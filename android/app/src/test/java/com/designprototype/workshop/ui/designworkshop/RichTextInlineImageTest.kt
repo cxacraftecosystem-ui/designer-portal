@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.report.BlockKind
+import com.designprototype.workshop.report.IMAGE_WIDTH_STEP_PCT
 import com.designprototype.workshop.report.ImageBlock
 import com.designprototype.workshop.report.ImageRef
 import com.designprototype.workshop.report.Mark
@@ -446,6 +447,42 @@ class RichTextInlineImageTest {
         // it back to 100 on the next read.
         assertEquals(100f, setImageWidth(doc, 1, 900f).doc.blocks[1].widthPct, 0.001f)
         assertEquals(10f, setImageWidth(doc, 1, -900f).doc.blocks[1].widthPct, 0.001f)
+    }
+
+    @Test
+    fun `the two width controls step by the web's step and land on the web's ladder`() {
+        // THE DIVERGENCE THIS PINS SHIPPED ONCE AND NOTHING REPORTED IT. The steppers were written
+        // with a round `10f`; `frontend/lib/richText.ts` exports `IMAGE_WIDTH_STEP_PCT = 15` and
+        // `RichTextEditor.tsx` passes exactly that to `setImageWidth`. `widthPct` is STORED in the
+        // document and printed by five renderers, so one press of "Wider" gave the same photograph
+        // 80% in a report exported from the phone and 85% in one exported from the browser — two
+        // copies of one document laying the figure out differently, from a control labelled the
+        // same on both, with nothing failing anywhere.
+        //
+        // Asserted as the LADDER rather than as the constant, because a test that reads the
+        // constant back out of the code it is checking cannot fail. These are the values the web
+        // reaches from the default, by hand: 70 → 85 → 100, and 70 → 55 → 40.
+        assertEquals(15f, IMAGE_WIDTH_STEP_PCT, 0.001f)
+
+        val placed = insertImage(
+            RichDoc(listOf(para("x"))),
+            collapsedAt(DocPoint(0, 1)),
+            "media-42",
+        ).doc
+        assertEquals("placed at the shared default", 70f, placed.blocks[1].widthPct, 0.001f)
+
+        val wider = setImageWidth(placed, 1, IMAGE_WIDTH_STEP_PCT).doc
+        assertEquals(85f, wider.blocks[1].widthPct, 0.001f)
+        assertEquals(
+            "and the second press reaches the ceiling exactly, as it does on the web",
+            100f,
+            setImageWidth(wider, 1, IMAGE_WIDTH_STEP_PCT).doc.blocks[1].widthPct,
+            0.001f,
+        )
+
+        val narrower = setImageWidth(placed, 1, -IMAGE_WIDTH_STEP_PCT).doc
+        assertEquals(55f, narrower.blocks[1].widthPct, 0.001f)
+        assertEquals(40f, setImageWidth(narrower, 1, -IMAGE_WIDTH_STEP_PCT).doc.blocks[1].widthPct, 0.001f)
     }
 
     @Test

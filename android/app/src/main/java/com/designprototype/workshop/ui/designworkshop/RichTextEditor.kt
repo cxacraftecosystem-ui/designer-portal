@@ -69,6 +69,7 @@ import com.designprototype.workshop.report.Align
 import com.designprototype.workshop.report.BlockKind
 import com.designprototype.workshop.report.IMAGE_MAX_WIDTH_PCT
 import com.designprototype.workshop.report.IMAGE_MIN_WIDTH_PCT
+import com.designprototype.workshop.report.IMAGE_WIDTH_STEP_PCT
 import com.designprototype.workshop.report.Mark
 import com.designprototype.workshop.report.RichBlock
 import com.designprototype.workshop.report.RichDoc
@@ -957,8 +958,14 @@ private fun InlinePhotograph(
                 // A STEP, not a number. See `setImageWidth`: asking a designer for a percentage of a
                 // text column they cannot see is a question nobody can answer, and the steppers are
                 // disabled at the bounds rather than silently doing nothing.
+                //
+                // THE STEP IS THE WEB'S CONSTANT AND NOT A ROUND NUMBER CHOSEN HERE. It was 10 until
+                // this was checked against `RichTextEditor.tsx`, which passes `IMAGE_WIDTH_STEP_PCT`
+                // — 15. `widthPct` is stored in the document and printed, so the same photograph
+                // widened once was 80% in a report exported from the phone and 85% in one exported
+                // from the browser, from a control labelled the same on both.
                 IconButton(
-                    onClick = { onWidthStep(-10f) },
+                    onClick = { onWidthStep(-IMAGE_WIDTH_STEP_PCT) },
                     enabled = block.widthPct > IMAGE_MIN_WIDTH_PCT,
                     modifier = Modifier.size(30.dp),
                 ) {
@@ -969,7 +976,7 @@ private fun InlinePhotograph(
                     )
                 }
                 IconButton(
-                    onClick = { onWidthStep(10f) },
+                    onClick = { onWidthStep(IMAGE_WIDTH_STEP_PCT) },
                     enabled = block.widthPct < IMAGE_MAX_WIDTH_PCT,
                     modifier = Modifier.size(30.dp),
                 ) {
