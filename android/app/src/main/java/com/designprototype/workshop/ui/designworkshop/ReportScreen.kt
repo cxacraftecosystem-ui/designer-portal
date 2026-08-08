@@ -182,6 +182,14 @@ fun ReportScreen(
     var deviceOnlyNote by remember(workshopId) { mutableStateOf<String?>(null) }
     /** Which copy the next export will be built from, said in all three states. */
     var builtFromLine by remember(workshopId) { mutableStateOf("") }
+    /**
+     * The same fact for the FILE rather than for the screen — see [ReportSource.serverCopyUnread].
+     *
+     * The notice above is read by the designer on the day and is gone the moment they leave the
+     * screen; the officer who opens the .docx next month was never here. This is what carries "this
+     * copy may be short" onto the cover, through [reportPlanFor] and `fieldCopyNote`.
+     */
+    var serverCopyUnread by remember(workshopId) { mutableStateOf(false) }
 
     LaunchedEffect(workshopId) {
         loading = true
@@ -206,6 +214,7 @@ fun ReportScreen(
             val stored = source.draft
             deviceOnlyNote = source.deviceOnlyNote
             builtFromLine = source.builtFromLine
+            serverCopyUnread = source.serverCopyUnread
             // Scored from the MERGED draft, so the percentage and the warnings describe the document
             // that is about to be written. Scoring the local draft while exporting the merged one is
             // how a screen comes to say "18% of the required fields are filled in" over a report
@@ -249,7 +258,16 @@ fun ReportScreen(
         result = null
         scope.launch {
             runCatching {
-                val stored = draft ?: WorkshopDraftStore.load(appContext, workshopId)
+                // THE MERGED DRAFT AND NOTHING ELSE. There was a `?: WorkshopDraftStore.load(…)`
+                // here, and it is exactly the read this whole path exists to stop being the report's
+                // source: it can only ever return what this handset already had. It was unreachable
+                // in any case that mattered — `draft` is assigned in the same `runCatching` that
+                // assigns `schema`, and the guard above returns on a null `schema`, so a null
+                // `draft` here means the merge found nothing on either side and the re-read would
+                // have returned null too. Removing it changes no behaviour today and leaves exactly
+                // ONE place the report's data comes from, which is what stops a later edit quietly
+                // restoring the defect.
+                val stored = draft
                 // RESOLVED ONCE, here, and handed to the builder. What this screen tells the
                 // designer about the file and what the builder writes into it then cannot come
                 // from two readings of the same stage-20 entry.
@@ -261,6 +279,8 @@ fun ReportScreen(
                     requestedAccent = accent,
                     format = format,
                     generatedAt = Instant.now().toString(),
+                    // Carried into the FILE, not only onto the screen — see [ReportPlan.serverCopyUnread].
+                    serverCopyUnread = serverCopyUnread,
                 )
                 exportNotes = plan.warnings
                 val document = withContext(Dispatchers.Default) {
@@ -339,7 +359,20 @@ fun ReportScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp))
-                Text("Preparing…", color = MaterialTheme.field.muted, fontSize = 13.sp)
+                // NAMED, BECAUSE THIS WAIT IS NOW A NETWORK WAIT. Preparing the report used to be a
+                // local file read and was over before the spinner drew; it now reads the workshop's
+                // stages, and on a handset attached to a cell that accepts packets and answers none
+                // — a courtyard on the edge of coverage, not a phone with no bars — OkHttp spends
+                // its connect timeout and its retries before giving up. A designer with an officer
+                // waiting must be able to see WHY the buttons have not appeared, and that waiting is
+                // what buys the other nineteen stages. Said only where a read is certain: an id with
+                // no server form never attempts one.
+                Text(
+                    if (isLocalOnlyWorkshop(workshopId)) "Preparing…"
+                    else "Reading this workshop from the server…",
+                    color = MaterialTheme.field.muted,
+                    fontSize = 13.sp,
+                )
             }
             return@Column
         }
@@ -1226,6 +1259,7 @@ private fun renderCover(
         plan.template,
         plan.settings,
         plan.meta.generatedAt.take(10).let(::formatReportDate),
+        plan.serverCopyUnread,
     )
 
     builder.add(

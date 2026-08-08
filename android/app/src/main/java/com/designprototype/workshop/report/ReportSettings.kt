@@ -440,16 +440,36 @@ fun fieldCopyNote(
     template: ReportTemplate,
     settings: Map<String, JsonElement>?,
     generatedOn: String,
+    /**
+     * The handset could not read the workshop from the server while building this file, so it holds
+     * only what that handset itself had. See `ReportPlan.serverCopyUnread`.
+     *
+     * THE SAME KIND OF FACT AS THE SENTENCE BELOW IT and it belongs in the same slot for the same
+     * reason: what separates this copy from the office's is exactly what makes a provenance line
+     * worth printing. A device-only export is the largest such difference there is — a workshop of
+     * twenty-two stages can come out as three — and it is the one the reader cannot detect from the
+     * file, because a short report is internally consistent: right cover, right contents, fewer
+     * sections. The screen says so to the designer; only this says so to the officer.
+     *
+     * Defaulted false so that every caller that has no way to know keeps the sentence off. Saying
+     * "some of this may be missing" over a file that is whole would make the line noise, and a
+     * provenance line nobody believes is worse than none.
+     */
+    serverCopyUnread: Boolean = false,
 ): String {
     val stamp = if (generatedOn.isBlank()) "" else " on $generatedOn"
     val made = "Generated on a handset in the field$stamp."
+    val unread = if (!serverCopyUnread) "" else
+        " The workshop could not be read from the server when this file was made, so it contains " +
+            "only what that handset had already downloaded; anything recorded on another phone or " +
+            "on the web may be missing."
     val missing = unsupportedSectionsIn(template, settings).mapNotNull { UNSUPPORTED_SECTION_NAMES[it] }
-    if (missing.isEmpty()) return made
+    if (missing.isEmpty()) return made + unread
     val listed = when (missing.size) {
         1 -> missing[0]
         else -> missing.dropLast(1).joinToString(", ") + " and " + missing.last()
     }
-    return "$made The office's copy of this report also carries $listed."
+    return "$made$unread The office's copy of this report also carries $listed."
 }
 
 /**
