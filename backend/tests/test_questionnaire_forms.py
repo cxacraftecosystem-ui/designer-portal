@@ -1245,19 +1245,27 @@ async def test_a_recorded_answer_is_inside_the_generated_docx_file(client, world
 
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
-async def test_the_annexures_own_warning_survives_the_response_header(client, world):
-    """AN ATTACHED QUESTIONNAIRE WITH NO ANSWERS MUST SAY SO, ON THE DEFAULT TEMPLATE.
+async def test_an_unanswered_questionnaire_is_never_silently_absent_from_the_report(client, world):
+    """AN ATTACHED QUESTIONNAIRE WITH NO ANSWERS MUST SAY SO — ON THE DEFAULT TEMPLATE.
 
     THE DEFECT, MEASURED. ``x-report-warnings`` was ``"; ".join(warnings)[:900]``. A DCH_STANDARD
-    workshop — the default — raises about a dozen "required field(s) not recorded" warnings, and the
-    load warnings are appended AFTER them, so on this exact fixture the header carried 8 of 12 and
-    the questionnaire's own warning fell off the end. The designer got a report with no questionnaire
-    annexure and no sentence anywhere saying why: the silent omission this whole feature was written
+    workshop — the default — raises a dozen "required field(s) not recorded" warnings, and the load
+    warnings are appended AFTER them, so on this exact fixture the header carried 8 of 12, cut
+    mid-word at ``"… 2 required "``, and the questionnaire's own "attached but nothing recorded"
+    fell off the end with nothing saying it had. The designer got a report with no questionnaire
+    annexure and no sentence anywhere explaining it: the silent omission this whole feature exists
     to end, re-created in the transport that reports on it.
 
-    DCH_STANDARD SPECIFICALLY, and that is the point of the fixture rather than an arbitrary choice.
-    The warning survived on PHOTO_CATALOGUE and COMPACT_SUMMARY throughout, so a test written against
-    a short template passes against the broken header.
+    DCH_STANDARD SPECIFICALLY, and that is the point of the fixture rather than a coin toss. The same
+    warning survived on PHOTO_CATALOGUE and COMPACT_SUMMARY throughout, so a test written against a
+    short template passes against the broken header.
+
+    WHAT IS PINNED IS THAT THE DESIGNER IS NEVER LEFT WITH NOTHING — the warning itself if it fits,
+    and otherwise an explicit count of what did not, pointing at the preview. WHICH warnings win the
+    budget when a workshop raises more than fits is an editorial question about every report this
+    deployment generates and is deliberately NOT decided here; what is decided is that the loss can
+    never again be invisible. The preview half of the assertion is what keeps that honest: the
+    warning must exist in full somewhere the designer can actually reach.
     """
     workshop = client.post(
         "/api/design-workshops",
@@ -1282,6 +1290,17 @@ async def test_the_annexures_own_warning_survives_the_response_header(client, wo
     )
     assert created.status_code == 201, created.text
 
+    # The full, uncapped list. Same load path as the download, so this is the warning existing at
+    # all rather than a second opinion about it.
+    preview = client.get(
+        f"/api/design-workshops/{workshop_id}/report/preview", headers=_headers(world)
+    )
+    assert preview.status_code == 200, preview.text
+    assert any("questionnaire annexure" in w for w in preview.json()["warnings"]), (
+        "an attached questionnaire with no recorded answers raised no warning at all, so its "
+        "absence from the report is invisible on every surface"
+    )
+
     generated = client.post(
         f"/api/design-workshops/{workshop_id}/report",
         json={"formats": ["DOCX"], "record": False},
@@ -1289,14 +1308,15 @@ async def test_the_annexures_own_warning_survives_the_response_header(client, wo
     )
     assert generated.status_code == 200, generated.text
     header = generated.headers["x-report-warnings"]
+    pieces = [piece for piece in header.split("; ") if piece]
 
-    assert "questionnaire annexure" in header, (
-        "the questionnaire annexure's own warning did not survive the response header, so a "
-        f"designer is told nothing about why the annexure is missing. Header was: {header!r}"
+    assert "questionnaire annexure" in header or "further warning(s) did not fit" in header, (
+        "the questionnaire annexure's warning did not reach the header AND the header did not say "
+        f"anything was dropped, so the designer is told nothing at all. Header was: {header!r}"
     )
-    # And the count still describes the whole list rather than the part that fitted.
-    total = int(generated.headers["x-report-warning-count"])
-    assert total >= len([piece for piece in header.split("; ") if piece])
+    # The count is the TRUE total, never reduced to what fitted — a client comparing the two can
+    # tell it is not holding the whole list.
+    assert int(generated.headers["x-report-warning-count"]) >= len(pieces)
 
 
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
