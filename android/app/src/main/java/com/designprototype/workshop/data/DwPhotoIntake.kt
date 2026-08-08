@@ -407,8 +407,18 @@ object DwPhotoIntake {
         return if (photoDayIndex(trimmed) == null) null else trimmed
     }
 
-    /** The row's own name, when the entity declares a label field and the row filled it in. */
-    private fun rowLabelOf(labelField: String, row: DwDataRow): String? {
+    /**
+     * The row's own name, when the entity declares a label field and the row filled it in.
+     *
+     * `internal` rather than private because the SURFACE names the same rows — the "attach to" picker
+     * lists every collection row a photograph can go into — and `page.tsx` spells that label with the
+     * identical `typeof labelValue === "string" && labelValue.trim()`. A second copy written beside
+     * the picker was a second answer: it reached for Kotlin's `trim()`, which leaves the no-break
+     * space [jsTrim] removes, so a label pasted out of a spreadsheet that the browser reads as blank
+     * — and names "row 3" — named the option with an invisible character here and gave the designer
+     * an unlabelled row to choose between.
+     */
+    internal fun rowLabelOf(labelField: String, row: DwDataRow): String? {
         if (labelField.isEmpty()) return null
         val raw = row[labelField] as? JsonPrimitive ?: return null
         if (!raw.isString) return null
