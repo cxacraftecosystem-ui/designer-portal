@@ -56,18 +56,33 @@
 #
 # Nothing in this application, or in ML Kit, references any of them from code. AGP keeps the SERVICE
 # — it is an `android:name` on a manifest component — but a class name that appears only inside a
-# meta-data attribute is a string, and R8 does not read strings. Verified rather than assumed, the
-# same way this file's other claims were: every `proguard.txt` in the resolved ML Kit graph was
-# unzipped out of the Gradle cache and read (`com.google.mlkit:common`,
-# `text-recognition-bundled-common`, `play-services-basement`, `play-services-base`; the rest ship
-# none), and none of them keeps a ComponentRegistrar. The three classes were also checked for
-# `@androidx.annotation.Keep`, which `play-services-basement` DOES keep — none of them carries it.
+# meta-data attribute is a string, and R8 does not read strings.
 #
-# WHY IT MATTERS MORE THAN ITS THREE LINES. The failure is not a build error and not a missing
-# feature: `TextRecognition.getClient()` throws at the first tap, on a build that assembled and
-# installed perfectly, in a courtyard, on the one code path this lane exists to make work without a
-# connection. And it would take seventeen megabytes of recogniser with it — shipped, downloaded over
-# prepaid data, and unreachable.
+# BELT AND BRACES, NOT THE ONLY BRACE — and the earlier version of this comment was wrong about that.
+# It claimed that "every proguard.txt in the resolved ML Kit graph was read ... none of them keeps a
+# ComponentRegistrar". One does. `com.google.firebase:firebase-components:16.1.0` sits squarely
+# inside this graph — `play-services-mlkit-text-recognition-common`, `com.google.mlkit:common` and
+# `com.google.mlkit:vision-common` each depend on it (`:app:dependencies --configuration
+# releaseRuntimeClasspath`) — and its consumer `proguard.txt` is three lines, of which the third is:
+#
+#     -keep class * implements com.google.firebase.components.ComponentRegistrar
+#
+# Read out of the release build's OWN merged configuration rather than from the cache alone:
+# `app/build/outputs/mapping/release/configuration.txt` carries it under the
+# `firebase-components-16.1.0/proguard.txt` banner. So the registrars would have survived R8 without
+# anything in this file, and the claim that they would not was not checked as thoroughly as it said
+# it was.
+#
+# THE RULE STAYS, for the one thing the library rule does not say. `-keep class *` with no member
+# specification keeps the class; ML Kit reaches these through `Class.forName(name).newInstance()`,
+# which needs the NO-ARG CONSTRUCTOR as well, and that is what the body below adds. Keeping a
+# constructor that would probably have survived anyway costs nothing measurable; discovering in a
+# courtyard that it did not would cost the whole feature. What it must not do is claim to be the
+# only thing standing between this build and a crash.
+#
+# Confirmed in the release build's own output, not asserted: `r8-kept.txt` (`-printseeds`) lists all
+# three classes AND their no-arg constructors, `mapping.txt` maps each to ITSELF (so `Class.forName`
+# still finds them by name), and `r8-removed.txt` shows only a synthetic `int zza` trimmed from each.
 -keep class * implements com.google.firebase.components.ComponentRegistrar {
     <init>();
 }
