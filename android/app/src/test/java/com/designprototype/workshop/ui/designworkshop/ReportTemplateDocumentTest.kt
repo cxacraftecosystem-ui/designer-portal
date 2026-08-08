@@ -1038,6 +1038,35 @@ class ReportTemplateDocumentTest {
     }
 
     @Test
+    fun `the tinted state is keyed by the canonical name the rasteriser can seed`() {
+        // WHAT THIS PINS. `highlight` is not a caption, it is a LOOKUP KEY: `ReportMap.tintStates`
+        // resolves each name against the 36-entry STATE_SEATS table to find the pixel it seeds the
+        // flood fill from. A raw "Orissa" finds no seat, tints nothing, and the figure prints
+        // "Not tinted: Orissa" across a map of India — in the one case where the tinted region is
+        // the ENTIRE content of the figure, because no fix and no atlas means there is no pin.
+        //
+        // AND THE SPELLING IS REAL. The state column predates its validator and is nullable, so
+        // rows holding "Orissa" and "Pondicherry" exist in the data; that is why `address._ALIASES`
+        // exists on the server and why `canonicalState` ports it. Nothing asserted the builder
+        // actually routes stage 1's typed answer through it.
+        val alias = build(mapSchema(), mapDraft(mapOf("state" to JsonPrimitive("  orissa "))))
+            .blocks.filterIsInstance<MapBlock>().first()
+        assertEquals(
+            "a spelling that is in the data must tint the state it names, not print a complaint",
+            setOf("Odisha"),
+            alias.highlight,
+        )
+
+        // An unrecognised name is carried through AS TYPED, matching the server's
+        // `canonical_state(state) or state`. It cannot tint — there is no seat for it — and the
+        // renderer NAMES it on the figure. Dropping it instead would leave a reader attributing an
+        // untinted map to the data rather than to a state nobody can resolve.
+        val unknown = build(mapSchema(), mapDraft(mapOf("state" to JsonPrimitive("Atlantis"))))
+            .blocks.filterIsInstance<MapBlock>().first()
+        assertEquals(setOf("Atlantis"), unknown.highlight)
+    }
+
+    @Test
     fun `the file says which copy of the report it is`() {
         // The officer reads the phone's PDF as THE report: same cover, same running foot, a
         // self-consistent contents page. One line under the cover is what stops a section present in
