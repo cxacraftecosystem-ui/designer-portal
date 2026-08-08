@@ -960,6 +960,20 @@ data class DesignWorkshopDetailDto(
     val startDate: String? = null,
     val endDate: String? = null,
     val updatedAt: String? = null,
+    /**
+     * Who pressed "New". Served all along — `GET /design-workshops/{id}` returns `workshop_summary`
+     * with the stages folded in, and that helper has always carried `createdById`; this field was
+     * simply never decoded.
+     *
+     * It is here for ONE caller, `WorkshopViewersScreen`, and it is the fact that whole screen turns
+     * on. The creator holds the workshop through this column and not through a viewer row, so they
+     * are held out of the picker on both sides: an admin who could untick them would be offered a
+     * control that cannot do what it appears to (`_deduplicate` drops them from any payload naming
+     * them), and a screen that showed every reader EXCEPT the one everybody knows has access reads
+     * as a bug. Nullable because the server may answer null, and a screen that cannot name the
+     * creator has to say so rather than exclude nobody and quietly offer them for removal.
+     */
+    val createdById: String? = null,
     val schemaVersion: String = "",
     val stages: Map<String, StageBucketDto> = emptyMap(),
     val completeness: Map<String, StageCompletenessDto> = emptyMap(),
