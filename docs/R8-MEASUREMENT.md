@@ -143,3 +143,61 @@ what it did and that the APK is not distributable.
 
 Publishing still needs a real keystore whose credentials come from `local.properties` or the CI
 secret store — never from a file in the repository.
+
+---
+
+# The size envelope after the bundled recogniser — 2026-08-09
+
+`docs/DECISION-identity-card-ocr-on-android.md` recommended against a bundled on-device text
+recogniser on size, and **the user overruled it**: the read happens on the handset and needs no
+connection. This section is the true cost of that decision, measured, and what was done to make it
+cost as little as it honestly can.
+
+## First: 6.09 MB had already gone stale, exactly as predicted above
+
+> "So this 6.09 MB is flattering and must not be quoted as a steady state."
+
+Re-measured on the current tree (`1d8d7c1`), same command, same machine, same
+`debugSignRelease=true` so the signature overhead is the same on both sides:
+
+| Release APK | Bytes | Size |
+|---|---|---|
+| Recorded above (`perf/enable-r8`, unsigned) | 6,389,483 | 6.09 MB |
+| Recorded above (same build, debug-signed, on the M32) | ~6,406,000 | 6.11 MB |
+| **Today's tree, before ML Kit** | **6,636,115** | **6.33 MB** |
+
+The 246,632-byte growth is the wiring landing — `RecordCodeCard`, `RecordCodeLookup`,
+`ReportSource`, `ArtisanIdentity` and the rest of the ports that R8 was deleting whole when this
+document was written. That is the growth the section above calls "a sign of the wiring working
+rather than a regression", and it is why every figure below is stated against **6,636,115** rather
+than against the older number.
+
+## Second: this app was already shipping native code, and to architectures that cannot run it
+
+The OCR decision document states "This app ships **no native code at all** today". Measured off the
+baseline APK rather than assumed, that is not quite true:
+
+| `lib/` entry in `app-release.apk` | Bytes in APK | Method |
+|---|---|---|
+| `lib/x86_64/libandroidx.graphics.path.so` | 10,760 | STORED |
+| `lib/arm64-v8a/libandroidx.graphics.path.so` | 10,096 | STORED |
+| `lib/x86/libandroidx.graphics.path.so` | 9,284 | STORED |
+| `lib/armeabi-v7a/libandroidx.graphics.path.so` | 7,252 | STORED |
+
+`android/app/build.gradle.kts` sets **no `abiFilters`**, so every build packages every ABI every
+dependency offers — four of them. Today that is 20,044 bytes of x86/x86_64 shipped to devices that
+cannot be the target, which is rounding error. It matters because it proves the mechanism is already
+live and because **STORED** is the word that decides everything below.
+
+## Why R8 cannot help with any of this, proven rather than asserted
+
+`minSdk = 26` makes AGP write `extractNativeLibs="false"` into the merged manifest — read out of
+`app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml`, not
+recalled from documentation:
+
+    grep -o 'extractNativeLibs="[a-z]*"' …/AndroidManifest.xml   ->   extractNativeLibs="false"
+
+That attribute requires native libraries to be **stored uncompressed** in the APK, which is why every
+`lib/` row above reads STORED and why its "bytes in APK" equals its size on disk. R8 shrinks
+Java/Kotlin classes; it has no opinion about a `.so`. The 66% saving recorded at the top of this
+document buys nothing back here. **Filtering at package time is the only lever that exists.**
