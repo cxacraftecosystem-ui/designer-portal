@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { useAuth } from "@/components/AuthProvider";
 import { DynamicIslandNav } from "@/components/DynamicIslandNav";
+import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { roleLabel } from "@/lib/permissions";
 
 /**
@@ -52,6 +53,19 @@ export function DeadEndFrame({
   nav: boolean;
   children: React.ReactNode;
 }) {
+  const { user, loading } = useAuth();
+
+  /**
+   * Say which application this is whenever the island — which carries the mark itself — will not be
+   * on screen. Somebody who followed a dead link out of a colleague's message and is not signed in
+   * otherwise gets a white card on a tinted page and no answer to "what have I opened".
+   *
+   * Suppressed while `/me` is in flight, so the mark never appears and is then replaced by the
+   * island a moment later: a logo that shows up only to be swapped for a different logo reads as a
+   * page still loading, on a screen whose whole job is to say the loading is over.
+   */
+  const brand = !nav || (!loading && !user);
+
   return (
     <div className="min-h-screen bg-bg-0">
       {nav ? (
@@ -71,6 +85,15 @@ export function DeadEndFrame({
         </>
       ) : null}
       <main id="main-content" tabIndex={-1} className="mx-auto max-w-7xl px-4 pb-12 pt-24">
+        {brand ? (
+          // The island's own lockup, same mark and same wordmark, so the two cannot drift apart.
+          // Deliberately not a link: the panel below already names where to go, and a second,
+          // quieter route out competes with the answer this screen exists to give.
+          <div className="mb-8 flex items-center justify-center gap-2 text-ink-900">
+            <WorkshopLogo className="h-8 w-8 rounded-lg" />
+            <span className="font-display text-base font-bold tracking-tight">Design Prototype Workshop</span>
+          </div>
+        ) : null}
         {children}
       </main>
     </div>
