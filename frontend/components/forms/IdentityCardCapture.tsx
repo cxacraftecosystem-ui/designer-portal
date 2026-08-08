@@ -40,11 +40,31 @@
  *
  * Android's `DwIdentityCardControl` is the same control with the same two ways in and the same
  * refusals; its file header carries the on-device-recognition decision that applies to both.
+ *
+ * ── WHO IS OFFERED IT: THE DESIGNER SET, WHICH IS NOT WHO CAN OPEN THIS FORM ──────────────────
+ *
+ * `POST /design-workshops/ocr/identity` begins with `_require_designer`, i.e. `can_run_design_workshops`
+ * — the SET {Designer, Admin, Master Admin}. The artisan form is guarded by `canCreateRecords`, a
+ * RANK THRESHOLD at Researcher and above. Those are different rules and they do not nest: a
+ * RESEARCHER and a PROFESSOR can both open this form, and the endpoint answers both 403. A
+ * PROFESSOR outranks a designer and is still outside the set — see `deps.can_run_design_workshops`,
+ * which argues the point.
+ *
+ * So this control renders for the designer set ONLY, and `serverOffersRoute` cannot stand in for
+ * that check: it probes with a GET, and a GET to this POST-only route answers 405 from the router
+ * BEFORE any dependency runs (measured: `curl` against the running API returns 405 with no token at
+ * all). The probe therefore says "the route exists" to every account alive.
+ *
+ * Hiding it is not cosmetic. Without this gate a professor sees "Photograph the card", photographs
+ * somebody's Aadhaar card, and the image is uploaded to a third-party vision model before the 403
+ * comes back — the photograph is taken and transmitted, and only then refused. That is the exact
+ * shape `deps.py` names: the UI offering what the API refuses.
  */
 
 import { useEffect, useId, useRef, useState } from "react";
 import { AlertTriangle, Camera, Check, ImageIcon, Loader2, X } from "lucide-react";
 
+import { useAuth } from "@/components/AuthProvider";
 import {
   DW_OCR_IDENTITY_PATH,
   identityChoices,
@@ -52,6 +72,7 @@ import {
   serverOffersRoute,
   type DwIdentityChoice
 } from "@/lib/designWorkshops";
+import { canRunDesignWorkshops } from "@/lib/permissions";
 
 /** "123456789012" -> "1234 5678 9012", the grouping the card prints and a person proofreads by. */
 function display(choice: DwIdentityChoice): string {
@@ -90,6 +111,12 @@ export function IdentityCardCapture({
   const [reading, setReading] = useState(false);
   const [choices, setChoices] = useState<DwIdentityChoice[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
+  // Mirrored from `_require_designer`, never re-derived: the SET, not the rank ladder this form's
+  // own guard uses. See the header — a professor passes `canCreateRecords` and fails this one.
+  // `user` is null while `/me` is in flight, and `canRunDesignWorkshops(null)` is false, so the
+  // control appears only once the answer is known rather than flashing for everybody first.
+  const { user } = useAuth();
+  const permitted = canRunDesignWorkshops(user);
 
   /**
    * Whether this deployment can read a card at all, probed once per tab.
@@ -97,8 +124,15 @@ export function IdentityCardCapture({
    * Offered as a button that 503s, this would be indistinguishable from a card the reader could not
    * make out — and the researcher would photograph it four more times before giving up. The route is
    * newer than several of the servers this client talks to, so "absent" is a normal answer.
+   *
+   * NOT RUN for an account the route would refuse. The probe is a GET against a POST-only route, so
+   * it reports 405 — "the route is there" — for every signed-in account regardless of role, and
+   * spending a request to be told something that cannot gate anything is the least of it: the answer
+   * is cached per path for the tab, so a probe fired here would also be the one a designer's later
+   * screen reads.
    */
   useEffect(() => {
+    if (!permitted) return;
     let cancelled = false;
     serverOffersRoute(DW_OCR_IDENTITY_PATH)
       .then((available) => {
@@ -110,9 +144,11 @@ export function IdentityCardCapture({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [permitted]);
 
-  if (offered !== true) return null;
+  // After every hook, never before one: this component's `offered` state and the two file inputs
+  // must keep their slots for the life of the mount.
+  if (!permitted || offered !== true) return null;
 
   async function read(input: HTMLInputElement | null) {
     const file = input?.files?.[0];
