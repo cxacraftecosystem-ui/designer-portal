@@ -20,8 +20,9 @@ import { expect, test } from "@playwright/test";
  *     their ids travel as `?edit=` — so a link somebody actually sends lands on an unmatched URL
  *     rather than on any page's own not-found handling.
  *  2. **That the copy cannot be used to enumerate records.** The API deliberately answers 404 and
- *     not 403 for a record the caller may not see (`_load_or_404` in data_browser.py,
- *     `load_workshop_or_404` in design_workshops.py), so that asking about an id tells you nothing
+ *     not 403 for a record the caller may not see (`_require` in
+ *     backend/app/api/routes/data_browser.py:653, `load_workshop_or_404` in
+ *     backend/app/services/design_workshops.py:94), so that asking about an id tells you nothing
  *     about whether it exists. A 404 page that said "this record has been deleted" would hand that
  *     back in the client, and it would read as a helpful improvement to whoever wrote it. The
  *     assertion is on the DISJUNCTION and on the sentence that refuses to resolve it, because those
