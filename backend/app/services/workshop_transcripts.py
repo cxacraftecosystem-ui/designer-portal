@@ -288,8 +288,9 @@ async def load_transcript_items(entries: list[Any], *, viewer: Any) -> list[Tran
     client wrote there, and ``GET /api/media`` hands every signed-in account the id of every file in
     the repository. An AUDIO id belonging to somebody else therefore handed back that recording's
     FULL text on the stage read (``_transcripts_payload``) and its filename, duration, speaker count
-    and opening line on ``GET /design-workshops/{id}/transcripts`` — and would carry the whole
-    transcript into the annexure the day ``append_transcript_annexure`` gets its call site. The
+    and opening line on ``GET /design-workshops/{id}/transcripts`` — and now that
+    ``append_transcript_annexure`` has its call site in ``report_builder.ReportBuilder.build``, the
+    whole of a stranger's transcript would be printed into a delivered document. The
     predicate is the one every download surface already uses — ``owned_or_granted_where(user,
     owner_field="uploadedById")`` — AND-composed under the id list rather than merged into it,
     because it is an ``OR`` of its own. Keyword with no default, so no future call site can omit it.
