@@ -10,6 +10,8 @@ Nothing in this file touches a database. The resolver that reads one is in
 ``test_reference_resolver.py``.
 """
 
+import re
+
 import pytest
 
 # Importing this module is what installs the twenty-two stages into the registry.
@@ -22,6 +24,7 @@ from app.services.stage_schema import (
     EntitySpec,
     FieldSpec,
     FieldType,
+    ReportRole,
     StageSpec,
     Tier,
     all_entities,
@@ -156,6 +159,158 @@ def test_a_cascade_is_published_and_an_absent_one_is_not():
     with_cascade = field_to_dict(_field("existingProduct", "productRef"))
     assert with_cascade["refFilterBy"] == "artisanRef"
     assert "refFilterBy" not in field_to_dict(_field("participant", "artisanRef"))
+
+
+def test_the_hydration_mapping_crosses_the_wire_with_the_field():
+    """WHICH BOX EACH OF THE RECORD'S VALUES GOES IN, said by the server rather than guessed.
+
+    The clients fill the row in at the keyboard so a designer who picks an artisan does not watch
+    nine empty boxes stay empty until Save. Deriving the mapping client-side by matching key names
+    is the obvious shortcut and is actively wrong: on `existingProduct` the reference's `name` is
+    the ARTISAN's under `artisanRef` and the PRODUCT's under `productRef`, and the entity has a
+    `name` of its own that means the product — so a name-matching client writes a participant's
+    name into a ministry report's product table, and the only-fill-blanks rule then refuses to
+    correct it at save.
+    """
+    artisan_on_product = field_to_dict(_field("existingProduct", "artisanRef"), "existingProduct")
+    assert artisan_on_product["refHydration"] == {"name": "artisanName"}
+
+    product_on_product = field_to_dict(_field("existingProduct", "productRef"), "existingProduct")
+    assert product_on_product["refHydration"]["name"] == "name"
+    assert product_on_product["refHydration"]["photo"] == "productPhotos"
+
+
+def test_a_field_that_hydrates_nothing_publishes_nothing():
+    """Absent rather than empty, so a client can fail closed on the absence. A missing entry costs
+    one retyped box; a guessed one costs a wrong value nobody can see is wrong."""
+    sketch = field_to_dict(_field("prototype", "sketchRef"), "prototype")
+    assert "refHydration" not in sketch
+    # And a field serialised without its entity gets no mapping either: the table is keyed by
+    # "entityKey.fieldKey" because field keys are unique only within an entity.
+    assert "refHydration" not in field_to_dict(_field("existingProduct", "artisanRef"))
+
+
+# --------------------------------------------------------------------------------------
+# The hydration table, and the rename that would empty it in silence
+# --------------------------------------------------------------------------------------
+
+
+def test_every_hydration_target_is_a_real_field_of_its_entity():
+    """The check that makes a rename fail loudly instead of quietly.
+
+    `hydrate_entries` resolves each target with `entity.field(target_key)` and SKIPS what it
+    cannot resolve — no error, no log — so a mapping naming a field somebody renamed copies
+    nothing, on every save, for ever, and the first symptom is a submitted document with a hole in
+    a table. `validate_registry` is asserted sound above; this names the rule so a future edit
+    that removes it fails here rather than in a ministry office.
+    """
+    for path, mapping in stage_schema.REFERENCE_HYDRATION.items():
+        entity_key, _, ref_key = path.partition(".")
+        entity = next(e for _s, e in all_entities() if e.key == entity_key)
+        assert entity.field(ref_key) is not None, path
+        assert entity.field(ref_key).type is FieldType.REF, path
+        for source_key, target_key in mapping.items():
+            assert entity.field(target_key) is not None, f"{path}[{source_key}] -> {target_key}"
+
+
+def test_a_hydration_target_that_does_not_exist_fails_validation(monkeypatch):
+    monkeypatch.setattr(
+        stage_schema, "REFERENCE_HYDRATION",
+        {"participant.artisanRef": {"name": "fullName"}},
+    )
+    problems = validate_registry()
+    assert any("fullName" in p and "not a field" in p for p in problems), problems
+
+
+def test_a_hydration_path_naming_a_non_ref_field_fails_validation(monkeypatch):
+    """Only a REF field hydrates a row. A mapping hung off a text box would never run at all —
+    `hydrate_entries` only looks at REF fields — so it would sit in the table reading as coverage
+    the report does not have."""
+    monkeypatch.setattr(
+        stage_schema, "REFERENCE_HYDRATION",
+        {"participant.name": {"name": "name"}},
+    )
+    assert any("only a REF field" in p for p in validate_registry()), validate_registry()
+
+
+def test_the_documented_process_now_fills_more_than_its_name():
+    """The gap this lane closed. Stage 5's process table is one of the report's substantive
+    narrative sections and it copied ONE field while its siblings copied six and eight."""
+    mapping = stage_schema.REFERENCE_HYDRATION["processStep.processRef"]
+    assert mapping == {"name": "name", "notes": "description",
+                       "productName": "documentedFor"}
+    entity = next(e for _s, e in all_entities() if e.key == "processStep")
+    # Both new targets must PRINT, or the copy is a field that is hydrated and never seen.
+    assert entity.field("description").report_role is not ReportRole.HIDDEN
+    assert entity.field("documentedFor").report_role is not ReportRole.HIDDEN
+
+
+def test_a_prototype_is_not_the_product_it_derives_from():
+    """DECIDED, NOT OVERLOOKED. `prototype.productRef` copies the product's name into "Developed
+    from" and deliberately nothing else: a prototype is defined by how it DIFFERS from its
+    source, so `materials` is a required answer about what this object is actually made of, and
+    the product's `price` is a SELLING price with nothing on a prototype to receive it but the two
+    COST fields. The only-fill-blanks rule would leave any such copy standing, indistinguishable
+    from an answer the designer gave.
+
+    The same reasoning caps `existingProduct.artisanRef` at the name: that row documents a
+    PRODUCT, the entity declares no box for a village or a phone, and the roster row at stage 3
+    already holds both against the same artisan.
+    """
+    assert stage_schema.REFERENCE_HYDRATION["prototype.productRef"] == {"name": "productName"}
+    assert stage_schema.REFERENCE_HYDRATION["existingProduct.artisanRef"] == {"name": "artisanName"}
+
+
+def _web_hydration_table() -> dict[str, dict[str, str]] | None:
+    """`DW_REFERENCE_HYDRATION` as `frontend/lib/designWorkshops.ts` declares it, or None.
+
+    Parsed rather than imported because there is no TypeScript here. The shape is a flat object
+    literal of object literals with string values, so a scan is enough and a change that made it
+    anything else would fail the assertion below rather than pass silently — which is the right
+    direction for a guard whose whole job is to notice that the two copies stopped matching.
+    """
+    from pathlib import Path
+
+    web = Path(__file__).resolve().parents[2] / "frontend/lib/designWorkshops.ts"
+    if not web.is_file():
+        return None
+    text = re.sub(r"//[^\n]*", "", web.read_text(encoding="utf-8"))
+    start = text.find("const DW_REFERENCE_HYDRATION")
+    assert start != -1, "the web dropped DW_REFERENCE_HYDRATION without telling this test"
+    body = text[text.index("{", start): text.index("};", start)]
+    out: dict[str, dict[str, str]] = {}
+    for path, inner in re.findall(r'"([\w.]+)"\s*:\s*\{([^{}]*)\}', body):
+        out[path] = dict(re.findall(r'"?([\w]+)"?\s*:\s*"([\w]+)"', inner))
+    return out
+
+
+def test_the_web_carries_the_same_hydration_table():
+    """THE DRIFT THIS FEATURE HAS ALREADY PAID FOR ONCE, guarded on the surface that still copies.
+
+    Android hydrated by matching key names while the server mapped, and the two disagreed
+    permanently on the same pick: choosing the artisan on a stage 6 row wrote her name into the
+    PRODUCT column, and the only-fill-blanks rule then refused to correct it at save. Android now
+    reads the server's `refHydration` off the schema, so it cannot drift again. The web still keeps
+    a hand-maintained copy — deliberately, and it is currently correct — which makes it the one
+    remaining place the same defect can be reintroduced by a widening that updates one file.
+
+    A MISSING web entry costs one retyped box the server fills at save; a WRONG one costs a value
+    nobody can see is wrong. So this asserts equality, not containment.
+    """
+    web = _web_hydration_table()
+    if web is None:
+        pytest.skip("the frontend is not present in this checkout")
+
+    server = stage_schema.REFERENCE_HYDRATION
+    assert set(web) == set(server), (
+        "the web's hydration table names different refs from the server's: only in web "
+        f"{sorted(set(web) - set(server))}, only in server {sorted(set(server) - set(web))}"
+    )
+    for path, mapping in server.items():
+        assert web[path] == mapping, (
+            f"{path} hydrates {mapping} on the server and {web[path]} in the browser, so the same "
+            f"pick fills the row differently depending on which surface the designer used"
+        )
 
 
 # --------------------------------------------------------------------------------------

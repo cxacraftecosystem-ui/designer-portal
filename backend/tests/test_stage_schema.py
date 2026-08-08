@@ -15,6 +15,7 @@ import pytest
 
 # Importing this module is what installs the twenty-two stages into the registry.
 import app.services.stage_definitions  # noqa: F401
+from app.services import stage_schema
 from app.services.stage_schema import (
     ENUMS,
     PROMOTED_COLUMNS,
@@ -187,6 +188,47 @@ def test_the_version_changes_when_a_derivation_changes():
             )
 
     # And restored exactly: a digest that did not come back is a leak into every later test.
+    assert registry_version() == baseline
+
+
+def test_the_version_changes_when_a_hydration_mapping_changes(monkeypatch):
+    """THE SAME HOLE, ONE FEATURE LATER, and this is the one that would have reopened it.
+
+    `field_to_dict` publishes `REFERENCE_HYDRATION` as `refHydration`, which is how a handset
+    learns that a documented process fills in "What happens" and "Documented for" rather than the
+    step's name alone. That makes the mapping a CLIENT CONTRACT — and correcting one touches no
+    key, no type, no tier and no derivation. Left out of the digest, the version would not move,
+    so `test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from` (which compares
+    the version string, not the content) would report agreement against a stale asset, and a
+    phone that has never reached the network would keep hydrating by exactly the mapping the
+    correction was written to end. That is the artisan-name-in-the-product-column defect, redelivered.
+
+    Three perturbations, separately, because "some difference moves the digest" would pass for an
+    implementation that hashed only the presence of a mapping: a widening, a retargeting, and a
+    removal.
+    """
+    baseline = registry_version()
+    original = stage_schema.REFERENCE_HYDRATION
+    path = "processStep.processRef"
+
+    widened = dict(original)
+    widened[path] = {**original[path], "preProcessAvailable": "performedBy"}
+
+    retargeted = dict(original)
+    retargeted[path] = {**original[path], "notes": "problems"}
+
+    narrowed = dict(original)
+    narrowed[path] = {"name": "name"}
+
+    for label, table in (("widened", widened), ("retargeted", retargeted),
+                         ("narrowed", narrowed)):
+        monkeypatch.setattr(stage_schema, "REFERENCE_HYDRATION", table)
+        assert registry_version() != baseline, (
+            f"a {label} hydration mapping left the digest unchanged, so every phone holding the "
+            f"old one would go on filling rows in by it and never be told to refetch"
+        )
+        monkeypatch.undo()
+
     assert registry_version() == baseline
 
 

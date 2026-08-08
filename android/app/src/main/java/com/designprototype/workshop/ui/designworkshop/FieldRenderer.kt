@@ -473,7 +473,7 @@ fun FieldRenderer(
                     error = error,
                     label = fieldLabel(field),
                     rowValues = rowValues,
-                    writableKeys = siblings.keys,
+                    writableFields = siblings,
                     onChange = onChange,
                     onHydrate = onPatch,
                 )

@@ -170,6 +170,26 @@ data class FieldDto(
      * this workshop's roster.
      */
     val refScope: String = "",
+    /**
+     * WHICH BOXES THIS PICKER FILLS IN: the chosen record's own `data` keys, mapped to the field
+     * keys of the entity being filled.
+     *
+     * THE CLIENT MAY NOT DERIVE THIS BY MATCHING KEY NAMES, which is what this surface used to do
+     * and is not a smaller version of the rule — it is a different and wrong one. On
+     * `existingProduct` the reference's `data["name"]` is the ARTISAN's name under `artisanRef`
+     * and the PRODUCT's name under `productRef`, and the entity has a `name` field of its own that
+     * means the product. Matching names therefore wrote the artisan's name into the product's name
+     * box, on a row nobody had finished; the server's only-fill-blanks rule then refused to correct
+     * it at save, and the participant's name printed in the product table of a ministry report —
+     * on this surface only, while the same pick on the web filled the row correctly. `prototype`
+     * had the same collision, with the documented product's name landing in "Prototype name".
+     *
+     * The server is the authority (`REFERENCE_HYDRATION` in `stage_schema.py`, emitted by
+     * `field_to_dict`). An ABSENT map hydrates NOTHING rather than falling back to a guess: a
+     * missing entry costs the designer one retyped box and the server fills it at save regardless,
+     * whereas a guessed one costs a wrong value nobody can see is wrong.
+     */
+    val refHydration: Map<String, String> = emptyMap(),
     val maxLength: Int = 0,
     val minValue: Double? = null,
     val maxValue: Double? = null,
