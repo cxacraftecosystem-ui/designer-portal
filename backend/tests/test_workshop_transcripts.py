@@ -340,6 +340,75 @@ def test_transcripts_ride_on_the_workshop_data_and_read_back():
     assert len(transcripts_of(data)) == 2
 
 
+# --------------------------------------------------------------------------------------
+# The call site
+# --------------------------------------------------------------------------------------
+#
+# WHAT THESE TWO PIN, and why they go through `build_report` rather than through
+# `transcript_annexure_blocks`. Every part of this feature was finished and covered by the tests
+# above — the enqueue, the queue, the entitlement gate, the loading, the warnings, the blocks — and
+# the annexure still never appeared in a single report, because `ReportBuilder.build` had no
+# `ANNEXURE_TRANSCRIPTS` branch. The block builder passed while the document was empty. A test that
+# only exercises the module can never see that, so the assertion has to be made against a whole
+# document built the way the endpoint builds one.
+
+
+def _report(items, template_id: str = "DCH_STANDARD"):
+    """A whole report, built as the generate route builds it, with `items` attached or not."""
+    from app.services.report_builder import WorkshopData, build_report
+    from app.services.report_model import ReportMeta
+
+    data = WorkshopData(workshop_id="w1", title="Barpali cluster")
+    if items:
+        attach_transcripts(data, items)
+    document, _warnings = build_report(
+        data,
+        template_id,
+        lambda _media_id: None,
+        meta=ReportMeta(title="Barpali cluster", generated_at="2026-08-08T00:00:00Z"),
+    )
+    return document
+
+
+def test_the_annexure_reaches_a_built_report_and_not_only_its_own_block_builder():
+    document = _report(_items())
+
+    headings = [
+        runs_text(b.runs) for b in document.blocks if isinstance(b, HeadingBlock)
+    ]
+    assert any("Annexure — Recordings and transcripts" in h for h in headings), headings
+    assert "Artisan’s spoken explanation" in headings, headings
+
+    index = [b for b in document.blocks if isinstance(b, TableBlock)
+             and b.caption == "Recordings transcribed during this workshop."]
+    assert len(index) == 1, "the annexure's contents table did not reach the document"
+    assert len(index[0].rows) == 2
+
+    body = " ".join(
+        runs_text(b.runs) for b in document.blocks if isinstance(b, ParagraphBlock)
+    )
+    assert "My father set the warp" in body
+    assert "**" not in body, "the stored Markdown labels were printed verbatim into the report"
+
+
+def test_a_report_with_nothing_printable_is_the_report_it_was_before_this_branch():
+    """Attached but unprintable is the case that decides whether this branch was safe to add.
+
+    Every template carries the transcript section, so the new branch runs on EVERY report ever
+    generated. A workshop whose recordings are all still in the queue attaches items that print
+    nothing — and the document must come out identical to the one built with no attachment at all:
+    no page break, no numbered heading, no empty table. A blank annexure at the back of every
+    report would be a worse regression than the missing one this branch fixes. Compared block for
+    block rather than by searching the text, because a stray PageBreakBlock carries no text to
+    search for and is exactly what a careless `page_break_before` would leave behind.
+    """
+    pending = build_transcript_item(
+        _media("aud-9", "", status="QUEUED"),
+        ("SKETCH_REVIEW", "sketchReview", "voiceFeedback"),
+    )
+    assert _report([pending]).blocks == _report(None).blocks
+
+
 @pytest.mark.parametrize(
     ("option", "saved", "expected"),
     [

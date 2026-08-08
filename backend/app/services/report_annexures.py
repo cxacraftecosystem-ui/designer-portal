@@ -9,9 +9,12 @@ said was to be sent the audio. This module turns the whole set into an annexure 
 appends with one toggle — ``includeTranscripts`` on the stage-20 report settings.
 
 WHY IT IS A SEPARATE MODULE. :mod:`app.services.report_builder` is the generic template
-interpreter, and it is deliberately free of per-stage and per-feature code. It is also, right now,
-being changed by someone else. So the annexure lives here and the builder needs exactly one line to
-wire it — see :func:`append_transcript_annexure`, whose docstring gives that line verbatim.
+interpreter, and it is deliberately free of per-stage and per-feature code. So the annexure lives
+here and the builder reaches it in one branch — ``ReportBuilder.build``'s
+``SpecialSection.ANNEXURE_TRANSCRIPTS`` arm, which calls :func:`append_transcript_annexure` and
+nothing else. That branch was missing for the whole of this module's first life, which meant every
+report silently dropped the annexure while three surfaces on the Android export screen told the
+designer the office's copy would carry it. A module with no call site is not a feature.
 
 WHY THE TRANSCRIPTS TRAVEL ON ``WorkshopData`` RATHER THAN BEING FETCHED HERE. Every renderer in
 this pipeline is synchronous, on purpose: that is what lets the Kotlin port on Android be a
@@ -376,19 +379,15 @@ def append_transcript_annexure(
 ) -> int:
     """Append the whole annexure to ``doc``. Returns how many transcripts were printed.
 
-    THE CALL SITE, for whoever wires this into ``report_builder.ReportBuilder.build``. Add
-    ``ANNEXURE_TRANSCRIPTS`` to the ``if/elif`` chain over ``section.special`` with exactly this
-    one line, beside the ``ANNEXURE_MEDIA`` branch::
+    THE ONE CALL SITE is ``report_builder.ReportBuilder.build``, in the ``if/elif`` chain over
+    ``section.special``, beside the ``ANNEXURE_MEDIA`` branch. Keep it the only one: two callers
+    would mean two chances to pass a different heading or a different ``numbered``, and a report
+    whose annexure is numbered on the phone and unnumbered at the office is exactly the divergence
+    the report port exists to end.
 
-        elif section.special is SpecialSection.ANNEXURE_TRANSCRIPTS:
-            append_transcript_annexure(self.doc, transcripts_of(self.data),
-                                       heading=section.heading,
-                                       numbered=self.template.number_headings,
-                                       page_break_before=section.page_break_before)
-
-    and import the two names from ``app.services.report_annexures``. Nothing else changes: with no
-    transcripts attached this appends nothing at all, not even the page break, so every existing
-    template renders exactly as it does today.
+    With no transcripts attached — the toggle off, or nothing transcribed yet — this appends
+    nothing at all, not even the page break, so a template carrying the section is byte-for-byte
+    the template it was before whenever the designer did not ask.
 
     Headings go through ``doc.heading`` rather than being constructed here because the "3.2"
     counters and the Word bookmarks are the DocumentBuilder's to maintain — a heading built by hand

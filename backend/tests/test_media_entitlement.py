@@ -299,11 +299,11 @@ def test_the_report_path_refuses_a_strangers_recording_and_says_so(env, client):
     because that is the observable the designer actually gets: a report whose annexure is two
     recordings short, with nothing saying why, is the failure this whole surface exists to avoid.
 
-    NOTE FOR WHOEVER WIRES THE ANNEXURE UP. ``append_transcript_annexure`` still has no call site in
-    ``report_builder`` — see its own docstring, which carries the missing branch verbatim — so today
-    the text never reaches the document. When it does, this test is already the guard, and
-    ``test_a_strangers_transcript_does_not_come_back_onto_the_stage`` proves the words themselves
-    are withheld.
+    THE TEXT NOW REACHES THE DOCUMENT: ``append_transcript_annexure`` has its call site in
+    ``ReportBuilder.build``, so a recording that slipped past this gate would be PRINTED into a
+    delivered report rather than merely loaded and discarded. This test and
+    ``test_a_strangers_transcript_does_not_come_back_onto_the_stage`` — which proves the words
+    themselves are withheld — are what stand between a stranger's recording and a ministry.
     """
     mine = _workshop(client)
     _save(client, mine, AUDIO_STAGE, AUDIO_ENTITY, {AUDIO_FIELD: env["own_audio"]})
