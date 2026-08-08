@@ -62,17 +62,49 @@ be copied onto a prototype row is an open product question — the answer may le
 because a prototype is not the product it derives from. Decide it explicitly; do not widen these two
 by symmetry with the others.
 
-### 3. Questionnaire data reaches the report by no path at all
+### 3. Questionnaire data reaches the report by no path at all — DECIDED AND BUILT
 
-Not in `REFERENCE_MODELS`, not referenced anywhere in the builder or the templates. The interviews
-exist (`/api/questionnaire/interviews` is live and the Android client already lists them), and stage
-7/8 are about the survey — so the report describes a survey whose actual responses live in a table
-it never opens.
+**Status: closed on the server.** `SpecialSection.ANNEXURE_QUESTIONNAIRES`,
+`app/services/report_questionnaires.py`, one branch in `ReportBuilder.build`,
+`questionnaire_forms.report_items()` and `design_workshops.attach_report_questionnaires()`. The
+argument is in that module's docstring; the summary is below because the paragraph this replaces
+named the wrong source and would send the next reader down it.
 
-**This is the largest piece of the three and needs a design decision before code:** a questionnaire
-is not a single record a REF points at, it is a set of responses. Options are a new special section
-(like the annexures), a new entity in the registry, or an annexure of its own. That choice belongs
-to whoever owns the report format, not to an implementer.
+**THERE ARE TWO QUESTIONNAIRE SYSTEMS AND THE OBVIOUS ONE IS THE WRONG ONE.**
+
+`QuestionnaireInterview` / `QuestionnaireResponse`, behind `/api/questionnaire/interviews` and listed
+by the Android client, is the org-wide artisan documentation instrument. Its foreign key is
+`workshopId -> Workshop` (`schema.prisma:942`) — the LEGACY documented-workshop model, not
+`DesignWorkshop`. It reaches a design workshop only through the nullable `DesignWorkshop.workshopId`
+two hops away, set only when a design workshop happens to be held at a documented one, and it carries
+its own review-queue permission model.
+
+`Questionnaire` / `QuestionnaireFormSection` / `QuestionnaireFormQuestion` / `QuestionnaireFormEntry`
+/ `QuestionnaireFormAnswer` is the DESIGNER's own instrument, built from the `.xlsx` pro-forma and
+answered in-app. It carries **`designWorkshopId` (`schema.prisma:1034`)** and
+**`DesignWorkshop.questionnaires` (`schema.prisma:1512`)** — a direct, first-class, already populated
+link to the exact record the report is about. That is the source.
+
+**Shape: an annexure, not a registry entity.** A REF stores one id and `REFERENCE_HYDRATION` copies
+scalars onto the stage entry at PICK time. A questionnaire is sittings × questions, sized by the
+fieldwork rather than by the registry, and hydration would have frozen the answers as they stood the
+moment the designer chose the form — omitting every answer recorded afterwards, which is the whole of
+the fieldwork.
+
+**No stage-20 toggle**, and that is a decision rather than an omission: `includeTranscripts` exists
+because transcripts happen automatically to a designer, whereas attaching a questionnaire to a
+workshop is the designer asking for it. A toggle would also have changed `registry_version()`,
+forcing a regeneration of `android/.../design-workshop-schema.json`.
+
+**Permissions mirror the server and were not invented.** Sittings are readable by the questionnaire's
+owner, an admin, or anyone working on the design workshop it is attached to
+(`_works_on_this_questionnaires_workshop`, `api/routes/questionnaire_forms.py:111`). Report
+generation requires `load_workshop_or_404` (`design_workshops.py:85`) — a subset of that set.
+
+**Android carries the section and cannot fill it**, declared in `UNSUPPORTED_SECTIONS`: the answers
+have no local copy at all, and `WorkshopRepository`'s "Custom questionnaires" block falls back to the
+device for nothing, on purpose. The remaining question there is whether to give the handset a
+read-only cache of the answers, which is a data decision and not a report one.
 
 ## Both surfaces
 

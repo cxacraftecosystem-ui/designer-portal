@@ -90,6 +90,7 @@ from app.services.design_workshops import (
     REFERENCE_LIMIT_MAX,
     assemble_workshop_data,
     attach_district_anchors,
+    attach_report_questionnaires,
     attach_report_references,
     attach_report_transcripts,
     entry_rows,
@@ -1139,9 +1140,11 @@ async def _report_inputs(
     The dependency graph only ever demanded three: the entries, then everything that reads the
     entries, then the media resolver — which cannot start until ``attach_report_references`` has
     told it about the photographs hanging off the REFERENCED records rather than off the stages.
-    The three loads in wave 2 write DIFFERENT attributes of ``data`` (``references``,
-    ``district_points``, the transcripts), so gathering them is safe; anything that shared one
-    would have to stay sequential.
+    The loads in wave 2 write DIFFERENT attributes of ``data`` (``references``,
+    ``district_points``, the transcripts, the questionnaires), so gathering them is safe; anything
+    that shared one would have to stay sequential. Two of the four are CONDITIONAL — the map's
+    anchors and the questionnaire annexure are appended only when the resolved template draws them —
+    which is why the warnings below are indexed from the END of ``results`` rather than by position.
 
     ``viewer`` is threaded through to the two media reads because a media id on a stage is whatever
     a client wrote there — see ``design_workshops.media_resolver``.
@@ -1164,18 +1167,30 @@ async def _report_inputs(
     # threw the whole result away. The cost tracked the size of the archive rather than the size of
     # the workshop, on both Preview and Generate. `apply_report_settings` can only REMOVE sections
     # and MAP is not one of the toggles it removes, so the base template is the right thing to ask.
-    draws_map = any(
-        section.special is SpecialSection.MAP for section in get_template(template_id).sections
-    )
+    specials = {section.special for section in get_template(template_id).sections}
+    draws_map = SpecialSection.MAP in specials
     if draws_map:
         loads.append(attach_district_anchors(data))
+    # THE SAME "ONLY WHEN SOMETHING DRAWS IT" RULE, and it is not a micro-optimisation here either:
+    # this is five queries against the questionnaire tables, and `PHOTO_CATALOGUE` — or any template
+    # a later release ships without the annexure — would throw every row away. `apply_report_settings`
+    # can only REMOVE sections, so the base template is the right thing to ask, exactly as the map
+    # above asks it.
+    draws_questionnaires = SpecialSection.ANNEXURE_QUESTIONNAIRES in specials
+    if draws_questionnaires:
+        loads.append(attach_report_questionnaires(data, workshop_id))
     loads.append(
         attach_report_transcripts(data, entries, viewer=viewer, requested=transcripts)
     )
 
     results = await gather_reads(*loads)
     reference_photos = results[0]
+    # The LAST two loads, in the order they were appended: the questionnaire annexure's warnings when
+    # it was loaded at all, and the transcript annexure's always. Indexed from the end rather than by
+    # position because the map load in the middle is conditional.
     warnings = list(results[-1])
+    if draws_questionnaires:
+        warnings = list(results[-2]) + warnings
 
     resolver = await media_resolver(entries, viewer=viewer, extra_ids=reference_photos)
     if resolver.withheld:
