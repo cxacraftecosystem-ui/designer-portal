@@ -79,6 +79,12 @@ ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("suspended", "DESIGNER", "Suspended Designer"),
     ("unlisted", "DESIGNER", "Never Empanelled Designer"),
     ("researcher", "RESEARCHER", "Ordinary Researcher"),
+    # THE ONE ACCOUNT A RANK LADDER WOULD ADMIT. ``DESIGN_WORKSHOP_ROLES`` is a SET, and PROFESSOR
+    # sits at rank 40 — ABOVE DESIGNER's 35 — so every "this tier and above" spelling of the
+    # eligibility rule lets them in and the set does not. The researcher below cannot prove that
+    # distinction: at rank 30 they are refused by the ladder and by the set alike, so a test with
+    # only a researcher in it passes just as well against the wrong rule.
+    ("professor", "PROFESSOR", "Senior Professor"),
 )
 
 #: slug -> isActive on DesignerRoster. "suspended" has a row that no longer admits them; "unlisted"
@@ -458,6 +464,11 @@ def test_an_id_postgres_cannot_hold_is_a_422_not_a_500(world, client, label, bad
     "slug",
     [
         "researcher",  # right rank ladder position, wrong SET — see can_run_design_workshops
+        # OUTRANKS a designer and is still refused. The refusal reads "… is a PROFESSOR and cannot
+        # run a design & prototype workshop", which is the sentence an admin needs: being senior to
+        # a designer is not the same thing as being one, and a viewer row would hand this account
+        # access its own capability check refuses.
+        "professor",
         "suspended",   # a DESIGNER whose roster row no longer admits them
         "unlisted",    # a DESIGNER who never had a roster row at all
     ],
@@ -528,6 +539,10 @@ def test_eligible_viewers_offers_only_accounts_that_could_actually_open_a_worksh
 
     # A researcher outranks nobody into this set — it is a SET, not a threshold.
     assert world["people"]["researcher"].id not in offered
+    # And a PROFESSOR, who DOES outrank a designer, is out for the same reason. This is the
+    # assertion that distinguishes the set from the ladder: swap ``DESIGN_WORKSHOP_ROLES`` for
+    # ``role_rank(user) >= ROLE_RANK["DESIGNER"]`` and only this line fails.
+    assert world["people"]["professor"].id not in offered
     # And the two designers who cannot sign in are not offered, because a row for them is a trap.
     assert world["people"]["suspended"].id not in offered
     assert world["people"]["unlisted"].id not in offered
@@ -546,7 +561,7 @@ def test_eligible_viewers_is_not_swallowed_by_the_workshop_id_route(world, clien
     assert "users" in response.json()
 
 
-@pytest.mark.parametrize("slug", ["creator", "colleague", "researcher"])
+@pytest.mark.parametrize("slug", ["creator", "colleague", "researcher", "professor"])
 def test_only_an_admin_may_administer_viewers(world, client, slug):
     """Including the workshop's own CREATOR.
 
@@ -554,6 +569,15 @@ def test_only_an_admin_may_administer_viewers(world, client, slug):
     readers sounds reasonable until a designer leaves and their workshop's access is frozen in
     whatever state they left it — which is the handover problem this feature exists to solve,
     reintroduced one level up. An admin grant has an administrator behind it who is still here.
+
+    AND INCLUDING A PROFESSOR, who outranks every designer in ``ROLE_RANK`` and is still not an
+    admin. ``require_admin`` is ``is_admin`` — a two-member set — so the ladder has no say here
+    either. Asserted on the SERVER rather than left to the clients, because
+    ``android/…/ui/designworkshop/WorkshopViewersScreen.kt`` and
+    ``frontend/components/settings/DesignWorkshopViewersPanel.tsx`` both hide their controls from
+    these accounts, and a UI guard over an open endpoint has shipped as a security bug in this
+    repository twice — both times surviving review because nobody opened the app as the role that
+    should have been refused. All three routes are driven here as each of them.
     """
     workshop_id = _make_workshop(world, f"Ikat, admin only {slug}")
 

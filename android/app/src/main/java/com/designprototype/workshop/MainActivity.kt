@@ -202,6 +202,7 @@ import com.designprototype.workshop.ui.designworkshop.StageIndexScreen
 import com.designprototype.workshop.ui.designworkshop.StageScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopCodesScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopListScreen
+import com.designprototype.workshop.ui.designworkshop.WorkshopViewersScreen
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireAnswerScreen
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireDetailScreen
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireListScreen
@@ -504,6 +505,23 @@ private sealed interface Screen {
      * exists to produce.
      */
     data class DesignWorkshopPhotos(val workshopId: String) : Screen
+
+    /**
+     * Who, besides its creator, may open one design workshop — the phone's viewer roster.
+     *
+     * ANOTHER SIBLING OF THE REPORT, hanging off the stage index for the same reason: it is a fact
+     * about the WORKSHOP rather than about any one of its 22 stages. Reached only from that screen,
+     * and only by an admin — `require_admin` gates all three routes behind it, so this is the one
+     * design-workshop screen a DESIGNER may not open even for a workshop they created. The gate is
+     * NOT applied here; the screen re-derives it from the cached account on entry and again at the
+     * moment of the write, because a router check would be a third copy of the rule and the one
+     * nobody reads when changing the screen.
+     *
+     * Carries the DRAFT STORE's id like its siblings — the screen resolves the server id from the
+     * draft's `remoteId` itself, and says so when there is none, because a workshop that has never
+     * left the phone has no row for a grant to point at.
+     */
+    data class DesignWorkshopViewers(val workshopId: String) : Screen
 
     /**
      * The `DesignerProfile` behind every report's cover page.
@@ -1337,6 +1355,11 @@ private fun HomeScreen(
             is Screen.DesignWorkshopReport -> Screen.DesignWorkshopStages(s.workshopId)
             is Screen.DesignWorkshopCodes -> Screen.DesignWorkshopStages(s.workshopId)
             is Screen.DesignWorkshopPhotos -> Screen.DesignWorkshopStages(s.workshopId)
+            // Back to THIS workshop's index and not to the designer roster, which is the other
+            // "who" screen and a different question entirely: the roster says who may sign in at
+            // all, this says who may open one record. The only route in is the index, so the only
+            // route out is back to it.
+            is Screen.DesignWorkshopViewers -> Screen.DesignWorkshopStages(s.workshopId)
             // An admin who opened somebody else's profile came from the roster and goes back to it;
             // a designer looking at their own came from the menu and goes back to the dashboard.
             // Sending both to the dashboard would make an admin re-find the row in a list they may
@@ -1383,6 +1406,7 @@ private fun HomeScreen(
         is Screen.DesignWorkshopReport -> null
         is Screen.DesignWorkshopCodes -> null
         is Screen.DesignWorkshopPhotos -> null
+        is Screen.DesignWorkshopViewers -> null
         // Null on both for the same reason as the four above: each screen draws its own heading,
         // and the profile's additionally says WHOSE profile it is, which a shared header cannot.
         is Screen.DesignerProfile -> null
@@ -1427,6 +1451,11 @@ private fun HomeScreen(
         is Screen.DesignWorkshopReport,
         is Screen.DesignWorkshopCodes,
         is Screen.DesignWorkshopPhotos -> NavDestination.DESIGN_WORKSHOPS
+        // Lights the same row as its siblings even though it is admin chrome, because it is still a
+        // screen INSIDE one design workshop and the row opens the list the admin is already in.
+        // It is not `DESIGNER_ROSTER`: that is the institution's list of who may sign in at all,
+        // and this is one workshop's readers.
+        is Screen.DesignWorkshopViewers -> NavDestination.DESIGN_WORKSHOPS
         // Same reasoning at all three depths: the row opens the list the designer is already inside.
         is Screen.Questionnaires,
         is Screen.QuestionnaireDetail,
@@ -2018,6 +2047,12 @@ private fun HomeScreen(
                 onOpenReport = { message = null; screen = Screen.DesignWorkshopReport(s.workshopId) },
                 onOpenCodes = { message = null; screen = Screen.DesignWorkshopCodes(s.workshopId) },
                 onOpenPhotos = { message = null; screen = Screen.DesignWorkshopPhotos(s.workshopId) },
+                // Ungated HERE, deliberately, exactly like the DESIGNER-tier screens below: the
+                // stage index decides whether to OFFER the control (admins only, and only for a
+                // workshop the server has), and the screen itself re-derives `require_admin` from
+                // the cached account on entry and again at the moment of the write. A third check
+                // in the router would be the copy nobody updates.
+                onOpenViewers = { message = null; screen = Screen.DesignWorkshopViewers(s.workshopId) },
                 onError = { showMessage(it) }
             )
 
@@ -2064,6 +2099,15 @@ private fun HomeScreen(
                 workshopId = s.workshopId,
                 onMessage = { showMessage(it) },
                 onError = { showMessage(it) }
+            )
+
+            // No `onError` arm, unlike its siblings: every failure on that screen is rendered beside
+            // the control that caused it rather than as a message that slides away — see its own
+            // note on `onMessage`.
+            is Screen.DesignWorkshopViewers -> WorkshopViewersScreen(
+                repository = repository,
+                workshopId = s.workshopId,
+                onMessage = { showMessage(it) }
             )
 
             /*
