@@ -163,11 +163,13 @@ android {
              * a dialog it cannot dismiss. One universal APK that installs everywhere is the
              * requirement; this makes it as small as that requirement allows.
              *
-             * `armeabi-v7a` IS KEPT DELIBERATELY, at 6.47 MB. `minSdk = 26` means this app targets
-             * handsets back to 2017, when 32-bit-only devices were still being sold in this market,
-             * and the failure mode of guessing wrong is not a slow app — it is an install that
-             * refuses, on a phone whose update dialog cannot be dismissed, in a village. There is no
-             * device inventory here to say the risk is zero, so it is not assumed to be.
+             * `armeabi-v7a` IS KEPT DELIBERATELY, and it is measured at 6,809,547 bytes — 6.49 MB —
+             * of this APK, so it is the largest single saving still on the table. `minSdk = 26` means
+             * this app targets handsets back to 2017, when 32-bit-only devices were still being sold
+             * in this market, and the failure mode of guessing wrong is not a slow app — it is an
+             * install that refuses, on a phone whose update dialog cannot be dismissed, in a village.
+             * There is no device inventory here to say the risk is zero, so it is not assumed to be.
+             * With a roster of what the designers actually carry, this is a one-line change.
              *
              * THE EMULATOR, because dropping x86 drops it and this project has no device CI. `debug`
              * below is left unfiltered on purpose, so day-to-day work on an x86_64 emulator is
