@@ -14,6 +14,7 @@ import {
 } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { DynamicIslandNav } from "@/components/DynamicIslandNav";
+import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { isAdmin, roleLabel, routeGuardFor } from "@/lib/permissions";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -21,6 +22,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { adminMode, adminViewResolved, setAdminView } = useAdminView();
   const router = useRouter();
   const pathname = usePathname();
+  /**
+   * The route-change fade below is the one animation nobody using this app can avoid — it replays on
+   * every navigation, on every protected page — so it is also the one that most needs the preference
+   * honoured. `useAppReducedMotion()` and not framer's `useReducedMotion()`: the latter sees only the
+   * OS media query, and this app's second switch is the Settings toggle, which stamps
+   * `data-reduced-motion="true"` on <html> and reaches CSS but never JavaScript.
+   *
+   * Branching `initial` as well as the transition is safe HERE, unlike on the public hero. `loading`
+   * starts true, so the server and the first client render both paint the "Opening the repository…"
+   * frame and `motion.main` does not exist to mismatch; by the time `/me` has answered and it first
+   * mounts, ThemeProvider's mount effect has long since read the stored preference. Every later
+   * navigation remounts it through `key={pathname}`, which is when `initial` is read again.
+   */
+  const reduce = useAppReducedMotion();
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -74,9 +89,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         id="main-content"
         tabIndex={-1}
         key={pathname}
-        initial={{ opacity: 0, y: 6 }}
+        initial={reduce ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.22, ease: "easeOut" }}
+        transition={reduce ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
         className="mx-auto max-w-7xl px-4 pb-12 pt-24"
       >
         {blocked && guard ? (
