@@ -95,21 +95,38 @@ android {
     buildTypes {
         release {
             /**
-             * SIGNED WITH THE DEBUG KEY SO THE SHRUNK BUILD CAN BE INSTALLED AND EXERCISED.
+             * OPT-IN DEBUG SIGNING, SO A SHRUNK BUILD CAN BE PUT ON A HANDSET WITHOUT MAKING AN
+             * UNDISTRIBUTABLE APK THE DEFAULT.
              *
-             * An unsigned APK cannot be installed, and a shrunk build that is never run on a
-             * handset is exactly the thing that must not be trusted: R8's failure mode is not a
-             * compile error but a `SerializationException` or a `NoSuchMethodError` at the first
-             * sync, on a build that assembled perfectly. Verifying it requires putting it on a
-             * device, and putting it on a device requires a signature.
+             * The problem it solves is real: an unsigned APK cannot be installed, and a shrunk build
+             * that is never run on a device is exactly the thing that must not be trusted, because
+             * R8's failure mode is not a compile error — it is a `SerializationException` or a
+             * `NoSuchMethodError` at the first sync, on a build that assembled perfectly. Verifying
+             * it requires a device, and a device requires a signature.
              *
-             * THIS IS NOT A RELEASE SIGNING CONFIG AND MUST NOT BECOME ONE. The debug keystore is
-             * shared by every Android SDK install on earth, so an APK signed with it is not
-             * distributable: anyone can produce an update for it. Before this app is published,
-             * replace this with a real keystore whose credentials come from `local.properties` or
-             * the CI secret store — never from a file in the repository.
+             * THE DEBUG KEYSTORE SHIPS WITH EVERY ANDROID SDK ON EARTH, so an APK signed with it is
+             * not distributable — anyone can produce an update for it. Wiring it in unconditionally
+             * (which an earlier revision of this block did) means the first person to cut a release
+             * from a clean checkout produces exactly that, and nothing in the build tells them.
+             *
+             * So it is now OFF unless a developer asks for it in their own gitignored
+             * `local.properties`:
+             *
+             *     debugSignRelease=true
+             *
+             * With the flag absent — the state of a clean checkout and of CI — the release build is
+             * unsigned, which fails loudly at install time rather than quietly at publish time.
+             *
+             * Before this app is published, add a real keystore whose credentials come from
+             * `local.properties` or the CI secret store, never from a file in the repository.
              */
-            signingConfig = signingConfigs.getByName("debug")
+            if (localProperties.getProperty("debugSignRelease", "false").toBoolean()) {
+                signingConfig = signingConfigs.getByName("debug")
+                logger.lifecycle(
+                    "release: signing with the DEBUG keystore (debugSignRelease=true). " +
+                        "For on-device testing only — this APK is not distributable."
+                )
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

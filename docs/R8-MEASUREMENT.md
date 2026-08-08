@@ -114,3 +114,32 @@ the harsher of the two cases rather than the softer one.
 **Recommendation:** merge. The size win is 66% and every mechanism R8 could plausibly have broken has
 now been exercised on the target hardware. Re-run the export check once a workshop with real content
 exists on a device.
+
+---
+
+## The debug-signing footgun this created, and how it was closed
+
+Verifying R8 on a handset needed a signature, because an unsigned APK cannot be installed. The first
+version of that change wired the DEBUG keystore into the release build type unconditionally — which
+was fine in a throwaway worktree and wrong the moment it merged, because the debug keystore ships
+with every Android SDK on earth. Anyone can produce an update for an APK signed with it, and nothing
+in the build would have told the first person to cut a release from a clean checkout.
+
+It is now opt-in, off by default:
+
+    # android/local.properties (gitignored)
+    debugSignRelease=true
+
+Verified in both directions with `:app:signingReport` rather than by reading the code:
+
+| `debugSignRelease` | release variant |
+|---|---|
+| `true` | `Config: debug`, store `~/.android/debug.keystore` |
+| absent / `false` | `Config: null` — unsigned |
+
+A clean checkout and CI therefore produce an unsigned release, which fails loudly at install time
+instead of quietly at publish time. When the flag is on, the build prints a lifecycle warning naming
+what it did and that the APK is not distributable.
+
+Publishing still needs a real keystore whose credentials come from `local.properties` or the CI
+secret store — never from a file in the repository.
