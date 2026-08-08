@@ -147,6 +147,36 @@ class DwWorkshopCardsTest {
         assertNull(workshopCardSource(DwWorkshopRecordType.PROTOTYPE, bare))
     }
 
+    @Test
+    fun `only a prototype and an artisan live inside a workshop, so every other type must be asked of the repository`() {
+        // THE DEFECT THIS PINS, which shipped and was caught in review. `WorkshopCodesScreen`'s typed
+        // lookup used to end `else -> lookUpArtisan(repository, ref.id)`. That was exactly right while
+        // the grammar carried two letters — anything not a prototype was an artisan. The moment nine
+        // letters existed it started asking `GET /artisans/{id}` about a TOOL id, and reported the 404
+        // as "no artisan you can open matches that code … search for the artisan by name instead":
+        // the wrong record type, said confidently, about a record the app opens perfectly well from
+        // Search. Wrong-record confusion is the entire failure codes exist to remove.
+        //
+        // The screen can only be right if the set of types a WORKSHOP can answer for is exactly these
+        // two, so that is what is pinned here rather than the lambda: adding a third would silently
+        // widen the local branch, and this test is what makes that a decision instead of an accident.
+        for (type in DwWorkshopRecordType.entries) {
+            val source = workshopCardSource(type, registry)
+            val local = type == DwWorkshopRecordType.PROTOTYPE || type == DwWorkshopRecordType.ARTISAN
+            assertEquals("$type answerable from this workshop's own stages", local, source != null)
+        }
+
+        // And the same answer through the lookup the screen actually calls: null, meaning "this
+        // workshop can say nothing about it" — never a refusal, which the screen would print.
+        val draft = draftWith("PROTOTYPE", listOf(prototypeRow(prototypeClientKey)))
+        for (type in DwWorkshopRecordType.entries - DwWorkshopRecordType.PROTOTYPE - DwWorkshopRecordType.ARTISAN) {
+            assertNull(
+                "$type must fall through to the repository, not be answered here",
+                findWorkshopCodeInDraft(DwWorkshopCodeRef(type, artisanId), registry, draft, emptyMap()),
+            )
+        }
+    }
+
     // ----------------------------------------------------------------------------------
     // The one place this port cannot be a transcription
     // ----------------------------------------------------------------------------------
