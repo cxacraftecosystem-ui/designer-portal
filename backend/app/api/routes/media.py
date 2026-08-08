@@ -288,7 +288,22 @@ async def complete_media_upload(
     data = clean_data(payload.model_dump(exclude={"processingRequests"}))
     data = await attach_location(data)
     data["bucket"] = data.get("bucket") or settings.aws_s3_bucket
-    data["url"] = data.get("url") or public_url_for_key(data["objectKey"])
+    # THE SERVER DERIVES THE URL. IT NEVER TAKES THE CALLER'S.
+    #
+    # This used to be `data.get("url") or public_url_for_key(...)`, so the payload's value won. Any
+    # signed-in account could therefore complete a one-byte upload with `url:
+    # "https://attacker.example/portal-login"` and plant a row that `GET /data/media/{id}/download`
+    # 307-redirects to (`api/routes/data_browser.py`) and the media screen renders in an `<img>` /
+    # `<iframe>` — a phishing hop that begins on the portal's own domain, and an off-site fetch that
+    # hands the attacker the viewer's IP every time the lightbox opens.
+    #
+    # The field is KEPT on `MediaCompleteRequest` and simply ignored: `APIModel` sets
+    # `extra="forbid"`, and both clients send the key today, so dropping it would 422 every upload
+    # from every installed build — including phones in the field that cannot be updated.
+    # `_assert_owns_object` above has already forced the key under `media/<user_id>/`, so the
+    # derived URL is the only one the server can vouch for. It is None when the deployment has no
+    # public base URL configured, which the download path already handles by streaming the bytes.
+    data["url"] = public_url_for_key(data["objectKey"])
     data["uploadedById"] = current_user.id
     relation_data = media_relation_data(data.get("linkedRecordType"), data.get("linkedRecordId"))
     parent: Any = None

@@ -49,8 +49,14 @@ logger = logging.getLogger(__name__)
 TRANSCRIPTION = "TRANSCRIPTION"
 
 # A clip in one of these states must not be queued again: it either has a transcript already or one
-# is on its way. RATE_LIMITED is deliberately NOT here — the queue owns that state and requeues the
-# job itself without consuming an attempt, so it is already covered by the pending-job check below.
+# is on its way. These are ``MediaFile.transcriptStatus`` values, NOT job statuses, and the two
+# vocabularies are not the same one — RATE_LIMITED is a MediaProcessingJob status and never reaches
+# this column, because a throttled run writes the clip back to QUEUED so the worker finishes it
+# later (``media_queue._apply_transcription_result``). Listing it here would have matched nothing.
+#
+# FAILED and UNAVAILABLE are deliberately absent, so a clip whose provider run failed becomes a
+# candidate again on the next save of its stage. That is the retry, and the pending-job read below
+# is what stops it queueing a second job while the first is still in flight.
 _SETTLED_TRANSCRIPT_STATUSES = frozenset({"COMPLETED", "EMPTY", "QUEUED", "PROCESSING"})
 
 # Where an uploader might have put a clip's length. The web recorder and the Android recorder each
@@ -124,6 +130,8 @@ async def enqueue_stage_transcriptions(
     entries: list[Any],
     requested_by_id: str,
     settings: Settings | None = None,
+    *,
+    viewer: Any,
 ) -> list[str]:
     """Queue a TRANSCRIPTION job for every untranscribed AUDIO clip in ``entries``.
 
@@ -133,14 +141,30 @@ async def enqueue_stage_transcriptions(
     locked, the media id on the stage points at nothing — must not be allowed to fail that write
     and send the phone away to retry a save that already succeeded. The clip is picked up on the
     next save of the stage, and the failure is in the log.
+
+    ``viewer`` narrows the load to clips this account may actually be handed, for the same reason
+    :func:`load_transcript_items` does: a media id on a stage is whatever a client wrote there, and
+    a foreign AUDIO id here would spend provider credit transcribing a stranger's recording and
+    write the result onto their row.
+
+    TWO QUERIES, NOT TWO PER CLIP. The already-queued check used to be a ``find_first`` inside the
+    loop — eighteen prototypes each carrying the artisan's spoken explanation meant eighteen extra
+    sequential round trips on a link this repository measured at 756ms (``services/concurrency``),
+    inside a save a designer is watching a spinner for in a village. The question is the same for
+    every clip, so it is asked once for all of them.
     """
     from app.services.media_queue import enqueue_media_processing_jobs
+    from app.services.records import owned_or_granted_where
 
     references = audio_references(entries)
     if not references:
         return []
     try:
-        rows = await db.mediafile.find_many(where={"id": {"in": sorted(references)}})
+        where: dict[str, Any] = {"id": {"in": sorted(references)}}
+        entitled = await owned_or_granted_where(viewer, owner_field="uploadedById")
+        if entitled:
+            where = {"AND": [where, entitled]}
+        rows = await db.mediafile.find_many(where=where)
     except Exception as exc:  # noqa: BLE001 - see the docstring: never fail the stage save
         logger.warning("Could not load workshop audio for transcription: %s", exc)
         return []
@@ -155,21 +179,29 @@ async def enqueue_stage_transcriptions(
     if not candidates:
         return []
 
+    # A job already in flight for a clip means another save (or the upload itself) got there
+    # first. Creating a second one would transcribe the same audio twice, pay the provider twice,
+    # and have the two results race to write the same column. Failing this read is not fatal —
+    # `enqueue_media_processing_jobs` is itself idempotent on the queue — so an empty set means
+    # "ask the queue", never "skip the clip".
+    already_queued: set[str] = set()
+    try:
+        pending = await db.mediaprocessingjob.find_many(
+            where={
+                "mediaFileId": {"in": [row.id for row in candidates]},
+                "jobType": TRANSCRIPTION,
+                "status": {"in": ["QUEUED", "PROCESSING"]},
+            }
+        )
+        already_queued = {job.mediaFileId for job in pending}
+    except Exception as exc:  # noqa: BLE001 - see the docstring: never fail the stage save
+        logger.warning("Could not read pending transcription jobs: %s", exc)
+
     queued: list[str] = []
     for row in candidates:
+        if row.id in already_queued:
+            continue
         try:
-            # A job already in flight for this clip means another save (or the upload itself)
-            # got there first. Creating a second one would transcribe the same audio twice, pay
-            # the provider twice, and have the two results race to write the same column.
-            pending = await db.mediaprocessingjob.find_first(
-                where={
-                    "mediaFileId": row.id,
-                    "jobType": TRANSCRIPTION,
-                    "status": {"in": ["QUEUED", "PROCESSING"]},
-                }
-            )
-            if pending is not None:
-                continue
             created = await enqueue_media_processing_jobs(
                 row, [TRANSCRIPTION], requested_by_id, settings
             )
@@ -185,10 +217,12 @@ async def enqueue_stage_transcriptions_for_stage(
     entries: list[Any],
     requested_by_id: str,
     settings: Settings | None = None,
+    *,
+    viewer: Any,
 ) -> list[str]:
     """:func:`enqueue_stage_transcriptions` narrowed to the rows of one stage."""
     scoped = [row for row in entries if getattr(row, "stageKey", "") == spec.key]
-    return await enqueue_stage_transcriptions(scoped, requested_by_id, settings)
+    return await enqueue_stage_transcriptions(scoped, requested_by_id, settings, viewer=viewer)
 
 
 # --------------------------------------------------------------------------------------
@@ -242,18 +276,34 @@ def build_transcript_item(row: Any, reference: tuple[str, str, str]) -> Transcri
     )
 
 
-async def load_transcript_items(entries: list[Any]) -> list[TranscriptItem]:
+async def load_transcript_items(entries: list[Any], *, viewer: Any) -> list[TranscriptItem]:
     """Every AUDIO clip referenced by ``entries``, with whatever transcript it has, in stage order.
 
     Includes the clips that have NO transcript yet. The transcripts endpoint has to show a designer
     that a recording exists but is still being processed — a picker that lists only finished
     transcripts looks, to someone who made six recordings and sees four, like two recordings were
     lost. The annexure filters them out at print time instead.
+
+    ``viewer`` IS REQUIRED, AND WITHOUT IT THIS READ WAS A LEAK. A media id on a stage is whatever a
+    client wrote there, and ``GET /api/media`` hands every signed-in account the id of every file in
+    the repository. An AUDIO id belonging to somebody else therefore handed back that recording's
+    FULL text on the stage read (``_transcripts_payload``) and its filename, duration, speaker count
+    and opening line on ``GET /design-workshops/{id}/transcripts`` — and would carry the whole
+    transcript into the annexure the day ``append_transcript_annexure`` gets its call site. The
+    predicate is the one every download surface already uses — ``owned_or_granted_where(user,
+    owner_field="uploadedById")`` — AND-composed under the id list rather than merged into it,
+    because it is an ``OR`` of its own. Keyword with no default, so no future call site can omit it.
     """
+    from app.services.records import owned_or_granted_where
+
     references = audio_references(entries)
     if not references:
         return []
-    rows = await db.mediafile.find_many(where={"id": {"in": sorted(references)}})
+    where: dict[str, Any] = {"id": {"in": sorted(references)}}
+    entitled = await owned_or_granted_where(viewer, owner_field="uploadedById")
+    if entitled:
+        where = {"AND": [where, entitled]}
+    rows = await db.mediafile.find_many(where=where)
     items = [build_transcript_item(row, references[row.id]) for row in rows if row.id in references]
     items.sort(key=lambda item: (item.stage_number, item.stage_key, item.label, item.media_id))
     return items
