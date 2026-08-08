@@ -371,3 +371,59 @@ time the recogniser is opened. None of them is a compile error and none of them 
 build. **Before this ships: install the (c) APK on the M32 and open the identity-card control once.**
 That single tap is what proves the whole native path, and it is the recogniser lane's own device
 verification, so it need not be a separate trip.
+
+---
+
+# The merged tree, installed and run — 2026-08-09
+
+That debt is paid, and paying it found the defect the paragraph above predicted the *shape* of and
+not the *cause* of. Full account in `docs/DECISION-identity-card-ocr-on-android.md` under **"IT HAS
+NOW BEEN RUN ON THE HANDSET"**; what belongs here is the size half.
+
+## The number that ships is 26,211,648 bytes
+
+Neither lane's figure describes the tree that merges them. Measured on the merged tree, real
+`:app:assembleRelease`, `os.path.getsize` on the APK, `grep -c '^e: '` = 0:
+
+| Release APK | Bytes | Size | vs the 6,636,115 baseline |
+|---|---|---|---|
+| lane 1's branch, reported | 26,195,264 | 24.98 MB | +19,559,149 |
+| lane 2's branch, reported (row **c**) | 26,080,576 | 24.87 MB | +19,444,461 |
+| **the merged tree, measured here** | **26,211,648** | **25.00 MB** | **+19,575,533 · 3.95×** |
+
+All three are honest measurements of different trees, and the spread — 131,072 bytes, exactly 32
+pages — is dex and alignment, not native code. ABIs read out of the APK's own central directory with
+`zipfile`: `arm64-v8a`, `armeabi-v7a`, nothing else. Both `libmlkit_google_ocr_pipeline.so` entries
+are STORED at 11,064,544 and 6,781,940 bytes with CRC-32 `5a02f1b7` and `264f5dd0` — byte-identical
+to the AAR, as this document said, re-confirmed on the merged artifact.
+
+## The two `abiFilters` blocks the merge produced, and why one had to go
+
+Both lanes shipped an ARM filter. The recogniser lane put it in `defaultConfig`; this lane put it in
+`buildTypes.release` behind the `releaseAllAbis` escape hatch. **Git merged both cleanly** — different
+regions of one file, no textual conflict — and the result was wrong in two ways that no build error
+would have shown:
+
+1. **AGP unions the two sets.** A build-type `abiFilters` cannot subtract from `defaultConfig`'s, so
+   with `releaseAllAbis=true` the release block adds nothing and the `defaultConfig` pair still
+   applies. The escape hatch stopped widening anything **while still printing the lifecycle line
+   saying it had** — the worst kind of broken flag, one that lies in the console.
+2. **`defaultConfig` narrows `debug` too**, taking away the x86_64 emulator that this document's own
+   recommendation (3) deliberately preserves, on a project whose CI runs no instrumented tests.
+
+The merge keeps the `buildTypes.release` block alone, and `defaultConfig` now carries a comment
+naming this defect so the next merge does not re-create it.
+
+## The model really is the local one
+
+The size argument's entire premise is that these megabytes buy a model that is *present*. From the
+handset's own log during a read:
+
+    DynamiteModule: Considering local module com.google.mlkit.dynamite.text.latin:10000
+                    and remote module com.google.mlkit.dynamite.text.latin:0
+    DynamiteModule: Selected local version of com.google.mlkit.dynamite.text.latin
+    native: Loading mlkit-google-ocr-models/gocr/.../optical/conv_model.fb
+
+Remote version `0` — there is no Play Services module — and the `.fb` weights come out of the
+`assets/mlkit-google-ocr-models/` this document measured at 1,272,325 bytes. The bytes are doing the
+job they were bought for. The whole read took **under one second** on the M32, cold load included.
