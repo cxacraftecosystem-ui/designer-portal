@@ -71,6 +71,18 @@ internal data class ReportSource(
     val deviceOnlyNote: String?,
     /** Always said, in all three states: what the next export will actually be built from. */
     val builtFromLine: String,
+    /**
+     * The workshop EXISTS on the server and could not be read, so this file may be short — the one
+     * fact here that is written into the DOCUMENT, through `ReportPlan.serverCopyUnread` and
+     * `fieldCopyNote`, and not only onto the screen.
+     *
+     * NARROWER THAN `deviceOnlyNote != null` ON PURPOSE. A workshop with no server record at all is
+     * device-only and COMPLETE — there is nothing anywhere else it could be missing — so it gets the
+     * screen's note (send it to the server if work was recorded elsewhere) and nothing on the cover.
+     * Printing "some of this may be missing" over a file that is whole is how a provenance line
+     * stops being believed.
+     */
+    val serverCopyUnread: Boolean,
 )
 
 /**
@@ -108,7 +120,13 @@ internal fun reportSourceFor(
             return@forEach
         }
         if (bucket.singleton.isEmpty() && bucket.collections.values.all { it.isEmpty() }) return@forEach
-        merged[stageKey] = stageDraftFromRemote(stageKey, bucket, specs[stageKey], stored)
+        val downloaded = stageDraftFromRemote(stageKey, bucket, specs[stageKey], stored)
+        // Emptied on the phone and nowhere else yet, so what came back was a stage the designer has
+        // already deleted the whole of. Counted as neither side's, because it is in the file as
+        // neither — saying "downloaded from the server just now" over a stage that prints nothing is
+        // how the built-from line stops being a count of the document.
+        if (downloaded.values.isEmpty() && downloaded.rows.isEmpty()) return@forEach
+        merged[stageKey] = downloaded
         filled += stageKey
     }
 
@@ -133,9 +151,16 @@ internal fun reportSourceFor(
             "This workshop has not been created on the server yet, so this report can only contain " +
                 "what is saved on this device. Send it to the server first if work recorded " +
                 "elsewhere has to appear in the document."
+        // NAMED AS WHAT WAS OBSERVED, NOT AS A DIAGNOSIS. All this code saw is that the read
+        // returned nothing; it did not see a radio. A refused token, a 500, a captive portal and a
+        // genuinely empty sky all arrive here identically, and "There is no connection" shown to a
+        // designer looking at four bars is a notice that stops being believed — which costs the
+        // NEXT one, the one that is true. [StageScreen] says "there is no connection, or the
+        // request failed" on exactly this evidence and this follows it.
         remote == null ->
-            "There is no connection, so this report can only contain what is saved on this device. " +
-                "Anything recorded on another phone or on the web is NOT in it — say so before " +
+            "This workshop could not be read from the server — there is no connection, or the " +
+                "request failed. So this report can only contain what is saved on this device: " +
+                "anything recorded on another phone or on the web is NOT in it. Say so before " +
                 "handing this copy to an officer."
         else -> null
     }
@@ -146,6 +171,7 @@ internal fun reportSourceFor(
         keptFromDevice = kept,
         deviceOnlyNote = deviceOnlyNote,
         builtFromLine = builtFromLine(deviceOnlyNote == null, filled.size, kept.size),
+        serverCopyUnread = remoteId != null && remote == null,
     )
 }
 
@@ -181,6 +207,15 @@ private fun builtFromLine(serverAnswered: Boolean, fromServer: Int, fromDevice: 
  * Fabricating [StageDraft.mediaIds] out of server ids would instead point the on-device renderer at
  * an id space it cannot read, which is the id-space confusion `DraftMedia.remoteMediaId` exists to
  * keep apart.
+ *
+ * A COLLECTION THIS DEVICE HAS EMPTIED IS NOT READ BACK IN. Eight of the twenty-two stages —
+ * sketches, prototypes, iterations, cost sheets — hold nothing BUT collections, so deleting their
+ * last row leaves a stage with no values and no rows, which is precisely the shape the merge above
+ * treats as "this device holds nothing here" and fills from the server. Without this filter the one
+ * document a designer hands to an officer would print, under its ministry cover page, exactly the
+ * rows they deleted in front of them — because the deletion is still sitting in
+ * [StageDraft.emptiedEntities] waiting for signal. This function already carries that list forward;
+ * honouring it is the difference between carrying a record of the act and acting on it.
  */
 private fun stageDraftFromRemote(
     stageKey: String,
@@ -188,26 +223,33 @@ private fun stageDraftFromRemote(
     spec: StageDto?,
     /** The empty local shell, when there is one — its bookkeeping is kept rather than dropped. */
     existing: StageDraft?,
-): StageDraft = StageDraft(
-    stageId = stageKey,
-    title = spec?.title ?: existing?.title.orEmpty(),
-    order = spec?.number ?: existing?.order ?: 0,
-    values = bucket.singleton.toMap(),
-    rows = bucket.collections.entries.flatMap { (entityKey, rows) ->
-        rows.mapIndexed { index, row -> DraftRow(id = dwRowId(entityKey, remoteRowId(row, index)), values = row.toMap()) }
-    },
-    // Whatever this device already had attached to the stage stays attached: the photographs are
-    // this handset's and the server's answer says nothing about them.
-    mediaIds = existing?.mediaIds.orEmpty(),
-    requiredKeys = spec?.singleton?.liveFields.orEmpty().filter { it.required }.map { it.key },
-    completedAt = existing?.completedAt,
-    notes = existing?.notes.orEmpty(),
-    // TRUE, AND HONESTLY SO: this stage was seeded from a successful read of the server's copy —
-    // the same claim `StageScreen` makes on the same evidence. It is inert either way, because
-    // nothing built here is ever written to disk or sent.
-    serverBaseline = true,
-    emptiedEntities = existing?.emptiedEntities.orEmpty(),
-)
+): StageDraft {
+    val emptied = existing?.emptiedEntities.orEmpty().toSet()
+    return StageDraft(
+        stageId = stageKey,
+        title = spec?.title ?: existing?.title.orEmpty(),
+        order = spec?.number ?: existing?.order ?: 0,
+        values = bucket.singleton.toMap(),
+        rows = bucket.collections.entries
+            .filter { (entityKey, _) -> entityKey !in emptied }
+            .flatMap { (entityKey, rows) ->
+                rows.mapIndexed { index, row ->
+                    DraftRow(id = dwRowId(entityKey, remoteRowId(row, index)), values = row.toMap())
+                }
+            },
+        // Whatever this device already had attached to the stage stays attached: the photographs are
+        // this handset's and the server's answer says nothing about them.
+        mediaIds = existing?.mediaIds.orEmpty(),
+        requiredKeys = spec?.singleton?.liveFields.orEmpty().filter { it.required }.map { it.key },
+        completedAt = existing?.completedAt,
+        notes = existing?.notes.orEmpty(),
+        // TRUE, AND HONESTLY SO: this stage was seeded from a successful read of the server's copy —
+        // the same claim `StageScreen` makes on the same evidence. It is inert either way, because
+        // nothing built here is ever written to disk or sent.
+        serverBaseline = true,
+        emptiedEntities = existing?.emptiedEntities.orEmpty(),
+    )
+}
 
 /**
  * A stable row id for a downloaded row.

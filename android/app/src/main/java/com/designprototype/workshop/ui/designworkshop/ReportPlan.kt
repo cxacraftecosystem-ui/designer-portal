@@ -39,6 +39,20 @@ data class ReportPlan(
     val settings: Map<String, JsonElement>,
     /** Advisory, dismissible, shown beside the file — never written into it. */
     val warnings: List<String>,
+    /**
+     * WHETHER THIS FILE WAS BUILT WITHOUT THE SERVER'S COPY OF THE WORKSHOP — see [ReportSource].
+     *
+     * The one fact on this object that goes into the DOCUMENT rather than beside it, and it belongs
+     * there for the reason `fieldCopyNote` already gives about the office's extra sections: the
+     * warnings are read by the designer on the day and dismissed, and the person who has to know
+     * that this copy could be short is the officer opening the .docx next month, who was never on
+     * the screen that said so. A short report that is silent about being short is the defect this
+     * whole path exists to close; the screen notice closes it for the designer and this closes it
+     * for everybody downstream of them.
+     *
+     * False whenever the server answered — which is the ordinary case, and prints nothing.
+     */
+    val serverCopyUnread: Boolean = false,
 )
 
 /**
@@ -63,6 +77,8 @@ internal fun reportPlanFor(
     requestedAccent: String,
     format: String,
     generatedAt: String,
+    /** See [ReportPlan.serverCopyUnread]. Defaulted false so no existing caller has to change. */
+    serverCopyUnread: Boolean = false,
 ): ReportPlan {
     val settings = draft?.stages?.get("REPORT_GENERATION")?.values.orEmpty()
     val templateId = resolveTemplateId(requestedTemplateId, settings, draft?.templateId.orEmpty())
@@ -107,6 +123,7 @@ internal fun reportPlanFor(
         theme = theme,
         settings = settings,
         warnings = warnings,
+        serverCopyUnread = serverCopyUnread,
     )
 }
 
