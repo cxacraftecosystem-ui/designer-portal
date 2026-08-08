@@ -1045,7 +1045,7 @@ class ReportTemplateDocumentTest {
         //
         // IT IS THE FIRST OF TWO NETS, NOT THE ONLY ONE, and recording it as the only one here is
         // exactly how the second gets deleted as dead. `tintStates` seeds from
-        // `canonicalState(name) ?: name` (ReportMap.kt:570) and the server's
+        // `canonicalState(name) ?: name` (ReportMap.kt:569) and the server's
         // `report_map._tint_states` does the identical `canonical_state(name) or name`, so a raw
         // "Orissa" that reached either rasteriser would still tint Odisha. What this test holds is
         // the BUILDER's half: the block this handset constructs must equal the block
