@@ -116,6 +116,37 @@ def test_a_longer_digit_run_is_not_mined_for_twelve_digit_windows():
     assert aadhaar_candidates("4111111111111111 2345678901234567")[0] == []
 
 
+def test_a_grouped_vid_does_not_yield_its_own_first_twelve_digits():
+    """THE CARD PRINTS ITS VID IN GROUPS, AND THAT IS WHAT DEFEATED THE TEST ABOVE.
+
+    ``test_a_longer_digit_run_is_not_mined_for_twelve_digit_windows`` passed against a CONTIGUOUS
+    sixteen-digit run, where the old regex's ``(?![0-9])`` lookahead did its job. A real card does
+    not print it that way — it prints "VID : 2345 6789 0124 0831" — and there the twelve digits are
+    followed by a space, the lookahead is satisfied, and the front of the VID was returned as an
+    Aadhaar candidate off a card whose text contains no Aadhaar number at all.
+
+    Verhoeff does not save this. The number below is constructed so that the sixteen-digit VID and
+    its twelve-digit prefix BOTH satisfy the checksum, which is not a contrivance: sampled over
+    200,000 Verhoeff-valid sixteen-digit numbers, 10.02% have a Verhoeff-valid twelve-digit prefix.
+    Nor does the human confirmation step, which is the whole safety net of this feature: the panel
+    would print "2345 6789 0124" and the designer would find those exact twelve digits, in that
+    order, printed on the card in their hand.
+    """
+    vid = "2345 6789 0124 0831"
+    assert verhoeff_ok(vid.replace(" ", ""))
+    assert verhoeff_ok(vid.replace(" ", "")[:12])
+
+    accepted, rejected = aadhaar_candidates(f"Ramesh Kumar Meena\nVID : {vid}\nBagru, Jaipur\n")
+    assert accepted == []
+    # And it is not counted as a misread either: nothing about the card was misread, so telling the
+    # designer to photograph it again in better light would send them after a fault that is not there.
+    assert rejected == 0
+
+    # The enrolment number and the pin code go the same way, and for the same reason.
+    assert aadhaar_candidates("Enrolment No.: 1234 56789 01234")[0] == []
+    assert aadhaar_candidates("Bagru, Jaipur, Rajasthan 303007")[0] == []
+
+
 def test_devanagari_digits_are_not_accepted():
     """``str.isdigit()`` is True for "१२३", and such a value stored verbatim would sit in the
     unique index as a different string from its ASCII spelling — the same artisan, twice."""
