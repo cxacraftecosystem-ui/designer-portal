@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------------------------
+# Line endings.
+#
+# This exists because of a real, expensive failure: docker/backend/entrypoint.sh was checked out
+# with CRLF on a Windows machine, so its shebang line read `#!/bin/sh\r`. Linux then looked for an
+# interpreter literally named `/bin/sh\r`, did not find one, and reported
+#
+#     exec /usr/local/bin/entrypoint.sh: no such file or directory
+#
+# which names the SCRIPT while actually complaining about the INTERPRETER. The script was present,
+# executable and correct. Every shell script that is executed inside a Linux container or on an
+# EC2 instance must therefore be LF regardless of the platform it was edited on.
+# ---------------------------------------------------------------------------------------------
+
+# Let git decide what is text, and normalise it to LF in the repository.
+* text=auto
+
+# Anything a Linux kernel has to exec, or a container runtime has to parse, is LF ALWAYS — never
+# translated to CRLF on checkout, even on Windows.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+.dockerignore   text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# Windows-only helpers keep CRLF; cmd.exe and PowerShell scripts are read by Windows.
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+*.ps1           text eol=crlf
+
+# Binary — never touch, never diff as text.
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.webp          binary
+*.pdf           binary
+*.docx          binary
+*.xlsx          binary
+*.zip           binary
+*.jar           binary
+*.keystore      binary
+*.ttf           binary
+*.otf           binary
+*.woff          binary
+*.woff2         binary
+*.db            binary

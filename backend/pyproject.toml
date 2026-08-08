@@ -1,0 +1,81 @@
+[project]
+name = "design-workshop-backend"
+version = "0.1.0"
+description = "API-first FastAPI backend for Design Prototype Workshop capture, review and report generation."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.1",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=4.0.1,<4.1.0",
+    "prisma>=0.13.1",
+    "boto3>=1.34.0",
+    "python-multipart>=0.0.9",
+    "email-validator>=2.1.1",
+    "google-auth>=2.29.0",
+    "requests>=2.32.0",
+    "pydub>=0.25.1",
+    "openpyxl>=3.1.2",
+    # PDF rendering for the workshop report (app/services/report_pdf.py). A CORE dependency, not
+    # an extra, because app/api/routes/design_workshops.py imports it at module scope and the API
+    # router imports that — so an install without it does not degrade, it fails to boot. Pure
+    # Python with no system libraries, which is what ruled out WeasyPrint: that needs Pango and
+    # Cairo installed on the host, and the local Windows development stack has neither.
+    #
+    # The .docx path deliberately has NO dependency at all — see app/services/report_docx.py for
+    # why that matters (the identical algorithm has to run on the phone, where python-docx cannot).
+    "reportlab>=4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4.0",
+    "pytest>=8.2.0",
+    "httpx>=0.27.0",
+]
+# Optional AI image features (app/ai_features, all flags default off — see docs/AI_FEATURES.md).
+# Nothing below is installed by `pip install -e .`, and nothing below is imported unless a
+# capability's flag is on. The split is deliberate: the hosted providers cost 3 MB, local
+# inference costs closer to 400 MB of wheels plus a 176 MB model download, and the 1 GiB
+# production box can afford exactly one of those.
+ai = [
+    # Pillow composites the two layers of a separation from the alpha a hosted cutout returns.
+    # Hosted background removal alone needs nothing here: requests is already a core dependency.
+    "pillow>=10.3.0",
+    # Rust raster-to-SVG tracer: a small wheel, no model, no per-image charge.
+    "vtracer>=0.6.11",
+]
+ai-local = [
+    "pillow>=10.3.0",
+    # MEASURED on a laptop: importing rembg alone costs ~130 MB, a U2Net session ~560 MB, and one
+    # 1.9 MP matte peaked the process at 1,032 MB. Do not install this on the t3.micro.
+    "rembg>=2.0.50",
+    "onnxruntime>=1.17.0",
+]
+# Only for SCALE_CACHE_BACKEND=redis. Deliberately NOT in `dependencies`: the default cache backend
+# is in-process and needs nothing installed, so `pip install -e .` stays exactly as light as it was.
+# Nothing imports redis unless that variable is set (app/scale/redis_backend.py imports it inside a
+# function, after the flag check), which is what lets the flag exist on a machine without the
+# package — it logs one line and uses the in-process cache instead of failing to boot.
+cache = [
+    "redis>=5.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["prisma*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

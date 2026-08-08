@@ -1,0 +1,4316 @@
+{
+ "competitorPositions/c01-pooled-sixty-two-percent": [
+  {
+   "category": "SAREE",
+   "name": "Mill saree",
+   "note": "₹350 is below what 62% of all 8 buyers asked said they would pay (their median: ₹450).",
+   "percentile": 0.375,
+   "price": 350.0,
+   "seller": "Ganesh",
+   "versusMedian": -100.0
+  }
+ ],
+ "competitorPositions/c02-category-matched": [
+  {
+   "category": "SAREE",
+   "name": "Mill saree",
+   "note": "₹550 is above what 60% of the 5 buyers asked about SAREE said they would pay (their median: ₹500).",
+   "percentile": 0.6,
+   "price": 550.0,
+   "seller": "Ganesh",
+   "versusMedian": 50.0
+  },
+  {
+   "category": "BAG",
+   "name": "Jute bag",
+   "note": "₹150 is below what 83% of all 6 buyers asked said they would pay (their median: ₹450).",
+   "percentile": 0.1667,
+   "price": 150.0,
+   "seller": "Hari",
+   "versusMedian": -300.0
+  }
+ ],
+ "competitorPositions/c03-too-few-buyers": [
+  {
+   "category": "SAREE",
+   "name": "Mill saree",
+   "note": "₹550. Too few buyer price expectations were recorded in the survey to place this against them.",
+   "percentile": null,
+   "price": 550.0,
+   "seller": "",
+   "versusMedian": null
+  }
+ ],
+ "competitorPositions/c04-competitor-without-price": [
+  {
+   "category": "",
+   "name": "Unnamed product",
+   "note": "₹500 is above what 60% of all 5 buyers asked said they would pay (their median: ₹500).",
+   "percentile": 0.6,
+   "price": 500.0,
+   "seller": "",
+   "versusMedian": 0.0
+  }
+ ],
+ "competitorPositions/c05-competitor-exactly-at-median": [
+  {
+   "category": "",
+   "name": "Exactly median",
+   "note": "₹300 is above what 60% of all 5 buyers asked said they would pay (their median: ₹300).",
+   "percentile": 0.6,
+   "price": 300.0,
+   "seller": "Z",
+   "versusMedian": 0.0
+  }
+ ],
+ "cost/k01-empty": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 0,
+  "sheets": [],
+  "warnings": []
+ },
+ "cost/k02-no-lines-but-declared": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1650.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹1,650.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": 800.0,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹800.00 is declared as labour cost and there are no labour lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 2450.0,
+      "declared": 2450.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the stored total cost ₹2,450.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 22.45,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the sheet's figures imply a margin of 22.4% on cost; no margin is declared.",
+      "unit": "PCT",
+      "verdict": "NOT_DECLARED"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 550.0,
+     "expectedPrice": 3000.0,
+     "message": "Cost sheet 1: an expected price of ₹3,000.00 against a total cost of ₹2,450.00 implies a margin of ₹550.00, or 22.4% on cost.",
+     "percent": 22.4,
+     "totalCost": 2450.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k03-no-lines-nothing-declared": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no material lines are recorded and no material cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: none of the six cost heads is filled in, so there is no total to check.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — neither an expected price nor any cost is recorded.",
+     "percent": null,
+     "totalCost": null,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k04-lines-agree": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": 1650.0,
+      "declared": 1650.0,
+      "difference": 0.0,
+      "key": "materialCost",
+      "lineCount": 2,
+      "message": "Indigo saree: the 2 material line(s) add up to ₹1,650.00, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 800.0,
+      "declared": 800.0,
+      "difference": 0.0,
+      "key": "labourCost",
+      "lineCount": 1,
+      "message": "Indigo saree: the 1 labour line(s) add up to ₹800.00, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 2450.0,
+      "declared": 2450.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Indigo saree: the stored total cost ₹2,450.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 25.0,
+      "declared": 25.0,
+      "difference": 0.0,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Indigo saree: the declared margin of 25.0% matches the 25.0% implied by the price and cost.",
+      "unit": "PCT",
+      "verdict": "AGREES"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Indigo saree",
+    "labourLines": 1,
+    "margin": {
+     "amount": 612.5,
+     "expectedPrice": 3062.5,
+     "message": "Indigo saree: an expected price of ₹3,062.50 against a total cost of ₹2,450.00 implies a margin of ₹612.50, or 25.0% on cost.",
+     "percent": 25.0,
+     "totalCost": 2450.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 2
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k05-mismatch-more": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": 1560.0,
+      "declared": 1650.0,
+      "difference": 90.0,
+      "key": "materialCost",
+      "lineCount": 2,
+      "message": "Cost sheet 1: the 2 material line(s) add up to ₹1,560.00, but the sheet declares ₹1,650.00 — ₹90.00 more than the lines account for.",
+      "unit": "INR",
+      "verdict": "MISMATCH"
+     },
+     {
+      "computed": null,
+      "declared": 0.0,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹0.00 is declared as labour cost and there are no labour lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1650.0,
+      "declared": 1650.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the stored total cost ₹1,650.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 21.21,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the sheet's figures imply a margin of 21.2% on cost; no margin is declared.",
+      "unit": "PCT",
+      "verdict": "NOT_DECLARED"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 350.0,
+     "expectedPrice": 2000.0,
+     "message": "Cost sheet 1: an expected price of ₹2,000.00 against a total cost of ₹1,650.00 implies a margin of ₹350.00, or 21.2% on cost.",
+     "percent": 21.2,
+     "totalCost": 1650.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 2
+   }
+  ],
+  "warnings": [
+   "Cost sheet 1: the 2 material line(s) add up to ₹1,560.00, but the sheet declares ₹1,650.00 — ₹90.00 more than the lines account for."
+  ]
+ },
+ "cost/k06-mismatch-less": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": 1650.0,
+      "declared": 1560.0,
+      "difference": -90.0,
+      "key": "materialCost",
+      "lineCount": 2,
+      "message": "Cost sheet 1: the 2 material line(s) add up to ₹1,650.00, but the sheet declares ₹1,560.00 — ₹90.00 less than the lines account for.",
+      "unit": "INR",
+      "verdict": "MISMATCH"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1560.0,
+      "declared": 1560.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the stored total cost ₹1,560.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 28.21,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the sheet's figures imply a margin of 28.2% on cost; no margin is declared.",
+      "unit": "PCT",
+      "verdict": "NOT_DECLARED"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 440.0,
+     "expectedPrice": 2000.0,
+     "message": "Cost sheet 1: an expected price of ₹2,000.00 against a total cost of ₹1,560.00 implies a margin of ₹440.00, or 28.2% on cost.",
+     "percent": 28.2,
+     "totalCost": 1560.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 2
+   }
+  ],
+  "warnings": [
+   "Cost sheet 1: the 2 material line(s) add up to ₹1,650.00, but the sheet declares ₹1,560.00 — ₹90.00 less than the lines account for."
+  ]
+ },
+ "cost/k07-tolerance-exactly-one-rupee": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": 1649.0,
+      "declared": 1650.0,
+      "difference": 1.0,
+      "key": "materialCost",
+      "lineCount": 1,
+      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,649.00, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1650.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹1,650.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 1650.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 1
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k08-tolerance-just-over": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": 1648.99,
+      "declared": 1650.0,
+      "difference": 1.01,
+      "key": "materialCost",
+      "lineCount": 1,
+      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,648.99, but the sheet declares ₹1,650.00 — ₹1.01 more than the lines account for.",
+      "unit": "INR",
+      "verdict": "MISMATCH"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1650.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹1,650.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 1650.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 1
+   }
+  ],
+  "warnings": [
+   "Cost sheet 1: the 1 material line(s) add up to ₹1,648.99, but the sheet declares ₹1,650.00 — ₹1.01 more than the lines account for."
+  ]
+ },
+ "cost/k09-unreadable-line-incomplete": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1650.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 5,
+      "message": "Cost sheet 1: 4 of 5 material lines have no readable amount (Dye, an unnamed line, Mordant), so the lines cannot be totalled and the declared subtotal cannot be checked. Reopening those lines and saving them will recompute the Amount column.",
+      "unit": "INR",
+      "verdict": "INCOMPLETE"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1650.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹1,650.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 1650.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 5
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k10-lines-with-no-declared-subtotal": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": 1000.0,
+      "declared": null,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 1,
+      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,000.00; no material cost is declared on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": 800.0,
+      "declared": 800.0,
+      "difference": 0.0,
+      "key": "labourCost",
+      "lineCount": 1,
+      "message": "Cost sheet 1: the 1 labour line(s) add up to ₹800.00, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 800.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹800.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 1,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 800.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 1
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k11-stale-total-cost": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1650.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹1,650.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": 800.0,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹800.00 is declared as labour cost and there are no labour lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 2500.0,
+      "declared": 2450.0,
+      "difference": -50.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the six cost heads add up to ₹2,500.00, but the stored total cost is ₹2,450.00. Total cost is a derived field, so the stored value is out of date — reopening the sheet and saving it will recompute it.",
+      "unit": "INR",
+      "verdict": "MISMATCH"
+     },
+     {
+      "computed": 20.0,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the sheet's figures imply a margin of 20.0% on cost; no margin is declared.",
+      "unit": "PCT",
+      "verdict": "NOT_DECLARED"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 500.0,
+     "expectedPrice": 3000.0,
+     "message": "Cost sheet 1: an expected price of ₹3,000.00 against a total cost of ₹2,500.00 implies a margin of ₹500.00, or 20.0% on cost.",
+     "percent": 20.0,
+     "totalCost": 2500.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": [
+   "Cost sheet 1: the six cost heads add up to ₹2,500.00, but the stored total cost is ₹2,450.00. Total cost is a derived field, so the stored value is out of date — reopening the sheet and saving it will recompute it."
+  ]
+ },
+ "cost/k12-all-heads-blank": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no material lines are recorded and no material cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": 2450.0,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: none of the six cost heads is filled in, so there is no total to check.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 22.45,
+      "declared": 22.5,
+      "difference": 0.05,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the declared margin of 22.5% matches the 22.4% implied by the price and cost.",
+      "unit": "PCT",
+      "verdict": "AGREES"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 550.0,
+     "expectedPrice": 3000.0,
+     "message": "Cost sheet 1: an expected price of ₹3,000.00 against a total cost of ₹2,450.00 implies a margin of ₹550.00, or 22.4% on cost.",
+     "percent": 22.4,
+     "totalCost": 2450.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k13-head-unreadable": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1650.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹1,650.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": 2450.0,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: Labour cost could not be read as a number, so the total cost cannot be checked against the cost heads.",
+      "unit": "INR",
+      "verdict": "INCOMPLETE"
+     },
+     {
+      "computed": 22.45,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the sheet's figures imply a margin of 22.4% on cost; no margin is declared.",
+      "unit": "PCT",
+      "verdict": "NOT_DECLARED"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 550.0,
+     "expectedPrice": 3000.0,
+     "message": "Cost sheet 1: an expected price of ₹3,000.00 against a total cost of ₹2,450.00 implies a margin of ₹550.00, or 22.4% on cost.",
+     "percent": 22.4,
+     "totalCost": 2450.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k14-margin-below-cost": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1650.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹1,650.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": 800.0,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹800.00 is declared as labour cost and there are no labour lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 2450.0,
+      "declared": 2450.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the stored total cost ₹2,450.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": -18.37,
+      "declared": 20.0,
+      "difference": 38.37,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: a margin of 20.0% is declared, but the expected price and total cost on this sheet imply -18.4% on cost.",
+      "unit": "PCT",
+      "verdict": "MISMATCH"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": -450.0,
+     "expectedPrice": 2000.0,
+     "message": "Cost sheet 1: the expected price ₹2,000.00 is below the total cost ₹2,450.00 — a loss of ₹450.00 on every piece sold.",
+     "percent": -18.4,
+     "totalCost": 2450.0,
+     "verdict": "BELOW_COST"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": [
+   "Cost sheet 1: a margin of 20.0% is declared, but the expected price and total cost on this sheet imply -18.4% on cost.",
+   "Cost sheet 1: the expected price ₹2,000.00 is below the total cost ₹2,450.00 — a loss of ₹450.00 on every piece sold."
+  ]
+ },
+ "cost/k15-margin-at-cost": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 2450.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹2,450.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 2450.0,
+      "declared": 2450.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the stored total cost ₹2,450.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 0.02,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the sheet's figures imply a margin of 0.0% on cost; no margin is declared.",
+      "unit": "PCT",
+      "verdict": "NOT_DECLARED"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 0.5,
+     "expectedPrice": 2450.5,
+     "message": "Cost sheet 1: the expected price ₹2,450.50 is the same as the total cost ₹2,450.00 — this product earns nothing as priced.",
+     "percent": 0.0,
+     "totalCost": 2450.0,
+     "verdict": "AT_COST"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k16-margin-zero-cost": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 4,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 0.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹0.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 0.0,
+      "declared": 0.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the stored total cost ₹0.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": null,
+      "declared": 30.0,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: a margin of 30.0% is declared, but the sheet has no price and cost to imply a margin from, so it cannot be checked.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": 2000.0,
+     "message": "Cost sheet 1: no margin can be implied — the total cost is zero.",
+     "percent": null,
+     "totalCost": 0.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   },
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1000.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: ₹1,000.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1000.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: the cost heads add up to ₹1,000.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 2: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s2",
+    "label": "Cost sheet 2",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 2: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 1000.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   },
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 3: no material lines are recorded and no material cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 3: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 3: none of the six cost heads is filled in, so there is no total to check.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 3: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s3",
+    "label": "Cost sheet 3",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": 500.0,
+     "message": "Cost sheet 3: no margin can be implied — no cost is recorded.",
+     "percent": null,
+     "totalCost": null,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   },
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 4: no material lines are recorded and no material cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 4: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 4: none of the six cost heads is filled in, so there is no total to check.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 4: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s4",
+    "label": "Cost sheet 4",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 4: no margin can be implied — neither an expected price nor any cost is recorded.",
+     "percent": null,
+     "totalCost": null,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k17-margin-half-even-percent": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1000.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹1,000.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1000.0,
+      "declared": 1000.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the stored total cost ₹1,000.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 25.25,
+      "declared": 25.25,
+      "difference": 0.0,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the declared margin of 25.2% matches the 25.2% implied by the price and cost.",
+      "unit": "PCT",
+      "verdict": "AGREES"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 252.5,
+     "expectedPrice": 1252.5,
+     "message": "Cost sheet 1: an expected price of ₹1,252.50 against a total cost of ₹1,000.00 implies a margin of ₹252.50, or 25.2% on cost.",
+     "percent": 25.2,
+     "totalCost": 1000.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k18-declared-margin-mismatch": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1000.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹1,000.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1000.0,
+      "declared": 1000.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the stored total cost ₹1,000.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 30.0,
+      "declared": 20.0,
+      "difference": -10.0,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: a margin of 20.0% is declared, but the expected price and total cost on this sheet imply 30.0% on cost.",
+      "unit": "PCT",
+      "verdict": "MISMATCH"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 300.0,
+     "expectedPrice": 1300.0,
+     "message": "Cost sheet 1: an expected price of ₹1,300.00 against a total cost of ₹1,000.00 implies a margin of ₹300.00, or 30.0% on cost.",
+     "percent": 30.0,
+     "totalCost": 1000.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": [
+   "Cost sheet 1: a margin of 20.0% is declared, but the expected price and total cost on this sheet imply 30.0% on cost."
+  ]
+ },
+ "cost/k19-orphans-material-and-labour": {
+  "cautions": [
+   "3 material cost lines are not attached to any cost sheet in this stage (Zari, Mordant, Unlinked). The sheet they named may have been deleted after they were recorded. Their amounts come to ₹1,675.12, counted in no subtotal.",
+   "1 labour cost line is not attached to any cost sheet in this stage (Finishing). The sheet they named may have been deleted after they were recorded. Their amounts come to ₹120.00, counted in no subtotal."
+  ],
+  "orphans": [
+   {
+    "amount": 1650.12,
+    "kind": "MATERIAL",
+    "label": "Zari",
+    "ref": "deleted-sheet"
+   },
+   {
+    "amount": 0.0,
+    "kind": "MATERIAL",
+    "label": "Mordant",
+    "ref": "deleted-sheet"
+   },
+   {
+    "amount": 25.0,
+    "kind": "MATERIAL",
+    "label": "Unlinked",
+    "ref": ""
+   },
+   {
+    "amount": 120.0,
+    "kind": "LABOUR",
+    "label": "Finishing",
+    "ref": "gone"
+   }
+  ],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": 1000.0,
+      "declared": 1000.0,
+      "difference": 0.0,
+      "key": "materialCost",
+      "lineCount": 1,
+      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,000.00, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 800.0,
+      "declared": 800.0,
+      "difference": 0.0,
+      "key": "labourCost",
+      "lineCount": 1,
+      "message": "Cost sheet 1: the 1 labour line(s) add up to ₹800.00, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 1800.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹1,800.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 1,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 1800.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 1
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k20-orphan-without-readable-amount": {
+  "cautions": [
+   "1 material cost line is not attached to any cost sheet in this stage (an unnamed line). The sheet they named may have been deleted after they were recorded. None of them has a readable amount."
+  ],
+  "orphans": [
+   {
+    "amount": null,
+    "kind": "MATERIAL",
+    "label": "an unnamed line",
+    "ref": "gone"
+   }
+  ],
+  "sheetCount": 0,
+  "sheets": [],
+  "warnings": []
+ },
+ "cost/k21-sheet-without-entry-id": {
+  "cautions": [
+   "1 material cost line is not attached to any cost sheet in this stage (Yarn). The sheet they named may have been deleted after they were recorded. Their amounts come to ₹1,000.00, counted in no subtotal."
+  ],
+  "orphans": [
+   {
+    "amount": 1000.0,
+    "kind": "MATERIAL",
+    "label": "Yarn",
+    "ref": ""
+   }
+  ],
+  "sheetCount": 2,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1000.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹1,000.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1000.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹1,000.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 1000.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   },
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 500.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: ₹500.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 500.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: the cost heads add up to ₹500.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 2: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "",
+    "label": "Cost sheet 2",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 2: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 500.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k22-duplicate-entry-id": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 2,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": 1000.0,
+      "declared": 1000.0,
+      "difference": 0.0,
+      "key": "materialCost",
+      "lineCount": 1,
+      "message": "Cost sheet 1: the 1 material line(s) add up to ₹1,000.00, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1000.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹1,000.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 1000.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 1
+   },
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1000.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: ₹1,000.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1000.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: the cost heads add up to ₹1,000.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 2: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 2",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 2: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 1000.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k23-label-resolution": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 5,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 10.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Indigo saree: ₹10.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Indigo saree: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 10.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Indigo saree: the cost heads add up to ₹10.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Indigo saree: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Indigo saree",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Indigo saree: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 10.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   },
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 10.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: ₹10.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 10.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 2: the cost heads add up to ₹10.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 2: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s2",
+    "label": "Cost sheet 2",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 2: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 10.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   },
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 10.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 3: ₹10.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 3: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 10.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 3: the cost heads add up to ₹10.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 3: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s3",
+    "label": "Cost sheet 3",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 3: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 10.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   },
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 10.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 4: ₹10.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 4: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 10.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 4: the cost heads add up to ₹10.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 4: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s4",
+    "label": "Cost sheet 4",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 4: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 10.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   },
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 10.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 5: ₹10.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 5: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 10.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 5: the cost heads add up to ₹10.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 5: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s5",
+    "label": "Cost sheet 5",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 5: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 10.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k24-blank-ref-lines-are-orphans": {
+  "cautions": [
+   "3 material cost lines are not attached to any cost sheet in this stage (No ref at all, Null ref, Numeric ref). The sheet they named may have been deleted after they were recorded. Their amounts come to ₹180.00, counted in no subtotal."
+  ],
+  "orphans": [
+   {
+    "amount": 40.0,
+    "kind": "MATERIAL",
+    "label": "No ref at all",
+    "ref": ""
+   },
+   {
+    "amount": 60.0,
+    "kind": "MATERIAL",
+    "label": "Null ref",
+    "ref": ""
+   },
+   {
+    "amount": 80.0,
+    "kind": "MATERIAL",
+    "label": "Numeric ref",
+    "ref": "7"
+   }
+  ],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 1000.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹1,000.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no labour lines are recorded and no labour cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 1000.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹1,000.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 1000.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k25-whitespace-and-comma-heads": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: no material lines are recorded and no material cost is declared.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": 1650.0,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹1,650.00 is declared as labour cost and there are no labour lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": 1650.0,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: Material cost could not be read as a number, so the total cost cannot be checked against the cost heads.",
+      "unit": "INR",
+      "verdict": "INCOMPLETE"
+     },
+     {
+      "computed": 21.21,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the sheet's figures imply a margin of 21.2% on cost; no margin is declared.",
+      "unit": "PCT",
+      "verdict": "NOT_DECLARED"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": 350.0,
+     "expectedPrice": 2000.0,
+     "message": "Cost sheet 1: an expected price of ₹2,000.00 against a total cost of ₹1,650.00 implies a margin of ₹350.00, or 21.2% on cost.",
+     "percent": 21.2,
+     "totalCost": 1650.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k26-live-workshop": {
+  "cautions": [],
+  "orphans": [],
+  "sheetCount": 4,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": 235.45,
+      "declared": 235.45,
+      "difference": -0.0,
+      "key": "materialCost",
+      "lineCount": 7,
+      "message": "Bandha table runner — phoda kumbha border: the 7 material line(s) add up to ₹235.45, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 427.5,
+      "declared": 427.5,
+      "difference": 0.0,
+      "key": "labourCost",
+      "lineCount": 5,
+      "message": "Bandha table runner — phoda kumbha border: the 5 labour line(s) add up to ₹427.50, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 742.5,
+      "declared": 742.5,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Bandha table runner — phoda kumbha border: the stored total cost ₹742.50 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 122.22,
+      "declared": 55.0,
+      "difference": -67.22,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Bandha table runner — phoda kumbha border: a margin of 55.0% is declared, but the expected price and total cost on this sheet imply 122.2% on cost.",
+      "unit": "PCT",
+      "verdict": "MISMATCH"
+     }
+    ],
+    "entryId": "cmsik9t6t008sh8xctosr9wa2",
+    "label": "Bandha table runner — phoda kumbha border",
+    "labourLines": 5,
+    "margin": {
+     "amount": 907.5,
+     "expectedPrice": 1650.0,
+     "message": "Bandha table runner — phoda kumbha border: an expected price of ₹1,650.00 against a total cost of ₹742.50 implies a margin of ₹907.50, or 122.2% on cost.",
+     "percent": 122.2,
+     "totalCost": 742.5,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 7
+   },
+   {
+    "checks": [
+     {
+      "computed": 359.64,
+      "declared": 359.64,
+      "difference": 0.0,
+      "key": "materialCost",
+      "lineCount": 7,
+      "message": "Silk-cotton bandha stole — macha and phula scatter: the 7 material line(s) add up to ₹359.64, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 697.5,
+      "declared": 697.5,
+      "difference": 0.0,
+      "key": "labourCost",
+      "lineCount": 6,
+      "message": "Silk-cotton bandha stole — macha and phula scatter: the 6 labour line(s) add up to ₹697.50, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 1184.0,
+      "declared": 1184.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Silk-cotton bandha stole — macha and phula scatter: the stored total cost ₹1,184.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 119.59,
+      "declared": 119.6,
+      "difference": 0.01,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Silk-cotton bandha stole — macha and phula scatter: the declared margin of 119.6% matches the 119.6% implied by the price and cost.",
+      "unit": "PCT",
+      "verdict": "AGREES"
+     }
+    ],
+    "entryId": "cmsik9t6w008uh8xcvg102hzp",
+    "label": "Silk-cotton bandha stole — macha and phula scatter",
+    "labourLines": 6,
+    "margin": {
+     "amount": 1416.0,
+     "expectedPrice": 2600.0,
+     "message": "Silk-cotton bandha stole — macha and phula scatter: an expected price of ₹2,600.00 against a total cost of ₹1,184.00 implies a margin of ₹1,416.00, or 119.6% on cost.",
+     "percent": 119.6,
+     "totalCost": 1184.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 7
+   },
+   {
+    "checks": [
+     {
+      "computed": 156.43,
+      "declared": 156.43,
+      "difference": 0.0,
+      "key": "materialCost",
+      "lineCount": 7,
+      "message": "Bandha cushion cover set of two — chakra medallion: the 7 material line(s) add up to ₹156.43, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 315.0,
+      "declared": 315.0,
+      "difference": 0.0,
+      "key": "labourCost",
+      "lineCount": 5,
+      "message": "Bandha cushion cover set of two — chakra medallion: the 5 labour line(s) add up to ₹315.00, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 528.0,
+      "declared": 528.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Bandha cushion cover set of two — chakra medallion: the stored total cost ₹528.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 127.27,
+      "declared": 127.3,
+      "difference": 0.03,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Bandha cushion cover set of two — chakra medallion: the declared margin of 127.3% matches the 127.3% implied by the price and cost.",
+      "unit": "PCT",
+      "verdict": "AGREES"
+     }
+    ],
+    "entryId": "cmsik9t6z008wh8xc950msesn",
+    "label": "Bandha cushion cover set of two — chakra medallion",
+    "labourLines": 5,
+    "margin": {
+     "amount": 672.0,
+     "expectedPrice": 1200.0,
+     "message": "Bandha cushion cover set of two — chakra medallion: an expected price of ₹1,200.00 against a total cost of ₹528.00 implies a margin of ₹672.00, or 127.3% on cost.",
+     "percent": 127.3,
+     "totalCost": 528.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 7
+   },
+   {
+    "checks": [
+     {
+      "computed": 175.61,
+      "declared": 175.61,
+      "difference": 0.0,
+      "key": "materialCost",
+      "lineCount": 7,
+      "message": "Bandha yardage — micro shankha repeat: the 7 material line(s) add up to ₹175.61, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 373.5,
+      "declared": 373.5,
+      "difference": 0.0,
+      "key": "labourCost",
+      "lineCount": 6,
+      "message": "Bandha yardage — micro shankha repeat: the 6 labour line(s) add up to ₹373.50, which is what the sheet declares.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 615.0,
+      "declared": 615.0,
+      "difference": 0.0,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Bandha yardage — micro shankha repeat: the stored total cost ₹615.00 matches the six cost heads.",
+      "unit": "INR",
+      "verdict": "AGREES"
+     },
+     {
+      "computed": 127.64,
+      "declared": 127.6,
+      "difference": -0.04,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Bandha yardage — micro shankha repeat: the declared margin of 127.6% matches the 127.6% implied by the price and cost.",
+      "unit": "PCT",
+      "verdict": "AGREES"
+     }
+    ],
+    "entryId": "cmsik9t72008yh8xcixnwl0jm",
+    "label": "Bandha yardage — micro shankha repeat",
+    "labourLines": 6,
+    "margin": {
+     "amount": 785.0,
+     "expectedPrice": 1400.0,
+     "message": "Bandha yardage — micro shankha repeat: an expected price of ₹1,400.00 against a total cost of ₹615.00 implies a margin of ₹785.00, or 127.6% on cost.",
+     "percent": 127.6,
+     "totalCost": 615.0,
+     "verdict": "COMPUTED"
+    },
+    "materialLines": 7
+   }
+  ],
+  "warnings": [
+   "Bandha table runner — phoda kumbha border: a margin of 55.0% is declared, but the expected price and total cost on this sheet imply 122.2% on cost."
+  ]
+ },
+ "cost/k27-orphan-total-compensated-sum": {
+  "cautions": [
+   "4 material cost lines are not attached to any cost sheet in this stage (top of the range, an ordinary amount, its negative). The sheet they named may have been deleted after they were recorded. Their amounts come to ₹2,560.00, counted in no subtotal."
+  ],
+  "orphans": [
+   {
+    "amount": 1e+308,
+    "kind": "MATERIAL",
+    "label": "top of the range",
+    "ref": "gone"
+   },
+   {
+    "amount": 1560.0,
+    "kind": "MATERIAL",
+    "label": "an ordinary amount",
+    "ref": "gone"
+   },
+   {
+    "amount": -1e+308,
+    "kind": "MATERIAL",
+    "label": "its negative",
+    "ref": "gone"
+   },
+   {
+    "amount": 1000.0,
+    "kind": "MATERIAL",
+    "label": "another",
+    "ref": "gone"
+   }
+  ],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 0.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹0.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": 0.0,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹0.00 is declared as labour cost and there are no labour lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 0.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹0.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 0.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "cost/k28-orphan-total-overflows": {
+  "cautions": [
+   "2 material cost lines are not attached to any cost sheet in this stage (top of the range, top of the range again). The sheet they named may have been deleted after they were recorded. Their amounts come to ₹inf, counted in no subtotal."
+  ],
+  "orphans": [
+   {
+    "amount": 1e+308,
+    "kind": "MATERIAL",
+    "label": "top of the range",
+    "ref": "gone"
+   },
+   {
+    "amount": 1e+308,
+    "kind": "MATERIAL",
+    "label": "top of the range again",
+    "ref": "gone"
+   }
+  ],
+  "sheetCount": 1,
+  "sheets": [
+   {
+    "checks": [
+     {
+      "computed": null,
+      "declared": 0.0,
+      "difference": null,
+      "key": "materialCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹0.00 is declared as material cost and there are no material lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": null,
+      "declared": 0.0,
+      "difference": null,
+      "key": "labourCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: ₹0.00 is declared as labour cost and there are no labour lines to check it against. An un-itemised subtotal is not an error — it simply cannot be verified from this stage.",
+      "unit": "INR",
+      "verdict": "NOT_ITEMISED"
+     },
+     {
+      "computed": 0.0,
+      "declared": null,
+      "difference": null,
+      "key": "totalCost",
+      "lineCount": 0,
+      "message": "Cost sheet 1: the cost heads add up to ₹0.00; no total cost is stored on the sheet.",
+      "unit": "INR",
+      "verdict": "NOT_DECLARED"
+     },
+     {
+      "computed": null,
+      "declared": null,
+      "difference": null,
+      "key": "marginPercent",
+      "lineCount": 0,
+      "message": "Cost sheet 1: there is no implied margin to check a declared margin against.",
+      "unit": "PCT",
+      "verdict": "NOT_COMPUTABLE"
+     }
+    ],
+    "entryId": "s1",
+    "label": "Cost sheet 1",
+    "labourLines": 0,
+    "margin": {
+     "amount": null,
+     "expectedPrice": null,
+     "message": "Cost sheet 1: no margin can be implied — no expected price is recorded.",
+     "percent": null,
+     "totalCost": 0.0,
+     "verdict": "NOT_COMPUTABLE"
+    },
+    "materialLines": 0
+   }
+  ],
+  "warnings": []
+ },
+ "market/m01-empty": {
+  "bands": [],
+  "byCategory": {},
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 0,
+  "respondentPrices": null,
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m02-one-price": {
+  "bands": [],
+  "byCategory": {
+   "": {
+    "count": 1,
+    "maximum": 450.0,
+    "mean": 450.0,
+    "median": 450.0,
+    "minimum": 450.0,
+    "p25": 450.0,
+    "p75": 450.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Only 1 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {
+   "CONSUMER": 1
+  },
+  "observations": 1,
+  "respondentPrices": {
+   "count": 1,
+   "maximum": 450.0,
+   "mean": 450.0,
+   "median": 450.0,
+   "minimum": 450.0,
+   "p25": 450.0,
+   "p75": 450.0,
+   "quantilesReported": false
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m03-four-prices-below-quantile-floor": {
+  "bands": [],
+  "byCategory": {
+   "": {
+    "count": 4,
+    "maximum": 400.0,
+    "mean": 250.0,
+    "median": 250.0,
+    "minimum": 100.0,
+    "p25": 250.0,
+    "p75": 250.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Only 4 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {
+   "CONSUMER": 3,
+   "RETAILER": 1
+  },
+  "observations": 4,
+  "respondentPrices": {
+   "count": 4,
+   "maximum": 400.0,
+   "mean": 250.0,
+   "median": 250.0,
+   "minimum": 100.0,
+   "p25": 250.0,
+   "p75": 250.0,
+   "quantilesReported": false
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m04-five-prices-at-quantile-floor": {
+  "bands": [],
+  "byCategory": {
+   "": {
+    "count": 5,
+    "maximum": 500.0,
+    "mean": 300.0,
+    "median": 300.0,
+    "minimum": 100.0,
+    "p25": 200.0,
+    "p75": 400.0,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [
+   "Only 5 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {
+   "CONSUMER": 4,
+   "RETAILER": 1
+  },
+  "observations": 5,
+  "respondentPrices": {
+   "count": 5,
+   "maximum": 500.0,
+   "mean": 300.0,
+   "median": 300.0,
+   "minimum": 100.0,
+   "p25": 200.0,
+   "p75": 400.0,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m05-seven-prices-band-unverifiable": {
+  "bands": [
+   {
+    "above": 1,
+    "below": 2,
+    "category": "SAREE",
+    "coverage": 0.5714,
+    "declaredHigh": 600.0,
+    "declaredLow": 300.0,
+    "evidence": {
+     "count": 7,
+     "maximum": 700.0,
+     "mean": 400.0,
+     "median": 400.0,
+     "minimum": 100.0,
+     "p25": 250.0,
+     "p75": 550.0,
+     "quantilesReported": true
+    },
+    "inside": 4,
+    "message": "Only 7 price observation(s) were recorded for SAREE — too few to judge the band against. 4 of them fall inside it.",
+    "verdict": "UNVERIFIABLE"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 7,
+    "maximum": 700.0,
+    "mean": 400.0,
+    "median": 400.0,
+    "minimum": 100.0,
+    "p25": 250.0,
+    "p75": 550.0,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [
+   "Only 7 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 7,
+  "respondentPrices": {
+   "count": 7,
+   "maximum": 700.0,
+   "mean": 400.0,
+   "median": 400.0,
+   "minimum": 100.0,
+   "p25": 250.0,
+   "p75": 550.0,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m06-eight-prices-band-sound": {
+  "bands": [
+   {
+    "above": 1,
+    "below": 1,
+    "category": "SAREE",
+    "coverage": 0.75,
+    "declaredHigh": 700.0,
+    "declaredLow": 200.0,
+    "evidence": {
+     "count": 8,
+     "maximum": 800.0,
+     "mean": 450.0,
+     "median": 450.0,
+     "minimum": 100.0,
+     "p25": 275.0,
+     "p75": 625.0,
+     "quantilesReported": true
+    },
+    "inside": 6,
+    "message": "The band ₹200–700 covers 6 of 8 price observations for SAREE; the median observed is ₹450.",
+    "verdict": "SOUND"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 8,
+    "maximum": 800.0,
+    "mean": 450.0,
+    "median": 450.0,
+    "minimum": 100.0,
+    "p25": 275.0,
+    "p75": 625.0,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 8,
+  "respondentPrices": {
+   "count": 8,
+   "maximum": 800.0,
+   "mean": 450.0,
+   "median": 450.0,
+   "minimum": 100.0,
+   "p25": 275.0,
+   "p75": 625.0,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m07-all-blank-rows": {
+  "bands": [
+   {
+    "above": 0,
+    "below": 0,
+    "category": "",
+    "coverage": 0.0,
+    "declaredHigh": null,
+    "declaredLow": null,
+    "evidence": null,
+    "inside": 0,
+    "message": "No price was recorded in stage 8 for this category, so this band cannot be checked against the survey.",
+    "verdict": "NO_EVIDENCE"
+   }
+  ],
+  "byCategory": {},
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 0,
+  "respondentPrices": null,
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m08-unparseable-prices": {
+  "bands": [],
+  "byCategory": {
+   "": {
+    "count": 1,
+    "maximum": 450.0,
+    "mean": 450.0,
+    "median": 450.0,
+    "minimum": 450.0,
+    "p25": 450.0,
+    "p75": 450.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Only 1 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 1,
+  "respondentPrices": {
+   "count": 1,
+   "maximum": 450.0,
+   "mean": 450.0,
+   "median": 450.0,
+   "minimum": 450.0,
+   "p25": 450.0,
+   "p75": 450.0,
+   "quantilesReported": false
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m09-comma-grouped-and-unicode-digits": {
+  "bands": [],
+  "byCategory": {
+   "": {
+    "count": 10,
+    "maximum": 125000.0,
+    "mean": 12929.15,
+    "median": 545.0,
+    "minimum": 0.5,
+    "p25": 123.0,
+    "p75": 925.0,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 10,
+  "respondentPrices": {
+   "count": 10,
+   "maximum": 125000.0,
+   "mean": 12929.15,
+   "median": 545.0,
+   "minimum": 0.5,
+   "p25": 123.0,
+   "p75": 925.0,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m10-negatives-and-signed-zero": {
+  "bands": [
+   {
+    "above": 0,
+    "below": 1,
+    "category": "",
+    "coverage": 0.6667,
+    "declaredHigh": 50.0,
+    "declaredLow": -50.0,
+    "evidence": {
+     "count": 3,
+     "maximum": -0.0,
+     "mean": -33.33,
+     "median": 0.0,
+     "minimum": -100.0,
+     "p25": 0.0,
+     "p75": 0.0,
+     "quantilesReported": false
+    },
+    "inside": 2,
+    "message": "Only 3 price observation(s) were recorded for this category — too few to judge the band against. 2 of them fall inside it.",
+    "verdict": "UNVERIFIABLE"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 3,
+    "maximum": -0.0,
+    "mean": -33.33,
+    "median": 0.0,
+    "minimum": -100.0,
+    "p25": 0.0,
+    "p75": 0.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Only 3 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 3,
+  "respondentPrices": {
+   "count": 3,
+   "maximum": -0.0,
+   "mean": -33.33,
+   "median": 0.0,
+   "minimum": -100.0,
+   "p25": 0.0,
+   "p75": 0.0,
+   "quantilesReported": false
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m11-non-finite-strings": {
+  "bands": [],
+  "byCategory": {
+   "": {
+    "count": 1,
+    "maximum": 250.0,
+    "mean": 250.0,
+    "median": 250.0,
+    "minimum": 250.0,
+    "p25": 250.0,
+    "p75": 250.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Only 1 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 1,
+  "respondentPrices": {
+   "count": 1,
+   "maximum": 250.0,
+   "mean": 250.0,
+   "median": 250.0,
+   "minimum": 250.0,
+   "p25": 250.0,
+   "p75": 250.0,
+   "quantilesReported": false
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m12-reversed-band": {
+  "bands": [
+   {
+    "above": 1,
+    "below": 0,
+    "category": "SAREE",
+    "coverage": 0.875,
+    "declaredHigh": 1000.0,
+    "declaredLow": 400.0,
+    "evidence": {
+     "count": 8,
+     "maximum": 1100.0,
+     "mean": 750.0,
+     "median": 750.0,
+     "minimum": 400.0,
+     "p25": 575.0,
+     "p75": 925.0,
+     "quantilesReported": true
+    },
+    "inside": 7,
+    "message": "The band ₹400–1,000 covers 7 of 8 price observations for SAREE; the median observed is ₹750.",
+    "verdict": "SOUND"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 8,
+    "maximum": 1100.0,
+    "mean": 750.0,
+    "median": 750.0,
+    "minimum": 400.0,
+    "p25": 575.0,
+    "p75": 925.0,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 8,
+  "respondentPrices": {
+   "count": 8,
+   "maximum": 1100.0,
+   "mean": 750.0,
+   "median": 750.0,
+   "minimum": 400.0,
+   "p25": 575.0,
+   "p75": 925.0,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m13-transposed-band-high": {
+  "bands": [
+   {
+    "above": 0,
+    "below": 8,
+    "category": "SAREE",
+    "coverage": 0.0,
+    "declaredHigh": 8000.0,
+    "declaredLow": 4000.0,
+    "evidence": {
+     "count": 8,
+     "maximum": 750.0,
+     "mean": 575.0,
+     "median": 575.0,
+     "minimum": 400.0,
+     "p25": 487.5,
+     "p75": 662.5,
+     "quantilesReported": true
+    },
+    "inside": 0,
+    "message": "The band ₹4,000–8,000 sits above the evidence for SAREE: 8 of 8 observations are below it, and the median observed is ₹575.",
+    "verdict": "HIGH"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 8,
+    "maximum": 750.0,
+    "mean": 575.0,
+    "median": 575.0,
+    "minimum": 400.0,
+    "p25": 487.5,
+    "p75": 662.5,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 8,
+  "respondentPrices": {
+   "count": 8,
+   "maximum": 750.0,
+   "mean": 575.0,
+   "median": 575.0,
+   "minimum": 400.0,
+   "p25": 487.5,
+   "p75": 662.5,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m14-band-low": {
+  "bands": [
+   {
+    "above": 8,
+    "below": 0,
+    "category": "SAREE",
+    "coverage": 0.0,
+    "declaredHigh": 80.0,
+    "declaredLow": 40.0,
+    "evidence": {
+     "count": 8,
+     "maximum": 750.0,
+     "mean": 575.0,
+     "median": 575.0,
+     "minimum": 400.0,
+     "p25": 487.5,
+     "p75": 662.5,
+     "quantilesReported": true
+    },
+    "inside": 0,
+    "message": "The band ₹40–80 sits below the evidence for SAREE: 8 of 8 observations are above it, and the median observed is ₹575. The prototypes may be priced under what buyers said.",
+    "verdict": "LOW"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 8,
+    "maximum": 750.0,
+    "mean": 575.0,
+    "median": 575.0,
+    "minimum": 400.0,
+    "p25": 487.5,
+    "p75": 662.5,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 8,
+  "respondentPrices": {
+   "count": 8,
+   "maximum": 750.0,
+   "mean": 575.0,
+   "median": 575.0,
+   "minimum": 400.0,
+   "p25": 487.5,
+   "p75": 662.5,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m15-band-narrow": {
+  "bands": [
+   {
+    "above": 3,
+    "below": 3,
+    "category": "SAREE",
+    "coverage": 0.25,
+    "declaredHigh": 540.0,
+    "declaredLow": 480.0,
+    "evidence": {
+     "count": 8,
+     "maximum": 1000.0,
+     "mean": 540.0,
+     "median": 510.0,
+     "minimum": 100.0,
+     "p25": 187.5,
+     "p75": 912.5,
+     "quantilesReported": true
+    },
+    "inside": 2,
+    "message": "The band ₹480–540 covers only 2 of 8 observations for SAREE (3 below, 3 above; median ₹510). Widening it, or splitting the category, would match what was recorded.",
+    "verdict": "NARROW"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 8,
+    "maximum": 1000.0,
+    "mean": 540.0,
+    "median": 510.0,
+    "minimum": 100.0,
+    "p25": 187.5,
+    "p75": 912.5,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 8,
+  "respondentPrices": {
+   "count": 8,
+   "maximum": 1000.0,
+   "mean": 540.0,
+   "median": 510.0,
+   "minimum": 100.0,
+   "p25": 187.5,
+   "p75": 912.5,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m16-band-incomplete": {
+  "bands": [
+   {
+    "above": 0,
+    "below": 0,
+    "category": "SAREE",
+    "coverage": 0.0,
+    "declaredHigh": null,
+    "declaredLow": 300.0,
+    "evidence": {
+     "count": 2,
+     "maximum": 500.0,
+     "mean": 450.0,
+     "median": 450.0,
+     "minimum": 400.0,
+     "p25": 450.0,
+     "p75": 450.0,
+     "quantilesReported": false
+    },
+    "inside": 0,
+    "message": "2 price observation(s) exist for SAREE, but the band itself is incomplete.",
+    "verdict": "NO_EVIDENCE"
+   },
+   {
+    "above": 0,
+    "below": 0,
+    "category": "BAG",
+    "coverage": 0.0,
+    "declaredHigh": 900.0,
+    "declaredLow": null,
+    "evidence": {
+     "count": 2,
+     "maximum": 500.0,
+     "mean": 450.0,
+     "median": 450.0,
+     "minimum": 400.0,
+     "p25": 450.0,
+     "p75": 450.0,
+     "quantilesReported": false
+    },
+    "inside": 0,
+    "message": "2 price observation(s) exist for BAG, but the band itself is incomplete.",
+    "verdict": "NO_EVIDENCE"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 2,
+    "maximum": 500.0,
+    "mean": 450.0,
+    "median": 450.0,
+    "minimum": 400.0,
+    "p25": 450.0,
+    "p75": 450.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Only 2 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 2,
+  "respondentPrices": {
+   "count": 2,
+   "maximum": 500.0,
+   "mean": 450.0,
+   "median": 450.0,
+   "minimum": 400.0,
+   "p25": 450.0,
+   "p75": 450.0,
+   "quantilesReported": false
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m17-band-no-evidence-at-all": {
+  "bands": [
+   {
+    "above": 0,
+    "below": 0,
+    "category": "FLOOR_COVERING",
+    "coverage": 0.0,
+    "declaredHigh": 900.0,
+    "declaredLow": 300.0,
+    "evidence": null,
+    "inside": 0,
+    "message": "No price was recorded in stage 8 for FLOOR_COVERING, so this band cannot be checked against the survey.",
+    "verdict": "NO_EVIDENCE"
+   }
+  ],
+  "byCategory": {},
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 0,
+  "respondentPrices": null,
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m18-dominant-group-caution": {
+  "bands": [],
+  "byCategory": {
+   "": {
+    "count": 10,
+    "maximum": 900.0,
+    "mean": 216.0,
+    "median": 145.0,
+    "minimum": 100.0,
+    "p25": 122.5,
+    "p75": 167.5,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [
+   "9 of 10 priced responses come from one respondent group (CONSUMER). The price figures describe that group rather than the market."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {
+   "CONSUMER": 9,
+   "RETAILER": 1
+  },
+  "observations": 10,
+  "respondentPrices": {
+   "count": 10,
+   "maximum": 900.0,
+   "mean": 216.0,
+   "median": 145.0,
+   "minimum": 100.0,
+   "p25": 122.5,
+   "p75": 167.5,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m19-competitors-only-no-buyers": {
+  "bands": [],
+  "byCategory": {
+   "DUPATTA_STOLE": {
+    "count": 1,
+    "maximum": 310.5,
+    "mean": 310.5,
+    "median": 310.5,
+    "minimum": 310.5,
+    "p25": 310.5,
+    "p75": 310.5,
+    "quantilesReported": false
+   },
+   "SAREE": {
+    "count": 1,
+    "maximum": 1250.0,
+    "mean": 1250.0,
+    "median": 1250.0,
+    "minimum": 1250.0,
+    "p25": 1250.0,
+    "p75": 1250.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Competitor prices were recorded but no buyer price expectations were. Shelf prices say what is charged, not what the buyers surveyed said they would pay."
+  ],
+  "clusters": [],
+  "competitorPrices": {
+   "count": 2,
+   "maximum": 1250.0,
+   "mean": 780.25,
+   "median": 780.25,
+   "minimum": 310.5,
+   "p25": 780.25,
+   "p75": 780.25,
+   "quantilesReported": false
+  },
+  "competitors": [
+   {
+    "category": "SAREE",
+    "name": "Mill saree",
+    "note": "₹1,250. Too few buyer price expectations were recorded in the survey to place this against them.",
+    "percentile": null,
+    "price": 1250.0,
+    "seller": "Ganesh Textiles",
+    "versusMedian": null
+   },
+   {
+    "category": "DUPATTA_STOLE",
+    "name": "Powerloom stole",
+    "note": "₹310. Too few buyer price expectations were recorded in the survey to place this against them.",
+    "percentile": null,
+    "price": 310.5,
+    "seller": "",
+    "versusMedian": null
+   }
+  ],
+  "groupCounts": {},
+  "observations": 2,
+  "respondentPrices": null,
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m20-swot-odia": {
+  "bands": [],
+  "byCategory": {},
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 0,
+  "respondentPrices": null,
+  "swot": [
+   {
+    "hasOwnEvidence": false,
+    "kind": "STRENGTH",
+    "overlap": 2,
+    "point": "ରଙ୍ଗ ଏବଂ ଦାମ ଉପରେ ମତାମତ",
+    "supported": true,
+    "supportedBy": [
+     "ବିନୋଦ"
+    ]
+   },
+   {
+    "hasOwnEvidence": false,
+    "kind": "THREAT",
+    "overlap": 0,
+    "point": "synthetic competition from the mills",
+    "supported": false,
+    "supportedBy": []
+   }
+  ],
+  "unsupportedSwot": [
+   {
+    "kind": "THREAT",
+    "point": "synthetic competition from the mills"
+   }
+  ]
+ },
+ "market/m21-swot-own-evidence-and-blank-point": {
+  "bands": [],
+  "byCategory": {},
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 0,
+  "respondentPrices": null,
+  "swot": [
+   {
+    "hasOwnEvidence": true,
+    "kind": "WEAKNESS",
+    "overlap": 0,
+    "point": "unrelated assertion about packaging",
+    "supported": true,
+    "supportedBy": []
+   },
+   {
+    "hasOwnEvidence": false,
+    "kind": "WEAKNESS",
+    "overlap": 0,
+    "point": "unrelated assertion about logistics",
+    "supported": false,
+    "supportedBy": []
+   },
+   {
+    "hasOwnEvidence": false,
+    "kind": "STRENGTH",
+    "overlap": 2,
+    "point": "indigo dye is the cluster's signature",
+    "supported": true,
+    "supportedBy": [
+     "Ravi"
+    ]
+   }
+  ],
+  "unsupportedSwot": [
+   {
+    "kind": "WEAKNESS",
+    "point": "unrelated assertion about logistics"
+   }
+  ]
+ },
+ "market/m22-swot-astral-name-tiebreak": {
+  "bands": [],
+  "byCategory": {},
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 0,
+  "respondentPrices": null,
+  "swot": [
+   {
+    "hasOwnEvidence": false,
+    "kind": "STRENGTH",
+    "overlap": 2,
+    "point": "indigo dye quality problem",
+    "supported": true,
+    "supportedBy": [
+     "A respondent",
+     " Sita",
+     "𐀀 Ravi"
+    ]
+   }
+  ],
+  "unsupportedSwot": []
+ },
+ "market/m23-clusters-mixed-case": {
+  "bands": [],
+  "byCategory": {},
+  "cautions": [],
+  "clusters": [
+   {
+    "coOccurrences": 3,
+    "members": [
+     "saree",
+     "stole"
+    ],
+    "mentions": 6
+   }
+  ],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 0,
+  "respondentPrices": null,
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m24-clusters-chain-and-string-tags": {
+  "bands": [],
+  "byCategory": {},
+  "cautions": [],
+  "clusters": [
+   {
+    "coOccurrences": 4,
+    "members": [
+     "saree",
+     "stole",
+     "yardage"
+    ],
+    "mentions": 8
+   },
+   {
+    "coOccurrences": 0,
+    "members": [
+     "bag"
+    ],
+    "mentions": 2
+   },
+   {
+    "coOccurrences": 0,
+    "members": [
+     "floor mat"
+    ],
+    "mentions": 2
+   }
+  ],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 0,
+  "respondentPrices": null,
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m25-half-even-median-and-mean": {
+  "bands": [
+   {
+    "above": 1,
+    "below": 2,
+    "category": "SAREE",
+    "coverage": 0.625,
+    "declaredHigh": 800.0,
+    "declaredLow": 300.0,
+    "evidence": {
+     "count": 8,
+     "maximum": 900.0,
+     "mean": 531.12,
+     "median": 624.5,
+     "minimum": 100.0,
+     "p25": 275.0,
+     "p75": 725.0,
+     "quantilesReported": true
+    },
+    "inside": 5,
+    "message": "The band ₹300–800 covers 5 of 8 price observations for SAREE; the median observed is ₹624.",
+    "verdict": "SOUND"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 8,
+    "maximum": 900.0,
+    "mean": 531.12,
+    "median": 624.5,
+    "minimum": 100.0,
+    "p25": 275.0,
+    "p75": 725.0,
+    "quantilesReported": true
+   }
+  },
+  "cautions": [],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {},
+  "observations": 8,
+  "respondentPrices": {
+   "count": 8,
+   "maximum": 900.0,
+   "mean": 531.12,
+   "median": 624.5,
+   "minimum": 100.0,
+   "p25": 275.0,
+   "p75": 725.0,
+   "quantilesReported": true
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m26-categorised-competitors-pooled-into-bands": {
+  "bands": [
+   {
+    "above": 1,
+    "below": 0,
+    "category": "SAREE",
+    "coverage": 0.8,
+    "declaredHigh": 1000.0,
+    "declaredLow": 300.0,
+    "evidence": {
+     "count": 5,
+     "maximum": 1200.0,
+     "mean": 750.0,
+     "median": 900.0,
+     "minimum": 300.0,
+     "p25": 350.0,
+     "p75": 1000.0,
+     "quantilesReported": true
+    },
+    "inside": 4,
+    "message": "Only 5 price observation(s) were recorded for SAREE — too few to judge the band against. 4 of them fall inside it.",
+    "verdict": "UNVERIFIABLE"
+   },
+   {
+    "above": 1,
+    "below": 0,
+    "category": "DUPATTA_STOLE",
+    "coverage": 0.75,
+    "declaredHigh": 400.0,
+    "declaredLow": 200.0,
+    "evidence": {
+     "count": 4,
+     "maximum": 1200.0,
+     "mean": 527.5,
+     "median": 325.0,
+     "minimum": 260.0,
+     "p25": 325.0,
+     "p75": 325.0,
+     "quantilesReported": false
+    },
+    "inside": 3,
+    "message": "Only 4 price observation(s) were recorded for DUPATTA_STOLE — too few to judge the band against. 3 of them fall inside it.",
+    "verdict": "UNVERIFIABLE"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 3,
+    "maximum": 1200.0,
+    "mean": 616.67,
+    "median": 350.0,
+    "minimum": 300.0,
+    "p25": 350.0,
+    "p75": 350.0,
+    "quantilesReported": false
+   },
+   "DUPATTA_STOLE": {
+    "count": 1,
+    "maximum": 260.0,
+    "mean": 260.0,
+    "median": 260.0,
+    "minimum": 260.0,
+    "p25": 260.0,
+    "p75": 260.0,
+    "quantilesReported": false
+   },
+   "SAREE": {
+    "count": 2,
+    "maximum": 1000.0,
+    "mean": 950.0,
+    "median": 950.0,
+    "minimum": 900.0,
+    "p25": 950.0,
+    "p75": 950.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Only 3 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [
+   {
+    "coOccurrences": 2,
+    "members": [
+     "saree",
+     "stole"
+    ],
+    "mentions": 5
+   }
+  ],
+  "competitorPrices": {
+   "count": 3,
+   "maximum": 1000.0,
+   "mean": 720.0,
+   "median": 900.0,
+   "minimum": 260.0,
+   "p25": 900.0,
+   "p75": 900.0,
+   "quantilesReported": false
+  },
+  "competitors": [
+   {
+    "category": "SAREE",
+    "name": "Mill saree",
+    "note": "₹900. Too few buyer price expectations were recorded in the survey to place this against them.",
+    "percentile": null,
+    "price": 900.0,
+    "seller": "Ganesh",
+    "versusMedian": null
+   },
+   {
+    "category": "SAREE",
+    "name": "Unnamed product",
+    "note": "₹1,000. Too few buyer price expectations were recorded in the survey to place this against them.",
+    "percentile": null,
+    "price": 1000.0,
+    "seller": "",
+    "versusMedian": null
+   },
+   {
+    "category": "DUPATTA_STOLE",
+    "name": "Stole",
+    "note": "₹260. Too few buyer price expectations were recorded in the survey to place this against them.",
+    "percentile": null,
+    "price": 260.0,
+    "seller": "Y",
+    "versusMedian": null
+   }
+  ],
+  "groupCounts": {
+   "CONSUMER": 2,
+   "RETAILER": 1
+  },
+  "observations": 6,
+  "respondentPrices": {
+   "count": 3,
+   "maximum": 1200.0,
+   "mean": 616.67,
+   "median": 350.0,
+   "minimum": 300.0,
+   "p25": 350.0,
+   "p75": 350.0,
+   "quantilesReported": false
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ },
+ "market/m27-live-workshop": {
+  "bands": [
+   {
+    "above": 2,
+    "below": 1,
+    "category": "HOME_FURNISHING",
+    "coverage": 0.7273,
+    "declaredHigh": 2200.0,
+    "declaredLow": 900.0,
+    "evidence": {
+     "count": 11,
+     "maximum": 3500.0,
+     "mean": 1703.64,
+     "median": 1500.0,
+     "minimum": 390.0,
+     "p25": 1300.0,
+     "p75": 2000.0,
+     "quantilesReported": true
+    },
+    "inside": 8,
+    "message": "The band ₹900–2,200 covers 8 of 11 price observations for HOME_FURNISHING; the median observed is ₹1,500.",
+    "verdict": "SOUND"
+   },
+   {
+    "above": 0,
+    "below": 0,
+    "category": "DUPATTA_STOLE",
+    "coverage": 1.0,
+    "declaredHigh": 3500.0,
+    "declaredLow": 950.0,
+    "evidence": {
+     "count": 11,
+     "maximum": 3500.0,
+     "mean": 1981.82,
+     "median": 1800.0,
+     "minimum": 950.0,
+     "p25": 1450.0,
+     "p75": 2300.0,
+     "quantilesReported": true
+    },
+    "inside": 11,
+    "message": "The band ₹950–3,500 covers 11 of 11 price observations for DUPATTA_STOLE; the median observed is ₹1,800.",
+    "verdict": "SOUND"
+   },
+   {
+    "above": 4,
+    "below": 0,
+    "category": "YARDAGE",
+    "coverage": 0.6,
+    "declaredHigh": 1800.0,
+    "declaredLow": 950.0,
+    "evidence": {
+     "count": 10,
+     "maximum": 3500.0,
+     "mean": 1835.0,
+     "median": 1650.0,
+     "minimum": 950.0,
+     "p25": 1425.0,
+     "p75": 2050.0,
+     "quantilesReported": true
+    },
+    "inside": 6,
+    "message": "The band ₹950–1,800 covers 6 of 10 price observations for YARDAGE; the median observed is ₹1,650.",
+    "verdict": "SOUND"
+   },
+   {
+    "above": 5,
+    "below": 0,
+    "category": "ACCESSORY",
+    "coverage": 0.5455,
+    "declaredHigh": 1500.0,
+    "declaredLow": 600.0,
+    "evidence": {
+     "count": 11,
+     "maximum": 3500.0,
+     "mean": 1736.27,
+     "median": 1500.0,
+     "minimum": 749.0,
+     "p25": 1300.0,
+     "p75": 2000.0,
+     "quantilesReported": true
+    },
+    "inside": 6,
+    "message": "The band ₹600–1,500 sits below the evidence for ACCESSORY: 5 of 11 observations are above it, and the median observed is ₹1,500. The prototypes may be priced under what buyers said.",
+    "verdict": "LOW"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 10,
+    "maximum": 3500.0,
+    "mean": 1835.0,
+    "median": 1650.0,
+    "minimum": 950.0,
+    "p25": 1425.0,
+    "p75": 2050.0,
+    "quantilesReported": true
+   },
+   "ACCESSORY": {
+    "count": 1,
+    "maximum": 749.0,
+    "mean": 749.0,
+    "median": 749.0,
+    "minimum": 749.0,
+    "p25": 749.0,
+    "p75": 749.0,
+    "quantilesReported": false
+   },
+   "DUPATTA_STOLE": {
+    "count": 1,
+    "maximum": 3450.0,
+    "mean": 3450.0,
+    "median": 3450.0,
+    "minimum": 3450.0,
+    "p25": 3450.0,
+    "p75": 3450.0,
+    "quantilesReported": false
+   },
+   "HOME_FURNISHING": {
+    "count": 1,
+    "maximum": 390.0,
+    "mean": 390.0,
+    "median": 390.0,
+    "minimum": 390.0,
+    "p25": 390.0,
+    "p75": 390.0,
+    "quantilesReported": false
+   },
+   "SAREE": {
+    "count": 1,
+    "maximum": 4200.0,
+    "mean": 4200.0,
+    "median": 4200.0,
+    "minimum": 4200.0,
+    "p25": 4200.0,
+    "p75": 4200.0,
+    "quantilesReported": false
+   },
+   "TABLE_LINEN": {
+    "count": 1,
+    "maximum": 1250.0,
+    "mean": 1250.0,
+    "median": 1250.0,
+    "minimum": 1250.0,
+    "p25": 1250.0,
+    "p75": 1250.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [],
+  "clusters": [
+   {
+    "coOccurrences": 4,
+    "members": [
+     "cushion cover",
+     "dupatta",
+     "gift packing",
+     "scarf",
+     "stole",
+     "table runner"
+    ],
+    "mentions": 21
+   },
+   {
+    "coOccurrences": 0,
+    "members": [
+     "yardage"
+    ],
+    "mentions": 2
+   }
+  ],
+  "competitorPrices": {
+   "count": 5,
+   "maximum": 4200.0,
+   "mean": 2007.8,
+   "median": 1250.0,
+   "minimum": 390.0,
+   "p25": 749.0,
+   "p75": 3450.0,
+   "quantilesReported": true
+  },
+  "competitors": [
+   {
+    "category": "TABLE_LINEN",
+    "name": "Pochampally double-ikat cotton table runner, 180 x 33 cm",
+    "note": "₹1,250 is below what 80% of all 10 buyers asked said they would pay (their median: ₹1,650).",
+    "percentile": 0.2,
+    "price": 1250.0,
+    "seller": "Telangana handloom counter, Ekamra Haat craft mela",
+    "versusMedian": -400.0
+   },
+   {
+    "category": "HOME_FURNISHING",
+    "name": "Screen-printed ikat-effect cushion cover pair, 45 x 45 cm",
+    "note": "₹390 is below what 100% of all 10 buyers asked said they would pay (their median: ₹1,650).",
+    "percentile": 0.0,
+    "price": 390.0,
+    "seller": "General cloth traders, Hatapada lane",
+    "versusMedian": -1260.0
+   },
+   {
+    "category": "DUPATTA_STOLE",
+    "name": "Nuapatna khandua silk stole, 210 x 65 cm",
+    "note": "₹3,450 is above what 90% of all 10 buyers asked said they would pay (their median: ₹1,650).",
+    "percentile": 0.9,
+    "price": 3450.0,
+    "seller": "Boyanika, Western Tower showroom",
+    "versusMedian": 1800.0
+   },
+   {
+    "category": "SAREE",
+    "name": "Sambalpuri bandha cotton saree, existing cluster line",
+    "note": "₹4,200 is above what 100% of all 10 buyers asked said they would pay (their median: ₹1,650).",
+    "percentile": 1.0,
+    "price": 4200.0,
+    "seller": "Sambalpur Handloom Emporium, Golebazar",
+    "versusMedian": 2550.0
+   },
+   {
+    "category": "ACCESSORY",
+    "name": "Block-printed padded laptop sleeve, 38 x 28 cm",
+    "note": "₹749 is below what 100% of all 10 buyers asked said they would pay (their median: ₹1,650).",
+    "percentile": 0.0,
+    "price": 749.0,
+    "seller": "Private lifestyle stall, Ekamra Haat craft mela",
+    "versusMedian": -901.0
+   }
+  ],
+  "groupCounts": {
+   "CONSUMER": 5,
+   "EXPORTER": 2,
+   "RETAILER": 2,
+   "WHOLESALER": 1
+  },
+  "observations": 15,
+  "respondentPrices": {
+   "count": 10,
+   "maximum": 3500.0,
+   "mean": 1835.0,
+   "median": 1650.0,
+   "minimum": 950.0,
+   "p25": 1425.0,
+   "p75": 2050.0,
+   "quantilesReported": true
+  },
+  "swot": [
+   {
+    "hasOwnEvidence": true,
+    "kind": "STRENGTH",
+    "overlap": 4,
+    "point": "A GI-registered double-ikat technique in which the yarn is tied and dyed to the motif before weaving, held as a living skill by all twenty participants across four villages. It cannot be reproduced on a power loom, and the survey found no counterfeit that came close on the reverse face.",
+    "supported": true,
+    "supportedBy": [
+     "Kum. Ipsita Rath, software engineer, 27",
+     "Ms. Shreya Kulkarni, buying head, Tvaksati Design Studio, Bengaluru",
+     "Smt. Rina Mohanty, stall manager, Utkal Vastra craft counter",
+     "Sri Ashutosh Mishra, architect, 38",
+     "Smt. Sarita Agrawal, homemaker, 52"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "STRENGTH",
+    "overlap": 4,
+    "point": "The entire value chain — motif drafting, tying, dyeing, warping and weaving — sits inside Barpali under one co-operative society, so a change of product can be executed end to end without bringing in an outside vendor or a job worker.",
+    "supported": true,
+    "supportedBy": [
+     "Sri Debasis Nayak, bank officer, 41",
+     "Sri Prafulla Kumar Sahoo, proprietor, Sahoo Handloom Stores",
+     "Ms. Shreya Kulkarni, buying head, Tvaksati Design Studio, Bengaluru",
+     "Smt. Anita Das, Procurement Officer (Handloom), Boyanika",
+     "Sri Rajesh Bothra, partner, export merchant house, Kolkata"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "STRENGTH",
+    "overlap": 3,
+    "point": "The craft is already known to the buyer by name, which removes the cost of introducing an unfamiliar product. Recognition is not what has to be built; only the format has to change.",
+    "supported": true,
+    "supportedBy": [
+     "Smt. Sarita Agrawal, homemaker, 52",
+     "Kum. Ipsita Rath, software engineer, 27",
+     "Smt. Anita Das, Procurement Officer (Handloom), Boyanika",
+     "Smt. Rina Mohanty, stall manager, Utkal Vastra craft counter",
+     "Sri Debasis Nayak, bank officer, 41"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "WEAKNESS",
+    "overlap": 5,
+    "point": "The product range is effectively a single article. Almost everything the cluster offers is a saree, so it is absent from the gifting and home shelf where the turnover is, and it has no answer for a buyer who does not wear one.",
+    "supported": true,
+    "supportedBy": [
+     "Smt. Mitali Panda, school teacher, 34",
+     "Smt. Sarita Agrawal, homemaker, 52",
+     "Sri Debasis Nayak, bank officer, 41",
+     "Sri Rajesh Bothra, partner, export merchant house, Kolkata",
+     "Kum. Ipsita Rath, software engineer, 27"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "WEAKNESS",
+    "overlap": 4,
+    "point": "The production cycle is long and the working capital is locked up for the whole of it — forty-five to seventy days per saree against a unit realisation of ₹2,800 to ₹6,500, which leaves the artisan waiting for two months to be paid for one piece.",
+    "supported": true,
+    "supportedBy": [
+     "Ms. Shreya Kulkarni, buying head, Tvaksati Design Studio, Bengaluru",
+     "Smt. Sarita Agrawal, homemaker, 52",
+     "Smt. Rina Mohanty, stall manager, Utkal Vastra craft counter",
+     "Kum. Ipsita Rath, software engineer, 27",
+     "Smt. Anita Das, Procurement Officer (Handloom), Boyanika"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "WEAKNESS",
+    "overlap": 7,
+    "point": "Colour is not held across dye lots because dyeing is done household by household with dyestuff bought in small quantities and no written recipe. Institutional and export buyers named this, not price or design, as the single reason they do not place repeat orders.",
+    "supported": true,
+    "supportedBy": [
+     "Ms. Shreya Kulkarni, buying head, Tvaksati Design Studio, Bengaluru",
+     "Smt. Anita Das, Procurement Officer (Handloom), Boyanika",
+     "Sri Rajesh Bothra, partner, export merchant house, Kolkata",
+     "Sri Prafulla Kumar Sahoo, proprietor, Sahoo Handloom Stores",
+     "Sri Ashutosh Mishra, architect, 38"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "OPPORTUNITY",
+    "overlap": 6,
+    "point": "An empty sub-₹2,000 gifting and home-linen shelf in every market surveyed, which retailers are currently filling with printed goods from outside the State for want of an Odia alternative.",
+    "supported": true,
+    "supportedBy": [
+     "Sri Prafulla Kumar Sahoo, proprietor, Sahoo Handloom Stores",
+     "Sri Debasis Nayak, bank officer, 41",
+     "Smt. Sarita Agrawal, homemaker, 52"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "OPPORTUNITY",
+    "overlap": 4,
+    "point": "A younger urban buyer who rejects the saree but responds strongly to the same motif on a neutral ground in a smaller scale, opening a segment the cluster has never served.",
+    "supported": true,
+    "supportedBy": [
+     "Kum. Ipsita Rath, software engineer, 27",
+     "Smt. Rina Mohanty, stall manager, Utkal Vastra craft counter",
+     "Smt. Sarita Agrawal, homemaker, 52",
+     "Sri Ashutosh Mishra, architect, 38",
+     "Sri Debasis Nayak, bank officer, 41"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "OPPORTUNITY",
+    "overlap": 8,
+    "point": "Two institutional buyers are ready to commit to orders on conditions the cluster can meet within this workshop — a written dye recipe, colour matching across a lot and a stated delivery calendar.",
+    "supported": true,
+    "supportedBy": [
+     "Smt. Anita Das, Procurement Officer (Handloom), Boyanika",
+     "Sri Rajesh Bothra, partner, export merchant house, Kolkata",
+     "Ms. Shreya Kulkarni, buying head, Tvaksati Design Studio, Bengaluru",
+     "Smt. Rina Mohanty, stall manager, Utkal Vastra craft counter",
+     "Sri Ashutosh Mishra, architect, 38"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "THREAT",
+    "overlap": 3,
+    "point": "Screen-printed power-loom imitation of the ikat blur, sold at a fifth of the handwoven price, occupies the exact shelf slot and price expectation the new range is aimed at, and it conditions the buyer to a price the craft can never meet.",
+    "supported": true,
+    "supportedBy": [
+     "Smt. Rina Mohanty, stall manager, Utkal Vastra craft counter",
+     "Sri Prafulla Kumar Sahoo, proprietor, Sahoo Handloom Stores",
+     "Smt. Mitali Panda, school teacher, 34",
+     "Smt. Sarita Agrawal, homemaker, 52"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "THREAT",
+    "overlap": 8,
+    "point": "Other genuine ikat clusters are already occupying the diversified formats in Odisha's own retail space, and they have moved first. Pochampally is selling table linen in Bhubaneswar and Nuapatna is holding the premium stole shelf at Boyanika.",
+    "supported": true,
+    "supportedBy": [
+     "Smt. Rina Mohanty, stall manager, Utkal Vastra craft counter",
+     "Smt. Anita Das, Procurement Officer (Handloom), Boyanika",
+     "Sri Prafulla Kumar Sahoo, proprietor, Sahoo Handloom Stores",
+     "Sri Rajesh Bothra, partner, export merchant house, Kolkata",
+     "Kum. Ipsita Rath, software engineer, 27"
+    ]
+   },
+   {
+    "hasOwnEvidence": true,
+    "kind": "THREAT",
+    "overlap": 2,
+    "point": "The tying skill is ageing and thinning. Tying is the slowest operation and the scarcest capacity in the cluster, and if younger hands continue to leave for wage work, any order growth will run into a constraint that cannot be purchased or hired quickly.",
+    "supported": true,
+    "supportedBy": [
+     "Sri Ashutosh Mishra, architect, 38",
+     "Sri Prafulla Kumar Sahoo, proprietor, Sahoo Handloom Stores",
+     "Sri Rajesh Bothra, partner, export merchant house, Kolkata"
+    ]
+   }
+  ],
+  "unsupportedSwot": []
+ },
+ "market/m28-python-whitespace-forms": {
+  "bands": [
+   {
+    "above": 0,
+    "below": 0,
+    "category": "SAREE",
+    "coverage": 1.0,
+    "declaredHigh": 1000.0,
+    "declaredLow": 400.0,
+    "evidence": {
+     "count": 4,
+     "maximum": 900.0,
+     "mean": 687.5,
+     "median": 675.0,
+     "minimum": 500.0,
+     "p25": 675.0,
+     "p75": 675.0,
+     "quantilesReported": false
+    },
+    "inside": 4,
+    "message": "Only 4 price observation(s) were recorded for SAREE — too few to judge the band against. 4 of them fall inside it.",
+    "verdict": "UNVERIFIABLE"
+   }
+  ],
+  "byCategory": {
+   "": {
+    "count": 3,
+    "maximum": 900.0,
+    "mean": 700.0,
+    "median": 700.0,
+    "minimum": 500.0,
+    "p25": 700.0,
+    "p75": 700.0,
+    "quantilesReported": false
+   },
+   "SAREE": {
+    "count": 1,
+    "maximum": 650.0,
+    "mean": 650.0,
+    "median": 650.0,
+    "minimum": 650.0,
+    "p25": 650.0,
+    "p75": 650.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Only 3 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [
+   {
+    "coOccurrences": 3,
+    "members": [
+     "saree",
+     "stole"
+    ],
+    "mentions": 6
+   }
+  ],
+  "competitorPrices": {
+   "count": 1,
+   "maximum": 650.0,
+   "mean": 650.0,
+   "median": 650.0,
+   "minimum": 650.0,
+   "p25": 650.0,
+   "p75": 650.0,
+   "quantilesReported": false
+  },
+  "competitors": [
+   {
+    "category": "SAREE",
+    "name": "Mill saree",
+    "note": "₹650. Too few buyer price expectations were recorded in the survey to place this against them.",
+    "percentile": null,
+    "price": 650.0,
+    "seller": "Ganesh",
+    "versusMedian": null
+   }
+  ],
+  "groupCounts": {
+   "CONSUMER": 3
+  },
+  "observations": 4,
+  "respondentPrices": {
+   "count": 3,
+   "maximum": 900.0,
+   "mean": 700.0,
+   "median": 700.0,
+   "minimum": 500.0,
+   "p25": 700.0,
+   "p75": 700.0,
+   "quantilesReported": false
+  },
+  "swot": [
+   {
+    "hasOwnEvidence": false,
+    "kind": "STRENGTH",
+    "overlap": 2,
+    "point": "indigo dye is the strength",
+    "supported": true,
+    "supportedBy": [
+     "Kalpana"
+    ]
+   }
+  ],
+  "unsupportedSwot": []
+ },
+ "market/m29-mean-compensated-sum": {
+  "bands": [],
+  "byCategory": {
+   "": {
+    "count": 4,
+    "maximum": 1e+308,
+    "mean": 250.0,
+    "median": 500.0,
+    "minimum": -1e+308,
+    "p25": 500.0,
+    "p75": 500.0,
+    "quantilesReported": false
+   }
+  },
+  "cautions": [
+   "Only 4 respondent price expectation(s) were recorded. The figures below describe what was collected; they are not a market estimate."
+  ],
+  "clusters": [],
+  "competitorPrices": null,
+  "competitors": [],
+  "groupCounts": {
+   "CONSUMER": 4
+  },
+  "observations": 4,
+  "respondentPrices": {
+   "count": 4,
+   "maximum": 1e+308,
+   "mean": 250.0,
+   "median": 500.0,
+   "minimum": -1e+308,
+   "p25": 500.0,
+   "p75": 500.0,
+   "quantilesReported": false
+  },
+  "swot": [],
+  "unsupportedSwot": []
+ }
+}

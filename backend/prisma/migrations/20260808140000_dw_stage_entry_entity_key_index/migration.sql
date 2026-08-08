@@ -1,0 +1,76 @@
+-- The cross-workshop read of DwStageEntry, which no existing index could serve.
+--
+-- WHAT WAS SLOW, MEASURED. `GET /analytics/design-workshops` asks for a named handful of entity
+-- keys across the WHOLE archive — `ANALYSED_ENTITIES` in app/api/routes/analytics.py, currently
+-- followUp / costSheet / designOpportunity — rather than for the rows of one workshop. The two
+-- indexes DwStageEntry already carries both LEAD WITH `designWorkshopId`
+-- (`[designWorkshopId, stageKey, ordinal]` and `[designWorkshopId, entityKey]`), and a btree
+-- cannot be probed on its second column, so a query that names no workshop could use neither.
+-- The planner fell back to a sequential scan. EXPLAIN (ANALYZE, BUFFERS) on the local stack holding
+-- 6,952 stage rows, warm shared buffers, best of three:
+--
+--   Limit  (actual time=0.022..4.254 rows=69 loops=1)
+--     Buffers: shared hit=312
+--     ->  Seq Scan on "DwStageEntry"  (actual time=0.022..4.254 rows=69 loops=1)
+--           Filter: (("deletedAt" IS NULL) AND ("entityKey" = ANY ('{followUp,costSheet,...}')))
+--           Rows Removed by Filter: 6883
+--   Execution Time: 4.300 ms
+--
+-- Six thousand eight hundred and eighty-three rows read and thrown away to return sixty-nine. With
+-- this index, same query, same data, same conditions:
+--
+--   Limit  (actual time=0.048..0.262 rows=69 loops=1)
+--     Buffers: shared hit=62
+--     ->  Bitmap Heap Scan on "DwStageEntry"
+--           Recheck Cond: ("entityKey" = ANY ('{followUp,costSheet,designOpportunity}'))
+--           Filter: ("deletedAt" IS NULL)   Rows Removed by Filter: 49
+--           ->  Bitmap Index Scan on "DwStageEntry_entityKey_idx"  (rows=118)
+--   Execution Time: 0.297 ms
+--
+-- 4.30 ms -> 0.30 ms, 312 shared buffers -> 62.
+--
+-- BE HONEST ABOUT WHAT THIS DOES NOT BUY. Measured at the ENDPOINT, `GET /analytics/design-workshops`
+-- is 37 ms median with this index and 40 ms without it (15 calls each, interleaved) — the same
+-- number twice, because four milliseconds of query sit under roughly thirty-five of request
+-- handling and JSON. Nobody will feel this today, and it is not being claimed that they will.
+--
+-- IT IS THE SHAPE THAT IS WORTH THE INDEX, not the four milliseconds. The sequential scan's cost is
+-- the size of the ARCHIVE; the bitmap scan's is the size of the ANSWER. This is the only read in
+-- the design-workshop family that is not already proportional to what it returns, and it is on the
+-- one endpoint deliberately built to grow — `ROW_CAP` is sized for roughly 800 complete workshops,
+-- more than ten times the entries here, at which point the scan is reading ~70,000 rows to return
+-- the same handful while this index is not. Five times fewer buffers also matters more on the
+-- deployment this runs on than it does on a laptop: one small instance with a 128 MB shared_buffers,
+-- where the pages a scan evicts are pages some other request wanted.
+--
+-- WHY NOT PARTIAL ON `deletedAt IS NULL`, which is how the endpoint actually filters. Because it
+-- buys almost nothing here and cannot be written in schema.prisma. Measured both ways: the partial
+-- index came out at 0.249 ms / 52 buffers against the plain index's 0.539 ms / 56 — inside the
+-- noise, because 6,361 of 6,952 rows are live and the recheck the plain index leaves behind
+-- discards only 42 of them. Prisma has no syntax for a WHERE clause on `@@index`, so a partial
+-- index would have to be raw SQL here and permanently invisible to the schema — `prisma migrate
+-- dev` would report drift against it for ever. A measurable difference would be worth that; this
+-- one is not.
+--
+-- WHY `[entityKey]` ALONE rather than `[entityKey, deletedAt]`. The second column would only
+-- convert a 42-row recheck into an index condition, and it would make the index wider on a table
+-- every stage save writes to. The 43 distinct entity keys make the first column selective enough
+-- on its own (~2% of the table per key).
+--
+-- PURELY ADDITIVE AND FULLY REVERSIBLE. One index. No column, constraint or default is touched, no
+-- row is rewritten, and nothing about what any query RETURNS changes — an index cannot change a
+-- result set, only how fast it is found. Rolling back is `DROP INDEX "DwStageEntry_entityKey_idx"`.
+--
+-- HOW TO APPLY THIS ONE, exactly as 20260726200000_index_coverage does it. There are two files in
+-- this directory and they do the same work:
+--
+--   apply_concurrently.sql  run against production by hand, BEFORE deploying
+--   migration.sql           this file, which `prisma migrate deploy` runs during the deploy
+--
+-- They are a pair because CREATE INDEX CONCURRENTLY cannot run inside a transaction block and
+-- `prisma migrate deploy` sends a migration file as one implicitly-transacted multi-statement
+-- query. See the long note in that migration for what happens if you ignore this. Running only
+-- this file is still correct — it just takes a brief lock while it builds.
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "DwStageEntry_entityKey_idx" ON "DwStageEntry"("entityKey");

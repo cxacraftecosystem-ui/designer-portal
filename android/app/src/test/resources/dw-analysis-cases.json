@@ -1,0 +1,762 @@
+{
+  "note": "THE SHARED CASE TABLE. Read verbatim by DwAnalysisParityTest.kt and by the harness that regenerates dw-analysis-expected.json from backend/app/services/{market_analysis,cost_integrity}.py. Every case is a set of stage entry data maps exactly as the draft stores them. Do not 'tidy' a value: the odd spellings (a hexadecimal scrap, Odia digits, a signed zero, a no-break space) are each a place the two languages part company.",
+
+  "market": [
+    {
+      "name": "m01-empty",
+      "responses": [], "competitors": [], "bands": [], "swot": []
+    },
+    {
+      "name": "m02-one-price",
+      "responses": [{"respondentName": "Sarita", "respondentGroup": "CONSUMER", "priceExpectation": "450.00", "response": "would buy at this price"}],
+      "competitors": [], "bands": [], "swot": []
+    },
+    {
+      "name": "m03-four-prices-below-quantile-floor",
+      "responses": [
+        {"respondentName": "A", "respondentGroup": "CONSUMER", "priceExpectation": "100.00"},
+        {"respondentName": "B", "respondentGroup": "RETAILER", "priceExpectation": "200.00"},
+        {"respondentName": "C", "respondentGroup": "CONSUMER", "priceExpectation": "300.00"},
+        {"respondentName": "D", "respondentGroup": "CONSUMER", "priceExpectation": "400.00"}
+      ],
+      "competitors": [], "bands": [], "swot": []
+    },
+    {
+      "name": "m04-five-prices-at-quantile-floor",
+      "responses": [
+        {"respondentName": "A", "respondentGroup": "CONSUMER", "priceExpectation": "100.00"},
+        {"respondentName": "B", "respondentGroup": "RETAILER", "priceExpectation": "200.00"},
+        {"respondentName": "C", "respondentGroup": "CONSUMER", "priceExpectation": "300.00"},
+        {"respondentName": "D", "respondentGroup": "CONSUMER", "priceExpectation": "400.00"},
+        {"respondentName": "E", "respondentGroup": "CONSUMER", "priceExpectation": "500.00"}
+      ],
+      "competitors": [], "bands": [], "swot": []
+    },
+    {
+      "name": "m05-seven-prices-band-unverifiable",
+      "responses": [
+        {"respondentName": "A", "priceExpectation": "100.00"},
+        {"respondentName": "B", "priceExpectation": "200.00"},
+        {"respondentName": "C", "priceExpectation": "300.00"},
+        {"respondentName": "D", "priceExpectation": "400.00"},
+        {"respondentName": "E", "priceExpectation": "500.00"},
+        {"respondentName": "F", "priceExpectation": "600.00"},
+        {"respondentName": "G", "priceExpectation": "700.00"}
+      ],
+      "competitors": [],
+      "bands": [{"category": "SAREE", "lowPrice": "300.00", "highPrice": "600.00"}],
+      "swot": []
+    },
+    {
+      "name": "m06-eight-prices-band-sound",
+      "responses": [
+        {"respondentName": "A", "priceExpectation": "100.00"},
+        {"respondentName": "B", "priceExpectation": "200.00"},
+        {"respondentName": "C", "priceExpectation": "300.00"},
+        {"respondentName": "D", "priceExpectation": "400.00"},
+        {"respondentName": "E", "priceExpectation": "500.00"},
+        {"respondentName": "F", "priceExpectation": "600.00"},
+        {"respondentName": "G", "priceExpectation": "700.00"},
+        {"respondentName": "H", "priceExpectation": "800.00"}
+      ],
+      "competitors": [],
+      "bands": [{"category": "SAREE", "lowPrice": "200.00", "highPrice": "700.00"}],
+      "swot": []
+    },
+    {
+      "name": "m07-all-blank-rows",
+      "responses": [
+        {"respondentName": "", "respondentGroup": "", "priceExpectation": "", "response": "", "place": "", "productsDiscussed": []},
+        {"respondentName": null, "respondentGroup": null, "priceExpectation": null, "response": null, "place": null, "productsDiscussed": null},
+        {}
+      ],
+      "competitors": [{"name": "", "seller": "", "category": "", "price": ""}],
+      "bands": [{"category": "", "lowPrice": "", "highPrice": ""}],
+      "swot": [{"kind": "", "point": "", "evidence": ""}, {"kind": "STRENGTH", "point": "   ", "evidence": null}]
+    },
+    {
+      "name": "m08-unparseable-prices",
+      "responses": [
+        {"respondentName": "hex", "priceExpectation": "0x1A"},
+        {"respondentName": "java-suffix", "priceExpectation": "1.5f"},
+        {"respondentName": "words", "priceExpectation": "about four hundred"},
+        {"respondentName": "empty", "priceExpectation": ""},
+        {"respondentName": "spaces", "priceExpectation": "   "},
+        {"respondentName": "binary", "priceExpectation": "0b101"},
+        {"respondentName": "double-underscore", "priceExpectation": "1__0"},
+        {"respondentName": "leading-underscore", "priceExpectation": "_1"},
+        {"respondentName": "trailing-underscore", "priceExpectation": "1_"},
+        {"respondentName": "overflow", "priceExpectation": "1e400"},
+        {"respondentName": "list", "priceExpectation": ["500.00"]},
+        {"respondentName": "object", "priceExpectation": {"amount": "500.00"}},
+        {"respondentName": "boolean", "priceExpectation": true},
+        {"respondentName": "good", "priceExpectation": "450.00"}
+      ],
+      "competitors": [], "bands": [], "swot": []
+    },
+    {
+      "name": "m09-comma-grouped-and-unicode-digits",
+      "responses": [
+        {"respondentName": "western-grouping", "priceExpectation": "1,250.00"},
+        {"respondentName": "indian-grouping", "priceExpectation": "1,25,000.00"},
+        {"respondentName": "underscored", "priceExpectation": "1_000"},
+        {"respondentName": "odia-digits", "priceExpectation": "୧୨୩"},
+        {"respondentName": "arabic-indic-digits", "priceExpectation": "١٢٣"},
+        {"respondentName": "nbsp-padded", "priceExpectation": " 450 "},
+        {"respondentName": "bare-dot", "priceExpectation": ".5"},
+        {"respondentName": "trailing-dot", "priceExpectation": "5."},
+        {"respondentName": "exponent", "priceExpectation": "+7e2"},
+        {"respondentName": "json-number", "priceExpectation": 640}
+      ],
+      "competitors": [], "bands": [], "swot": []
+    },
+    {
+      "name": "m10-negatives-and-signed-zero",
+      "responses": [
+        {"respondentName": "zero", "priceExpectation": "0.00"},
+        {"respondentName": "negative-zero", "priceExpectation": "-0.00"},
+        {"respondentName": "negative", "priceExpectation": "-100.00"}
+      ],
+      "competitors": [], "bands": [{"category": "", "lowPrice": "-50.00", "highPrice": "50.00"}], "swot": []
+    },
+    {
+      "name": "m11-non-finite-strings",
+      "responses": [
+        {"respondentName": "nan-lower", "priceExpectation": "nan"},
+        {"respondentName": "NaN-java", "priceExpectation": "NaN"},
+        {"respondentName": "inf", "priceExpectation": "inf"},
+        {"respondentName": "Infinity", "priceExpectation": "Infinity"},
+        {"respondentName": "neg-inf", "priceExpectation": "-inf"},
+        {"respondentName": "good", "priceExpectation": "250.00"}
+      ],
+      "competitors": [{"name": "Mill stole", "price": "Infinity", "category": "DUPATTA_STOLE"}],
+      "bands": [], "swot": []
+    },
+    {
+      "name": "m12-reversed-band",
+      "responses": [
+        {"respondentName": "A", "priceExpectation": "400.00"},
+        {"respondentName": "B", "priceExpectation": "500.00"},
+        {"respondentName": "C", "priceExpectation": "600.00"},
+        {"respondentName": "D", "priceExpectation": "700.00"},
+        {"respondentName": "E", "priceExpectation": "800.00"},
+        {"respondentName": "F", "priceExpectation": "900.00"},
+        {"respondentName": "G", "priceExpectation": "1000.00"},
+        {"respondentName": "H", "priceExpectation": "1100.00"}
+      ],
+      "competitors": [],
+      "bands": [{"category": "SAREE", "lowPrice": "1000.00", "highPrice": "400.00"}],
+      "swot": []
+    },
+    {
+      "name": "m13-transposed-band-high",
+      "responses": [
+        {"respondentName": "A", "priceExpectation": "400.00"},
+        {"respondentName": "B", "priceExpectation": "450.00"},
+        {"respondentName": "C", "priceExpectation": "500.00"},
+        {"respondentName": "D", "priceExpectation": "550.00"},
+        {"respondentName": "E", "priceExpectation": "600.00"},
+        {"respondentName": "F", "priceExpectation": "650.00"},
+        {"respondentName": "G", "priceExpectation": "700.00"},
+        {"respondentName": "H", "priceExpectation": "750.00"}
+      ],
+      "competitors": [],
+      "bands": [{"category": "SAREE", "lowPrice": "4000.00", "highPrice": "8000.00"}],
+      "swot": []
+    },
+    {
+      "name": "m14-band-low",
+      "responses": [
+        {"respondentName": "A", "priceExpectation": "400.00"},
+        {"respondentName": "B", "priceExpectation": "450.00"},
+        {"respondentName": "C", "priceExpectation": "500.00"},
+        {"respondentName": "D", "priceExpectation": "550.00"},
+        {"respondentName": "E", "priceExpectation": "600.00"},
+        {"respondentName": "F", "priceExpectation": "650.00"},
+        {"respondentName": "G", "priceExpectation": "700.00"},
+        {"respondentName": "H", "priceExpectation": "750.00"}
+      ],
+      "competitors": [],
+      "bands": [{"category": "SAREE", "lowPrice": "40.00", "highPrice": "80.00"}],
+      "swot": []
+    },
+    {
+      "name": "m15-band-narrow",
+      "responses": [
+        {"respondentName": "A", "priceExpectation": "100.00"},
+        {"respondentName": "B", "priceExpectation": "150.00"},
+        {"respondentName": "C", "priceExpectation": "200.00"},
+        {"respondentName": "D", "priceExpectation": "500.00"},
+        {"respondentName": "E", "priceExpectation": "520.00"},
+        {"respondentName": "F", "priceExpectation": "900.00"},
+        {"respondentName": "G", "priceExpectation": "950.00"},
+        {"respondentName": "H", "priceExpectation": "1000.00"}
+      ],
+      "competitors": [],
+      "bands": [{"category": "SAREE", "lowPrice": "480.00", "highPrice": "540.00"}],
+      "swot": []
+    },
+    {
+      "name": "m16-band-incomplete",
+      "responses": [
+        {"respondentName": "A", "priceExpectation": "400.00"},
+        {"respondentName": "B", "priceExpectation": "500.00"}
+      ],
+      "competitors": [],
+      "bands": [
+        {"category": "SAREE", "lowPrice": "300.00", "highPrice": ""},
+        {"category": "BAG", "lowPrice": null, "highPrice": "900.00"}
+      ],
+      "swot": []
+    },
+    {
+      "name": "m17-band-no-evidence-at-all",
+      "responses": [{"respondentName": "A", "response": "no price given"}],
+      "competitors": [],
+      "bands": [{"category": "FLOOR_COVERING", "lowPrice": "300.00", "highPrice": "900.00"}],
+      "swot": []
+    },
+    {
+      "name": "m18-dominant-group-caution",
+      "responses": [
+        {"respondentName": "A", "respondentGroup": "CONSUMER", "priceExpectation": "100.00"},
+        {"respondentName": "B", "respondentGroup": "CONSUMER", "priceExpectation": "110.00"},
+        {"respondentName": "C", "respondentGroup": "CONSUMER", "priceExpectation": "120.00"},
+        {"respondentName": "D", "respondentGroup": "CONSUMER", "priceExpectation": "130.00"},
+        {"respondentName": "E", "respondentGroup": "CONSUMER", "priceExpectation": "140.00"},
+        {"respondentName": "F", "respondentGroup": "CONSUMER", "priceExpectation": "150.00"},
+        {"respondentName": "G", "respondentGroup": "CONSUMER", "priceExpectation": "160.00"},
+        {"respondentName": "H", "respondentGroup": "CONSUMER", "priceExpectation": "170.00"},
+        {"respondentName": "I", "respondentGroup": "CONSUMER", "priceExpectation": "180.00"},
+        {"respondentName": "J", "respondentGroup": "RETAILER", "priceExpectation": "900.00"}
+      ],
+      "competitors": [], "bands": [], "swot": []
+    },
+    {
+      "name": "m19-competitors-only-no-buyers",
+      "responses": [{"respondentName": "A", "response": "liked the border"}],
+      "competitors": [
+        {"name": "Mill saree", "seller": "Ganesh Textiles", "category": "SAREE", "price": "1,250.00"},
+        {"name": "Powerloom stole", "seller": "", "category": "DUPATTA_STOLE", "price": "310.50"}
+      ],
+      "bands": [], "swot": []
+    },
+    {
+      "name": "m20-swot-odia",
+      "responses": [
+        {"respondentName": "ବିନୋଦ", "response": "ଏହି ରଙ୍ଗ ଭଲ ଅଛି ଦାମ କମ୍", "place": "ବଜାର"},
+        {"respondentName": "Latha", "response": "the border is fine", "place": "market"}
+      ],
+      "competitors": [],
+      "bands": [],
+      "swot": [
+        {"kind": "STRENGTH", "point": "ରଙ୍ଗ ଏବଂ ଦାମ ଉପରେ ମତାମତ", "evidence": ""},
+        {"kind": "THREAT", "point": "synthetic competition from the mills", "evidence": ""}
+      ]
+    },
+    {
+      "name": "m21-swot-own-evidence-and-blank-point",
+      "responses": [
+        {"respondentName": "Ravi", "response": "indigo dye quality is inconsistent", "productsDiscussed": ["stole", "saree"]}
+      ],
+      "competitors": [],
+      "bands": [],
+      "swot": [
+        {"kind": "WEAKNESS", "point": "unrelated assertion about packaging", "evidence": "the cluster head said so"},
+        {"kind": "WEAKNESS", "point": "unrelated assertion about logistics", "evidence": "   "},
+        {"kind": "OPPORTUNITY", "point": "", "evidence": "x"},
+        {"kind": "STRENGTH", "point": "indigo dye is the cluster's signature", "evidence": ""}
+      ]
+    },
+    {
+      "name": "m22-swot-astral-name-tiebreak",
+      "responses": [
+        {"respondentName": " Sita", "response": "indigo dye is good"},
+        {"respondentName": "𐀀 Ravi", "response": "the indigo dye smells"},
+        {"respondentName": "", "response": "indigo dye everywhere"}
+      ],
+      "competitors": [],
+      "bands": [],
+      "swot": [{"kind": "STRENGTH", "point": "indigo dye quality problem", "evidence": ""}]
+    },
+    {
+      "name": "m23-clusters-mixed-case",
+      "responses": [
+        {"respondentName": "A", "productsDiscussed": ["Stole", "SAREE"]},
+        {"respondentName": "B", "productsDiscussed": ["stole", "saree"]},
+        {"respondentName": "C", "productsDiscussed": ["STOLE", "Saree", "stole"]},
+        {"respondentName": "D", "productsDiscussed": ["bag"]}
+      ],
+      "competitors": [], "bands": [], "swot": []
+    },
+    {
+      "name": "m24-clusters-chain-and-string-tags",
+      "responses": [
+        {"respondentName": "A", "productsDiscussed": "stole, saree"},
+        {"respondentName": "B", "productsDiscussed": "stole,saree"},
+        {"respondentName": "C", "productsDiscussed": ["saree", "yardage"]},
+        {"respondentName": "D", "productsDiscussed": ["saree", "yardage"]},
+        {"respondentName": "E", "productsDiscussed": ["bag", "purse"]},
+        {"respondentName": "F", "productsDiscussed": [" ", "", "floor mat"]},
+        {"respondentName": "G", "productsDiscussed": ["floor mat", "bag"]},
+        {"respondentName": "H", "productsDiscussed": 4}
+      ],
+      "competitors": [], "bands": [], "swot": []
+    },
+    {
+      "name": "m25-half-even-median-and-mean",
+      "responses": [
+        {"respondentName": "A", "priceExpectation": "100.00"},
+        {"respondentName": "B", "priceExpectation": "200.00"},
+        {"respondentName": "C", "priceExpectation": "300.00"},
+        {"respondentName": "D", "priceExpectation": "600.00"},
+        {"respondentName": "E", "priceExpectation": "649.00"},
+        {"respondentName": "F", "priceExpectation": "700.00"},
+        {"respondentName": "G", "priceExpectation": "800.00"},
+        {"respondentName": "H", "priceExpectation": "900.00"}
+      ],
+      "competitors": [],
+      "bands": [{"category": "SAREE", "lowPrice": "300.00", "highPrice": "800.00"}],
+      "swot": []
+    },
+    {
+      "name": "m26-categorised-competitors-pooled-into-bands",
+      "responses": [
+        {"respondentName": "A", "respondentGroup": "CONSUMER", "priceExpectation": "300.00", "productsDiscussed": ["saree"]},
+        {"respondentName": "B", "respondentGroup": "CONSUMER", "priceExpectation": "350.00", "productsDiscussed": ["saree", "stole"]},
+        {"respondentName": "C", "respondentGroup": "RETAILER", "priceExpectation": "1,200.00", "productsDiscussed": ["saree", "stole"]}
+      ],
+      "competitors": [
+        {"name": "Mill saree", "seller": "Ganesh", "category": "SAREE", "price": "900.00"},
+        {"name": "  ", "seller": "  ", "category": "SAREE", "price": "1000.00"},
+        {"name": "No price", "seller": "X", "category": "SAREE", "price": ""},
+        {"name": "Stole", "seller": "Y", "category": "DUPATTA_STOLE", "price": "260.00"}
+      ],
+      "bands": [
+        {"category": "SAREE", "lowPrice": "300.00", "highPrice": "1000.00"},
+        {"category": "DUPATTA_STOLE", "lowPrice": "200.00", "highPrice": "400.00"}
+      ],
+      "swot": []
+    },
+    {
+      "comment": "THE REAL WORKSHOP, not a constructed case. These are the stage-8 and stage-9 rows of cmsik2jg8000eh8xc1lcy661a as GET /design-workshops/{id}/stages/{key} returns them, reduced to the keys market_analysis reads and verified to leave the payload unchanged. Its golden is what GET /design-workshops/{id}/market-analysis answered for the same rows, so a pass here is the handset agreeing with the running API about a workshop somebody filled in.",
+      "name": "m27-live-workshop",
+      "responses": [
+        {"place": "Ekamra Haat, Unit-III, Bhubaneswar", "priceExpectation": "1500.00", "productsDiscussed": ["Table runner", "Table mats", "Cushion cover"], "respondentGroup": "CONSUMER", "respondentName": "Smt. Mitali Panda, school teacher, 34", "response": "Recognised the fabric as Sambalpuri bandha at once and said her mother owns four such sarees, but that she owns none herself and does not wear them. Picked up the ecru runner sample first and asked whether it could be had in a length for a six-seater table. Said she buys two or three gifts a month in the ₹1,200 to ₹1,800 range and would prefer an article that shows the craft without being a garment. Asked twice whether the colour would run in a washing machine, and said a definite answer on that would decide the purchase."},
+        {"place": "Bargarh town market, Hatapada cloth bazaar", "priceExpectation": "1200.00", "productsDiscussed": ["Table runner", "Stole", "Gift packing"], "respondentGroup": "CONSUMER", "respondentName": "Sri Debasis Nayak, bank officer, 41", "response": "Buys handloom for family occasions and for gifting to colleagues posted outside Odisha, and said he has been asking local shops for something small from Barpali for several years without success. Explained that a saree is an awkward gift because of blouse matching and because the recipient may not wear one at all. Judged the small-scale phoda kumbha border on the runner sample to be far more usable than the full pallu treatment. Placed his ceiling at ₹1,200 for a gift article, and said he would go higher only if it came boxed with a note on the craft."},
+        {"place": "Ekamra Haat, Unit-III, Bhubaneswar", "priceExpectation": "2500.00", "productsDiscussed": ["Stole", "Laptop sleeve", "Scarf"], "respondentGroup": "CONSUMER", "respondentName": "Kum. Ipsita Rath, software engineer, 27", "response": "Owns no handloom article at all and said that Sambalpuri reads to her as something worn at a wedding by an older relative. Reacted strongly to the indigo ground on the stole sample and said she would wear it over office clothing if the motif were kept small and scattered rather than bordered. Asked, unprompted, whether a laptop sleeve could be made in the same cloth, which was the first mention of that format in the survey. Would pay up to ₹2,500 for the stole and about ₹1,000 for a sleeve, and said she buys such things online rather than at a counter."},
+        {"place": "Bargarh town market, Hatapada cloth bazaar", "priceExpectation": "3500.00", "productsDiscussed": ["Saree", "Cushion cover", "Dupatta"], "respondentGroup": "CONSUMER", "respondentName": "Smt. Sarita Agrawal, homemaker, 52", "response": "A regular buyer of Sambalpuri sarees who takes one or two pieces a year, usually before Nuakhai, and who was the clearest voice for the traditional segment. Said that the maroon and black palette is what she considers a genuine bandha and that she would not buy a saree in grey or coral. Her comfortable range for a saree is ₹3,000 to ₹3,500 and she named ₹7,000 as the point at which she would go to a silk saree instead of a cotton bandha. Was, however, immediately interested in a cushion set for her drawing room, which she said no shop in Bargarh sells."},
+        {"place": "Sambalpur Handloom Emporium, Golebazar", "priceExpectation": "1800.00", "productsDiscussed": ["Yardage", "Cushion cover", "Upholstery", "Curtain"], "respondentGroup": "CONSUMER", "respondentName": "Sri Ashutosh Mishra, architect, 38", "response": "Specifies fabric for residential interiors in Sambalpur and Jharsuguda and said he has repeatedly tried and failed to buy bandha cloth by the metre. Reported being told at three counters that the cluster only weaves saree lengths and cannot supply a running width. Wants a 110 cm width with a small repeating motif that will not be broken by a cushion seam or a curtain fold, and is willing to pay ₹1,500 a metre for a handwoven piece. Was emphatic that dimensional consistency across a lot matters more to him than the motif itself."},
+        {"place": "Golebazar retail row, adjoining the Sambalpur Handloom Emporium", "priceExpectation": "1900.00", "productsDiscussed": ["Table runner", "Cushion cover", "Dupatta", "Stole"], "respondentGroup": "RETAILER", "respondentName": "Sri Prafulla Kumar Sahoo, proprietor, Sahoo Handloom Stores", "response": "Has run a handloom counter in Golebazar for twenty-two years and stocks Barpali, Sonepur and Nuapatna goods. Said that the fastest line on his counter is the cotton bandha dupatta at ₹950 to ₹1,400 and that anything above ₹4,000 now sits for two to three months. Complained that the Barpali societies bring him nothing but sarees, so his gifting shelf is filled with printed goods from outside the State. Confirmed that he would take a table runner and a cushion set on a standing monthly order if the counter price stays below ₹1,900 and if the colour matches between lots."},
+        {"place": "Ekamra Haat, Unit-III, Bhubaneswar", "priceExpectation": "1500.00", "productsDiscussed": ["Stole", "Table runner", "Gift packing", "GI tag"], "respondentGroup": "RETAILER", "respondentName": "Smt. Rina Mohanty, stall manager, Utkal Vastra craft counter", "response": "Manages a craft counter at Ekamra Haat that carries handloom from four States and sells largely to walk-in urban buyers and to visitors. Said that Pochampally runners at ₹1,250 sold out on the morning of the visit while the Sambalpuri saree rack had moved two pieces in the week. Stressed that presentation decides the sale at her counter — a paper band, a care label and the GI tag together add about ₹150 to what she can ask. Offered shelf space immediately for a neutral-ground stole and asked for a first lot of twenty pieces before the March exhibition season."},
+        {"place": "Boyanika, Western Tower showroom and procurement counter, Bhubaneswar", "priceExpectation": "950.00", "productsDiscussed": ["Table runner", "Cushion cover set", "Purchase order", "Colour matching"], "respondentGroup": "WHOLESALER", "respondentName": "Smt. Anita Das, Procurement Officer (Handloom), Boyanika", "response": "Handles bulk procurement from primary weavers' societies for the Boyanika showroom network and already draws sarees from Sambalpuri Bastralaya, Barpali. Stated that a purchase order for table linen can be raised provided the society can hold colour across a lot and deliver a minimum of fifty pieces within thirty days. Works backwards from the counter price and will not accept a landed cost above ₹950 for an article that must retail at ₹1,650. Warned that a single mismatched dye lot in a delivery causes the whole consignment to be returned, and that this has happened twice with other societies in the past year."},
+        {"place": "Handloom buyers' online group (video call from Barpali)", "priceExpectation": "1400.00", "productsDiscussed": ["Yardage", "Stole", "Colour fastness report", "Shrinkage tolerance"], "respondentGroup": "EXPORTER", "respondentName": "Ms. Shreya Kulkarni, buying head, Tvaksati Design Studio, Bengaluru", "response": "Sources handwoven yardage for a studio label that ships to buyers in Europe and Japan and had received the sample set by courier before the call. Ranked repeatable delivery first, colour fastness second and motif novelty a distant third, and said the studio has stopped working with two clusters purely on delivery grounds. Requires a 110 cm usable width, shrinkage held below three per cent after a first wash, and a written dye recipe held on file so that a repeat order matches the first. Indicated a trial order of forty metres at ₹1,400 a metre if a wash-fastness report can be produced."},
+        {"place": "Handloom buyers' online group (video call from Barpali)", "priceExpectation": "2100.00", "productsDiscussed": ["Stole", "Scarf", "Wash fastness", "Export packing"], "respondentGroup": "EXPORTER", "respondentName": "Sri Rajesh Bothra, partner, export merchant house, Kolkata", "response": "Ships Indian handloom stoles and scarves to buyers in Germany and the Netherlands and buys mainly from West Bengal and Andhra clusters at present. Said that his European buyers reject any article that bleeds colour in a standard wash test, and that this alone has kept him from buying Odisha ikat despite liking the motifs. Wants a silk-cotton stole of 200 by 70 cm in muted grounds, packed flat, with a consistent hand across a lot of one hundred pieces. Would pay about ₹2,100 a piece landed and asked whether the cluster can commit to a delivery calendar rather than a one-time supply."}
+      ],
+      "competitors": [
+        {"category": "TABLE_LINEN", "name": "Pochampally double-ikat cotton table runner, 180 x 33 cm", "price": "1250.00", "seller": "Telangana handloom counter, Ekamra Haat craft mela"},
+        {"category": "HOME_FURNISHING", "name": "Screen-printed ikat-effect cushion cover pair, 45 x 45 cm", "price": "390.00", "seller": "General cloth traders, Hatapada lane"},
+        {"category": "DUPATTA_STOLE", "name": "Nuapatna khandua silk stole, 210 x 65 cm", "price": "3450.00", "seller": "Boyanika, Western Tower showroom"},
+        {"category": "SAREE", "name": "Sambalpuri bandha cotton saree, existing cluster line", "price": "4200.00", "seller": "Sambalpur Handloom Emporium, Golebazar"},
+        {"category": "ACCESSORY", "name": "Block-printed padded laptop sleeve, 38 x 28 cm", "price": "749.00", "seller": "Private lifestyle stall, Ekamra Haat craft mela"}
+      ],
+      "bands": [
+        {"category": "HOME_FURNISHING", "highPrice": "2200.00", "lowPrice": "900.00"},
+        {"category": "DUPATTA_STOLE", "highPrice": "3500.00", "lowPrice": "950.00"},
+        {"category": "YARDAGE", "highPrice": "1800.00", "lowPrice": "950.00"},
+        {"category": "ACCESSORY", "highPrice": "1500.00", "lowPrice": "600.00"}
+      ],
+      "swot": [
+        {"evidence": "GI Reg. No. 138, 'Sambalpuri Bandha Saree & Fabrics'. The nearest shelf competitor, the Panipat printed cushion pair at ₹390, is white on the reverse and hard-edged at the motif, which respondents distinguished at a glance when the two were held together.", "kind": "STRENGTH", "point": "A GI-registered double-ikat technique in which the yarn is tied and dyed to the motif before weaving, held as a living skill by all twenty participants across four villages. It cannot be reproduced on a power loom, and the survey found no counterfeit that came close on the reverse face."},
+        {"evidence": "Skill mapping of the twenty participants: six tie-dyers, four dyers, eight loom weavers, one motif draftsman and one warp preparer, all enrolled with Sambalpuri Bastralaya Handloom Weavers' Co-operative Society Ltd., Barpali.", "kind": "STRENGTH", "point": "The entire value chain — motif drafting, tying, dyeing, warping and weaving — sits inside Barpali under one co-operative society, so a change of product can be executed end to end without bringing in an outside vendor or a job worker."},
+        {"evidence": "Twenty-seven of thirty-eight consumer respondents named bandha unprompted and placed its origin at Sambalpur or Barpali. Existing supply relationships with the Boyanika counter and the Sambalpur emporium are already in place.", "kind": "STRENGTH", "point": "The craft is already known to the buyer by name, which removes the cost of introducing an unfamiliar product. Recognition is not what has to be built; only the format has to change."},
+        {"evidence": "Only nine of thirty-eight consumers owned a non-saree bandha article. No bandha table linen was found at any of the five survey points. All fourteen retailers said the Barpali societies bring them sarees and nothing else.", "kind": "WEAKNESS", "point": "The product range is effectively a single article. Almost everything the cluster offers is a saree, so it is absent from the gifting and home shelf where the turnover is, and it has no answer for a buyer who does not wear one."},
+        {"evidence": "Cluster baseline recorded in the craft documentation. The Boyanika procurement counter's forty-five day payment cycle sits on top of that production period, extending the artisan's wait further.", "kind": "WEAKNESS", "point": "The production cycle is long and the working capital is locked up for the whole of it — forty-five to seventy days per saree against a unit realisation of ₹2,800 to ₹6,500, which leaves the artisan waiting for two months to be paid for one piece."},
+        {"evidence": "Smt. Anita Das of Boyanika reported two consignments returned in the past year over mismatched lots. Both export respondents ranked colour fastness and repeatable delivery above motif novelty; the Kolkata buyer said a failed wash test returns the whole order.", "kind": "WEAKNESS", "point": "Colour is not held across dye lots because dyeing is done household by household with dyestuff bought in small quantities and no written recipe. Institutional and export buyers named this, not price or design, as the single reason they do not place repeat orders."},
+        {"evidence": "All fourteen retailers asked for gifting formats below ₹2,000. The Golebazar proprietor stocks Panipat cushion covers in a Sambalpuri shop; the Ekamra Haat manager sold out of Pochampally runners at ₹1,250 by mid-morning and offered immediate shelf space for a neutral-ground stole.", "kind": "OPPORTUNITY", "point": "An empty sub-₹2,000 gifting and home-linen shelf in every market surveyed, which retailers are currently filling with printed goods from outside the State for want of an Odia alternative."},
+        {"evidence": "Nineteen of thirty-eight consumers preferred an indigo, ecru or olive ground to maroon when shown the identical motif. A twenty-seven year old respondent at Ekamra Haat who owns no handloom asked unprompted for a laptop sleeve in the indigo cloth.", "kind": "OPPORTUNITY", "point": "A younger urban buyer who rejects the saree but responds strongly to the same motif on a neutral ground in a smaller scale, opening a segment the cluster has never served."},
+        {"evidence": "Boyanika will raise a purchase order for fifty runners in thirty days at ₹950 landed if the lot is colour-matched. Tvaksati Design Studio, Bengaluru, offered a trial of forty metres at ₹1,400 per metre against a wash-fastness report and a 110 cm usable width.", "kind": "OPPORTUNITY", "point": "Two institutional buyers are ready to commit to orders on conditions the cluster can meet within this workshop — a written dye recipe, colour matching across a lot and a stated delivery calendar."},
+        {"evidence": "Panipat printed cushion pairs at ₹390 moving on volume in the Hatapada lane, Bargarh, and stocked by two of the retailers interviewed only because no Odia article is available in that slot.", "kind": "THREAT", "point": "Screen-printed power-loom imitation of the ikat blur, sold at a fifth of the handwoven price, occupies the exact shelf slot and price expectation the new range is aimed at, and it conditions the buyer to a price the craft can never meet."},
+        {"evidence": "Pochampally cotton runners at ₹1,250 sold out on the day of the Ekamra Haat visit; Nuapatna khandua silk stoles at ₹3,450 are the article Boyanika staff reach for when a stole is asked for. An architect in Sambalpur buys Pochampally yardage because no Barpali supplier will sell by the metre.", "kind": "THREAT", "point": "Other genuine ikat clusters are already occupying the diversified formats in Odisha's own retail space, and they have moved first. Pochampally is selling table linen in Bhubaneswar and Nuapatna is holding the premium stole shelf at Boyanika."},
+        {"evidence": "Only six of the twenty participants are tie-dye specialists, and the three youngest — aged twenty-six, twenty-eight and twenty-nine — are the only ones below thirty. Seasonal loss of hands was already visible during the paddy harvest. Cotton yarn prices at the Bargarh depot add further pressure on the low-ticket formats.", "kind": "THREAT", "point": "The tying skill is ageing and thinning. Tying is the slowest operation and the scarcest capacity in the cluster, and if younger hands continue to leave for wage work, any order growth will run into a constraint that cannot be purchased or hired quickly."}
+      ]
+    },
+    {
+      "comment": "THE WHITESPACE PYTHON STRIPS THAT A JVM `trim()` DOES NOT. `str.strip()` follows `str.isspace()`, which is True for the next-line U+0085 and for every no-break space; `Character.isWhitespace` is False for all the no-break ones and `Char.isWhitespace` still misses U+0085. A price pasted out of a spreadsheet carries these as its separators, so the observation silently leaves the sample on one client only \u2014 and before this case the table did not contain a single character that told the two spellings apart, so the guard could have been deleted and everything still passed.",
+      "name": "m28-python-whitespace-forms",
+      "responses": [
+        {"priceExpectation": "500.00", "productsDiscussed": [" Saree ", "stole"], "respondentGroup": "CONSUMER", "respondentName": "Kalpana", "response": "indigo dye holds its colour"},
+        {"priceExpectation": " 700.00 ", "productsDiscussed": ["saree", " stole "], "respondentGroup": "CONSUMER", "respondentName": " Bhagaban ", "response": "indigo colour is what sells"},
+        {"priceExpectation": " 900.00 ", "productsDiscussed": ["saree", "stole"], "respondentGroup": "CONSUMER", "respondentName": "Sarita", "response": "the dye must not run"}
+      ],
+      "competitors": [
+        {"category": "SAREE", "name": "Mill saree", "price": "650.00", "seller": "Ganesh"}
+      ],
+      "bands": [
+        {"category": "SAREE", "highPrice": " 1000.00 ", "lowPrice": "400.00"}
+      ],
+      "swot": [
+        {"evidence": "", "kind": "STRENGTH", "point": "indigo dye is the strength"}
+      ]
+    },
+    {
+      "comment": "THE MEAN IS SUMMED BY A COMPENSATED `sum()`, AND A RUNNING TOTAL IS NOT. CPython 3.12 gave `sum()` the Neumaier algorithm and `backend/Dockerfile` pins that version, so the server recovers the ordinary prices after the two extremes cancel and answers a mean of 250.00, where a left-to-right accumulator has already dropped them and answers 0.00. Sorted, these are [-1e308, 400, 600, 1e308]: the extremes annihilate at the last step, and everything added between them fell off the bottom of the total as it was added. Four prices, so the quantiles stay unreported and the mean is the whole of what this case asks about.",
+      "name": "m29-mean-compensated-sum",
+      "responses": [
+        {"priceExpectation": "1e308", "respondentGroup": "CONSUMER", "respondentName": "top of the range"},
+        {"priceExpectation": "-1e308", "respondentGroup": "CONSUMER", "respondentName": "its negative"},
+        {"priceExpectation": "600.00", "respondentGroup": "CONSUMER", "respondentName": "an ordinary price"},
+        {"priceExpectation": "400.00", "respondentGroup": "CONSUMER", "respondentName": "another"}
+      ],
+      "competitors": [],
+      "bands": [],
+      "swot": []
+    }
+  ],
+
+  "competitorPositions": [
+    {
+      "name": "c01-pooled-sixty-two-percent",
+      "observations": [
+        {"amount": 100.0, "category": "", "source": "RESPONDENT", "group": "CONSUMER", "label": "A"},
+        {"amount": 200.0, "category": "", "source": "RESPONDENT", "group": "CONSUMER", "label": "B"},
+        {"amount": 300.0, "category": "", "source": "RESPONDENT", "group": "CONSUMER", "label": "C"},
+        {"amount": 400.0, "category": "", "source": "RESPONDENT", "group": "CONSUMER", "label": "D"},
+        {"amount": 500.0, "category": "", "source": "RESPONDENT", "group": "CONSUMER", "label": "E"},
+        {"amount": 600.0, "category": "", "source": "RESPONDENT", "group": "CONSUMER", "label": "F"},
+        {"amount": 700.0, "category": "", "source": "RESPONDENT", "group": "CONSUMER", "label": "G"},
+        {"amount": 800.0, "category": "", "source": "RESPONDENT", "group": "CONSUMER", "label": "H"}
+      ],
+      "competitors": [{"name": "Mill saree", "seller": "Ganesh", "category": "SAREE", "price": "350.00"}]
+    },
+    {
+      "name": "c02-category-matched",
+      "observations": [
+        {"amount": 300.0, "category": "SAREE", "source": "RESPONDENT", "group": "CONSUMER", "label": "A"},
+        {"amount": 400.0, "category": "SAREE", "source": "RESPONDENT", "group": "CONSUMER", "label": "B"},
+        {"amount": 500.0, "category": "SAREE", "source": "RESPONDENT", "group": "CONSUMER", "label": "C"},
+        {"amount": 600.0, "category": "SAREE", "source": "RESPONDENT", "group": "CONSUMER", "label": "D"},
+        {"amount": 700.0, "category": "SAREE", "source": "RESPONDENT", "group": "CONSUMER", "label": "E"},
+        {"amount": 999.0, "category": "SAREE", "source": "COMPETITOR", "group": "", "label": "ignored"},
+        {"amount": 120.0, "category": "BAG", "source": "RESPONDENT", "group": "CONSUMER", "label": "F"}
+      ],
+      "competitors": [
+        {"name": "Mill saree", "seller": "Ganesh", "category": "SAREE", "price": "550.00"},
+        {"name": "Jute bag", "seller": "Hari", "category": "BAG", "price": "150.00"}
+      ]
+    },
+    {
+      "name": "c03-too-few-buyers",
+      "observations": [
+        {"amount": 300.0, "category": "", "source": "RESPONDENT", "group": "", "label": "A"},
+        {"amount": 400.0, "category": "", "source": "RESPONDENT", "group": "", "label": "B"},
+        {"amount": 9000.0, "category": "SAREE", "source": "COMPETITOR", "group": "", "label": "C"}
+      ],
+      "competitors": [{"name": "Mill saree", "seller": "", "category": "SAREE", "price": "550.00"}]
+    },
+    {
+      "name": "c04-competitor-without-price",
+      "observations": [
+        {"amount": 300.0, "category": "", "source": "RESPONDENT", "group": "", "label": "A"},
+        {"amount": 400.0, "category": "", "source": "RESPONDENT", "group": "", "label": "B"},
+        {"amount": 500.0, "category": "", "source": "RESPONDENT", "group": "", "label": "C"},
+        {"amount": 600.0, "category": "", "source": "RESPONDENT", "group": "", "label": "D"},
+        {"amount": 700.0, "category": "", "source": "RESPONDENT", "group": "", "label": "E"}
+      ],
+      "competitors": [
+        {"name": "No price", "seller": "X", "category": "SAREE", "price": ""},
+        {"name": null, "seller": null, "category": null, "price": "500.00"}
+      ]
+    },
+    {
+      "name": "c05-competitor-exactly-at-median",
+      "observations": [
+        {"amount": 100.0, "category": "", "source": "RESPONDENT", "group": "", "label": "A"},
+        {"amount": 200.0, "category": "", "source": "RESPONDENT", "group": "", "label": "B"},
+        {"amount": 300.0, "category": "", "source": "RESPONDENT", "group": "", "label": "C"},
+        {"amount": 400.0, "category": "", "source": "RESPONDENT", "group": "", "label": "D"},
+        {"amount": 500.0, "category": "", "source": "RESPONDENT", "group": "", "label": "E"}
+      ],
+      "competitors": [{"name": "Exactly median", "seller": "Z", "category": "", "price": "300.00"}]
+    }
+  ],
+
+  "cost": [
+    {
+      "name": "k01-empty",
+      "sheets": [], "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k02-no-lines-but-declared",
+      "sheets": [{"_entryId": "s1", "materialCost": "1650.00", "labourCost": "800.00", "totalCost": "2450.00", "expectedPrice": "3000.00"}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k03-no-lines-nothing-declared",
+      "sheets": [{"_entryId": "s1"}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k04-lines-agree",
+      "sheets": [{"_entryId": "s1", "productRef": "p1", "materialCost": "1650.00", "labourCost": "800.00", "totalCost": "2450.00", "expectedPrice": "3062.50", "marginPercent": 25}],
+      "materialLines": [
+        {"_entryId": "m1", "costSheetRef": "s1", "item": "Yarn", "quantity": 2, "rate": "500.00", "amount": "1000.00"},
+        {"_entryId": "m2", "costSheetRef": "s1", "item": "Dye", "quantity": 1, "rate": "650.00", "amount": "650.00"}
+      ],
+      "labourLines": [
+        {"_entryId": "l1", "costSheetRef": "s1", "task": "Weaving", "persons": 2, "days": 2, "rate": "200.00", "amount": "800.00"}
+      ],
+      "labels": {"p1": "Indigo saree"}
+    },
+    {
+      "name": "k05-mismatch-more",
+      "sheets": [{"_entryId": "s1", "materialCost": "1650.00", "labourCost": "0.00", "totalCost": "1650.00", "expectedPrice": "2000.00"}],
+      "materialLines": [
+        {"costSheetRef": "s1", "item": "Yarn", "amount": "1000.00"},
+        {"costSheetRef": "s1", "item": "Dye", "amount": "560.00"}
+      ],
+      "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k06-mismatch-less",
+      "sheets": [{"_entryId": "s1", "materialCost": "1560.00", "totalCost": "1560.00", "expectedPrice": "2000.00"}],
+      "materialLines": [
+        {"costSheetRef": "s1", "item": "Yarn", "amount": "1000.00"},
+        {"costSheetRef": "s1", "item": "Dye", "amount": "650.00"}
+      ],
+      "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k07-tolerance-exactly-one-rupee",
+      "sheets": [{"_entryId": "s1", "materialCost": "1650.00"}],
+      "materialLines": [{"costSheetRef": "s1", "item": "Yarn", "amount": "1649.00"}],
+      "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k08-tolerance-just-over",
+      "sheets": [{"_entryId": "s1", "materialCost": "1650.00"}],
+      "materialLines": [{"costSheetRef": "s1", "item": "Yarn", "amount": "1648.99"}],
+      "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k09-unreadable-line-incomplete",
+      "sheets": [{"_entryId": "s1", "materialCost": "1650.00"}],
+      "materialLines": [
+        {"costSheetRef": "s1", "item": "Yarn", "amount": "1000.00"},
+        {"costSheetRef": "s1", "item": "Dye", "amount": ""},
+        {"costSheetRef": "s1", "item": "", "amount": "abc"},
+        {"costSheetRef": "s1", "item": "Mordant", "amount": null},
+        {"costSheetRef": "s1", "item": "Zari", "amount": "0x10"}
+      ],
+      "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k10-lines-with-no-declared-subtotal",
+      "sheets": [{"_entryId": "s1", "labourCost": "800.00"}],
+      "materialLines": [{"costSheetRef": "s1", "item": "Yarn", "amount": "1000.00"}],
+      "labourLines": [{"costSheetRef": "s1", "task": "Weaving", "amount": "800.00"}],
+      "labels": {}
+    },
+    {
+      "name": "k11-stale-total-cost",
+      "sheets": [{"_entryId": "s1", "materialCost": "1650.00", "labourCost": "800.00", "packagingCost": "50.00", "totalCost": "2450.00", "expectedPrice": "3000.00"}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k12-all-heads-blank",
+      "sheets": [{"_entryId": "s1", "materialCost": "", "labourCost": null, "totalCost": "2450.00", "expectedPrice": "3000.00", "marginPercent": 22.5}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k13-head-unreadable",
+      "sheets": [{"_entryId": "s1", "materialCost": "1650.00", "labourCost": "eight hundred", "totalCost": "2450.00", "expectedPrice": "3000.00"}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k14-margin-below-cost",
+      "sheets": [{"_entryId": "s1", "materialCost": "1650.00", "labourCost": "800.00", "totalCost": "2450.00", "expectedPrice": "2000.00", "marginPercent": 20}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k15-margin-at-cost",
+      "sheets": [{"_entryId": "s1", "materialCost": "2450.00", "totalCost": "2450.00", "expectedPrice": "2450.50"}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k16-margin-zero-cost",
+      "sheets": [
+        {"_entryId": "s1", "materialCost": "0.00", "totalCost": "0.00", "expectedPrice": "2000.00", "marginPercent": 30},
+        {"_entryId": "s2", "materialCost": "1000.00", "expectedPrice": ""},
+        {"_entryId": "s3", "expectedPrice": "500.00"},
+        {"_entryId": "s4"}
+      ],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k17-margin-half-even-percent",
+      "sheets": [{"_entryId": "s1", "materialCost": "1000.00", "totalCost": "1000.00", "expectedPrice": "1252.50", "marginPercent": 25.25}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k18-declared-margin-mismatch",
+      "sheets": [{"_entryId": "s1", "materialCost": "1000.00", "totalCost": "1000.00", "expectedPrice": "1300.00", "marginPercent": 20}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k19-orphans-material-and-labour",
+      "sheets": [{"_entryId": "s1", "materialCost": "1000.00", "labourCost": "800.00"}],
+      "materialLines": [
+        {"costSheetRef": "s1", "item": "Yarn", "amount": "1000.00"},
+        {"costSheetRef": "deleted-sheet", "item": "Zari", "amount": "1650.125"},
+        {"costSheetRef": "deleted-sheet", "item": "Mordant", "amount": "0.00"},
+        {"costSheetRef": "", "item": "Unlinked", "amount": "25.00"}
+      ],
+      "labourLines": [
+        {"costSheetRef": "s1", "task": "Weaving", "amount": "800.00"},
+        {"costSheetRef": "gone", "task": "Finishing", "amount": "120.00"}
+      ],
+      "labels": {}
+    },
+    {
+      "name": "k20-orphan-without-readable-amount",
+      "sheets": [],
+      "materialLines": [{"costSheetRef": "gone", "item": "", "amount": "abc"}],
+      "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k21-sheet-without-entry-id",
+      "sheets": [{"materialCost": "1000.00"}, {"_entryId": "", "materialCost": "500.00"}],
+      "materialLines": [{"costSheetRef": "", "item": "Yarn", "amount": "1000.00"}],
+      "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k22-duplicate-entry-id",
+      "sheets": [
+        {"_entryId": "s1", "materialCost": "1000.00"},
+        {"_entryId": "s1", "materialCost": "1000.00"}
+      ],
+      "materialLines": [{"costSheetRef": "s1", "item": "Yarn", "amount": "1000.00"}],
+      "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k23-label-resolution",
+      "sheets": [
+        {"_entryId": "s1", "productRef": "p1", "materialCost": "10.00"},
+        {"_entryId": "s2", "productRef": "unknown", "materialCost": "10.00"},
+        {"_entryId": "s3", "productRef": "", "materialCost": "10.00"},
+        {"_entryId": "s4", "productRef": 42, "materialCost": "10.00"},
+        {"_entryId": "s5", "productRef": "p5", "materialCost": "10.00"}
+      ],
+      "materialLines": [], "labourLines": [],
+      "labels": {"p1": "Indigo saree", "p5": ""}
+    },
+    {
+      "name": "k24-blank-ref-lines-are-orphans",
+      "sheets": [{"_entryId": "s1", "materialCost": "1000.00"}],
+      "materialLines": [
+        {"item": "No ref at all", "amount": "40.00"},
+        {"costSheetRef": null, "item": "Null ref", "amount": "60.00"},
+        {"costSheetRef": 7, "item": "Numeric ref", "amount": "80.00"}
+      ],
+      "labourLines": [], "labels": {}
+    },
+    {
+      "name": "k25-whitespace-and-comma-heads",
+      "sheets": [{"_entryId": "s1", "materialCost": " ", "labourCost": "1,650.00", "totalCost": "1650.00", "expectedPrice": "2,000.00"}],
+      "materialLines": [], "labourLines": [], "labels": {}
+    },
+    {
+      "comment": "THE REAL WORKSHOP's stage 17 \u2014 four cost sheets, twenty-eight material lines and twenty-two labour lines, with `_entryId` carried exactly as the endpoint injects it and `labels` resolved from stage 16's finalProduct rows the way the route resolves them. Its golden is what GET /design-workshops/{id}/cost-integrity answered. It contains a real finding: a sheet declaring 55% margin whose own price and cost imply 122.2%.",
+      "name": "k26-live-workshop",
+      "sheets": [
+        {"_entryId": "cmsik9t6t008sh8xctosr9wa2", "expectedPrice": "1650.00", "labourCost": "427.50", "marginPercent": 55.0, "materialCost": "235.45", "overheadCost": "79.55", "productRef": "cmsik9cwc008jh8xc7b0xg02j", "totalCost": "742.50"},
+        {"_entryId": "cmsik9t6w008uh8xcvg102hzp", "expectedPrice": "2600.00", "labourCost": "697.50", "marginPercent": 119.6, "materialCost": "359.64", "overheadCost": "126.86", "productRef": "cmsik9cwf008lh8xcaqcf6f4s", "totalCost": "1184.00"},
+        {"_entryId": "cmsik9t6z008wh8xc950msesn", "expectedPrice": "1200.00", "labourCost": "315.00", "marginPercent": 127.3, "materialCost": "156.43", "overheadCost": "56.57", "productRef": "cmsik9cwh008nh8xcn2e0dkc6", "totalCost": "528.00"},
+        {"_entryId": "cmsik9t72008yh8xcixnwl0jm", "expectedPrice": "1400.00", "labourCost": "373.50", "marginPercent": 127.6, "materialCost": "175.61", "overheadCost": "65.89", "productRef": "cmsik9cwk008ph8xczfo98boq", "totalCost": "615.00"}
+      ],
+      "materialLines": [
+        {"_entryId": "cmsikecpw00dch8xccepf8hzi", "amount": "42.30", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "item": "Cotton yarn 2/80s bleached (warp)"},
+        {"_entryId": "cmsikecq000deh8xchdc0abby", "amount": "57.20", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "item": "Cotton yarn 2/40s bleached (weft, doubled)"},
+        {"_entryId": "cmsikecq400dgh8xcladaqcvk", "amount": "46.00", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "item": "Vat maroon and napthol black with caustic soda and hydrosulphite"},
+        {"_entryId": "cmsikecq800dih8xcrn9cux9p", "amount": "29.40", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "item": "Plastic tying tape and cotton tying thread"},
+        {"_entryId": "cmsikecqb00dkh8xctqlwu2t9", "amount": "12.55", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "item": "Finishing agents — soap, softener and rice starch"},
+        {"_entryId": "cmsikecqf00dmh8xcwfoi4ufb", "amount": "32.00", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "item": "Kraft core, printed band, jute tie and GI hang tag"},
+        {"_entryId": "cmsikecqj00doh8xc5hd9cg62", "amount": "16.00", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "item": "Inward yarn and outward stock freight share"},
+        {"_entryId": "cmsikecqn00dqh8xc81pawwms", "amount": "192.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "item": "Mulberry silk yarn 20/22 denier, six-ply (weft)"},
+        {"_entryId": "cmsikecqq00dsh8xctby18vau", "amount": "54.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "item": "Cotton yarn 2/100s bleached (warp)"},
+        {"_entryId": "cmsikecqu00duh8xcp781eg4l", "amount": "44.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "item": "Indigo vat and two napthol shades with auxiliaries"},
+        {"_entryId": "cmsikecqy00dwh8xcggirjre9", "amount": "25.20", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "item": "Plastic tying tape and cotton tying thread"},
+        {"_entryId": "cmsikecr200dyh8xcfwk3pnfh", "amount": "12.44", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "item": "Finishing agents — silk soap and softener"},
+        {"_entryId": "cmsikecr600e0h8xcrghsofbi", "amount": "20.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "item": "Printed kraft sleeve box, butter paper and GI hang tag"},
+        {"_entryId": "cmsikecrb00e2h8xc8jszfh0m", "amount": "12.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "item": "Inward yarn and outward courier freight share"},
+        {"_entryId": "cmsikecrh00e4h8xcooo3f8j6", "amount": "98.80", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "item": "Cotton yarn 2/40s bleached, warp and weft for four panels"},
+        {"_entryId": "cmsikecrm00e6h8xcr7cw9k2q", "amount": "23.00", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "item": "Vat olive with napthol maroon and black, auxiliaries"},
+        {"_entryId": "cmsikecrr00e8h8xc87ie9s2o", "amount": "11.55", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "item": "Plastic tying tape and cotton tying thread"},
+        {"_entryId": "cmsikecrv00eah8xcgymrvbpu", "amount": "10.80", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "item": "Concealed nylon zip 40 cm and polyester stitching thread"},
+        {"_entryId": "cmsikecs000ech8xcgewkba6s", "amount": "3.28", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "item": "Finishing agents — soap, softener and rice starch"},
+        {"_entryId": "cmsikecs500eeh8xcl8erpn4g", "amount": "5.00", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "item": "Kraft band, loom-waste drawstring bag cloth and GI hang tag"},
+        {"_entryId": "cmsikecs900egh8xcnjpm38pr", "amount": "4.00", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "item": "Inward yarn and outward stock freight share"},
+        {"_entryId": "cmsikecsd00eih8xcvrzhtulk", "amount": "54.52", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "item": "Cotton yarn 2/80s bleached, warp share per metre"},
+        {"_entryId": "cmsikecsh00ekh8xcl350b0oq", "amount": "41.60", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "item": "Cotton yarn 2/40s bleached (weft)"},
+        {"_entryId": "cmsikecsm00emh8xcb2rjswa1", "amount": "38.00", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "item": "Vat ecru ground and napthol black with caustic soda and hydrosulphite"},
+        {"_entryId": "cmsikecsq00eoh8xckgbnw1ci", "amount": "23.10", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "item": "Plastic tying tape and cotton tying thread"},
+        {"_entryId": "cmsikecsu00eqh8xcnbjqe7yd", "amount": "4.39", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "item": "Finishing agents — soap, softener and rice starch"},
+        {"_entryId": "cmsikecsx00esh8xcecfx7k4e", "amount": "8.00", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "item": "Card roll core, poly sleeve, GI hang tag and 15 cm lot sample"},
+        {"_entryId": "cmsikect100euh8xcs2zcyl93", "amount": "6.00", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "item": "Inward yarn and local cartage freight share"}
+      ],
+      "labourLines": [
+        {"_entryId": "cmsikect500ewh8xcuqtoh7i8", "amount": "67.50", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "task": "Warping, drafting and rice-starch sizing of 960 ends"},
+        {"_entryId": "cmsikect900eyh8xc0wnbsuak", "amount": "157.50", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "task": "Bandha tying of the phoda kumbha border weft"},
+        {"_entryId": "cmsikectd00f0h8xcxihodicz", "amount": "45.00", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "task": "Yarn dyeing — vat maroon ground and napthol black tip, two baths"},
+        {"_entryId": "cmsikecth00f2h8xc30nnkc6e", "amount": "135.00", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "task": "Weaving on four-treadle pit loom at 52 picks to the inch"},
+        {"_entryId": "cmsikectm00f4h8xc5mqigb5f", "amount": "22.50", "costSheetRef": "cmsik9t6t008sh8xctosr9wa2", "task": "Washing, hemming, fringe twisting and pressing"},
+        {"_entryId": "cmsikectr00f6h8xcbaslcscj", "amount": "81.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "task": "Reeling, warping and sizing of the 2,100-end cotton warp"},
+        {"_entryId": "cmsikectv00f8h8xcqvfyy8or", "amount": "202.50", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "task": "Bandha tying of the macha and phula weft groups"},
+        {"_entryId": "cmsikectz00fah8xclgize3s4", "amount": "54.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "task": "Bandha tying of the fourteen warp registration bands"},
+        {"_entryId": "cmsikecu200fch8xcz81s7jgq", "amount": "54.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "task": "Yarn dyeing — indigo vat ground and two napthol shades, three baths"},
+        {"_entryId": "cmsikecu500feh8xcjcawoerx", "amount": "270.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "task": "Weaving on four-treadle frame loom, silk weft at 56 picks to the inch"},
+        {"_entryId": "cmsikecu900fgh8xczg9z647j", "amount": "36.00", "costSheetRef": "cmsik9t6w008uh8xcvg102hzp", "task": "Silk-soap washing, fringe twisting and pressing under muslin"},
+        {"_entryId": "cmsikecuc00fih8xcb5281e90", "amount": "36.00", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "task": "Warping, drafting and sizing of one warp for four panels"},
+        {"_entryId": "cmsikecuf00fkh8xc1to0tgge", "amount": "99.00", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "task": "Bandha tying of the chakra medallion in warp and weft"},
+        {"_entryId": "cmsikecui00fmh8xc9jkm2xc0", "amount": "27.00", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "task": "Yarn dyeing — vat olive ground with napthol maroon and black"},
+        {"_entryId": "cmsikecul00foh8xcra8a0368", "amount": "126.00", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "task": "Weaving of four panels on four-treadle pit loom"},
+        {"_entryId": "cmsikecuq00fqh8xcur08yb8x", "amount": "27.00", "costSheetRef": "cmsik9t6z008wh8xc950msesn", "task": "Cutting, French seaming and concealed zip fixing of two covers"},
+        {"_entryId": "cmsikecut00fsh8xc95j3qgmh", "amount": "36.00", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "task": "Warping and sizing for 114 cm loom width, share per metre"},
+        {"_entryId": "cmsikecuw00fuh8xcpzq6l34c", "amount": "112.50", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "task": "Bandha tying of the micro shankha weft repeat"},
+        {"_entryId": "cmsikecuz00fwh8xc9yosp3td", "amount": "27.00", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "task": "Bandha tying of warp registration lines at every twelfth repeat"},
+        {"_entryId": "cmsikecv300fyh8xc6ef5g6vf", "amount": "27.00", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "task": "Yarn dyeing — vat ecru ground and napthol black conch"},
+        {"_entryId": "cmsikecv700g0h8xciw6ve7bg", "amount": "157.50", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "task": "Weaving on four-treadle frame loom at 50 picks to the inch"},
+        {"_entryId": "cmsikecvc00g2h8xcfqra9ov8", "amount": "13.50", "costSheetRef": "cmsik9t72008yh8xcixnwl0jm", "task": "Washing, mending, measuring and rolling on the card core"}
+      ],
+      "labels": {"cmsik9cwc008jh8xc7b0xg02j": "Bandha table runner — phoda kumbha border", "cmsik9cwf008lh8xcaqcf6f4s": "Silk-cotton bandha stole — macha and phula scatter", "cmsik9cwh008nh8xcn2e0dkc6": "Bandha cushion cover set of two — chakra medallion", "cmsik9cwk008ph8xczfo98boq": "Bandha yardage — micro shankha repeat"}
+    },
+    {
+      "comment": "THE ORPHAN TOTAL IS SUMMED BY A COMPENSATED `sum()`. This is the case a 280-case differential fuzz actually failed on, and it is a sentence a designer reads: the server says these lines in no subtotal come to \u20b92,560.00 and a left-to-right accumulator says \u20b91,000.00, because 1e308 and its negative cancel only after the ordinary amounts have been added to a total already too large to hold them. Orphans keep the order they were entered in, so the cancelling pair straddles the amounts it destroys.",
+      "name": "k27-orphan-total-compensated-sum",
+      "sheets": [
+        {"_entryId": "s1", "materialCost": "0.00", "labourCost": "0.00"}
+      ],
+      "materialLines": [
+        {"costSheetRef": "gone", "item": "top of the range", "amount": "1e308"},
+        {"costSheetRef": "gone", "item": "an ordinary amount", "amount": "1560.00"},
+        {"costSheetRef": "gone", "item": "its negative", "amount": "-1e308"},
+        {"costSheetRef": "gone", "item": "another", "amount": "1000.00"}
+      ],
+      "labourLines": [],
+      "labels": {}
+    },
+    {
+      "comment": "AN ORPHAN TOTAL THAT OVERFLOWS STAYS INFINITE AND MUST NOT BECOME A NaN. This case constrains the FIX for k27 rather than the bug: the compensation term for a step that overflows is itself infinite, so folding it back unconditionally turns a real overflow into \u20b9nan. CPython adds the compensation only while the running total is still finite. Both amounts are accepted by `as_number` because 1e308 is finite \u2014 it is their sum that is not.",
+      "name": "k28-orphan-total-overflows",
+      "sheets": [
+        {"_entryId": "s1", "materialCost": "0.00", "labourCost": "0.00"}
+      ],
+      "materialLines": [
+        {"costSheetRef": "gone", "item": "top of the range", "amount": "1e308"},
+        {"costSheetRef": "gone", "item": "top of the range again", "amount": "1e308"}
+      ],
+      "labourLines": [],
+      "labels": {}
+    }
+  ]
+}

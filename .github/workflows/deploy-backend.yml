@@ -1,0 +1,230 @@
+name: Deploy backend to EC2
+
+# Auto-deploys the FastAPI backend to the EC2 box. Requires these repository secrets
+# (Settings → Secrets and variables → Actions):
+#   EC2_HOST              Elastic IP of the API box (terraform output api_public_ip)
+#   EC2_SSH_KEY           contents of the .pem private key for the EC2 key pair
+#   BACKEND_ENV           the full backend/.env file contents (DATABASE_URL, JWT_SECRET,
+#                         AWS_* keys, OPENAI_API_KEY, GEMINI_API_KEYS, BACKEND_CORS_ORIGINS …)
+#
+# Nothing secret is stored in this file — values come from the secrets above.
+#
+# ─── THIS WORKFLOW IS THE HEAD OF THE RELEASE PIPELINE ────────────────────────────────
+#   deploy-backend.yml  →  deploy-frontend.yml  →  android-build.yml
+#         (push)              (workflow_run)          (workflow_run)
+#
+# The order is a real dependency, not a preference:
+#   • The web app calls API endpoints that only exist after the backend is deployed and
+#     migrated. Ship the frontend first and the live site spends the gap between the two
+#     deploys calling routes that answer 404/422 — visible to users as blank lists and
+#     failed saves. Backend first, frontend second.
+#   • The Android APK is built (not deployed) last: it is a compile/lint gate whose output
+#     is an artifact, so it is the cheapest thing to run and the least urgent.
+#
+# WHY THE `paths:` FILTER IS GONE (this used to be `paths: [backend/**]`):
+# `workflow_run` can only fire when the upstream workflow actually RUNS. With a paths
+# filter, a frontend-only push never starts this workflow, so the frontend workflow would
+# never be triggered either — the pipeline would dead-lock on exactly the change it most
+# needs to ship. So this workflow now starts on EVERY push to main and does the path
+# filtering itself, in the `changes` job below: when nothing under backend/ changed, the
+# `deploy` job is skipped (the run still completes successfully and still triggers the
+# frontend workflow), and nothing is touched on EC2.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# cancel-in-progress is deliberately OFF. This workflow now starts on every push to main,
+# so overlapping runs are far more likely than they were with the old paths filter — and
+# cancelling mid-deploy is destructive here: the remote script stops the fieldrepo service
+# before running `prisma migrate deploy`, so a run killed in that window can leave the API
+# down with no restart step to come. Queueing is slower and safe; cancelling is not.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  # Works out which parts of the monorepo this push touched, so each stage of the pipeline
+  # can skip work it does not need. The result is also uploaded as an artifact because the
+  # downstream workflows run in a separate `workflow_run` context and cannot read job
+  # outputs across workflows — only artifacts cross that boundary.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.detect.outputs.backend }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+      android: ${{ steps.detect.outputs.android }}
+    steps:
+      - name: Checkout (full history so the push range can be diffed)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect which areas changed
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Fail SAFE: anything we cannot diff (manual dispatch, first push of a branch,
+          # force-push that orphaned the old head) is treated as "everything changed", so
+          # the pipeline over-deploys rather than silently skipping a real change.
+          if [ "$EVENT" != "push" ] \
+            || [ -z "${BEFORE:-}" ] \
+            || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "No usable diff range (event=$EVENT before=${BEFORE:-none}); treating all areas as changed."
+            files=""
+            all=true
+          else
+            files="$(git diff --name-only "$BEFORE" "$AFTER")"
+            all=false
+            echo "Changed files:"; printf '%s\n' "$files"
+          fi
+
+          area() {
+            if [ "$all" = "true" ]; then echo true; return; fi
+            if printf '%s\n' "$files" | grep -Eq "$1"; then echo true; else echo false; fi
+          }
+          backend=$(area '^(backend/|\.github/workflows/deploy-backend\.yml$)')
+          frontend=$(area '^(frontend/|\.github/workflows/deploy-frontend\.yml$)')
+          android=$(area '^(android/|\.github/workflows/android-build\.yml$)')
+
+          printf 'backend=%s\nfrontend=%s\nandroid=%s\n' "$backend" "$frontend" "$android" \
+            | tee -a "$GITHUB_OUTPUT" | tee changes.env
+          {
+            echo "### Changed areas"
+            echo ""
+            echo "| area | changed |"
+            echo "|---|---|"
+            echo "| backend | $backend |"
+            echo "| frontend | $frontend |"
+            echo "| android | $android |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the change summary for the downstream workflows
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-changes
+          path: changes.env
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy:
+    needs: changes
+    # Skipped (not failed) when the push did not touch backend/. A skipped job still lets
+    # the workflow run finish as a success, which is what keeps the frontend stage moving
+    # on a frontend-only change. Manual dispatch always deploys.
+    if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start ssh-agent with the deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Add EC2 host to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync code to the server
+        run: |
+          rsync -az --delete \
+            --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' \
+            ./backend/ ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/app/backend/
+
+      - name: Write .env on the server (piped over the SSH tunnel, never on the command line)
+        run: |
+          printf '%s' "$BACKEND_ENV" | ssh ubuntu@${{ secrets.EC2_HOST }} \
+            'cat > /home/ubuntu/app/backend/.env && chmod 600 /home/ubuntu/app/backend/.env'
+        env:
+          BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
+
+      # Pin CORS to the origins that actually exist, in the workflow rather than in BACKEND_ENV.
+      #
+      # The deployed API answered `access-control-allow-origin: *`. That is not the hole it looks
+      # like — auth is a Bearer token from localStorage, not a cookie, and app/core/config.py forces
+      # `allow_credentials=False` whenever a wildcard is present, so a hostile page could reach only
+      # unauthenticated endpoints and could never read a signed-in user's data. It is still worth
+      # closing, and pinning is what lets credentialed CORS be true rather than silently downgraded.
+      #
+      # Set HERE and not in the secret because these origins are public knowledge — they are in every
+      # browser's address bar — and because BACKEND_ENV cannot be read to edit one line of it. A
+      # wholesale rewrite of a secret nobody can print is how a database URL gets lost.
+      #
+      # Both entries earn their place. The Vercel alias is production. `http://localhost:3000` is the
+      # local dev server, which is routinely pointed at THIS deployed API rather than a local backend
+      # — omitting it would break every developer's browser while looking like an API fault. The
+      # Android client is unaffected either way: a native HTTP client does not do CORS.
+      - name: Pin the CORS origins
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd /home/ubuntu/app/backend
+          # The step above writes this file with `printf '%s'`, which emits NO trailing newline, so a
+          # bare `>>` glues the new key onto the end of whatever the last line is and silently
+          # corrupts that variable. Guarantee the newline first. (This is not hypothetical: the first
+          # version of this step did exactly that, and `grep -c` then found zero matches.)
+          [ -s .env ] && [ -n "$(tail -c1 .env)" ] && printf '\n' >> .env
+          # Drop any inherited value, so this is authoritative rather than additive.
+          sed -i '/^BACKEND_CORS_ORIGINS=/d' .env
+          # `field-repository.vercel.app` is the pre-rebrand product name and it is still the real
+          # origin the browser sends. A Vercel project's production domain is not renamed by editing
+          # this repository, so "correcting" it to a design-workshop.* host here removes the ONLY
+          # allowed origin the deployed site actually loads from: every authenticated call fails its
+          # CORS preflight, the site renders and then does nothing, and the pipeline stays green
+          # because the backend is healthy and the frontend built. Change this only in the same
+          # change that adds the new domain in the Vercel dashboard, and keep the old one listed
+          # until the alias is retired. deploy-frontend.yml smoke-tests the same host.
+          printf 'BACKEND_CORS_ORIGINS=%s\n' 'https://field-repository.vercel.app,http://localhost:3000' >> .env
+          # Assert the key landed on a line of its own. `grep -q` rather than `grep -c`: a count of
+          # zero exits 1, which under `set -e` fails the step with no explanation of what was wrong.
+          grep -q '^BACKEND_CORS_ORIGINS=' .env || { echo "CORS origins did not land on their own line"; exit 1; }
+          echo "CORS origins pinned"
+          REMOTE
+
+      - name: Install deps, migrate, restart
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          set -euxo pipefail
+          cd /home/ubuntu/app/backend
+          if [ ! -d .venv ]; then python3.12 -m venv .venv; fi
+          ./.venv/bin/pip install --upgrade pip
+          ./.venv/bin/pip install -e .
+          PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
+          # Migrations talk to the Supabase pooler in SESSION mode (pool_size 15). The running app
+          # holds most of those client sessions across its uvicorn workers, so the schema engine had
+          # no connection left and failed with "EMAXCONNSESSION max clients reached". Stop the app to
+          # free its sessions, then migrate (with a short retry for any sessions the pooler hasn't
+          # reclaimed yet). The app is ALWAYS restarted afterwards, so a transient migrate failure
+          # never leaves the API down — but a genuine migrate failure still fails the deploy.
+          sudo systemctl stop fieldrepo || true
+          sleep 5
+          migrate_ok=0
+          for attempt in 1 2 3 4 5; do
+            if PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma migrate deploy; then migrate_ok=1; break; fi
+            echo "migrate attempt ${attempt} failed; waiting for pooler sessions to drain..."; sleep 10
+          done
+          sudo systemctl restart fieldrepo
+          # The media queue runs in its OWN service (decoupled from uvicorn so its heavy AI/ffmpeg
+          # work can never starve uvicorn's worker health-ping and get the worker SIGKILLed, which
+          # used to orphan Prisma query-engines and exhaust the pooler -> HTTP 500). Restart it too
+          # so it picks up the new code; '|| true' keeps deploys working on a box provisioned before
+          # this service existed.
+          sudo systemctl restart fieldrepo-queue 2>/dev/null || true
+          if [ "$migrate_ok" != "1" ]; then echo "prisma migrate deploy failed after retries"; exit 1; fi
+          # App startup connects to Supabase (cross-region), so poll instead of a fixed sleep.
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then echo "healthy after ${i} tries"; break; fi
+            if [ "$i" = "40" ]; then echo "service did not become healthy:"; sudo journalctl -u fieldrepo -n 80 --no-pager; exit 1; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/health
+          REMOTE
