@@ -81,6 +81,34 @@ class DesignWorkshopViewersTest {
     }
 
     @Test
+    fun `an eligible list that never arrived would call the whole team ineligible`() {
+        // THE TRAP BEHIND THE EARLY RETURN IN WorkshopViewersScreen, written down where the next
+        // person to touch that load will see the consequence rather than the rule.
+        //
+        // This function cannot tell "the server offered a list without them" from "no list arrived":
+        // both are an empty `eligible`, and both mark every current viewer "has access, no longer
+        // eligible". The first is the truth the mark exists for; the second is a screen telling an
+        // administrator that every designer on the workshop has been suspended from the roster,
+        // with nobody available to add. It cannot be fixed here — an empty eligible list IS a legal
+        // answer, from a repository whose designers are all suspended — so it is fixed by the
+        // caller refusing to draw the picker at all when the call failed with anything but the 404
+        // that means "this deployment predates the feature". Delete that early return and this test
+        // still passes; that is exactly why the consequence is spelled out here.
+        val choices = dwViewerChoices(
+            eligible = emptyList(),
+            viewers = listOf(granted("u-a"), granted("u-b")),
+            creatorId = creator,
+        )
+
+        assertEquals(listOf("u-a", "u-b"), choices.map { it.userId })
+        assertTrue(
+            "with no eligible list every holder is marked ineligible, which is why a failed load " +
+                "must stop rather than fall through",
+            choices.all { it.grantedButIneligible }
+        )
+    }
+
+    @Test
     fun `somebody who is both eligible and granted appears once`() {
         val choices = dwViewerChoices(
             eligible = listOf(eligible("u-a"), eligible("u-b")),
@@ -243,6 +271,31 @@ class DesignWorkshopViewersTest {
         assertEquals("Aarav Sharma", dwPersonLabel("Aarav Sharma", "a@example.org"))
         assertEquals("a@example.org", dwPersonLabel("  ", "a@example.org"))
         assertEquals("Unknown user", dwPersonLabel(null, null))
+    }
+
+    @Test
+    fun `a name that is only a no-break space falls through to the email, as it does in the browser`() {
+        // THE WEB IS THE SOURCE HERE — `personLabel` in DesignWorkshopViewersPanel.tsx is
+        // `name?.trim() || email?.trim() || "Unknown user"`, and JavaScript's trim strips U+00A0
+        // and U+202F while Kotlin's `trim()`/`isBlank()` (Char.isWhitespace) deliberately do not.
+        // A directory row pasted out of a spreadsheet or a ministry PDF carries them, so under the
+        // Kotlin spelling the browser named the designer and the handset drew an option with an
+        // invisible label and no address — on the screen where picking the wrong row grants a
+        // stranger a fortnight of somebody's fieldwork. No test reports a divergence like this; it
+        // is only ever seen by the admin holding the phone.
+        // Spelled as escapes and never as literal characters: a source file cannot show the
+        // difference between these and an ordinary space, and an invisible character in a
+        // whitespace test is one nobody can review.
+        val nbsp = "\u00A0"          // what a spreadsheet paste leaves between words
+        val narrow = "\u202F"        // and what a PDF paste leaves
+        val figure = "\u2007"
+        val ideographic = "\u3000"
+
+        assertEquals("a@example.org", dwPersonLabel(nbsp, "a@example.org"))
+        assertEquals("a@example.org", dwPersonLabel(narrow + figure, "a@example.org"))
+        assertEquals("Meera Nair", dwPersonLabel(nbsp + "Meera Nair" + nbsp, "a@example.org"))
+        // And with nothing else to fall back to, the neutral word rather than an invisible one.
+        assertEquals("Unknown user", dwPersonLabel(nbsp, ideographic))
     }
 
     // ── Telling the failures apart ───────────────────────────────────────────────────────────────

@@ -150,9 +150,49 @@ data class DwViewerChoice(
     val grantedButIneligible: Boolean = false,
 )
 
-/** A person's name without ever leaking an id: their name, else their email, else a neutral word. */
+/**
+ * A person's name without ever leaking an id: their name, else their email, else a neutral word.
+ *
+ * **THE TRIM IS JAVASCRIPT'S, NOT KOTLIN'S**, because this is a port of `personLabel` in
+ * `frontend/components/settings/DesignWorkshopViewersPanel.tsx` (`name?.trim() || email?.trim() ||
+ * "Unknown user"`) and the two clients draw the same picker for the same administrator. Kotlin's
+ * `trim()` — and `isBlank()` with it — is `Char.isWhitespace`, which is deliberately FALSE for the
+ * no-break space U+00A0 and the narrow no-break space U+202F; JavaScript strips both.
+ *
+ * The divergence is not cosmetic and it lands on the one field this screen is read for. A `name` of
+ * nothing but a no-break space — which is what a directory row pasted out of a spreadsheet or a PDF
+ * leaves behind — is falsy in the browser, so it falls through to the EMAIL and names the person.
+ * Under `trim()`/`ifBlank` it survives here, so the handset offers an admin an option with an
+ * invisible label and no address, on the screen where picking the wrong row grants a stranger a
+ * fortnight of somebody's fieldwork. `ifEmpty` rather than `ifBlank` for the same reason: JS's `||`
+ * asks whether the trimmed string is EMPTY, and U+001C-U+001F are Kotlin whitespace that JS keeps.
+ *
+ * NOT [DwPy.strip], which is Python's set (it takes U+0085 and leaves U+FEFF): nothing on the server
+ * computes this label, so Python is not the language being mirrored.
+ */
 fun dwPersonLabel(name: String?, email: String?): String =
-    name?.trim().orEmpty().ifBlank { email?.trim().orEmpty() }.ifBlank { "Unknown user" }
+    dwJsTrim(name.orEmpty()).ifEmpty { dwJsTrim(email.orEmpty()) }.ifEmpty { "Unknown user" }
+
+/**
+ * `String.prototype.trim`, character for character — see [dwPersonLabel] for why not `trim()`.
+ *
+ * A third copy of a predicate `data/DwWorkshopCodes.kt` and `ui/designworkshop/RichTextOps.kt`
+ * already hold, and for the same reason theirs are two: both of those are file-private, the data
+ * layer does not import the UI layer, and a shared spelling of this belongs in a change that moves
+ * all three at once rather than in an access-control screen.
+ *
+ * Written as code points because half the set is invisible in a source file, and an invisible
+ * character in a whitespace test is one nobody can review.
+ */
+private fun dwJsTrim(text: String): String = text.trim { c ->
+    when (c.code) {
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20 -> true   // tab, LF, VT, FF, CR, space
+        0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF -> true
+        // U+2000..U+200A, EN QUAD through HAIR SPACE — what a name pasted out of a page-layout
+        // program or a ministry PDF carries.
+        else -> c.code in 0x2000..0x200A
+    }
+}
 
 /**
  * Everyone the picker offers: the eligible accounts, plus anybody who already HOLDS a row and has
