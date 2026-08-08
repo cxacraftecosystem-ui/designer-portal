@@ -73,9 +73,32 @@ const QR_BOX_MM = 26;
  * anybody in the room already owns, so it fits the lanyard pouches a workshop already buys.
  * The prototype tag is smaller because it is tied or taped to an object rather than worn.
  */
-const GEOMETRY: Record<WorkshopRecordType, { widthMm: number; heightMm: number; columns: number }> = {
-  artisan: { widthMm: 85, heightMm: 54, columns: 2 },
-  prototype: { widthMm: 63, heightMm: 45, columns: 3 }
+type CardGeometry = { widthMm: number; heightMm: number; columns: number };
+
+/** ID-1, the size of every identity card anybody in the room already owns. */
+const ID_CARD: CardGeometry = { widthMm: 85, heightMm: 54, columns: 2 };
+/** Smaller, because a tag is tied or taped to an object rather than worn. */
+const OBJECT_TAG: CardGeometry = { widthMm: 63, heightMm: 45, columns: 3 };
+
+/**
+ * A TOTAL record and not a partial one, deliberately: adding a record type to `workshopCodes.ts`
+ * fails this file's typecheck until somebody has decided what a sheet of them is cut to. Every type
+ * other than the artisan is tagged rather than worn, which is why they all take the tag.
+ *
+ * Only the artisan and the prototype are OFFERED as a sheet today — this component's one caller is
+ * the workshop's Cards & tags page. Every other record type carries its code on its own record
+ * screen, one at a time, where it is expanded and downloaded rather than printed forty to a page.
+ */
+const GEOMETRY: Record<WorkshopRecordType, CardGeometry> = {
+  artisan: ID_CARD,
+  craft: OBJECT_TAG,
+  workshop: OBJECT_TAG,
+  product: OBJECT_TAG,
+  process: OBJECT_TAG,
+  tool: OBJECT_TAG,
+  questionnaire: OBJECT_TAG,
+  media: OBJECT_TAG,
+  prototype: OBJECT_TAG
 };
 
 /** The error-correction level every code is printed at, and why it is not the default L. */
