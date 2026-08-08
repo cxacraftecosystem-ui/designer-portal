@@ -11,12 +11,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -27,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,12 +40,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DW_MAX_HITS
+import com.designprototype.workshop.data.DW_MIN_QUERY_CHARS
+import com.designprototype.workshop.data.DwSearchStatus
 import com.designprototype.workshop.data.DwStageCompleteness
 import com.designprototype.workshop.data.DwStageFocus
 import com.designprototype.workshop.data.DwSubmissionReadiness
+import com.designprototype.workshop.data.DwWorkshopSearch
+import com.designprototype.workshop.data.DwWorkshopSearchHit
+import com.designprototype.workshop.data.DwWorkshopSearchIndex
 import com.designprototype.workshop.data.StageCompletenessDto
 import com.designprototype.workshop.data.WorkshopDraftStore
 import com.designprototype.workshop.data.WorkshopRepository
@@ -85,6 +104,15 @@ import com.designprototype.workshop.ui.field
  * out WHERE each label lives and decides nothing about completeness — so a label it cannot place
  * still shows and still opens the stage, and this screen still prints exactly the labels the scorer
  * produced. See that module's header for why the asymmetry is the whole design.
+ *
+ * ── AND SO IS EVERY WORD IN THE WORKSHOP ─────────────────────────────────────────────────────────
+ *
+ * The box above the list searches all 22 stages, offline, through [DwWorkshopSearch] — see that
+ * module for the tokenising and folding rules and for why the Odia case is the one that decides
+ * whether any of it works. It is HERE rather than on a screen of its own for the same reason the web
+ * puts it on the workshop overview: this is the screen a designer is already looking at when the
+ * question occurs to them, and a search that had to be navigated to in order to navigate to a stage
+ * would be one screen too many in a courtyard.
  */
 @Composable
 fun StageIndexScreen(
@@ -122,6 +150,14 @@ fun StageIndexScreen(
     var addresses by remember(workshopId) {
         mutableStateOf<Map<String, Map<String, DwStageFocus>>>(emptyMap())
     }
+    /**
+     * Every written answer in the workshop, indexed once.
+     *
+     * Built HERE, in the load that has already read the registry and the draft, and never again: a
+     * keystroke costs a query against this and nothing else. Rebuilding per keystroke would re-fold a
+     * quarter of a megabyte on a 6 GB handset for every letter typed.
+     */
+    var searchIndex by remember(workshopId) { mutableStateOf(DwWorkshopSearch.emptyIndex()) }
 
     LaunchedEffect(workshopId) {
         loading = true
@@ -135,6 +171,10 @@ fun StageIndexScreen(
             addresses = DwSubmissionReadiness.addressBook(
                 DwSubmissionReadiness.assess(schema, draft, workshopId)
             )
+            // Same two inputs again, and deliberately before the network call below: a designer who
+            // opens this screen with no signal waits for a timeout, and the search must be ready the
+            // moment the spinner goes rather than a request later.
+            searchIndex = DwWorkshopSearch.buildIndex(schema, draft)
 
             val remoteId = draft?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
             val remote = remoteId?.let {
@@ -212,6 +252,15 @@ fun StageIndexScreen(
 
         HorizontalDivider()
 
+        WorkshopSearchPanel(
+            index = searchIndex,
+            // The receiving half. [DwWorkshopSearch.focusOf] is the ONE place a hit becomes an
+            // address, so the box and the form cannot disagree about which field was asked for.
+            onOpenHit = { hit -> onOpenStage(hit.stageKey, DwWorkshopSearch.focusOf(hit)) },
+        )
+
+        HorizontalDivider()
+
         stages.forEach { stage ->
             StageIndexRow(
                 stage = stage,
@@ -224,6 +273,186 @@ fun StageIndexScreen(
         }
         Spacer(Modifier.padding(bottom = 8.dp))
     }
+}
+
+/**
+ * "Where did I write about indigo?" — asked of a whole 22-stage workshop, with no network.
+ *
+ * IT COSTS NOTHING AND ASKS FOR NOTHING. The index is built by [DwWorkshopSearch] from the draft this
+ * screen has ALREADY read out of `filesDir`, so there is no request, no spinner and no difference in
+ * behaviour between a designer at a desk and one who has had no signal for three days. That is not a
+ * nicety: a search that needed a server would be missing in exactly the fortnight the fieldwork
+ * happens in.
+ *
+ * WHAT IS SAID OUT LOUD, because none of it is guessable from an empty list:
+ *   • how much was searched — values, and how many stages actually hold text;
+ *   • that the result list is capped, and what the true total was;
+ *   • that a one-character query was refused rather than answered;
+ *   • that a query of punctuation had nothing in it to search for.
+ * A list that quietly stops is indistinguishable from a workshop with nothing in it, and that is the
+ * single most repeated defect in this repository. The wording is the web panel's, verbatim, because a
+ * designer moves between the two surfaces inside one workshop.
+ */
+@Composable
+private fun WorkshopSearchPanel(
+    index: DwWorkshopSearchIndex,
+    onOpenHit: (DwWorkshopSearchHit) -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    /*
+     * Answered synchronously on the keystroke, with no debounce.
+     *
+     * A debounce makes every designer wait the same fixed delay whether or not the device needed it,
+     * and a query against a built index is a binary search and a walk — microseconds against the tens
+     * of milliseconds a frame has. `remember` keyed on both inputs is what stops it re-running on
+     * every unrelated recomposition of a screen that also holds 22 progress bars.
+     */
+    val result = remember(index, query) { DwWorkshopSearch.search(index, query) }
+
+    OutlinedTextField(
+        value = query,
+        onValueChange = { query = it },
+        label = { Text("Search this workshop") },
+        placeholder = {
+            Text(
+                "A word, a name, a product code — in any script",
+                color = MaterialTheme.field.placeholder,
+                fontSize = 13.sp,
+            )
+        },
+        singleLine = true,
+        leadingIcon = {
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = null,
+                tint = MaterialTheme.field.muted,
+                modifier = Modifier.size(18.dp),
+            )
+        },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { query = "" }) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Clear search",
+                        tint = MaterialTheme.field.muted,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        },
+        // The box takes Odia and Hindi as often as English, and a keyboard that autocorrects a
+        // transliterated village name changes what was typed into something that matches nothing.
+        // Capitalisation is turned off with it even though the fold lowercases everything, because a
+        // designer watching their own word being changed under their finger stops trusting the box.
+        keyboardOptions = KeyboardOptions(
+            capitalization = KeyboardCapitalization.None,
+            autoCorrectEnabled = false,
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    /*
+     * THE STATUS LINE, and it is a polite live region for a reason: nothing announces a list that
+     * re-renders under an input still holding focus, so a designer using TalkBack would type six
+     * letters into silence. Polite, never assertive — it must not interrupt them mid-word.
+     */
+    Text(
+        when {
+            result.status == DwSearchStatus.IDLE ->
+                "Searches every written answer on this device — ${index.fieldCount} across " +
+                    "${index.stageCount} stage${if (index.stageCount == 1) "" else "s"}. " +
+                    "No connection needed."
+
+            result.status == DwSearchStatus.TOO_SHORT -> "Type at least $DW_MIN_QUERY_CHARS characters."
+
+            result.status == DwSearchStatus.NO_TERMS ->
+                "There are no words or numbers in that to search for."
+
+            result.total == 0 ->
+                "Nothing in this workshop holds " +
+                    (if (result.terms.size == 1) "that word" else "all of those words") +
+                    ". Every answer saved on this device was searched — ${index.fieldCount} of them."
+
+            result.truncated ->
+                "Showing the $DW_MAX_HITS closest of ${result.total} matching answers. " +
+                    "Add another word to narrow it."
+
+            else -> "${result.total} matching answer${if (result.total == 1) "" else "s"}."
+        },
+        color = MaterialTheme.field.muted,
+        fontSize = 12.sp,
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+    )
+
+    if (result.hits.isNotEmpty()) {
+        // A plain Column, not a LazyColumn: this screen is already inside a `verticalScroll`, and
+        // nesting a lazy list in one is an unbounded-height crash. The cap on the module's side is
+        // what keeps this to at most 60 rows.
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
+            result.hits.forEach { hit -> SearchHitRow(hit = hit, onOpen = { onOpenHit(hit) }) }
+        }
+    }
+}
+
+/** One result: where it is, then what it says. */
+@Composable
+private fun SearchHitRow(hit: DwWorkshopSearchHit, onOpen: () -> Unit) {
+    val markStyle = SpanStyle(
+        background = MaterialTheme.colorScheme.primaryContainer,
+        color = MaterialTheme.colorScheme.onPrimaryContainer,
+        // Weight AS WELL as a wash, so the answer to "why is this row here" survives a screen read in
+        // sunlight and a reader who cannot separate the two purples.
+        fontWeight = FontWeight.SemiBold,
+    )
+    val quoted = remember(hit, markStyle) { markedSnippet(hit, markStyle) }
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                // Read out instead of the bare "double tap to activate": sixty rows that all announce
+                // the same verb are sixty rows a screen-reader user has to open to tell apart.
+                onClickLabel = "Open ${hit.fieldLabel} in stage ${hit.stageNumber}",
+                onClick = onOpen,
+            )
+            .padding(vertical = 6.dp)
+    ) {
+        Text(
+            buildString {
+                // The stage NUMBER as well as its title: a designer navigates this workshop by
+                // number, and "13" is what they will look for in the list below.
+                append("${hit.stageNumber}. ${hit.stageTitle} · ${hit.entityTitle}")
+                // The row, titled exactly as the collection list titles it, so the designer
+                // recognises what they will land on rather than being shown a second name for it.
+                hit.recordTitle?.let { append(" · $it") }
+                append(" · ${hit.fieldLabel}")
+            },
+            color = MaterialTheme.field.muted,
+            fontSize = 11.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(quoted, color = MaterialTheme.field.body, fontSize = 13.sp)
+    }
+}
+
+/**
+ * The snippet as one string, with the matched runs marked.
+ *
+ * SEGMENTS IN, SPANS OUT, and never a marked-up string parsed back apart: the text being highlighted
+ * is prose a designer typed, including — legitimately — whatever character a marker would have used.
+ */
+private fun markedSnippet(hit: DwWorkshopSearchHit, mark: SpanStyle): AnnotatedString = buildAnnotatedString {
+    // The ellipses are the module's `clippedStart`/`clippedEnd`, drawn rather than inferred from the
+    // length: a snippet that happens to start at character 0 of a long field is not clipped, and one
+    // that fills the window exactly still is.
+    if (hit.snippet.clippedStart) append("…")
+    for (segment in hit.snippet.segments) {
+        if (segment.match) withStyle(mark) { append(segment.text) } else append(segment.text)
+    }
+    if (hit.snippet.clippedEnd) append("…")
 }
 
 @Composable
