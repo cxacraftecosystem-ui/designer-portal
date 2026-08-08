@@ -335,8 +335,14 @@ object DwPhotoMeasure {
      * The negative zero is carried deliberately: `Math.round(-0.4)` is `-0` in JavaScript, and
      * `-0 / 10` is `-0`, so a value rounded away to nothing keeps the sign the designer's marks gave
      * it rather than silently becoming a positive zero on one client only.
+     *
+     * INTERNAL RATHER THAN PRIVATE so that [DwSketchRectify] — which is a port of a different
+     * JavaScript file that calls the same `Math.round` for its plate and window sizes — reaches this
+     * one rather than growing a third copy of the rule. There are already two `jsRound`s in this
+     * package ([DwImageQuality]'s is deliberately the simpler `floor(x + 0.5)`, correct for the one
+     * positive, far-from-a-boundary score it is fed), and a third would be the copy that drifts.
      */
-    private fun jsRound(value: Double): Double {
+    internal fun jsRound(value: Double): Double {
         if (!value.isFinite()) return value
         val floored = floor(value)
         val rounded = if (value - floored >= 0.5) floored + 1.0 else floored
