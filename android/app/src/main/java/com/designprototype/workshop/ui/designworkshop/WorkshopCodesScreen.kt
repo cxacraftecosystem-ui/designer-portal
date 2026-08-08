@@ -227,7 +227,7 @@ fun WorkshopCodesScreen(
             return@Column
         }
 
-        deviceOnlyNote?.let { DwCardNotice(it) }
+        deviceOnlyNote?.let { DwWorkshopNotice(it) }
 
         // What to print. Two buttons rather than a segmented control, matching the web's pair and the
         // rest of this app's toggles, and each states its own pressed state for a screen reader.
@@ -278,7 +278,7 @@ fun WorkshopCodesScreen(
         if (source == null) {
             // NOT the same as "there is nothing to print", and confusing the two would send a designer
             // looking for rows they never entered instead of reporting a build that is out of date.
-            DwCardNotice(
+            DwWorkshopNotice(
                 "This version of the app cannot find " +
                     (if (kind == DwWorkshopRecordType.PROTOTYPE) "the prototype list" else "the artisan roster") +
                     " in the field registry it was served, so it cannot print " +
@@ -815,9 +815,17 @@ private fun DwCardKindButton(label: String, selected: Boolean, modifier: Modifie
     }
 }
 
-/** A stated fact about what is on screen, on the warning fill the rest of this feature uses. */
+/**
+ * A stated fact about what is on screen, on the warning fill the rest of this feature uses.
+ *
+ * `internal` rather than private to this file, and named for the FEATURE rather than for the card
+ * sheet, because [PhotoIntakeScreen] says the same class of thing — "this workshop has not been
+ * downloaded to this device yet" — and a second copy of an amber row is a second copy that drifts:
+ * the two notices would end up on different fills, at different sizes, in one feature a designer
+ * moves between within a workshop.
+ */
 @Composable
-private fun DwCardNotice(message: String) {
+internal fun DwWorkshopNotice(message: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()

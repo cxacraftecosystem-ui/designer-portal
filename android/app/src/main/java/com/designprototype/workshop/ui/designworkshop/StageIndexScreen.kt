@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
@@ -102,6 +103,15 @@ fun StageIndexScreen(
      * The report button beside it is reached the same way for the same reason.
      */
     onOpenCodes: () -> Unit,
+    /**
+     * Open the bulk photo intake for this workshop.
+     *
+     * A SIBLING OF THE CARDS BUTTON, and off the index for the same reason — sharpened. A camera dump
+     * spans the whole fortnight, and the entire point of the intake is that it works out WHICH stage
+     * each photograph belongs to. Hanging it off a stage would ask the designer for the answer the
+     * feature exists to produce.
+     */
+    onOpenPhotos: () -> Unit,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -208,6 +218,14 @@ fun StageIndexScreen(
             Icon(Icons.Filled.QrCode2, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
             Text("Cards & tags")
+        }
+
+        // Outlined for the same reason as the cards button above: the report is what the workshop is
+        // FOR, and both of these are tools used along the way to it.
+        OutlinedButton(onClick = onOpenPhotos, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Import photographs")
         }
 
         HorizontalDivider()
