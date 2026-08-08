@@ -104,10 +104,12 @@ Here there is none.
 ## What else was looked at
 
 **The card's own QR code.** Every Aadhaar card carries one and the app could decode it for well
-under a megabyte, which would be the ideal answer. It does not work: UIDAI's Secure QR carries a
-*reference id* — the last four digits of the number plus a timestamp — precisely so that scanning a
-card cannot yield the full number. Whatever else it gives, it cannot give the twelve digits this
-field stores.
+under a megabyte, which would be the ideal answer. It does not work: by UIDAI's published Secure QR
+specification the code carries a *reference id* — the last four digits of the number plus a
+timestamp — precisely so that scanning a card cannot yield the full number. Whatever else it gives,
+it cannot give the twelve digits this field stores. (Read off the specification, not verified
+against a card here — there is no card and no scanner on this machine. It is the one claim in this
+document that was not measured, and it only rules an option out.)
 
 **Tesseract.** `numFound: 0` on Maven Central for `tesseract4android`; it is published through
 JitPack, which builds from source on demand. Putting a build-time dependency on a service that
