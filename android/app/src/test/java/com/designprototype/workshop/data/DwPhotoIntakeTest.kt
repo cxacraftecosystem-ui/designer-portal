@@ -13,6 +13,7 @@ import com.designprototype.workshop.data.DwPhotoIntake.rankProposals
 import com.designprototype.workshop.data.DwPhotoIntake.resolveStamp
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -35,8 +36,10 @@ import java.time.LocalDate
  * the product — the point of the feature is that a designer can trust the first row without reading
  * the other two. Every assertion below fixes an exact order, an exact day count or an exact sentence.
  *
- * SIX CASES ARE NOT IN THE WEB SPEC, because they pin seams that exist only in Kotlin, and each one
- * is a way the two clients would have drifted apart silently:
+ * THE CASES BELOW THE WEB'S ARE NOT IN THE WEB SPEC. They pin seams that exist only in Kotlin, or
+ * claims this module makes in prose that nothing was holding it to, and each one is a way the two
+ * clients would have drifted apart SILENTLY — which is the only way that matters, because a batch of
+ * two hundred photographs is exactly the size at which nobody re-checks a date by hand:
  *
  *  * `a no-break space in a stored date is stripped the way the browser strips it` — Kotlin's
  *    `trim()` is not JavaScript's, and a date pasted out of a spreadsheet carries U+00A0.
@@ -50,6 +53,21 @@ import java.time.LocalDate
  *    on the function.
  *  * `a draft row entered offline still has a key a confirmation can aim at` — this client keeps a
  *    row's client key in the draft row's ID rather than inside the object.
+ *  * `a camera that declares Z or a colonless offset is understood` — two branches of the offset
+ *    grammar that the +05:30 cases never enter, and getting either wrong misfiles evening frames.
+ *  * `an unknown timezone declines to shift` — the null return that keeps the DEVICE's zone out of a
+ *    calculation two clients have to agree on.
+ *  * `a blank timezone falls back to the default` — "" and "   " both reach ZoneId.of otherwise.
+ *  * `a lakh-sized gap is grouped the Indian way` — the 20,496 case above has one group and so passes
+ *    under plain three-digit grouping too; this is the case that separates them.
+ *  * `a photograph stranded between two far-apart anchors prints the web's negative gap` — a KNOWN
+ *    defect both clients carry, pinned so it cannot be fixed on one of them alone.
+ *  * `a null client key falls through to the entry id` — `JsonNull` IS a `JsonPrimitive`, so the
+ *    obvious cast reads it as the string "null" and addresses nothing.
+ *  * `a DATE field holding something that is not a date string contributes no anchor` — the web tests
+ *    `typeof raw !== "string"`; coercing instead would file a batch against a day nobody recorded.
+ *  * `a deprecated DATE field still anchors` — `fields` and not `liveFields`, chosen rather than
+ *    overlooked, because reaching for `liveFields` is the reflex everywhere else in this package.
  */
 class DwPhotoIntakeTest {
 
@@ -677,5 +695,168 @@ class DwPhotoIntakeTest {
         // And a workshop this device has never opened contributes nothing at all, which is what the
         // surface reports in words rather than by proposing nothing.
         assertEquals(emptyMap<String, DwStageData>(), dwStageDataFrom(registry, null))
+    }
+
+    // -----------------------------------------------------------------------
+    // Claims the module makes in prose that nothing was holding it to
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `a camera that declares Z or a colonless offset is understood, and junk is ignored`() {
+        // "Z" is what a camera set to UTC writes, and it is the branch of EXIF_OFFSET that the
+        // +05:30 cases never enter. A file written by such a camera at 19:40 belongs on the NEXT
+        // day in Asia/Kolkata, so getting this branch wrong misfiles every evening frame — silently,
+        // because the naive path it would fall back to produces a perfectly plausible date.
+        val zulu = resolveStamp(photo("z.jpg", "2026:02:14 19:40:12", "Z"), DwPhotoIntake.DEFAULT_TIMEZONE)
+        assertEquals("2026-02-15", zulu?.date)
+        assertEquals("Z", zulu?.shiftedFrom)
+
+        // EXIF 2.31 spells it "+05:30"; some writers drop the colon. Both are one zone, and a
+        // handset that read only one spelling would shift half a batch and not the other half.
+        assertEquals(
+            resolveStamp(photo("a.jpg", "2026:02:14 19:40:12", "-0800"), DwPhotoIntake.DEFAULT_TIMEZONE)?.date,
+            resolveStamp(photo("b.jpg", "2026:02:14 19:40:12", "-08:00"), DwPhotoIntake.DEFAULT_TIMEZONE)?.date,
+        )
+
+        // An offset that is not one is NOT a shift of zero — it is no declaration at all, so the
+        // wall clock stands and the evidence does not claim a clock was moved.
+        val junk = resolveStamp(photo("j.jpg", "2026:02:14 19:40:12", "not an offset"), DwPhotoIntake.DEFAULT_TIMEZONE)
+        assertEquals("2026-02-14", junk?.date)
+        assertNull(junk?.shiftedFrom)
+    }
+
+    @Test
+    fun `an unknown timezone declines to shift rather than falling back to the device's own`() {
+        // The whole point of zoneOffsetMinutesAt returning null: a workshop recorded against a zone
+        // this handset's tz database has never heard of must NOT be quietly resolved in whatever
+        // zone the device happens to be set to, or a designer in Delhi and a reviewer in London get
+        // different stage proposals out of one file. The wall clock stands, unshifted, instead.
+        val stamp = resolveStamp(photo("x.jpg", "2026:02:14 19:40:12", "+00:00"), "Mars/Olympus_Mons")
+
+        assertEquals("2026-02-14", stamp?.date)
+        assertEquals(19 * 60 + 40, stamp?.minutes)
+        assertNull(stamp?.shiftedFrom)
+    }
+
+    @Test
+    fun `a blank timezone falls back to the default rather than resolving against nothing`() {
+        // `intakePhotos` takes the zone as a plain string, so "" and "   " are both reachable from a
+        // caller reading a setting that was never filled in. Neither may reach ZoneId.of.
+        val expected = intakePhotos(listOf(photo("x.jpg", "2026:02:14 19:40:12", "+00:00")), anchors)
+            .single().stamp?.date
+
+        assertEquals("2026-02-15", expected)
+        assertEquals(
+            expected,
+            intakePhotos(listOf(photo("x.jpg", "2026:02:14 19:40:12", "+00:00")), anchors, timeZone = "  ")
+                .single().stamp?.date,
+        )
+    }
+
+    @Test
+    fun `a lakh-sized gap is grouped the Indian way, which is the case three digits never reaches`() {
+        // The existing 20,496 case has ONE group and so passes under plain three-digit grouping too.
+        // This is the case that separates them: en-IN writes 4,01,767 where en-US writes 401,767, and
+        // the refusal sentence is exactly what a designer holds beside the browser's when they are
+        // working out whether the camera or the app is wrong.
+        val distant = anchor(start = "3000-01-01")
+        val row = intakePhotos(listOf(photo("IMG_0001.JPG", "1900:01:01 09:00:00")), listOf(distant)).single()
+
+        val gap = LocalDate.of(3000, 1, 1).toEpochDay() - LocalDate.of(1900, 1, 1).toEpochDay()
+        assertEquals(401_767L, gap)
+        assertTrue(row.refusal, row.refusal!!.contains("4,01,767 days before the first date recorded"))
+    }
+
+    @Test
+    fun `a photograph stranded between two far-apart anchors prints the web's negative gap`() {
+        // A KNOWN DEFECT, CARRIED ON PURPOSE, and pinned here so it cannot be fixed on one client
+        // alone. `intakePhotos` measures the gap to the OUTER envelope, so a photograph INSIDE
+        // [earliest, latest] but near neither anchor takes the "after the last" arm and subtracts a
+        // larger number. `lib/photoIntake.ts` does the identical subtraction and prints the identical
+        // sentence; a refusal that reads differently on the phone and the laptop is a worse failure
+        // than one that reads oddly on both. The photograph is listed and assignable either way.
+        // When this is fixed it must be fixed in `lib/photoIntake.ts` and here in one commit, and
+        // this test is what will say so.
+        val row = intakePhotos(
+            listOf(photo("stranded.jpg", "2026:02:15 09:00:00")),
+            listOf(anchor(start = "2026-02-01"), anchor(start = "2026-03-01")),
+        ).single()
+
+        assertEquals(emptyList<DwStageProposal>(), row.proposals)
+        assertTrue(row.refusal, row.refusal!!.contains("-14 days after the last date recorded"))
+    }
+
+    @Test
+    fun `a null client key falls through to the entry id rather than swallowing the row`() {
+        // A row round-tripped through the server can carry `_clientKey: null` outright, and in
+        // kotlinx.serialization JsonNull IS a JsonPrimitive — so the obvious `as? JsonPrimitive`
+        // would read it as the string "null" and hand a confirmation a key that addresses nothing.
+        // The web's `??` falls through; so must this.
+        val nulled = mapOf(
+            "WORKSHOP_IDENTIFICATION" to DwStageData(
+                singleton = mapOf("startDate" to text("2026-02-12"), "endDate" to text("2026-02-26")),
+            ),
+            "PROTOTYPE_DEVELOPMENT" to DwStageData(
+                collections = mapOf(
+                    "prototypeStageLog" to listOf(
+                        mapOf(
+                            "_clientKey" to JsonNull,
+                            "_entryId" to text("server-a"),
+                            "logDate" to text("2026-02-14"),
+                            "activity" to text("Warping the loom"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val day = buildAnchors(registry, nulled).single { it.kind == DwAnchorKind.DAY }
+        assertEquals("server-a", day.rowKey)
+    }
+
+    @Test
+    fun `a DATE field holding something that is not a date string contributes no anchor`() {
+        // A number, a boolean or an object in a DATE box all come off a payload this client did not
+        // write. The web tests `typeof raw !== "string"`; anything looser here would either crash on
+        // a batch import or — worse — coerce an epoch number into a date and file two hundred
+        // photographs against a day nobody recorded.
+        val wrong = mapOf(
+            "WORKSHOP_IDENTIFICATION" to DwStageData(
+                singleton = mapOf(
+                    "startDate" to JsonPrimitive(20496),
+                    "endDate" to text("2026-02-26"),
+                ),
+            ),
+        )
+
+        // No SPAN, because the pair is incomplete — and no DAY from `startDate` either.
+        assertEquals(listOf("2026-02-26"), buildAnchors(registry, wrong).map { it.start })
+        assertEquals(listOf(DwAnchorKind.DAY), buildAnchors(registry, wrong).map { it.kind })
+    }
+
+    @Test
+    fun `a deprecated DATE field still anchors, because deprecation withholds an input not a fact`() {
+        // The value is still stored, the report still reads it, and a photograph taken on that day
+        // still belongs to that stage. `buildAnchors` therefore walks `fields` and not `liveFields`,
+        // matching the web — and this is the test that says the difference was chosen rather than
+        // overlooked, because reaching for `liveFields` is the reflex everywhere else in this package.
+        val withDeprecated = registry.copy(
+            stages = listOf(
+                registry.stages[0].copy(
+                    entities = listOf(
+                        registry.stages[0].entities[0].copy(
+                            fields = listOf(
+                                FieldDto(key = "startDate", label = "Start date", type = "DATE", deprecated = true),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val stage1Only = mapOf(
+            "WORKSHOP_IDENTIFICATION" to DwStageData(singleton = mapOf("startDate" to text("2026-02-12"))),
+        )
+
+        assertEquals(listOf("2026-02-12"), buildAnchors(withDeprecated, stage1Only).map { it.start })
     }
 }
