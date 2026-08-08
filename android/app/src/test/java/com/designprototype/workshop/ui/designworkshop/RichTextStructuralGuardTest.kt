@@ -141,6 +141,50 @@ class RichTextStructuralGuardTest {
     }
 
     @Test
+    fun `prose cannot be re-kinded INTO a structural block either`() {
+        // THE SAME GUARD FROM THE OTHER SIDE: the sibling test protects the SOURCE block, this one
+        // protects the TARGET kind. It is a deliberate divergence from the web and not parity —
+        // `RichBlockKind` (richText.ts:84) includes "TABLE" and "IMAGE", so `setBlockKind(doc,
+        // range, "TABLE")` type-checks in the browser too and the web has the same hole. Both are
+        // saved from it only by the fact that no control passes either token; this port takes a
+        // STRING (the toolbar reports a press as one) and `KIND_BY_NAME` has resolved both ever
+        // since the constants were added to stop the phone destroying a photograph.
+        //
+        // A TABLE with no `rows` and an IMAGE with no `media` are both blocks that `toJson` writes
+        // and `fromJson` then DROPS — "a table with nothing in it is not a table". The designer's
+        // sentence stayed on screen until the stage was reopened and then was not there.
+        val doc = RichDoc(listOf(para("a sentence"), para("another")))
+
+        for (kind in listOf("TABLE", "IMAGE")) {
+            val result = setBlockKind(doc, wholeDoc(doc), kind, 0)
+            assertEquals("$kind: the prose is left alone", doc, result.doc)
+            // And the round trip still holds, which is the loss the assertion above is standing in
+            // for: a document whose blocks became empty structural ones comes back short.
+            assertEquals(
+                "$kind: nothing is dropped on the next read",
+                2,
+                storedBlocks(result.doc).size,
+            )
+        }
+    }
+
+    @Test
+    fun `the guard on the target kind is not a blanket refusal`() {
+        // The control. Refusing every `setBlockKind` would be the easy over-correction and would
+        // leave the toolbar's five kind buttons doing nothing at all.
+        val doc = RichDoc(listOf(para("a sentence")))
+
+        assertEquals(
+            "HEADING",
+            storedBlocks(setBlockKind(doc, wholeDoc(doc), "HEADING", 2).doc)[0]["kind"]!!.jsonPrimitive.content,
+        )
+        assertEquals(
+            "QUOTE",
+            storedBlocks(setBlockKind(doc, wholeDoc(doc), "QUOTE", 0).doc)[0]["kind"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
     fun `isStructural names exactly the two kinds whose content is not their spans`() {
         // If a third such kind is ever added, this fails and points at the guard that must learn it.
         val structural = BlockKind.values().filter { it.isStructural }.toSet()

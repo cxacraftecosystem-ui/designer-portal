@@ -99,6 +99,33 @@ private const val MAX_TABLE_ROWS = 200
 private const val MAX_TABLE_COLUMNS = 12
 private const val MAX_SPANS_PER_CELL = 64
 
+/**
+ * An inline photograph's printed width, as a percentage of the text column.
+ *
+ * Named constants rather than the literals that used to sit in [fromJson] and [toJson], because the
+ * editor now PLACES a photograph as well as reading one, and three surfaces have to agree about the
+ * same four numbers: `IMAGE_DEFAULT_WIDTH_PCT` is the value [toJson] omits, so a phone defaulting to
+ * 70 against a browser defaulting to 65 would write a different document for the same picture. They
+ * are the `IMAGE_*_PCT` exports of `frontend/lib/richText.ts` and the same bounds `rich_text.py`
+ * clamps to.
+ *
+ * ALL FOUR, AND THE STEP IS THE ONE THAT LOOKS OPTIONAL AND IS NOT. The web exports these in a
+ * single block for a reason: `widthPct` is not a display preference, it is STORED in the document
+ * and printed by five renderers. A phone stepping by 10 against a browser stepping by 15 gives the
+ * same photograph, widened once by two people, 80% on one surface and 85% on the other — a real
+ * difference in the .docx, written by a control whose label ("Wider") promises the two are the same
+ * gesture. Nothing fails, no test that does not name the number notices, and the two copies of the
+ * report simply lay the figure out differently. See `RichTextEditor.tsx`'s `image-narrower` /
+ * `image-wider`, which pass exactly this constant.
+ */
+const val IMAGE_DEFAULT_WIDTH_PCT = 70f
+const val IMAGE_MIN_WIDTH_PCT = 10f
+const val IMAGE_MAX_WIDTH_PCT = 100f
+const val IMAGE_WIDTH_STEP_PCT = 15f
+
+/** The stored media id is truncated to this on the way in, on all three surfaces. */
+const val MAX_MEDIA_ID_CHARS = 64
+
 // --------------------------------------------------------------------------------------
 // The model
 // --------------------------------------------------------------------------------------
@@ -232,7 +259,7 @@ data class RichBlock(
     /** [BlockKind.IMAGE] only: the media id, resolved through the same resolver as any picture. */
     val media: String = "",
     /** [BlockKind.IMAGE] only: printed width as a percentage of the text column, clamped 10-100. */
-    val widthPct: Float = 70f,
+    val widthPct: Float = IMAGE_DEFAULT_WIDTH_PCT,
 ) {
     val text: String
         get() =
@@ -511,13 +538,15 @@ fun fromJson(raw: JsonElement?): RichDoc {
         }
 
         var media = ""
-        var widthPct = 70f
+        var widthPct = IMAGE_DEFAULT_WIDTH_PCT
         if (kind == BlockKind.IMAGE) {
-            media = cleanText(scalarOf(entry["media"])).trim().take(64)
+            media = cleanText(scalarOf(entry["media"])).trim().take(MAX_MEDIA_ID_CHARS)
             // An IMAGE with no id is not a picture — dropped, exactly as an empty TABLE is.
             if (media.isEmpty()) continue
             val rawWidth = (entry["widthPct"] as? JsonPrimitive)?.content?.toFloatOrNull()
-            if (rawWidth != null) widthPct = maxOf(10f, minOf(100f, rawWidth))
+            if (rawWidth != null) {
+                widthPct = maxOf(IMAGE_MIN_WIDTH_PCT, minOf(IMAGE_MAX_WIDTH_PCT, rawWidth))
+            }
         }
 
         var rows: List<List<List<RichSpan>>> = emptyList()
@@ -599,7 +628,7 @@ fun toJson(doc: RichDoc): JsonObject = buildJsonObject {
                 if (block.kind == BlockKind.IMAGE) {
                     put("media", block.media)
                     // Written only when it differs from the default, matching `to_json`.
-                    if (block.widthPct != 70f) put("widthPct", block.widthPct)
+                    if (block.widthPct != IMAGE_DEFAULT_WIDTH_PCT) put("widthPct", block.widthPct)
                 }
                 if (block.kind == BlockKind.TABLE) {
                     // Emitted in the same position and the same shape as the server's `to_json`,
@@ -694,6 +723,68 @@ fun isEmptyDocument(raw: JsonElement?): Boolean {
     if (raw == null || raw is JsonNull) return true
     if (raw is JsonPrimitive && raw.isString) return raw.content.isBlank()
     return fromJson(raw).isEmpty
+}
+
+// --------------------------------------------------------------------------------------
+// The media ids buried in a document
+//
+// A photograph placed inside a narrative does not put its id in the FIELD's value; it puts it in a
+// block, several levels down in the document JSON. Anything that walks a record looking for
+// photographs therefore has to be told to look here, and the server already is
+// (`rich_text.media_ids`, called from `design_workshops._media_ids`).
+//
+// THE PHONE NEEDS ONLY THE REWRITE, WHICH IS WHY ONLY THE REWRITE IS HERE. A read-only twin of
+// `rich_text.media_ids` was written alongside it and had no caller: the sync layer needs to SWAP the
+// ids, not list them, and the report resolver is handed one id at a time by `toReportBlocks`. R8
+// deletes an unreachable function from the release build, so a port kept "for parity" is a port that
+// is not in the product while reading as though it were. Add it back the day something asks.
+// --------------------------------------------------------------------------------------
+
+/**
+ * The same stored document with every inline media id passed through [translate] — the phone's own
+ * id swapped for the server's, on the way to the wire.
+ *
+ * ── WHY THIS IS SURGERY ON THE RAW TREE AND NOT `fromJson` THEN `toJson` ──────────────────────
+ *
+ * Because the round trip is not the identity for a document this build did not write. A field
+ * carrying a mark a later release added, a block kind this build has never heard of, a table with a
+ * ragged row — all of them survive in the column and none of them survives being re-serialised here.
+ * More immediately: the stage's payload is HASHED to decide whether it needs sending at all, so
+ * re-serialising every narrative on every pass would change the signature of stages nobody has
+ * touched and re-upload the whole workshop.
+ *
+ * So the value is returned UNCHANGED — the same instance — unless an IMAGE block's `media` actually
+ * moves. [translate] returning null means "leave this one alone", which is what a caller says both
+ * for an id that is already the server's and for one whose upload has not finished; the second case
+ * is the caller's cue to hold the stage back rather than to send a broken reference.
+ */
+fun remapInlineMedia(raw: JsonElement?, translate: (String) -> String?): JsonElement? {
+    // A plain string is the pre-promotion shape and has no blocks in it; null is nothing at all.
+    if (raw == null || raw is JsonNull || raw is JsonPrimitive) return raw
+    val blocksRaw: JsonArray = when (raw) {
+        is JsonObject -> raw["blocks"] as? JsonArray ?: return raw
+        is JsonArray -> raw
+        else -> return raw
+    }
+
+    var changed = false
+    val rewritten = blocksRaw.map { entry ->
+        val block = entry as? JsonObject ?: return@map entry
+        val kind = (block["kind"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.uppercase()
+        if (kind != BlockKind.IMAGE.name) return@map entry
+        val current = (block["media"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        if (current.isNullOrEmpty()) return@map entry
+        val next = translate(current) ?: return@map entry
+        if (next == current) return@map entry
+        changed = true
+        // `plus` on a JsonObject's backing LinkedHashMap REPLACES `media` in place rather than
+        // appending it, so the key order the oracle compares against is unchanged.
+        JsonObject(block + ("media" to JsonPrimitive(next)))
+    }
+    if (!changed) return raw
+
+    val array = JsonArray(rewritten)
+    return if (raw is JsonObject) JsonObject(raw + ("blocks" to array)) else array
 }
 
 /** A one-line plain-text preview, for a list row or a collection's label field. */
