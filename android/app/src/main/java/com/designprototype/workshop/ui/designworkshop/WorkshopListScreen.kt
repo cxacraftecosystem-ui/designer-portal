@@ -323,8 +323,43 @@ fun WorkshopListScreen(
                             "No connection. Everything is saved on this device and will upload by itself."
                         )
                         result.didAnything -> onMessage(
-                            "Sent ${result.stagesSent} stage(s) and ${result.mediaUploaded} file(s)." +
-                                if (result.stoppedOffline) " The connection dropped — the rest is still here." else ""
+                            buildString {
+                                append("Sent ${result.stagesSent} stage(s) and ${result.mediaUploaded} file(s).")
+                                if (result.stoppedOffline) {
+                                    append(" The connection dropped — the rest is still here.")
+                                }
+                                // A pass that sends nineteen stages and is refused the twentieth is
+                                // not a clean pass, and reporting only the nineteen is how a designer
+                                // packs up believing all twenty went. `buildString` rather than a
+                                // chain of `+ if (…) … else ""`: Kotlin binds the second `if` inside
+                                // the first one's else-branch, so the two clauses would have been
+                                // mutually exclusive.
+                                if (result.refused > 0) {
+                                    append(" ${result.refused} item(s) were refused — open the workshop below to see why.")
+                                }
+                            }
+                        )
+                        // ABOVE BOTH the offline line and the "already on the server" line, and each
+                        // ordering closes a different way of telling a designer a refusal did not
+                        // happen. A pass that sent nothing and was refused something used to fall
+                        // through to "already on the server" and report the fortnight safe. And
+                        // whenever a refusal was FOLLOWED by a genuine drop — workshop 1 refused, the
+                        // signal gone by workshop 2 — it fell to the offline line instead, which is
+                        // the answered-5xx defect itself arriving by the other door: the server
+                        // answered and refused an item, and the designer was told the connection was
+                        // at fault and went looking for better signal. `stoppedOffline` is still
+                        // said, second, because "the rest has not been tried yet" is the other half
+                        // of the news and it is the half that says nothing was lost.
+                        result.refused > 0 -> onMessage(
+                            buildString {
+                                append("${result.refused} item(s) were refused by the server and are ")
+                                append("still on this device. Open the workshop below to see which, ")
+                                append("and why.")
+                                if (result.stoppedOffline) {
+                                    append(" The connection then dropped, so nothing after that was ")
+                                    append("tried — none of it has been lost.")
+                                }
+                            }
                         )
                         result.stoppedOffline -> onMessage(
                             "The connection dropped before anything could be sent. Nothing has been lost."
