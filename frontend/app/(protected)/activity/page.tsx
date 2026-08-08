@@ -6,6 +6,7 @@ import { Activity, ChevronRight } from "lucide-react";
 
 import { EmptyState } from "@/components/EmptyState";
 import { Field, Select } from "@/components/FormControls";
+import type { ProcessRecord } from "@/components/forms/ProcessForm";
 import { PageHeader } from "@/components/PageHeader";
 import { useAuth } from "@/components/AuthProvider";
 import { apiFetch, listResource } from "@/lib/api";
@@ -52,6 +53,13 @@ type RawLists = {
   artisans: Array<Artisan & WithCreator>;
   products: Array<ProductDocumentation & WithCreator>;
   tools: Array<ToolDocumentation & WithCreator>;
+  /**
+   * Processes were missing from this page while "Document process" has always been an entry in both
+   * clients' menus (`NAV_ITEMS`, Android's `AppNavigation`), so a record type this app can create
+   * was reported nowhere. Android's My Activity has always listed them — it owns the information
+   * architecture, so the web follows it here rather than the other way round.
+   */
+  processes: Array<ProcessRecord & WithCreator>;
   workshops: Array<Workshop & WithCreator>;
   crafts: Array<Craft & WithCreator>;
   interviews: QuestionnaireInterview[];
@@ -96,11 +104,12 @@ export default function MyActivityPage() {
     const mine = { pageSize, createdBy: activeUserId };
 
     async function load() {
-      const [artisans, products, tools, workshops, crafts, interviews, media, directoryResult] =
+      const [artisans, products, tools, processes, workshops, crafts, interviews, media, directoryResult] =
         await Promise.allSettled([
           listResource<Artisan & WithCreator>("/artisans", mine),
           listResource<ProductDocumentation & WithCreator>("/products", mine),
           listResource<ToolDocumentation & WithCreator>("/tools", mine),
+          listResource<ProcessRecord & WithCreator>("/processes", mine),
           listResource<Workshop & WithCreator>("/workshops", mine),
           listResource<Craft & WithCreator>("/crafts", mine),
           listResource<QuestionnaireInterview>("/questionnaire/interviews", mine),
@@ -117,6 +126,7 @@ export default function MyActivityPage() {
         artisans: items(artisans),
         products: items(products),
         tools: items(tools),
+        processes: items(processes),
         workshops: items(workshops),
         crafts: items(crafts),
         interviews: items(interviews),
@@ -124,7 +134,7 @@ export default function MyActivityPage() {
       });
       setDirectory(directoryResult.status === "fulfilled" ? directoryResult.value : []);
 
-      const failures = [artisans, products, tools, workshops, crafts, interviews, media].filter(
+      const failures = [artisans, products, tools, processes, workshops, crafts, interviews, media].filter(
         (result) => result.status === "rejected"
       );
       setError(failures.length ? "Some records could not be loaded — the lists below may be incomplete." : null);
@@ -177,6 +187,14 @@ export default function MyActivityPage() {
         href: "/tools",
         rows: by(raw.tools).map((t) => ({ id: t.id, name: t.toolkitName, createdAt: t.createdAt }))
       },
+      // After Tools and before Workshops, which is where Android's My Activity puts it — Android owns
+      // the information architecture and the two lists must not disagree about the order a designer
+      // reads their own work in.
+      {
+        title: "Processes",
+        href: "/processes",
+        rows: by(raw.processes).map((p) => ({ id: p.id, name: p.name, createdAt: p.createdAt }))
+      },
       {
         title: "Workshops",
         href: "/workshops",
@@ -208,7 +226,7 @@ export default function MyActivityPage() {
     <>
       <PageHeader
         title="My Activity"
-        description="Everything documented — artisans, products, tools, workshops, crafts, interviews and media. Reviewers can also inspect the activity of contributors they oversee."
+        description="Everything documented — artisans, products, tools, processes, workshops, crafts, interviews and media. Reviewers can also inspect the activity of contributors they oversee."
         icon={<Activity className="h-5 w-5" aria-hidden />}
       />
       {error ? (
@@ -244,8 +262,8 @@ export default function MyActivityPage() {
           title={viewingSelf ? "Nothing here yet" : `No records from ${selectedName ?? "this user"} yet`}
           body={
             viewingSelf
-              ? "Records you create — artisans, products, tools, interviews and media uploads — will show up here."
-              : "Records this contributor creates — artisans, products, tools, interviews and media uploads — will show up here."
+              ? "Records you create — artisans, products, tools, processes, interviews and media uploads — will show up here."
+              : "Records this contributor creates — artisans, products, tools, processes, interviews and media uploads — will show up here."
           }
         />
       ) : (

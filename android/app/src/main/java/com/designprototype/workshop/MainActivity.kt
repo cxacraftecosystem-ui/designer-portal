@@ -13206,6 +13206,15 @@ private fun WorkshopAccessQueueCard(
 // person owns, sees and reports progress on their own row.
 // ===========================================================================
 
+/**
+ * The four task statuses, in the order the web's /tasks page lists them.
+ *
+ * CANCELLED was missing from the chips while the API, the DTO and [taskStatusLabel] all knew it, so
+ * a cancelled task assigned to you could be seen under "All" and never filtered for — and never
+ * counted.
+ */
+private val TASK_STATUSES = listOf("OPEN", "IN_PROGRESS", "DONE", "CANCELLED")
+
 private fun taskStatusLabel(status: String): String = when (status) {
     "OPEN" -> "Open"
     "IN_PROGRESS" -> "In progress"
@@ -13279,13 +13288,31 @@ private fun MyTasksScreen(
     var tasks by remember { mutableStateOf<List<TaskDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var busyId by remember { mutableStateOf<String?>(null) }
+    /**
+     * Did the last attempt to read the list FAIL? Not the same question as "is the list empty", and
+     * conflating the two is what this screen used to do: `refresh` left `tasks` untouched on failure,
+     * so an offline designer — the ordinary state of this handset — was told "Nothing is assigned to
+     * you right now." about a request that never reached the server. The outbox banner appeared
+     * underneath saying the device was offline, so the one screen a designer checks between sessions
+     * made two statements that contradicted each other, and the reassuring one was the false one.
+     */
+    var loadFailed by remember { mutableStateOf(false) }
+    // Exact per-status totals for the chips (web parity: /tasks loads these too). Empty = not known,
+    // which draws the chips unlabelled rather than labelling them zero.
+    var counts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
 
     fun refresh() {
         scope.launch {
             loading = true
             runCatching { repository.tasks(view = view, status = statusFilter.ifBlank { null }) }
-                .onSuccess { tasks = it }
-                .onFailure { onError(it.apiErrorMessage("Unable to load your tasks")) }
+                .onSuccess { tasks = it; loadFailed = false }
+                .onFailure { loadFailed = true; onError(it.apiErrorMessage("Unable to load your tasks")) }
+            // Swallowed deliberately: a chip with no number is a working filter, and the failure has
+            // already been reported by the list load above. Two notices for one dead connection is
+            // noise.
+            runCatching { repository.taskCounts(view = view, statuses = TASK_STATUSES) }
+                .onSuccess { counts = it }
+                .onFailure { counts = emptyMap() }
             loading = false
         }
     }
@@ -13335,12 +13362,18 @@ private fun MyTasksScreen(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            FilterChip(selected = statusFilter.isBlank(), onClick = { statusFilter = "" }, label = { Text("All") })
-            listOf("OPEN", "IN_PROGRESS", "DONE").forEach { value ->
+            val knownTotal = counts.takeIf { it.isNotEmpty() }?.values?.sum()
+            FilterChip(
+                selected = statusFilter.isBlank(),
+                onClick = { statusFilter = "" },
+                label = { Text(if (knownTotal != null) "All ($knownTotal)" else "All") }
+            )
+            TASK_STATUSES.forEach { value ->
+                val count = counts[value]
                 FilterChip(
                     selected = statusFilter == value,
                     onClick = { statusFilter = if (statusFilter == value) "" else value },
-                    label = { Text(taskStatusLabel(value)) }
+                    label = { Text(if (count != null) "${taskStatusLabel(value)} ($count)" else taskStatusLabel(value)) }
                 )
             }
         }
@@ -13349,8 +13382,30 @@ private fun MyTasksScreen(
             Spacer(Modifier.width(8.dp))
             Text(if (loading) "Loading tasks…" else "Refresh")
         }
+        // The other half of the same honesty: a list that IS on screen after a failed refresh is the
+        // one fetched earlier, not the repository's current answer. Saying so costs a line and stops
+        // a designer acting on a task that was reassigned while they were out of signal.
+        if (loadFailed && tasks.isNotEmpty() && !loading) {
+            Text(
+                "Showing the list last fetched — the latest refresh did not reach the repository.",
+                color = Muted,
+                fontSize = 12.sp
+            )
+        }
         when {
             loading -> Text("Loading tasks…", color = Muted, fontSize = 12.sp)
+            // ORDERED BEFORE THE EMPTY CASE ON PURPOSE. "Nothing is assigned to you" is a claim about
+            // the repository, and this app may only make it after the repository has answered. Tasks
+            // are read over the network every time — the offline outbox carries CREATES only, so
+            // neither the list nor a status change survives no signal — which on this fleet means the
+            // failing branch is the ordinary one, not the exception.
+            loadFailed && tasks.isEmpty() -> Text(
+                "Your task list could not be fetched, so this is not \"nothing is assigned to you\" — it is " +
+                    "\"not known yet\". Tasks are read live and are not stored on this device. Use Refresh once " +
+                    "you have a connection.",
+                color = Muted,
+                fontSize = 12.sp
+            )
             tasks.isEmpty() -> Text(
                 if (view == "created") "You have not assigned any work yet."
                 else "Nothing is assigned to you right now.",

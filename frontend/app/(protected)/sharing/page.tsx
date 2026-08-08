@@ -311,12 +311,26 @@ export default function SharingPage() {
     setLoadingRecords(true);
     try {
       const mine = currentUser.id;
+      /*
+        OWNERSHIP IS ASKED FOR, NOT SIFTED FOR — the same rule /activity already documents.
+
+        This used to fetch page one of every list and filter it on `createdById`. Reading the
+        repository is open (`services/records.viewable_where` returns {}), so page one is the newest
+        hundred rows of the WHOLE archive: MEASURED against the running API there are 431 artisans and
+        613 products, with page one of /artisans spanning 34 distinct creators. An owner could
+        therefore only ever offer the records that happened to sit in that hundred, so a subset grant
+        over their older work was impossible to build and nothing on screen said why.
+
+        The client-side filter below is kept as well: it costs nothing, and against a deployment that
+        ignores the parameter it is the difference between an over-long list and a wrong one.
+      */
+      const owned = { pageSize: 100, createdBy: mine };
       const [a, p, t, w, q] = await Promise.all([
-        listResource<Artisan>("/artisans", { pageSize: 100 }),
-        listResource<ProductDocumentation>("/products", { pageSize: 100 }),
-        listResource<ToolDocumentation>("/tools", { pageSize: 100 }),
-        listResource<Workshop>("/workshops", { pageSize: 100 }),
-        listResource<QuestionnaireInterview>("/questionnaire/interviews", { pageSize: 100 })
+        listResource<Artisan>("/artisans", owned),
+        listResource<ProductDocumentation>("/products", owned),
+        listResource<ToolDocumentation>("/tools", owned),
+        listResource<Workshop>("/workshops", owned),
+        listResource<QuestionnaireInterview>("/questionnaire/interviews", owned)
       ]);
       const recs: OwnRecord[] = [
         ...a.items.filter((x) => x.createdById === mine).map((x) => ({ recordType: "artisan", recordId: x.id, label: `Artisan · ${x.name}` })),
