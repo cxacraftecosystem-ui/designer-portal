@@ -21,12 +21,16 @@
  *   `role="alertdialog"` and for the danger tone.
  * - **`aria-modal` + a labelled title**, `aria-describedby` on the body when one is supplied, and
  *   `role="alertdialog"` for anything demanding a decision.
- * - **Reduced motion is respected** — `useReducedMotion` covers both the OS setting and the app's own
- *   Settings toggle, and collapses the enter/exit to a plain fade with zero movement.
+ * - **Reduced motion is respected** — `useAppReducedMotion` is the OR of the OS setting and the app's
+ *   own Settings toggle, and collapses the enter/exit to a plain fade with zero movement. It has to
+ *   be that hook and not framer's `useReducedMotion`, which subscribes to the OS media query and
+ *   nothing else: this header used to claim both switches while reading only one, so a designer with
+ *   vestibular sensitivity who turned Reduce motion on in Settings still had every confirm, every
+ *   unsaved-changes prompt and every delete dialog spring in with a scale and a 10px rise.
  * - **The page behind cannot scroll**, and nested dialogs unwind that lock in the right order.
  */
 
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import {
   useCallback,
@@ -39,6 +43,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { cn } from "@/lib/utils";
 
 export type DialogTone = "neutral" | "danger" | "warning";
@@ -198,7 +203,7 @@ export function FieldDialog({
   const instanceId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const reduce = useReducedMotion() ?? false;
+  const reduce = useAppReducedMotion();
 
   // Portals need a DOM; the first client render is what makes one available.
   const [mounted, setMounted] = useState(false);

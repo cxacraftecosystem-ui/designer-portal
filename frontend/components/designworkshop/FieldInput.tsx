@@ -63,7 +63,6 @@ import {
   inputValue,
   listValue,
   type DwEntity,
-  type DwEnumOption,
   type DwEntryData,
   type DwField,
   type DwGeoValue,
@@ -93,8 +92,6 @@ import type { MediaFile, MediaType } from "@/lib/types";
  * unable to find it again, which reads to the designer as a file that vanished.
  */
 export const DW_MEDIA_RECORD_TYPE = "designWorkshop";
-
-export type RefOptionMap = Record<string, DwEnumOption[]>;
 
 /**
  * Provenance for everything a stage uploads: where the device was and when.
@@ -144,12 +141,14 @@ export type FieldInputProps = {
    * beneath the media control — see the file header for why it may not live anywhere else.
    */
   caption?: { field: DwField; value: DwValue | undefined; onChange: (value: DwValue) => void };
-  /**
-   * Options for REF fields, keyed by `refModel` ("DwSketch", "DwParticipant", "Artisan", …). When a
-   * model has no entry the field degrades to a plain text box rather than to an empty dropdown: an
-   * empty closed list is a control that cannot be answered, and a required one blocks the save.
+  /*
+   * NOTE — THERE IS NO `refOptions` PROP HERE, AND NOTHING SHOULD ADD ONE BACK. The REF branch below
+   * hands the field to `StageReferenceSelect`, which fetches and caches the options it needs. A
+   * `refOptions` map used to be built by the stage page and threaded down through `EntityForm` to
+   * here, where it was destructured and never read — up to five requests per stage open, one of them
+   * the whole workshop, discarded before they reached a control.
    */
-  refOptions?: RefOptionMap;
+
   disabled?: boolean;
   /** A per-field message from the save response's `errors` map. */
   error?: string | null;
@@ -243,7 +242,6 @@ export function FieldInput({
   onPatch,
   workshopId,
   caption,
-  refOptions,
   disabled,
   error,
   place,
