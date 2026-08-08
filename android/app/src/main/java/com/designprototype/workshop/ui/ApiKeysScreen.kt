@@ -87,9 +87,9 @@ import java.util.Locale
  * only whether each engine has one and what the provider said the last time we asked.
  *
  * THE KEYS (`/secrets`, below) stay MASTER ADMIN ONLY, because handing out live provider credentials
- * (reveal returns plaintext) is a different class of power. The gate is discovered rather than
- * asserted: the API answers 403 for an ordinary admin and [ApiKeysRestrictedCard] takes the list's
- * place, while the ranking above it stays fully live. That is what lets one screen serve both roles.
+ * (reveal returns plaintext) is a different class of power. [ApiKeysRestrictedCard] takes the list's
+ * place while the ranking above it stays fully live, and that is what lets one screen serve both
+ * roles. Which of the two paths puts the card there is the subject of the last paragraph below.
  *
  * Two rules shape the key half, and both are the reason it is worth having at all:
  *
@@ -104,15 +104,37 @@ import java.util.Locale
  *    provider call (API *and* the transcription queue) uses it — no restart, no redeploy. The
  *    banner says so out loud rather than leaving the master admin wondering whether to SSH in.
  *
- * The caller gates this screen on ADMIN, and the API is the real authority for the half that is
- * higher: if `/secrets` answers 403 the screen renders [ApiKeysRestrictedCard] instead of an error,
- * because "you are not allowed" is a state, not a failure. That authority is what makes the screen
- * safe to open to plain admins for the ranking's sake — an account that may not read keys still
- * cannot, whatever route brought it here. This paragraph used to say the caller gated on MASTER
- * admin, and it did: `AdminHubEntry.API_KEYS` carried `masterOnly = true`, so the require_admin
- * ranking above sat behind a require_master_admin door and no admin ever saw the screen that was
- * written for them.
+ * The caller gates this screen on ADMIN and hands it `isMasterAdmin`, which decides whether the key
+ * half is ASKED FOR at all; the API decides the answer to every request that is actually made, and a
+ * 403 renders [ApiKeysRestrictedCard] instead of an error, because "you are not allowed" is a state
+ * and not a failure. The hint can only remove a request, so an account that may not read keys still
+ * cannot, whatever route brought it here.
+ *
+ * TWO CORRECTIONS ARE BURIED IN THAT SENTENCE, both of them shipped defects. This paragraph used to
+ * say the caller gated on MASTER admin, and it did: `AdminHubEntry.API_KEYS` carried
+ * `masterOnly = true`, so the `require_admin` ranking above sat behind a `require_master_admin` door
+ * and no admin ever saw the screen written for them. Then, with the door open, it said the 403 alone
+ * kept the arrangement honest — which is true only where there is signal. Offline the refusal never
+ * arrives, the failure is an IOException, and the ordinary admin this screen had just been opened to
+ * got "Unable to load the managed keys" and a snackbar about a resource they were never entitled to.
  */
+
+/**
+ * Is this `/secrets` failure the server REFUSING THIS ACCOUNT, or is it something that went wrong?
+ *
+ * 403 is the only refusal. Everything else — a timeout, a captive portal, a 502 from CloudFront, no
+ * signal at all — is a failure, and the two must not be confused in either direction: reading a
+ * network drop as "you are not the master admin" would tell a master admin they had been demoted,
+ * and reading a 403 as a failure would show an ordinary admin an error they cannot act on.
+ *
+ * `internal` so `ApiKeysAccessTest` can walk it. That test is the one that states the thing this
+ * screen's own KDoc used to get wrong: with no signal — the normal condition in a village — the
+ * failure is an IOException rather than a 403, so an account sent to ask `/secrets` when it was
+ * never allowed to gets "Unable to load the managed keys" and a snackbar instead of the restricted
+ * card. That is why [ApiKeysScreen] takes `isMasterAdmin` and does not ask at all.
+ */
+internal fun secretsRefusedTheAccount(error: Throwable): Boolean =
+    error is HttpException && error.code() == 403
 
 /** How long a revealed value stays on screen before it hides itself again. */
 private const val REVEAL_TIMEOUT_MS = 30_000L
@@ -206,14 +228,35 @@ class ApiKeysState internal constructor(
                     secrets = it
                 }
                 .onFailure { err ->
-                    if (err is HttpException && err.code() == 403) {
-                        restricted = true
-                        secrets = emptyList()
+                    if (secretsRefusedTheAccount(err)) {
+                        markRestricted()
                     } else {
                         error = err.apiErrorMessage("Unable to load the managed keys")
                     }
                 }
         }
+    }
+
+    /**
+     * Draw the restricted card WITHOUT asking `/secrets` first — for an account the caller already
+     * knows is not the master admin.
+     *
+     * This only ever SUBTRACTS a request; it can never show a key. The 403 branch in [load] is still
+     * the authority and still fires for anyone who does ask, so an account whose rank changed on the
+     * server since sign-in is refused by the server exactly as before.
+     *
+     * It exists because the tile above this screen opened to plain admins. For them `GET /secrets`
+     * is a guaranteed 403 on every open — a request billed to prepaid mobile data for an answer the
+     * client already knows — and, with no signal, it does not even come back as one: the failure is
+     * an IOException, so [load] would set [error] and this screen would raise "Unable to load the
+     * managed keys" plus a snackbar at an admin who was never entitled to them. Mirrors the web,
+     * which renders `<ApiKeysPanel/>` only `{master ? … : null}`
+     * (frontend/app/(protected)/settings/api-keys/page.tsx:84).
+     */
+    fun markRestricted() {
+        restricted = true
+        secrets = emptyList()
+        error = null
     }
 
     /** Tapping the eye a second time hides the value; otherwise fetch it (audit-logged server-side). */
@@ -362,10 +405,18 @@ fun rememberApiKeysState(repository: WorkshopRepository): ApiKeysState {
 
 /**
  * Providers & API keys. ADMIN and above — the caller gates it there, for the ranking's sake — and
- * the key list below the ranking is the master admin's, which the API decides: its 403 sets
- * `restricted` and draws [ApiKeysRestrictedCard], and deliberately never touches `error`, so an
- * ordinary admin opening this screen is told what they hold rather than shown a failure they cannot
- * act on.
+ * the key list below the ranking is the master admin's.
+ *
+ * WHO DECIDES THE KEY HALF, in this order. [isMasterAdmin] decides whether the phone ASKS: an
+ * ordinary admin gets [ApiKeysRestrictedCard] straight away and `/secrets` is never called, which is
+ * what the web does with `{master ? <ApiKeysPanel/> : null}`. The API decides the ANSWER whenever it
+ * is asked: a 403 still sets `restricted` and draws the same card, and deliberately never touches
+ * `error`, so a stale hint is refused by the server rather than trusted.
+ *
+ * The hint alone would be a client inventing a permission; the 403 alone left an admin with no
+ * signal — the normal condition here — looking at "Unable to load the managed keys" and a snackbar,
+ * because an unreachable server does not answer 403 (see [secretsRefusedTheAccount]). Both, in this
+ * order, is the only arrangement that is honest offline and safe online.
  *
  * HOSTING: this is an admin-hub tool, so it lays out as a plain [Column] and renders into whatever
  * scrolling parent hosts it — exactly like [TaskAdminScreen] and every other hub tool. It must NOT
@@ -384,6 +435,15 @@ fun rememberApiKeysState(repository: WorkshopRepository): ApiKeysState {
 @Composable
 fun ApiKeysScreen(
     repository: WorkshopRepository,
+    /**
+     * `deps.is_master_admin` — `role == "MASTER_ADMIN"`, nothing softer.
+     *
+     * Required rather than defaulted on purpose. A default of `true` would silently restore the
+     * pointless 403 for every future caller that forgot it, and a default of `false` would hide the
+     * key list from the master admin; there is one call site, so the compiler asking is cheaper than
+     * either.
+     */
+    isMasterAdmin: Boolean,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     onMessage: (String) -> Unit = {},
@@ -392,7 +452,9 @@ fun ApiKeysScreen(
     val state = rememberApiKeysState(repository)
     val context = LocalContext.current
 
-    LaunchedEffect(state) { state.load() }
+    LaunchedEffect(state, isMasterAdmin) {
+        if (isMasterAdmin) state.load() else state.markRestricted()
+    }
 
     // Security: nothing revealed survives leaving this screen.
     DisposableEffect(state) { onDispose { state.hideAll() } }
