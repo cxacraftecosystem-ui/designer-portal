@@ -1977,9 +1977,17 @@ private fun HomeScreen(
                     repository = repository,
                     onError = { showMessage(it) }
                 )
+                // The blurb names what is actually behind the toggle, and only the part EVERY admin
+                // gets. It used to promise "user management", which is not in this hub at all
+                // (Manage users is its own destination), and to omit the tools that are — including
+                // the provider ranking, which an admin now reaches here. Feedback and the global
+                // settings are deliberately unnamed: they are master-admin-only entries, and a card
+                // shown to every admin must not advertise doors most of its readers will not find.
                 else -> AdminViewHiddenCard(
                     label = "The settings hub",
-                    blurb = "It gathers reviews, recovered recordings, feedback, tool assignment and user management in one place.",
+                    blurb = "It gathers reviews, recovered recordings, task and tool assignment, " +
+                        "workshop rosters and access requests, and the transcription provider " +
+                        "ranking in one place.",
                     canToggle = canToggleAdminView,
                     onEnable = { adminViewRequested = true }
                 )
@@ -9100,8 +9108,15 @@ private fun AdminHubScreen(
             AdminHubEntry.ACCESS_REQUESTS -> WorkshopAccessQueueCard(repository = repository, onMessage = onMessage, onError = onError)
             // Same as the task board above: the hub's "All admin tools" pill is the back control,
             // so the screen's own arrow stays off (`onBack = null`).
+            // `isMasterAdmin` is passed DOWN rather than re-derived, and it gates only the key half.
+            // The tile itself is `require_admin` because of the ranking; without the hint the screen
+            // would fire a guaranteed-403 `GET /secrets` on every open for every ordinary admin —
+            // mobile data spent on an answer the client already has, and, with no signal, an
+            // IOException that reads as "Unable to load the managed keys" rather than as the
+            // restricted card.
             AdminHubEntry.API_KEYS -> ApiKeysScreen(
                 repository = repository,
+                isMasterAdmin = isMasterAdmin,
                 onBack = null,
                 onMessage = onMessage,
                 onError = onError
