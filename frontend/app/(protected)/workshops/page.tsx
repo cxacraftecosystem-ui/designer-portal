@@ -6,6 +6,7 @@ import { MapPinned } from "lucide-react";
 
 import { CollabDialog } from "@/components/CollabDialog";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
+import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { Field, MultiNoteField, Select, TextArea, TextInput } from "@/components/FormControls";
@@ -672,40 +673,61 @@ function WorkshopsPageBody() {
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
 
-      {assigning ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setAssigning(null)}>
-          <div className="panel w-full max-w-lg p-4" onClick={(e) => e.stopPropagation()}>
-            <h2 className="font-display font-bold text-lg text-ink">Assign researchers</h2>
-            <p className="mt-1 text-sm text-ink-muted">
-              Only assigned researchers can create entries for <span className="font-medium">{assigning.title}</span>. Submissions outside the
-              workshop dates are flagged for admin approval. Leave empty to keep the workshop open to everyone.
-            </p>
-            <div className="mt-3 grid max-h-72 gap-1 overflow-y-auto rounded-md border border-line-200 bg-field-50 p-2">
-              {researchers.length === 0 ? (
-                <p className="px-2 py-1 text-sm text-ink-muted">No users to assign.</p>
-              ) : (
-                researchers.map((r) => (
-                  <label key={r.id} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-field-100">
-                    <input type="checkbox" checked={assignIds.has(r.id)} onChange={() => toggleAssign(r.id)} />
-                    <span className="min-w-0 flex-1 truncate text-sm text-ink">
-                      {r.name} <span className="text-ink-muted">· {r.email}</span>
-                    </span>
-                    <span className="rounded-full bg-field-200 px-2 py-0.5 text-xs text-ink-muted">{r.role}</span>
-                  </label>
-                ))
-              )}
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button className="field-button-secondary" onClick={() => setAssigning(null)}>
-                Cancel
-              </button>
-              <button className="field-button" disabled={assignBusy} onClick={saveAssignments}>
-                {assignBusy ? "Saving…" : `Save (${assignIds.size})`}
-              </button>
-            </div>
-          </div>
+      {/*
+        THE ASSIGN DIALOG GOES THROUGH `FieldDialog` LIKE EVERY OTHER MODAL IN THE APP. It used to be
+        a `fixed inset-0 z-50 bg-black/40` div with a `stopPropagation` guard and nothing else: no
+        `role="dialog"`, no focus trap, no Escape, no focus restore, no scroll lock — so an admin
+        opening it from the keyboard was left on the Assign button behind the dimmer with the table
+        still being read out underneath, and the page scrolled under the overlay.
+
+        `dismissOnBackdrop={false}` because the panel below holds work in progress: the ticks are
+        state, not a saved answer, and a stray click on the dim area silently threw away however many
+        researchers had been picked while showing the original assignment untouched on reopening.
+        `busy` suspends Escape and the X while the PUT is in flight for the same reason.
+      */}
+      <FieldDialog
+        open={assigning !== null}
+        onClose={() => setAssigning(null)}
+        title="Assign researchers"
+        description={
+          <>
+            Only assigned researchers can create entries for <span className="font-medium">{assigning?.title}</span>. Submissions
+            outside the workshop dates are flagged for admin approval. Leave empty to keep the workshop open to everyone.
+          </>
+        }
+        className="max-w-lg"
+        dismissOnBackdrop={false}
+        busy={assignBusy}
+        footer={
+          <>
+            {/* Deliberately NOT disabled while `busy`: `busy` suspends the ambiguous dismissals
+                (Escape, the X, the backdrop), and Cancel is the one explicit way out that must stay
+                available — as it was before this dialog had any of the others. */}
+            <button className="field-button-secondary" onClick={() => setAssigning(null)}>
+              Cancel
+            </button>
+            <button className="field-button" disabled={assignBusy} onClick={saveAssignments}>
+              {assignBusy ? "Saving…" : `Save (${assignIds.size})`}
+            </button>
+          </>
+        }
+      >
+        <div className="mt-3 grid max-h-72 gap-1 overflow-y-auto rounded-md border border-line-200 bg-field-50 p-2">
+          {researchers.length === 0 ? (
+            <p className="px-2 py-1 text-sm text-ink-muted">No users to assign.</p>
+          ) : (
+            researchers.map((r) => (
+              <label key={r.id} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-field-100">
+                <input type="checkbox" checked={assignIds.has(r.id)} onChange={() => toggleAssign(r.id)} />
+                <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                  {r.name} <span className="text-ink-muted">· {r.email}</span>
+                </span>
+                <span className="rounded-full bg-field-200 px-2 py-0.5 text-xs text-ink-muted">{r.role}</span>
+              </label>
+            ))
+          )}
         </div>
-      ) : null}
+      </FieldDialog>
       <CollabDialog recordType="workshop" recordId={collabId} onClose={() => setCollabId(null)} />
       <UnsavedChangesDialog
         open={confirmAction !== null}

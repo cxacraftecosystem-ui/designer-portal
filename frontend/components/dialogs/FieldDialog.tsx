@@ -21,12 +21,16 @@
  *   `role="alertdialog"` and for the danger tone.
  * - **`aria-modal` + a labelled title**, `aria-describedby` on the body when one is supplied, and
  *   `role="alertdialog"` for anything demanding a decision.
- * - **Reduced motion is respected** — `useReducedMotion` covers both the OS setting and the app's own
- *   Settings toggle, and collapses the enter/exit to a plain fade with zero movement.
+ * - **Reduced motion is respected** — `useAppReducedMotion` is the OR of the OS setting and the app's
+ *   own Settings toggle, and collapses the enter/exit to a plain fade with zero movement. It has to
+ *   be that hook and not framer's `useReducedMotion`, which subscribes to the OS media query and
+ *   nothing else: this header used to claim both switches while reading only one, so a designer with
+ *   vestibular sensitivity who turned Reduce motion on in Settings still had every confirm, every
+ *   unsaved-changes prompt and every delete dialog spring in with a scale and a 10px rise.
  * - **The page behind cannot scroll**, and nested dialogs unwind that lock in the right order.
  */
 
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import {
   useCallback,
@@ -39,6 +43,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { cn } from "@/lib/utils";
 
 export type DialogTone = "neutral" | "danger" | "warning";
@@ -158,7 +163,12 @@ export type FieldDialogProps = {
   busy?: boolean;
   /** Focused when the dialog opens; falls back to the first focusable node in the panel. */
   initialFocusRef?: RefObject<HTMLElement | null>;
-  /** Extra classes for the panel (width, padding overrides). */
+  /**
+   * Extra classes for the panel (width, padding overrides).
+   *
+   * A `max-w-*` here REPLACES the panel's default `max-w-md` rather than sitting beside it — see
+   * `callerSetsMaxWidth` below for the cascade trap that made a width passed here do nothing.
+   */
   className?: string;
   /**
    * Replaces the panel's default background + tone border outright. For the one dialog whose colour
@@ -198,7 +208,7 @@ export function FieldDialog({
   const instanceId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const reduce = useReducedMotion() ?? false;
+  const reduce = useAppReducedMotion();
 
   // Portals need a DOM; the first client render is what makes one available.
   const [mounted, setMounted] = useState(false);
@@ -209,6 +219,26 @@ export function FieldDialog({
     installFocusTracker();
     return releaseFocusTracker;
   }, []);
+
+  /**
+   * True when the caller has named the panel's width, in which case the default one is dropped
+   * rather than merely listed first.
+   *
+   * WHY THIS IS NOT REDUNDANT. `cn` is a plain `join(" ")` (lib/utils.ts) — it is NOT
+   * tailwind-merge — so `cn("max-w-md", "max-w-lg")` puts both utilities on the element and leaves
+   * the winner to the cascade. Tailwind writes its max-width utilities ALPHABETICALLY, so the
+   * built stylesheet reads `…max-w-full{…}.max-w-lg{max-width:32rem}.max-w-md{max-width:28rem}…`:
+   * `.max-w-md` comes LAST and wins at equal specificity. Measured in Chromium against the built
+   * CSS, a panel carrying the exact string this component produced for `className="max-w-lg"`
+   * computed `max-width: 448px` — the DEFAULT — where the hand-rolled overlay it replaced measured
+   * 512px. The prop documented as the width override silently did nothing, and both rebuilt
+   * dialogs (Discuss, Assign researchers) came out 64px narrower than before.
+   *
+   * `surfaceClassName` is deliberately NOT consulted here: it replaces the background and tone
+   * ring, and one caller passes a width through it (`InlineRecordDialog`), so honouring it would
+   * change that dialog's size as a side effect of this fix.
+   */
+  const callerSetsMaxWidth = /(?:^|\s)!?max-w-/.test(className ?? "");
 
   // A dismissal is only honoured when the dialog allows it and nothing is in flight.
   const canDismiss = dismissible && !busy;
@@ -353,7 +383,8 @@ export function FieldDialog({
             exit={reduce ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.98 }}
             transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 34, mass: 0.7 }}
             className={cn(
-              "relative w-full max-w-md rounded-xl border p-5 shadow-lg outline-none",
+              "relative w-full rounded-xl border p-5 shadow-lg outline-none",
+              callerSetsMaxWidth ? null : "max-w-md",
               // One or the other, never both: two competing `bg-*` utilities resolve by stylesheet
               // order, not by the order they appear in this string.
               surfaceClassName ?? cn("bg-card", TONE_RING[tone]),
