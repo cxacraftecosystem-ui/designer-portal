@@ -1140,9 +1140,11 @@ async def _report_inputs(
     The dependency graph only ever demanded three: the entries, then everything that reads the
     entries, then the media resolver — which cannot start until ``attach_report_references`` has
     told it about the photographs hanging off the REFERENCED records rather than off the stages.
-    The three loads in wave 2 write DIFFERENT attributes of ``data`` (``references``,
-    ``district_points``, the transcripts), so gathering them is safe; anything that shared one
-    would have to stay sequential.
+    The loads in wave 2 write DIFFERENT attributes of ``data`` (``references``,
+    ``district_points``, the transcripts, the questionnaires), so gathering them is safe; anything
+    that shared one would have to stay sequential. Two of the four are CONDITIONAL — the map's
+    anchors and the questionnaire annexure are appended only when the resolved template draws them —
+    which is why the warnings below are indexed from the END of ``results`` rather than by position.
 
     ``viewer`` is threaded through to the two media reads because a media id on a stage is whatever
     a client wrote there — see ``design_workshops.media_resolver``.

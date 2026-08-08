@@ -319,18 +319,29 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
         ) if entry_ids else _none(),
     )
 
-    section_of = {s.id: s for s in sections}
     # THE ORDER OF THIS LIST IS THE ORDER THE ANNEXURE PRINTS, and it is built once here rather than
     # sorted per sitting: section position first, then question position, which is the order the
     # designer wrote the form in and the order the .xlsx download uses. A sitting is then a lookup
     # against it, so two sittings of the same form cannot come out in two different orders — which,
     # in a document read side by side with another respondent's answers, is what makes it comparable.
-    ordered: dict[str, list[Any]] = {}
+    #
+    # WALKED SECTION BY SECTION, AND IT MUST BE. `QuestionnaireFormQuestion.sortOrder` is scoped to
+    # its SECTION — the upload numbers `enumerate(section.questions, start=1)` and the create route
+    # takes `max(sortOrder) + 1` over the section's siblings alone — so the flat query above, ordered
+    # by sortOrder across every section at once, comes back INTERLEAVED: A1, B1, A2, B2. Appending in
+    # that order printed one single-row table per question with the section label repeated above each,
+    # A/B/A/B down the page, in the appendix of evidence handed to a ministry officer. `load_form` is
+    # safe from the same query only because it re-buckets by `sectionId` before it emits; this does
+    # the same, so the per-section order the query does give (sortOrder, then createdAt) is kept and
+    # the section order comes from `sections`, which IS globally ordered within one questionnaire.
+    questions_by_section: dict[str, list[Any]] = {}
     for question in questions or []:
-        section = section_of.get(question.sectionId)
-        if section is None:
-            continue
-        ordered.setdefault(section.questionnaireId, []).append((section, question))
+        questions_by_section.setdefault(question.sectionId, []).append(question)
+
+    ordered: dict[str, list[Any]] = {}
+    for section in sections:
+        for question in questions_by_section.get(section.id, ()):
+            ordered.setdefault(section.questionnaireId, []).append((section, question))
 
     answers_by_entry: dict[str, dict[str, Any]] = {}
     for answer in answers or []:
