@@ -361,8 +361,11 @@ fun rememberApiKeysState(repository: WorkshopRepository): ApiKeysState {
 }
 
 /**
- * The managed API keys screen. MASTER ADMIN ONLY — the caller gates it, and a 403 from the API
- * renders the restricted state rather than an error.
+ * Providers & API keys. ADMIN and above — the caller gates it there, for the ranking's sake — and
+ * the key list below the ranking is the master admin's, which the API decides: its 403 sets
+ * `restricted` and draws [ApiKeysRestrictedCard], and deliberately never touches `error`, so an
+ * ordinary admin opening this screen is told what they hold rather than shown a failure they cannot
+ * act on.
  *
  * HOSTING: this is an admin-hub tool, so it lays out as a plain [Column] and renders into whatever
  * scrolling parent hosts it — exactly like [TaskAdminScreen] and every other hub tool. It must NOT
