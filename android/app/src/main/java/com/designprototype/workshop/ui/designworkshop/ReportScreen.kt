@@ -277,7 +277,13 @@ fun ReportScreen(
             // load: an offline export that lost the template picker and the completeness figures
             // because a questionnaire lookup timed out would be a worse screen than the one that
             // never fetched. A failure leaves whatever is cached exactly where it is.
-            val remoteId = stored?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
+            // THE SAME `remoteId` RESOLVED ABOVE, deliberately not recomputed. This block used to
+            // derive its own from `stored`, which reads as the safer choice and is in fact the same
+            // value in every case: `reportSourceFor` either copies the local draft, keeping its
+            // `remoteId` untouched, or builds one carrying the very id passed in, or returns null
+            // and leaves both expressions falling through to the same `takeUnless`. Two spellings of
+            // one value in one scope is how the cache and the stage fetch would come to disagree
+            // about which workshop this is.
             // BOTH KEYS ARE TRIED, and the second one is not defensive padding. A workshop created
             // offline keeps its LOCAL id on this screen for ever, while a questionnaire's
             // `designWorkshopId` is necessarily the SERVER's — so the copy `QuestionnaireDetailScreen`
