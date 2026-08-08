@@ -7941,25 +7941,76 @@ private data class ActivityItem(
     val createdAt: String?
 )
 
-/** Gather the current user's own records across every type, newest first (ISO timestamps sort lexically). */
-private suspend fun loadMyActivity(repository: WorkshopRepository, userId: String): List<ActivityItem> {
+/**
+ * What one pass over the eight lists produced: the rows, and how many of the lists never answered.
+ *
+ * [failedLists] is the whole reason this is not just a `List<ActivityItem>`. Every list here is a
+ * separate request, all eight of them network-only, and the screen is opened in a courtyard. An
+ * empty result means "you have recorded nothing" ONLY when every list actually answered; when they
+ * did not, the same emptiness means "this phone could not ask". Those two sentences send a designer
+ * in opposite directions — one to record the work again, one to find signal — so the screen is given
+ * the number it needs to tell them apart instead of being left to guess.
+ */
+private data class MyActivity(val items: List<ActivityItem>, val failedLists: Int, val totalLists: Int) {
+    /** Nothing answered at all: the honest reading is "offline", not "you have nothing". */
+    val allFailed: Boolean get() = failedLists == totalLists
+}
+
+/**
+ * Gather the current user's own records across every type, newest first (ISO timestamps sort
+ * lexically).
+ *
+ * THE OWNERSHIP TEST IS IN THE QUERY, and the client-side `mine(...)` filter below is KEPT on top of
+ * it deliberately — see the block comment on [WorkshopRepository.artisans] for the measurement.
+ * Asking the server costs nothing extra, and against a deployment older than the `createdBy`
+ * parameter the surviving client-side filter is the difference between an over-long list and a
+ * wrong one. The web page this mirrors keeps both for the same reason
+ * (frontend/app/(protected)/activity/page.tsx).
+ */
+private suspend fun loadMyActivity(repository: WorkshopRepository, userId: String): MyActivity {
     val items = mutableListOf<ActivityItem>()
+    var failed = 0
+    var total = 0
     fun mine(createdById: String?) = createdById != null && createdById == userId
-    runCatching { repository.artisans() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    // Each list is attempted independently: one type failing must not cost the designer the seven
+    // that answered, which is why this is not a single try around the lot.
+    fun <T> attempt(block: () -> List<T>): List<T> {
+        total++
+        return runCatching(block).getOrElse { failed++; emptyList() }
+    }
+    attempt { repository.artisans(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.ARTISAN, it.id, it.name, "Artisan · ${it.place}", it.createdAt)) }
-    runCatching { repository.products() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.products(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.PRODUCT, it.id, it.productName, "Product · ${it.craftName}", it.createdAt)) }
-    runCatching { repository.tools() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.tools(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.TOOL, it.id, it.toolkitName, "Tool · ${it.craftName}", it.createdAt)) }
-    runCatching { repository.processes() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.processes(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.PROCESS, it.id, it.name, "Process" + (it.product?.productName?.let { p -> " · $p" } ?: ""), it.createdAt)) }
-    runCatching { repository.crafts() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.crafts(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.CRAFT, it.id, it.name, "Craft", it.createdAt)) }
-    runCatching { repository.workshops() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.workshops(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.WORKSHOP, it.id, it.title.ifBlank { "Untitled workshop" }, "Workshop", it.createdAt)) }
-    runCatching { repository.interviews() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.interviews(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.QUESTIONNAIRE, it.id, it.title.ifBlank { "Untitled interview" }, "Interview", it.createdAt)) }
-    return items.sortedByDescending { it.createdAt ?: "" }
+    // MEDIA, which this list used to omit entirely while the menu carried an "Upload media" entry —
+    // so a designer's uploads were the one thing they could create and then never find again here.
+    // Media owns its uploader through `uploadedById`, not `createdById`, on BOTH sides of the wire.
+    // Tapping a row lands on the media viewer (EditScreen routes EntryMode.MEDIA to ViewDataDetail),
+    // which is where the app already opens a media file from search.
+    attempt { repository.mediaList(uploadedBy = userId) }.filter { it.uploadedBy?.id == userId }
+        .forEach { media ->
+            val tag = media.linkedRecordType?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
+            items.add(
+                ActivityItem(
+                    EntryMode.MEDIA,
+                    media.id,
+                    media.originalFilename.ifBlank { "Media" },
+                    listOfNotNull("Media", media.mediaType.takeIf { it.isNotBlank() }, tag).joinToString(" · "),
+                    media.createdAt
+                )
+            )
+        }
+    return MyActivity(items.sortedByDescending { it.createdAt ?: "" }, failedLists = failed, totalLists = total)
 }
 
 @Composable
@@ -7969,26 +8020,56 @@ private fun MyActivityScreen(
     onOpen: (EntryMode, String) -> Unit,
     onError: (String) -> Unit
 ) {
-    var items by remember { mutableStateOf<List<ActivityItem>?>(null) }
+    var loaded by remember { mutableStateOf<MyActivity?>(null) }
     LaunchedEffect(Unit) {
         runCatching { loadMyActivity(repository, userId) }
-            .onSuccess { items = it }
-            .onFailure { onError(it.message ?: "Couldn't load your activity"); items = emptyList() }
+            .onSuccess { loaded = it }
+            .onFailure {
+                onError(it.message ?: "Couldn't load your activity")
+                // Not `emptyList()`: a throw out of the gatherer is a total failure, and recording it
+                // as "nothing to show" is the very lie the failure count exists to prevent.
+                loaded = MyActivity(emptyList(), failedLists = 1, totalLists = 1)
+            }
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("Everything you've recorded, most recent first. Tap an entry to open it.", color = Muted, fontSize = 13.sp)
-        val current = items
+        Text(
+            // Says out loud that this screen needs a connection, in the WorkshopCodesScreen manner —
+            // the alternative is a designer reading an empty list as lost work.
+            "Everything you've recorded, most recent first. Tap an entry to open it. This list is read " +
+                "from the server, so it needs a connection.",
+            color = Muted,
+            fontSize = 13.sp
+        )
+        val current = loaded
+        // SOME answered and some did not. The rows below are real but the list is short by an unknown
+        // amount, so it is captioned rather than presented as the whole of someone's work — the same
+        // sentence the web page shows for the same partial failure.
+        if (current != null && current.failedLists > 0 && !current.allFailed) {
+            Text(
+                "Some record types could not be loaded, so this list may be incomplete.",
+                color = Coral,
+                fontSize = 12.sp
+            )
+        }
         when {
             current == null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 Text("Loading your activity…", color = Muted, fontSize = 13.sp)
             }
-            current.isEmpty() -> Text(
+            // NOTHING ANSWERED. Saying "you haven't recorded anything yet" here would tell a designer
+            // whose only copy of a morning's work is on this handset that the work is gone.
+            current.allFailed -> Text(
+                "Your activity couldn't be loaded — the server could not be reached. Anything you have " +
+                    "recorded is safe; open this again when there is a connection.",
+                color = Coral,
+                fontSize = 13.sp
+            )
+            current.items.isEmpty() -> Text(
                 "You haven't recorded anything yet. Create a record from the menu and it will appear here.",
                 color = Muted,
                 fontSize = 13.sp
             )
-            else -> current.forEach { item ->
+            else -> current.items.forEach { item ->
                 ElevatedCard(
                     colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard),
                     shape = RoundedCornerShape(14.dp),

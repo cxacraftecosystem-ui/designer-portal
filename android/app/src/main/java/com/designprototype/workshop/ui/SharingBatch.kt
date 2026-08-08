@@ -368,20 +368,36 @@ fun GrantAccessFields(
         }
     }
 
+    /**
+     * The records this researcher may put in a subset grant.
+     *
+     * ASKED FOR BY OWNER, NOT SIFTED OUT OF PAGE ONE. Each of these calls returns a hundred rows, and
+     * reading the repository is open to every signed-in account
+     * (`backend/app/services/records.py::viewable_where` returns an empty `where`), so an unfiltered
+     * page one is the hundred most recent rows ANYONE recorded. MEASURED against
+     * http://localhost:8000: 431 artisans and 613 products exist, and page one of each holds nothing
+     * belonging to the signed-in designer. Filtering that page client-side offered an EMPTY record
+     * picker to a researcher with records — "You have no records to share." over data they own — and
+     * silently made older records unshareable. `createdBy` moves the test into the query.
+     *
+     * The client-side ownership filter is kept on top of it on purpose: it costs nothing, and against
+     * a deployment that predates the parameter it is the difference between an over-long list and
+     * offering to share somebody else's rows, which the server would refuse anyway.
+     */
     fun loadMine() {
         if (myRecords != null) return
         scope.launch {
             runCatching {
                 val recs = mutableListOf<SelectOption>()
-                repository.artisans().filter { it.createdById == myId }
+                repository.artisans(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("artisan::${it.id}", "Artisan · ${it.name}") }
-                repository.products().filter { it.createdById == myId }
+                repository.products(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("product::${it.id}", "Product · ${it.productName}") }
-                repository.tools().filter { it.createdById == myId }
+                repository.tools(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("tool::${it.id}", "Tool · ${it.toolkitName}") }
-                repository.workshops().filter { it.createdById == myId }
+                repository.workshops(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("workshop::${it.id}", "Workshop · ${it.title}") }
-                repository.interviews().filter { it.createdById == myId }
+                repository.interviews(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("questionnaire::${it.id}", "Interview · ${it.title}") }
                 recs
             }.onSuccess { myRecords = it }
