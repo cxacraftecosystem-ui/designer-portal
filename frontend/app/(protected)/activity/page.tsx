@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Field, Select } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
 import { useAuth } from "@/components/AuthProvider";
+import type { ProcessRecord } from "@/components/forms/ProcessForm";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { ROLE_RANK, isMasterAdmin, roleLabel, roleRank } from "@/lib/permissions";
@@ -52,6 +53,13 @@ type RawLists = {
   artisans: Array<Artisan & WithCreator>;
   products: Array<ProductDocumentation & WithCreator>;
   tools: Array<ToolDocumentation & WithCreator>;
+  /**
+   * Documented processes. Missing here until now while "Document process" sat in the nav's Record
+   * group all along — so a process was a record this page could offer to create and then never
+   * account for. Android's My Activity has always grouped them (MainActivity.kt loadMyActivity), and
+   * Android owns the information architecture.
+   */
+  processes: Array<ProcessRecord & WithCreator>;
   workshops: Array<Workshop & WithCreator>;
   crafts: Array<Craft & WithCreator>;
   interviews: QuestionnaireInterview[];
@@ -96,11 +104,12 @@ export default function MyActivityPage() {
     const mine = { pageSize, createdBy: activeUserId };
 
     async function load() {
-      const [artisans, products, tools, workshops, crafts, interviews, media, directoryResult] =
+      const [artisans, products, tools, processes, workshops, crafts, interviews, media, directoryResult] =
         await Promise.allSettled([
           listResource<Artisan & WithCreator>("/artisans", mine),
           listResource<ProductDocumentation & WithCreator>("/products", mine),
           listResource<ToolDocumentation & WithCreator>("/tools", mine),
+          listResource<ProcessRecord & WithCreator>("/processes", mine),
           listResource<Workshop & WithCreator>("/workshops", mine),
           listResource<Craft & WithCreator>("/crafts", mine),
           listResource<QuestionnaireInterview>("/questionnaire/interviews", mine),
@@ -117,6 +126,7 @@ export default function MyActivityPage() {
         artisans: items(artisans),
         products: items(products),
         tools: items(tools),
+        processes: items(processes),
         workshops: items(workshops),
         crafts: items(crafts),
         interviews: items(interviews),
@@ -124,7 +134,7 @@ export default function MyActivityPage() {
       });
       setDirectory(directoryResult.status === "fulfilled" ? directoryResult.value : []);
 
-      const failures = [artisans, products, tools, workshops, crafts, interviews, media].filter(
+      const failures = [artisans, products, tools, processes, workshops, crafts, interviews, media].filter(
         (result) => result.status === "rejected"
       );
       setError(failures.length ? "Some records could not be loaded — the lists below may be incomplete." : null);
@@ -178,6 +188,12 @@ export default function MyActivityPage() {
         rows: by(raw.tools).map((t) => ({ id: t.id, name: t.toolkitName, createdAt: t.createdAt }))
       },
       {
+        // Android's order: processes sit directly after tools, before workshops.
+        title: "Processes",
+        href: "/processes",
+        rows: by(raw.processes).map((p) => ({ id: p.id, name: p.name, createdAt: p.createdAt }))
+      },
+      {
         title: "Workshops",
         href: "/workshops",
         rows: by(raw.workshops).map((w) => ({ id: w.id, name: w.title, createdAt: w.createdAt }))
@@ -208,7 +224,7 @@ export default function MyActivityPage() {
     <>
       <PageHeader
         title="My Activity"
-        description="Everything documented — artisans, products, tools, workshops, crafts, interviews and media. Reviewers can also inspect the activity of contributors they oversee."
+        description="Everything documented — artisans, products, tools, processes, workshops, crafts, interviews and media. Reviewers can also inspect the activity of contributors they oversee."
         icon={<Activity className="h-5 w-5" aria-hidden />}
       />
       {error ? (
@@ -244,8 +260,8 @@ export default function MyActivityPage() {
           title={viewingSelf ? "Nothing here yet" : `No records from ${selectedName ?? "this user"} yet`}
           body={
             viewingSelf
-              ? "Records you create — artisans, products, tools, interviews and media uploads — will show up here."
-              : "Records this contributor creates — artisans, products, tools, interviews and media uploads — will show up here."
+              ? "Records you create — artisans, products, tools, processes, interviews and media uploads — will show up here."
+              : "Records this contributor creates — artisans, products, tools, processes, interviews and media uploads — will show up here."
           }
         />
       ) : (

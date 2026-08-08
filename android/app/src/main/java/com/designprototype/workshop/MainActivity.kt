@@ -12610,6 +12610,30 @@ private fun UserManagementForm(
 }
 
 /**
+ * A destructive sharing action, held back until the researcher confirms it.
+ *
+ * WHY THIS EXISTS. Deny, Revoke and Remove were single taps that fired straight into the API — on a
+ * touchscreen, in a courtyard, with no undo and nothing to read first. Remove is the sharpest of the
+ * three: `DELETE /data-access/grants/{id}` destroys the row itself, so the record of who asked for
+ * what and when goes with the access. The web has confirmed all three since
+ * frontend/app/(protected)/sharing/page.tsx, and this app already owns the primitive
+ * (DeleteRecordSection above, DesignerRosterScreen, WorkshopListScreen) — so this was a missing use,
+ * not a missing control.
+ *
+ * [danger] paints the confirm button with the error colour, matching the web's danger/warning split:
+ * denying is reversible (they can ask again) and stays neutral; revoking and removing are not.
+ */
+private data class SharingConfirm(
+    val title: String,
+    val body: String,
+    /** The second sentence — what SURVIVES the action, which is what stops a researcher hesitating. */
+    val note: String,
+    val confirmLabel: String,
+    val danger: Boolean,
+    val onConfirm: () -> Unit
+)
+
+/**
  * Cross-researcher data sharing. A researcher can request access to another's data at a tier
  * (Download < Comment < Edit, with definitions shown), and manage requests/grants on their own data:
  * approve, deny, change tier, or revoke. Mirrors the web Sharing page.
@@ -12627,6 +12651,7 @@ private fun SharingForm(
     var directory by remember { mutableStateOf<List<UserDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf(false) }
+    var confirming by remember { mutableStateOf<SharingConfirm?>(null) }
 
     fun reload() {
         scope.launch {
@@ -12703,14 +12728,54 @@ private fun SharingForm(
                         color = Muted, fontSize = 12.sp
                     )
                     if (!g.requestNote.isNullOrBlank()) Text("“${g.requestNote}”", color = Muted, fontSize = 12.sp)
+                    val who = g.grantee?.name ?: g.granteeId
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         when (g.status) {
                             "PENDING" -> {
+                                // Approving is the only one of the four that is not confirmed, and
+                                // that is deliberate — it GIVES access, is undone by Revoke beside
+                                // it, and destroys nothing. Web parity: `decide` only confirms DENIED.
                                 Button(enabled = !busy, onClick = { run({ repository.decideDataAccess(g.id, "GRANTED", g.tier) }, "Granted") }) { Text("Approve") }
-                                OutlinedButton(enabled = !busy, onClick = { run({ repository.decideDataAccess(g.id, "DENIED", null) }, "Denied") }) { Text("Deny") }
+                                OutlinedButton(
+                                    enabled = !busy,
+                                    onClick = {
+                                        confirming = SharingConfirm(
+                                            title = "Deny this request?",
+                                            body = "$who will not get access to your data, and will see the request as denied.",
+                                            note = "They can request access again, and you can grant it at any time.",
+                                            confirmLabel = "Deny request",
+                                            danger = false,
+                                            onConfirm = { run({ repository.decideDataAccess(g.id, "DENIED", null) }, "Denied") }
+                                        )
+                                    }
+                                ) { Text("Deny") }
                             }
-                            "GRANTED" -> OutlinedButton(enabled = !busy, onClick = { run({ repository.revokeDataAccess(g.id) }, "Revoked") }) { Text("Revoke") }
-                            else -> OutlinedButton(enabled = !busy, onClick = { run({ repository.deleteDataAccess(g.id) }, "Removed") }) { Text("Remove") }
+                            "GRANTED" -> OutlinedButton(
+                                enabled = !busy,
+                                onClick = {
+                                    confirming = SharingConfirm(
+                                        title = "Revoke this access?",
+                                        body = "$who loses access to your data immediately, including anything they were part-way through downloading.",
+                                        note = "Comments and edits they already made are kept.",
+                                        confirmLabel = "Revoke access",
+                                        danger = true,
+                                        onConfirm = { run({ repository.revokeDataAccess(g.id) }, "Revoked") }
+                                    )
+                                }
+                            ) { Text("Revoke") }
+                            else -> OutlinedButton(
+                                enabled = !busy,
+                                onClick = {
+                                    confirming = SharingConfirm(
+                                        title = "Remove this sharing entry?",
+                                        body = "This permanently deletes the grant record, along with the history of who asked for what and when.",
+                                        note = "It clears a denied or revoked row. $who is not notified, and can request access again.",
+                                        confirmLabel = "Remove entry",
+                                        danger = true,
+                                        onConfirm = { run({ repository.deleteDataAccess(g.id) }, "Removed") }
+                                    )
+                                }
+                            ) { Text("Remove") }
                         }
                     }
                 }
@@ -12729,12 +12794,71 @@ private fun SharingForm(
                         "${g.owner?.email ?: ""} · ${tierLabel(g.tier)} · ${g.status}",
                         color = Muted, fontSize = 12.sp
                     )
-                    OutlinedButton(enabled = !busy, onClick = { run({ repository.deleteDataAccess(g.id) }, "Removed") }) {
-                        Text(if (g.status == "PENDING") "Withdraw" else "Remove")
+                    // The SAME DELETE, from the other side of the table: as grantee it withdraws a
+                    // pending request or drops access already held. Both readings are destructive and
+                    // neither is undoable, so the confirmation is worded for whichever one applies.
+                    val withdrawing = g.status == "PENDING"
+                    val owner = g.owner?.name ?: g.ownerId
+                    OutlinedButton(
+                        enabled = !busy,
+                        onClick = {
+                            confirming = SharingConfirm(
+                                title = if (withdrawing) "Withdraw this request?" else "Remove this access?",
+                                body = if (withdrawing) {
+                                    "Your pending request to $owner is deleted, along with the note you sent with it."
+                                } else {
+                                    "You give up the access $owner granted you, and the grant record is deleted."
+                                },
+                                note = if (withdrawing) {
+                                    "You can ask again at any time."
+                                } else {
+                                    "Getting it back means requesting it again and waiting for $owner to decide."
+                                },
+                                confirmLabel = if (withdrawing) "Withdraw request" else "Remove access",
+                                danger = true,
+                                onConfirm = { run({ repository.deleteDataAccess(g.id) }, "Removed") }
+                            )
+                        }
+                    ) {
+                        Text(if (withdrawing) "Withdraw" else "Remove")
                     }
                 }
             }
         }
+    }
+    // ONE dialog for every destructive button above, rather than one per button: the buttons differ
+    // only in their words and their call, and a single host is what keeps a new destructive action
+    // from quietly shipping without a confirmation the way these four did.
+    confirming?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { if (!busy) confirming = null },
+            title = { Text(pending.title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(pending.body)
+                    Text(pending.note, color = Muted, fontSize = 12.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        // Cleared BEFORE the call, not in its callback: `run` reloads on success and
+                        // the row this dialog describes may be gone by then, so waiting would leave
+                        // the sentence on screen describing a grant that no longer exists.
+                        val act = pending.onConfirm
+                        confirming = null
+                        act()
+                    }
+                ) {
+                    Text(
+                        pending.confirmLabel,
+                        color = if (pending.danger) MaterialTheme.colorScheme.error else Color.Unspecified
+                    )
+                }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { confirming = null }) { Text("Cancel") } }
+        )
     }
     // Workshop assignments moved to the admin "Settings" hub (see AdminHubScreen).
 }
@@ -13262,6 +13386,14 @@ private fun taskStatusColor(status: String): Color = when (status) {
 private val assigneeTaskStatuses = listOf("OPEN", "IN_PROGRESS", "DONE")
 
 /**
+ * The statuses a task list may be FILTERED to — every status the server can return, which is a
+ * superset of [assigneeTaskStatuses]. Not being allowed to cancel a task is no reason to be unable
+ * to find the one somebody cancelled. Matches the web's `STATUSES`
+ * (frontend/app/(protected)/tasks/page.tsx).
+ */
+private val taskFilterStatuses = listOf("OPEN", "IN_PROGRESS", "DONE", "CANCELLED")
+
+/**
  * One line describing everything the task asks for: the record kinds, the questionnaire sections and
  * the artisans it is scoped to. Built from the server-resolved names so nothing has to be looked up.
  */
@@ -13313,13 +13445,29 @@ private fun MyTasksScreen(
     var tasks by remember { mutableStateOf<List<TaskDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var busyId by remember { mutableStateOf<String?>(null) }
+    /**
+     * DID THE LAST LOAD ACTUALLY ANSWER?
+     *
+     * Without this the screen had one rendering for two opposite facts. `refresh` leaves `tasks`
+     * untouched when the request fails, so an offline designer fell through to "Nothing is assigned
+     * to you right now." — a positive statement about the server's contents, made by a phone that
+     * never reached the server. This screen is network-only in both directions: the offline outbox
+     * carries CREATES only (data/Offline.kt: "One queued create: the record type, its serialized
+     * create request, and the media to attach after"), so neither the list nor `PATCH /tasks/{id}`
+     * survives no signal. Being unreachable is the NORMAL state here, which is exactly why it has to
+     * be said in words rather than dressed up as an answer.
+     */
+    var loadFailed by remember { mutableStateOf(false) }
 
     fun refresh() {
         scope.launch {
             loading = true
             runCatching { repository.tasks(view = view, status = statusFilter.ifBlank { null }) }
-                .onSuccess { tasks = it }
-                .onFailure { onError(it.apiErrorMessage("Unable to load your tasks")) }
+                .onSuccess { tasks = it; loadFailed = false }
+                .onFailure {
+                    loadFailed = true
+                    onError(it.apiErrorMessage("Unable to load your tasks"))
+                }
             loading = false
         }
     }
@@ -13341,8 +13489,12 @@ private fun MyTasksScreen(
 
     RecordCard(title = "Tasks", icon = Icons.AutoMirrored.Filled.Assignment) {
         Text(
+            // The last sentence is the one that has to be there. Everything else a designer does on
+            // this handset survives a fortnight with no signal; this screen does not, and saying so
+            // up front is what stops an unreachable server being read as an empty workload.
             "Work assigned to you, with what it covers and how far along you are. Move the status as you " +
-                "go so whoever assigned it can see where things stand.",
+                "go so whoever assigned it can see where things stand. Tasks are read and updated " +
+                "online only — they are not carried in the offline queue.",
             color = Muted,
             fontSize = 12.sp
         )
@@ -13370,7 +13522,17 @@ private fun MyTasksScreen(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             FilterChip(selected = statusFilter.isBlank(), onClick = { statusFilter = "" }, label = { Text("All") })
-            listOf("OPEN", "IN_PROGRESS", "DONE").forEach { value ->
+            // FILTER chips, not the ASSIGNEE's status buttons — the two lists are deliberately
+            // different. `assigneeTaskStatuses` is what this person may MOVE a task to and rightly
+            // omits CANCELLED (cancelling belongs to whoever handed it out); this row is what they
+            // may LOOK AT, and a cancelled task assigned to them was visible under "All" and
+            // unfilterable, which is the web's four-status list minus one for no reason.
+            // `GET /tasks?status=CANCELLED&view=assigned` measured 200 on http://localhost:8000.
+            //
+            // The web additionally labels each chip with an exact count (four extra requests on every
+            // visit). Not copied: this handset opens the screen between sessions on a village uplink,
+            // where four more round trips buy a number the list underneath already shows.
+            taskFilterStatuses.forEach { value ->
                 FilterChip(
                     selected = statusFilter == value,
                     onClick = { statusFilter = if (statusFilter == value) "" else value },
@@ -13383,14 +13545,35 @@ private fun MyTasksScreen(
             Spacer(Modifier.width(8.dp))
             Text(if (loading) "Loading tasks…" else "Refresh")
         }
-        when {
-            loading -> Text("Loading tasks…", color = Muted, fontSize = 12.sp)
-            tasks.isEmpty() -> Text(
-                if (view == "created") "You have not assigned any work yet."
-                else "Nothing is assigned to you right now.",
-                color = Muted,
+        // THE REQUEST FAILED. Say so ABOVE the list rather than instead of it: `refresh` leaves the
+        // previously loaded rows in place, and a stale list a designer can still read between
+        // sessions beats a blank screen — as long as it is labelled stale.
+        if (loadFailed && !loading) {
+            Text(
+                if (tasks.isEmpty()) {
+                    "Your tasks couldn't be loaded — the server could not be reached. Tasks are read " +
+                        "and updated online only, so try again when there is a connection."
+                } else {
+                    "The server could not be reached, so this is the last list that loaded. It may be " +
+                        "out of date, and status changes will not send until there is a connection."
+                },
+                color = Coral,
                 fontSize = 12.sp
             )
+        }
+        when {
+            loading -> Text("Loading tasks…", color = Muted, fontSize = 12.sp)
+            // "Nothing is assigned to you" is a claim about what the SERVER holds, so it is only
+            // said when the server answered. When it did not, the caption above has already given
+            // the honest reason and printing this underneath would contradict it on one screen.
+            tasks.isEmpty() -> if (!loadFailed) {
+                Text(
+                    if (view == "created") "You have not assigned any work yet."
+                    else "Nothing is assigned to you right now.",
+                    color = Muted,
+                    fontSize = 12.sp
+                )
+            }
             else -> tasks.forEach { task ->
                 TaskCard(
                     task = task,
