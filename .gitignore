@@ -82,3 +82,6 @@ TRANSCRIPTION_SERVICE.md
 # script re-fetches with --fetch. The GENERATED assets under frontend/public/boundaries and
 # android/.../res/raw ARE committed; these inputs are not.
 .boundary-cache/
+
+# Transient git worktrees created for isolated parallel agents. Build state, never source.
+.claude/worktrees/
