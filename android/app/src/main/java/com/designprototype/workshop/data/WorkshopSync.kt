@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import retrofit2.HttpException
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.UUID
 
 /**
  * The other half of offline retention: getting a design workshop OFF the phone, intact, once there
@@ -148,6 +149,18 @@ data class StageSyncRecord(
     val failedAt: String? = null,
     /** True when no retry will change the answer. The pass steps over it; the designer is told. */
     val permanent: Boolean = false,
+    /**
+     * The app run that recorded a refusal ONLY AN UPDATE CAN CLEAR. Null on every other failure.
+     *
+     * See [blocksRetry] for the whole policy. In short: `permanent` is the right marking for a
+     * refusal a DESIGNER can fix and the wrong one for a SCHEMA refusal, where this build of the app
+     * and this build of the API disagree about the shape of the request. Marking that permanent means
+     * the phone can never recover from a skew even after the skew has gone.
+     *
+     * Defaulted, so a draft written by an earlier build decodes with null and behaves exactly as it
+     * did — sticking until a person taps Try again.
+     */
+    val skewRun: String? = null,
     val attempts: Int = 0,
 )
 
@@ -167,6 +180,8 @@ data class DraftSyncState(
     /** Set when the server refused to CREATE this workshop at all. Nothing else can proceed. */
     val createFailure: String? = null,
     val createFailedAt: String? = null,
+    /** [StageSyncRecord.skewRun] for the create. The costlier half: it strands the whole fortnight. */
+    val createSkewRun: String? = null,
     val stages: Map<String, StageSyncRecord> = emptyMap(),
 )
 
@@ -284,6 +299,64 @@ private fun WorkshopRepository.isConnectionFailure(error: Throwable): Boolean {
 }
 
 /**
+ * THIS RUN OF THE APP. One value for the life of the process, and its only job is to be different
+ * next time. See [blocksRetry].
+ *
+ * A process, not an install and not a build number: Android tears the process down when the app has
+ * been in the background for a while and always when the APK is replaced, so "a new run" covers both
+ * an update and simply opening the app again the next morning.
+ */
+internal val APP_RUN: String = UUID.randomUUID().toString()
+
+/**
+ * Must this recorded refusal stop the pass from trying the item again on its own?
+ *
+ * ── WHY [StageSyncRecord.permanent] WAS NOT ENOUGH ───────────────────────────────────────────────
+ *
+ * `permanent` means "the server answered, so a better connection will not help", and it was used for
+ * two refusals that are nothing alike:
+ *
+ *  * one the DESIGNER can fix — a rejected answer, a workshop an admin deleted, a duplicate. Sending
+ *    it again unchanged really would get the same answer for ever, and the status line is right to
+ *    wait for a person. `skewRun` is null and this returns true, exactly as before.
+ *
+ *  * a SCHEMA refusal ([ApiRefusal.schemaSkew]) — this build of the app and this build of the API
+ *    disagree about the shape of the request. Nobody typed anything wrong and no edit can clear it;
+ *    what clears it is an UPDATE TO ONE OF THE TWO. Calling that permanent means the phone can never
+ *    recover from a skew even once the skew has gone. The web hit exactly this on 2026-08-08 with the
+ *    then-new `merge` key, which this file also sends (`buildStageBody`, `merge = !authoritative`),
+ *    and the stored refusal outlived the fix: the API had learned `merge` and answered 200 to the
+ *    very PUT the banner was still refusing to make.
+ *
+ * ── THE TRIGGER, AND WHY IT IS THE APP RUN ───────────────────────────────────────────────────────
+ *
+ * A schema refusal is re-attempted ONCE PER APP RUN. Not once per pass: this engine is driven from
+ * sign-in, a 45-second fallback timer and the connectivity callback (see the header), and on a
+ * handset walking in and out of coverage in a village that is dozens of passes an hour — against a
+ * server that really is too old, 22 stages × every flap is a prepaid data bill for 422s nobody reads.
+ *
+ * And not on a version-name change, which is the obvious answer and the wrong one: a skew closes when
+ * EITHER side is updated, and this phone cannot see the API's build. There is no version on any
+ * response, and the one server digest it does hold — the schema `version` — is documented in
+ * `backend/app/services/stage_schema.py::registry_version` as a digest of registry keys, types,
+ * tiers, derivations and hydration, which the wire schema is not part of. Measured: the 2026-08-08
+ * skew was closed by adding `merge` to `StageSaveIn`, which moved no registry digest at all, so a
+ * version check would have gone on refusing the stage for ever. A new app run is the coarser signal
+ * that covers both — every APK update starts one — and its cost is bounded by something a person
+ * does rather than by the weather.
+ *
+ * Kept in step with `blocksRetry` in `frontend/lib/offline.ts`, which is the same three lines.
+ */
+internal fun blocksRetry(permanent: Boolean, skewRun: String?): Boolean {
+    if (!permanent) return false
+    if (skewRun.isNullOrBlank()) return true
+    return skewRun == APP_RUN
+}
+
+/** [blocksRetry] for a stage, including the "never refused at all" case. */
+private fun StageSyncRecord?.blocksRetry(): Boolean = blocksRetry(this?.permanent == true, this?.skewRun)
+
+/**
  * What to write on an item the server REFUSED, including the one fact the designer cannot infer.
  *
  * A bare 500 renders through [apiErrorMessage] as "HTTP 500 Internal Server Error", which reads like
@@ -291,21 +364,41 @@ private fun WorkshopRepository.isConnectionFailure(error: Throwable): Boolean {
  * end. So an answered 5xx says out loud that waiting for signal will not help. A 4xx already carries
  * the server's own `detail`, written for the person reading it, and is left alone.
  *
- * Call once per failure: [apiErrorMessage] consumes the buffered error body.
+ * Returns [ApiRefusal] rather than a string so the caller also learns whether the refusal was a
+ * dialect mismatch. That has to come out of the SAME call — Retrofit's error body is consumed by
+ * reading it, so asking twice would answer "not a schema refusal" to every failure on the device.
+ *
+ * Call once per failure.
  */
-private fun Throwable.refusalMessage(fallback: String): String {
-    val text = apiErrorMessage(fallback)
-    val code = (this as? HttpException)?.code() ?: return text
-    if (code < 500) return text
+private fun Throwable.refusal(fallback: String): ApiRefusal {
+    val refusal = apiRefusal(fallback)
+    val text = refusal.message
+    val code = (this as? HttpException)?.code() ?: return refusal
+    if (code < 500) return refusal
     // Stopped first. [apiErrorMessage] hands back whatever the server wrote, or — for the 500 that
     // carried no body, which is the shape this branch was written for — Retrofit's own "HTTP 500
     // Internal Server Error", and neither ends in one. Without this the two ran together as "HTTP
     // 500 Internal Server Error The server answered, so…", a single unpunctuated clause a designer
     // skims and abandons before the half that tells them waiting for signal cannot help.
     val lead = if (text.endsWith('.') || text.endsWith('!') || text.endsWith('?')) text else "$text."
-    return "$lead The server answered, so a better connection will not help — this will keep being " +
-        "refused until whatever caused it is corrected. Use Try again once it has been."
+    return refusal.copy(
+        message = "$lead The server answered, so a better connection will not help — this will keep " +
+            "being refused until whatever caused it is corrected. Use Try again once it has been."
+    )
 }
+
+/**
+ * The sentence for a refusal nobody on this phone can act on, and the run stamp that ends it.
+ *
+ * Wording deliberately mirrors the web's (`frontend/lib/designWorkshopStore.ts`) — a designer moves
+ * between the two apps mid-workshop and must not be told two different stories about one refusal.
+ * The last clause is the load-bearing one: it is a promise that this policy is what keeps.
+ */
+private fun skewSentence(what: String, said: String): String =
+    "$what could not be read by the repository: $said Nothing you typed is wrong and nothing has been " +
+        "thrown away — this app and the repository are out of step, and no edit will clear it. Your " +
+        "work is safe on this device, and it will be sent by itself the next time you open the app " +
+        "after either has been updated; you do not have to do anything."
 
 // --------------------------------------------------------------------------------------
 // The engine
@@ -498,6 +591,11 @@ object WorkshopSyncEngine {
      * had a quota raised, corrected a stage — the only thing standing between the fortnight and the
      * server is a flag this device set. Retry is therefore "assume the world changed", which is
      * exactly what the designer is asserting by tapping it.
+     *
+     * IT IS NOW FOR THOSE CASES ONLY. A refusal whose cause is that this app and the API are out of
+     * step clears itself on the next app run ([blocksRetry]), because a designer has no way of
+     * knowing when tapping this would help and no reason to think a refusal that blamed their answers
+     * would be cleared by tapping it at all.
      */
     suspend fun retryWorkshop(
         context: Context,
@@ -510,9 +608,10 @@ object WorkshopSyncEngine {
                 sync = draft.sync.copy(
                     createFailure = null,
                     createFailedAt = null,
+                    createSkewRun = null,
                     lastError = null,
                     stages = draft.sync.stages.mapValues {
-                        it.value.copy(failure = null, failedAt = null, permanent = false)
+                        it.value.copy(failure = null, failedAt = null, permanent = false, skewRun = null)
                     },
                 ),
             )
@@ -580,7 +679,9 @@ object WorkshopSyncEngine {
 
         // ── 1. The record itself ─────────────────────────────────────────────────────────────────
         if (remoteIdOf(draft) == null) {
-            if (draft.sync.createFailure != null) return true // Waiting on a person, not the network.
+            // Waiting on a person, not the network — UNLESS it is waiting on an update instead, in
+            // which case this run is the one that gets to find out whether the update has landed.
+            if (blocksRetry(draft.sync.createFailure != null, draft.sync.createSkewRun)) return true
             val created = try {
                 repository.createDesignWorkshop(
                     // Only the title and the template. Every other column the workshop list shows —
@@ -603,10 +704,22 @@ object WorkshopSyncEngine {
                     return false
                 }
                 tally.refused++
+                // THE COSTLIER HALF OF THE SAME SPLIT. `DesignWorkshopCreateBody` is an `APIModel`
+                // too, so a handset that has learned a new header field before the API has gets
+                // `extra_forbidden` here — and holding that for ever strands not one stage but the
+                // whole fortnight, header, stages and photographs alike, behind a refusal nobody can
+                // act on. Same answer as the stage arm: say what happened, and let the next app run
+                // find out whether the skew has closed.
+                val refusal = e.refusal("The server refused to create this workshop.")
                 noteSync(context, workshopId) {
                     it.copy(
-                        createFailure = e.refusalMessage("The server refused to create this workshop."),
+                        createFailure = if (refusal.schemaSkew) {
+                            skewSentence("What this copy of the app sent for this workshop", refusal.message)
+                        } else {
+                            refusal.message
+                        },
                         createFailedAt = Instant.now().toString(),
+                        createSkewRun = if (refusal.schemaSkew) APP_RUN else null,
                     )
                 }
                 return true
@@ -626,6 +739,11 @@ object WorkshopSyncEngine {
                             "connect properly, check whether the workshop already exists, and use " +
                             "Try again.",
                         createFailedAt = Instant.now().toString(),
+                        // Explicitly cleared, not merely left alone: this refusal is one only a
+                        // PERSON can settle, and inheriting a `createSkewRun` from an earlier pass
+                        // would let the next app run POST the workshop a second time behind the
+                        // portal — the duplicate this branch exists to prevent.
+                        createSkewRun = null,
                     )
                 }
                 return true
@@ -636,7 +754,12 @@ object WorkshopSyncEngine {
             draft = WorkshopDraftStore.updateBookkeeping(context, workshopId) {
                 it.copy(
                     remoteId = createdId,
-                    sync = it.sync.copy(createFailure = null, createFailedAt = null, lastError = null),
+                    sync = it.sync.copy(
+                        createFailure = null,
+                        createFailedAt = null,
+                        createSkewRun = null,
+                        lastError = null,
+                    ),
                 )
             } ?: return true
             tally.created++
@@ -744,7 +867,10 @@ object WorkshopSyncEngine {
                 }
                 noteMediaFailure(
                     context, draft.workshopId, descriptor.id,
-                    e.refusalMessage("the server refused this file.")
+                    // `.message` only: a media upload is multipart form-data rather than an
+                    // `APIModel` body, so `extra_forbidden` cannot arise here and there is no skew to
+                    // record. The bytes stay on the device either way — see [DraftMedia.uploadFailure].
+                    e.refusal("the server refused this file.").message
                 )
                 tally.refused++
                 return@forEachIndexed
@@ -813,7 +939,8 @@ object WorkshopSyncEngine {
         val mediaById = draft.media.associateBy { it.id }
         for (spec in schema.stages.sortedBy { it.number }) {
             val record = draft.sync.stages[spec.key]
-            if (record?.permanent == true) continue // The server's final answer; waiting on a person.
+            // The server's final answer; waiting on a person — unless it is waiting on an update.
+            if (record.blocksRetry()) continue
 
             val stored = draft.stages[spec.key]
             val empty = stored == null || (stored.values.isEmpty() && stored.rows.isEmpty())
@@ -844,6 +971,10 @@ object WorkshopSyncEngine {
                             failure = note,
                             failedAt = Instant.now().toString(),
                             permanent = false,
+                            // This is a hold-up, not a refusal, and it REPLACES whatever was recorded
+                            // before — a leftover run stamp would describe a refusal that is no
+                            // longer what is standing in the way.
+                            skewRun = null,
                             attempts = it.attempts + 1,
                         )
                     }
@@ -880,11 +1011,28 @@ object WorkshopSyncEngine {
                     return false
                 }
                 tally.refused++
+                /*
+                  A SCHEMA REFUSAL IS RECORDED AND SHOWN, BUT NOT HELD FOR EVER.
+
+                  "the server refused this stage" is the right story for an answer the validator
+                  rejected. It is the wrong one when the repository could not read the payload at all
+                  — this build speaking a dialect that build does not know — because then nothing the
+                  designer can reach is wrong and no edit will clear it. Marked permanent it would
+                  survive the update that fixed it, which is exactly what the web saw: the API had
+                  learned `merge` and the phone was still refusing to send. `skewRun` buys the next
+                  app run one attempt, with nobody tapping anything. See [blocksRetry].
+                */
+                val refusal = e.refusal("the server refused this stage.")
                 noteStage(context, draft.workshopId, spec.key) {
                     it.copy(
-                        failure = e.refusalMessage("the server refused this stage."),
+                        failure = if (refusal.schemaSkew) {
+                            skewSentence("What this copy of the app sent for this stage", refusal.message)
+                        } else {
+                            refusal.message
+                        },
                         failedAt = Instant.now().toString(),
                         permanent = true,
+                        skewRun = if (refusal.schemaSkew) APP_RUN else null,
                         attempts = it.attempts + 1,
                     )
                 }
@@ -1343,6 +1491,9 @@ private suspend fun recordStageSent(
             },
             failedAt = if (dropped == null) null else Instant.now().toString(),
             permanent = false,
+            // The stage is on the server, so whatever skew once refused it is over. Cleared rather
+            // than left standing: a record that still names an app run reads as unfinished business.
+            skewRun = null,
         )
     }
 
