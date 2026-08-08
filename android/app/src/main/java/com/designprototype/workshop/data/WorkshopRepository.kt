@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -76,6 +77,16 @@ private const val MULTIPART_THRESHOLD = 64L * 1024 * 1024
  * query that lists "this workshop's media" would silently return half of them.
  */
 internal const val DESIGN_WORKSHOP_MEDIA_TAG = "designWorkshop"
+
+/**
+ * [PendingEntry.type] for a queued export-log row.
+ *
+ * The one outbox entry that is not a record the researcher typed. It is written down as a constant
+ * because the string is matched in `createFromEntry` and produced in `recordDesignWorkshopExport`,
+ * and a typo between the two would park every offline export in the queue for ever: the replay
+ * would throw "Unknown offline entry type", which `isTransient` calls worth retrying.
+ */
+internal const val OFFLINE_EXPORT_RECORD = "designWorkshopExport"
 
 /** MIME type for the .xlsx report workbook (OOXML spreadsheet). */
 private const val XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -310,8 +321,46 @@ class WorkshopRepository(
         body: StageSaveBody
     ): StageSaveResultDto = api.saveDesignWorkshopStage(id, stageKey, body)
 
-    suspend fun recordDesignWorkshopExport(id: String, body: ExportRecordBody) {
-        api.recordDesignWorkshopExport(id, body)
+    /**
+     * Tell the office that this handset produced a report — and if it cannot be told now, QUEUE IT.
+     *
+     * The export log is what an office matches a delivered field copy against. Every export that
+     * matters most is made in exactly the condition that used to lose this call: at the close of a
+     * workshop, in a village, with no signal, minutes before the file is handed to a visiting
+     * ministry officer. This was a bare pass-through wrapped in `runCatching` at the call site, so
+     * offline the record was dropped on the floor and the officer's copy existed against an empty
+     * log — the one comparison that would show the field copy was genuine.
+     *
+     * THE BYTES ARE STILL NEVER SENT. The queued entry is the ExportRecordBody and nothing else: a
+     * format, a template id, a filename, a size and a checksum. A designer on a metered connection is
+     * not charged thirty megabytes to prove a report was made, and the checksum is what matches the
+     * file later.
+     *
+     * Triage is [isTransient]'s, the same as every other queued write. No signal or a 5xx queues; a
+     * 4xx is the server's final answer about a bookkeeping call and is swallowed, because an export
+     * that HAPPENED is not undone by a record of it that the server refuses — the file is already in
+     * the designer's Downloads folder and the officer is already holding it.
+     */
+    suspend fun recordDesignWorkshopExport(context: Context, id: String, body: ExportRecordBody) {
+        try {
+            api.recordDesignWorkshopExport(id, body)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!isTransient(e)) return
+            OfflineOutbox.enqueue(
+                context,
+                PendingEntry(
+                    id = java.util.UUID.randomUUID().toString(),
+                    type = OFFLINE_EXPORT_RECORD,
+                    payloadJson = offlineJson.encodeToString(PendingExportRecord(workshopId = id, body = body)),
+                    // Read by the outbox banner and by the "could not be uploaded" notice, so it has
+                    // to name the thing a designer would recognise: the file they just handed over.
+                    label = "Export log · ${body.fileName}",
+                    createdAt = Instant.now().toString()
+                )
+            )
+        }
     }
 
     /**
@@ -958,6 +1007,22 @@ class WorkshopRepository(
      * [assigneeId] and [batchId] are admin-only narrowings — on the default "assigned" view the API
      * hard-pins the list to the caller, so they cannot be used to read somebody else's tasks.
      */
+    /**
+     * Exact per-status totals for the filter chips, mirroring the web's `loadCounts` on /tasks.
+     *
+     * One tiny call per status (`pageSize=1`, derivation off) rather than counting the list on
+     * screen: the list is one page and a count taken from it would be a count of what is displayed,
+     * which is not the question a chip labelled "Done 14" is answering. `withDerived = false` skips
+     * the data-backed rollup the API would otherwise compute for rows nobody is going to read.
+     *
+     * Failures are the CALLER's to swallow — an unlabelled chip is a working filter, and the list
+     * itself is what the designer came for.
+     */
+    suspend fun taskCounts(view: String = "assigned", statuses: List<String>): Map<String, Int> =
+        statuses.associateWith { status ->
+            api.tasks(view = view, status = status, pageSize = 1, withDerived = false).total
+        }
+
     suspend fun tasks(
         view: String = "assigned",
         status: String? = null,
@@ -2878,6 +2943,16 @@ class WorkshopRepository(
         // Steps come back in submit order, so `stepIndex` on a queued file selects the matching one.
         "process" -> api.createProcess(offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson))
             .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }) }
+        // NOT a record — a bookkeeping row about a report this phone already produced. It carries no
+        // media, so the replay reaches Synced the moment this returns and the entry leaves the queue.
+        // The id is the workshop's rather than a created row's: this route answers with no body, and
+        // `createdId` only has to be non-null so a pass interrupted after the POST does not send it
+        // twice and put two rows in the office's export log for one delivered file.
+        OFFLINE_EXPORT_RECORD -> {
+            val queuedExport = offlineJson.decodeFromString<PendingExportRecord>(entry.payloadJson)
+            api.recordDesignWorkshopExport(queuedExport.workshopId, queuedExport.body)
+            CreatedRecord(queuedExport.workshopId)
+        }
         else -> throw IllegalStateException("Unknown offline entry type: ${entry.type}")
     }
 

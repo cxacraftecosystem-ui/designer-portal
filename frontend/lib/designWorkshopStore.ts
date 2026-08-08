@@ -1803,10 +1803,17 @@ export function buildStageEntries(
           "the client is newer than the server" is an ordinary state here and not a mistake.
 
           Sending it only when it is TRUE shrinks the blast radius of that skew from EVERY stage save
-          to just the never-downloaded ones. It does not eliminate it, and the residue is written
-          down in `docs/OPEN_FINDINGS.md`: against an old server those saves are refused, and the
-          refusal banner says the stage "will keep being refused until the answer that caused it is
-          corrected", which is false — no answer the designer typed has anything to do with it.
+          to just the never-downloaded ones. It does not eliminate it: against an old server those
+          saves are still refused.
+
+          WHAT THE DESIGNER IS TOLD WHEN THAT HAPPENS IS NOW CORRECT, and this note used to say
+          otherwise. The refusal is triaged by `isSchemaRefusal` (see `noteStageFailure` below, and
+          `isSchemaRefusal` in `lib/offline.ts`, which matches pydantic's `extra_forbidden`
+          discriminator — exactly the shape this `merge` skew produces). An extra-input refusal now
+          says "this app and the repository are out of step, and no edit to the stage will clear it",
+          not "it will keep being refused until the answer that caused it is corrected". Only a
+          genuine field-level refusal gets that second sentence, which is the one case where it is
+          true.
         */
         entries.push(
           neverRead
