@@ -558,10 +558,17 @@ has the designer captured so far". Generating a report from it is not possible e
 there is nothing to read, and after a successful sync there are no local photographs left to embed.
 
 `WorkshopDraftStore`, in the same package, is the answer. It holds the whole multi-stage document,
-every photo, every recording and every report generated from them, on the device, in a shape the app
-can **read back** rather than merely replay. A workshop is filled in over a fortnight, out of signal,
-in a courtyard; it must be openable, editable and printable on that device the entire time, and it
-must still be all of those things after the process has been killed forty times in between.
+every photo and every recording, on the device, in a shape the app can **read back** rather than
+merely replay. A workshop is filled in over a fortnight, out of signal, in a courtyard; it must be
+openable, editable and printable on that device the entire time, and it must still be all of those
+things after the process has been killed forty times in between.
+
+It does **not** hold the reports generated from them, and that sentence used to say it did. The
+store carried a whole export-retention subsystem — `DraftExport`, `exports`, `exportsDir`,
+`registerExport`, `exportCount` — that nothing ever called, so `draft.exports` was permanently empty
+and the paragraph above described a capability no build ever had. A generated report is published
+straight to Downloads by `ReportExport` and is not copied back into `filesDir`; see that object's
+header for why the subsystem was removed rather than wired.
 
 Two details in it are the difference between working and appearing to work:
 
