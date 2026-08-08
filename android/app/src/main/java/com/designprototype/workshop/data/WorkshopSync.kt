@@ -296,7 +296,13 @@ private fun Throwable.refusalMessage(fallback: String): String {
     val text = apiErrorMessage(fallback)
     val code = (this as? HttpException)?.code() ?: return text
     if (code < 500) return text
-    return "$text The server answered, so a better connection will not help — this will keep being " +
+    // Stopped first. [apiErrorMessage] hands back whatever the server wrote, or — for the 500 that
+    // carried no body, which is the shape this branch was written for — Retrofit's own "HTTP 500
+    // Internal Server Error", and neither ends in one. Without this the two ran together as "HTTP
+    // 500 Internal Server Error The server answered, so…", a single unpunctuated clause a designer
+    // skims and abandons before the half that tells them waiting for signal cannot help.
+    val lead = if (text.endsWith('.') || text.endsWith('!') || text.endsWith('?')) text else "$text."
+    return "$lead The server answered, so a better connection will not help — this will keep being " +
         "refused until whatever caused it is corrected. Use Try again once it has been."
 }
 
