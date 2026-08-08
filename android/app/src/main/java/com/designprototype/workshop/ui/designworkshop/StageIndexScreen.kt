@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -76,6 +78,15 @@ fun StageIndexScreen(
     workshopId: String,
     onOpenStage: (stageKey: String) -> Unit,
     onOpenReport: () -> Unit,
+    /**
+     * Open the artisan cards and prototype tags for this workshop.
+     *
+     * It hangs off the INDEX rather than off stage 13, and that is the point of putting it here: the
+     * tags are wanted at the close of a workshop, for prototypes entered over a fortnight across three
+     * stages, and a designer looking for them is looking at the workshop rather than at any one stage.
+     * The report button beside it is reached the same way for the same reason.
+     */
+    onOpenCodes: () -> Unit,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -157,6 +168,15 @@ fun StageIndexScreen(
             Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
             Text("Generate the report")
+        }
+
+        // OUTLINED, under the filled report button, because the report is what the workshop is FOR and
+        // the cards are a tool used along the way — two filled buttons of equal weight would make a
+        // designer choose between them at the moment they are looking for the report.
+        OutlinedButton(onClick = onOpenCodes, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.QrCode2, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Cards & tags")
         }
 
         HorizontalDivider()

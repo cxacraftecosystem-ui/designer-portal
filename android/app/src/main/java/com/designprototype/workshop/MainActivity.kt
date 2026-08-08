@@ -198,6 +198,7 @@ import com.designprototype.workshop.ui.designworkshop.DesignerRosterScreen
 import com.designprototype.workshop.ui.designworkshop.ReportScreen
 import com.designprototype.workshop.ui.designworkshop.StageIndexScreen
 import com.designprototype.workshop.ui.designworkshop.StageScreen
+import com.designprototype.workshop.ui.designworkshop.WorkshopCodesScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopListScreen
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireAnswerScreen
 import com.designprototype.workshop.ui.questionnaires.QuestionnaireDetailScreen
@@ -468,6 +469,16 @@ private sealed interface Screen {
     data class DesignWorkshopStages(val workshopId: String) : Screen
     data class DesignWorkshopStage(val workshopId: String, val stageKey: String) : Screen
     data class DesignWorkshopReport(val workshopId: String) : Screen
+
+    /**
+     * The artisan cards and prototype tags for one workshop — the phone's `…/codes` page.
+     *
+     * A SIBLING OF THE REPORT, hanging off the stage index rather than off stage 13. The tags cover
+     * prototypes entered across three stages over a fortnight and are wanted at the close of the
+     * workshop, so the thing a designer is looking at when they want them is the WORKSHOP. Parking it
+     * inside a stage would also make it unreachable from the two later stages that scan a tag.
+     */
+    data class DesignWorkshopCodes(val workshopId: String) : Screen
 
     /**
      * The `DesignerProfile` behind every report's cover page.
@@ -1299,6 +1310,7 @@ private fun HomeScreen(
             is Screen.DesignWorkshopStages -> Screen.DesignWorkshops
             is Screen.DesignWorkshopStage -> Screen.DesignWorkshopStages(s.workshopId)
             is Screen.DesignWorkshopReport -> Screen.DesignWorkshopStages(s.workshopId)
+            is Screen.DesignWorkshopCodes -> Screen.DesignWorkshopStages(s.workshopId)
             // An admin who opened somebody else's profile came from the roster and goes back to it;
             // a designer looking at their own came from the menu and goes back to the dashboard.
             // Sending both to the dashboard would make an admin re-find the row in a list they may
@@ -1336,13 +1348,14 @@ private fun HomeScreen(
         is Screen.Settings -> "Settings"
         is Screen.Appearance -> "Appearance & accessibility"
         is Screen.DataBrowser -> "Data Browser"
-        // Null on all four: each of these screens draws its own heading, carrying the workshop's own
+        // Null on all five: each of these screens draws its own heading, carrying the workshop's own
         // title and its progress bar. A shared header above that would state the section twice and
         // spend the page's first line saying less than the line under it.
         is Screen.DesignWorkshops -> null
         is Screen.DesignWorkshopStages -> null
         is Screen.DesignWorkshopStage -> null
         is Screen.DesignWorkshopReport -> null
+        is Screen.DesignWorkshopCodes -> null
         // Null on both for the same reason as the four above: each screen draws its own heading,
         // and the profile's additionally says WHOSE profile it is, which a shared header cannot.
         is Screen.DesignerProfile -> null
@@ -1384,7 +1397,8 @@ private fun HomeScreen(
         is Screen.DesignWorkshops,
         is Screen.DesignWorkshopStages,
         is Screen.DesignWorkshopStage,
-        is Screen.DesignWorkshopReport -> NavDestination.DESIGN_WORKSHOPS
+        is Screen.DesignWorkshopReport,
+        is Screen.DesignWorkshopCodes -> NavDestination.DESIGN_WORKSHOPS
         // Same reasoning at all three depths: the row opens the list the designer is already inside.
         is Screen.Questionnaires,
         is Screen.QuestionnaireDetail,
@@ -1963,6 +1977,7 @@ private fun HomeScreen(
                 workshopId = s.workshopId,
                 onOpenStage = { key -> message = null; screen = Screen.DesignWorkshopStage(s.workshopId, key) },
                 onOpenReport = { message = null; screen = Screen.DesignWorkshopReport(s.workshopId) },
+                onOpenCodes = { message = null; screen = Screen.DesignWorkshopCodes(s.workshopId) },
                 onError = { showMessage(it) }
             )
 
@@ -1989,6 +2004,13 @@ private fun HomeScreen(
             )
 
             is Screen.DesignWorkshopReport -> ReportScreen(
+                repository = repository,
+                workshopId = s.workshopId,
+                onMessage = { showMessage(it) },
+                onError = { showMessage(it) }
+            )
+
+            is Screen.DesignWorkshopCodes -> WorkshopCodesScreen(
                 repository = repository,
                 workshopId = s.workshopId,
                 onMessage = { showMessage(it) },
