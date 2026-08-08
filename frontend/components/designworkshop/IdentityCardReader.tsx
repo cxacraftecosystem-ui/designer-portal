@@ -182,7 +182,16 @@ export function IdentityCardReader({
           <p className="text-xs leading-5 text-ink-500">
             Read from {candidate.source}
             {candidate.kind ? ` · looks like a ${candidate.kind.toLowerCase()} card` : ""}
-            {candidate.confidence !== null ? ` · the reader is ${Math.round(candidate.confidence * 100)}% sure` : ""}.
+            {/* WORDS, NOT A PERCENTAGE, and the two new panels written alongside this one already say
+                why: "82% sure" invites a designer to treat 82 as good enough and skip the comparison,
+                which is the one behaviour this panel exists to prevent. There is no threshold at
+                which reading the number off the card stops being required, so there is no number
+                here to reason about. Matches `IdentityCardCapture` and Android's
+                `DwIdentityCardControl` exactly, including the 0.85 boundary. */}
+            {candidate.confidence !== null
+              ? ` · ${candidate.confidence >= 0.85 ? "read clearly" : "read with difficulty"}`
+              : ""}
+            .
           </p>
 
           <p className="flex items-start gap-2 rounded-md border border-amber-500 bg-amber-100 px-2 py-1.5 text-xs leading-5 text-amber-800">
