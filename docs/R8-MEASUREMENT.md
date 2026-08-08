@@ -237,3 +237,104 @@ that has stopped working in a village with no support channel. Giving the two AP
 So the only shape this delivery chain can carry is **one universal APK that installs on every field
 handset**, and the only way to make it smaller is to stop putting architectures in it that no field
 handset has.
+
+## The measurement
+
+Five real `assembleRelease` runs on the same tree, same machine, same `debugSignRelease=true`, each
+differing from the one above it in exactly one thing. Sizes read off the file with `os.path.getsize`,
+not off a Gradle report, and the ABIs read out of the APK's own central directory rather than off the
+build file. `lintVital*` is excluded from (b) onwards purely for wall-clock; lint produces no bytes.
+
+| | Release APK | Bytes | Size | vs today | multiple |
+|---|---|---|---|---|---|
+| **a** | today, before ML Kit (four ABIs, as configured) | **6,636,115** | 6.33 MB | — | 1.00× |
+| **b** | + bundled ML Kit, four ABIs — *what would have shipped* | **49,307,952** | 47.02 MB | +42,671,837 | **7.43×** |
+| **c** | + bundled ML Kit, `abiFilters` = the ARM pair | **26,080,576** | 24.87 MB | +19,444,461 | **3.93×** |
+| d | + bundled ML Kit, `abiFilters` = `arm64-v8a` alone | 19,271,029 | 18.38 MB | +12,634,914 | 2.90× |
+| e | (c) with `useLegacyPackaging = true` | 16,103,260 | 15.36 MB | +9,467,145 | 2.43× |
+
+**(a) → (c) is what this lane delivers and what `build.gradle.kts` now does: 23,227,376 bytes —
+22.15 MB — that would otherwise have shipped, removed.** Proven off the artifacts rather than off the
+configuration: (b) carries
+`lib/{arm64-v8a,armeabi-v7a,x86,x86_64}/libmlkit_google_ocr_pipeline.so` and (c) carries only the two
+ARM entries.
+
+### Where the 42.67 MB of (b) actually goes, grouped off the two APKs
+
+| group | before | after | delta |
+|---|---|---|---|
+| `lib/x86_64` | 10,760 | 11,636,888 | +11,626,128 |
+| `lib/x86` | 9,284 | 11,570,332 | +11,561,048 |
+| `lib/arm64-v8a` | 10,096 | 11,074,640 | +11,064,544 |
+| `lib/armeabi-v7a` | 7,252 | 6,789,192 | +6,781,940 |
+| `assets/mlkit-*` (`.tflite`, also STORED) | 0 | 1,272,325 | **+1,272,325** |
+| `*.dex` | 5,052,235 | 5,267,116 | +214,881 |
+| `resources.arsc` + `res/` | 1,300,483 | 1,398,309 | +97,826 |
+
+**R8 did its job and it did not matter.** The five ML Kit artifacts bring roughly 1 MB of
+`classes.jar` plus the whole `play-services-mlkit-text-recognition` shim, and the dex grew by
+**214,881 bytes** — R8 ate almost all of it. 99.5% of the cost is in rows R8 is structurally unable to
+touch.
+
+### The earlier estimate was LOW, not high, and it is worth knowing why
+
+`DECISION-identity-card-ocr-on-android.md` derived ~45.2 MB for the four-ABI build and ~23.1 MB for
+the ARM pair by unzipping the AAR and adding the `.so` to a 6.09 MB baseline. Measured: **47.02 MB**
+and **24.87 MB**. Two things the AAR arithmetic could not see:
+
+- **`assets/mlkit-google-ocr-models/*.tflite`, 1,272,325 bytes**, which live in the shim AAR rather
+  than in the one that was unzipped, are ABI-independent (they ship once whatever `abiFilters` says),
+  and are **STORED as well** — AGP does not compress `.tflite`. They are pure unshrinkable weight.
+- the dex and resource growth above, and a baseline that had already moved from 6.09 to 6.33 MB.
+
+The estimate's *shape* was right and its conclusion about R8 was exactly right. It was 1.8 MB
+optimistic, which is the usual direction for a number derived from a listing.
+
+## Two further levers, measured but NOT taken here
+
+**Dropping `armeabi-v7a` saves another 6,809,547 bytes (6.49 MB)** — row (d). It is not taken, and
+the reason is not sentiment. `minSdk = 26` reaches handsets from 2017, when 32-bit-only phones were
+still being sold in this market; there is no device inventory in this repository to say none is in
+the field; and the failure mode of guessing wrong is not a slow app but
+`INSTALL_FAILED_NO_MATCHING_ABIS` behind an update dialog with no "Later" button, in a village, with
+no support channel. 6.49 MB is not worth that without a roster of what the designers actually carry.
+**If that roster exists, this is a one-line change and the number is measured and waiting.**
+
+**`useLegacyPackaging = true` saves another 9,977,316 bytes (9.52 MB) off every download** — row (e).
+It flips `extractNativeLibs` back to `"true"` (verified in the merged manifest), so the libraries are
+DEFLATED in the APK — 17,863,832 bytes stored becomes 7,927,235 compressed — and the installer
+unpacks them at install time. It is a genuine transfer rather than a free win:
+
+| | (c), as shipped | (e), legacy packaging |
+|---|---|---|
+| download, every install **and every update** | 26,080,576 | **16,103,260** (−9,977,316) |
+| permanent on-device footprint | 26,080,576 | **33,967,092** (+7,886,516) |
+
+For an application that is side-loaded over prepaid mobile data and whose updater downloads the whole
+APK every release, trading 7.52 MB of storage for 9.52 MB off *every* download is arguably the right
+way round. It is deliberately left as its own decision rather than folded into this one: it changes
+install-time behaviour on a build nothing here can put on a handset, and this document's own record
+is that untested release-only behaviour is how this repository gets hurt. **The number is measured;
+the choice is not this lane's to make.**
+
+## Recommendation
+
+1. **Ship (c).** `abiFilters = ["arm64-v8a", "armeabi-v7a"]` on release only — already in
+   `android/app/build.gradle.kts`. 22.15 MB, no behaviour change on any device that can run the app.
+2. **No ABI split and no App Bundle**, for the delivery-chain reasons above, until `/api/app/download`
+   learns to pick a file per device — at which point re-read this section rather than reasoning from
+   scratch.
+3. **A developer with no handset is not blocked.** `debug` keeps all four ABIs, so the ordinary
+   x86_64 emulator is untouched. For a *shrunk release* build with no phone in reach,
+   `releaseAllAbis=true` in a gitignored `local.properties` widens it back and the build prints a
+   lifecycle warning naming what it did and that the APK must not be published.
+
+## Still owed, and it is the same debt as the top of this document
+
+The (c) APK has never been installed on anything. This app now ships 17 MB of native code where it
+previously shipped 37 KB, and the failure modes that adds are all install-time or first-call —
+`INSTALL_FAILED_NO_MATCHING_ABIS` on an ABI nobody checked, or an `UnsatisfiedLinkError` the first
+time the recogniser is opened. None of them is a compile error and none of them shows up in a green
+build. **Before this ships: install the (c) APK on the M32 and open the identity-card control once.**
+That single tap is what proves the whole native path, and it is the recogniser lane's own device
+verification, so it need not be a separate trip.
