@@ -494,6 +494,12 @@ fun FieldRenderer(
                     onCaptionChange = onCaptionChange,
                     resetKey = resetKey,
                     services = services,
+                    // For "measure a dimension from this photograph": the entity's OTHER fields are
+                    // what a measurement can be proposed into, the row is what it would replace, and
+                    // `onPatch` is the one door it may write through. See [DwPhotoMeasurePanel].
+                    siblings = siblings,
+                    rowValues = rowValues,
+                    onPatch = onPatch,
                 )
 
             DwFieldType.TEXT -> ScalarInput(
@@ -989,6 +995,12 @@ private fun MediaField(
     onCaptionChange: (JsonElement?) -> Unit,
     resetKey: Any,
     services: DwFieldServices? = null,
+    /** Every live field of this entity, by key — where a measured dimension could be proposed. */
+    siblings: Map<String, FieldDto> = emptyMap(),
+    /** The record this field sits in, so a proposal can say what it would replace. */
+    rowValues: Map<String, JsonElement> = emptyMap(),
+    /** The one door a measurement may be written through. See [FieldRenderer]'s `onPatch`. */
+    onPatch: (Map<String, JsonElement?>) -> Unit = {},
 ) {
     val ids = remember(value, type) {
         if (type == DwFieldType.IMAGE_LIST) DwValues.list(value)
@@ -1029,6 +1041,31 @@ private fun MediaField(
         onMessage = services?.onMessage ?: {},
         onError = services?.onError ?: {},
     )
+
+    /*
+     * "Measure a dimension from this photograph", offered on every image field of an entity that
+     * records a length — which is four entities and thirteen fields in the bundled registry, and no
+     * offer at all on the other thirty-nine. See [dwOffersPhotoMeasure] for why nothing here tries to
+     * guess WHICH photograph has the ruler in it.
+     *
+     * ADDITIVE, like every other extra on this card. It sits after the attachment rows because it is
+     * about them, and it cannot touch the import: by the time it composes the photograph is already
+     * copied, hashed and in the draft, and the panel only ever READS the bytes. Its one write is
+     * `onPatch`, from a button that spells out the figure it will put in the field.
+     */
+    if (dwOffersPhotoMeasure(field, siblings)) {
+        val targets = remember(siblings) { dwMeasurableLengthFields(siblings) }
+        // Resolved here rather than inside the panel so the panel never sees the bridge and cannot
+        // reach the draft store by any route other than the patch above.
+        val photos = ids.mapNotNull(media.resolve).filter { it.mediaType.equals("IMAGE", ignoreCase = true) }
+        DwPhotoMeasurePanel(
+            photos = photos,
+            targets = targets,
+            rowValues = rowValues,
+            enabled = enabled,
+            onPropose = { key, proposed -> onPatch(mapOf(key to proposed)) },
+        )
+    }
 
     if (caption != null) {
         Box(modifier = Modifier.padding(start = 12.dp, top = 2.dp)) {
