@@ -59,6 +59,7 @@ import com.designprototype.workshop.data.WorkshopDraft
 import com.designprototype.workshop.data.WorkshopDraftStore
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.collections
+import com.designprototype.workshop.data.computeStageCompleteness
 import com.designprototype.workshop.data.computeWorkshopCompleteness
 import com.designprototype.workshop.data.dwRefId
 import com.designprototype.workshop.data.entityKey
@@ -850,12 +851,13 @@ private fun renderStageSection(
 /**
  * The sections that are not one of the 22 stages.
  *
- * The four this device can build are built. The five it cannot — the map, the infographics and the
- * three annexures — are SKIPPED IN SILENCE HERE AND NAMED IN THE WARNINGS, which [reportPlanFor]
- * assembled from this same template. That split is deliberate: a warning belongs to the act of
- * generating and not to the document, so the officer who opens the .docx next month does not find a
- * note about what a handset could not draw on the day, while the designer standing beside them on
- * the day is told plainly.
+ * The six this device can build are built — the cover, the contents, the metric row, the
+ * acknowledgement, the photographic record and the completeness table. The three it cannot — the
+ * map, the infographics and the transcript annexure — are SKIPPED IN SILENCE HERE AND NAMED IN THE
+ * WARNINGS, which [reportPlanFor] assembled from this same template. That split is deliberate: a
+ * warning belongs to the act of generating and not to the document, so the officer who opens the
+ * .docx next month does not find a note about what a handset could not draw on the day, while the
+ * designer standing beside them on the day is told plainly.
  */
 private fun renderSpecialSection(
     builder: DocumentBuilder,
@@ -885,15 +887,194 @@ private fun renderSpecialSection(
                 blocks.forEach(builder::add)
             }
         }
+        SpecialSection.ANNEXURE_MEDIA ->
+            renderMediaAnnexure(builder, section, plan, schema, draft, imageFor)
+        SpecialSection.COMPLETENESS ->
+            renderCompletenessAnnexure(builder, section, plan, schema, draft, refs)
+
         // Not drawn on this device. The designer was told why by `reportWarnings`; emitting half of
         // one here — a numbered heading over an empty frame — would be worse than the honest gap,
         // because a heading in the contents that leads to nothing reads as a corrupt file.
+        //
+        // ANNEXURE_TRANSCRIPTS IS NOT HERE FOR THE REASON THE OTHER TWO WERE. The map and the
+        // figures are drawings this device cannot make; the transcripts are text it does not HAVE.
+        // Design-workshop audio is transcribed server-side by the media queue and the text lands on
+        // `MediaFile.transcriptText`, which no draft on this handset carries and no endpoint this
+        // client binds ever asks for — see the ledger entry for `includeTranscripts`.
         SpecialSection.MAP,
         SpecialSection.CHART,
-        SpecialSection.ANNEXURE_MEDIA,
-        SpecialSection.ANNEXURE_TRANSCRIPTS,
-        SpecialSection.COMPLETENESS -> Unit
+        SpecialSection.ANNEXURE_TRANSCRIPTS -> Unit
     }
+}
+
+/**
+ * Every photograph in the record, in stage order, as a contact sheet —
+ * `ReportBuilder._render_media_annexure`.
+ *
+ * IT WALKS THE REGISTRY AND NOT THE TEMPLATE'S SECTION LIST, exactly as the server does. The
+ * annexure's claim is "this is the photographic record of the workshop", so it is drawn from what
+ * was CAPTURED rather than from what this template chose to print in its narrative. A designer who
+ * excluded a stage, or a template that reduces the cluster background to a two-line annexure, still
+ * has those photographs in the record and the office's copy still prints every one of them here;
+ * walking the sections instead would hand two contact sheets of the same workshop different numbers
+ * of plates and nothing in either file would admit it.
+ *
+ * TWO SERVER BEHAVIOURS ARE REPRODUCED RATHER THAN IMPROVED ON, because a difference here is a
+ * difference between the phone's copy and the office's, which is the whole defect this area exists
+ * to end. `_render_media_annexure` reads neither `section.include_photos` nor `section.photo_columns`
+ * — the contact sheet is three across whatever stage 20 said about photo columns, and it still
+ * prints when `includePhotographs` is off. `includeMediaAnnexure` is the switch that removes it, and
+ * that one is honoured in [applyReportSettings] before this is ever reached.
+ *
+ * ONE BITMAP AT A TIME, WHICH IS WHY THE WHOLE SET GOES INTO ONE [ImageGridBlock] rather than being
+ * decoded here. `PdfWriter.drawImage` decodes each photograph downsampled to the cell it will
+ * actually occupy and recycles it immediately instead of leaving it to the GC — a sixty-photo
+ * annexure is sixty sequential decodes and never sixty live bitmaps, which is the difference between
+ * an annexure and an OutOfMemoryError on the cheapest phone in the room.
+ */
+private fun renderMediaAnnexure(
+    builder: DocumentBuilder,
+    section: TemplateSection,
+    plan: ReportPlan,
+    schema: SchemaResponse,
+    draft: WorkshopDraft?,
+    imageFor: (String) -> ImageRef?,
+) {
+    val gathered = ArrayList<Pair<ImageRef, String>>()
+    // Stage order, and the registry's own order within a stage. A contact sheet whose plates run in
+    // the order the phone happened to store them cannot be read against the report it belongs to.
+    schema.stages.sortedBy { it.number }.forEach { stage ->
+        val stored = draft?.stages?.get(stage.key)
+        stage.entities.forEach { entity ->
+            val sources = if (entity.cardinality == "SINGLETON") {
+                listOf(stored?.values.orEmpty())
+            } else {
+                stored?.rowsFor(entity.key).orEmpty().map { it.values }
+            }
+            sources.forEach { values ->
+                // The SAME resolver the stage sections use, deliberately: a photograph that prints
+                // on page 20 and is missing from the annexure — or the reverse — is one document
+                // disagreeing with itself about what was photographed.
+                imagesOf(entity, values, imageFor, plan.template.maxTier).forEach { (ref, caption) ->
+                    // The stage's own title where the photograph has no caption of its own. A plate
+                    // with no line under it is a picture, not evidence.
+                    gathered += ref to caption.ifBlank { stage.title }
+                }
+            }
+        }
+    }
+    if (gathered.isEmpty()) return
+
+    if (section.pageBreakBefore) builder.add(PageBreakBlock)
+    builder.heading(
+        section.heading.ifBlank { "Photographic record" },
+        level = 1,
+        numbered = plan.template.numberHeadings,
+    )
+    builder.add(ImageGridBlock(images = gathered, columns = 3))
+}
+
+/**
+ * What the record does and does not contain, stage by stage — `ReportBuilder._render_completeness`.
+ *
+ * It goes through the same [computeStageCompleteness] the stage screens score themselves with, so
+ * there is one definition of "filled" on this device and not two — with ONE addition that only a
+ * report can make, and the difference is deliberate on the server too. [maskUnresolvableRefs] applies
+ * `ref_resolves`, so a reference whose row was deleted counts as unfilled HERE while the percentage
+ * above the export buttons still counts it as filled. That is not the two disagreeing by accident:
+ * the headline figure is the form's own score, computed with nothing to resolve an id against, and
+ * the annexure's job is to agree with the rest of THIS DOCUMENT, which blanks that same reference
+ * eighteen pages earlier. The server splits it identically — `stage_completeness` takes
+ * `ref_resolves` only from the report.
+ *
+ * NO PAGE BREAK EVEN WHERE THE SECTION ASKS FOR ONE, because the server's renderer does not read
+ * `section.page_break_before` here and the only template that carries this section does not set it.
+ * Honouring it would move a page boundary on the phone's copy alone.
+ */
+private fun renderCompletenessAnnexure(
+    builder: DocumentBuilder,
+    section: TemplateSection,
+    plan: ReportPlan,
+    schema: SchemaResponse,
+    draft: WorkshopDraft?,
+    refs: DwRefLabels,
+) {
+    val rows = schema.stages.sortedBy { it.number }.map { stage ->
+        val stored = draft?.stages?.get(stage.key)
+        val score = computeStageCompleteness(
+            stage = stage,
+            singleton = stage.singleton
+                ?.let { maskUnresolvableRefs(it, stored?.values.orEmpty(), refs) }
+                .orEmpty(),
+            collections = stage.collections.associate { entity ->
+                entity.key to stored?.rowsFor(entity.key).orEmpty()
+                    .map { maskUnresolvableRefs(entity, it.values, refs) }
+            },
+        )
+        listOf(
+            runsOf("${score.number}. ${score.title}"),
+            runsOf("${score.requiredFilled}/${score.requiredTotal}"),
+            runsOf("${score.percent}%"),
+            runsOf(if (score.isComplete) "Complete" else score.missing.take(3).joinToString(", ")),
+        )
+    }
+    if (rows.isEmpty()) return
+
+    builder.heading(
+        section.heading.ifBlank { "Data completeness" },
+        level = 1,
+        numbered = plan.template.numberHeadings,
+    )
+    builder.add(
+        TableBlock(
+            columns = listOf(
+                TableColumn("Stage", 40.0f),
+                TableColumn("Required fields", 15.0f, numeric = true),
+                TableColumn("Complete", 12.0f, numeric = true),
+                TableColumn("Outstanding", 33.0f),
+            ),
+            rows = rows,
+        )
+    )
+}
+
+/**
+ * One record's values with every REF that no longer resolves REMOVED, so the scorer counts a field
+ * exactly as the renderer prints it — the port of `ReportBuilder.ref_resolves`.
+ *
+ * THE SCORER AND THE RENDERER MUST AGREE, and the server's own comment records what happens when
+ * they do not: the completeness annexure read "13. Prototype Development | 144/144 | 100% |
+ * Complete" while eighteen pages earlier the same submitted document printed "Prototype | Not
+ * recorded." thirty-six times, for the very fields it had just counted as filled. The renderer
+ * blanks an id whose row was deleted ([displayValue]) and the plain scorer only checks that the
+ * string is non-empty. One document, two answers about one field.
+ *
+ * Masking the value rather than teaching [computeStageCompleteness] a second rule is what keeps the
+ * counting in one place: the stage form on this phone scores itself with no document around it and
+ * nothing to resolve references against, so "does this id still point at something" is a question
+ * only the REPORT can ask — which is exactly why the server passes it in as an argument too.
+ *
+ * `refs.label(...)` and NOT [displayValue] is the resolution test, matching the server's
+ * `bool(self._ref_label(value))`. The two differ for a REF holding hand-typed text like "SK-01",
+ * which the renderer prints and the scorer counts as unfilled; that asymmetry is the server's and
+ * copying it is what keeps the two completeness tables identical.
+ */
+private fun maskUnresolvableRefs(
+    entity: EntityDto,
+    values: Map<String, JsonElement>,
+    refs: DwRefLabels,
+): Map<String, JsonElement> {
+    val unresolved = entity.liveFields
+        .filter { DwFieldType.of(it.type) == DwFieldType.REF }
+        .map { it.key }
+        .filter { key ->
+            val stored = values[key]
+            stored != null && refs.label(dwRefId(stored).trim()).isBlank()
+        }
+    // The common case by far — 38 of the registry's 43 entities name no REF at all — and returning
+    // the map itself avoids copying every record of every stage to change nothing.
+    if (unresolved.isEmpty()) return values
+    return values - unresolved.toSet()
 }
 
 /**
