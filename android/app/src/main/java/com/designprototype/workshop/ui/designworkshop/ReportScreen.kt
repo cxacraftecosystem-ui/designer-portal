@@ -237,7 +237,14 @@ fun ReportScreen(
             // because a questionnaire lookup timed out would be a worse screen than the one that
             // never fetched. A failure leaves whatever is cached exactly where it is.
             val remoteId = stored?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
+            // BOTH KEYS ARE TRIED, and the second one is not defensive padding. A workshop created
+            // offline keeps its LOCAL id on this screen for ever, while a questionnaire's
+            // `designWorkshopId` is necessarily the SERVER's — so the copy `QuestionnaireDetailScreen`
+            // files when the designer reads their sittings on Monday is under the remote id, and a
+            // read on Thursday under the local one alone would miss it. Thursday, in a courtyard with
+            // no signal, is the export this whole cache exists for.
             var held = DwQuestionnaireStore.load(appContext, workshopId)
+                ?: remoteId?.let { DwQuestionnaireStore.load(appContext, it) }
             if (remoteId != null) {
                 runCatching { repository.designWorkshopQuestionnaires(remoteId) }
                     .onSuccess { fetched ->
