@@ -419,8 +419,38 @@ class WorkshopRepository(
     // worked, or a designer editing a profile the server has since had changed underneath them. Both
     // of those are worse than an honest error, so a failure here propagates.
 
-    /** The whole roster, newest empanelment last. Admin and above — the server refuses everyone else. */
-    suspend fun designerRoster(): List<DesignerRosterDto> = api.designerRoster()
+    /**
+     * The whole roster, newest empanelment first, across as many pages as the server reports.
+     *
+     * A WALK AND NOT ONE REQUEST, for the reason [walkPagedListing] exists: the server's default page
+     * is 50 rows of a table an institution adds to for years, and a list that quietly stops at the
+     * newest 50 is indistinguishable from an institution that has only ever empanelled 50 people.
+     * The one row an admin opens this screen to find is the SUSPENDED designer standing in front of
+     * them saying they cannot sign in — a row that was added long ago and sorts last. That is exactly
+     * the row a single-page read cannot reach.
+     *
+     * `PagedListing.truncated` is carried to the screen rather than swallowed, so a roster past the
+     * walk's ceiling is stated on screen instead of being left for an admin to infer from a person
+     * who is not in it.
+     *
+     * Admin and above — the server refuses everyone else, and the screen does not even issue the
+     * request for an account that may not have it.
+     */
+    suspend fun designerRoster(): PagedListing<DesignerRosterDto> =
+        walkPagedListing(idOf = { it.id }) { page, pageSize ->
+            api.designerRoster(page = page, pageSize = pageSize)
+        }
+
+    /**
+     * The accounts an admin may hand a workshop to — used here purely as the email -> account id
+     * join a roster row needs to reach `/designers/{userId}/profile`.
+     *
+     * `includeSuspended = true` because the row an admin is most often working on is the suspended
+     * one; see [DesignerDirectoryEntryDto]. Capped at 500 accounts server-side, which the caller must
+     * SAY when it is hit rather than silently drop the profile action from rows whose account exists.
+     */
+    suspend fun designerDirectory(): List<DesignerDirectoryEntryDto> =
+        api.designerDirectory(includeSuspended = true)
 
     /**
      * Empanel somebody by email.

@@ -828,8 +828,36 @@ interface WorkshopRepositoryApi {
     // do, and the server does again. See the notes on the screens for why the client check is not
     // merely cosmetic.
 
+    // PAGED, AND READING IT AS A BARE `List` IS THE DEFECT THIS SIGNATURE REPLACES.
+    //
+    // `GET /designers/roster` answers `page_payload(...)` — the OBJECT
+    // `{items,total,page,pageSize,pages}` (backend/app/services/pagination.py:14-21) — exactly as
+    // every other list in this API does. kotlinx.serialization cannot decode a JSON object into a
+    // `List<T>`, and neither of the leniencies in [ApiClient] bridges it: `isLenient` reads a quoted
+    // number as a number and `coerceInputValues` falls back to a default for a null, but a
+    // structural array/object mismatch throws. So EVERY open of the roster landed in `.onFailure`
+    // and drew "Could not load the designer roster." over an empty list — with the screen, its nav
+    // entry, its admin-only permission check and all four mutations shipping and correct behind it,
+    // and with the admin editor for another designer's profile unreachable as a consequence.
+    //
+    // `search` and `activeOnly` are deliberately NOT declared. The screen fetches the roster once
+    // and filters it on the device (see `DesignerRosterScreen`), which is the same trade
+    // `designWorkshopReferences` makes above: a per-keystroke server search is faster in an office
+    // and useless in a courtyard on 2G. The walk over `page` is what keeps that honest.
     @GET("designers/roster")
-    suspend fun designerRoster(): List<DesignerRosterDto>
+    suspend fun designerRoster(
+        @Query("page") page: Int = 1,
+        @Query("pageSize") pageSize: Int = 100
+    ): PageResponse<DesignerRosterDto>
+
+    // The email -> account join, and the only one there is: a roster row is keyed by email and
+    // carries no user id, while `/designers/{userId}/profile` can only be reached by an id. See
+    // [DesignerDirectoryEntryDto] for why `includeSuspended` is passed rather than left at its
+    // default, and for why the DTO is narrower than the payload.
+    @GET("designers/directory")
+    suspend fun designerDirectory(
+        @Query("includeSuspended") includeSuspended: Boolean = true
+    ): List<DesignerDirectoryEntryDto>
 
     @POST("designers/roster")
     suspend fun addDesignerToRoster(@Body body: DesignerRosterCreateBody): DesignerRosterDto
