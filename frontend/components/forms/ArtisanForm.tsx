@@ -8,6 +8,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { CarryForwardCards } from "@/components/CarryForwardCards";
 import { Field, MultiNoteField, Select, TextArea, TextInput } from "@/components/FormControls";
 import { AadhaarField, aadhaarValidationError, isMaskedIdentityNumber } from "@/components/forms/AadhaarField";
+import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
 import { DosDontsField } from "@/components/forms/DosDontsField";
 import { DuplicateArtisanDialog } from "@/components/forms/DuplicateArtisanDialog";
@@ -246,6 +247,27 @@ function PehchanFields({
             </>
           ) : null}
         </p>
+        {/* Only when the artisan holds a card. Offering to photograph a document the record has just
+            said does not exist is an invitation to photograph SOMETHING — and for this class of data
+            the wrong photograph being taken at all is the incident, not the wrong value stored.
+            Android's ArtisanForm makes the same call in the same place. */}
+        {available ? (
+          <IdentityCardCapture
+            kind="PEHCHAN"
+            targetLabel="the Pehchan card number"
+            currentValue={keptMask ?? number}
+            aadhaarProblem={aadhaarValidationError}
+            onUse={(value) => {
+              // Stand the mask down for the same reason the Aadhaar field does: posting it back
+              // means "unchanged", and the confirmed number would never be written.
+              setReplacing(true);
+              setNumber(value);
+              // A programmatic set fires no input event, so the dirty flag is raised by hand — the
+              // same rule every themed control in this form follows.
+              onDirty();
+            }}
+          />
+        ) : null}
       </div>
     </>
   );
@@ -756,6 +778,10 @@ export function ArtisanForm({
               defaultValue={initial?.aadhaarNumber}
               excludeArtisanId={initial?.id ?? null}
               required={aadhaarRequired}
+              // The researcher is sitting with the artisan and the card: this is the one form where
+              // photographing it instead of typing twelve digits is the right offer. Android's
+              // artisan form carries the same control under the same box.
+              offerCardCapture
               onValueChange={markDirty}
             />
             <PehchanFields

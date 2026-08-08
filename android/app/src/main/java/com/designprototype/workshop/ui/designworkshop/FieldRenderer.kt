@@ -311,7 +311,7 @@ fun FieldRenderer(
             DwFieldType.LONG_TEXT ->
                 ScalarInput(
                     field, value, onChange, enabled, error, minLines = 4, resetKey = resetKey,
-                    services = services, media = media,
+                    services = services,
                 )
 
             // The numeric three take `rowValues` for one reason: a derived field is computed from its
@@ -513,7 +513,7 @@ fun FieldRenderer(
 
             DwFieldType.TEXT -> ScalarInput(
                 field, value, onChange, enabled, error, resetKey = resetKey,
-                services = services, media = media,
+                services = services,
             )
         }
     }
@@ -574,8 +574,6 @@ private fun ScalarInput(
     /** See [FieldRenderer]'s `resetKey`: the buffer belongs to a ROW, not merely to a field key. */
     resetKey: Any = field.key,
     services: DwFieldServices? = null,
-    /** Only for the identity-card camera, which writes its photograph under filesDir like everything else. */
-    media: DwMediaBridge? = null,
     /** The whole record this field sits in — what a DERIVED field is computed from. */
     rowValues: Map<String, JsonElement> = emptyMap(),
 ) {
@@ -595,7 +593,13 @@ private fun ScalarInput(
     val dictationAvailable = rememberDictationAvailable()
     val canDictate = services != null && dictationAvailable &&
         dictatable(DwFieldType.of(field.type))
-    val canReadCard = services != null && media != null &&
+    // No `media` in this condition any more, and the removal is the point: the card control used to
+    // need the stage's media bridge to get a file to photograph into, which tied it to a screen that
+    // has one. It now owns its own scratch file (and deletes it), so the only thing it needs is a
+    // repository to send the bytes through — which is what let the same control reach the artisan
+    // form in MainActivity, where the Aadhaar number is actually entered and where there is no
+    // media bridge at all.
+    val canReadCard = services != null &&
         DwFieldType.of(field.type) == DwFieldType.TEXT && isIdentityNumberField(field)
 
     /**
@@ -694,15 +698,15 @@ private fun ScalarInput(
             modifier = Modifier.fillMaxWidth()
         )
         DwDictationHint(listening = spoken.isNotBlank())
-        // `canReadCard` already carries both null checks, and the compiler propagates that through
-        // the local val — repeating them here only earns a "condition is always true" warning.
+        // `canReadCard` already carries the null check, and the compiler propagates that through the
+        // local val — repeating it here only earns a "condition is always true" warning.
         if (canReadCard) {
-            DwIdentityOcrControl(
-                field = field,
+            DwIdentityCardControl(
+                targetLabel = field.label,
+                kind = identityKindFor(field),
                 repository = services!!.repository,
-                newCaptureFile = media!!.newCaptureFile,
                 enabled = enabled,
-                // The ONLY route from the recogniser to the field, and it is reached from a tap on a
+                // The ONLY route from the reader to the field, and it is reached from a tap on a
                 // button that spells the number out. Nothing above ever calls this.
                 onUse = { number -> commit(number) },
                 onError = services.onError,

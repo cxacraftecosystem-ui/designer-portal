@@ -1061,14 +1061,47 @@ export function dictateAudio(blob: Blob, language: string): Promise<DwDictationR
   return apiFetch<DwDictationResult>(DW_DICTATE_PATH, { method: "POST", body: form });
 }
 
-export type DwIdentityOcrResult = {
-  /** The digits the reader believes it saw. NEVER written to a field without a human saying so. */
-  number?: string | null;
-  /** "AADHAAR" / "PEHCHAN" / "" — what the card appears to be. */
+/** One number the server read off the card, after its own Verhoeff filtering. */
+export type DwIdentityCandidate = {
+  /** The digits themselves, unconfirmed. NEVER written to a field without a human saying so. */
+  value?: string | null;
+  /** "AADHAAR" / "PEHCHAN" — shown so a misclassification is visible rather than silent. */
   kind?: string | null;
-  /** 0–1 where the reader reports one. Shown, because a designer confirming needs to know. */
+  /** 0–0.95; the server clamps below 1.0 on purpose. Shown, because a designer confirming needs it. */
   confidence?: number | null;
-  message?: string | null;
+  /** AADHAAR only: "XXXX XXXX 9012", the only form a surface other than the confirm panel may print. */
+  masked?: string | null;
+};
+
+/**
+ * The wire shape of `POST /design-workshops/ocr/identity`.
+ *
+ * THESE FIELD NAMES ARE THE SERVER'S, CHECKED AGAINST IT RATHER THAN REMEMBERED. This type used to
+ * declare `number`, `documentType`, `name`, `confidence` and `message` — none of which the endpoint
+ * has ever sent. `IdentityOcrResult.payload()` returns the five keys below, so
+ * `(result.number ?? "").replace(/\D/g, "")` in `IdentityCardReader` was always "", and a PERFECT
+ * read was reported to the designer as "No number could be read from that photograph": the card
+ * looked unreadable, while the reader was simply listening on the wrong keys. Android's
+ * `DwIdentityOcrDto` had the identical bug against the identical payload; both are now pinned by a
+ * test that starts from the server's own bytes.
+ */
+export type DwIdentityOcrResult = {
+  aadhaarCandidates?: DwIdentityCandidate[] | null;
+  pehchanCandidates?: DwIdentityCandidate[] | null;
+  /**
+   * How many 12-digit runs the model produced that FAILED the checksum — a count, never the values,
+   * because a rejected candidate is still somebody's misread identity number. Worth showing: "3
+   * readings were rejected" means the card was found and misread (better light), while "nothing was
+   * read" means it was not found at all (fill the frame). Two different next actions.
+   */
+  rejectedAadhaarCount?: number | null;
+  provider?: string | null;
+  /**
+   * The server stating in the payload that this is a suggestion, not a commit. Absent is read as
+   * TRUE by every consumer here — an older deployment or a proxy that rewrote the body must never be
+   * read as permission to write an identity number without a person.
+   */
+  requiresConfirmation?: boolean | null;
 };
 
 /** Read an identity number off a photograph of a card. The caller must not auto-commit the answer. */
@@ -1076,6 +1109,60 @@ export function readIdentityCard(file: File): Promise<DwIdentityOcrResult> {
   const form = new FormData();
   form.append("file", file);
   return apiFetch<DwIdentityOcrResult>(DW_OCR_IDENTITY_PATH, { method: "POST", body: form });
+}
+
+/** A candidate this client is willing to put in front of a designer. */
+export type DwIdentityChoice = { value: string; kind: "AADHAAR" | "PEHCHAN"; confidence: number | null };
+
+/**
+ * Strip a Pehchan card number to the ONE spelling the server stores.
+ *
+ * Mirrors `normalize_pehchan`: everything that is not a letter or a digit goes, and the rest is
+ * upper-cased. There is no checksum on a PM Vishwakarma artisan ID, so normalisation is the only
+ * thing standing between one card and two differently-punctuated records of it.
+ */
+export function normalizePehchan(value: string | null | undefined): string {
+  return (value ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
+/**
+ * The candidates worth offering for `kind`, best first, each re-checked in this client.
+ *
+ * Pure, exported and tested (`e2e/identity-ocr-unit.spec.ts`) because it is the whole filter between
+ * a model's guess and a deduplication key. `isValidAadhaar` is passed in rather than imported so
+ * this module stays free of React component imports; every caller hands it
+ * `AadhaarField.aadhaarValidationError`, so there is exactly one checksum on this client.
+ *
+ * A candidate that fails is REFUSED, not warned about: the server has already applied the same
+ * Verhoeff filter, so anything that fails here is a transport or shape problem rather than a card a
+ * designer can do anything about.
+ */
+export function identityChoices(
+  result: DwIdentityOcrResult,
+  kind: "AADHAAR" | "PEHCHAN" | "ANY",
+  aadhaarProblem: (digits: string) => string | null
+): DwIdentityChoice[] {
+  const out: DwIdentityChoice[] = [];
+  const push = (choice: DwIdentityChoice) => {
+    if (!out.some((existing) => existing.value === choice.value)) out.push(choice);
+  };
+  if (kind === "AADHAAR" || kind === "ANY") {
+    for (const candidate of result.aadhaarCandidates ?? []) {
+      const digits = (candidate?.value ?? "").replace(/\D/g, "");
+      if (!digits || aadhaarProblem(digits)) continue;
+      push({ value: digits, kind: "AADHAAR", confidence: typeof candidate?.confidence === "number" ? candidate.confidence : null });
+    }
+  }
+  if (kind === "PEHCHAN" || kind === "ANY") {
+    for (const candidate of result.pehchanCandidates ?? []) {
+      const cleaned = normalizePehchan(candidate?.value);
+      // The same 4–32 bound `pehchan_error` applies. Shorter is not a card number, longer is not one
+      // either, and both are the shape a model returns when it read a caption instead of a code.
+      if (cleaned.length < 4 || cleaned.length > 32) continue;
+      push({ value: cleaned, kind: "PEHCHAN", confidence: typeof candidate?.confidence === "number" ? candidate.confidence : null });
+    }
+  }
+  return out;
 }
 
 export function previewDesignWorkshopReport(id: string, templateId?: string | null) {
