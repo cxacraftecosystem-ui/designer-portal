@@ -29,6 +29,7 @@ from app.services.stage_schema import (
     REF_SCOPE_WORKSHOP,
     FieldType,
     coerce_value,
+    registry_to_dict,
     registry_version,
     stage_by_number,
     validate_entry,
@@ -235,10 +236,113 @@ def test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from():
     successful GET. A stale one is mostly harmless — the first fetch supersedes it — but the
     version string is the signal every client uses to decide whether to refetch at all, so an
     asset whose version matches a registry it no longer equals is a phone that never asks again.
+
+    THIS CHECK IS THE REFETCH SIGNAL AND NOT THE STALENESS CHECK, and reading it as the latter is
+    what let three derived fields go missing under a digest that matched character for character.
+    See :func:`test_the_bundled_android_asset_is_the_registry_it_claims_to_be` immediately below,
+    which is the one that compares the CONTENT.
     """
     assert ANDROID_ASSET.exists(), f"the bundled registry is missing: {ANDROID_ASSET}"
     bundled = json.loads(ANDROID_ASSET.read_text(encoding="utf-8"))
     assert bundled["version"] == registry_version()
+
+
+def test_the_bundled_android_asset_is_the_registry_it_claims_to_be():
+    """The asset is a DUMP of ``registry_to_dict()``, so the only honest check is equality.
+
+    WHY THE VERSION CHECK ABOVE IS NOT ENOUGH, MEASURED RATHER THAN ARGUED. ``registry_version()``
+    digests key, type, tier, required, enum NAME, deprecated, derivation and hydration — and
+    nothing else, deliberately, because retitling a field must not invalidate every cached draft
+    on every phone. ``field_to_dict``/``entity_to_dict``/``stage_to_dict`` serialise a great deal
+    more than that. Mutating the live registry one attribute at a time and re-dumping it (run on
+    2026-08-08) shows eleven separate changes that move the ASSET and leave the VERSION identical:
+
+        an enum gains a token · a field is relabelled · a field gains help text
+        a field gains a maxLength · a field changes reportRole · an entity changes cardinality
+        an entity changes parent · an entity changes labelField · a REF picker changes refScope
+        a REF picker changes refFilterBy · a stage changes title or becomes optional
+
+    Every one of those is something a handset with no signal renders from. The enum case is this
+    module's own subject: a token added to ``TOOL_TYPE`` never reaches a phone that has not yet
+    fetched, and the designer standing in the cluster picks from last release's list. The
+    cardinality and ``parent`` cases are worse than stale — ``parent`` is what
+    ``dwParentGroups`` reads to print a report's sub-headings, and ``refScope`` is what decides
+    whether stage 6's picker offers this workshop's eleven artisans or every artisan in the
+    country. None of them would have failed the version check.
+
+    THE HISTORY IS EXACTLY THIS SHAPE, ONE ROUND EARLIER. The asset once carried two derived fields
+    where the registry had five and its version matched CHARACTER FOR CHARACTER, because the digest
+    did not cover derivations; the fix was to widen the digest. Widening it again for labels and
+    help text is NOT the fix here — that would re-invalidate every draft on every phone for a
+    typo correction, which is precisely what ``registry_version`` refuses to do. The asset is a
+    dump, so the asset is compared to the dump.
+
+    Regenerate with the command in ``android/.../data/StageSchema.kt`` when this fails.
+    """
+    assert ANDROID_ASSET.exists(), f"the bundled registry is missing: {ANDROID_ASSET}"
+    bundled = json.loads(ANDROID_ASSET.read_text(encoding="utf-8"))
+    live = registry_to_dict()
+
+    # Reported per stage rather than as one 119 KB diff: pytest's assertion rewriting on two
+    # dicts this size prints something nobody reads, and "stage 5 differs" is what tells you
+    # which edit was not dumped.
+    assert sorted(bundled) == sorted(live), "the asset's top-level shape is not the registry's"
+    assert bundled["enums"] == live["enums"], (
+        "the bundled enums differ from the registry's — a controlled list a phone with no signal "
+        "offers is not the list the server validates against"
+    )
+    assert [s["key"] for s in bundled["stages"]] == [s["key"] for s in live["stages"]], (
+        "the asset and the registry do not even carry the same stages, in the same order"
+    )
+    stale = [
+        stage["key"]
+        for stage, shipped in zip(live["stages"], bundled["stages"])
+        if stage != shipped
+    ]
+    assert stale == [], f"the bundled asset is stale for these stages: {stale}"
+    assert bundled == live
+
+
+def test_a_new_tool_token_moves_the_asset_and_not_the_version():
+    """The guard's own self-check: prove the version string CANNOT see this file's own subject.
+
+    A test that only ever passes proves nothing about what it would catch, and the whole reason
+    the content comparison above exists is a claim about what the version check misses. So the
+    claim is exercised rather than asserted in a comment: ``TOOL_TYPE`` gains a token — the exact
+    edit this module is about, the one that decides what a designer in a cluster can pick from —
+    and the digest does not move by a character while the dumped registry does.
+
+    Read the two assertions in the right order. The first is NOT a defect: ``registry_version`` is
+    deliberately insensitive to anything that is not a key, type, tier, required flag, enum NAME,
+    derivation or hydration, because a version that moved for a token would re-run the draft
+    migration on every phone in the field for a vocabulary edit. The defect would be believing
+    that check answers "is the bundled asset current", which it cannot, which is the second
+    assertion's job.
+
+    The registry is a process-global, so the token is removed in a ``finally``; leaving it behind
+    would fail ``test_the_bundled_android_asset_is_the_registry_it_claims_to_be`` in whichever
+    order pytest happened to run the two.
+    """
+    probe = "ZZ_PROBE_NOT_A_REAL_TOOL"
+    assert probe not in ENUMS["TOOL_TYPE"]
+
+    before_version = registry_version()
+    before_dump = registry_to_dict()
+    ENUMS["TOOL_TYPE"][probe] = "Probe token"
+    try:
+        assert registry_version() == before_version, (
+            "the digest moved for a vocabulary edit — if this is deliberate, the note in "
+            "registry_version about not invalidating every cached draft needs rewriting"
+        )
+        assert registry_to_dict() != before_dump, (
+            "an enum gained a token and the dumped registry did not change, which would mean the "
+            "asset never carries the vocabularies at all"
+        )
+    finally:
+        ENUMS["TOOL_TYPE"].pop(probe, None)
+
+    assert registry_version() == before_version
+    assert registry_to_dict() == before_dump
 
 
 # --------------------------------------------------------------------------------------
