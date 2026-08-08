@@ -271,6 +271,12 @@ ARM entries.
 | `*.dex` | 5,052,235 | 5,267,116 | +214,881 |
 | `resources.arsc` + `res/` | 1,300,483 | 1,398,309 | +97,826 |
 
+Cross-checked with a second tool rather than trusted to one: `unzip -v` on the shipped APK reports
+`Stored … 0%` for every `lib/` entry, and the CRC-32s of the two ML Kit libraries (`5a02f1b7`,
+`264f5dd0`) are **byte-identical to the entries inside the AAR**. Nothing in the build touched them —
+`stripReleaseDebugSymbols` had nothing to strip, because Google ships them stripped. There is no
+version of this build that makes those 17,846,484 bytes smaller.
+
 **R8 did its job and it did not matter.** The five ML Kit artifacts bring roughly 1 MB of
 `classes.jar` plus the whole `play-services-mlkit-text-recognition` shim, and the dex grew by
 **214,881 bytes** — R8 ate almost all of it. 99.5% of the cost is in rows R8 is structurally unable to
