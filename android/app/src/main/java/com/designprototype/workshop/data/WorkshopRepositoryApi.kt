@@ -819,6 +819,38 @@ interface WorkshopRepositoryApi {
         @Part file: okhttp3.MultipartBody.Part
     ): DwIdentityOcrDto
 
+    // --- Who, besides its creator, may open one design workshop ---------------------------------
+    //
+    // ADMIN-ONLY, ALL THREE. Every route behind these is `Depends(require_admin)` — `is_admin`, so
+    // {ADMIN, MASTER_ADMIN} and nobody else. NOT the workshop's creator and NOT
+    // `can_run_design_workshops`: a designer cannot hand out access to their own workshop, which is
+    // deliberate (an owner's grant freezes the moment the owner leaves — the handover problem the
+    // feature exists to solve, one level up). Nothing in this interface enforces it; the screen does,
+    // at the moment of every write, and the server does again. See data/DesignWorkshopViewers.kt.
+    //
+    // A 404 FROM `eligible-viewers` MEANS THE SERVER PREDATES THE FEATURE, not that a record is
+    // missing: it is the one call here carrying no id, and on a server without the route FastAPI
+    // matches it against `GET /design-workshops/{workshop_id}` and answers 404 "Record not found".
+    // (That same collision is why `api/router.py` must include the viewers router FIRST — a note
+    // lives there; it is the server's problem, but this is where a phone would see it.)
+
+    @GET("design-workshops/eligible-viewers")
+    suspend fun eligibleDesignWorkshopViewers(): DwEligibleViewerListDto
+
+    @GET("design-workshops/{id}/viewers")
+    suspend fun designWorkshopViewers(@Path("id") id: String): DwViewerListDto
+
+    // REPLACES the whole set. There is no add route and no remove route: taking somebody off is
+    // sending the list without them, so a caller that posts only what it just ticked has silently
+    // revoked everybody else. The answer is the set as the SERVER now holds it, not an echo of what
+    // was sent — two admins on the same screen must not each believe their own payload was the
+    // outcome.
+    @PUT("design-workshops/{id}/viewers")
+    suspend fun setDesignWorkshopViewers(
+        @Path("id") id: String,
+        @Body body: DwViewersBody
+    ): DwViewerListDto
+
     // --- The DESIGNER tier: the roster that gates sign-in, and the profile a report prints ---
     //
     // Two groups of routes under one prefix, and they are gated differently on the server: the roster

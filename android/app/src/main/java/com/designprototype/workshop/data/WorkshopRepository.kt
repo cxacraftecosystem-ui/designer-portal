@@ -409,6 +409,62 @@ class WorkshopRepository(
         return api.designWorkshopIdentityOcr(part)
     }
 
+    // ── Who may open one design workshop ─────────────────────────────────────────────────────────
+    //
+    // THESE THREE THROW, unlike almost everything above them, and the exception is the point. The
+    // block above degrades to the device because a stage is a fortnight of fieldwork captured in a
+    // courtyard and an exception thrown at a designer who cannot do anything about it is worse than
+    // stale data. Access is not that kind of fact: a grant is a row another person's sign-in reads on
+    // the other side of the country, so a cached answer would tell an admin their co-designer is in
+    // while the co-designer is still refused, and a queued write would be a promise this app cannot
+    // keep. The screen says "this needs a connection" in words; it does not pretend to have one.
+    //
+    // ADMIN-ONLY on the server — `require_admin` on all three routes, so {ADMIN, MASTER_ADMIN} and
+    // not the workshop's creator. The screen mirrors that with `FieldPermissions.isAdmin` and
+    // re-derives it at the moment of the write; see data/DesignWorkshopViewers.kt for the full rule.
+
+    /**
+     * The accounts that may be given a viewer row at all, straight off the wire.
+     *
+     * NEVER re-derived from the user directory. The eligible set is DESIGNER/ADMIN/MASTER_ADMIN — a
+     * SET, so a PROFESSOR is out despite outranking a designer — narrowed further by the designer
+     * roster, a clause this client cannot see. Computing it here would drift within a release, and
+     * the drift shows up as an admin granting access that the next sign-in refuses.
+     *
+     * NOT PAGED, and there is nothing to page. The endpoint caps at `ELIGIBLE_VIEWER_LIMIT = 2000`
+     * and carries no `page` and no `total`, because the eligible set is the admins plus the
+     * designers the roster still admits — a few dozen accounts. When the cap IS reached the server
+     * logs a warning and the wire has nowhere to say so, which is a gap this client cannot close by
+     * counting: it is not told what it is missing. Said here rather than left for a future reader to
+     * think was overlooked; closing it means adding `search` to the endpoint first.
+     */
+    suspend fun eligibleDesignWorkshopViewers(): List<DwEligibleViewerDto> =
+        api.eligibleDesignWorkshopViewers().users
+
+    /**
+     * Everyone holding a viewer row on this workshop, oldest grant first.
+     *
+     * The CREATOR is not in this answer and an empty list must never be read as "nobody can see
+     * this": their access comes from `createdById`, a different clause entirely.
+     */
+    suspend fun designWorkshopViewers(workshopId: String): List<DwViewerDto> =
+        api.designWorkshopViewers(workshopId).viewers
+
+    /**
+     * REPLACE the viewer set with exactly [userIds], and answer with it as the server now holds it.
+     *
+     * Named for the whole set because that is what the endpoint means — there is deliberately no
+     * `addDesignWorkshopViewer` for somebody to reach for, because such a helper would have to send
+     * a list, and a list built from one name revokes everybody else. The answer is returned rather
+     * than the request echoed so the caller adopts the SERVER's membership: another admin may have
+     * added somebody between this screen loading and Save being pressed.
+     */
+    suspend fun setDesignWorkshopViewers(
+        workshopId: String,
+        userIds: List<String>
+    ): List<DwViewerDto> =
+        api.setDesignWorkshopViewers(workshopId, DwViewersBody(userIds = userIds)).viewers
+
     // ── The DESIGNER tier ────────────────────────────────────────────────────────────────────────
     //
     // NOTHING IN THIS BLOCK FALLS BACK TO THE DEVICE, and that is the difference between it and the
