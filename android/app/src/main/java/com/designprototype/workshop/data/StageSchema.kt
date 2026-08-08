@@ -1003,6 +1003,16 @@ data class StageEntryBody(
      * It exists because the blank form a failed download leaves behind is indistinguishable on the
      * wire from a stage somebody emptied. `StageScreen` tells the designer that what is already on
      * the server "will not be replaced by it"; this flag is what makes that true for a singleton.
+     *
+     * IT MUST NOT BE SERIALISED WHEN FALSE, and it is not: `ApiClient.retrofit` leaves
+     * `encodeDefaults` at kotlinx's default of false, so a property still holding its default is
+     * omitted from the body entirely. That is what keeps this handset compatible with an API that
+     * predates the field — `APIModel` is `extra="forbid"` on the server, so a version that does not
+     * know `merge` answers 422 "Extra inputs are not permitted" to every entry carrying it, and the
+     * refusal banner then tells the designer to correct an answer that has nothing wrong with it.
+     * A handset updates when it next sees wifi and the API updates when somebody deploys it, so the
+     * client running ahead of the server is an ordinary state here. If `encodeDefaults` is ever
+     * turned on for this client, this field has to become nullable and be sent only when true.
      */
     val merge: Boolean = false,
 )

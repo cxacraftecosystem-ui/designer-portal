@@ -21,6 +21,14 @@
  * that have the native detector — to serve the browser share that does not. The typed code is a
  * shorter path to the same record and it works everywhere, today, with nothing added.
  *
+ * THERE ARE THREE ROUTES TO ONE RECORD, and they exist because a card is not always in the hand:
+ * the LENS for a card in front of the designer, an UPLOADED PHOTOGRAPH for one that was
+ * photographed earlier or is on a bolt already packed, and the TYPED code, which is the only one
+ * that works on every device and is therefore never hidden. All three converge on
+ * {@link handleRawValue}, so a decoded string is treated identically however it arrived — the
+ * alternative is three subtly different ideas of what a valid code is. The upload path reuses the
+ * SAME native detector rather than bundling a decoder, so the refusal above still holds.
+ *
  * THE CAMERA IS TURNED OFF, EVERY WAY OUT. Stopping the tracks on unmount is the obvious one and
  * the least likely to be needed; the ones that actually bite are the designer who scans a card and
  * navigates away in the same second, and the one who switches to WhatsApp mid-scan and leaves the
@@ -38,7 +46,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Camera, CameraOff, Keyboard, Loader2, ScanLine, Square } from "lucide-react";
+import { AlertTriangle, Camera, CameraOff, ImageUp, Keyboard, Loader2, ScanLine, Square } from "lucide-react";
 
 import { decodeWorkshopCode, type WorkshopCodeRef } from "@/lib/workshopCodes";
 
@@ -84,6 +92,8 @@ export function WorkshopCodeScanner({
   const [typed, setTyped] = useState("");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  /** The hidden file input the "Upload a photo" button drives — see `readFromFile`. */
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
@@ -186,6 +196,78 @@ export function WorkshopCodeScanner({
     [handleReference]
   );
 
+  /**
+   * Read a code out of a PHOTOGRAPH the designer already has, rather than off the lens.
+   *
+   * THE THIRD ROUTE, and it is the one for the cases the other two leave standing: the card was
+   * photographed in the morning and the artisan has gone home; the tag is on a bolt of cloth
+   * already packed; the courtyard is too dark to focus but the flash photo came out; the laminated
+   * card glares under the lens at every angle but not in the picture taken from above. Typing the
+   * code is still the shortest path when the card is IN THE HAND — this is for when it is not.
+   *
+   * IT USES THE SAME NATIVE DETECTOR AND SHIPS NOTHING NEW. `detect` takes any
+   * `ImageBitmapSource`, so decoding a file is `createImageBitmap` and then the identical call the
+   * camera path makes. The header's refusal to bundle a JavaScript decoder therefore still holds,
+   * and so does its consequence: a browser without `BarcodeDetector` cannot do this either, which
+   * is why the control is offered on exactly the same condition as the camera and not on
+   * `input[type=file]` being available.
+   *
+   * THE BITMAP IS CLOSED IN A `finally`. A twelve-megapixel photo off a modern handset decodes to
+   * roughly 48 MB; leaving a handful of those to the garbage collector on a 2 GB field device is
+   * how a scanner starts failing at the fourth card with an error about the picture rather than
+   * about memory.
+   *
+   * A FILE THAT CANNOT BE DECODED IS NOT REPORTED AS A CODE THAT CANNOT BE READ. The commonest
+   * cause is an iPhone HEIC, which most browsers refuse outright, and telling somebody their card
+   * is unreadable when the truth is that this browser cannot open that FORMAT sends them back to
+   * photograph a card that was fine.
+   */
+  async function readFromFile(file: File) {
+    setProblem(null);
+    setOutcome(null);
+    stopCamera();
+
+    const constructor = (globalThis as unknown as { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;
+    if (!constructor) {
+      setSupport("no");
+      return;
+    }
+
+    setBusy(true);
+    let bitmap: ImageBitmap | null = null;
+    try {
+      try {
+        bitmap = await createImageBitmap(file);
+      } catch {
+        setProblem(
+          `This browser could not open “${file.name}”. Photographs from an iPhone are often HEIC, which most ` +
+            "browsers cannot read — re-save it as JPEG or PNG, or type the code printed under the QR."
+        );
+        return;
+      }
+
+      const detector = detectorRef.current ?? new constructor({ formats: ["qr_code"] });
+      detectorRef.current = detector;
+      const found = await detector.detect(bitmap);
+      const raw = found[0]?.rawValue;
+      if (!raw) {
+        setProblem(
+          "No QR code was found in that picture. Make sure the whole square is in the frame and in focus, or type the " +
+            "code printed under it."
+        );
+        return;
+      }
+      await handleRawValue(raw);
+    } catch (error) {
+      setProblem(
+        error instanceof Error ? `That picture could not be read: ${error.message}` : "That picture could not be read."
+      );
+    } finally {
+      bitmap?.close();
+      setBusy(false);
+    }
+  }
+
   async function startCamera() {
     setProblem(null);
     setOutcome(null);
@@ -286,6 +368,36 @@ export function WorkshopCodeScanner({
             {scanning ? <Square className="h-4 w-4" aria-hidden /> : <Camera className="h-4 w-4" aria-hidden />}
             {scanning ? "Stop the camera" : "Scan a code"}
           </button>
+          {/*
+            OFFERED ON THE SAME CONDITION AS THE CAMERA, not on `input[type=file]` existing: both
+            paths end in the same `BarcodeDetector`, so a browser that cannot scan cannot read a
+            photograph either, and a button that was present and always failed would be worse than
+            no button. See `readFromFile`.
+          */}
+          <button
+            type="button"
+            className="field-button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busy || scanning}
+          >
+            <ImageUp className="h-4 w-4" aria-hidden />
+            Upload a photo
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            data-testid="workshop-code-file"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              // Cleared BEFORE the read, so choosing the same file twice fires `change` again — a
+              // designer who re-picks the photo after fixing the framing expects a second attempt,
+              // and an input still holding the value is silent.
+              event.target.value = "";
+              if (file) void readFromFile(file);
+            }}
+          />
           {scanning ? <span className="text-xs text-ink-500">Hold the card 10–15 cm from the lens, with the whole square in view.</span> : null}
         </div>
       ) : null}
