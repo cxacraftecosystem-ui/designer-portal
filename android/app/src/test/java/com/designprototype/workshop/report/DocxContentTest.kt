@@ -32,6 +32,10 @@ import java.util.zip.ZipInputStream
  * paragraphs long, because the report screen rendered from a draft whose stages had never been
  * downloaded. The officer standing at the close of the workshop was handed a cover sheet.
  *
+ * THAT TEN IS REPRODUCED HERE EXACTLY. Against the shipped registry an empty draft comes to 10
+ * block-level elements and a filled one to 596 (472 paragraphs, 124 tables) — measured on
+ * 2026-08-09, not estimated. The device's file was the floor and nothing above it.
+ *
  * NOTHING IN THE SUITE COULD SEE IT. `DocxMediaStreamingTest` proves the writer does not hold
  * photographs on the heap; `ReportDocumentTest` and `ReportTemplateDocumentTest` prove
  * `buildWorkshopDocument` puts the right BLOCKS in a [ReportDocument]. Both are true of a document
@@ -325,19 +329,21 @@ class DocxContentTest {
 
     /**
      * The floor a cover page and a contents page put under EVERY export, however empty the workshop.
+     * Measured at 10 — the same 10 the handset's file had.
      *
-     * Stated as a cap rather than an equality: the cover is a handful of centred paragraphs plus a
+     * Stated as a CAP rather than an equality: the cover is a handful of centred paragraphs plus a
      * table of whatever stage 1 answered, and pinning its exact length would make this a test of the
-     * cover's typography. What must stay true is that the floor is SMALL — a file this size is a
-     * cover sheet, and the moment a populated workshop produces one, this test is the thing that
-     * says so.
+     * cover's typography that fails when somebody adds a letterhead line. What must stay true is
+     * that the floor is SMALL — a file this size is a cover sheet, and the moment a populated
+     * workshop produces one, this test is the thing that says so.
      */
     private val coverFloorCap = 24
 
     /**
      * What a real workshop must clear. Twenty-two stages, forty-three entities, three rows in every
      * collection and ninety-eight narratives cannot come to fewer blocks than this without something
-     * having been dropped wholesale; the shipped registry produces several times it.
+     * having been dropped wholesale; the shipped registry measures 596, so this leaves room for a
+     * template edit that legitimately halves the report and still refuses a cover sheet.
      */
     private val populatedFloor = 200
 
@@ -364,7 +370,6 @@ class DocxContentTest {
         val schema = shippedRegistry()
         val empty = bodyChildren(documentXmlOf(docxOf(documentOf(schema, emptyDraft()))))
         val populated = bodyChildren(documentXmlOf(docxOf(documentOf(schema, populatedDraft(schema)))))
-        println("[DOCXMEASURE] empty=${empty.size} populated=${populated.size} kinds=${populated.groupingBy { it }.eachCount()}")
 
         // THE HANDSET'S FILE, REPRODUCED. A workshop whose stages were never downloaded still gets
         // its cover and its contents page — which is exactly why the defect survived inspection.
