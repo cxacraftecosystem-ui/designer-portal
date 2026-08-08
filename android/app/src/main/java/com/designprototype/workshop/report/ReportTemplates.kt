@@ -66,14 +66,18 @@ enum class SpecialSection {
      * Every sitting recorded against a questionnaire the designer built and attached to THIS
      * workshop.
      *
-     * DECLARED HERE AND DRAWN BY NOTHING ON THIS DEVICE, exactly as [ANNEXURE_TRANSCRIPTS] is, and
-     * for the same kind of reason: the gap is DATA rather than drawing. The answers live in
-     * `QuestionnaireFormAnswer` on the server; a handset holds no local copy of them and the
-     * questionnaire screens read them over the network. So the enum member exists — the catalogue
-     * must match the server's section for section, and `ReportTemplatePinTest` diffs the two by
-     * value — and [UNSUPPORTED_SECTIONS] carries the sentence that tells the designer the office's
-     * copy will have what this file does not. A section silently missing from the field copy is the
-     * divergence this port exists to end.
+     * DRAWN ON THIS DEVICE, from `DwQuestionnaireStore` — the copy of the answers the handset keeps
+     * from every questionnaire it has been shown. It used to sit beside [ANNEXURE_TRANSCRIPTS] as a
+     * section declared here and drawn by nothing, and the reason recorded then was the right one: the
+     * gap was DATA rather than drawing, because no file under `data/` held a questionnaire answer at
+     * all. That is what was built, so the section is real now.
+     *
+     * ONE STATE STILL CANNOT BE DRAWN and [UNSUPPORTED_SECTIONS] still carries a sentence for it: a
+     * handset that has never once read this workshop's questionnaire list holds nothing and cannot
+     * tell an unattached workshop from an attached one, so it prints no annexure and says so
+     * conditionally. Everywhere else — none attached, or attached with the answers on the device —
+     * the section speaks for itself. A section silently missing from the field copy is the divergence
+     * this port exists to end.
      */
     ANNEXURE_QUESTIONNAIRES,
     COMPLETENESS,

@@ -699,6 +699,15 @@ class WorkshopRepository(
     // (losing the sitting) or attach it to the new wording (fabricating evidence). Both are worse
     // than being told, in the room, that there is no signal. If this feature ever does go offline it
     // needs the questionnaire VERSION as its precondition, not a retry loop.
+    //
+    // [DwQuestionnaireStore] IS NOT AN EXCEPTION TO THIS, and the distinction is worth stating here
+    // because the two look alike from a distance. That store keeps a copy of the ANSWERS ALREADY
+    // READ, for one purpose: printing them into the report this handset writes at the close of a
+    // workshop. It is read-only evidence. Nothing in it is ever sent back, no method below consults
+    // it, and it holds none of the ids a save would need — so it cannot become the offline queue the
+    // paragraph above refuses. The rule that stands is about writing an answer without the server;
+    // the gap that was closed is a report that could not print an answer the server had already
+    // handed over.
 
     suspend fun customQuestionnaires(
         page: Int = 1,
