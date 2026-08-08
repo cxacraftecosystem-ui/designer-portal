@@ -56,7 +56,11 @@ export function RecordCodeScanPanel() {
     <div className="mb-5 grid gap-3">
       <WorkshopCodeScanner
         resolve={resolve}
-        description="A card, tag or code printed by this app, for any kind of record — an artisan, a craft, a workshop, a product, a process, a tool or an interview. Nothing about the record is inside the code: it holds a reference and a check digit, and nothing else."
+        // Names a MEDIA FILE too, because this panel resolves one (`lookUpWorkshopCode`'s `media`
+        // branch) and Android's own sentence has always named it. A list that stops one type short of
+        // what the lookup answers is how a designer holding a media tag concludes it is not supported
+        // and types the filename into search instead.
+        description="A card, tag or code printed by this app, for any kind of record — an artisan, a craft, a workshop, a product, a process, a tool, an interview or a media file. Nothing about the record is inside the code: it holds a reference and a check digit, and nothing else."
       />
       {found ? <ResolvedRecordRow recordType={found.ref.recordType} hit={found.hit} /> : null}
     </div>

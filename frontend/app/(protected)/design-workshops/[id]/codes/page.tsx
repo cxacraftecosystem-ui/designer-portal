@@ -333,7 +333,9 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
 
       <WorkshopCodeScanner
         resolve={resolve}
-        description="A tag or card printed by this app, for any kind of record — a prototype or an artisan from this workshop, or a craft, product, process, tool or interview from the repository. Nothing about the record is inside the code: it holds a reference and a check, and nothing else."
+        // A media file is named here too: `lookUpWorkshopCode` resolves one, so leaving it out of the
+        // sentence understates what this box answers by exactly one record type.
+        description="A tag or card printed by this app, for any kind of record — a prototype or an artisan from this workshop, or a craft, product, process, tool, interview or media file from the repository. Nothing about the record is inside the code: it holds a reference and a check, and nothing else."
       />
       {/* Only for a record that HAS a page. A prototype is a row inside this workshop's draft and has
           no route of its own, so a prototype scan reports and stops there — which is correct: the

@@ -73,7 +73,9 @@ import com.designprototype.workshop.data.workshopCardSpecs
 import com.designprototype.workshop.data.workshopRecordTypeLabel
 import com.designprototype.workshop.report.renderCardSheetPdf
 import com.designprototype.workshop.ui.DwQrSymbolImage
+import com.designprototype.workshop.ui.RecordCodeOutcome
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.lookUpRecordCode
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -263,7 +265,23 @@ fun WorkshopCodesScreen(
                     // `GET /artisans/{id}` answers 404 both for a record that does not exist and for
                     // one this designer may not see, and telling the two apart here would hand back
                     // exactly the fact the API withholds.
-                    else -> lookUpArtisan(repository, ref.id)
+                    ref.recordType == DwWorkshopRecordType.ARTISAN -> lookUpArtisan(repository, ref.id)
+                    // EVERY OTHER RECORD TYPE, and this branch is why it is a branch. This `when` used
+                    // to end at `else -> lookUpArtisan`, which was correct while the grammar carried
+                    // exactly two letters: anything that was not a prototype was an artisan. The
+                    // moment nine letters existed, that `else` started asking `GET /artisans/{id}`
+                    // about a TOOL id — which 404s, and is then reported as "no artisan you can open
+                    // matches that code … search for the artisan by name instead". A designer standing
+                    // at this screen with a tool tag would be told, confidently, the wrong thing about
+                    // a record this build opens perfectly well from Search. `lookUpRecordCode` asks the
+                    // endpoint that actually holds the record and names it correctly; its refusals are
+                    // the same flattened sentence for the same reason.
+                    else -> when (val answer = lookUpRecordCode(repository, ref)) {
+                        is RecordCodeOutcome.Found ->
+                            DwLookupOutcome.Found(DwCardHit(answer.hit.label, answer.hit.detail.orEmpty()))
+
+                        is RecordCodeOutcome.Refused -> DwLookupOutcome.Refused(answer.message)
+                    }
                 }
             }
         )
