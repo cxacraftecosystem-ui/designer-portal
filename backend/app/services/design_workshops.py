@@ -935,6 +935,27 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     if bad_key in previous:
                         clean[bad_key] = previous[bad_key]
 
+        if entry.merge and previous:
+            # "I AM SENDING EVERY KEY I HAVE, NOT EVERY KEY THERE IS."
+            #
+            # A client that has never downloaded this stage holds a blank form, and a blank form
+            # is indistinguishable on the wire from a stage somebody deliberately emptied. Both
+            # clients show a banner saying so and both promised that what is left blank would not
+            # overwrite an answer recorded elsewhere; without this branch they could not keep it,
+            # because the update below replaces a singleton's `data` WHOLESALE. Typing one field
+            # into an unread stage deleted every other field the office had written — in place,
+            # with no RecordRevision to recover it — and `_coerce_promoted` then nulled
+            # craftName, state, district and the dates along with it, so the workshop fell out of
+            # every filter and the report cover printed blank.
+            #
+            # Applied HERE, before `pending`, so the merged dict is the one that reaches the row,
+            # the promoted columns AND the `stored` block echoed back — three readers that must
+            # not disagree about what was just written.
+            #
+            # `clean` wins every key it holds: this fills the gaps in what the client sent, it
+            # never overrides it. An empty string the designer actually typed is a value and stays.
+            clean = {**previous, **clean}
+
         pending.append(PendingEntry(
             entity=entity, data=clean, previous=previous,
             row_id=row.id if row is not None else None,
