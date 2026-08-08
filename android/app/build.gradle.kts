@@ -38,6 +38,13 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
+        // Instrumented tests. There are none of the usual kind here and this is not the start of a
+        // UI-test suite: the JVM tests cover the logic on purpose (see `testOptions` below). What
+        // needs a handset is the handful of questions only a real speech service can answer — which
+        // languages it will admit to being able to download, and what it says when asked in
+        // different ways. Those answers cannot be reasoned out from the docs; they have to be
+        // measured, and measured on the fleet's actual phone.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Default to the production backend through CloudFront over HTTPS. CloudFront is dual-stack
         // (publishes a native IPv6 / AAAA record), so it connects on IPv6-only mobile networks
         // (e.g. Jio/Airtel) where the IPv4-only EC2 origin — whether addressed by literal IP or its
@@ -181,6 +188,10 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)
+
+    // Instrumented-test only: nothing here reaches the shipped APK, so it costs no download size.
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.core:core-ktx:1.15.0")
