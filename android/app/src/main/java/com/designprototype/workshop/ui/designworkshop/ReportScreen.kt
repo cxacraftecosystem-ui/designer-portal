@@ -304,12 +304,20 @@ fun ReportScreen(
                 }
                 // Record the fact — never the bytes. A designer on a metered field connection should
                 // not be charged for a thirty-megabyte report merely to prove one was made, and the
-                // checksum is enough to match the file later. Best-effort: an export that happened is
-                // not undone by a bookkeeping call that could not be delivered.
+                // checksum is enough to match the file later.
+                //
+                // QUEUED, NOT BEST-EFFORT. This used to be a bare call inside `runCatching`, so with
+                // no signal the record was dropped and the office's export log stayed empty for a
+                // report that had been handed over — and the close of a workshop in a village is
+                // precisely when there is no signal. `recordDesignWorkshopExport` now puts the row in
+                // the offline outbox on a transient failure and it drains with everything else. The
+                // `runCatching` stays as the last guard: an export that HAPPENED must not be reported
+                // as failed because the bookkeeping around it threw.
                 val remoteId = stored?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
                 if (remoteId != null) {
                     runCatching {
                         repository.recordDesignWorkshopExport(
+                            appContext,
                             remoteId,
                             ExportRecordBody(
                                 format = format,

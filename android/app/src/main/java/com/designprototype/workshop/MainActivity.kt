@@ -8007,27 +8007,64 @@ private data class ActivityItem(
     val id: String,
     val title: String,
     val subtitle: String,
-    val createdAt: String?
+    val createdAt: String?,
+    /**
+     * False = show the row, do not offer to open it. Media is the only such type: [EditScreen] is a
+     * `when (mode)` over the editable record forms and has no MEDIA branch, so routing a tap there
+     * would land the designer on a blank screen. The web draws every activity row as plain text for
+     * the same reason, linking only the group.
+     */
+    val openable: Boolean = true
 )
 
-/** Gather the current user's own records across every type, newest first (ISO timestamps sort lexically). */
+/**
+ * Gather the current user's own records across every type, newest first (ISO timestamps sort lexically).
+ *
+ * OWNERSHIP IS ASKED FOR, NOT SIFTED FOR. Each list is fetched with `createdBy` (`uploadedBy` for
+ * media) so the server returns this designer's rows and nothing else. Sifting page one client-side —
+ * which is what this did — silently under-reports, because reading the repository is open and page
+ * one is the newest hundred rows of the WHOLE archive. MEASURED against the running API as
+ * designer@example.org: /api/artisans total=431 with page one spanning 34 distinct creators and NOT
+ * ONE of that designer's own; /api/media total=854 across 18 uploaders, likewise none. Both of that
+ * designer's two records were invisible and the screen said "You haven't recorded anything yet."
+ *
+ * The client-side `mine` filter below is KEPT deliberately: it costs nothing, and against an older
+ * deployment that ignores the new query parameter it is the difference between an over-long list and
+ * a wrong one. The web says the same thing at frontend/app/(protected)/activity/page.tsx.
+ */
 private suspend fun loadMyActivity(repository: WorkshopRepository, userId: String): List<ActivityItem> {
     val items = mutableListOf<ActivityItem>()
     fun mine(createdById: String?) = createdById != null && createdById == userId
-    runCatching { repository.artisans() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    runCatching { repository.artisans(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.ARTISAN, it.id, it.name, "Artisan · ${it.place}", it.createdAt)) }
-    runCatching { repository.products() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    runCatching { repository.products(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.PRODUCT, it.id, it.productName, "Product · ${it.craftName}", it.createdAt)) }
-    runCatching { repository.tools() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    runCatching { repository.tools(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.TOOL, it.id, it.toolkitName, "Tool · ${it.craftName}", it.createdAt)) }
-    runCatching { repository.processes() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    runCatching { repository.processes(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.PROCESS, it.id, it.name, "Process" + (it.product?.productName?.let { p -> " · $p" } ?: ""), it.createdAt)) }
-    runCatching { repository.crafts() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    runCatching { repository.crafts(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.CRAFT, it.id, it.name, "Craft", it.createdAt)) }
-    runCatching { repository.workshops() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    runCatching { repository.workshops(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.WORKSHOP, it.id, it.title.ifBlank { "Untitled workshop" }, "Workshop", it.createdAt)) }
-    runCatching { repository.interviews() }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    runCatching { repository.interviews(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.QUESTIONNAIRE, it.id, it.title.ifBlank { "Untitled interview" }, "Interview", it.createdAt)) }
+    // Media was missing entirely while "Upload media" has always been an entry on this app's own
+    // menu (AppNavigation.kt), so a designer's uploads were recorded by a control they can press and
+    // then reported nowhere. `uploadedBy` because MediaFile owns its rows through `uploadedById`.
+    runCatching { repository.mediaUploadedBy(userId) }.getOrDefault(emptyList()).filter { mine(it.uploadedBy?.id) }
+        .forEach {
+            items.add(
+                ActivityItem(
+                    EntryMode.MEDIA,
+                    it.id,
+                    it.originalFilename,
+                    "Media · ${it.mediaType.lowercase().replaceFirstChar { c -> c.uppercase() }}",
+                    it.createdAt,
+                    openable = false
+                )
+            )
+        }
     return items.sortedByDescending { it.createdAt ?: "" }
 }
 
@@ -8063,7 +8100,8 @@ private fun MyActivityScreen(
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onOpen(item.mode, item.id) }
+                        // Only rows that have an editor to land on take a tap — see [ActivityItem.openable].
+                        .then(if (item.openable) Modifier.clickable { onOpen(item.mode, item.id) } else Modifier)
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(item.title, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
@@ -10032,7 +10070,16 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
                         repository.downloadDataset(context) { d, t -> done = d; total = t }
                     }.onSuccess { res ->
                         resultMessage = "Saved to ${res.displayLocation} — ${res.saved}/${res.total} files" +
-                            if (res.failed > 0) " (${res.failed} could not be fetched)" else ""
+                            (if (res.failed > 0) " (${res.failed} could not be fetched)" else "") +
+                            // The cap is invisible in the counts — a truncated manifest is internally
+                            // consistent, so every file it names is fetched and "4,312/4,312" is true
+                            // of an archive that is missing everything past the cap. Said here or
+                            // nowhere: a partial archive that presents itself as complete is worse
+                            // than a failed one, because nobody goes back for the rest.
+                            if (res.truncated) {
+                                "\n\nWARNING: this export hit the server's row cap, so it does NOT " +
+                                    "contain all of the data. Ask an admin for a full extract."
+                            } else ""
                     }.onFailure { onError(it.message ?: "Unable to download the dataset") }
                     downloading = false
                 }
@@ -13228,6 +13275,15 @@ private fun WorkshopAccessQueueCard(
 // person owns, sees and reports progress on their own row.
 // ===========================================================================
 
+/**
+ * The four task statuses, in the order the web's /tasks page lists them.
+ *
+ * CANCELLED was missing from the chips while the API, the DTO and [taskStatusLabel] all knew it, so
+ * a cancelled task assigned to you could be seen under "All" and never filtered for — and never
+ * counted.
+ */
+private val TASK_STATUSES = listOf("OPEN", "IN_PROGRESS", "DONE", "CANCELLED")
+
 private fun taskStatusLabel(status: String): String = when (status) {
     "OPEN" -> "Open"
     "IN_PROGRESS" -> "In progress"
@@ -13301,13 +13357,31 @@ private fun MyTasksScreen(
     var tasks by remember { mutableStateOf<List<TaskDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var busyId by remember { mutableStateOf<String?>(null) }
+    /**
+     * Did the last attempt to read the list FAIL? Not the same question as "is the list empty", and
+     * conflating the two is what this screen used to do: `refresh` left `tasks` untouched on failure,
+     * so an offline designer — the ordinary state of this handset — was told "Nothing is assigned to
+     * you right now." about a request that never reached the server. The outbox banner appeared
+     * underneath saying the device was offline, so the one screen a designer checks between sessions
+     * made two statements that contradicted each other, and the reassuring one was the false one.
+     */
+    var loadFailed by remember { mutableStateOf(false) }
+    // Exact per-status totals for the chips (web parity: /tasks loads these too). Empty = not known,
+    // which draws the chips unlabelled rather than labelling them zero.
+    var counts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
 
     fun refresh() {
         scope.launch {
             loading = true
             runCatching { repository.tasks(view = view, status = statusFilter.ifBlank { null }) }
-                .onSuccess { tasks = it }
-                .onFailure { onError(it.apiErrorMessage("Unable to load your tasks")) }
+                .onSuccess { tasks = it; loadFailed = false }
+                .onFailure { loadFailed = true; onError(it.apiErrorMessage("Unable to load your tasks")) }
+            // Swallowed deliberately: a chip with no number is a working filter, and the failure has
+            // already been reported by the list load above. Two notices for one dead connection is
+            // noise.
+            runCatching { repository.taskCounts(view = view, statuses = TASK_STATUSES) }
+                .onSuccess { counts = it }
+                .onFailure { counts = emptyMap() }
             loading = false
         }
     }
@@ -13357,12 +13431,18 @@ private fun MyTasksScreen(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            FilterChip(selected = statusFilter.isBlank(), onClick = { statusFilter = "" }, label = { Text("All") })
-            listOf("OPEN", "IN_PROGRESS", "DONE").forEach { value ->
+            val knownTotal = counts.takeIf { it.isNotEmpty() }?.values?.sum()
+            FilterChip(
+                selected = statusFilter.isBlank(),
+                onClick = { statusFilter = "" },
+                label = { Text(if (knownTotal != null) "All ($knownTotal)" else "All") }
+            )
+            TASK_STATUSES.forEach { value ->
+                val count = counts[value]
                 FilterChip(
                     selected = statusFilter == value,
                     onClick = { statusFilter = if (statusFilter == value) "" else value },
-                    label = { Text(taskStatusLabel(value)) }
+                    label = { Text(if (count != null) "${taskStatusLabel(value)} ($count)" else taskStatusLabel(value)) }
                 )
             }
         }
@@ -13371,8 +13451,30 @@ private fun MyTasksScreen(
             Spacer(Modifier.width(8.dp))
             Text(if (loading) "Loading tasks…" else "Refresh")
         }
+        // The other half of the same honesty: a list that IS on screen after a failed refresh is the
+        // one fetched earlier, not the repository's current answer. Saying so costs a line and stops
+        // a designer acting on a task that was reassigned while they were out of signal.
+        if (loadFailed && tasks.isNotEmpty() && !loading) {
+            Text(
+                "Showing the list last fetched — the latest refresh did not reach the repository.",
+                color = Muted,
+                fontSize = 12.sp
+            )
+        }
         when {
             loading -> Text("Loading tasks…", color = Muted, fontSize = 12.sp)
+            // ORDERED BEFORE THE EMPTY CASE ON PURPOSE. "Nothing is assigned to you" is a claim about
+            // the repository, and this app may only make it after the repository has answered. Tasks
+            // are read over the network every time — the offline outbox carries CREATES only, so
+            // neither the list nor a status change survives no signal — which on this fleet means the
+            // failing branch is the ordinary one, not the exception.
+            loadFailed && tasks.isEmpty() -> Text(
+                "Your task list could not be fetched, so this is not \"nothing is assigned to you\" — it is " +
+                    "\"not known yet\". Tasks are read live and are not stored on this device. Use Refresh once " +
+                    "you have a connection.",
+                color = Muted,
+                fontSize = 12.sp
+            )
             tasks.isEmpty() -> Text(
                 if (view == "created") "You have not assigned any work yet."
                 else "Nothing is assigned to you right now.",
