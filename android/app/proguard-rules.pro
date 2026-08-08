@@ -43,6 +43,35 @@
 -keep,allowobfuscation interface com.designprototype.workshop.data.WorkshopRepositoryApi { *; }
 -keep,allowobfuscation interface com.designprototype.workshop.ui.SttProviderApi { *; }
 
+# ── ML Kit's own components, which are found by NAME out of the merged manifest ─────────────────
+#
+# THE ONE RULE IN THIS FILE THAT COVERS SOMEBODY ELSE'S LIBRARY, and it is here because ML Kit does
+# not ship it and R8 cannot possibly infer it. ML Kit boots by reading `<meta-data>` entries off its
+# own `MlKitComponentDiscoveryService` and calling `Class.forName` on the class names spelled inside
+# the meta-data KEY. Three of them are pulled in by `com.google.mlkit:text-recognition`:
+#
+#   com.google.mlkit.common.internal.CommonComponentRegistrar        (com.google.mlkit:common)
+#   com.google.mlkit.vision.common.internal.VisionCommonRegistrar    (com.google.mlkit:vision-common)
+#   com.google.mlkit.vision.text.internal.TextRegistrar              (play-services-mlkit-text-recognition-common)
+#
+# Nothing in this application, or in ML Kit, references any of them from code. AGP keeps the SERVICE
+# — it is an `android:name` on a manifest component — but a class name that appears only inside a
+# meta-data attribute is a string, and R8 does not read strings. Verified rather than assumed, the
+# same way this file's other claims were: every `proguard.txt` in the resolved ML Kit graph was
+# unzipped out of the Gradle cache and read (`com.google.mlkit:common`,
+# `text-recognition-bundled-common`, `play-services-basement`, `play-services-base`; the rest ship
+# none), and none of them keeps a ComponentRegistrar. The three classes were also checked for
+# `@androidx.annotation.Keep`, which `play-services-basement` DOES keep — none of them carries it.
+#
+# WHY IT MATTERS MORE THAN ITS THREE LINES. The failure is not a build error and not a missing
+# feature: `TextRecognition.getClient()` throws at the first tap, on a build that assembled and
+# installed perfectly, in a courtyard, on the one code path this lane exists to make work without a
+# connection. And it would take seventeen megabytes of recogniser with it — shipped, downloaded over
+# prepaid data, and unreachable.
+-keep class * implements com.google.firebase.components.ComponentRegistrar {
+    <init>();
+}
+
 # ── What R8 removed, written down where a human can read it ─────────────────────────────────────
 #
 # Not diagnostics for their own sake: the ONLY way to check a shrunk build without a device is to
