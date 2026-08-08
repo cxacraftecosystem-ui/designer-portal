@@ -217,6 +217,79 @@ class DwSubmissionReadinessTest {
         assertTrue(caption.href.contains("find=prototype.photo"))
     }
 
+    // ── What the handset navigates by ────────────────────────────────────────────────────────────
+
+    /**
+     * The href is for people; [DwStageFocus] is for this client.
+     *
+     * `AndroidManifest.xml` declares MAIN/LAUNCHER and nothing else, so there is nothing here that
+     * could open `/design-workshops/…?find=…`. If the two ever described different boxes, the
+     * designer would be sent to one field and told about another — so they are asserted against each
+     * other rather than each against a literal.
+     */
+    @Test
+    fun `the focus a handset navigates by names the same box as the href a person pastes`() {
+        for (item in readiness.blocking) {
+            val focus = DwSubmissionReadiness.focusOf(item)
+            assertNotNull("${item.label} was placed", focus)
+            assertEquals(item.stageKey, focus!!.stageKey)
+            assertEquals(
+                "${item.label}: the focus and the href name one field",
+                DwSubmissionReadiness.stageFieldHref(
+                    workshopId, focus.stageKey, focus.entityKey, focus.fieldKey, focus.rowKey,
+                ),
+                item.href,
+            )
+        }
+    }
+
+    @Test
+    fun `a collection focus carries its row and a singleton focus carries none`() {
+        val material = DwSubmissionReadiness.focusOf(
+            readiness.blocking.first { it.label == "Prototypes: Material" }
+        )!!
+        assertEquals("prototype", material.entityKey)
+        assertEquals("material", material.fieldKey)
+        // The row the stage screen opens. It is the `_clientKey`, which is what `CollectionRow.rowId`
+        // holds — a focus naming anything else would expand no row and land on a closed heading.
+        assertEquals("proto-1", material.rowKey)
+
+        val caption = DwSubmissionReadiness.focusOf(
+            readiness.blocking.first { it.label == "Prototypes: Photograph caption" }
+        )!!
+        // The MEDIA field, not the caption's own key: a caption input is drawn inside the field it
+        // describes and has no wrapper to scroll to.
+        assertEquals("photo", caption.fieldKey)
+
+        val venue = DwSubmissionReadiness.focusOf(readiness.blocking.first { it.label == "Venue" })!!
+        assertEquals("workshopSetup", venue.entityKey)
+        assertEquals("venue", venue.fieldKey)
+        assertEquals("a singleton has no row to open", null, venue.rowKey)
+    }
+
+    /**
+     * The screen looks each label up by the string it is already printing.
+     *
+     * The stage index renders [DwStageCompleteness.missing] verbatim and asks this map where each
+     * entry lives. A key that did not match the printed label character for character would produce
+     * a list that silently stopped being tappable — which looks exactly like the inert list this
+     * replaced.
+     */
+    @Test
+    fun `the address book is keyed by the label the scorer produced`() {
+        val book = DwSubmissionReadiness.addressBook(readiness)
+        for (score in computeWorkshopCompleteness(registry, draft)) {
+            for (label in score.missing) {
+                assertNotNull(
+                    "stage ${score.stageKey} label “$label” is addressable",
+                    book[score.stageKey]?.get(label),
+                )
+            }
+        }
+        // A stage with nothing outstanding contributes no entry at all rather than an empty map.
+        assertFalse(book.containsKey("REPORT_GENERATION"))
+    }
+
     // ── The report's checks, beyond the fields ───────────────────────────────────────────────────
 
     @Test

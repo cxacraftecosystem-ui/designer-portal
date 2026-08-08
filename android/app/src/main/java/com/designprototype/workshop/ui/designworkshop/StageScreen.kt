@@ -2,8 +2,12 @@ package com.designprototype.workshop.ui.designworkshop
 
 import android.content.Context
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,16 +44,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import com.designprototype.workshop.data.AppScope
 import com.designprototype.workshop.data.DW_ROW_KEY_SEPARATOR
 import com.designprototype.workshop.data.DraftMedia
 import com.designprototype.workshop.data.DraftRow
 import com.designprototype.workshop.data.DwImageQuality
+import com.designprototype.workshop.data.DwStageFocus
 import com.designprototype.workshop.data.DwTier
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.EntityDto
@@ -70,6 +79,7 @@ import com.designprototype.workshop.data.rowsFor
 import com.designprototype.workshop.data.singleton
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
@@ -109,6 +119,12 @@ import java.util.UUID
  * phone reconnects after two days offline and posts everything it has for the stage, and either all
  * of it lands or none of it does. A per-field endpoint leaves a stage half-written whenever the
  * connection drops mid-sync, which on one bar of signal is most of the time.
+ *
+ * THREE THINGS START THAT SAVE AND ALL THREE RUN THE SAME CODE — the debounce, the "Save and sync
+ * this stage now" button, and the `onDispose` that catches a designer leaving inside the debounce
+ * window. The last two were missing, which meant the window between the final keystroke and the
+ * write was 800ms during which Back discarded the edit, and the button that exists to close that
+ * window merely reopened it.
  */
 
 /**
@@ -119,6 +135,15 @@ import java.util.UUID
  * process gets killed. 800ms is the same order the rest of this app uses for auto-save.
  */
 private const val SAVE_DEBOUNCE_MS = 800L
+
+/**
+ * How long the box a readiness link landed on stays outlined.
+ *
+ * The web's `FLASH_MS` (`components/hooks/useRevealRow.ts`), to the millisecond, because it is the
+ * same signal answering the same question — "which of these is the one I tapped" — and two clients
+ * that mark an arrival for visibly different lengths teach a designer two different habits.
+ */
+private const val FIELD_FLASH_MS = 1400L
 
 /** One row of a repeating entity, held as the form edits it. */
 @Immutable
@@ -145,11 +170,72 @@ private data class StageState(
 /** What the status line under the header is currently able to promise. */
 private enum class SaveState { CLEAN, PENDING, SAVING, ON_DEVICE, SYNCED }
 
+/**
+ * One stage's unwritten edit, complete enough to be landed by something that is not this screen.
+ *
+ * It carries the whole argument list [persistLocally] takes — including the workshop id and the
+ * registry spec — precisely so that the dispose does not have to consult the composition for any of
+ * it. That is the point: `onDispose` runs after the composition that let go of this screen, and
+ * anything read from a `remember(stageKey)` slot at that moment is already the NEXT stage's default.
+ *
+ * Plain state, not Compose state, and not `@Immutable`: nothing draws from it, and a recomposition
+ * on every keystroke to update a holder no pixel depends on would be pure cost.
+ */
+private class PendingWrite {
+
+    /** Everything needed to write one stage without asking a composable anything. */
+    class Outstanding(
+        val workshopId: String,
+        val stage: StageDto,
+        val state: StageState,
+        val baseline: Boolean,
+        val emptied: Set<String>,
+        /** Whether there is a server record to offer it to — see `syncId` in [StageScreen]. */
+        val syncable: Boolean,
+    )
+
+    /** The screen's edit counter when this was recorded. Zero when nothing is outstanding. */
+    var revision: Int = 0
+        private set
+
+    private var outstanding: Outstanding? = null
+
+    fun record(
+        revision: Int,
+        workshopId: String,
+        stage: StageDto,
+        state: StageState,
+        baseline: Boolean,
+        emptied: Set<String>,
+        syncable: Boolean,
+    ) {
+        this.revision = revision
+        outstanding = Outstanding(workshopId, stage, state, baseline, emptied, syncable)
+    }
+
+    fun clear() {
+        revision = 0
+        outstanding = null
+    }
+
+    /** Hand the write over, ONCE. Taking it discharges it, so a second dispose cannot re-send it. */
+    fun take(): Outstanding? = outstanding.also { clear() }
+}
+
 @Composable
 fun StageScreen(
     repository: WorkshopRepository,
     workshopId: String,
     stageKey: String,
+    /**
+     * One box on this stage to arrive at, or null for the ordinary "open the stage".
+     *
+     * Set by the stage index when a designer taps one of the "still missing" labels. It is honoured
+     * ONCE, on the way in — it opens the ADVANCED disclosure or the collection row that holds the
+     * field if either is closed, scrolls it into view and marks it briefly. Nothing about it is
+     * saved, and it never changes a value.
+     */
+    focus: DwStageFocus? = null,
     onMessage: (String) -> Unit,
     onError: (String) -> Unit,
     /**
@@ -257,6 +343,11 @@ fun StageScreen(
             stage = spec
             state = loaded.state
             baseline = loaded.baseline
+            // A gap the designer tapped may be behind "More detail", which is closed by default —
+            // and a link that lands on a disclosure the field is hiding inside has not arrived
+            // anywhere. Set here rather than as the initial `remember` value because the registry is
+            // only known once the load has finished.
+            showAdvanced = focusOpensAdvanced(spec, focus)
             saveState = SaveState.CLEAN
             downloadNote = if (!loaded.downloadFailed) null else
                 "This stage could not be downloaded — there is no connection, or the request " +
@@ -271,13 +362,33 @@ fun StageScreen(
         loading = false
     }
 
-    // ── Debounced save ───────────────────────────────────────────────────────────────────────────
-    LaunchedEffect(revision) {
-        if (revision == 0) return@LaunchedEffect
-        val spec = stage ?: return@LaunchedEffect
-        saveState = SaveState.PENDING
-        delay(SAVE_DEBOUNCE_MS)
+    // ── Saving ───────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * The edit that has not reached the disk yet, held OUTSIDE every `remember(stageKey)` slot.
+     *
+     * WHY THE DISPOSE BELOW DOES NOT SIMPLY READ THIS SCREEN'S STATE. `onDispose` runs during apply,
+     * AFTER the composition that changed the key — so on a move from one stage straight into another
+     * every `remember(stageKey)` slot has already been re-created and reads back its default. The
+     * dispose would find `stage == null`, write nothing, and lose exactly what it exists to save, in
+     * the one navigation nobody would think to test. Unkeyed, it still holds the outgoing stage.
+     */
+    val pending = remember { PendingWrite() }
+
+    /**
+     * Write the stage to the device, then offer it to the server. THE ONE SAVE PATH.
+     *
+     * Extracted from the debounce because it now has three callers and every one of them has to do
+     * the identical thing: the timer below, the explicit button, and the dispose that catches a
+     * designer leaving inside the timer's window. The button used to be `onClick = { revision++ }`,
+     * which merely RESTARTED the 800ms debounce — so the one control that exists to stop trusting a
+     * timer you cannot see started the timer, and a designer who tapped "Save and sync this stage
+     * now" and walked away had nothing written anywhere.
+     */
+    suspend fun saveAndSync() {
+        val spec = stage ?: return
         saveState = SaveState.SAVING
+        val at = revision
         val snapshot = state
 
         // The device first and unconditionally. Nothing below this line may prevent it.
@@ -285,8 +396,13 @@ fun StageScreen(
             .onFailure { error ->
                 saveState = SaveState.PENDING
                 onError(error.message ?: "Could not write this stage to the device.")
-                return@LaunchedEffect
+                return
             }
+        // Discharged only if the edit this write was built from is still the newest one. A designer
+        // typing while the write was in flight has produced a NEWER snapshot, and clearing on the
+        // strength of the older one would let the dispose decide there was nothing outstanding.
+        // Same comparison, and the same reason, as `dirtyAt` in `lib/designWorkshopStore.ts`.
+        if (pending.revision == at) pending.clear()
         saveState = SaveState.ON_DEVICE
 
         // Then the server, opportunistically, THROUGH THE ONE SYNC ENGINE rather than with a PUT of
@@ -300,7 +416,7 @@ fun StageScreen(
         // `submit` stays false in there for every auto-save: turning it on makes the server enforce
         // the Basic-tier required fields and 422 the request, so a stage the designer is halfway
         // through typing would silently refuse to sync for the rest of the day.
-        if (syncId == null) return@LaunchedEffect
+        if (syncId == null) return
         when (val push = runCatching {
             WorkshopSyncEngine.pushStage(appContext, repository, workshopId, spec)
         }.getOrElse { StagePush.NotSent }) {
@@ -337,9 +453,91 @@ fun StageScreen(
         }
     }
 
+    // The debounce itself: a new keystroke cancels the pending write rather than queueing a second
+    // one behind it. `PENDING` is set here rather than inside [saveAndSync] because it describes the
+    // WAIT, and the other two callers do not wait.
+    LaunchedEffect(revision) {
+        if (revision == 0) return@LaunchedEffect
+        if (stage == null) return@LaunchedEffect
+        saveState = SaveState.PENDING
+        delay(SAVE_DEBOUNCE_MS)
+        saveAndSync()
+    }
+
+    /**
+     * THE WRITE THAT SURVIVES THE SCREEN.
+     *
+     * Leaving a stage inside the debounce window used to discard the edit outright: `goBack()` runs
+     * unguarded, this screen leaves composition, and the coroutine sitting in `delay(800)` is
+     * cancelled along with the scope it belongs to — so the last thing typed into a document that
+     * exists nowhere else was gone, silently, with the status line still reading "unsaved changes"
+     * as it disappeared. Pressing Back is exactly what a designer does when they have finished
+     * typing.
+     *
+     * [AppScope.io] and not the composition's scope, for the same reason the eager media upload uses
+     * it: the work has to outlive the composable that started it, and a scope that is being torn
+     * down cannot finish anything. It reads [pending] rather than this screen's state for the reason
+     * given on that holder.
+     *
+     * It runs only when there IS something outstanding, so an ordinary back-out of a stage nobody
+     * edited writes nothing and asks the network nothing. A write that lands twice is harmless —
+     * [WorkshopDraftStore.update] merges under its own lock, and [WorkshopSyncEngine.pushStage]
+     * answers `AlreadySent` to an identical payload.
+     *
+     * NO UNSAVED-CHANGES PROMPT, deliberately, and it is why this screen does not register with the
+     * app's unsaved-changes guard the way the record forms do. This feature's premise is that the
+     * local draft IS the document and is written continuously; a "Save or discard?" dialog on every
+     * exit from a stage a designer opens forty times a day would obstruct that, and its Discard
+     * button would be a lie — the work has already been persisted by the time anyone could press it.
+     * The routing comment in MainActivity says which of the two protects these screens.
+     */
+    DisposableEffect(workshopId, stageKey) {
+        onDispose {
+            val outstanding = pending.take() ?: return@onDispose
+            AppScope.io.launch {
+                runCatching {
+                    persistLocally(
+                        appContext,
+                        outstanding.workshopId,
+                        outstanding.stage,
+                        outstanding.state,
+                        outstanding.baseline,
+                        outstanding.emptied,
+                    )
+                }.onSuccess {
+                    // The other half of what the button promises. Never allowed to fail the local
+                    // write above, which has already happened by the time this runs.
+                    if (outstanding.syncable) {
+                        runCatching {
+                            WorkshopSyncEngine.pushStage(
+                                appContext, repository, outstanding.workshopId, outstanding.stage,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fun edit(transform: (StageState) -> StageState) {
-        state = transform(state)
+        val next = transform(state)
+        state = next
         revision++
+        // Recorded on the SAME line as the edit, so the dispose can never be looking at a stage the
+        // screen has already forgotten. `stage` is non-null here by construction — nothing is
+        // editable until the load has finished — but the null branch simply records nothing rather
+        // than asserting, because a crash on a keystroke is not a defensible way to find out.
+        stage?.let { spec ->
+            pending.record(
+                revision = revision,
+                workshopId = workshopId,
+                stage = spec,
+                state = next,
+                baseline = baseline,
+                emptied = emptied,
+                syncable = syncId != null,
+            )
+        }
     }
 
     // ── Media ────────────────────────────────────────────────────────────────────────────────────
@@ -523,6 +721,10 @@ fun StageScreen(
                 values = state.singleton,
                 media = media,
                 services = services,
+                // Only a singleton focus lands here — one naming a row belongs to a collection
+                // below, and handing it to this section would scroll to a field of the same key in
+                // the wrong entity.
+                focusFieldKey = focus?.takeIf { it.entityKey == entity.key && it.rowKey == null }?.fieldKey,
                 showAdvanced = showAdvanced,
                 onToggleAdvanced = { showAdvanced = !showAdvanced },
                 onValueChange = { key, value ->
@@ -545,6 +747,7 @@ fun StageScreen(
                 rows = state.collections[entity.key].orEmpty(),
                 media = media,
                 services = services,
+                focus = focus?.takeIf { it.entityKey == entity.key },
                 onRowsChange = { rows ->
                     // RECORDED THE MOMENT THE LAST ROW GOES, and only then. An emptied collection
                     // contributes no entries to a stage payload, so without this the deletion is
@@ -582,8 +785,14 @@ fun StageScreen(
 
         // Explicit sync, for the moment a designer walks back into signal and wants to know the work
         // has left the phone rather than trusting a debounce they cannot see.
+        //
+        // IT SAVES, RATHER THAN ASKING THE TIMER TO. This was `onClick = { revision++ }`, which
+        // re-entered the same 800ms debounce the button exists to let a designer stop trusting — so
+        // the label promised "now" and delivered "in a moment, if you are still here", and pressing
+        // it and immediately leaving wrote nothing at all. The dispose above is the belt to this
+        // brace; both are needed, because the tap is also the moment somebody puts the phone down.
         OutlinedButton(
-            onClick = { revision++ },
+            onClick = { scope.launch { saveAndSync() } },
             enabled = saveState != SaveState.SAVING,
             modifier = Modifier.fillMaxWidth()
         ) { Text("Save and sync this stage now") }
@@ -661,12 +870,24 @@ private fun StageHeader(
  * Caption fields never appear here. They are removed from the flow and handed to the media field they
  * describe, because `captionFor` exists exactly so the two cannot be separated — see [FieldRenderer].
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EntitySection(
     entity: EntityDto,
     values: Map<String, JsonElement>,
     media: DwMediaBridge,
     services: DwFieldServices,
+    /**
+     * The one field of THIS record a designer was sent to, or null.
+     *
+     * The arrival lives here rather than on the stage screen because the moment to scroll is the
+     * moment the box EXISTS, and when that is depends on where it lives: a singleton field is drawn
+     * on first paint, a collection field appears when its row opens, an ADVANCED field when its
+     * disclosure does. An effect inside the section is right in all three without enumerating any of
+     * them — the same reasoning `FieldCell` in `components/designworkshop/EntityForm.tsx` gives for
+     * putting it on the cell.
+     */
+    focusFieldKey: String? = null,
     showAdvanced: Boolean,
     onToggleAdvanced: () -> Unit,
     onValueChange: (String, JsonElement?) -> Unit,
@@ -708,6 +929,49 @@ private fun EntitySection(
      */
     val missingViews = remember(entity.key, values) { DwImageQuality.findMissingViews(entity.key, values) }
 
+    /**
+     * The arrival: scroll the named box into view, then mark it for [FIELD_FLASH_MS].
+     *
+     * ONE FRAME LATER, because this effect runs in the same commit that opened the row panel or the
+     * disclosure above it — measuring now measures a layout the field is about to leave. That is the
+     * same deferral `FieldCell` makes with `requestAnimationFrame` on the web.
+     *
+     * THE MARK IS A STATIC OUTLINE and not an animation. It is what tells a designer WHICH of the
+     * three boxes now on screen is the one they tapped, in a form of several hundred, and a signal
+     * that existed only as motion would be no signal at all for a reader who has asked for less of
+     * it. It is drawn on a border that is always laid out and merely changes colour, so arriving
+     * does not shift the field under the finger that is about to type into it.
+     */
+    val arrival = remember { BringIntoViewRequester() }
+    var marked by remember(focusFieldKey) { mutableStateOf(false) }
+    LaunchedEffect(focusFieldKey) {
+        if (focusFieldKey == null) return@LaunchedEffect
+        withFrameNanos { }
+        try {
+            arrival.bringIntoView()
+        } catch (e: CancellationException) {
+            // Rethrown rather than swallowed: this is the designer leaving, and a `runCatching` here
+            // would eat the cancellation and go on to mark a field on a screen that has gone.
+            throw e
+        } catch (_: Throwable) {
+            // The node went away between the frame above and this call. Not scrolling is a small
+            // failure; crashing on the way to a field a designer asked for is not.
+        }
+        marked = true
+        delay(FIELD_FLASH_MS)
+        marked = false
+    }
+
+    /** The anchor. Applied to the focused field and to nothing else — see [FieldRenderer]'s modifier. */
+    val anchor = Modifier
+        .bringIntoViewRequester(arrival)
+        .border(
+            width = 2.dp,
+            color = if (marked) MaterialTheme.colorScheme.primary else Color.Transparent,
+            shape = RoundedCornerShape(10.dp),
+        )
+        .padding(6.dp)
+
     Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
         if (entity.description.isNotBlank()) {
             Text(entity.description, color = MaterialTheme.field.muted, fontSize = 12.sp)
@@ -718,6 +982,7 @@ private fun EntitySection(
                 field = field,
                 value = values[field.key],
                 onChange = { next -> onValueChange(field.key, next) },
+                modifier = if (field.key == focusFieldKey) anchor else Modifier,
                 media = media,
                 caption = captionByTarget[field.key],
                 captionValue = captionByTarget[field.key]?.let { values[it.key] },
@@ -743,6 +1008,7 @@ private fun EntitySection(
                         field = field,
                         value = values[field.key],
                         onChange = { next -> onValueChange(field.key, next) },
+                        modifier = if (field.key == focusFieldKey) anchor else Modifier,
                         media = media,
                         caption = captionByTarget[field.key],
                         captionValue = captionByTarget[field.key]?.let { values[it.key] },
@@ -808,9 +1074,15 @@ private fun CollectionSection(
     rows: List<CollectionRow>,
     media: DwMediaBridge,
     services: DwFieldServices,
+    /** A gap the designer tapped that lives in one of these rows — see [DwStageFocus]. */
+    focus: DwStageFocus? = null,
     onRowsChange: (List<CollectionRow>) -> Unit,
 ) {
-    var expanded by remember(entity.key) { mutableStateOf<String?>(null) }
+    // OPEN ON THE ROW THAT HOLDS IT. Rows are collapsed by default, so a link to "the material on
+    // prototype 1" that landed on a closed list would have arrived at a heading. `rowKey` is the
+    // row's `_clientKey`, which is exactly what `rowId` holds here — both are `DraftRow.id` past
+    // its entity prefix (see `fromDraft` and `DwSubmissionReadiness.rowKeyOf`).
+    var expanded by remember(entity.key, focus) { mutableStateOf(focus?.rowKey) }
     val titleField = remember(entity) { entity.rowTitleField }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -857,6 +1129,7 @@ private fun CollectionSection(
                 expanded = expanded == row.rowId,
                 media = media,
                 services = services,
+                focusFieldKey = focus?.takeIf { it.rowKey == row.rowId }?.fieldKey,
                 onToggle = { expanded = if (expanded == row.rowId) null else row.rowId },
                 onMove = { delta ->
                     val target = index + delta
@@ -914,13 +1187,19 @@ private fun CollectionRowCard(
     expanded: Boolean,
     media: DwMediaBridge,
     services: DwFieldServices,
+    /** The one field of THIS row a designer was sent to, or null. */
+    focusFieldKey: String? = null,
     onToggle: () -> Unit,
     onMove: (Int) -> Unit,
     onDelete: () -> Unit,
     onValueChange: (String, JsonElement?) -> Unit,
     onPatch: (Map<String, JsonElement?>) -> Unit,
 ) {
-    var showAdvanced by remember(row.rowId) { mutableStateOf(false) }
+    // Opened when the field they were sent to is behind "More detail", closed otherwise — and
+    // ordinary state from then on, so the disclosure still answers its own header.
+    var showAdvanced by remember(row.rowId) {
+        mutableStateOf(isAdvanced(entity, focusFieldKey))
+    }
 
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
@@ -957,6 +1236,7 @@ private fun CollectionRowCard(
                     values = row.values,
                     media = media,
                     services = services,
+                    focusFieldKey = focusFieldKey,
                     showAdvanced = showAdvanced,
                     onToggleAdvanced = { showAdvanced = !showAdvanced },
                     onValueChange = onValueChange,
@@ -1032,6 +1312,25 @@ private data class StageLoad(
     /** True when a server read was attempted and failed — the screen says so. */
     val downloadFailed: Boolean,
 )
+
+/**
+ * Is [focusFieldKey] one of this entity's ADVANCED fields — the ones behind "More detail"?
+ *
+ * Asked so the disclosure can be opened on arrival. A link that lands on a closed disclosure has not
+ * arrived anywhere: the designer is looking at the same form they were told the field was missing
+ * from, with no indication that it is one tap further down.
+ */
+private fun isAdvanced(entity: EntityDto, focusFieldKey: String?): Boolean {
+    val key = focusFieldKey ?: return false
+    return entity.liveFields.any { it.key == key && DwTier.of(it.tier) == DwTier.ADVANCED }
+}
+
+/** The same question for the stage's singleton, which is the one entity [StageScreen] itself draws. */
+private fun focusOpensAdvanced(stage: StageDto, focus: DwStageFocus?): Boolean {
+    val target = focus?.takeIf { it.rowKey == null } ?: return false
+    val entity = stage.singleton?.takeIf { it.key == target.entityKey } ?: return false
+    return isAdvanced(entity, target.fieldKey)
+}
 
 private fun fromDraft(stage: StageDto, draft: StageDraft): StageState = StageState(
     singleton = draft.values,
