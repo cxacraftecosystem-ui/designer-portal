@@ -403,10 +403,26 @@ class DocxWriter(
     private val theme = doc.theme
     private val body = ArrayList<String>()
 
-    /** One embedded media part: its file name inside `word/media/`, its bytes, mime and rId. */
+    /**
+     * One embedded media part: its file name inside `word/media/`, where its bytes come from, its
+     * mime and its rId.
+     *
+     * THE BYTES ARE DELIBERATELY NOT HELD HERE, which is the same trade `PdfWriter.sizeCache` makes
+     * and for the same reason. This class used to carry a `data: ByteArray`, and since every part is
+     * registered during [emitBlocks] and none is written until [writeTo], a photo-heavy workshop had
+     * every original JPEG — 4-6 MB each, unsubsampled, never re-encoded, with no cap on the count —
+     * simultaneously resident on the Java heap before a single byte reached the zip. On the Android
+     * 8/9 handsets this fleet targets that is enough to be killed, and the designer, with an officer
+     * waiting, saw "The report could not be generated." while the .pdf of the same workshop
+     * succeeded — because [PdfWriter] refuses to retain bytes and this writer did not.
+     *
+     * [image] is what the bytes are re-fetched from at write time, through the same figures-first
+     * resolution [registerImage] used, so a rasterised map (which has no file behind it and lives in
+     * [figures]) resolves exactly as it did the first time.
+     */
     private class MediaPart(
         val name: String,
-        val data: ByteArray,
+        val image: ImageRef,
         val mime: String,
         val rid: Int,
         val probedWidth: Int,
@@ -470,6 +486,17 @@ class DocxWriter(
     private class Registered(val rid: Int, val widthPx: Int, val heightPx: Int)
 
     /**
+     * The bytes behind [image] — a figure this writer made, or a photograph the loader must fetch.
+     *
+     * FIGURES FIRST, PHOTOGRAPHS SECOND. [loadImage] resolves a media id against the device's local
+     * copy of a photograph, so a synthetic `figure:N` source would resolve to nothing, be recorded as
+     * a dropped image, and remove the map from the report with a warning naming a source the designer
+     * has never seen. Deliberately the same shape as `PdfWriter.bytesFor`: both writers ask twice for
+     * one photograph rather than holding sixty at once, and both must ask the same way.
+     */
+    private fun bytesFor(image: ImageRef): ByteArray? = figures[image.source] ?: loadImage(image)
+
+    /**
      * Embed [image] once and return its relationship id and display size.
      *
      * The size returned is the *display* size, i.e. after the EXIF quarter turn, preferring what the
@@ -484,9 +511,7 @@ class DocxWriter(
             return Registered(cached, w, h)
         }
 
-        // Figures first, photographs second. A rasterised map is already bytes in this process; asking
-        // the loader for "figure:1" would resolve nothing and drop the map from the report.
-        val data = figures[image.source] ?: loadImage(image)
+        val data = bytesFor(image)
         if (data == null || data.isEmpty()) {
             droppedImages.add(image.source)
             return null
@@ -511,7 +536,7 @@ class DocxWriter(
         val rid = RID_FIRST_IMAGE + media.size
         val ext = MIME_TO_EXT.getValue(mime)
         media.add(
-            MediaPart("image${media.size + 1}.$ext", data, mime, rid, probed.first, probed.second)
+            MediaPart("image${media.size + 1}.$ext", image, mime, rid, probed.first, probed.second)
         )
         ridBySource[image.source] = rid
         val (w, h) = displaySize(image, probed)
@@ -1285,10 +1310,15 @@ class DocxWriter(
      * Write the whole package into [out].
      *
      * Streams rather than returning a `ByteArray` because a 60-photo report is tens of megabytes and
-     * this runs on a phone: the media parts are already in memory once (they must be, to be
-     * deflated), and buffering the finished zip as well would double that for no reason. The stream
-     * is finished but NOT closed — the caller owns it, and closing a caller's `FileOutputStream`
-     * before it has had a chance to `fd.sync()` is how a temp file gets published half-written.
+     * this runs on a phone: buffering the finished zip in memory as well as writing it would double
+     * the peak for no reason.
+     *
+     * ONE PHOTOGRAPH IN MEMORY AT A TIME, which is what the loop over [media] below is for.
+     * `ZipOutputStream` deflates as it is written and needs only the window it is fed, NOT the whole
+     * part — the sentence that used to stand here said the opposite ("the media parts are already in
+     * memory once (they must be, to be deflated)") and that untrue clause is what justified holding
+     * every original JPEG on the heap until the last block had been emitted. Each part is fetched,
+     * deflated into its entry and dropped; [MediaPart] records why.
      */
     fun writeTo(out: OutputStream) {
         emitBlocks()
@@ -1307,8 +1337,22 @@ class DocxWriter(
         putText(zip, "docProps/core.xml", coreXml())
         putText(zip, "docProps/app.xml", APP_XML)
         for (part in media) {
+            // Re-asked, not remembered. See [MediaPart]: the read costs a few milliseconds per photo
+            // and the alternative was an OutOfMemoryError on the handsets this app is for.
+            val data = bytesFor(part.image)
             zip.putNextEntry(ZipEntry("word/media/${part.name}"))
-            zip.write(part.data)
+            if (data == null || data.isEmpty()) {
+                // The part is still WRITTEN, empty, and that is deliberate. `documentRels` has
+                // already declared a relationship pointing at this name and `document.xml` a
+                // `w:drawing` that embeds it; omitting the entry leaves a dangling relationship,
+                // which Word reports as "the file appears to be corrupted" and refuses to open — one
+                // unreadable photograph would cost the designer the entire report. An empty part is
+                // one missing picture in a document that opens, and the source is named to the
+                // caller as a dropped image exactly as a first-pass failure is.
+                droppedImages.add(part.image.source)
+            } else {
+                zip.write(data)
+            }
             zip.closeEntry()
         }
         // Three parts per native chart, and all three or none. A chart part whose workbook

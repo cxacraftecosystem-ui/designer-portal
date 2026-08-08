@@ -1,19 +1,24 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.data.DraftRow
+import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.EntityDto
+import com.designprototype.workshop.data.EnumOption
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.StageDraft
 import com.designprototype.workshop.data.StageDto
 import com.designprototype.workshop.data.WorkshopDraft
 import com.designprototype.workshop.report.Block
+import com.designprototype.workshop.report.ChartBlock
 import com.designprototype.workshop.report.CoverBlock
 import com.designprototype.workshop.report.HeadingBlock
 import com.designprototype.workshop.report.ImageBlock
 import com.designprototype.workshop.report.ImageGridBlock
 import com.designprototype.workshop.report.ImageRef
 import com.designprototype.workshop.report.KeyValueBlock
+import com.designprototype.workshop.report.MapBlock
+import com.designprototype.workshop.report.MapPointKind
 import com.designprototype.workshop.report.ParagraphBlock
 import com.designprototype.workshop.report.ReportDocument
 import com.designprototype.workshop.report.Run
@@ -671,7 +676,8 @@ class ReportTemplateDocumentTest {
         // COMPLETENESS scores the REGISTRY's stages, and ANNEXURE_MEDIA walks them looking for
         // photographs, so both report "unbuilt" against an empty schema however well they work.
         // One stage carrying one required text field and one photograph is the least that lets
-        // either of them have anything to say.
+        // either of them have anything to say. MAP is gated on stage 1 naming a state or a district
+        // and CHART on a figure having two categories, so both get the least that satisfies them.
         val schema = SchemaResponse(
             version = "test",
             stages = listOf(
@@ -684,6 +690,9 @@ class ReportTemplateDocumentTest {
                                 FieldDto(
                                     key = "designerName", label = "Designer", type = "TEXT",
                                     tier = "BASIC", required = true,
+                                ),
+                                FieldDto(
+                                    key = "state", label = "State", type = "TEXT", tier = "BASIC",
                                 ),
                                 FieldDto(
                                     key = "coverPhoto", label = "Cover photograph", type = "IMAGE",
@@ -699,11 +708,14 @@ class ReportTemplateDocumentTest {
             workshopId = "local-test",
             title = "Barpali cluster",
             stages = mapOf(
-                // COVER's author line, SIGNATURES' first signatory, and ANNEXURE_MEDIA's one plate.
+                // COVER's author line, SIGNATURES' first signatory, ANNEXURE_MEDIA's one plate, and
+                // MAP's gate — a state and nothing else, which is the case the server says is worth
+                // drawing on its own.
                 "WORKSHOP_SETUP" to StageDraft(
                     stageId = "WORKSHOP_SETUP",
                     values = mapOf(
                         "designerName" to JsonPrimitive("A. Mohanty"),
+                        "state" to JsonPrimitive("Odisha"),
                         "coverPhoto" to JsonPrimitive("media-1"),
                     ),
                 ),
@@ -715,7 +727,15 @@ class ReportTemplateDocumentTest {
                             JsonPrimitive("The team thanks the weavers of Barpali."),
                     ),
                 ),
-                // SUMMARY_METRICS counts records; with none it has no row to draw.
+                // SUMMARY_METRICS counts records; with none it has no row to draw. The two rows
+                // together are also CHART's two categories — one alone is a one-bar bar chart, which
+                // the builder correctly refuses to draw.
+                "SKETCH_DEVELOPMENT" to StageDraft(
+                    stageId = "SKETCH_DEVELOPMENT",
+                    rows = listOf(
+                        DraftRow(id = "sketch#1", values = mapOf("name" to JsonPrimitive("Runner"))),
+                    ),
+                ),
                 "PROTOTYPE_DEVELOPMENT" to StageDraft(
                     stageId = "PROTOTYPE_DEVELOPMENT",
                     rows = listOf(
@@ -756,6 +776,293 @@ class ReportTemplateDocumentTest {
                 drew && declared,
             )
         }
+    }
+
+    // ── the infographics and the map ─────────────────────────────────────────────────────────────
+    //
+    // WHAT THESE PIN. The rasterisers shipped in the APK, both writers dispatched ChartBlock and
+    // MapBlock, and the India boundary rings are an offline asset — and no block was ever
+    // CONSTRUCTED, so the DEFAULT template came off the phone with no figures at all while the
+    // office's copy of the same workshop printed five. These build through `buildWorkshopDocument`
+    // rather than calling the builders directly, for the same reason the annexure tests do: the
+    // defect was never in the drawing, it was in nothing reaching it.
+
+    private fun figuresSchema() = SchemaResponse(
+        version = "test",
+        stages = listOf(
+            StageDto(
+                number = 15, key = "PROTOTYPE_VALIDATION", title = "Prototype validation",
+                entities = listOf(
+                    EntityDto(
+                        key = "prototypeValidation", cardinality = "COLLECTION", title = "Reviews",
+                        fields = listOf(
+                            FieldDto(
+                                key = "decision", label = "Decision", type = "ENUM", tier = "BASIC",
+                                reportRole = "TABLE_COLUMN",
+                                options = listOf(
+                                    EnumOption("SELECTED", "Selected"),
+                                    EnumOption("REJECTED", "Rejected"),
+                                ),
+                            ),
+                        ),
+                    )
+                ),
+            ),
+            StageDto(
+                number = 17, key = "COSTING_MARKET_LINKAGE", title = "Costing",
+                entities = listOf(
+                    EntityDto(
+                        key = "costSheet", cardinality = "COLLECTION", title = "Cost sheets",
+                        fields = listOf(
+                            FieldDto(
+                                key = "materialCost", label = "Material cost", type = "MONEY",
+                                tier = "BASIC", reportRole = "TABLE_COLUMN",
+                            ),
+                            FieldDto(
+                                key = "labourCost", label = "Labour cost", type = "MONEY",
+                                tier = "BASIC", reportRole = "TABLE_COLUMN",
+                            ),
+                            FieldDto(
+                                key = "transportCost", label = "Transport", type = "MONEY",
+                                tier = "BASIC", reportRole = "TABLE_COLUMN",
+                            ),
+                        ),
+                    )
+                ),
+            ),
+            singletonStage(18, "WORKSHOP_OUTCOMES", "Workshop outcomes", text("result", "Result")),
+            singletonStage(20, "REPORT_GENERATION", "Report generation", text("reportTitle", "Report title")),
+        ),
+    )
+
+    /** Three sketches, two prototypes, two reviews and two cost sheets — enough for three figures. */
+    private fun figuresDraft(settings: Map<String, JsonElement> = emptyMap()) = WorkshopDraft(
+        workshopId = "local-test",
+        title = "Barpali cluster",
+        stages = mapOf(
+            "SKETCH_DEVELOPMENT" to StageDraft(
+                stageId = "SKETCH_DEVELOPMENT",
+                rows = (1..3).map { DraftRow(id = "sketch#$it") },
+            ),
+            "PROTOTYPE_DEVELOPMENT" to StageDraft(
+                stageId = "PROTOTYPE_DEVELOPMENT",
+                rows = (1..2).map { DraftRow(id = "prototype#$it") },
+            ),
+            "PROTOTYPE_VALIDATION" to StageDraft(
+                stageId = "PROTOTYPE_VALIDATION",
+                rows = listOf(
+                    DraftRow(id = "prototypeValidation#1", values = mapOf("decision" to JsonPrimitive("SELECTED"))),
+                    DraftRow(id = "prototypeValidation#2", values = mapOf("decision" to JsonPrimitive("REJECTED"))),
+                ),
+            ),
+            "COSTING_MARKET_LINKAGE" to StageDraft(
+                stageId = "COSTING_MARKET_LINKAGE",
+                rows = listOf(
+                    DraftRow(
+                        id = "costSheet#1",
+                        values = mapOf(
+                            "materialCost" to JsonPrimitive(400),
+                            "labourCost" to JsonPrimitive(250),
+                            // Entered as zero, which is not the same as entered: it must not appear.
+                            "transportCost" to JsonPrimitive(0),
+                        ),
+                    ),
+                    DraftRow(
+                        id = "costSheet#2",
+                        values = mapOf(
+                            "materialCost" to JsonPrimitive(100),
+                            "labourCost" to JsonPrimitive(50),
+                        ),
+                    ),
+                ),
+            ),
+            "WORKSHOP_OUTCOMES" to StageDraft(
+                stageId = "WORKSHOP_OUTCOMES",
+                values = mapOf("result" to JsonPrimitive("Two buyers linked")),
+            ),
+            "REPORT_GENERATION" to StageDraft(stageId = "REPORT_GENERATION", values = settings),
+        ),
+    )
+
+    private fun charts(document: ReportDocument) = document.blocks.filterIsInstance<ChartBlock>()
+
+    @Test
+    fun `the front-page infographics are drawn from the records`() {
+        val document = build(figuresSchema(), figuresDraft())
+        val yield_ = charts(document).firstOrNull { it.title.contains("Designs, prototypes") }
+        assertNotNull(
+            "DCH_STANDARD places 'Outcomes in figures' on its front page and the handset drew " +
+                "nothing there: ${charts(document).map { it.title }}",
+            yield_,
+        )
+        // Counted from the records, and only categories that carry a figure — a "Final products 0"
+        // bar would state the workshop produced none when what the record says is that nobody
+        // entered any yet.
+        assertEquals(
+            listOf("Sketches" to 3.0, "Prototypes" to 2.0),
+            yield_!!.series,
+        )
+        assertTrue(
+            "the review donut is the second of the two the template asks for: " +
+                charts(document).map { it.title },
+            charts(document).any { it.title.contains("review decision") },
+        )
+    }
+
+    @Test
+    fun `a figure the template asks for twice is drawn once`() {
+        // DCH_STANDARD carries OUTCOME_FIGURES at the front AND the WORKSHOP_OUTCOMES stage section
+        // that owns the same two figures. Printing the yield chart twice makes a reader hunt for the
+        // difference between two identical pictures.
+        val document = build(figuresSchema(), figuresDraft())
+        assertEquals(
+            "the same figure printed more than once: ${charts(document).map { it.title }}",
+            1,
+            charts(document).count { it.title.contains("Designs, prototypes") },
+        )
+    }
+
+    @Test
+    fun `the cost breakdown sums every sheet and drops the heads nobody entered`() {
+        val cost = charts(build(figuresSchema(), figuresDraft()))
+            .firstOrNull { it.title.contains("Cost by head") }
+        assertNotNull("the costing stage's own figure was not drawn", cost)
+        assertEquals(
+            "a head entered as zero reads as 'transport was free' on a document that becomes a " +
+                "sanctioned amount, and the record says nobody entered it: ${cost!!.series}",
+            listOf("Material cost" to 500.0, "Labour cost" to 300.0),
+            cost.series,
+        )
+    }
+
+    @Test
+    fun `a section that refuses figures gets none`() {
+        // PHOTO_CATALOGUE's price list sets includeFigures = false: the cost-by-head figure prints
+        // the maker's material and labour cost beside the price the buyer is being quoted.
+        val catalogue = build(figuresSchema(), figuresDraft(), templateId = "PHOTO_CATALOGUE")
+        assertTrue(
+            "the buyer-facing catalogue handed the buyer the cluster's margin: " +
+                charts(catalogue).map { it.title },
+            charts(catalogue).none { it.title.contains("Cost by head") },
+        )
+    }
+
+    @Test
+    fun `nothing at all is emitted when the record supports no figure`() {
+        // Not the heading, not an empty frame, not a note. A heading over nothing is the commonest
+        // way a generated report looks broken, and this section exists for records that have no
+        // figures in them yet.
+        val document = build(outcomesSchema(), outcomesDraft(emptyMap()))
+        assertTrue("no figure has data here", charts(document).isEmpty())
+        assertTrue(
+            "an empty CHART section still printed its heading: ${headings(document)}",
+            headings(document).none { it.contains("Outcomes in figures") },
+        )
+    }
+
+    private fun mapDraft(setup: Map<String, JsonElement>) = WorkshopDraft(
+        workshopId = "local-test",
+        title = "Barpali cluster",
+        stages = mapOf("WORKSHOP_SETUP" to StageDraft(stageId = "WORKSHOP_SETUP", values = setup)),
+    )
+
+    private fun mapSchema() = SchemaResponse(
+        version = "test",
+        stages = listOf(
+            singletonStage(
+                1, "WORKSHOP_SETUP", "Workshop setup",
+                text("state", "State"), text("village", "Village"),
+            ),
+        ),
+    )
+
+    @Test
+    fun `the map is drawn from the state alone, with no pin and a caption that says so`() {
+        val document = build(mapSchema(), mapDraft(mapOf("state" to JsonPrimitive("Odisha"))))
+        val map = document.blocks.filterIsInstance<MapBlock>().firstOrNull()
+        assertNotNull("a workshop that named its state has said enough to tint the region", map)
+        assertEquals(setOf("Odisha"), map!!.highlight)
+        assertTrue("nothing in the record places a point", map.points.isEmpty())
+        assertTrue(
+            "a map with no pins must say why, or it reads as a broken renderer: ${map.caption}",
+            map.caption.contains("could be resolved to a position"),
+        )
+    }
+
+    @Test
+    fun `the map is not drawn when stage 1 names neither a state nor a district`() {
+        val document = build(mapSchema(), mapDraft(mapOf("village" to JsonPrimitive("Barpali"))))
+        assertTrue(
+            "a map of India with no idea which bit of it this workshop happened in is a decoration",
+            document.blocks.filterIsInstance<MapBlock>().isEmpty(),
+        )
+    }
+
+    @Test
+    fun `the venue pin comes from the measured fix and from nothing else`() {
+        // The server's own first branch: a coordinate somebody stood at and captured wins and is
+        // never averaged with anything, so a pin drawn here lands where the office's copy puts it.
+        // Where there is no fix the server geocodes the typed address through a place atlas that is
+        // not on this device, and inventing a pin from the village name would put the two copies of
+        // one report in different places.
+        val fixed = build(
+            mapSchema(),
+            mapDraft(
+                mapOf(
+                    "state" to JsonPrimitive("Odisha"),
+                    "village" to JsonPrimitive("Barpali"),
+                    "venueLocation" to DwValues.geoOf(21.1958, 83.5872),
+                )
+            ),
+        ).blocks.filterIsInstance<MapBlock>().first()
+        assertEquals(1, fixed.points.size)
+        assertEquals("Barpali", fixed.points.first().label)
+        assertEquals(MapPointKind.VENUE, fixed.points.first().kind)
+        assertTrue(
+            "the venue sentence must name the place the RECORD names: ${fixed.caption}",
+            fixed.caption.contains("Workshop venue: Barpali"),
+        )
+
+        // 0,0 is the Gulf of Guinea and is what a form that never obtained a fix writes.
+        val unfixed = build(
+            mapSchema(),
+            mapDraft(
+                mapOf(
+                    "state" to JsonPrimitive("Odisha"),
+                    "village" to JsonPrimitive("Barpali"),
+                    "venueLocation" to DwValues.geoOf(0.0, 0.0),
+                )
+            ),
+        ).blocks.filterIsInstance<MapBlock>().first()
+        assertTrue("a zero fix is not a fix: ${unfixed.points}", unfixed.points.isEmpty())
+    }
+
+    @Test
+    fun `the file says which copy of the report it is`() {
+        // The officer reads the phone's PDF as THE report: same cover, same running foot, a
+        // self-consistent contents page. One line under the cover is what stops a section present in
+        // the office's copy and absent from this one reading as a document somebody altered.
+        val document = build(
+            annexureSchema(),
+            annexureDraft(mapOf("includeTranscripts" to JsonPrimitive(true))),
+            templateId = "DETAILED_TECHNICAL", imageFor = fakeImages,
+        )
+        val printed = printedText(document)
+        assertTrue(
+            "the file does not say it was made on a handset:\n$printed",
+            printed.contains("Generated on a handset in the field on 04 Mar 2026"),
+        )
+        assertTrue(
+            "it must name what the office's copy carries and this one does not:\n$printed",
+            printed.contains("also carries the transcripts of the recordings"),
+        )
+        // And it shortens by itself: with nothing outstanding it states only where the file was made.
+        val nothingOutstanding = build(annexureSchema(), annexureDraft(emptyMap()))
+        assertFalse(
+            "a report with no outstanding section apologised for one anyway:\n" +
+                printedText(nothingOutstanding),
+            printedText(nothingOutstanding).contains("also carries"),
+        )
     }
 
     @Test
