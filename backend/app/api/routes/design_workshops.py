@@ -19,11 +19,30 @@ draft store uses to run its migration.
 requirement is explicit that data is retained, and a designer's two weeks of fieldwork is not
 something a mis-tap should end. Every read filters ``deletedAt: null``; an admin can restore.
 
-**Permissions** follow the repository's existing ladder rather than inventing a second one. A
-contributor may create and edit their own workshops; ``require_workshop_manager`` gates editing
-someone else's; deletion is gated by ``assert_can_delete``. The one addition is that report
-generation is allowed to anyone who can READ the workshop — a report is a view of data the
-caller can already see, and refusing it would only push people to screenshot the screen.
+**Permissions**, as this file actually enforces them — read the four clauses, not the ladder,
+because one of them is not a rank threshold:
+
+* CREATING one needs BOTH ``assert_can_create_records`` (Researcher and above, the repository-wide
+  rule for making any record) AND ``_require_designer``, which is ``can_run_design_workshops`` — a
+  SET, ``{DESIGNER, ADMIN, MASTER_ADMIN}``, not a floor. A PROFESSOR outranks a designer on every
+  other surface in this codebase and still cannot start a workshop. ``PATCH``, every stage write and
+  the two capture aids (OCR and dictation) call ``_require_designer`` ALONE:
+  ``assert_can_create_records`` appears on the create route and nowhere else in this file. No caller
+  gets in that way who would not get in anyway — the designer set sits above Researcher on the
+  ladder, so whatever ``_require_designer`` admits ``can_create_records`` admits too — but which gate
+  is written where is exactly what this header is read for, so it says which.
+* OPENING someone else's is decided entirely by ``load_workshop_or_404``: the creator, an admin, or
+  an account an admin has given a ``DesignWorkshopViewer`` row. A grant carries read AND the stage
+  writes that go through that helper — see ``services/design_workshop_viewers.py`` for what it
+  deliberately does not carry.
+* DELETING is ``assert_can_delete``; restoring is ``require_admin``.
+* GENERATING A REPORT is open to anyone who can READ the workshop — a report is a view of data the
+  caller can already see, and refusing it would only push people to screenshot the screen. The
+  photographs and recordings it EMBEDS are a different question, gated per file by
+  ``owned_or_granted_where`` in ``media_resolver``/``load_transcript_items``.
+
+``require_workshop_manager`` is NOT used here. It belongs to ``api/routes/workshops.py``, a
+different router over a different model.
 """
 
 import asyncio
@@ -63,6 +82,7 @@ from app.schemas.design_workshops import (
     StageSaveIn,
 )
 from app.services.ai import transcribe_audio_bytes
+from app.services.concurrency import gather_reads
 from app.services.cost_integrity import analyse_cost_integrity, cost_findings_payload
 from app.services.design_workshop_viewers import visible_to_clause
 from app.services.design_workshops import (
@@ -94,7 +114,7 @@ from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import contains, enum_filter_or_422, plain
 from app.services.report_docx import DOCX_MIME
 from app.services.report_pdf import PDF_MIME
-from app.services.report_templates import template_choices
+from app.services.report_templates import SpecialSection, template as get_template, template_choices
 from app.services.stage_schema import (
     REF_SCOPE_ALL,
     registry_to_dict,
@@ -406,7 +426,7 @@ async def get_design_workshop(
     summary = workshop_summary(record)
     summary["stages"] = _stages_payload(entries)
     summary["completeness"] = workshop_completeness(entries)
-    summary["transcripts"] = await _transcripts_payload(entries)
+    summary["transcripts"] = await _transcripts_payload(entries, current_user)
     summary["schemaVersion"] = registry_version()
     return summary
 
@@ -481,7 +501,7 @@ async def list_stages(
     return {
         "stages": _stages_payload(entries),
         "completeness": workshop_completeness(entries),
-        "transcripts": await _transcripts_payload(entries),
+        "transcripts": await _transcripts_payload(entries, current_user),
         "schemaVersion": registry_version(),
     }
 
@@ -497,7 +517,7 @@ async def get_stage(
     entries = await entry_rows(workshop_id, stage_key=stage_key)
     payload = _stages_payload(entries).get(stage_key) or {"singleton": {}, "collections": {}}
     payload["completeness"] = workshop_completeness(entries).get(stage_key)
-    payload["transcripts"] = await _transcripts_payload(entries)
+    payload["transcripts"] = await _transcripts_payload(entries, current_user)
     return payload
 
 
@@ -589,7 +609,7 @@ async def list_workshop_transcripts(
     """
     await load_workshop_or_404(workshop_id, current_user)
     entries = await entry_rows(workshop_id)
-    items = await load_transcript_items(entries)
+    items = await load_transcript_items(entries, viewer=current_user)
     payloads = []
     for item in items:
         payload = item.payload()
@@ -713,18 +733,17 @@ async def preview_report(
     traversal of the data would be a fourth renderer, and the first to drift.
     """
     record = await load_workshop_or_404(workshop_id, current_user)
-    data, resolver, load_warnings = await _report_inputs(workshop_id, record)
+    # THE TEMPLATE COMES BACK FROM THE LOAD, THROUGH THE SAME PRECEDENCE EVERY OTHER STAGE-20
+    # SETTING USES. It used to be resolved here as `templateId or record.templateId`, which skipped
+    # the stage-20 answer entirely — so the required, Basic-tier "Report template" picker a designer
+    # had to fill in to satisfy the completeness gate changed nothing about the document it names.
+    # `_report_inputs` now resolves it (see `resolve_template_id`) because it has to know whether
+    # the document draws a map before deciding what to load.
+    data, resolver, load_warnings, template_id = await _report_inputs(
+        workshop_id, record, viewer=current_user, requested_template_id=templateId
+    )
     document, warnings = await asyncio.to_thread(
-        _build_only,
-        data,
-        # THROUGH THE SAME PRECEDENCE EVERY OTHER STAGE-20 SETTING USES. This used to be
-        # `templateId or record.templateId`, which skipped the stage-20 answer entirely — so the
-        # required, Basic-tier "Report template" picker a designer had to fill in to satisfy the
-        # completeness gate changed nothing about the document it names. See
-        # `resolve_template_id`.
-        resolve_template_id(templateId, data.singleton("REPORT_GENERATION"), record),
-        resolver,
-        record,
+        _build_only, data, template_id, resolver, record,
     )
     warnings = list(warnings) + load_warnings
     return {
@@ -758,15 +777,16 @@ async def generate_report(
     """
     record = await load_workshop_or_404(workshop_id, current_user)
     fmt = payload.formats[0]
-    data, resolver, load_warnings = await _report_inputs(
-        workshop_id, record, transcripts=payload.includeTranscripts
-    )
-
-    # The template the file is actually built from, resolved once and used for BOTH the render
-    # and the export row — a recorded export that names a different template from the one in the
-    # file is worse than no record, because the checksum makes it look authoritative.
-    template_id = resolve_template_id(
-        payload.templateId, data.singleton("REPORT_GENERATION"), record
+    # The template the file is actually built from is resolved ONCE, inside `_report_inputs`, and
+    # used for the loads, the render AND the export row — a recorded export that names a different
+    # template from the one in the file is worse than no record, because the checksum makes it
+    # look authoritative.
+    data, resolver, load_warnings, template_id = await _report_inputs(
+        workshop_id,
+        record,
+        viewer=current_user,
+        requested_template_id=payload.templateId,
+        transcripts=payload.includeTranscripts,
     )
     blob, warnings, page_count = await asyncio.to_thread(
         render_report, data, template_id, resolver, record, fmt, payload,
@@ -1017,7 +1037,7 @@ def _export_payload(row: Any) -> dict[str, Any]:
     }
 
 
-async def _transcripts_payload(entries: list[Any]) -> dict[str, Any]:
+async def _transcripts_payload(entries: list[Any], viewer: Any) -> dict[str, Any]:
     """THE TRANSCRIPT COMING BACK ONTO THE STAGE, keyed by the media id the AUDIO field holds.
 
     A designer records an artisan explaining a technique, the media queue transcribes it minutes or
@@ -1027,8 +1047,11 @@ async def _transcripts_payload(entries: list[Any]) -> dict[str, Any]:
     note are five ids in one payload, and the client matches each to the row holding it.
 
     A stage with no audio costs one dictionary and no query.
+
+    ``viewer`` gates it: the transcript is the CONTENT of a recording, so an AUDIO id a client wrote
+    onto a stage is not on its own permission to read one back. See ``load_transcript_items``.
     """
-    items = await load_transcript_items(entries)
+    items = await load_transcript_items(entries, viewer=viewer)
     return {item.media_id: item.payload() | {"text": item.text} for item in items}
 
 
@@ -1094,30 +1117,76 @@ def _stages_payload(entries: list[Any]) -> dict[str, Any]:
 
 
 async def _report_inputs(
-    workshop_id: str, record: Any, *, transcripts: bool | None = None
-) -> tuple[Any, Any, list[str]]:
+    workshop_id: str,
+    record: Any,
+    *,
+    viewer: Any,
+    requested_template_id: Any = None,
+    transcripts: bool | None = None,
+) -> tuple[Any, Any, list[str], str]:
     """Everything the synchronous render needs, loaded on the event loop before it starts.
 
-    The third element is the warnings this loading produced — at present only the transcript
-    annexure's, which has to be reported to the designer rather than shown as a shorter appendix
-    than they expected. It is merged with the builder's own warnings by the caller.
+    The third element is the warnings this loading produced — a transcript annexure shorter than
+    the designer expected, a photograph that could not be resolved — which the caller merges with
+    the builder's own. The fourth is the resolved template id, resolved HERE because the loads
+    below have to know what the document will contain; the callers use it rather than resolving it
+    a second time and risking two answers.
+
+    THREE WAVES, NOT FIVE SEQUENTIAL LOADS, and on this deployment that is the whole cost of the
+    endpoint. The database is in another AWS region and one round trip measured 756ms against
+    queries that execute in under a millisecond (``services/concurrency``), so a fully-referenced
+    workshop paid roughly 6.8s of pure network before the renderer started, and again on Generate.
+    The dependency graph only ever demanded three: the entries, then everything that reads the
+    entries, then the media resolver — which cannot start until ``attach_report_references`` has
+    told it about the photographs hanging off the REFERENCED records rather than off the stages.
+    The three loads in wave 2 write DIFFERENT attributes of ``data`` (``references``,
+    ``district_points``, the transcripts), so gathering them is safe; anything that shared one
+    would have to stay sequential.
+
+    ``viewer`` is threaded through to the two media reads because a media id on a stage is whatever
+    a client wrote there — see ``design_workshops.media_resolver``.
     """
     entries = await entry_rows(workshop_id)
     data = assemble_workshop_data(record, entries)
-    # BEFORE the media resolver, and the order is load-bearing. The referenced records carry
-    # photographs that are not in the entries at all — an artisan's portrait, the catalogue
-    # picture of the product a prototype copied — so the resolver has to be told about them or the
-    # builder places an ImageRef it cannot resolve and the renderer drops it silently. This is
-    # also what fills the map's artisan pins: the home district lives on the Artisan's Location
-    # and nowhere on the roster row.
-    reference_photos = await attach_report_references(data, entries)
-    # Positions for every district the repository can place, so the map draws artisans in their own
-    # districts anywhere in India rather than folding them onto the state capital. Loaded here, with
-    # the references, because the builder may not query — see `attach_district_anchors`.
-    await attach_district_anchors(data)
-    resolver = await media_resolver(entries, extra_ids=reference_photos)
-    warnings = await attach_report_transcripts(data, entries, requested=transcripts)
-    return data, resolver, warnings
+    # RESOLVED BEFORE THE LOADS, because one of them is only worth paying for on some templates.
+    # `resolve_template_id` needs the stage-20 answers, which is why this cannot sit any earlier.
+    template_id = resolve_template_id(
+        requested_template_id, data.singleton("REPORT_GENERATION"), record
+    )
+
+    # `attach_report_references` fills the photographs that are not in the entries at all — an
+    # artisan's portrait, the catalogue picture of the product a prototype copied — and the map's
+    # artisan pins, whose home district lives on the Artisan's Location and nowhere on the roster
+    # row. Its result feeds the resolver, which is what makes it wave 2 and the resolver wave 3.
+    loads: list[Any] = [attach_report_references(data, entries)]
+    # POSITIONS ONLY WHEN SOMETHING DRAWS THEM. This reads every pinned Location in the repository
+    # and folds it across all 795 districts; four of the six templates contain no map at all and
+    # threw the whole result away. The cost tracked the size of the archive rather than the size of
+    # the workshop, on both Preview and Generate. `apply_report_settings` can only REMOVE sections
+    # and MAP is not one of the toggles it removes, so the base template is the right thing to ask.
+    draws_map = any(
+        section.special is SpecialSection.MAP for section in get_template(template_id).sections
+    )
+    if draws_map:
+        loads.append(attach_district_anchors(data))
+    loads.append(
+        attach_report_transcripts(data, entries, viewer=viewer, requested=transcripts)
+    )
+
+    results = await gather_reads(*loads)
+    reference_photos = results[0]
+    warnings = list(results[-1])
+
+    resolver = await media_resolver(entries, viewer=viewer, extra_ids=reference_photos)
+    if resolver.withheld:
+        # NOT SILENT. A photograph that is missing from a report reads as a photograph nobody took;
+        # saying so is what tells a designer to ask the colleague who uploaded it for a data-access
+        # grant instead of re-photographing an artisan who has gone home.
+        warnings.append(
+            f"{len(resolver.withheld)} attached file(s) could not be included: they were "
+            "uploaded by another account, or the file is gone."
+        )
+    return data, resolver, warnings, template_id
 
 
 def _build_only(data: Any, template_id: str, resolver: Any, record: Any) -> tuple[Any, list[str]]:

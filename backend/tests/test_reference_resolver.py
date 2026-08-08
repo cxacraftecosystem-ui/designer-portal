@@ -94,6 +94,23 @@ async def world():
             "sizeBytes": 1024, "bucket": "test", "objectKey": f"artisans/{tag}/latha.jpg",
             "uploadedById": user.id, "artisanId": latha.id,
         })
+        # LATHA IS DELIBERATELY OVER-PHOTOGRAPHED, and mohan's single portrait is deliberately the
+        # NEWEST row of the pair. `_reference_photos` used to read `take=len(ids) * 4` rows ordered
+        # by createdAt across ALL the ids at once, so with two artisans in scope the eight oldest
+        # rows — every one of them latha's — consumed the whole budget and mohan hydrated with no
+        # photo at all. See `test_a_heavily_photographed_artisan_does_not_starve_the_next_one`.
+        for index in range(12):
+            await db.mediafile.create(data={
+                "originalFilename": f"latha-{index}.jpg", "mediaType": "IMAGE",
+                "mimeType": "image/jpeg", "sizeBytes": 1024, "bucket": "test",
+                "objectKey": f"artisans/{tag}/latha-extra-{index}.jpg",
+                "uploadedById": user.id, "artisanId": latha.id,
+            })
+        await db.mediafile.create(data={
+            "originalFilename": "mohan.jpg", "mediaType": "IMAGE", "mimeType": "image/jpeg",
+            "sizeBytes": 1024, "bucket": "test", "objectKey": f"artisans/{tag}/mohan.jpg",
+            "uploadedById": user.id, "artisanId": mohan.id,
+        })
 
         products: dict[str, object] = {}
         # FINISHED_GOOD is deliberate: it is a ProductType with no honest counterpart in the
@@ -241,6 +258,25 @@ async def test_the_workshop_scope_offers_the_artisans_in_the_room(client, linked
     assert world["latha"].name in labels
     assert world["mohan"].name in labels
     assert world["outsider"].name not in labels
+
+
+async def test_a_heavily_photographed_artisan_does_not_starve_the_next_one(client, linked, world):
+    """ONE PHOTOGRAPH PER PARENT, not one budget shared between the parents.
+
+    `_reference_photos` used to ask for `take=len(ids) * 4` rows ordered by `createdAt asc` across
+    every id at once. Two artisans in scope meant eight rows for both of them, and latha's thirteen
+    older pictures took all eight — so mohan, whose only portrait is the NEWEST row in the pair,
+    came back with `photo` empty. In a roster of forty that is a report printed for a visiting
+    officer with faces missing for people whose portraits sit one join away in the media table, and
+    re-saving the stage never fixed it because the same rows won the budget every time. It rendered
+    cleanly, which is why it survived.
+    """
+    options = _refs(client, linked, model="Artisan", scope="WORKSHOP", search=world["tag"])["options"]
+    photos = {o["label"]: o["data"].get("photo") for o in options}
+    assert photos.get(world["latha"].name), "the over-photographed artisan lost her portrait"
+    assert photos.get(world["mohan"].name), (
+        "the artisan photographed most recently was starved of the shared budget"
+    )
 
 
 async def test_the_roster_picker_sees_the_whole_table(client, linked, world):

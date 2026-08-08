@@ -277,6 +277,18 @@ class _Votes:
         return (self.latitude / self.count, self.longitude / self.count)
 
 
+#: How many ``Location`` rows may be read to LEARN where districts are.
+#:
+#: Stated here rather than in a route because there are now TWO readers — ``/map`` and the design
+#: workshop report's ``attach_district_anchors`` — and a cap that differs between them would place
+#: the same district in two positions in two products of the same data. Only rows carrying a subject
+#: pin are read, which is a small subset; the cap means a repository of a million locations degrades
+#: into anchors learned from the first few thousand pins rather than into a request that never
+#: returns. Degrading is safe because an anchor is a MEAN: rows past the cap refine a position, they
+#: do not create it, and the atlas seed survives underneath.
+MAX_ANCHOR_ROWS = 5000
+
+
 class DistrictAnchors:
     """Where each district IS, as far as this repository can tell.
 

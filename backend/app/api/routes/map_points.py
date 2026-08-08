@@ -62,6 +62,7 @@ from app.core.db import db
 from app.core.deps import get_current_user
 from app.services.concurrency import gather_reads
 from app.services.geography import (
+    MAX_ANCHOR_ROWS,
     PRECISION_SUBJECT_PIN,
     SOURCE_PLACE_TEXT,
     SOURCE_SUBJECT_PIN,
@@ -151,11 +152,10 @@ _MAX_CAPTURE_POINTS = 4000
 # A Location row is small — no long text, no blobs — so this bound is about the wire, not memory.
 _MAX_LOCATION_ROWS = 20000
 
-# How many ``Location`` rows are read to LEARN where districts are (see
-# ``geography.DistrictAnchors``). Only rows that actually carry a subject pin are read, which is a
-# small subset — and the cap means a repository of a million locations degrades into anchors learned
-# from the first few thousand pins rather than into a request that never returns.
-_MAX_ANCHOR_ROWS = 5000
+# How many ``Location`` rows are read to LEARN where districts are. Owned by
+# ``geography.MAX_ANCHOR_ROWS`` because the design-workshop report learns anchors from the same
+# table, and two caps would place one district in two positions on two products of the same data.
+_MAX_ANCHOR_ROWS = MAX_ANCHOR_ROWS
 
 # Record stubs returned when a caller opens one pin. A pin is a way IN to the records, not a second
 # list view — past this many the panel links to Browse records with the same filters applied.
