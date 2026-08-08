@@ -1038,6 +1038,52 @@ class ReportTemplateDocumentTest {
     }
 
     @Test
+    fun `the tinted state is keyed by the canonical name the rasteriser can seed`() {
+        // WHAT THIS PINS — AND, JUST AS IMPORTANTLY, WHAT IT DOES NOT. `highlight` is not a
+        // caption, it is a LOOKUP KEY into the 36-entry STATE_SEATS table: `ReportMap.tintStates`
+        // (ReportMap.kt:556) resolves each name to a seat and floods the map from that pixel.
+        //
+        // IT IS THE FIRST OF TWO NETS, NOT THE ONLY ONE, and recording it as the only one here is
+        // exactly how the second gets deleted as dead. `tintStates` seeds from
+        // `canonicalState(name) ?: name` (ReportMap.kt:569) and the server's
+        // `report_map._tint_states` does the identical `canonical_state(name) or name`, so a raw
+        // "Orissa" that reached either rasteriser would still tint Odisha. What this test holds is
+        // the BUILDER's half: the block this handset constructs must equal the block
+        // `report_builder._render_map` constructs for the same workshop, so neither half can be
+        // dropped on the belief that the other already covers it.
+        //
+        // AND ONE VISIBLE THING DOES RIDE ON THE BUILDER'S HALF. Both rasterisers report a failed
+        // fill using the RAW name out of `highlight` and never the canonical one — ReportMap.kt:572
+        // and :579, `missed.append(name)` on the server — and that list is printed on the figure as
+        // "Not tinted: …". So on the fills that do fail (a seat pixel an earlier state already
+        // took, or the 25%-of-land escape budget) an un-canonicalised builder makes the handset's
+        // copy name a state the office's copy names differently, on a figure whose tinted region is
+        // its ENTIRE content, because no fix and no atlas means there is no pin.
+        //
+        // AND THE SPELLING IS REAL. The state column predates its validator and is nullable, so
+        // rows holding "Orissa" and "Pondicherry" exist in the data; that is why `address._ALIASES`
+        // exists on the server and why `canonicalState` ports it. Nothing asserted the builder
+        // actually routes stage 1's typed answer through it.
+        val alias = build(mapSchema(), mapDraft(mapOf("state" to JsonPrimitive("  orissa "))))
+            .blocks.filterIsInstance<MapBlock>().first()
+        assertEquals(
+            "a spelling that is in the data must reach the block canonicalised, exactly as the " +
+                "server's `canonical_state(state) or state` leaves it",
+            setOf("Odisha"),
+            alias.highlight,
+        )
+
+        // An unrecognised name is carried through AS TYPED, matching the server's
+        // `canonical_state(state) or state`. It cannot tint on either surface — there is no seat
+        // for it and neither rasteriser can invent one — and both NAME it on the figure. Dropping
+        // it instead would leave a reader attributing an untinted map to the data rather than to a
+        // state nobody can resolve.
+        val unknown = build(mapSchema(), mapDraft(mapOf("state" to JsonPrimitive("Atlantis"))))
+            .blocks.filterIsInstance<MapBlock>().first()
+        assertEquals(setOf("Atlantis"), unknown.highlight)
+    }
+
+    @Test
     fun `the file says which copy of the report it is`() {
         // The officer reads the phone's PDF as THE report: same cover, same running foot, a
         // self-consistent contents page. One line under the cover is what stops a section present in
