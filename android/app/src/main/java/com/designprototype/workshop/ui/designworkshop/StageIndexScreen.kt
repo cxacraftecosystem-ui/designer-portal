@@ -299,15 +299,25 @@ private fun WorkshopSearchPanel(
     onOpenHit: (DwWorkshopSearchHit) -> Unit,
 ) {
     /*
-     * KEYED ON THE INDEX, exactly as every other piece of state on this screen is keyed on the
-     * workshop id, and for the same failure. This composable is one `when` branch of [MainActivity]'s
-     * navigation, so opening a second workshop re-enters the SAME call site: an unkeyed `remember`
-     * would keep the word typed against the previous workshop sitting in the box while the results
-     * beneath it were rebuilt from a different draft — a query the designer never typed here,
-     * answered honestly, which reads as the search having found the wrong workshop's answers.
-     * [DwWorkshopSearch.buildIndex] and `emptyIndex()` both mint a fresh instance, so this resets on
-     * a new workshop and — because the panel is not drawn until `loading` is false — never clears
-     * mid-word within one.
+     * KEYED, exactly as every one of the seven state slots above is keyed on the workshop id.
+     *
+     * EVERY DESTINATION IN THIS PART OF THE APP RENDERS THROUGH ONE COMPOSITION SLOT. [MainActivity]
+     * says so itself where it wraps `rememberScrollState` in `key(screen)`, having shipped that bug
+     * once: two screens of the same `when` branch share every unkeyed `remember` inside it, and a
+     * form left half-scrolled opened the next one already past its own first fields.
+     *
+     * A SECOND WORKSHOP CANNOT REACH THAT TODAY, and the guard is here anyway. The only route to one
+     * is `WorkshopListScreen`'s `onOpen`, which means passing through the workshop LIST — a different
+     * branch of the same `when`, so this subtree is torn down and every `remember` in it forgotten on
+     * the way. What keys buy is that the box cannot outlive the draft under it should any of the four
+     * routes into this screen ever set a second workshop id directly: an unkeyed `remember` would
+     * then leave the word typed against the previous workshop in the box while the results beneath it
+     * were rebuilt from a different draft — a query the designer never typed, answered honestly.
+     *
+     * ON THE INDEX rather than on `workshopId`, which this composable is not given.
+     * [DwWorkshopSearch.buildIndex] and `emptyIndex()` both mint a fresh instance, so it resets on a
+     * new workshop; and because the panel is not drawn until `loading` is false, the one rebuild that
+     * happens within a workshop happens before there is a box to clear.
      */
     var query by remember(index) { mutableStateOf("") }
     /*

@@ -10,6 +10,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -291,6 +292,80 @@ class DwWorkshopSearchTest {
         // that exists in no language, and one no query could ever reach.
         assertEquals("ରଙ୍ଗ", DwWorkshopSearch.foldForSearch("ରଙ୍ଗ"))
         assertEquals("ଘନଶ୍ୟାମ ମେହେର", DwWorkshopSearch.foldForSearch("ଘନଶ୍ୟାମ ମେହେର"))
+    }
+
+    /**
+     * The Odia letter DDA-with-NUKTA has TWO spellings in Unicode, and both are typed in the field.
+     *
+     * U+0B5C is the single letter most Odia keyboards emit. U+0B21 U+0B3C is the same letter written
+     * as DDA plus the NUKTA, which is what a transliteration tool and several Android IMEs emit.
+     * They are different strings and nothing in this module ever compares them directly -- NFKD is
+     * the only reason they are one word, because U+0B5C's canonical decomposition IS that pair. It is
+     * a composition exclusion, so no normal form ever puts it back together and the fold only ever
+     * has to go one way. The same holds for U+0B5D (DDHA + NUKTA).
+     *
+     * THE THREE CASES BELOW SPELL THEIR ODIA AS `\uXXXX` ESCAPES AND NOT AS GLYPHS, alone in this
+     * file. The two spellings are indistinguishable in every editor and in every diff, so a glyph
+     * here would be a test whose entire subject is invisible in its own source -- and one that an
+     * editor, a `git` filter or a helpful normalise-on-save could quietly turn into an assertion that
+     * a string equals itself. Every other case in this file is about a word, and spells it as a word.
+     */
+    @Test
+    fun `an Odia letter spelled the two ways a keyboard spells it is ONE word to this box`() {
+        val precomposed = "\u0B17\u0B3E\u0B5C"        // gaada: GA, AA, RRA
+        val decomposed = "\u0B17\u0B3E\u0B21\u0B3C"   // gaada: GA, AA, DDA, NUKTA
+        assertFalse("this test means nothing if the two spellings are one string", precomposed == decomposed)
+        assertEquals(
+            DwWorkshopSearch.foldForSearch(decomposed),
+            DwWorkshopSearch.foldForSearch(precomposed),
+        )
+        assertEquals(DwWorkshopSearch.tokenise(decomposed), DwWorkshopSearch.tokenise(precomposed))
+
+        // ...and the NUKTA survives the fold. It is the one Indic mark no fixture in this file
+        // contains, because it is in none of them until NFKD introduces it -- which is exactly how a
+        // fold widened from U+0300-U+036F to `\p{M}` would pass every other case here and still merge
+        // the two different words GA AA RRA and GA AA DDA, on a workshop nobody would re-check.
+        assertNotEquals(
+            DwWorkshopSearch.foldForSearch("\u0B17\u0B3E\u0B21"),
+            DwWorkshopSearch.foldForSearch(precomposed),
+        )
+    }
+
+    @Test
+    fun `a value typed with one spelling of a nukta letter is found by a query typed with the other`() {
+        // The stored value uses the single-letter spelling and the query uses DDA + NUKTA -- the
+        // designer who typed the loom's name into stage 5 last week on one keyboard and searches for
+        // it this week on another. The assertion on the HIGHLIGHT is the load-bearing half: what is
+        // quoted back is the value as STORED, so one code point folded to TWO units here and the
+        // offset map is being read in the Indic direction of the hazard
+        // `a character that folds to two units` states with the ligature fi. That ligature will never
+        // appear in this corpus; this letter is in the name of the loom the fixture is built around.
+        val hit = onlyHitOver("\u0B17\u0B3E\u0B5C \u0B24\u0B28\u0B4D\u0B24", "\u0B17\u0B3E\u0B21\u0B3C")
+        assertEquals("[\u0B17\u0B3E\u0B5C] \u0B24\u0B28\u0B4D\u0B24", marked(hit))
+    }
+
+    @Test
+    fun `a nukta letter earlier in the value does not slide the highlight off a later word`() {
+        // The other direction of the same map, and the silent one: the fold of that letter is one
+        // unit LONGER than the text it came from, so every offset after it must be pushed twice or
+        // the highlight walks one character left for the rest of the value. `an astral character does
+        // not slide the highlight off the word after it` says this with an emoji, which a designer
+        // may never type; this is the character they type in the first field of stage 5.
+        val hit = onlyHitOver("\u0B17\u0B3E\u0B5C \u0B24\u0B28\u0B4D\u0B24 loom", "loom")
+        assertEquals("\u0B17\u0B3E\u0B5C \u0B24\u0B28\u0B4D\u0B24 [loom]", marked(hit))
+    }
+
+    @Test
+    fun `a query that mixes a transliteration and the script itself ANDs across both`() {
+        // How a bilingual designer actually searches: the word they remember in Latin and the word
+        // they remember in Odia, in one box. Both alternatives of the tokeniser inside ONE query, and
+        // the AND merge across them — rules this file states separately and nowhere states together.
+        val hit = only("gada ତନ୍ତ")
+        assertEquals("localName", hit.fieldKey)
+        assertEquals(
+            "[Gada] tanta (ଗାଡ଼ [ତନ୍ତ])",
+            marked(hit),
+        )
     }
 
     @Test
