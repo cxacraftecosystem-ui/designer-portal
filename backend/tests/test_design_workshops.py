@@ -579,3 +579,34 @@ def test_non_ascii_is_replaced_rather_than_raising_inside_starlette():
     header = _header(["Craft ସମ୍ବଲପୁରୀ has no cost sheet."])
     assert header.isascii()
     assert "has no cost sheet." in header
+
+
+def test_a_semicolon_inside_a_warning_does_not_split_it_on_the_designers_screen():
+    """PACKING WHOLE WARNINGS IS ONLY HALF OF "never a fragment". This is the other half.
+
+    ``";"`` is this header's separator and ``frontend/lib/designWorkshops.ts`` splits the value on
+    it, so a semicolon inside a warning is indistinguishable from the boundary between two.
+
+    MEASURED AGAINST THE RUNNING SERVER, not imagined: ``questionnaire_warnings`` interpolates the
+    questionnaire's TITLE, which a designer types. A form called "Loom survey; round two" sent
+    ``x-report-warning-count: 2`` with nothing truncated, and the report screen showed THREE
+    warnings, the last of them ``"round two)."`` — the sentence saying a whole annexure is missing
+    from the file, delivered as two halves, one of which means nothing alone.
+
+    The assertion is the FRONTEND's split — ``";"``, not ``"; "`` — because what is being pinned is
+    what the designer reads, not what the header contains.
+    """
+    typed_by_a_designer = (
+        "1 questionnaire(s) attached to this workshop have no recorded answers and were left out "
+        "of the questionnaire annexure (Loom survey; round two)."
+    )
+    header = _header([typed_by_a_designer, "Stage 3 (Workshop Plan): 1 required field(s)."])
+
+    pieces = [piece.strip() for piece in header.split(";") if piece.strip()]
+    assert len(pieces) == 2, (
+        f"two warnings reached the designer as {len(pieces)} pieces, so at least one of them is a "
+        f"half-sentence: {pieces}"
+    )
+    assert pieces[0].endswith("(Loom survey, round two).")
+    # The pause the designer wrote survives as a comma rather than being deleted outright.
+    assert "round two" in pieces[0]

@@ -1325,14 +1325,37 @@ def _warnings_header(warnings: list[str]) -> str:
     compares the two can tell that it is not holding the whole list, and a client that ignores the
     header entirely still gets the count right.
 
+    ONE WARNING IS ONE PIECE, and the packing is only half of what makes that true — the other half
+    is :func:`one_piece` below, because a semicolon inside a warning splits it just as effectively
+    as truncation did.
+
     Non-ASCII is replaced rather than dropped for the reason :func:`_content_disposition` exists:
     every ASGI header value is encoded latin-1, so a warning naming a craft in Odia would raise
     inside Starlette after the handler returned and turn a generated report into a bare 500.
     """
-    def ascii_only(value: str) -> str:
-        return str(value).encode("ascii", "replace").decode("ascii")
+    def one_piece(value: str) -> str:
+        """One warning as exactly ONE piece of this header, whatever text it carries.
 
-    items = [ascii_only(w) for w in warnings if str(w).strip()]
+        ``";"`` is this header's item separator and ``frontend/lib/designWorkshops.ts`` splits the
+        value on it, so a semicolon INSIDE a warning is indistinguishable from the boundary between
+        two — and the packing above, which exists so the designer never reads a fragment, cannot
+        help with a fragment the content itself creates.
+
+        MEASURED, NOT IMAGINED. ``report_questionnaires.questionnaire_warnings`` interpolates the
+        questionnaire's TITLE, which a designer types. A form called "Loom survey; round two"
+        produced ``x-report-warning-count: 2`` and THREE pieces on the screen, the last of them
+        ``"round two)."`` — a warning that a whole annexure is missing from the report, delivered as
+        two half-sentences, one of which means nothing on its own.
+
+        A comma rather than a deletion because the semicolon is doing work in the sentence a
+        designer wrote, and losing the pause reads worse than shifting it. See :func:`_dropped_note`
+        for the same constraint stated from the other side.
+
+        Non-ASCII is replaced first, for the reason in this function's own docstring.
+        """
+        return str(value).encode("ascii", "replace").decode("ascii").replace(";", ",")
+
+    items = [one_piece(w) for w in warnings if str(w).strip()]
     if not items:
         return ""
 
