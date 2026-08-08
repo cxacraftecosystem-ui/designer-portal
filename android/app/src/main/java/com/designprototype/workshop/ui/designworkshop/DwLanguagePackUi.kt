@@ -508,14 +508,26 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
             }
         }
 
-        // ---- The nineteen ---------------------------------------------------------------------
+        /*
+         * ---- The nineteen ----------------------------------------------------------------------
+         *
+         * A row is tickable only where a download could actually be started for it, and "already
+         * asked for in this sitting" counts as cannot: `controller.requests` holds one note per
+         * language and the row shows it. Leaving such a row tickable would put a second Download
+         * button beside a pack that is already coming, which on a prepaid bundle in a district town
+         * is how one file gets paid for twice. The state list itself only turns DOWNLOADING once the
+         * platform admits the request, which on Android 13 it never does.
+         */
+        val askable = DW_DICTATION_LANGUAGES.filter { language ->
+            dwPackOffer(states[language.tag] ?: DwPackState.UNKNOWN, controller.connection) == DwPackOffer.DOWNLOAD &&
+                controller.requests[language.tag] == null
+        }
         DW_DICTATION_LANGUAGES.forEach { language ->
             val state = states[language.tag] ?: DwPackState.UNKNOWN
-            val offer = dwPackOffer(state, controller.connection)
             DwLanguagePackRow(
                 label = language.label,
                 state = state,
-                selectable = offer == DwPackOffer.DOWNLOAD,
+                selectable = language in askable,
                 checked = language.tag in selected,
                 note = controller.requests[language.tag],
                 onCheckedChange = { ticked ->
@@ -525,9 +537,7 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
         }
 
         // ---- What it costs, said BEFORE the button ---------------------------------------------
-        val downloadable = DW_DICTATION_LANGUAGES.count {
-            dwPackOffer(states[it.tag] ?: DwPackState.UNKNOWN, controller.connection) == DwPackOffer.DOWNLOAD
-        }
+        val downloadable = askable.size
         val missingButOffline = controller.connection == DwConnection.NONE &&
             DW_DICTATION_LANGUAGES.any { states[it.tag] == DwPackState.DOWNLOADABLE }
         // A list with no button under it must say WHY there is no button, or it reads as a list that
@@ -569,8 +579,10 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
             if (downloadable > 0) {
                 Button(
                     onClick = {
-                        DW_DICTATION_LANGUAGES.filter { it.tag in selected }
-                            .forEach { controller.ask(it.tag, it.label) }
+                        // Over `askable`, not over the whole list: a tick left behind on a row that
+                        // has since been requested (or has since arrived) must not send a second
+                        // request for the same pack.
+                        askable.filter { it.tag in selected }.forEach { controller.ask(it.tag, it.label) }
                         selected = emptySet()
                     },
                     enabled = selected.isNotEmpty(),
