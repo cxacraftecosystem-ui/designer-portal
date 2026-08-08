@@ -1599,14 +1599,38 @@ class WorkshopRepository(
      * form pickers use — it also counts an artisan who merely sat in an interview taken at the
      * workshop — so this list and the completion matrix agree about who was there.
      */
+    /**
+     * ============================================================================================
+     * [createdBy] — WHOSE RECORDS. IT MUST BE ASKED OF THE SERVER, NEVER SIFTED OUT OF THE ANSWER.
+     * ============================================================================================
+     *
+     * Every list function here takes ONE page of a hundred rows. That was indistinguishable from
+     * "all of them" while reading the repository was owner-scoped, so a caller wanting its own
+     * records could fetch a page and filter it client-side and be right by accident.
+     *
+     * READING IS OPEN NOW — `backend/app/services/records.py::viewable_where` returns an empty
+     * `where` with the comment "everything, for every signed-in account". Page one is therefore a
+     * hundred rows of the WHOLE repository, ordered newest-first, and a caller's own records are on
+     * it only if they happen to be among the hundred most recent things anyone recorded.
+     *
+     * MEASURED against http://localhost:8000 as designer@example.org (2026-08): 431 artisans and 854
+     * media rows exist; page one of each holds 100 rows from 34 and 18 distinct creators
+     * respectively, and NONE of them are this designer's — while `?createdBy=<me>` returns their
+     * true total of 1 artisan and `?uploadedBy=<me>` their 1 media file. A client-side filter over
+     * page one answers "you have recorded nothing" to someone who has, which reads as data loss on a
+     * handset that is the only copy until it syncs.
+     *
+     * So the ownership test belongs in the query. Callers that want everyone's rows keep passing
+     * null and are unaffected.
+     */
     suspend fun artisans(workshopIds: List<String>? = null, createdBy: String? = null): List<ArtisanDto> =
-        api.artisans(pageSize = 100, workshopIds = workshopIds.toQueryCsv(), createdBy = createdBy).items
+        api.artisans(pageSize = 100, workshopIds = workshopIds.toQueryCsv(), createdBy = createdBy?.blankToNull()).items
 
     suspend fun crafts(createdBy: String? = null): List<CraftDto> =
-        api.crafts(pageSize = 100, createdBy = createdBy).items
+        api.crafts(pageSize = 100, createdBy = createdBy?.blankToNull()).items
 
     suspend fun products(createdBy: String? = null): List<ProductDetailDto> =
-        api.products(pageSize = 100, createdBy = createdBy).items
+        api.products(pageSize = 100, createdBy = createdBy?.blankToNull()).items
 
     /**
      * Products the server links to a given artisan. Covers datasets with >100 total products, and —
@@ -1618,7 +1642,7 @@ class WorkshopRepository(
         api.products(pageSize = 100, artisanId = artisanId, artisanName = artisanName?.trim()?.ifBlank { null }).items
 
     suspend fun tools(createdBy: String? = null): List<ToolDetailDto> =
-        api.tools(pageSize = 100, createdBy = createdBy).items
+        api.tools(pageSize = 100, createdBy = createdBy?.blankToNull()).items
 
     /** Artisans a tool is assigned to (many-to-many). */
     suspend fun toolArtisans(toolId: String): List<ArtisanDto> = api.toolArtisans(toolId)
@@ -1630,7 +1654,7 @@ class WorkshopRepository(
     suspend fun unassignToolArtisan(toolId: String, artisanId: String) = api.unassignToolArtisan(toolId, artisanId)
 
     suspend fun workshops(createdBy: String? = null): List<WorkshopDetailDto> =
-        api.workshops(pageSize = 100, createdBy = createdBy).items
+        api.workshops(pageSize = 100, createdBy = createdBy?.blankToNull()).items
 
     /**
      * The workshops this user can SEE — `GET /workshops` is scoped by row visibility — ordered by
@@ -1696,8 +1720,21 @@ class WorkshopRepository(
 
     suspend fun media(): List<MediaFileDto> = api.media(pageSize = 20).items
 
-    /** A broader media list for the View Data "Miscellaneous Media" browser (most recent first). */
-    suspend fun mediaList(): List<MediaFileDto> = api.media(pageSize = 100).items
+    /**
+     * A broader media list for the View Data "Miscellaneous Media" browser (most recent first), and
+     * — with [uploadedBy] — the Media half of My Activity.
+     *
+     * [uploadedBy] is media's owner column and it is NOT `createdBy`: MediaFile owns its rows through
+     * `uploadedById` while every other record uses `createdById`, and the query key follows the column
+     * on both sides of the wire. Spelling this one `createdBy` would be ignored by the API and hand
+     * back the whole repository, which is the exact failure asking the server is meant to prevent.
+     *
+     * Asked for by name rather than sifted out of the answer, for the reason set out on [artisans]:
+     * reading media is open, so page one is the newest hundred rows of the whole archive and a
+     * client-side filter silently reports that a designer has uploaded nothing.
+     */
+    suspend fun mediaList(uploadedBy: String? = null): List<MediaFileDto> =
+        api.media(pageSize = 100, uploadedBy = uploadedBy?.blankToNull()).items
 
     /** One media file by id, for the View Data media detail. */
     suspend fun mediaItem(id: String): MediaFileDto = api.getMedia(id)
@@ -1979,7 +2016,7 @@ class WorkshopRepository(
         api.media(pageSize = 100, linkedRecordType = linkedRecordType, linkedRecordId = linkedRecordId).items
 
     suspend fun processes(createdBy: String? = null): List<ProcessDetailDto> =
-        api.processes(pageSize = 100, createdBy = createdBy).items
+        api.processes(pageSize = 100, createdBy = createdBy?.blankToNull()).items
 
     suspend fun process(id: String): ProcessDetailDto = api.process(id)
 
@@ -2045,18 +2082,8 @@ class WorkshopRepository(
         api.createQuestionnaireInterview(body)
 
     suspend fun interviews(createdBy: String? = null): List<QuestionnaireInterviewDetailDto> =
-        api.interviews(pageSize = 100, createdBy = createdBy).items
+        api.interviews(pageSize = 100, createdBy = createdBy?.blankToNull()).items
 
-    /**
-     * Media this user UPLOADED, newest first — the Media half of My Activity.
-     *
-     * `uploadedBy` rather than `createdBy` because MediaFile owns its rows through `uploadedById`;
-     * the query key follows the column. Asked for by name for the reason spelled out on
-     * [WorkshopRepositoryApi.artisans]: reading media is open, so page one is the newest hundred
-     * rows of the whole archive and a client-side sift silently reports nothing.
-     */
-    suspend fun mediaUploadedBy(userId: String): List<MediaFileDto> =
-        api.media(pageSize = 100, uploadedBy = userId).items
 
     suspend fun interview(id: String): QuestionnaireInterviewDetailDto = api.interview(id)
 

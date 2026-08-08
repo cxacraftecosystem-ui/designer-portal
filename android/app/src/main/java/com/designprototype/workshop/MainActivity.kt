@@ -320,6 +320,7 @@ import com.designprototype.workshop.data.WorkshopMappingPlanDto
 import com.designprototype.workshop.data.WorkshopSubmissionCheckDto
 import com.designprototype.workshop.data.titleCasePreview
 import androidx.compose.runtime.DisposableEffect
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
@@ -8007,65 +8008,94 @@ private data class ActivityItem(
     val id: String,
     val title: String,
     val subtitle: String,
-    val createdAt: String?,
-    /**
-     * False = show the row, do not offer to open it. Media is the only such type: [EditScreen] is a
-     * `when (mode)` over the editable record forms and has no MEDIA branch, so routing a tap there
-     * would land the designer on a blank screen. The web draws every activity row as plain text for
-     * the same reason, linking only the group.
-     */
-    val openable: Boolean = true
+    val createdAt: String?
 )
 
 /**
- * Gather the current user's own records across every type, newest first (ISO timestamps sort lexically).
+ * What one pass over the eight lists produced: the rows, and how many of the lists never answered.
  *
- * OWNERSHIP IS ASKED FOR, NOT SIFTED FOR. Each list is fetched with `createdBy` (`uploadedBy` for
- * media) so the server returns this designer's rows and nothing else. Sifting page one client-side —
- * which is what this did — silently under-reports, because reading the repository is open and page
- * one is the newest hundred rows of the WHOLE archive. MEASURED against the running API as
- * designer@example.org: /api/artisans total=431 with page one spanning 34 distinct creators and NOT
- * ONE of that designer's own; /api/media total=854 across 18 uploaders, likewise none. Both of that
- * designer's two records were invisible and the screen said "You haven't recorded anything yet."
- *
- * The client-side `mine` filter below is KEPT deliberately: it costs nothing, and against an older
- * deployment that ignores the new query parameter it is the difference between an over-long list and
- * a wrong one. The web says the same thing at frontend/app/(protected)/activity/page.tsx.
+ * [failedLists] is the whole reason this is not just a `List<ActivityItem>`. Every list here is a
+ * separate request, all eight of them network-only, and the screen is opened in a courtyard. An
+ * empty result means "you have recorded nothing" ONLY when every list actually answered; when they
+ * did not, the same emptiness means "this phone could not ask". Those two sentences send a designer
+ * in opposite directions — one to record the work again, one to find signal — so the screen is given
+ * the number it needs to tell them apart instead of being left to guess.
  */
-private suspend fun loadMyActivity(repository: WorkshopRepository, userId: String): List<ActivityItem> {
+private data class MyActivityResult(val items: List<ActivityItem>, val failedLists: Int, val totalLists: Int) {
+    /** Nothing answered at all: the honest reading is "offline", not "you have nothing". */
+    val allFailed: Boolean get() = failedLists == totalLists
+}
+
+/**
+ * Gather the current user's own records across every type, newest first (ISO timestamps sort
+ * lexically).
+ *
+ * THE OWNERSHIP TEST IS IN THE QUERY, and the client-side `mine(...)` filter below is KEPT on top of
+ * it deliberately — see the block comment on [WorkshopRepository.artisans] for the measurement.
+ * Asking the server costs nothing extra, and against a deployment older than the `createdBy`
+ * parameter the surviving client-side filter is the difference between an over-long list and a
+ * wrong one. The web page this mirrors keeps both for the same reason
+ * (frontend/app/(protected)/activity/page.tsx).
+ */
+private suspend fun loadMyActivity(repository: WorkshopRepository, userId: String): MyActivityResult {
     val items = mutableListOf<ActivityItem>()
+    var failed = 0
+    var total = 0
     fun mine(createdById: String?) = createdById != null && createdById == userId
-    runCatching { repository.artisans(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    // Each list is attempted independently: one type failing must not cost the designer the seven
+    // that answered, which is why this is not a single try around the lot. `suspend` on the local
+    // function is what lets the repository calls stay inside it.
+    //
+    // CANCELLATION IS RETHROWN, NOT COUNTED. `runCatching` catches Throwable, and a coroutine
+    // cancelled because the designer left this screen arrives as one. Swallowing it here would do
+    // two wrong things at once: bump [failed] so a screen nobody is looking at reasons about a
+    // "failure" that never happened, and — worse on a village uplink — let the remaining seven
+    // requests fire anyway, since the loop would keep walking after the scope was already dead.
+    // Same rule as ui/ConsolidatedQuestionnaireScreen.kt:276.
+    suspend fun <T> attempt(block: suspend () -> List<T>): List<T> {
+        total++
+        return try {
+            block()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            failed++
+            emptyList()
+        }
+    }
+    attempt { repository.artisans(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.ARTISAN, it.id, it.name, "Artisan · ${it.place}", it.createdAt)) }
-    runCatching { repository.products(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.products(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.PRODUCT, it.id, it.productName, "Product · ${it.craftName}", it.createdAt)) }
-    runCatching { repository.tools(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.tools(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.TOOL, it.id, it.toolkitName, "Tool · ${it.craftName}", it.createdAt)) }
-    runCatching { repository.processes(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.processes(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.PROCESS, it.id, it.name, "Process" + (it.product?.productName?.let { p -> " · $p" } ?: ""), it.createdAt)) }
-    runCatching { repository.crafts(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.crafts(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.CRAFT, it.id, it.name, "Craft", it.createdAt)) }
-    runCatching { repository.workshops(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.workshops(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.WORKSHOP, it.id, it.title.ifBlank { "Untitled workshop" }, "Workshop", it.createdAt)) }
-    runCatching { repository.interviews(createdBy = userId) }.getOrDefault(emptyList()).filter { mine(it.createdById) }
+    attempt { repository.interviews(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.QUESTIONNAIRE, it.id, it.title.ifBlank { "Untitled interview" }, "Interview", it.createdAt)) }
-    // Media was missing entirely while "Upload media" has always been an entry on this app's own
-    // menu (AppNavigation.kt), so a designer's uploads were recorded by a control they can press and
-    // then reported nowhere. `uploadedBy` because MediaFile owns its rows through `uploadedById`.
-    runCatching { repository.mediaUploadedBy(userId) }.getOrDefault(emptyList()).filter { mine(it.uploadedBy?.id) }
-        .forEach {
+    // MEDIA, which this list used to omit entirely while the menu carried an "Upload media" entry —
+    // so a designer's uploads were the one thing they could create and then never find again here.
+    // Media owns its uploader through `uploadedById`, not `createdById`, on BOTH sides of the wire.
+    // Tapping a row lands on the media viewer (EditScreen routes EntryMode.MEDIA to ViewDataDetail),
+    // which is where the app already opens a media file from search.
+    attempt { repository.mediaList(uploadedBy = userId) }.filter { it.uploadedBy?.id == userId }
+        .forEach { media ->
+            val tag = media.linkedRecordType?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
             items.add(
                 ActivityItem(
                     EntryMode.MEDIA,
-                    it.id,
-                    it.originalFilename,
-                    "Media · ${it.mediaType.lowercase().replaceFirstChar { c -> c.uppercase() }}",
-                    it.createdAt,
-                    openable = false
+                    media.id,
+                    media.originalFilename.ifBlank { "Media" },
+                    listOfNotNull("Media", media.mediaType.takeIf { it.isNotBlank() }, tag).joinToString(" · "),
+                    media.createdAt
                 )
             )
         }
-    return items.sortedByDescending { it.createdAt ?: "" }
+    return MyActivityResult(items.sortedByDescending { it.createdAt ?: "" }, failedLists = failed, totalLists = total)
 }
 
 @Composable
@@ -8075,33 +8105,73 @@ private fun MyActivityScreen(
     onOpen: (EntryMode, String) -> Unit,
     onError: (String) -> Unit
 ) {
-    var items by remember { mutableStateOf<List<ActivityItem>?>(null) }
+    var loaded by remember { mutableStateOf<MyActivityResult?>(null) }
     LaunchedEffect(Unit) {
         runCatching { loadMyActivity(repository, userId) }
-            .onSuccess { items = it }
-            .onFailure { onError(it.message ?: "Couldn't load your activity"); items = emptyList() }
+            .onSuccess { loaded = it }
+            .onFailure {
+                // LEAVING THE SCREEN IS NOT A FAILURE. `runCatching` catches Throwable, so walking
+                // away mid-load lands here as a CancellationException; reporting it would raise
+                // "Couldn't load your activity" as a snackbar on whatever screen the designer moved
+                // ON to, about a request they themselves abandoned. Rethrow instead, which is also
+                // what stops the dead composable writing state (ConsolidatedQuestionnaireScreen.kt:276).
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                onError(it.message ?: "Couldn't load your activity")
+                // Not `emptyList()`: a throw out of the gatherer is a total failure, and recording it
+                // as "nothing to show" is the very lie the failure count exists to prevent.
+                loaded = MyActivityResult(emptyList(), failedLists = 1, totalLists = 1)
+            }
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("Everything you've recorded, most recent first. Tap an entry to open it.", color = Muted, fontSize = 13.sp)
-        val current = items
+        Text(
+            // Says out loud that this screen needs a connection, in the WorkshopCodesScreen manner —
+            // the alternative is a designer reading an empty list as lost work.
+            "Everything you've recorded, most recent first. Tap an entry to open it. This list is read " +
+                "from the server, so it needs a connection.",
+            color = Muted,
+            fontSize = 13.sp
+        )
+        val current = loaded
+        // SOME answered and some did not. The rows below are real but the list is short by an unknown
+        // amount, so it is captioned rather than presented as the whole of someone's work — the same
+        // sentence the web page shows for the same partial failure.
+        if (current != null && current.failedLists > 0 && !current.allFailed) {
+            Text(
+                "Some record types could not be loaded, so this list may be incomplete.",
+                color = Coral,
+                fontSize = 12.sp
+            )
+        }
         when {
             current == null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 Text("Loading your activity…", color = Muted, fontSize = 13.sp)
             }
-            current.isEmpty() -> Text(
+            // NOTHING ANSWERED. Saying "you haven't recorded anything yet" here would tell a designer
+            // whose only copy of a morning's work is on this handset that the work is gone.
+            current.allFailed -> Text(
+                "Your activity couldn't be loaded — the server could not be reached. Anything you have " +
+                    "recorded is safe; open this again when there is a connection.",
+                color = Coral,
+                fontSize = 13.sp
+            )
+            current.items.isEmpty() -> Text(
                 "You haven't recorded anything yet. Create a record from the menu and it will appear here.",
                 color = Muted,
                 fontSize = 13.sp
             )
-            else -> current.forEach { item ->
+            else -> current.items.forEach { item ->
                 ElevatedCard(
                     colors = CardDefaults.elevatedCardColors(containerColor = SurfaceCard),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        // Only rows that have an editor to land on take a tap — see [ActivityItem.openable].
-                        .then(if (item.openable) Modifier.clickable { onOpen(item.mode, item.id) } else Modifier)
+                        // EVERY row opens, media included. This used to be conditional on an
+                        // `openable` flag that only media set false, justified by [EditScreen] having
+                        // "no MEDIA branch" — it has one now (EntryMode.MEDIA -> ViewDataDetail plus
+                        // its record code), reached from Search and from this list. The flag outlived
+                        // its reason and was left asserting the opposite of the code beside it.
+                        .clickable { onOpen(item.mode, item.id) }
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(item.title, display = true, color = Body, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
@@ -12645,6 +12715,30 @@ private fun UserManagementForm(
 }
 
 /**
+ * A destructive sharing action, held back until the researcher confirms it.
+ *
+ * WHY THIS EXISTS. Deny, Revoke and Remove were single taps that fired straight into the API — on a
+ * touchscreen, in a courtyard, with no undo and nothing to read first. Remove is the sharpest of the
+ * three: `DELETE /data-access/grants/{id}` destroys the row itself, so the record of who asked for
+ * what and when goes with the access. The web has confirmed all three since
+ * frontend/app/(protected)/sharing/page.tsx, and this app already owns the primitive
+ * (DeleteRecordSection above, DesignerRosterScreen, WorkshopListScreen) — so this was a missing use,
+ * not a missing control.
+ *
+ * [danger] paints the confirm button with the error colour, matching the web's danger/warning split:
+ * denying is reversible (they can ask again) and stays neutral; revoking and removing are not.
+ */
+private data class SharingConfirm(
+    val title: String,
+    val body: String,
+    /** The second sentence — what SURVIVES the action, which is what stops a researcher hesitating. */
+    val note: String,
+    val confirmLabel: String,
+    val danger: Boolean,
+    val onConfirm: () -> Unit
+)
+
+/**
  * Cross-researcher data sharing. A researcher can request access to another's data at a tier
  * (Download < Comment < Edit, with definitions shown), and manage requests/grants on their own data:
  * approve, deny, change tier, or revoke. Mirrors the web Sharing page.
@@ -12662,6 +12756,7 @@ private fun SharingForm(
     var directory by remember { mutableStateOf<List<UserDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf(false) }
+    var confirming by remember { mutableStateOf<SharingConfirm?>(null) }
 
     fun reload() {
         scope.launch {
@@ -12738,14 +12833,54 @@ private fun SharingForm(
                         color = Muted, fontSize = 12.sp
                     )
                     if (!g.requestNote.isNullOrBlank()) Text("“${g.requestNote}”", color = Muted, fontSize = 12.sp)
+                    val who = g.grantee?.name ?: g.granteeId
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         when (g.status) {
                             "PENDING" -> {
+                                // Approving is the only one of the four that is not confirmed, and
+                                // that is deliberate — it GIVES access, is undone by Revoke beside
+                                // it, and destroys nothing. Web parity: `decide` only confirms DENIED.
                                 Button(enabled = !busy, onClick = { run({ repository.decideDataAccess(g.id, "GRANTED", g.tier) }, "Granted") }) { Text("Approve") }
-                                OutlinedButton(enabled = !busy, onClick = { run({ repository.decideDataAccess(g.id, "DENIED", null) }, "Denied") }) { Text("Deny") }
+                                OutlinedButton(
+                                    enabled = !busy,
+                                    onClick = {
+                                        confirming = SharingConfirm(
+                                            title = "Deny this request?",
+                                            body = "$who will not get access to your data, and will see the request as denied.",
+                                            note = "They can request access again, and you can grant it at any time.",
+                                            confirmLabel = "Deny request",
+                                            danger = false,
+                                            onConfirm = { run({ repository.decideDataAccess(g.id, "DENIED", null) }, "Denied") }
+                                        )
+                                    }
+                                ) { Text("Deny") }
                             }
-                            "GRANTED" -> OutlinedButton(enabled = !busy, onClick = { run({ repository.revokeDataAccess(g.id) }, "Revoked") }) { Text("Revoke") }
-                            else -> OutlinedButton(enabled = !busy, onClick = { run({ repository.deleteDataAccess(g.id) }, "Removed") }) { Text("Remove") }
+                            "GRANTED" -> OutlinedButton(
+                                enabled = !busy,
+                                onClick = {
+                                    confirming = SharingConfirm(
+                                        title = "Revoke this access?",
+                                        body = "$who loses access to your data immediately, including anything they were part-way through downloading.",
+                                        note = "Comments and edits they already made are kept.",
+                                        confirmLabel = "Revoke access",
+                                        danger = true,
+                                        onConfirm = { run({ repository.revokeDataAccess(g.id) }, "Revoked") }
+                                    )
+                                }
+                            ) { Text("Revoke") }
+                            else -> OutlinedButton(
+                                enabled = !busy,
+                                onClick = {
+                                    confirming = SharingConfirm(
+                                        title = "Remove this sharing entry?",
+                                        body = "This permanently deletes the grant record, along with the history of who asked for what and when.",
+                                        note = "It clears a denied or revoked row. $who is not notified, and can request access again.",
+                                        confirmLabel = "Remove entry",
+                                        danger = true,
+                                        onConfirm = { run({ repository.deleteDataAccess(g.id) }, "Removed") }
+                                    )
+                                }
+                            ) { Text("Remove") }
                         }
                     }
                 }
@@ -12764,12 +12899,71 @@ private fun SharingForm(
                         "${g.owner?.email ?: ""} · ${tierLabel(g.tier)} · ${g.status}",
                         color = Muted, fontSize = 12.sp
                     )
-                    OutlinedButton(enabled = !busy, onClick = { run({ repository.deleteDataAccess(g.id) }, "Removed") }) {
-                        Text(if (g.status == "PENDING") "Withdraw" else "Remove")
+                    // The SAME DELETE, from the other side of the table: as grantee it withdraws a
+                    // pending request or drops access already held. Both readings are destructive and
+                    // neither is undoable, so the confirmation is worded for whichever one applies.
+                    val withdrawing = g.status == "PENDING"
+                    val owner = g.owner?.name ?: g.ownerId
+                    OutlinedButton(
+                        enabled = !busy,
+                        onClick = {
+                            confirming = SharingConfirm(
+                                title = if (withdrawing) "Withdraw this request?" else "Remove this access?",
+                                body = if (withdrawing) {
+                                    "Your pending request to $owner is deleted, along with the note you sent with it."
+                                } else {
+                                    "You give up the access $owner granted you, and the grant record is deleted."
+                                },
+                                note = if (withdrawing) {
+                                    "You can ask again at any time."
+                                } else {
+                                    "Getting it back means requesting it again and waiting for $owner to decide."
+                                },
+                                confirmLabel = if (withdrawing) "Withdraw request" else "Remove access",
+                                danger = true,
+                                onConfirm = { run({ repository.deleteDataAccess(g.id) }, "Removed") }
+                            )
+                        }
+                    ) {
+                        Text(if (withdrawing) "Withdraw" else "Remove")
                     }
                 }
             }
         }
+    }
+    // ONE dialog for every destructive button above, rather than one per button: the buttons differ
+    // only in their words and their call, and a single host is what keeps a new destructive action
+    // from quietly shipping without a confirmation the way these four did.
+    confirming?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { if (!busy) confirming = null },
+            title = { Text(pending.title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(pending.body)
+                    Text(pending.note, color = Muted, fontSize = 12.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        // Cleared BEFORE the call, not in its callback: `run` reloads on success and
+                        // the row this dialog describes may be gone by then, so waiting would leave
+                        // the sentence on screen describing a grant that no longer exists.
+                        val act = pending.onConfirm
+                        confirming = null
+                        act()
+                    }
+                ) {
+                    Text(
+                        pending.confirmLabel,
+                        color = if (pending.danger) MaterialTheme.colorScheme.error else Color.Unspecified
+                    )
+                }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { confirming = null }) { Text("Cancel") } }
+        )
     }
     // Workshop assignments moved to the admin "Settings" hub (see AdminHubScreen).
 }
@@ -13276,11 +13470,17 @@ private fun WorkshopAccessQueueCard(
 // ===========================================================================
 
 /**
- * The four task statuses, in the order the web's /tasks page lists them.
+ * The four task statuses, in the order the web's /tasks page lists them — the statuses a list may be
+ * FILTERED to, and the ones the chips count.
  *
  * CANCELLED was missing from the chips while the API, the DTO and [taskStatusLabel] all knew it, so
  * a cancelled task assigned to you could be seen under "All" and never filtered for — and never
  * counted.
+ *
+ * This is deliberately a SUPERSET of [assigneeTaskStatuses]: that list is what an assignee may MOVE
+ * a task to and rightly omits CANCELLED, since cancelling belongs to whoever handed the task out.
+ * Not being allowed to cancel a task is no reason to be unable to find the one somebody cancelled.
+ * Matches the web's `STATUSES` (frontend/app/(protected)/tasks/page.tsx).
  */
 private val TASK_STATUSES = listOf("OPEN", "IN_PROGRESS", "DONE", "CANCELLED")
 
@@ -13369,13 +13569,53 @@ private fun MyTasksScreen(
     // Exact per-status totals for the chips (web parity: /tasks loads these too). Empty = not known,
     // which draws the chips unlabelled rather than labelling them zero.
     var counts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    /**
+     * WHICH QUERY THE ROWS ON SCREEN ACTUALLY ANSWER — `view to statusFilter`, or null before the
+     * first one lands.
+     *
+     * [loadFailed] alone cannot tell the difference between "these are your tasks, a bit old" and
+     * "these are your OPEN tasks and you are now looking at the Cancelled chip". `refresh` leaves the
+     * previous rows in place on failure, so tapping a chip with no signal leaves the old list under a
+     * new heading: the chip asserts one thing and the rows are another, which is the same species of
+     * lie as "Nothing is assigned to you right now."
+     */
+    var shownQuery by remember { mutableStateOf<Pair<String, String>?>(null) }
+    /**
+     * WHICH PASS IS ALLOWED TO WRITE THE STATE ABOVE.
+     *
+     * `refresh` launches into `rememberCoroutineScope`, NOT into the LaunchedEffect, so nothing
+     * cancels the pass in flight: tapping two chips, or a chip and then Refresh, leaves two requests
+     * racing. Without this guard the slow one wins by finishing last, and the case that matters is
+     * the failing one — a 30-second connect timeout from the first tap resolves AFTER the second
+     * tap's success and flips `loadFailed` back to true, leaving "the server could not be reached"
+     * printed over a list the server had just successfully returned. On this fleet's uplink that
+     * ordering is ordinary, not exotic. Only the newest pass writes anything.
+     */
+    val loadSeq = remember { AtomicInteger(0) }
 
     fun refresh() {
+        // Captured HERE rather than read inside the coroutine: `refresh` is also the Refresh button's
+        // onClick, and reading the Compose state after the suspension point would label the answer
+        // with whichever chip happens to be selected when it lands instead of the one that asked.
+        val forView = view
+        val forStatus = statusFilter
+        val seq = loadSeq.incrementAndGet()
         scope.launch {
             loading = true
-            runCatching { repository.tasks(view = view, status = statusFilter.ifBlank { null }) }
-                .onSuccess { tasks = it; loadFailed = false }
-                .onFailure { loadFailed = true; onError(it.apiErrorMessage("Unable to load your tasks")) }
+            val outcome = runCatching { repository.tasks(view = forView, status = forStatus.ifBlank { null }) }
+            // Leaving the screen cancels the scope and arrives here as a Throwable like any other.
+            // Reported, it would raise "Unable to load your tasks" over the screen the designer moved
+            // on to (ui/ConsolidatedQuestionnaireScreen.kt:276).
+            outcome.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+            // A SUPERSEDED PASS WRITES NOTHING — not the rows, not the failure flag, and not
+            // `loading`, which the pass that replaced this one already owns.
+            if (seq != loadSeq.get()) return@launch
+            outcome
+                .onSuccess { tasks = it; loadFailed = false; shownQuery = forView to forStatus }
+                .onFailure {
+                    loadFailed = true
+                    onError(it.apiErrorMessage("Unable to load your tasks"))
+                }
             // Swallowed deliberately: a chip with no number is a working filter, and the failure has
             // already been reported by the list load above. Two notices for one dead connection is
             // noise.
@@ -13403,8 +13643,12 @@ private fun MyTasksScreen(
 
     RecordCard(title = "Tasks", icon = Icons.AutoMirrored.Filled.Assignment) {
         Text(
+            // The last sentence is the one that has to be there. Everything else a designer does on
+            // this handset survives a fortnight with no signal; this screen does not, and saying so
+            // up front is what stops an unreachable server being read as an empty workload.
             "Work assigned to you, with what it covers and how far along you are. Move the status as you " +
-                "go so whoever assigned it can see where things stand.",
+                "go so whoever assigned it can see where things stand. Tasks are read and updated " +
+                "online only — they are not carried in the offline queue.",
             color = Muted,
             fontSize = 12.sp
         )
@@ -13451,36 +13695,44 @@ private fun MyTasksScreen(
             Spacer(Modifier.width(8.dp))
             Text(if (loading) "Loading tasks…" else "Refresh")
         }
-        // The other half of the same honesty: a list that IS on screen after a failed refresh is the
-        // one fetched earlier, not the repository's current answer. Saying so costs a line and stops
-        // a designer acting on a task that was reassigned while they were out of signal.
-        if (loadFailed && tasks.isNotEmpty() && !loading) {
+        // THE REQUEST FAILED. Say so ABOVE the list rather than instead of it: `refresh` leaves the
+        // previously loaded rows in place, and a stale list a designer can still read between
+        // sessions beats a blank screen — as long as it is labelled stale.
+        if (loadFailed && !loading) {
+            // Three different facts, not two. The rows that survived a failure answer the query that
+            // last SUCCEEDED, which after a chip tap with no signal is not the query the chips above
+            // are now showing as selected — so that case has to name itself rather than be filed
+            // under "may be out of date".
+            val staleForAnotherFilter = tasks.isNotEmpty() && shownQuery != null && shownQuery != (view to statusFilter)
             Text(
-                "Showing the list last fetched — the latest refresh did not reach the repository.",
-                color = Muted,
+                when {
+                    tasks.isEmpty() ->
+                        "Your tasks couldn't be loaded — the server could not be reached. Tasks are read " +
+                            "and updated online only, so try again when there is a connection."
+                    staleForAnotherFilter ->
+                        "The server could not be reached, so the filter you just chose was never sent. " +
+                            "The tasks below are the last list that loaded, under the previous filter."
+                    else ->
+                        "The server could not be reached, so this is the last list that loaded. It may be " +
+                            "out of date, and status changes will not send until there is a connection."
+                },
+                color = Coral,
                 fontSize = 12.sp
             )
         }
         when {
             loading -> Text("Loading tasks…", color = Muted, fontSize = 12.sp)
-            // ORDERED BEFORE THE EMPTY CASE ON PURPOSE. "Nothing is assigned to you" is a claim about
-            // the repository, and this app may only make it after the repository has answered. Tasks
-            // are read over the network every time — the offline outbox carries CREATES only, so
-            // neither the list nor a status change survives no signal — which on this fleet means the
-            // failing branch is the ordinary one, not the exception.
-            loadFailed && tasks.isEmpty() -> Text(
-                "Your task list could not be fetched, so this is not \"nothing is assigned to you\" — it is " +
-                    "\"not known yet\". Tasks are read live and are not stored on this device. Use Refresh once " +
-                    "you have a connection.",
-                color = Muted,
-                fontSize = 12.sp
-            )
-            tasks.isEmpty() -> Text(
-                if (view == "created") "You have not assigned any work yet."
-                else "Nothing is assigned to you right now.",
-                color = Muted,
-                fontSize = 12.sp
-            )
+            // "Nothing is assigned to you" is a claim about what the SERVER holds, so it is only
+            // said when the server answered. When it did not, the caption above has already given
+            // the honest reason and printing this underneath would contradict it on one screen.
+            tasks.isEmpty() -> if (!loadFailed) {
+                Text(
+                    if (view == "created") "You have not assigned any work yet."
+                    else "Nothing is assigned to you right now.",
+                    color = Muted,
+                    fontSize = 12.sp
+                )
+            }
             else -> tasks.forEach { task ->
                 TaskCard(
                     task = task,

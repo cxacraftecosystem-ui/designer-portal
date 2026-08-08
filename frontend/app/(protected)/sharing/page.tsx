@@ -321,6 +321,10 @@ export default function SharingPage() {
         therefore only ever offer the records that happened to sit in that hundred, so a subset grant
         over their older work was impossible to build and nothing on screen said why.
 
+        The symptom that makes it concrete, measured against the same API: page one of each list held
+        NONE of the signed-in user's records, so the picker read "You have no records to share" to a
+        designer who owned plenty.
+
         The client-side filter below is kept as well: it costs nothing, and against a deployment that
         ignores the parameter it is the difference between an over-long list and a wrong one.
       */
