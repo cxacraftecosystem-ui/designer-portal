@@ -297,6 +297,15 @@ fun FieldRenderer(
                     // report prints it as one — so open inside a numbered item rather than making
                     // the designer type "1. " to get the behaviour the label already promised.
                     listKind = if (field.reportRole == "BULLETS") BlockKind.ORDERED_ITEM else null,
+                    // THE SAME BRIDGE EVERY MEDIA FIELD ON THIS STAGE USES, which is what makes a
+                    // photograph placed inside prose an ordinary attachment: one descriptor in
+                    // `draft.media`, so the sync engine uploads it and the on-device report writer
+                    // resolves it, with no second media pipeline to keep in step. Null in a preview,
+                    // and the editor then draws an IMAGE block without offering to place one.
+                    media = media,
+                    mediaField = field,
+                    onMessage = { text -> services?.onMessage?.invoke(text) },
+                    onError = { text -> services?.onError?.invoke(text) },
                 )
 
             DwFieldType.LONG_TEXT ->

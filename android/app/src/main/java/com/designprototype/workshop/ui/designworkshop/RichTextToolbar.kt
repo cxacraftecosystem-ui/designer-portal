@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.FormatStrikethrough
 import androidx.compose.material.icons.filled.FormatUnderlined
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -110,6 +111,15 @@ internal fun RichTextToolbar(
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Place a photograph at the caret, or null when this field cannot.
+     *
+     * NULL IS THE ORDINARY STATE, not a missing dependency. Placing a picture needs somewhere to put
+     * the bytes, which only the stage screen can supply (`DwMediaBridge`), so a field rendered in a
+     * preview — or anywhere else with no workshop behind it — simply does not offer the button
+     * rather than offering one that fails when pressed.
+     */
+    onInsertImage: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
@@ -191,6 +201,15 @@ internal fun RichTextToolbar(
         }
         RteToolButton("Justify", Icons.Filled.FormatAlignJustify, state.align == "JUSTIFY") {
             onAlign("JUSTIFY")
+        }
+
+        if (onInsertImage != null) {
+            RteSeparator()
+            // A ONE-SHOT COMMAND, so `active = null` and no state is announced. There is no such
+            // thing as "the caret is inside a photograph" to light up — the caret inside an IMAGE
+            // block is inside its CAPTION, which is prose, and lighting this there would say the
+            // designer had a picture selected when what they have is a line of text.
+            RteToolButton("Photograph", Icons.Filled.Image, active = null) { onInsertImage() }
         }
 
         RteSeparator()
