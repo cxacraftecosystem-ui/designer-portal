@@ -1,11 +1,16 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.report.BlockKind
+import com.designprototype.workshop.report.ImageBlock
+import com.designprototype.workshop.report.ImageRef
 import com.designprototype.workshop.report.Mark
+import com.designprototype.workshop.report.ParagraphBlock
 import com.designprototype.workshop.report.RichBlock
 import com.designprototype.workshop.report.RichDoc
 import com.designprototype.workshop.report.RichSpan
+import com.designprototype.workshop.report.fromJson
 import com.designprototype.workshop.report.toJson
+import com.designprototype.workshop.report.toReportBlocks
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -15,19 +20,27 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * A KEYSTROKE must never destroy an inline photograph.
+ * Placing an inline photograph, and the keystrokes that must never destroy one.
+ *
+ * ── WHAT THE HANDSET CAN NOW DO, AND WHERE THE PICTURE ENDS UP ────────────────────────────────
+ *
+ * The Photograph button on the rich-text toolbar imports through `DwMediaBridge.attach` — the same
+ * pipeline every media field on the stage uses — and places the returned id with [insertImage]. That
+ * makes the picture an ordinary attachment of the workshop: one descriptor in `draft.media`, so the
+ * on-device report writer resolves it (`imageFor`, ReportScreen.kt), the sync engine uploads it, and
+ * `wireData` swaps the local id for the server's before the stage goes up. The half of that chain
+ * this file can assert on a plain JVM is the model half — placement, the round trip through storage,
+ * and what `toReportBlocks` does with the result; `InlineMediaWireTest` pins the sync half.
+ *
+ * ── WHY THE DESTRUCTION HALF MATTERS JUST AS MUCH ─────────────────────────────────────────────
  *
  * `RichTextStructuralGuardTest` pins the two TOOLBAR commands (`clearFormatting`, `setBlockKind`).
  * This is the other half, and it is the half a designer reaches by accident: the two keys the editor
  * routes into the model itself — Enter through `splitBlock` and Backspace-at-offset-0 through
- * `deleteBackward` — both used to take a photograph with them.
- *
- * ── WHY THIS IS REACHABLE ON A HANDSET AT ALL ─────────────────────────────────────────────────
- *
- * The phone cannot yet PLACE a photograph inside prose; only the web editor can. It can very easily
- * be handed one: a designer sets a stage up in a browser, drops a picture of the loom into the
- * narrative, and the workshop is then opened on the M32 in a courtyard. That IMAGE block arrives in
- * the editor as an ordinary-looking line of text — its spans are the CAPTION — so:
+ * `deleteBackward` — both used to take a photograph with them. A picture can also arrive from the
+ * web (a designer sets a stage up in a browser, drops a photograph of the loom into the narrative,
+ * and the workshop is opened on the M32 in a courtyard), and that IMAGE block reaches the editor as
+ * an ordinary-looking line of text — its spans are the CAPTION — so:
  *
  *  * **Backspace at the start of that line** fell through the ladder's demotion rung and re-kinded
  *    the block to PARAGRAPH. [toJson] writes `media` ONLY for an IMAGE block, so the next auto-save
@@ -279,5 +292,170 @@ class RichTextInlineImageTest {
 
         assertTrue("the document is not empty", !doc.isEmpty)
         assertEquals("media-42", storedBlocks(doc)[0]["media"]!!.jsonPrimitive.content)
+    }
+
+    // ── Placing one ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `a photograph is placed after the caret's block and never splits the sentence`() {
+        val doc = RichDoc(listOf(para("The loom stands in the courtyard."), para("after")))
+
+        // The caret in the MIDDLE of the first sentence, which is where it usually is.
+        val result = insertImage(doc, collapsedAt(DocPoint(0, 4)), "media-42", "The loom")
+
+        assertEquals(
+            "the sentence is intact and the figure is under it",
+            listOf("The loom stands in the courtyard.", "The loom", "after"),
+            result.doc.blocks.map { it.text },
+        )
+        assertEquals(BlockKind.IMAGE, result.doc.blocks[1].kind)
+        // NO TRAILING PARAGRAPH. Enter in the caption opens one (see `splitBlock`), so adding one
+        // here would leave a stray blank line under every photograph nobody captioned.
+        assertEquals(3, result.doc.blocks.size)
+    }
+
+    @Test
+    fun `the caret lands at the end of the new caption`() {
+        // Not cosmetic: the point of placing a picture is to describe it, and a caret left in the
+        // paragraph above means the first thing the designer types goes into the wrong block.
+        val result = insertImage(RichDoc(listOf(para("intro"))), collapsedAt(DocPoint(0, 5)), "m", "a loom")
+
+        assertEquals(DocPoint(1, "a loom".length), result.selection.focus)
+    }
+
+    @Test
+    fun `a blank media id is refused rather than inserted as a placeholder`() {
+        // Both parsers DROP an IMAGE block with no id, so a placeholder would survive on screen and
+        // be gone at the next reload — and the designer would blame the picture rather than the
+        // empty reference. The caller finds out here, while it can still say so.
+        val doc = RichDoc(listOf(para("intro")))
+
+        assertEquals(doc, insertImage(doc, collapsedAt(DocPoint(0, 0)), "   ").doc)
+        assertEquals(doc, insertImage(doc, collapsedAt(DocPoint(0, 0)), "").doc)
+    }
+
+    @Test
+    fun `a caption's newline becomes a space rather than a second paragraph`() {
+        // A span holding a newline makes one block print as two paragraphs in the .docx and as one
+        // gapped line in the PDF — two renderers disagreeing about the same document.
+        val result = insertImage(RichDoc(listOf(para("x"))), collapsedAt(DocPoint(0, 1)), "m", "warp\nweft")
+
+        assertEquals("warp weft", result.doc.blocks[1].text)
+    }
+
+    @Test
+    fun `an over-long media id is truncated to what the parser will keep`() {
+        // `fromJson` truncates to 64 on the way back in. Storing more would mean the id on screen
+        // and the id in the file are different strings, and the resolver would answer null for the
+        // one that mattered.
+        val long = "m".repeat(200)
+
+        val placed = insertImage(RichDoc(listOf(para("x"))), collapsedAt(DocPoint(0, 0)), long)
+
+        assertEquals(64, placed.doc.blocks[1].media.length)
+        // And the round trip is a fixed point: storing then reading gives back the same id.
+        assertEquals(placed.doc.blocks[1].media, fromJson(toJson(placed.doc)).blocks[1].media)
+    }
+
+    // ── The whole slice: place it, store it, read it back, print it ──────────────────────────
+
+    @Test
+    fun `a placed photograph survives the round trip through storage`() {
+        // THE ASSERTION THE WHOLE FEATURE RESTS ON. Everything between the designer's press and the
+        // report goes through this JSON column: a `media` that did not survive `toJson`/`fromJson`
+        // is a picture that is on screen until the stage is reopened and then simply is not.
+        val placed = insertImage(
+            RichDoc(listOf(para("The dye vat was rebuilt in March."))),
+            collapsedAt(DocPoint(0, 33)),
+            "9f3c1b7e-0000-4a2b-9c1d-000000000042",
+            "The rebuilt vat",
+            widthPct = 40f,
+        ).doc
+
+        val reread = fromJson(toJson(placed))
+
+        assertEquals("the block count is unchanged", placed.blocks.size, reread.blocks.size)
+        val figure = reread.blocks[1]
+        assertEquals(BlockKind.IMAGE, figure.kind)
+        assertEquals("9f3c1b7e-0000-4a2b-9c1d-000000000042", figure.media)
+        assertEquals("The rebuilt vat", figure.text)
+        // The width is stored only when it differs from the default — so a non-default width is the
+        // case that proves the key is actually written, not merely defaulted back into place.
+        assertEquals(40f, figure.widthPct, 0.001f)
+    }
+
+    @Test
+    fun `a placed photograph reaches the report as an ImageBlock at the width it was given`() {
+        // The other end of the chain, and the reason a partial implementation here would be worse
+        // than none: an editor that inserts something the report drops means a designer discovering
+        // at the ministry that the photograph they placed is not in the document.
+        val placed = insertImage(
+            RichDoc(listOf(para("Before."), para("After."))),
+            collapsedAt(DocPoint(0, 7)),
+            "media-42",
+            "A loom in Kotpad",
+            widthPct = 40f,
+        ).doc
+
+        val blocks = toReportBlocks(
+            doc = fromJson(toJson(placed)),
+            // Standing in for `imageFor` in ReportScreen.kt, which is
+            // `draft.media.associateBy { it.id }` plus a file lookup — a photograph THIS DEVICE
+            // imported is in that index, which is exactly why the button imports through the
+            // bridge rather than referencing the picker's Uri.
+            resolveMedia = { id ->
+                if (id == "media-42") {
+                    ImageRef(source = "/data/media/42.jpg", widthPx = 1600, heightPx = 1200)
+                } else {
+                    null
+                }
+            },
+        )
+
+        val figure = blocks.filterIsInstance<ImageBlock>().single()
+        assertEquals("/data/media/42.jpg", figure.image.source)
+        assertEquals("A loom in Kotpad", figure.caption)
+        assertEquals(40f, figure.widthPct, 0.001f)
+        // The prose either side still prints, in order, around it.
+        assertEquals(3, blocks.size)
+        assertTrue(blocks[0] is ParagraphBlock)
+        assertTrue(blocks[2] is ParagraphBlock)
+    }
+
+    @Test
+    fun `a photograph the resolver cannot find leaves an honest gap, caption and all`() {
+        // The web-placed case on a handset that does not hold the bytes. A placeholder box in a
+        // document handed to a ministry officer is worse than a gap, and a caption with nothing
+        // above it reads as a lost paragraph — so BOTH halves go.
+        val doc = RichDoc(listOf(para("Before."), image("server-side-id", "A loom in Kotpad")))
+
+        val blocks = toReportBlocks(doc = doc, resolveMedia = { null })
+
+        assertTrue("no figure is printed", blocks.filterIsInstance<ImageBlock>().isEmpty())
+        assertEquals("and no orphaned caption either", 1, blocks.size)
+    }
+
+    // ── The width control ────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `the width steps and stops at the bounds the parser enforces`() {
+        val doc = RichDoc(listOf(para("x"), image("m", "c")))
+
+        assertEquals(50f, setImageWidth(doc, 1, -10f).doc.blocks[1].widthPct, 0.001f)
+        // A client that stored 120 would show one width and print another, because `fromJson` pulls
+        // it back to 100 on the next read.
+        assertEquals(100f, setImageWidth(doc, 1, 900f).doc.blocks[1].widthPct, 0.001f)
+        assertEquals(10f, setImageWidth(doc, 1, -900f).doc.blocks[1].widthPct, 0.001f)
+    }
+
+    @Test
+    fun `the width command refuses to touch prose`() {
+        // The block index comes from the caret, and the caret is in a caption only when the block
+        // really is a figure. A command that re-kinded or resized a paragraph would be writing a
+        // `widthPct` that `toJson` then omits — a silent no-op the designer watched succeed.
+        val doc = RichDoc(listOf(para("keep me")))
+
+        assertEquals(doc, setImageWidth(doc, 0, 10f).doc)
+        assertEquals("and an index outside the document is a no-op too", doc, setImageWidth(doc, 9, 10f).doc)
     }
 }
