@@ -1,0 +1,1363 @@
+"""The field registry: one declaration of the 22 workshop stages, read by everything.
+
+The source requirements document defines a Design & Prototype Workshop as 22 stages, each
+capturing fields at three tiers — *Basic* (minimum required), *Standard* (desirable for most
+workshops) and *Advanced* (where facilities and expertise permit). That is on the order of two
+and a half thousand fields. Three surfaces have to agree about every one of them: the capture
+form, the validator that decides whether a stage is complete, and the report that prints it.
+
+Writing those out three times, in three languages, would guarantee drift — and writing them as
+two and a half thousand database columns would make every schema change a migration. So the
+fields are *data*, declared once here:
+
+    STAGES  ->  a form (web + Android)
+            ->  validation and the completeness gate
+            ->  the report (labels become table headers and key-value captions)
+            ->  the research export (stable keys and units)
+
+The storage side follows from that. Each stage's answers live in a ``DwStageEntry`` row whose
+``data`` is a JSON object keyed by ``FieldSpec.key``; the handful of fields a researcher will
+actually filter and sort on are *also* denormalised onto typed columns of ``DesignWorkshop``
+(see ``promoted_columns``). That hybrid is deliberate: a pure-JSON store cannot answer "every
+workshop on Ikat in Odisha in 2026" without a table scan, and a pure-column store cannot absorb
+a new Standard-tier field without a migration in the middle of a workshop season.
+
+Three rules keep the registry honest, and :func:`validate_registry` (run by the tests and at
+import time in debug) enforces all three:
+
+1. **Keys are permanent.** A field key is what the research data is indexed by, what the phone
+   wrote into a draft two weeks ago, and what a saved report template refers to. Renaming one
+   silently orphans data. Fields are deprecated, never renamed — see :attr:`FieldSpec.replaced_by`.
+2. **Every enum has a canonical option list.** Six stages ask for a material and six independent
+   authors will spell it six ways; a shared :data:`ENUMS` table is what makes "cotton" the same
+   answer in stage 5 and stage 17.
+3. **Only Basic-tier fields may be required.** The tiers exist so a workshop held in a village
+   without power can still produce a complete report. A required Standard field would make the
+   completeness gate unsatisfiable exactly where the app is most needed.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+from app.services.report_model import clean_text
+from app.services.report_theme import ACCENT_PRESET_ENUM, FONT_PRESET_ENUM
+
+
+class Tier(str, Enum):
+    """Which capture tier a field belongs to, straight from the source matrix."""
+
+    BASIC = "BASIC"
+    STANDARD = "STANDARD"
+    ADVANCED = "ADVANCED"
+
+    @property
+    def rank(self) -> int:
+        return {"BASIC": 0, "STANDARD": 1, "ADVANCED": 2}[self.value]
+
+
+class FieldType(str, Enum):
+    """How a value is captured, validated, stored and printed.
+
+    The set is deliberately small. Every extra type costs a branch in the web form, a Composable
+    on Android, a validator here and a renderer in the report builder, so a new one has to earn
+    its place four times over.
+    """
+
+    TEXT = "TEXT"                # single line
+    LONG_TEXT = "LONG_TEXT"      # textarea; becomes report prose
+    # A structured document (app/services/rich_text.py), never HTML. Stored as JSON in the
+    # stage entry exactly like any other value, and rendered by every surface from the same
+    # block list — see that module for why the storage form is not markup.
+    RICH_TEXT = "RICH_TEXT"
+    INT = "INT"
+    DECIMAL = "DECIMAL"
+    MONEY = "MONEY"              # INR, stored as a decimal string
+    PERCENT = "PERCENT"
+    DATE = "DATE"                # ISO-8601 date, no time
+    TIME = "TIME"                # HH:MM
+    BOOL = "BOOL"
+    ENUM = "ENUM"                # one option from a canonical list
+    MULTI_ENUM = "MULTI_ENUM"    # several options from a canonical list
+    TAGS = "TAGS"                # free-form list; no canonical list exists
+    IMAGE = "IMAGE"              # one media id
+    IMAGE_LIST = "IMAGE_LIST"    # gallery
+    FILE = "FILE"                # a sanction order, a questionnaire PDF
+    AUDIO = "AUDIO"
+    VIDEO = "VIDEO"
+    GEO = "GEO"                  # {lat, lon, accuracy}
+    REF = "REF"                  # a foreign id: an Artisan, a Craft, another stage entry
+    URL = "URL"
+    PHONE = "PHONE"
+    EMAIL = "EMAIL"
+
+    @property
+    def is_media(self) -> bool:
+        return self in {FieldType.IMAGE, FieldType.IMAGE_LIST, FieldType.FILE,
+                        FieldType.AUDIO, FieldType.VIDEO}
+
+    @property
+    def is_numeric(self) -> bool:
+        return self in {FieldType.INT, FieldType.DECIMAL, FieldType.MONEY, FieldType.PERCENT}
+
+    @property
+    def is_multi(self) -> bool:
+        """Whether the stored value is a list."""
+        return self in {FieldType.MULTI_ENUM, FieldType.TAGS, FieldType.IMAGE_LIST}
+
+
+class ReportRole(str, Enum):
+    """Where a field lands in the generated report.
+
+    A field with no role is captured and retained but never printed — which is a legitimate
+    outcome for internal bookkeeping, and much better than the alternative of printing every
+    field and burying the narrative.
+    """
+
+    NARRATIVE = "NARRATIVE"          # a prose paragraph
+    KEY_VALUE = "KEY_VALUE"          # a label/value pair
+    TABLE_COLUMN = "TABLE_COLUMN"    # a column when the entity is a collection
+    CAPTION = "CAPTION"              # the caption of the media field beside it
+    GALLERY = "GALLERY"              # a photo grid
+    COVER_FIELD = "COVER_FIELD"      # a row of the cover-page table
+    METRIC = "METRIC"                # a headline number
+    BULLETS = "BULLETS"              # a bulleted list
+    HIDDEN = "HIDDEN"
+
+
+class Cardinality(str, Enum):
+    SINGLETON = "SINGLETON"      # one per workshop: the stage's own fields
+    COLLECTION = "COLLECTION"    # many per workshop: sketches, prototypes, respondents
+
+
+# How wide a REF field's picker casts its net. Declared as plain strings rather than an Enum
+# because the value crosses the wire to three clients and back, and a token is easier to keep
+# identical in Kotlin and TypeScript than an enum member is.
+#
+# WORKSHOP means "only records already linked to the Workshop this design workshop belongs to".
+# That is what turns the artisan picker from a scroll through a cluster's several hundred
+# documented artisans into the dozen who are actually in the room — which is the difference
+# between a dropdown a designer uses and one they give up on and retype around.
+#
+# ALL means the whole table. Stage 3 is deliberately ALL: it is where the roster is BUILT, so
+# narrowing it to the roster would be circular and a designer could never add the artisan who
+# turned up on day two.
+REF_SCOPE_WORKSHOP = "WORKSHOP"
+REF_SCOPE_ALL = "ALL"
+REF_SCOPES = frozenset({REF_SCOPE_WORKSHOP, REF_SCOPE_ALL})
+
+
+@dataclass(frozen=True, slots=True)
+class FieldSpec:
+    key: str
+    label: str
+    type: FieldType
+    tier: Tier = Tier.STANDARD
+    required: bool = False
+    help: str = ""
+    unit: str = ""
+    enum: str = ""               # name of the shared list in ENUMS, for ENUM/MULTI_ENUM
+    ref_model: str = ""          # for REF: "Artisan", "Craft", or a Dw entity name
+    # THE TWO HALVES OF A CASCADING PICKER, and the reason a designer stops retyping records
+    # that are already in the database.
+    #
+    # ``ref_filter_by`` names another field OF THE SAME ENTITY whose chosen value narrows this
+    # one. ``existingProduct.productRef`` filters by ``artisanRef``, so once the artisan is
+    # picked the product dropdown holds that artisan's products and nothing else. Without it the
+    # product picker on a cluster with three hundred documented products is a list nobody reads
+    # to the end, and the designer types the product name in by hand — which is precisely the
+    # behaviour that leaves the report with a name and no join key, and the research data with
+    # no way to connect a workshop's baseline to the product record it was measured from.
+    #
+    # ``ref_scope`` is one of :data:`REF_SCOPES`. See the note there for why WORKSHOP and ALL
+    # are both needed and which stages want which.
+    ref_filter_by: str = ""
+    ref_scope: str = ""
+    max_length: int = 0
+    min_value: float | None = None
+    max_value: float | None = None
+    report_role: ReportRole = ReportRole.KEY_VALUE
+    column_width_pct: float = 0.0   # hint for TABLE_COLUMN; 0 means share the remainder
+    caption_for: str = ""        # this field captions that media field
+    #: HOW THIS FIELD COMPUTES ITSELF when the designer leaves it blank, and the field keys it
+    #: computes FROM. Declared here rather than implemented in a client because several fields
+    #: already PROMISED it in their help text — "Leave blank to derive it from the start and end
+    #: dates" — and nothing anywhere kept the promise: the value stayed empty, in a report, with
+    #: the form having said it would be filled in.
+    #:
+    #: One declaration, read by the web form, the Android form and the server's own save path, so
+    #: the number a designer watches appear is the number that is stored. See ``derive_value``.
+    derived_kind: str = ""       # DAYS_BETWEEN | PRODUCT | SUM
+    derived_from: tuple[str, ...] = ()
+    phase_note: str = ""         # a reviewer comment from the source document
+    deprecated: bool = False
+    replaced_by: str = ""
+
+    @property
+    def is_free_text(self) -> bool:
+        return self.type in {FieldType.TEXT, FieldType.LONG_TEXT, FieldType.RICH_TEXT}
+
+    @property
+    def is_rich_text(self) -> bool:
+        return self.type is FieldType.RICH_TEXT
+
+
+@dataclass(frozen=True, slots=True)
+class EntitySpec:
+    """One record shape within a stage.
+
+    A stage's SINGLETON entity holds its one-per-workshop answers. Its COLLECTION entities are
+    the repeating records — every sketch, every prototype, every survey respondent — each stored
+    as its own row so they can be counted, filtered and joined rather than buried in an array.
+    """
+
+    key: str                     # stable storage key, e.g. "sketch"
+    name: str                    # PascalCase display/model name, e.g. "DwSketch"
+    cardinality: Cardinality
+    title: str
+    fields: tuple[FieldSpec, ...]
+    parent: str = ""             # parent entity key, for nesting (iteration under prototype)
+    description: str = ""
+    label_field: str = ""        # which field titles a row in a list; defaults to the first text
+
+    @property
+    def required_fields(self) -> tuple[FieldSpec, ...]:
+        return tuple(f for f in self.fields if f.required and not f.deprecated)
+
+    def field(self, key: str) -> FieldSpec | None:
+        return next((f for f in self.fields if f.key == key), None)
+
+
+@dataclass(frozen=True, slots=True)
+class StageSpec:
+    number: int                  # 1-22, the source document's own numbering
+    key: str                     # UPPER_SNAKE, stable
+    title: str
+    purpose: str
+    entities: tuple[EntitySpec, ...]
+    notes: str = ""
+    optional_stage: bool = False  # the reviewer marked this one as possibly droppable
+
+    @property
+    def singleton(self) -> EntitySpec | None:
+        return next((e for e in self.entities if e.cardinality is Cardinality.SINGLETON), None)
+
+    @property
+    def collections(self) -> tuple[EntitySpec, ...]:
+        return tuple(e for e in self.entities if e.cardinality is Cardinality.COLLECTION)
+
+    def entity(self, key: str) -> EntitySpec | None:
+        return next((e for e in self.entities if e.key == key), None)
+
+
+# --------------------------------------------------------------------------------------
+# Canonical enumerations
+# --------------------------------------------------------------------------------------
+
+# Shared so that "cotton" recorded against a raw material in stage 5 is the same token as the
+# one in a stage 17 cost sheet. Values are UPPER_SNAKE; the label shown to a designer and
+# printed in the report is the dict value, because a report that says "TIE_AND_DYE" is not a
+# report anyone will submit to a ministry.
+ENUMS: dict[str, dict[str, str]] = {
+    "YES_NO_PARTIAL": {
+        "YES": "Yes",
+        "NO": "No",
+        "PARTIAL": "Partially",
+    },
+    "MATERIAL_FAMILY": {
+        "COTTON": "Cotton",
+        "SILK": "Silk",
+        "WOOL": "Wool",
+        "JUTE": "Jute",
+        "LINEN": "Linen",
+        "BLEND": "Blended yarn",
+        "BAMBOO": "Bamboo / cane",
+        "WOOD": "Wood",
+        "CLAY": "Clay / terracotta",
+        "METAL": "Metal",
+        "STONE": "Stone",
+        "LEATHER": "Leather",
+        "GRASS": "Grass / fibre",
+        "PAPER": "Paper",
+        "NATURAL_DYE": "Natural dye",
+        "CHEMICAL_DYE": "Chemical dye",
+        "OTHER": "Other",
+    },
+    # The material family's opposite number, and the list stage 5 had been missing.
+    #
+    # `tool.toolType` beside it has been free TEXT since the registry was written, and the eleven
+    # rows in this repository that filled the box in hold six different spellings — "Hand tool",
+    # "Loom", "Loom accessory", "Hand frame", "Hand-turned warping frame", "Vessel over a
+    # firewood hearth" — of which four are two categories under four names. So "how many clusters
+    # weave on a pit loom" was unanswerable across two workshops, which is exactly the failure
+    # rule 2 in this module's docstring describes.
+    #
+    # EVERY MEMBER IS TRACEABLE TO SOMETHING THE REPOSITORY ALREADY HOLDS, not to a taxonomy of
+    # world crafts invented at this keyboard: FIVE of them generalise the six spellings a designer
+    # actually typed — FRAME covers both "Hand frame" and "Hand-turned warping frame", which is the
+    # collapse the whole list exists to make — and KILN and MOULD are the two remaining categories
+    # `toolType`'s own help text has been asking for without ever offering, it having read, in full,
+    # "Hand tool, loom, kiln, mould, and so on." before this change.
+    # Nothing is guessed at for a craft this database has never documented — OTHER, plus the free
+    # text field that stays beside this one, carries those without pretending to classify them.
+    "TOOL_TYPE": {
+        "HAND_TOOL": "Hand tool",
+        "LOOM": "Loom",
+        "LOOM_ACCESSORY": "Loom accessory / attachment",
+        "FRAME": "Frame / drum",
+        "VESSEL": "Vessel / vat",
+        "KILN": "Kiln / furnace / hearth",
+        "MOULD": "Mould / die / block",
+        "OTHER": "Other",
+    },
+    "PRODUCT_CATEGORY": {
+        "APPAREL": "Apparel",
+        "SAREE": "Saree",
+        "DUPATTA_STOLE": "Dupatta / stole",
+        "YARDAGE": "Yardage / fabric",
+        "HOME_FURNISHING": "Home furnishing",
+        "TABLE_LINEN": "Table linen",
+        "FLOOR_COVERING": "Floor covering",
+        "ACCESSORY": "Accessory",
+        "BAG": "Bag",
+        "JEWELLERY": "Jewellery",
+        "UTILITY": "Utility item",
+        "DECORATIVE": "Decorative object",
+        "TOY": "Toy",
+        "PACKAGING": "Packaging",
+        "OTHER": "Other",
+    },
+    "TRADITION_TYPE": {
+        "TRADITIONAL": "Traditional",
+        "CONTEMPORARY": "Contemporary",
+        "TRANSITIONAL": "Traditional form, contemporary use",
+    },
+    "MARKET_CHANNEL": {
+        "LOCAL_HAAT": "Local haat / weekly market",
+        "EMPORIUM": "Government emporium",
+        "EXHIBITION": "Exhibition / mela",
+        "RETAILER": "Retailer",
+        "WHOLESALER": "Wholesaler",
+        "EXPORTER": "Exporter",
+        "ONLINE": "Online marketplace",
+        "DIRECT": "Direct to customer",
+        "MASTER_WEAVER": "Through master weaver / MCP",
+        "COOPERATIVE": "Cooperative society",
+        "OTHER": "Other",
+    },
+    "RESPONDENT_GROUP": {
+        "CONSUMER": "Consumer",
+        "RETAILER": "Retailer",
+        "WHOLESALER": "Wholesaler",
+        "EXPORTER": "Exporter",
+        "ARTISAN": "Artisan",
+        "MASTER_CRAFTSPERSON": "Master craftsperson (MCP)",
+        "EMPORIUM_STAFF": "Emporium staff",
+        "DESIGNER": "Designer",
+        "OFFICIAL": "Government official",
+        "OTHER": "Other",
+    },
+    "REVIEW_DECISION": {
+        "SELECTED": "Selected",
+        "REJECTED": "Rejected",
+        "REVISE": "Revise and resubmit",
+        "PENDING": "Pending review",
+    },
+    "DEMAND_LEVEL": {
+        "HIGH": "High",
+        "MEDIUM": "Medium",
+        "LOW": "Low",
+        "SEASONAL": "Seasonal",
+        "UNKNOWN": "Not known",
+    },
+    "SWOT_KIND": {
+        "STRENGTH": "Strength",
+        "WEAKNESS": "Weakness",
+        "OPPORTUNITY": "Opportunity",
+        "THREAT": "Threat",
+    },
+    "ADOPTION_STATUS": {
+        "ADOPTED_IN_PRODUCTION": "Adopted, in regular production",
+        "ADOPTED_ON_ORDER": "Adopted, made to order",
+        "TRIAL": "Under trial",
+        "NOT_ADOPTED": "Not adopted",
+        "UNKNOWN": "Not known",
+    },
+    "FOLLOWUP_INTERVAL": {
+        "M3": "3 months",
+        "M6": "6 months",
+        "M12": "12 months",
+        "AD_HOC": "Ad hoc",
+    },
+    "MEDIA_QUALITY_FLAG": {
+        "BLUR": "Blurred",
+        "LOW_RESOLUTION": "Resolution too low",
+        "OVEREXPOSED": "Overexposed",
+        "UNDEREXPOSED": "Underexposed",
+        "MISSING_VIEW": "A required view is missing",
+        "DUPLICATE": "Duplicate of another file",
+        "WRONG_SUBJECT": "Wrong subject",
+    },
+    "RETENTION_CLASS": {
+        "HOT": "Hot — in active use",
+        "WARM": "Warm — occasional access",
+        "COLD": "Cold — archive only",
+    },
+    "GI_STATUS": {
+        "REGISTERED": "GI registered",
+        "APPLIED": "GI application filed",
+        "NOT_REGISTERED": "Not GI registered",
+        "UNKNOWN": "Not known",
+    },
+    "EXPORT_FORMAT": {
+        "DOCX": "Word (.docx)",
+        "PDF": "PDF (.pdf)",
+    },
+    "REPORT_TEMPLATE": {
+        "DCH_STANDARD": "DCH standard workshop report",
+        "DIC_STANDARD": "DIC standard workshop report",
+        "IMPLEMENTING_AGENCY": "Implementing agency format",
+        "COMPACT_SUMMARY": "Compact summary",
+        "DETAILED_TECHNICAL": "Detailed technical report",
+        "PHOTO_CATALOGUE": "Photo catalogue",
+    },
+    "PAGE_SIZE": {
+        "A4": "A4",
+        "LETTER": "Letter",
+    },
+    # Built from :data:`app.services.report_theme.ACCENT_PRESETS` rather than written out here,
+    # because the twelve names and the twelve hex values must not be able to disagree: a swatch
+    # labelled "Maroon" that stores a token this registry knows and the theme module does not
+    # would validate, save, and then generate a report in the default indigo with no error
+    # anywhere. One list, one place. The import is safe in this direction — ``report_theme``
+    # imports only ``report_model``, which imports nothing of ours.
+    "REPORT_ACCENT_PRESET": dict(ACCENT_PRESET_ENUM),
+    # Same rule, same file: one typeface list, read by both forms and the validator.
+    "REPORT_FONT": dict(FONT_PRESET_ENUM),
+    "SEVERITY": {
+        "LOW": "Low",
+        "MEDIUM": "Medium",
+        "HIGH": "High",
+    },
+    # What an iteration was fighting, from the source document's own three words: it lists stage
+    # 14's Standard capture as "material/process/design problem".
+    #
+    # CLOSED, WITH NO "OTHER", which is a departure from every open-ended list above and is the
+    # honest reading of the requirement: these three are not a sample of the categories, they are
+    # the categories, and an OTHER member would simply invite the free text back into the one
+    # field the whole point was to make countable. A problem that is genuinely none of the three
+    # is described in `problemType` beside it, which is still there and still free text.
+    "PROBLEM_TYPE": {
+        "MATERIAL": "Material",
+        "PROCESS": "Process",
+        "DESIGN": "Design",
+    },
+    "QUALITY_RATING": {
+        "1": "1 — Poor",
+        "2": "2 — Below average",
+        "3": "3 — Acceptable",
+        "4": "4 — Good",
+        "5": "5 — Excellent",
+    },
+}
+
+
+def enum_label(enum_name: str, value: str) -> str:
+    """The printable label for a stored token, falling back to the token itself.
+
+    Falling back rather than raising is deliberate: a draft written by a phone one release ahead
+    of the server can carry a token this build has never heard of, and printing the raw token in
+    the report is better than failing the export a designer is waiting on in the field.
+    """
+    return ENUMS.get(enum_name, {}).get(value, value)
+
+
+# --------------------------------------------------------------------------------------
+# Promoted columns — the hybrid store's queryable half
+# --------------------------------------------------------------------------------------
+
+# Fields copied onto typed columns of DesignWorkshop whenever a stage is saved. These are the
+# axes a researcher actually filters and sorts on, and the ones a workshop list has to show
+# without opening every JSON document. Everything else stays in the stage's JSON.
+#
+# Keyed by "entityKey.fieldKey", not by field key alone. Field keys are unique only WITHIN an
+# entity — `startDate` is legitimately both the workshop's and a prototype's, `designerName` is
+# both the workshop's designer and the person credited on a final product — so an unscoped map
+# has two possible sources for one column and will silently pick whichever entity is saved last.
+#
+# Adding an entry here is a migration; removing one is not. Keep the list short on purpose:
+# this is an index, not a second copy of the data.
+PROMOTED_COLUMNS: dict[str, str] = {
+    "workshopSetup.workshopTitle": "title",
+    "workshopSetup.schemeName": "scheme",
+    "workshopSetup.craftName": "craftName",
+    "workshopSetup.clusterName": "clusterName",
+    "workshopSetup.state": "state",
+    "workshopSetup.district": "district",
+    "workshopSetup.venue": "venue",
+    "workshopSetup.startDate": "startDate",
+    "workshopSetup.endDate": "endDate",
+    "workshopSetup.designerName": "designerName",
+    "workshopSetup.implementingAgency": "implementingAgency",
+    "workshopSetup.sponsor": "sponsor",
+    "workshopSetup.workshopCode": "workshopCode",
+}
+
+
+def promoted_values(entity_key: str, data: dict[str, Any]) -> dict[str, Any]:
+    """The typed-column updates implied by saving ``entity_key``'s data.
+
+    Returns ``{column name: value}``. An entity that promotes nothing yields an empty dict, so
+    the caller can apply this unconditionally on every stage save.
+    """
+    out: dict[str, Any] = {}
+    for path, column in PROMOTED_COLUMNS.items():
+        source_entity, _, field_key = path.partition(".")
+        if source_entity == entity_key and field_key in data:
+            out[column] = data[field_key]
+    return out
+
+
+# --------------------------------------------------------------------------------------
+# The registry
+# --------------------------------------------------------------------------------------
+
+# Populated by stage_definitions.py, which holds the 22 StageSpec declarations. Splitting the
+# data out of the machinery keeps this module reviewable: the rules live here, the two and a
+# half thousand fields live there.
+STAGES: tuple[StageSpec, ...] = ()
+
+
+def _install(stages: tuple[StageSpec, ...]) -> None:
+    """Bind the stage declarations. Called once, from stage_definitions."""
+    global STAGES
+    STAGES = stages
+
+
+def stages() -> tuple[StageSpec, ...]:
+    """The 22 stages, loading the declarations on first use.
+
+    CALL THIS RATHER THAN IMPORTING ``STAGES``. ``from app.services.stage_schema import STAGES``
+    binds the empty tuple that exists at import time, and :func:`_install` rebinds this module's
+    global without ever reaching that copy — so the importing module keeps an empty registry for
+    the life of the process. Under uvicorn that meant ``GET .../stages/WORKSHOP_SETUP`` answered
+    404 "Unknown stage" while ``GET .../schema`` on the very same server returned all 22, which
+    is about as confusing as a symptom gets. A function cannot be captured that way.
+
+    ``STAGES`` remains for the declaration site and for tests that import the module rather than
+    a name out of it.
+    """
+    _ensure_installed()
+    return STAGES
+
+
+def _ensure_installed() -> None:
+    """Load the stage declarations the first time anything asks for them.
+
+    THE BUG THIS EXISTS FOR. ``STAGES`` starts empty and is filled by importing
+    :mod:`app.services.stage_definitions`, which calls :func:`_install`. Nothing in ``app/``
+    imported it — the tests did, explicitly, which is exactly why the suite could be entirely
+    green while a real server was broken. Under uvicorn the registry stayed empty, so
+    ``GET /design-workshops/schema`` answered ``stages: 0``, every client rendered a form with
+    no fields, every stage save dropped its whole payload as an unknown stage, and every report
+    printed nothing. Nothing raised; the API returned 200 throughout.
+
+    Importing inside the function rather than at module scope is what breaks the cycle:
+    ``stage_definitions`` imports this module for its ``FieldSpec``/``EntitySpec`` types, so a
+    top-level import here would be circular.
+    """
+    if not STAGES:
+        import app.services.stage_definitions  # noqa: F401  - importing installs the registry
+
+
+def stage(key: str) -> StageSpec:
+    _ensure_installed()
+    found = next((s for s in STAGES if s.key == key), None)
+    if found is None:
+        raise KeyError(f"unknown stage {key!r}")
+    return found
+
+
+def stage_by_number(number: int) -> StageSpec:
+    _ensure_installed()
+    found = next((s for s in STAGES if s.number == number), None)
+    if found is None:
+        raise KeyError(f"unknown stage number {number}")
+    return found
+
+
+def all_entities() -> tuple[tuple[StageSpec, EntitySpec], ...]:
+    _ensure_installed()
+    return tuple((s, e) for s in STAGES for e in s.entities)
+
+
+# --------------------------------------------------------------------------------------
+# Validation of the registry itself
+# --------------------------------------------------------------------------------------
+
+
+def validate_registry() -> list[str]:
+    """Return every rule violation in the registry. An empty list means it is sound.
+
+    Run by the tests. The checks are ordered by how expensive the mistake is to discover late:
+    a duplicate key silently overwrites research data, while a missing help string is cosmetic.
+    """
+
+    _ensure_installed()
+    problems: list[str] = []
+    seen_stage_keys: set[str] = set()
+    seen_stage_numbers: set[int] = set()
+    seen_entity_keys: set[str] = set()
+    entity_names: set[str] = set()
+
+    for spec in STAGES:
+        if spec.key in seen_stage_keys:
+            problems.append(f"duplicate stage key {spec.key!r}")
+        seen_stage_keys.add(spec.key)
+        if spec.number in seen_stage_numbers:
+            problems.append(f"duplicate stage number {spec.number}")
+        seen_stage_numbers.add(spec.number)
+        if not 1 <= spec.number <= 22:
+            problems.append(f"stage {spec.key} has number {spec.number}, outside 1-22")
+
+        singletons = [e for e in spec.entities if e.cardinality is Cardinality.SINGLETON]
+        if len(singletons) > 1:
+            problems.append(f"stage {spec.key} declares more than one SINGLETON entity")
+
+        for entity in spec.entities:
+            # Entity keys are globally unique because a stage entry row is addressed by
+            # (workshopId, entityKey, ordinal) alone — scoping by stage as well would make the
+            # storage key wider for no gain and let one collection be defined twice.
+            if entity.key in seen_entity_keys:
+                problems.append(f"duplicate entity key {entity.key!r} (stage {spec.key})")
+            seen_entity_keys.add(entity.key)
+            if entity.name in entity_names:
+                problems.append(f"duplicate entity model name {entity.name!r}")
+            entity_names.add(entity.name)
+            if entity.parent and entity.parent not in seen_entity_keys | {
+                e.key for s in STAGES for e in s.entities
+            }:
+                problems.append(
+                    f"entity {entity.key!r} names parent {entity.parent!r}, which does not exist"
+                )
+            if entity.label_field and entity.field(entity.label_field) is None:
+                problems.append(
+                    f"entity {entity.key!r} label_field {entity.label_field!r} is not one of "
+                    "its fields"
+                )
+
+            seen_field_keys: set[str] = set()
+            for f in entity.fields:
+                where = f"{entity.key}.{f.key}"
+                if f.key in seen_field_keys:
+                    problems.append(f"duplicate field key {where}")
+                seen_field_keys.add(f.key)
+                if not f.key or not f.key[0].isalpha():
+                    problems.append(f"field key {where} must start with a letter")
+                if not f.label:
+                    problems.append(f"field {where} has no label")
+
+                # Rule 3: the tiers only work if Basic alone can satisfy the gate.
+                if f.required and f.tier is not Tier.BASIC:
+                    problems.append(
+                        f"field {where} is required but tier {f.tier.value}; only BASIC fields "
+                        "may be required, or a workshop without facilities can never complete"
+                    )
+                # Rule 2: every enum resolves to a shared list.
+                if f.type in (FieldType.ENUM, FieldType.MULTI_ENUM):
+                    if not f.enum:
+                        problems.append(f"field {where} is {f.type.value} but names no enum")
+                    elif f.enum not in ENUMS:
+                        problems.append(f"field {where} names unknown enum {f.enum!r}")
+                elif f.enum:
+                    problems.append(f"field {where} names an enum but is {f.type.value}")
+
+                if f.type is FieldType.REF and not f.ref_model:
+                    problems.append(f"field {where} is REF but names no ref_model")
+
+                # THE CASCADE HAS TO RESOLVE HERE OR IT RESOLVES NOWHERE.
+                #
+                # A ``ref_filter_by`` naming a field that does not exist in the entity is
+                # invisible at every later point: the registry serialises it happily, the web
+                # form reads `row[refFilterBy]`, gets `undefined`, and asks the resolver for
+                # every record in the table — so the product picker silently stops being
+                # filtered by the artisan and starts offering the whole cluster's catalogue.
+                # Nothing errors, nothing logs, and the only symptom is a designer picking the
+                # wrong artisan's product into a ministry report. Renaming the field the cascade
+                # points at is how it happens, which is exactly the sort of edit that gets made
+                # without opening this file, so the registry has to refuse it.
+                if f.ref_filter_by:
+                    if f.type is not FieldType.REF:
+                        problems.append(
+                            f"field {where} names ref_filter_by but is {f.type.value}; only a "
+                            "REF field is narrowed by another"
+                        )
+                    elif f.ref_filter_by == f.key:
+                        problems.append(f"field {where} names itself as ref_filter_by")
+                    elif entity.field(f.ref_filter_by) is None:
+                        problems.append(
+                            f"field {where} is filtered by {f.ref_filter_by!r}, which is not a "
+                            f"field of {entity.key!r}"
+                        )
+                if f.ref_scope:
+                    if f.type is not FieldType.REF:
+                        problems.append(
+                            f"field {where} names ref_scope but is {f.type.value}"
+                        )
+                    elif f.ref_scope not in REF_SCOPES:
+                        problems.append(
+                            f"field {where} names unknown ref_scope {f.ref_scope!r}; expected "
+                            f"one of {', '.join(sorted(REF_SCOPES))}"
+                        )
+                if f.caption_for:
+                    target = entity.field(f.caption_for)
+                    if target is None:
+                        problems.append(
+                            f"field {where} captions {f.caption_for!r}, which is not in "
+                            f"{entity.key}"
+                        )
+                    elif not target.type.is_media:
+                        problems.append(
+                            f"field {where} captions {f.caption_for!r}, which is not a media "
+                            "field"
+                        )
+                if f.deprecated and not f.replaced_by:
+                    # A deprecated field with no successor leaves a form with a dead input and
+                    # no migration path for the data already stored under it.
+                    problems.append(f"field {where} is deprecated with no replaced_by")
+                if f.min_value is not None and f.max_value is not None \
+                        and f.min_value > f.max_value:
+                    problems.append(f"field {where} has min_value above max_value")
+                if f.column_width_pct and not 0 < f.column_width_pct <= 100:
+                    problems.append(f"field {where} column_width_pct out of range")
+
+    # Rule 1 across entities: every promoted path must resolve to exactly one real field, and
+    # no two paths may target the same column — either mistake gives the denormalisation two
+    # possible sources, and they will disagree the first time both are edited.
+    columns_seen: dict[str, str] = {}
+    for path, column in PROMOTED_COLUMNS.items():
+        entity_key, _, field_key = path.partition(".")
+        entity = next((e for _s, e in all_entities() if e.key == entity_key), None)
+        if entity is None:
+            problems.append(f"promoted path {path!r} names entity {entity_key!r}, which does "
+                            "not exist")
+            continue
+        if entity.field(field_key) is None:
+            problems.append(f"promoted path {path!r} names no field of {entity_key!r}")
+        if column in columns_seen:
+            problems.append(
+                f"promoted column {column!r} is written by both {columns_seen[column]!r} and "
+                f"{path!r}"
+            )
+        columns_seen[column] = path
+
+    return problems
+
+
+# --------------------------------------------------------------------------------------
+# Value coercion and validation
+# --------------------------------------------------------------------------------------
+
+_TRUE = {"true", "yes", "y", "1", "on"}
+_FALSE = {"false", "no", "n", "0", "off"}
+
+
+#: The largest number of metres a GPS accuracy may claim, in metres.
+#:
+#: Half the earth's circumference: no two points on the surface are further apart than this, so an
+#: error bar wider than it excludes nowhere and is not a measurement. The bound exists so that a
+#: reading a device could not have produced is refused HERE, with the field's name on it, rather
+#: than by the JSON column as a 500 the designer is shown as a lost connection.
+_MAX_ACCURACY_M = 20_037_508.0
+
+
+def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
+    """Coerce one submitted value to its stored form. Returns ``(value, error)``.
+
+    Coercion is forgiving on purpose. Three clients write these values — a web form that sends
+    strings, an Android draft that sends typed JSON, and a bulk import — and rejecting "12" for
+    an INT because it arrived as a string would fail whole stages on a formatting difference.
+    What is *not* forgiven is a value that cannot be read as the declared type at all, because
+    that silently becomes a blank cell in a report someone submits to a ministry.
+
+    A blank value is always accepted here and returns ``None``; whether blank is *allowed* is
+    :func:`validate_entry`'s question, not this one's.
+    """
+    if raw is None:
+        return None, None
+    if isinstance(raw, str) and not raw.strip() and spec.type is not FieldType.LONG_TEXT:
+        return None, None
+
+    t = spec.type
+    try:
+        if t is FieldType.RICH_TEXT:
+            # Normalised through the rich-text model rather than stored as the client sent it.
+            # That is what stops a client's own editor state — selection ranges, undo history, an
+            # unrecognised mark from a newer build — reaching the JSON column and, three months
+            # later, the report renderer. A plain string is accepted and read as unformatted
+            # prose, which is how a field promoted from LONG_TEXT keeps the text already under it.
+            from app.services.rich_text import from_json, is_empty, to_json
+
+            if is_empty(raw):
+                return None, None
+            return to_json(from_json(raw)), None
+
+        if t.is_multi:
+            if not isinstance(raw, (list, tuple)):
+                return None, f"{spec.label} must be a list"
+            items = [str(v).strip() for v in raw if str(v).strip()]
+            if t is FieldType.MULTI_ENUM:
+                allowed = ENUMS.get(spec.enum, {})
+                unknown = [v for v in items if v not in allowed]
+                if unknown:
+                    return None, f"{spec.label}: unknown option(s) {', '.join(unknown)}"
+            return items, None
+
+        if t in (FieldType.TEXT, FieldType.LONG_TEXT, FieldType.URL, FieldType.PHONE,
+                 FieldType.EMAIL, FieldType.REF, FieldType.IMAGE, FieldType.FILE,
+                 FieldType.AUDIO, FieldType.VIDEO):
+            # `clean_text` ON THE WAY IN, not only on the way to the renderer.
+            #
+            # It drops the codepoints no document part and no Postgres text column can carry:
+            # the C0 controls, U+FFFE/FFFF and — the one that was actually failing — the
+            # surrogate block. A lone surrogate is not exotic: JSON permits it as a bare \\udXXX
+            # escape, and ANY client that truncates a string at a UTF-16 index produces one by
+            # cutting an emoji or an astral glyph in half. It reached the driver, raised
+            # UnicodeEncodeError, and 500'd the WHOLE stage save — which the stage editor reads
+            # through `isTransient` as "no connection", so a permanently un-saveable stage looked
+            # like bad signal and retried forever with nothing ever told to the designer.
+            # `rich_text` has passed every string through this same function since it was written
+            # ("a lone surrogate from a phone that cut an emoji in half"), and RICH_TEXT fields
+            # were therefore safe while the plain-text ones beside them were not.
+            #
+            # Dropped rather than rejected, and measured AFTER the drop: the client already lost
+            # that character when it cut the pair, so losing one glyph is the honest outcome and
+            # a 422 would be a rejection the designer cannot act on — the text looks fine on
+            # their screen.
+            text = clean_text(str(raw)).strip()
+            if not text:
+                return None, None
+            if spec.max_length and len(text) > spec.max_length:
+                return None, f"{spec.label} is longer than {spec.max_length} characters"
+            return text, None
+
+        if t is FieldType.ENUM:
+            token = str(raw).strip()
+            if token not in ENUMS.get(spec.enum, {}):
+                return None, f"{spec.label}: {token!r} is not a valid option"
+            return token, None
+
+        if t is FieldType.BOOL:
+            if isinstance(raw, bool):
+                return raw, None
+            token = str(raw).strip().lower()
+            if token in _TRUE:
+                return True, None
+            if token in _FALSE:
+                return False, None
+            return None, f"{spec.label} must be yes or no"
+
+        if t is FieldType.INT:
+            value = int(str(raw).strip().replace(",", ""))
+            return _range_checked(spec, value)
+
+        if t in (FieldType.DECIMAL, FieldType.MONEY, FieldType.PERCENT):
+            value = float(str(raw).strip().replace(",", "").replace("₹", ""))
+            if not math.isfinite(value):
+                # `float()` HAPPILY READS "NaN", "Infinity", "inf" AND ANY RUN OF MORE THAN 308
+                # DIGITS, and every one of those boxes is a plain <input type="text"> (the web
+                # keeps trailing zeros that way), so a designer can type one. `_range_checked`
+                # cannot catch them: every comparison against NaN is False, so `nan < 0` passes
+                # the min-0 floor, and `inf` passes any floor there is. The consequences differed
+                # only in how quietly they failed. MONEY stringifies, so `f"{nan:.2f}"` stored
+                # the literal "nan" behind a 200 with `errors: {}` — the designer is told "Stage
+                # saved" — and `report_builder.format_value` printed "₹ nan." on the cover
+                # preview, in the .docx submitted to the ministry and in the on-device report,
+                # while the cost charts silently dropped the row (`_as_number` rejects
+                # non-finite) so the totals disagreed with the table with nothing to say why.
+                # DECIMAL stores the float raw, so it reached the Postgres JSON column, Prisma
+                # refused it, and the WHOLE STAGE SAVE 500'd — which the stage editor reads
+                # through `isTransient` as "no connection", so the designer is told to wait for
+                # signal while a permanently un-writable value retries forever.
+                #
+                # One guard, at the single point all three clients validate through.
+                return None, f"{spec.label} is not a valid number"
+            checked, error = _range_checked(spec, value)
+            if error:
+                return None, error
+            # Money is stored as a string so it survives the JSON round trip without picking up
+            # a binary-float artefact: 1250.10 must not come back as 1250.0999999999999.
+            if t is FieldType.MONEY:
+                return f"{checked:.2f}", None
+            return checked, None
+
+        if t is FieldType.DATE:
+            from datetime import date
+
+            text = str(raw).strip()[:10]
+            date.fromisoformat(text)   # raises if malformed
+            return text, None
+
+        if t is FieldType.TIME:
+            text = str(raw).strip()
+            parts = text.split(":")
+            if len(parts) < 2 or not (0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59):
+                raise ValueError(text)
+            return f"{int(parts[0]):02d}:{int(parts[1]):02d}", None
+
+        if t is FieldType.GEO:
+            if not isinstance(raw, dict):
+                return None, f"{spec.label} must be a coordinate"
+            lat = float(raw.get("lat"))
+            lon = float(raw.get("lon"))
+            # NaN fails this too, and deliberately reads that way round: every comparison
+            # against NaN is False, so `not (...)` is True and the coordinate is refused.
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                return None, f"{spec.label} is not a valid coordinate"
+            out: dict[str, Any] = {"lat": lat, "lon": lon}
+            if raw.get("accuracy") is not None:
+                accuracy = float(raw["accuracy"])
+                # ACCURACY HAD NO CHECK OF ANY KIND while lat and lon had one, so it was the way
+                # a non-finite float still got into the JSON column — where Prisma refuses it and
+                # the entire stage save comes back as a bare 500 that the stage editor reports to
+                # the designer as "no connection". A range as well as a finiteness test, because
+                # a negative error bar is not a reading and neither is one larger than the planet.
+                if not math.isfinite(accuracy) or not (0 <= accuracy <= _MAX_ACCURACY_M):
+                    return None, f"{spec.label}: {raw['accuracy']!r} is not a GPS accuracy"
+                out["accuracy"] = accuracy
+            return out, None
+    except (TypeError, ValueError):
+        return None, f"{spec.label} is not a valid {spec.type.value.lower().replace('_', ' ')}"
+
+    return raw, None
+
+
+def _range_checked(spec: FieldSpec, value: float) -> tuple[Any, str | None]:
+    if spec.min_value is not None and value < spec.min_value:
+        return None, f"{spec.label} must be at least {spec.min_value:g}"
+    if spec.max_value is not None and value > spec.max_value:
+        return None, f"{spec.label} must be at most {spec.max_value:g}"
+    return value, None
+
+
+def validate_entry(entity: EntitySpec, data: dict[str, Any], *,
+                   enforce_required: bool = True) -> tuple[dict[str, Any], dict[str, str]]:
+    """Coerce and validate a whole entry against its entity.
+
+    Returns the cleaned data and a ``{field key: message}`` map of errors. Unknown keys are
+    DROPPED rather than rejected — deliberately, and unlike the rest of this codebase, whose
+    ``APIModel`` sets ``extra="forbid"``. A phone one release ahead of the server carries fields
+    this build has never heard of, and 422-ing the whole stage would mean a designer in a
+    village cannot save two weeks of work because of a field they never filled in. The dropped
+    keys are returned to the caller to log.
+
+    ``enforce_required`` is off while a stage is a draft and on at submission: the whole point
+    of the app is that a stage can be left half-filled overnight.
+    """
+    cleaned: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+
+    for spec in entity.fields:
+        if spec.deprecated:
+            continue
+        raw = data.get(spec.key)
+        value, error = coerce_value(spec, raw)
+        if error:
+            errors[spec.key] = error
+            continue
+        if value is None or (isinstance(value, list) and not value):
+            # BLANK AND DERIVABLE MEANS COMPUTE IT, which is what the field's own help text has
+            # been promising. `durationDays` says "Leave blank to derive it from the start and end
+            # dates" and nothing derived it — the value simply stayed empty, and the cover page of
+            # a submitted report carried a blank where the form had said a number would appear.
+            #
+            # Derived from the INCOMING row rather than from the stored one, so a designer who
+            # changes the end date gets a duration that follows it. The clients compute the same
+            # value live from the same declaration (`derive_value`), so what they watch appear is
+            # what lands here; this branch is what makes it true for the Android app, for an older
+            # build, and for anything talking to the API directly.
+            derived = derive_value(spec, data)
+            if derived is not None:
+                cleaned[spec.key] = derived
+                continue
+            if enforce_required and spec.required:
+                errors[spec.key] = f"{spec.label} is required"
+            continue
+        cleaned[spec.key] = value
+
+    _check_conditional(entity, cleaned, errors)
+    return cleaned, errors
+
+
+#: Fields that become required once another field on the same entity is filled in, as
+#: ``entity key -> (dependent field, the fields that trigger it)``.
+#:
+#: ONE ENTRY SO FAR, and the shape is deliberately narrow rather than a general rule engine: the
+#: registry declares fields, and a conditional requirement is the one thing a flat field list
+#: cannot express. ``countOverrideReason``'s help has said "Required if either count above is
+#: filled in" since it was written and nothing enforced it, so a designer could state that the
+#: workshop produced 24 designs where the record holds 10 and give no reason at all — and that
+#: number now WINS on the report's front page (see ``report_builder._output_count``), which is
+#: exactly when the reason stops being a nicety.
+_CONDITIONALLY_REQUIRED: dict[str, tuple[str, tuple[str, ...]]] = {
+    "outcomes": ("countOverrideReason", ("designsCountOverride", "prototypesCountOverride")),
+}
+
+
+def _check_conditional(entity: EntitySpec, cleaned: dict[str, Any],
+                       errors: dict[str, str]) -> None:
+    """Apply the requirements that depend on another answer, at every tier and on every save.
+
+    NOT gated on ``enforce_required``: unlike a Basic-tier field, which a designer is entitled to
+    leave empty overnight, this one is only ever triggered by a value they have just typed. A
+    figure that overrides the record needs its reason in the same breath, not at submit time
+    three weeks later when the record it disagrees with has moved on.
+    """
+    rule = _CONDITIONALLY_REQUIRED.get(entity.key)
+    if rule is None:
+        return
+    dependent, triggers = rule
+    if cleaned.get(dependent) or dependent in errors:
+        return
+    if not any(_is_filled(cleaned.get(key)) for key in triggers):
+        return
+    spec = entity.field(dependent)
+    if spec is None:  # pragma: no cover - the registry audit keeps this reachable
+        return
+    labels = [entity.field(k).label for k in triggers if entity.field(k) is not None]
+    errors[dependent] = (
+        f"{spec.label} is required once {' or '.join(labels)} is filled in."
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Completeness — the "completeness check" the source document asks for at stage 20
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StageCompleteness:
+    stage_key: str
+    title: str
+    required_total: int
+    required_filled: int
+    optional_total: int
+    optional_filled: int
+    collection_counts: dict[str, int]
+    missing: tuple[str, ...]      # labels of unfilled required fields
+
+    @property
+    def percent(self) -> int:
+        """Progress across BASIC-tier fields only — the tier the report actually needs.
+
+        A stage with no required fields at all (stage 22 follow-up, for instance) reads as
+        complete rather than as 0%, because dividing by zero to decide whether a designer may
+        submit is how a stage becomes permanently unsubmittable.
+        """
+        if self.required_total == 0:
+            return 100
+        return round(100 * self.required_filled / self.required_total)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.required_filled >= self.required_total
+
+
+def _is_filled(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        # A rich-text document of empty paragraphs is not a filled field. An editor that was
+        # focused and then left alone still saves {"blocks":[{"kind":"PARAGRAPH","spans":[]}]},
+        # and counting that as filled would let a designer submit a report whose introduction is
+        # blank while the gate reads 100%.
+        if "blocks" in value:
+            from app.services.rich_text import is_empty
+
+            return not is_empty(value)
+        return bool(value)
+    if isinstance(value, (list, tuple)):
+        return bool(value)
+    return True
+
+
+def stage_completeness(
+    spec: StageSpec,
+    singleton: dict[str, Any],
+    collections: dict[str, list[dict[str, Any]]],
+    *,
+    ref_resolves: Callable[[Any], bool] | None = None,
+) -> StageCompleteness:
+    """Score one stage against its declaration.
+
+    A COLLECTION entity contributes its required fields once per existing row, and contributes
+    nothing when it is empty *unless* the entity itself sits behind a required singleton field —
+    an empty sketch list is a legitimate state on day one of a workshop, not an error.
+
+    ``ref_resolves`` ANSWERS "does this id still point at something?", and without it a required
+    REF counts as filled whenever it holds a non-empty string. That is what made one submitted
+    document disagree with itself: the completeness annexure read "13. Prototype Development |
+    144/144 | 100% | Complete" while eighteen pages earlier the same report printed "Prototype |
+    Not recorded." in all 18 prototypeStageLog tables and all 18 materialUsage tables — 36 times,
+    identically in the .docx and the PDF. The renderer blanks an id it cannot resolve (a deleted
+    parent row) and the scorer never checked, so the two halves of one document counted the same
+    field differently.
+
+    Left as ``None`` where nothing can resolve — the stage form scores itself on the phone with no
+    database — so the argument is what the REPORT passes, and the report is where the
+    contradiction was visible.
+    """
+    required_total = required_filled = 0
+    optional_total = optional_filled = 0
+    missing: list[str] = []
+
+    def _counts_as_filled(f: FieldSpec, value: Any) -> bool:
+        if not _is_filled(value):
+            return False
+        if f.type is not FieldType.REF or ref_resolves is None:
+            return True
+        return bool(ref_resolves(value))
+
+    single = spec.singleton
+    if single is not None:
+        for f in single.fields:
+            if f.deprecated:
+                continue
+            filled = _counts_as_filled(f, singleton.get(f.key))
+            if f.required:
+                required_total += 1
+                if filled:
+                    required_filled += 1
+                else:
+                    missing.append(f.label)
+            else:
+                optional_total += 1
+                optional_filled += int(filled)
+
+    counts: dict[str, int] = {}
+    for entity in spec.collections:
+        rows = collections.get(entity.key) or []
+        counts[entity.key] = len(rows)
+        for row in rows:
+            for f in entity.fields:
+                if f.deprecated:
+                    continue
+                filled = _counts_as_filled(f, row.get(f.key))
+                if f.required:
+                    required_total += 1
+                    if filled:
+                        required_filled += 1
+                    else:
+                        missing.append(f"{entity.title}: {f.label}")
+                else:
+                    optional_total += 1
+                    optional_filled += int(filled)
+
+    return StageCompleteness(
+        stage_key=spec.key,
+        title=spec.title,
+        required_total=required_total,
+        required_filled=required_filled,
+        optional_total=optional_total,
+        optional_filled=optional_filled,
+        collection_counts=counts,
+        missing=tuple(dict.fromkeys(missing)),   # de-duplicated, order preserved
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Serialisation for the clients
+# --------------------------------------------------------------------------------------
+
+
+def field_to_dict(f: FieldSpec) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "key": f.key,
+        "label": f.label,
+        "type": f.type.value,
+        "tier": f.tier.value,
+        "required": f.required,
+    }
+    # Only non-default keys are emitted: the whole registry crosses the wire on every app
+    # start, and the empty strings are most of its bulk.
+    if f.help:
+        out["help"] = f.help
+    if f.unit:
+        out["unit"] = f.unit
+    if f.enum:
+        out["enum"] = f.enum
+        out["options"] = [{"value": v, "label": lbl} for v, lbl in ENUMS[f.enum].items()]
+    if f.ref_model:
+        out["refModel"] = f.ref_model
+        # Emitted for EVERY ref field, defaulted rather than omitted, because a client that has
+        # to supply its own default for the scope is a client that will eventually supply a
+        # different one from the server's. The picker sends this value straight back on
+        # ``GET .../references``, so server and client agree on how wide the net is by
+        # construction instead of by both remembering the same rule.
+        out["refScope"] = f.ref_scope or REF_SCOPE_ALL
+    if f.ref_filter_by:
+        out["refFilterBy"] = f.ref_filter_by
+    if f.max_length:
+        out["maxLength"] = f.max_length
+    if f.min_value is not None:
+        out["minValue"] = f.min_value
+    if f.max_value is not None:
+        out["maxValue"] = f.max_value
+    if f.report_role is not ReportRole.KEY_VALUE:
+        out["reportRole"] = f.report_role.value
+    if f.derived_kind:
+        out["derivedKind"] = f.derived_kind
+        out["derivedFrom"] = list(f.derived_from)
+    if f.column_width_pct:
+        out["columnWidthPct"] = f.column_width_pct
+    if f.caption_for:
+        out["captionFor"] = f.caption_for
+    if f.deprecated:
+        out["deprecated"] = True
+        out["replacedBy"] = f.replaced_by
+    return out
+
+
+def entity_to_dict(e: EntitySpec) -> dict[str, Any]:
+    return {
+        "key": e.key,
+        "name": e.name,
+        "cardinality": e.cardinality.value,
+        "title": e.title,
+        "description": e.description,
+        "parent": e.parent,
+        "labelField": e.label_field,
+        "fields": [field_to_dict(f) for f in e.fields if not f.deprecated],
+    }
+
+
+def stage_to_dict(s: StageSpec) -> dict[str, Any]:
+    return {
+        "number": s.number,
+        "key": s.key,
+        "title": s.title,
+        "purpose": s.purpose,
+        "notes": s.notes,
+        "optionalStage": s.optional_stage,
+        "entities": [entity_to_dict(e) for e in s.entities],
+    }
+
+
+def registry_to_dict() -> dict[str, Any]:
+    """The whole registry, as the clients fetch it from ``GET /design-workshops/schema``.
+
+    Clients cache this by ``version``; a changed version is what tells an Android draft store
+    to run its migration. The version is derived from the content rather than hand-maintained,
+    because a hand-maintained one is a version that stops changing.
+    """
+
+    _ensure_installed()
+    return {
+        "version": registry_version(),
+        "enums": {name: [{"value": v, "label": lbl} for v, lbl in options.items()]
+                  for name, options in ENUMS.items()},
+        "stages": [stage_to_dict(s) for s in STAGES],
+    }
+
+
+def registry_version() -> str:
+    """A short stable digest of every key, type, tier and DERIVATION in the registry.
+
+    Deliberately insensitive to labels and help text: retitling a field must not invalidate
+    every cached draft on every phone, but adding, removing or retyping one must.
+
+    THE DERIVATION IS PART OF THE DIGEST BECAUSE IT IS PART OF THE BEHAVIOUR. It was not, once,
+    and the failure was silent in the worst way: `android/.../assets/design-workshop-schema.json`
+    — the copy a handset runs off before it has ever reached the network — carried two derived
+    fields where the registry had five, missing exactly the three cost-sheet ones. Because the
+    digest covered key/type/tier/required/enum/deprecated and nothing else, the stale asset's
+    version string matched the live registry's CHARACTER FOR CHARACTER, so the staleness check
+    that exists precisely to catch this reported agreement. A field that silently stops computing
+    is indistinguishable, on the phone, from a field the designer forgot to fill in.
+    """
+
+    _ensure_installed()
+    import hashlib
+
+    parts: list[str] = []
+    for s in STAGES:
+        for e in s.entities:
+            for f in e.fields:
+                parts.append(f"{s.key}.{e.key}.{f.key}:{f.type.value}:{f.tier.value}:"
+                             f"{int(f.required)}:{f.enum}:{int(f.deprecated)}:"
+                             f"{f.derived_kind}:{','.join(f.derived_from)}")
+    digest = hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()
+    return digest[:16]
+
+
+def derive_value(spec: FieldSpec, row: dict[str, Any]) -> Any:
+    """What ``spec`` computes to from ``row``, or ``None`` when it cannot be computed.
+
+    THE ONE DEFINITION. `frontend/lib/derivedFields.ts` and the Android renderer are ports of it,
+    and the reason all three exist rather than the server alone is that the value has to appear
+    while the designer is typing: a duration that only materialises after a save is a number they
+    cannot check against the sanction order in front of them.
+
+    Returns None rather than 0 for "not computable". A start date with no end date has no
+    duration, and writing 0 would put "0 days" onto a cover page.
+    """
+    if not spec.derived_kind or not spec.derived_from:
+        return None
+
+    if spec.derived_kind == "DAYS_BETWEEN":
+        from datetime import date
+
+        try:
+            start = date.fromisoformat(str(row.get(spec.derived_from[0]) or "")[:10])
+            end = date.fromisoformat(str(row.get(spec.derived_from[1]) or "")[:10])
+        except (TypeError, ValueError):
+            return None
+        # INCLUSIVE of both days: a workshop that runs the 12th to the 14th is three days long,
+        # which is what its attendance register and its utilisation certificate both say. The
+        # exclusive reading would report two and disagree with every other document in the file.
+        days = (end - start).days + 1
+        return days if days > 0 else None
+
+    if spec.derived_kind == "PRODUCT":
+        total = 1.0
+        for key in spec.derived_from:
+            raw = row.get(key)
+            if raw in (None, ""):
+                return None
+            try:
+                total *= float(str(raw).replace(",", ""))
+            except (TypeError, ValueError):
+                return None
+        # MONEY is stored as a fixed-2 string so it survives the JSON round trip without picking
+        # up a binary-float artefact — the same rule ``coerce_value`` follows.
+        return f"{total:.2f}" if spec.type is FieldType.MONEY else round(total, 4)
+
+    if spec.derived_kind == "SUM":
+        # BLANK MEANS ZERO HERE, and that is the difference from PRODUCT, which returns None the
+        # moment one factor is missing. A cost sheet's total is the sum of six heads of which
+        # four are optional: requiring all six would mean `totalCost` stayed empty for every
+        # workshop that had no packaging or transport cost, which is most of them. But a row with
+        # NONE of them filled has no total — it is an empty row, not a zero-rupee product — and
+        # printing "₹ 0.00" into a cost sheet a ministry reads is a claim, not a blank.
+        total = 0.0
+        seen = False
+        for key in spec.derived_from:
+            raw = row.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                total += float(str(raw).replace(",", ""))
+            except (TypeError, ValueError):
+                return None
+            seen = True
+        if not seen:
+            return None
+        return f"{total:.2f}" if spec.type is FieldType.MONEY else round(total, 4)
+
+    return None

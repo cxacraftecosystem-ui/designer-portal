@@ -1,0 +1,751 @@
+"use client";
+
+/**
+ * The two shapes a registry entity can take on screen, and nothing else.
+ *
+ * A stage's SINGLETON entity is one record per workshop and renders as {@link EntityForm}: a plain
+ * grid of fields, BASIC and STANDARD together in declaration order, ADVANCED collapsed behind a
+ * "More detail" disclosure. Its COLLECTION entities are repeating records — every sketch, every
+ * prototype, every survey respondent — and render as {@link CollectionTable}: a list of rows with
+ * add, edit, reorder and delete, each row titled by the entity's `labelField`.
+ *
+ * WHY ADVANCED IS COLLAPSED BY DEFAULT AND BASIC NEVER IS. The three tiers exist so that a workshop
+ * held in a village without mains power can still produce a complete report: BASIC is the minimum,
+ * and the backend's `validate_registry` refuses to build a registry in which any other tier is
+ * required. Stage 13 has upwards of thirty fields, most of them ADVANCED; showing all of them
+ * flattens the distinction the tiers were created to draw, and a designer working through a form on
+ * a handset in a courtyard cannot see what is actually being asked of them. The disclosure counts
+ * the fields behind it so nobody has to open it to find out whether it is worth opening.
+ *
+ * WHY THE FORM IS CONTROLLED RATHER THAN UNCONTROLLED `FormData`. Every record form in this
+ * repository is uncontrolled and read once at submit, which is right when the field list is fixed
+ * and known at compile time. It cannot work here: the payload is a JSON object whose keys come from
+ * a registry fetched at runtime, half the controls are themed buttons that emit no native input
+ * event at all (dropdowns, tag chips, the media picker, the GPS card), and a collection row has to
+ * survive being reordered — which remounts it — without losing what was typed. So the stage page
+ * owns the data and passes values down. Dirty tracking is explicit for the same reason: there is no
+ * `onInput` on a `<form>` that would ever see a dropdown change.
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, Plus, Trash2 } from "lucide-react";
+
+import { FieldInput, type RefOptionMap, type StageCaptureContext } from "@/components/designworkshop/FieldInput";
+import { StageReferenceMultiPicker } from "@/components/designworkshop/StageReferenceField";
+import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
+import { FLASH_MS } from "@/components/hooks/useRevealRow";
+import { findMissingViews } from "@/lib/imageQuality";
+import { FIELD_ANCHOR_ATTRIBUTE, ROW_ANCHOR_ATTRIBUTE, type StageFocus } from "@/lib/workshopSearch";
+import {
+  blankRow,
+  hydrateFromReference,
+  inputValue,
+  captionFieldFor,
+  formFields,
+  isFilled,
+  rowTitle,
+  splitByTier,
+  type DwEntity,
+  type DwEntryData,
+  type DwField,
+  type DwReferenceOption,
+  type DwRow,
+  type DwValue
+} from "@/lib/designWorkshops";
+
+/** Per-field messages for one record, as the save response's `errors` map holds them. */
+export type FieldErrors = Record<string, string> | undefined;
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The field grid, shared by both shapes
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * One field's cell — its layout span, its ADDRESS, and the arrival when a search sent someone here.
+ *
+ * WHY A FIELD NEEDS AN ADDRESS AT ALL. `FieldInput` names its control with `useId`, which is an
+ * opaque per-render string, so until now nothing outside this tree could point at a box. The
+ * workshop search on the overview page produces results that have to be navigable — a result a
+ * designer cannot get to is not a result — and `data-dw-field` / `data-dw-row` are what
+ * `lib/workshopSearch.readStageFocus` resolves a hit against. They are stamped from the registry's
+ * own keys, so they cost nothing per stage and cannot drift from the field list.
+ *
+ * WHY THE ARRIVAL LIVES HERE AND NOT ON THE STAGE PAGE. The moment to scroll is the moment the box
+ * EXISTS, and when that is depends on where the box lives: a singleton field is there on first
+ * paint, a collection field appears when its row's panel opens, an ADVANCED field appears when its
+ * disclosure opens. A mount effect on the cell itself is right in all three cases without any of
+ * them being enumerated; a `querySelector` from the page would have to guess when to look.
+ *
+ * THE FLASH IS THE `.fr-flash-row` CONTRACT, reused rather than re-invented (`globals.css`, and
+ * `components/hooks/useRevealRow.ts` for the map's version of the same problem): one pulse, plus a
+ * STATIC outline that lingers. The outline is the half that survives `prefers-reduced-motion`, and a
+ * signal that exists only as motion is a signal those readers never get. `data-flash` rather than a
+ * class so that flipping it cannot disturb the conditional layout classes beside it.
+ */
+function FieldCell({
+  entity,
+  field,
+  wide,
+  rowKey,
+  focused,
+  children
+}: {
+  entity: DwEntity;
+  field: DwField;
+  wide: boolean;
+  rowKey: string | null;
+  focused: boolean;
+  children: React.ReactNode;
+}) {
+  const reduce = useAppReducedMotion();
+  /**
+   * Read through a ref, never as a dependency. `useAppReducedMotion()` reads false on the server and
+   * on the first client render by design and flips a tick later once ThemeProvider has read the
+   * stored preferences — as a dependency that flip would tear this effect down and re-run it, so the
+   * page would scroll a second time for exactly the readers who asked for less movement. Same
+   * treatment, and the same reason, as `components/hooks/useEditDeepLink.ts`.
+   */
+  const reduceRef = useRef(reduce);
+  useEffect(() => {
+    reduceRef.current = reduce;
+  });
+
+  const cell = useRef<HTMLDivElement | null>(null);
+  const [flash, setFlash] = useState(false);
+
+  useEffect(() => {
+    if (!focused) return;
+    const node = cell.current;
+    if (!node) return;
+    // ONE FRAME LATER, for the reason `useRevealRow` defers its own scroll: this effect runs in the
+    // same commit that opened the row panel or the disclosure above it, so measuring now measures a
+    // layout the field is about to leave.
+    const frame = requestAnimationFrame(() => {
+      node.scrollIntoView({
+        behavior: reduceRef.current ? "auto" : "smooth",
+        // CENTRE, not "nearest": the field is being arrived at rather than kept in view, and a box
+        // pinned to the top edge of the window hides the entity heading that says what it belongs to.
+        block: "center",
+        inline: "nearest"
+      });
+      setFlash(true);
+    });
+    const timer = setTimeout(() => setFlash(false), FLASH_MS);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [focused]);
+
+  return (
+    <div
+      ref={cell}
+      className={wide ? "fr-flash-row md:col-span-2" : "fr-flash-row"}
+      data-flash={flash ? "true" : undefined}
+      {...{ [FIELD_ANCHOR_ATTRIBUTE]: `${entity.key}.${field.key}` }}
+      {...(rowKey ? { [ROW_ANCHOR_ATTRIBUTE]: rowKey } : {})}
+    >
+      {children}
+    </div>
+  );
+}
+
+function FieldGrid({
+  entity,
+  fields,
+  data,
+  onChange,
+  onPatch,
+  workshopId,
+  refOptions,
+  errors,
+  disabled,
+  stageKey,
+  rowKey,
+  anchorRowKey,
+  capture,
+  focus
+}: {
+  entity: DwEntity;
+  fields: DwField[];
+  data: DwEntryData;
+  onChange: (key: string, value: DwValue) => void;
+  /**
+   * Write several keys of this record in ONE commit.
+   *
+   * Needed by the reference pickers (choosing an artisan writes the id and every display field it
+   * hydrates) and by the identity-card reader. A loop of `onChange` calls cannot substitute for it in
+   * a collection: `patchRow` rebuilds the row array from the `rows` it captured at render, so the
+   * second call in a loop would be built on top of a snapshot that predates the first and would
+   * silently discard it.
+   */
+  onPatch: (values: Record<string, DwValue>) => void;
+  workshopId: string;
+  refOptions?: RefOptionMap;
+  errors: FieldErrors;
+  disabled?: boolean;
+  /** Passed straight down to media fields so a file staged offline knows what it answers. */
+  stageKey?: string;
+  rowKey?: string | null;
+  /**
+   * How the WORKSHOP SEARCH names this row, which is not the same question as `rowKey` above.
+   *
+   * `rowKey` is the row's `_clientKey` and nothing else, because that is the idempotency key
+   * `stageLocalMedia` files a staged photograph under. The anchor has to be whatever
+   * {@link CollectionTable}'s own `keyOf` opened the row BY — `_clientKey`, else the server's
+   * `_entryId` — so that "which row opened" and "which field is marked" can never come back as two
+   * different answers. As things stand the two ladders agree, because `adoptServerStage` mints a
+   * `_clientKey` for every server row it folds into the draft (the 244 rows of the flagship
+   * workshop arrive from the API with only `_entryId` and are keyed on the way in). They are kept
+   * separate anyway: one is a contract with the local media store and the other with
+   * `lib/workshopSearch`, and sharing one field between two contracts is how the next change to
+   * either quietly breaks the other.
+   */
+  anchorRowKey?: string | null;
+  /** Where and when the stage is being recorded — stamped onto every file the grid uploads. */
+  capture?: StageCaptureContext;
+  /** The field a workshop search sent the designer to. See {@link FieldCell}. */
+  focus?: StageFocus;
+}) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {fields.map((field) => {
+        // A caption belongs to its media field and is handed to FieldInput to draw underneath it.
+        // It is never listed in `fields` (formFields filters every `captionFor` field out), so this
+        // is the ONLY place a caption input can come from — which is what makes "never a separate
+        // input" enforceable rather than a convention somebody eventually breaks. No media-type
+        // test is needed: `validate_registry` refuses a registry in which `captionFor` points at
+        // anything that is not a media field, so a hit here is a media field by construction.
+        const captionField = captionFieldFor(entity, field.key);
+        // Media, long prose and the GPS card need the full width; a photo grid squeezed into half a
+        // row on a laptop is a thumbnail nobody can judge focus from.
+        const wide =
+          field.type === "LONG_TEXT" ||
+          // A RICH_TEXT field is the widest thing on a stage: it carries a toolbar of twenty-odd
+          // controls that would wrap into four rows in half a column, a find-and-replace bar, and
+          // the prose itself — and prose set to a 30-character measure is prose nobody proof-reads.
+          field.type === "RICH_TEXT" ||
+          field.type === "GEO" ||
+          field.type === "IMAGE" ||
+          field.type === "IMAGE_LIST" ||
+          field.type === "FILE" ||
+          field.type === "AUDIO" ||
+          field.type === "VIDEO";
+        return (
+          <FieldCell
+            key={field.key}
+            entity={entity}
+            field={field}
+            wide={wide}
+            rowKey={anchorRowKey ?? rowKey ?? null}
+            focused={
+              focus?.entityKey === entity.key &&
+              focus.fieldKey === field.key &&
+              (focus.rowKey ?? null) === (anchorRowKey ?? rowKey ?? null)
+            }
+          >
+            <FieldInput
+              field={field}
+              value={data[field.key]}
+              onChange={(next) => onChange(field.key, next)}
+              entity={entity}
+              row={data}
+              onPatch={onPatch}
+              workshopId={workshopId}
+              refOptions={refOptions}
+              disabled={disabled}
+              error={errors?.[field.key] ?? null}
+              place={{ stageKey, entityKey: entity.key, rowKey }}
+              capture={capture}
+              caption={
+                captionField
+                  ? {
+                      field: captionField,
+                      value: data[captionField.key],
+                      onChange: (next) => onChange(captionField.key, next)
+                    }
+                  : undefined
+              }
+            />
+          </FieldCell>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * "You have a front and a detail shot, but no back" — but ONLY for the one entity in the whole
+ * registry that really has named view slots.
+ *
+ * Stage 6's `existingProduct` declares `viewFront` / `viewBack` / `viewDetail` as separate Advanced
+ * IMAGE fields; nothing else does (stage 11's sketch has a single `image`, stage 16's finalProduct
+ * has galleries). `findMissingViews` is keyed on the entity for that reason, and returns nothing for
+ * every other entity — a warning that asked for a "back view" on a form with no such field would be
+ * asking for something the designer cannot give it.
+ *
+ * Placed OUTSIDE the "More detail" disclosure even though the slots themselves live inside it. The
+ * whole value of this hint is being seen while the product is still on the table; behind a collapsed
+ * disclosure it would be read only by someone who had already gone looking.
+ */
+function MissingViewsHint({ entity, data }: { entity: DwEntity; data: DwEntryData }) {
+  const findings = useMemo(
+    () => findMissingViews(entity.key, data as Record<string, unknown>),
+    [entity.key, data]
+  );
+  if (!findings.length) return null;
+  return (
+    <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-100 p-3 text-amber-800">
+      {/* Colour never carries this on its own: the icon is decorative and the sentence says it. */}
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+      <p className="text-xs leading-5">{findings[0].message}</p>
+    </div>
+  );
+}
+
+/**
+ * Does `focus` point at a field this list holds? Used to open a disclosure or a row that a search
+ * result is inside — an answer behind a collapsed control is an answer the search cannot deliver.
+ */
+function focusIsIn(focus: StageFocus | undefined, entity: DwEntity, fields: DwField[]): boolean {
+  if (!focus || focus.entityKey !== entity.key) return false;
+  // A caption is drawn by its media field and never appears in `fields` itself, so the media field
+  // is what the focus names — see `anchorFieldKey` in `lib/workshopSearch`.
+  return fields.some((field) => field.key === focus.fieldKey);
+}
+
+/**
+ * The "More detail" disclosure.
+ *
+ * `aria-controls` is set ONLY while the panel is mounted. The panel is unmounted on collapse (there
+ * is no height animation to keep it alive for), and pointing `aria-controls` at an element id that
+ * does not exist is worse for a screen reader than not pointing at anything.
+ */
+function AdvancedDisclosure({
+  id,
+  count,
+  defaultOpen = false,
+  children
+}: {
+  id: string;
+  count: number;
+  /**
+   * Open on first render. Only ever true when a search result points at a field inside — an
+   * ADVANCED field is behind this control precisely so a designer is not shown forty optional boxes
+   * in a courtyard, and opening it for any other reason would undo that.
+   */
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!count) return null;
+  return (
+    <div className="mt-4 border-t border-line-200 pt-4">
+      <button
+        type="button"
+        className="inline-flex items-center gap-2 text-sm font-medium text-purple-700 transition hover:text-purple-800"
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+        More detail
+        {/* The count is what lets a designer decide whether to open it without opening it. */}
+        <span className="rounded-full bg-field-200 px-2 py-0.5 text-xs font-medium text-ink-700">{count}</span>
+      </button>
+      {open ? (
+        <div id={id} className="mt-4">
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * SINGLETON
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export function EntityForm({
+  entity,
+  data,
+  onChange,
+  onPatch,
+  workshopId,
+  refOptions,
+  errors,
+  disabled,
+  stageKey,
+  capture,
+  focus
+}: {
+  entity: DwEntity;
+  data: DwEntryData;
+  onChange: (key: string, value: DwValue) => void;
+  /** Several keys of the singleton in one commit — see the note on FieldGrid's own `onPatch`. */
+  onPatch: (values: Record<string, DwValue>) => void;
+  workshopId: string;
+  refOptions?: RefOptionMap;
+  errors?: FieldErrors;
+  disabled?: boolean;
+  stageKey?: string;
+  capture?: StageCaptureContext;
+  /** The field a workshop search sent the designer here for, when it is one of this entity's. */
+  focus?: StageFocus;
+}) {
+  const { primary, advanced } = useMemo(() => splitByTier(formFields(entity)), [entity]);
+
+  return (
+    <section className="panel p-4">
+      <header className="mb-4">
+        <h2 className="font-display text-lg font-bold text-ink-900">{entity.title}</h2>
+        {entity.description ? <p className="mt-1 text-sm leading-6 text-ink-muted">{entity.description}</p> : null}
+      </header>
+      <FieldGrid
+        entity={entity}
+        fields={primary}
+        data={data}
+        onChange={onChange}
+        onPatch={onPatch}
+        workshopId={workshopId}
+        refOptions={refOptions}
+        errors={errors}
+        disabled={disabled}
+        stageKey={stageKey}
+        capture={capture}
+        focus={focus}
+      />
+      <MissingViewsHint entity={entity} data={data} />
+      <AdvancedDisclosure
+        id={`advanced-${entity.key}`}
+        count={advanced.length}
+        defaultOpen={focusIsIn(focus, entity, advanced)}
+      >
+        <FieldGrid
+          entity={entity}
+          fields={advanced}
+          data={data}
+          onChange={onChange}
+          onPatch={onPatch}
+          workshopId={workshopId}
+          refOptions={refOptions}
+          errors={errors}
+          disabled={disabled}
+          stageKey={stageKey}
+          capture={capture}
+          focus={focus}
+        />
+      </AdvancedDisclosure>
+    </section>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * COLLECTION
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A summary line for a collapsed row: how much of it is answered.
+ *
+ * Counting is done against BASIC-tier fields only, matching `stage_completeness` exactly. Two
+ * different answers to "is this row finished" — one on the row and one in the stage's progress bar
+ * — is a form that says a stage is complete and a Save that refuses it.
+ */
+function rowProgress(entity: DwEntity, row: DwRow): { filled: number; total: number } {
+  const required = entity.fields.filter((field) => field.required && !field.deprecated);
+  return {
+    filled: required.filter((field) => isFilled(row[field.key])).length,
+    total: required.length
+  };
+}
+
+export function CollectionTable({
+  entity,
+  rows,
+  onRowsChange,
+  workshopId,
+  refOptions,
+  errorsByIndex,
+  disabled,
+  stageKey,
+  capture,
+  focus
+}: {
+  entity: DwEntity;
+  rows: DwRow[];
+  onRowsChange: (rows: DwRow[]) => void;
+  workshopId: string;
+  refOptions?: RefOptionMap;
+  /** Per-row field errors, indexed the same way `rows` is. */
+  errorsByIndex?: Record<number, FieldErrors>;
+  disabled?: boolean;
+  stageKey?: string;
+  capture?: StageCaptureContext;
+  /** The row and field a workshop search sent the designer here for, when it is one of these. */
+  focus?: StageFocus;
+}) {
+  const { primary, advanced } = useMemo(() => splitByTier(formFields(entity)), [entity]);
+  /**
+   * Which row is open for editing, identified by its client key rather than its array index.
+   *
+   * BY KEY AND NOT BY INDEX, deliberately: reordering rewrites every index, so an index-based
+   * "which one is open" silently follows the row that moved into that slot. A designer who opened
+   * the third prototype and then moved it up would be editing the one it swapped with, and nothing
+   * on screen would say so.
+   *
+   * Seeded from `focus` so that a search result inside row seventeen of the participant roster opens
+   * that row. Seeded rather than forced, and only on FIRST RENDER: the designer may close it again
+   * and go looking at another row, and a panel that sprang back open on every render would be a form
+   * fighting the person filling it in.
+   */
+  const [openKey, setOpenKey] = useState<string | null>(
+    focus?.entityKey === entity.key ? focus.rowKey : null
+  );
+
+  const keyOf = (row: DwRow, index: number) => row._clientKey ?? row._entryId ?? `index-${index}`;
+
+  function patchRow(index: number, key: string, value: DwValue) {
+    onRowsChange(rows.map((row, position) => (position === index ? { ...row, [key]: value } : row)));
+  }
+
+  /**
+   * Several keys of one row, in ONE commit.
+   *
+   * A loop of `patchRow` calls cannot stand in for this: each one rebuilds the array from the `rows`
+   * captured at render, so the second call is built on a snapshot that predates the first and throws
+   * it away. Choosing an artisan writes nine keys at once, so the loop would have stored the id and
+   * lost the name, village, gender and phone that came with it — and the server's own hydration
+   * fills only BLANK fields, so it would not have put them back.
+   */
+  function patchRowMany(index: number, values: Record<string, DwValue>) {
+    if (!Object.keys(values).length) return;
+    onRowsChange(rows.map((row, position) => (position === index ? { ...row, ...values } : row)));
+  }
+
+  /**
+   * The multi-select the roster asked for.
+   *
+   * Offered only where the collection's rows ARE the chosen records, and that is decided by three
+   * conditions rather than by naming an entity — this file must not learn what a "participant" is.
+   *
+   *  * **BASIC tier**, because BASIC is the registry's own word for "this is what the row is for".
+   *  * **No `refFilterBy`**, because a cascading picker depends on a value that lives on a row which
+   *    does not exist yet, so there is nothing for the list to narrow to.
+   *  * **Exactly one such field**, because two of them means a row is a PAIRING — stage 13's
+   *    prototype names both a sketch and an artisan — and ticking thirty of one leaves thirty rows
+   *    half-answered while looking finished.
+   *
+   * On the current registry that resolves to the stage-3 roster and to nothing else, which is the
+   * intent; it will pick up any future collection built the same way without a line changing here.
+   */
+  const bulkField = useMemo(() => {
+    const refs = formFields(entity).filter(
+      (field) => field.type === "REF" && field.refModel && !field.refFilterBy && field.tier === "BASIC"
+    );
+    return refs.length === 1 ? refs[0] : null;
+  }, [entity]);
+
+  function addFromReferences(options: DwReferenceOption[]) {
+    if (!bulkField) return;
+    const created = options.map((option) => {
+      const row = blankRow();
+      // Hydrated exactly as a single pick is, through the same table, so a roster built in one go
+      // and one built name by name hold identical records. The server re-hydrates at save either
+      // way; this is what makes the thirty rows readable before then.
+      return { ...row, ...hydrateFromReference(entity, bulkField, option, row, ""), [bulkField.key]: option.id };
+    });
+    onRowsChange([...rows, ...created]);
+    // Deliberately NOT opened: thirty freshly expanded panels is not a form, it is a wall. Each row
+    // already shows its name and its required-field count, which is what a designer checks next.
+    setOpenKey(null);
+  }
+
+  function move(index: number, delta: number) {
+    const target = index + delta;
+    if (target < 0 || target >= rows.length) return;
+    const next = [...rows];
+    [next[index], next[target]] = [next[target], next[index]];
+    // The ordinal is rewritten from the ARRAY ORDER on save, not stored per row here — a row
+    // carrying a stale `_ordinal` after a swap would be re-sorted back to where it came from the
+    // next time the stage was loaded.
+    onRowsChange(next);
+  }
+
+  function addRow() {
+    const row = blankRow();
+    onRowsChange([...rows, row]);
+    // Opened immediately: adding a row and being shown a collapsed empty strip makes the button
+    // look like it did nothing, and the second press then adds a second empty row.
+    setOpenKey(row._clientKey ?? null);
+  }
+
+  function removeRow(index: number) {
+    const removed = rows[index];
+    onRowsChange(rows.filter((_, position) => position !== index));
+    if (openKey && removed && keyOf(removed, index) === openKey) setOpenKey(null);
+  }
+
+  return (
+    <section className="panel p-4">
+      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-display text-lg font-bold text-ink-900">{entity.title}</h2>
+          {entity.description ? <p className="mt-1 text-sm leading-6 text-ink-muted">{entity.description}</p> : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {bulkField ? (
+            <StageReferenceMultiPicker
+              workshopId={workshopId}
+              field={bulkField}
+              // Ids already on the list, so a name cannot be added twice — a duplicate roster row is
+              // a participant counted twice in every table the report prints.
+              alreadyChosen={rows.map((row) => inputValue(row[bulkField.key])).filter(Boolean)}
+              onAdd={addFromReferences}
+              disabled={disabled}
+              triggerLabel={`Add several from ${bulkField.label.toLowerCase()}`}
+            />
+          ) : null}
+          <button type="button" className="field-button" disabled={disabled} onClick={addRow}>
+            <Plus className="h-4 w-4" aria-hidden />
+            Add {entity.title.replace(/s$/, "").toLowerCase()}
+          </button>
+        </div>
+      </header>
+
+      {rows.length === 0 ? (
+        <p className="rounded-md border border-dashed border-line-200 bg-surface-50 px-4 py-6 text-center text-sm text-ink-muted">
+          No {entity.title.toLowerCase()} yet. An empty list is a legitimate state on day one of a workshop — add one when
+          there is something to record.
+        </p>
+      ) : (
+        <ol className="grid gap-2">
+          {rows.map((row, index) => {
+            const rowKey = keyOf(row, index);
+            const open = openKey === rowKey;
+            const panelId = `row-${entity.key}-${rowKey}`;
+            const progress = rowProgress(entity, row);
+            const rowErrors = errorsByIndex?.[index];
+            return (
+              <li key={rowKey} className="rounded-md border border-line-200 bg-card">
+                <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+                  {/* The ordinal comes from the array position and is printed on the row, so the
+                      list and any reference to it ("prototype 3") name the same thing. */}
+                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-field-200 text-xs font-semibold text-ink-700">
+                    {index + 1}
+                  </span>
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left text-sm font-medium text-ink-900"
+                    aria-expanded={open}
+                    aria-controls={open ? panelId : undefined}
+                    onClick={() => setOpenKey(open ? null : rowKey)}
+                  >
+                    {rowTitle(entity, row, index)}
+                  </button>
+                  {progress.total ? (
+                    <span
+                      className={
+                        progress.filled >= progress.total
+                          ? "rounded-full bg-success-100 px-2 py-0.5 text-xs font-medium text-success-600"
+                          : "rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                      }
+                    >
+                      {progress.filled}/{progress.total} required
+                    </span>
+                  ) : null}
+                  {rowErrors && Object.keys(rowErrors).length ? (
+                    <span className="rounded-full bg-error-100 px-2 py-0.5 text-xs font-medium text-error-600">
+                      {Object.keys(rowErrors).length} to fix
+                    </span>
+                  ) : null}
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      className="grid h-8 w-8 place-items-center rounded-md border border-line-200 text-ink-700 transition hover:bg-surface-50 disabled:opacity-40"
+                      aria-label={`Move ${rowTitle(entity, row, index)} up`}
+                      disabled={disabled || index === 0}
+                      onClick={() => move(index, -1)}
+                    >
+                      <ArrowUp className="h-4 w-4" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      className="grid h-8 w-8 place-items-center rounded-md border border-line-200 text-ink-700 transition hover:bg-surface-50 disabled:opacity-40"
+                      aria-label={`Move ${rowTitle(entity, row, index)} down`}
+                      disabled={disabled || index === rows.length - 1}
+                      onClick={() => move(index, 1)}
+                    >
+                      <ArrowDown className="h-4 w-4" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      className="grid h-8 w-8 place-items-center rounded-md border border-red-200 text-error-600 transition hover:bg-error-100 disabled:opacity-40"
+                      aria-label={`Delete ${rowTitle(entity, row, index)}`}
+                      disabled={disabled}
+                      onClick={() => removeRow(index)}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden />
+                    </button>
+                  </div>
+                </div>
+                {open ? (
+                  <div id={panelId} className="border-t border-line-200 p-3">
+                    <FieldGrid
+                      entity={entity}
+                      fields={primary}
+                      data={row}
+                      onChange={(key, value) => patchRow(index, key, value)}
+                      onPatch={(values) => patchRowMany(index, values)}
+                      capture={capture}
+                      workshopId={workshopId}
+                      refOptions={refOptions}
+                      errors={rowErrors}
+                      disabled={disabled}
+                      stageKey={stageKey}
+                      rowKey={row._clientKey ?? null}
+                      anchorRowKey={rowKey}
+                      focus={focus}
+                    />
+                    <MissingViewsHint entity={entity} data={row} />
+                    <AdvancedDisclosure
+                      id={`${panelId}-advanced`}
+                      count={advanced.length}
+                      defaultOpen={focus?.rowKey === rowKey && focusIsIn(focus, entity, advanced)}
+                    >
+                      <FieldGrid
+                        entity={entity}
+                        fields={advanced}
+                        data={row}
+                        onChange={(key, value) => patchRow(index, key, value)}
+                        onPatch={(values) => patchRowMany(index, values)}
+                        capture={capture}
+                        workshopId={workshopId}
+                        refOptions={refOptions}
+                        errors={rowErrors}
+                        disabled={disabled}
+                        stageKey={stageKey}
+                        rowKey={row._clientKey ?? null}
+                        anchorRowKey={rowKey}
+                        focus={focus}
+                      />
+                    </AdvancedDisclosure>
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {/* Deleting a row here only removes it from the list on screen, and saying so removes the
+          reflex worry that the button is destructive before Save. It is also the honest
+          description: the stage save sends the rows that remain, and the server sweeps the rest —
+          see the note on `replaceCollections` in the stage page for why that sweep is armed only
+          when something was actually deleted. */}
+      {rows.length ? (
+        <p className="mt-3 text-xs text-ink-500">
+          Reordering and deleting take effect when the stage is saved. Nothing is written until then.
+        </p>
+      ) : null}
+    </section>
+  );
+}

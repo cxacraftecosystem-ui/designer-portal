@@ -1,0 +1,560 @@
+import asyncio
+import os
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+from fastapi.encoders import jsonable_encoder
+from prisma import Json
+
+from app.core.config import Settings, get_settings
+from app.core.db import db
+from app.services.ai import (
+    analyze_measurement_image_bytes,
+    redact_secrets,
+    refine_transcript_text,
+    transcribe_audio_bytes,
+)
+from app.services.app_settings import (
+    load_app_settings,
+    transcription_mode,
+    within_processing_window,
+)
+from app.services.s3 import get_object_bytes
+
+TRANSCRIPTION = "TRANSCRIPTION"
+MEASUREMENT = "MEASUREMENT"
+QUEUED = "QUEUED"
+PROCESSING = "PROCESSING"
+COMPLETED = "COMPLETED"
+FAILED = "FAILED"
+UNAVAILABLE = "UNAVAILABLE"
+RATE_LIMITED = "RATE_LIMITED"
+
+STALE_PROCESSING_AFTER = timedelta(minutes=30)
+
+# Rate-limit backoff. When transcription is throttled (HTTP 429/503), we pause transcription for a
+# growing cooldown and requeue the job WITHOUT consuming an attempt — so every clip is transcribed
+# eventually instead of burning out its retries. Measurement jobs keep flowing through the cooldown.
+RATE_LIMIT_BASE_SECONDS = 30
+RATE_LIMIT_MAX_SECONDS = 900
+# Outside the off-peak window, transcription still runs when the box is idle — 1-minute load average
+# below this fraction of the CPU count — so spare daytime capacity is used instead of waiting for night.
+IDLE_LOAD_FACTOR = 0.6
+
+# Single elected worker (see main.py), so module-level cooldown state is safe.
+_rate_limit_cooldown_until: datetime | None = None
+_consecutive_rate_limits = 0
+
+
+class RateLimited(Exception):
+    """Raised when a transcription call is throttled. Carries an optional provider Retry-After (s)."""
+
+    def __init__(self, retry_after: float | None = None) -> None:
+        super().__init__("Transcription rate-limited")
+        self.retry_after = retry_after
+
+
+def _server_is_idle() -> bool:
+    """True when the host has spare capacity (low 1-minute load average). Used to let transcription
+    run outside the off-peak window when nothing else is keeping the box busy. Conservatively False
+    where load average is unavailable (e.g. Windows dev)."""
+    try:
+        load1 = os.getloadavg()[0]
+    except (OSError, AttributeError):
+        return False
+    return load1 < (os.cpu_count() or 1) * IDLE_LOAD_FACTOR
+
+
+def _transcription_in_cooldown(now: datetime | None = None) -> bool:
+    return _rate_limit_cooldown_until is not None and (now or datetime.now(UTC)) < _rate_limit_cooldown_until
+
+
+def _enter_rate_limit_cooldown(retry_after: float | None) -> None:
+    global _rate_limit_cooldown_until, _consecutive_rate_limits
+    _consecutive_rate_limits += 1
+    if retry_after and retry_after > 0:
+        delay = max(retry_after, RATE_LIMIT_BASE_SECONDS)
+    else:
+        delay = min(RATE_LIMIT_BASE_SECONDS * (2 ** (_consecutive_rate_limits - 1)), RATE_LIMIT_MAX_SECONDS)
+    _rate_limit_cooldown_until = datetime.now(UTC) + timedelta(seconds=delay)
+
+
+def _clear_rate_limit_cooldown() -> None:
+    global _rate_limit_cooldown_until, _consecutive_rate_limits
+    _rate_limit_cooldown_until = None
+    _consecutive_rate_limits = 0
+
+
+def _value(record: Any, key: str) -> Any:
+    if isinstance(record, dict):
+        return record.get(key)
+    return getattr(record, key, None)
+
+
+def _job_requests(media: Any, requested: list[str] | None) -> set[str]:
+    media_type = str(_value(media, "mediaType") or "").upper()
+    normalized = {str(item).strip().upper() for item in requested or [] if str(item).strip()}
+    if requested is None and media_type == "AUDIO":
+        normalized.add(TRANSCRIPTION)
+    if media_type != "AUDIO":
+        normalized.discard(TRANSCRIPTION)
+    if media_type != "IMAGE":
+        normalized.discard(MEASUREMENT)
+    return normalized & {TRANSCRIPTION, MEASUREMENT}
+
+
+def _target_data(media: Any) -> dict[str, str]:
+    data: dict[str, str] = {}
+    product_id = _value(media, "productId")
+    tool_id = _value(media, "toolId")
+    record_type = str(_value(media, "linkedRecordType") or "").lower()
+    linked_record_id = _value(media, "linkedRecordId")
+    if record_type == "product" and linked_record_id:
+        product_id = linked_record_id
+    if record_type == "tool" and linked_record_id:
+        tool_id = linked_record_id
+    if product_id:
+        data["productId"] = str(product_id)
+    if tool_id:
+        data["toolId"] = str(tool_id)
+    return data
+
+
+async def enqueue_media_processing_jobs(
+    media: Any,
+    processing_requests: list[str] | None,
+    requested_by_id: str,
+    settings: Settings | None = None,
+) -> list[Any]:
+    settings = settings or get_settings()
+    requests = _job_requests(media, processing_requests)
+    if not requests:
+        return []
+
+    media_id = str(_value(media, "id"))
+    target_data = _target_data(media)
+    created_jobs: list[Any] = []
+    for request in sorted(requests):
+        job = await db.mediaprocessingjob.create(
+            data={
+                "jobType": request,
+                "status": QUEUED,
+                "priority": 50 if request == TRANSCRIPTION else 70,
+                "maxAttempts": max(settings.media_queue_job_max_attempts, 1),
+                "mediaFileId": media_id,
+                "requestedById": requested_by_id,
+                **target_data,
+            }
+        )
+        created_jobs.append(job)
+
+    if TRANSCRIPTION in requests:
+        await db.mediafile.update(where={"id": media_id}, data={"transcriptStatus": QUEUED})
+
+    if MEASUREMENT in requests:
+        await _mark_measurement_queued(media_id, target_data)
+
+    return created_jobs
+
+
+async def _mark_measurement_queued(media_id: str, target_data: dict[str, str]) -> None:
+    data = {"measurementImageId": media_id, "measurementAnalysisStatus": QUEUED}
+    if target_data.get("productId"):
+        await db.productdocumentation.update(where={"id": target_data["productId"]}, data=data)
+    if target_data.get("toolId"):
+        await db.tooldocumentation.update(where={"id": target_data["toolId"]}, data=data)
+
+
+async def process_next_media_jobs(
+    limit: int | None = None,
+    worker_id: str = "api-worker",
+    settings: Settings | None = None,
+) -> dict[str, int]:
+    settings = settings or get_settings()
+    batch_size = max(1, limit or settings.media_queue_batch_size)
+    await recover_stale_processing_jobs()
+    now = datetime.now(UTC)
+    where: dict[str, Any] = {"status": QUEUED, "runAfter": {"lte": now}}
+    # When transcription may run: inside the configured off-peak window, OR whenever the server is idle
+    # (spare capacity) so we don't wait for the night when nothing else is happening — but never while a
+    # rate-limit cooldown is in effect. Lighter MEASUREMENT jobs always run.
+    app_settings = await load_app_settings()
+    allow_transcription = (
+        (within_processing_window(app_settings) or _server_is_idle())
+        and not _transcription_in_cooldown(now)
+    )
+    if not allow_transcription:
+        where["jobType"] = {"not": TRANSCRIPTION}
+    jobs = await db.mediaprocessingjob.find_many(
+        where=where,
+        include={"mediaFile": True},
+        order=[{"priority": "asc"}, {"createdAt": "asc"}],
+        take=batch_size,
+    )
+
+    processed = 0
+    succeeded = 0
+    failed = 0
+    for job in jobs:
+        processed += 1
+        try:
+            locked = await _lock_job(job.id, worker_id)
+            if locked is None:
+                continue
+            await _process_job(locked, settings)
+            succeeded += 1
+            if locked.jobType == TRANSCRIPTION:
+                _clear_rate_limit_cooldown()  # a clean success ends any backoff
+        except RateLimited as exc:
+            # Throttled: requeue this job without consuming an attempt, then pause transcription for a
+            # cooldown and stop draining the batch so we don't keep hammering a throttled provider.
+            await _defer_rate_limited_job(job, exc.retry_after)
+            _enter_rate_limit_cooldown(exc.retry_after)
+            break
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            await _handle_job_failure(job.id, exc)
+    return {"processed": processed, "succeeded": succeeded, "failed": failed}
+
+
+async def _defer_rate_limited_job(job: Any, retry_after: float | None) -> None:
+    """Requeue a throttled transcription job, restoring its pre-lock attempt count so rate limiting
+    never exhausts its retries — it will be picked up again after the cooldown."""
+    delay = retry_after if (retry_after and retry_after > 0) else RATE_LIMIT_BASE_SECONDS
+    await db.mediaprocessingjob.update(
+        where={"id": job.id},
+        data={
+            "status": QUEUED,
+            "lockedAt": None,
+            "lockedBy": None,
+            "attempts": job.attempts,
+            "runAfter": datetime.now(UTC) + timedelta(seconds=delay),
+            "error": "Rate-limited; awaiting cooldown before automatic retry.",
+        },
+    )
+
+
+async def transcribe_media_now(media: Any, settings: Settings | None = None) -> dict[str, Any]:
+    """Transcribe one audio media file immediately and store the result, applying the transcription
+    mode configured in the settings page (RAW / REFINED / REFINED+TRANSLATED). This is the admin
+    "Transcribe now" action: it bypasses the queue AND the off-peak window so the result is produced on
+    the spot. Mirrors the worker's TRANSCRIPTION path so a manual run and a queued run agree. Never
+    raises on an AI failure — it records the status/error on the media row and returns the result so the
+    caller can surface it."""
+    settings = settings or get_settings()
+    media_id = str(_value(media, "id"))
+    await db.mediafile.update(where={"id": media_id}, data={"transcriptStatus": PROCESSING})
+    content = await asyncio.to_thread(get_object_bytes, _value(media, "objectKey"))
+    result = await transcribe_audio_bytes(
+        content,
+        _value(media, "originalFilename") or "recording.webm",
+        _value(media, "mimeType") or "audio/webm",
+        settings,
+    )
+    mode = transcription_mode(await load_app_settings())
+    if result.get("status") == "COMPLETED" and mode in {"REFINED", "REFINED_TRANSLATED"} and result.get("text"):
+        refined = await refine_transcript_text(result.get("text"), mode == "REFINED_TRANSLATED", settings)
+        if refined.get("status") == "COMPLETED" and refined.get("refined"):
+            result = {
+                **result,
+                "formattedTranscript": refined["refined"],
+                "transcriptionMode": mode,
+                "translated": mode == "REFINED_TRANSLATED",
+            }
+    status = str(result.get("status") or FAILED).upper()
+    if status == RATE_LIMITED:
+        # Throttled even on a manual run — keep it QUEUED so the background worker finishes it later.
+        await db.mediafile.update(
+            where={"id": media_id},
+            data={"transcriptStatus": QUEUED, "transcriptError": result.get("message")},
+        )
+        # "Queued" must never be a dead end: if no queue job exists for this clip (e.g. it was
+        # uploaded without a transcription request), create one so the worker actually picks it up.
+        pending = await db.mediaprocessingjob.find_first(
+            where={
+                "mediaFileId": media_id,
+                "jobType": TRANSCRIPTION,
+                "status": {"in": [QUEUED, PROCESSING]},
+            }
+        )
+        if pending is None:
+            job_data: dict[str, Any] = {
+                "jobType": TRANSCRIPTION,
+                "status": QUEUED,
+                "priority": 50,
+                "maxAttempts": max(settings.media_queue_job_max_attempts, 1),
+                "mediaFileId": media_id,
+                **_target_data(media),
+            }
+            # requestedById is a real FK to User, so fall back to NULL (not a placeholder string)
+            # when the uploader is unknown.
+            uploader_id = _value(media, "uploadedById")
+            if uploader_id:
+                job_data["requestedById"] = str(uploader_id)
+            await db.mediaprocessingjob.create(data=job_data)
+        return result
+    await db.mediafile.update(where={"id": media_id}, data=_transcript_write(result, status))
+    return result
+
+
+def _transcript_write(result: dict[str, Any], status: str) -> dict[str, Any]:
+    """The MediaFile columns to write for a finished transcription run.
+
+    A FAILED or UNAVAILABLE run carries ``text: None`` (see services/ai.py), and writing that empty
+    result verbatim NULLED OUT a transcript that was already stored: re-running transcription on a
+    clip that already had a good transcript — the admin "Transcribe now" button, or a requeued job —
+    destroyed it the moment the provider was down, and nothing else holds a copy. A run that produced
+    no text therefore records only its status and its error; the previous transcript stays, and the
+    failure is still visible in ``transcriptStatus``/``transcriptError``. Clearing a transcript stays
+    a deliberate act: POST /media/{id}/transcript is the one path that overwrites stored text.
+    """
+    data: dict[str, Any] = {
+        "transcriptStatus": status,
+        "transcriptError": None if status in {COMPLETED, "EMPTY"} else result.get("message"),
+    }
+    transcript = result.get("formattedTranscript") or result.get("text")
+    if transcript:
+        data["transcriptText"] = transcript
+        data["transcriptSummary"] = result.get("text")
+    return data
+
+
+async def recover_stale_processing_jobs() -> int:
+    cutoff = datetime.now(UTC) - STALE_PROCESSING_AFTER
+    stale_jobs = await db.mediaprocessingjob.find_many(
+        where={"status": PROCESSING, "lockedAt": {"lt": cutoff}},
+        take=25,
+    )
+    for job in stale_jobs:
+        await db.mediaprocessingjob.update(
+            where={"id": job.id},
+            data={
+                "status": QUEUED,
+                "lockedAt": None,
+                "lockedBy": None,
+                "runAfter": datetime.now(UTC),
+                "error": "Recovered after worker interruption.",
+            },
+        )
+    return len(stale_jobs)
+
+
+async def _lock_job(job_id: str, worker_id: str) -> Any | None:
+    # Read first for the attempts counter, then claim ATOMICALLY: the update only matches while the
+    # row is still QUEUED, so of two concurrent claimers exactly one sees count==1 and the loser
+    # backs off with None instead of double-processing the job.
+    job = await db.mediaprocessingjob.find_unique(where={"id": job_id})
+    if not job or job.status != QUEUED:
+        return None
+    now = datetime.now(UTC)
+    claimed = await db.mediaprocessingjob.update_many(
+        where={"id": job_id, "status": QUEUED},
+        data={
+            "status": PROCESSING,
+            "lockedAt": now,
+            "lockedBy": worker_id,
+            "startedAt": now,
+            "attempts": job.attempts + 1,
+            "error": None,
+        },
+    )
+    if claimed != 1:
+        return None
+    return await db.mediaprocessingjob.find_unique(where={"id": job_id}, include={"mediaFile": True})
+
+
+async def _process_job(job: Any, settings: Settings) -> None:
+    media = job.mediaFile
+    content = await asyncio.to_thread(get_object_bytes, media.objectKey)
+    if job.jobType == TRANSCRIPTION:
+        result = await transcribe_audio_bytes(
+            content,
+            media.originalFilename or "recording.webm",
+            media.mimeType or "audio/webm",
+            settings,
+        )
+        # Apply the configured transcription mode: RAW keeps the plain transcript; REFINED rewrites it
+        # into a clean interviewer/interviewee dialogue; REFINED_TRANSLATED also translates to English.
+        # The refined text is stored as the transcript (raw stays in transcriptSummary) and still lands
+        # COMPLETED — i.e. awaiting human approval through the existing transcript-approval flow.
+        mode = transcription_mode(await load_app_settings())
+        if result.get("status") == "COMPLETED" and mode in {"REFINED", "REFINED_TRANSLATED"} and result.get("text"):
+            refined = await refine_transcript_text(result.get("text"), mode == "REFINED_TRANSLATED", settings)
+            if refined.get("status") == "COMPLETED" and refined.get("refined"):
+                result = {
+                    **result,
+                    "formattedTranscript": refined["refined"],
+                    "transcriptionMode": mode,
+                    "translated": mode == "REFINED_TRANSLATED",
+                }
+        await _apply_transcription_result(job, result)
+        return
+    if job.jobType == MEASUREMENT:
+        result = await analyze_measurement_image_bytes(
+            content,
+            media.originalFilename or "measurement.jpg",
+            media.mimeType or "image/jpeg",
+            settings,
+        )
+        await _apply_measurement_result(job, result)
+        return
+    raise RuntimeError(f"Unsupported media processing job type: {job.jobType}")
+
+
+async def _apply_transcription_result(job: Any, result: dict[str, Any]) -> None:
+    status = str(result.get("status") or FAILED).upper()
+    message = result.get("message")
+    if status == RATE_LIMITED:
+        # Leave the clip QUEUED and let the queue back off + retry without consuming an attempt.
+        await db.mediafile.update(
+            where={"id": job.mediaFileId},
+            data={"transcriptStatus": QUEUED, "transcriptError": message},
+        )
+        raise RateLimited(result.get("retryAfter"))
+    await db.mediafile.update(
+        where={"id": job.mediaFileId}, data=_transcript_write(result, status)
+    )
+    if status in {COMPLETED, "EMPTY"}:
+        await _complete_job(job.id, result)
+    elif status == UNAVAILABLE:
+        await _finalize_unavailable_job(job.id, result, message)
+    else:
+        raise RuntimeError(message or "Transcription failed")
+
+
+async def _apply_measurement_result(job: Any, result: dict[str, Any]) -> None:
+    status = str(result.get("status") or FAILED).upper()
+    message = result.get("message")
+    analysis = result.get("analysis")
+    metadata = _merge_measurement_metadata(job.mediaFile.extraMetadata, result)
+    await db.mediafile.update(where={"id": job.mediaFileId}, data={"extraMetadata": Json(metadata)})
+
+    if job.productId:
+        await _apply_measurement_to_product(job.productId, job.mediaFileId, status, analysis)
+    if job.toolId:
+        await _apply_measurement_to_tool(job.toolId, job.mediaFileId, status, analysis)
+
+    if status == COMPLETED:
+        await _complete_job(job.id, result)
+    elif status == UNAVAILABLE:
+        await _finalize_unavailable_job(job.id, result, message)
+    else:
+        raise RuntimeError(message or "Measurement analysis failed")
+
+
+def _merge_measurement_metadata(existing: Any, result: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(existing, dict):
+        metadata = dict(existing)
+    else:
+        metadata = {}
+    metadata["measurementProcessing"] = jsonable_encoder(result)
+    return metadata
+
+
+async def _apply_measurement_to_product(
+    product_id: str,
+    media_id: str,
+    status: str,
+    analysis: dict[str, Any] | None,
+) -> None:
+    product = await db.productdocumentation.find_unique(where={"id": product_id})
+    if not product:
+        return
+    data = _measurement_update_data(media_id, status, analysis, product)
+    await db.productdocumentation.update(where={"id": product_id}, data=data)
+
+
+async def _apply_measurement_to_tool(
+    tool_id: str,
+    media_id: str,
+    status: str,
+    analysis: dict[str, Any] | None,
+) -> None:
+    tool = await db.tooldocumentation.find_unique(where={"id": tool_id})
+    if not tool:
+        return
+    data = _measurement_update_data(media_id, status, analysis, tool)
+    await db.tooldocumentation.update(where={"id": tool_id}, data=data)
+
+
+def _measurement_update_data(
+    media_id: str,
+    status: str,
+    analysis: dict[str, Any] | None,
+    record: Any,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "measurementImageId": media_id,
+        "measurementAnalysisStatus": status,
+    }
+    if analysis:
+        data["measurementAnalysis"] = Json(jsonable_encoder(analysis))
+        length = _decimal_or_none(analysis.get("lengthInches"))
+        breadth = _decimal_or_none(analysis.get("breadthInches"))
+        if length is not None and _value(record, "lengthInches") is None:
+            data["lengthInches"] = str(length)
+        if breadth is not None and _value(record, "breadthInches") is None:
+            data["breadthInches"] = str(breadth)
+    return data
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value)).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+async def _complete_job(job_id: str, result: dict[str, Any]) -> None:
+    await db.mediaprocessingjob.update(
+        where={"id": job_id},
+        data={
+            "status": COMPLETED,
+            "lockedAt": None,
+            "lockedBy": None,
+            "completedAt": datetime.now(UTC),
+            "result": Json(jsonable_encoder(result)),
+            "error": None,
+        },
+    )
+
+
+async def _finalize_unavailable_job(job_id: str, result: dict[str, Any], message: Any) -> None:
+    await db.mediaprocessingjob.update(
+        where={"id": job_id},
+        data={
+            "status": FAILED,
+            "lockedAt": None,
+            "lockedBy": None,
+            "completedAt": datetime.now(UTC),
+            "result": Json(jsonable_encoder(result)),
+            "error": str(message or "Required AI API key is not configured."),
+        },
+    )
+
+
+async def _handle_job_failure(job_id: str, exc: Exception) -> None:
+    job = await db.mediaprocessingjob.find_unique(where={"id": job_id})
+    if not job:
+        return
+    now = datetime.now(UTC)
+    # This column is served with the job, and the exception reaching it is ANY exception the job
+    # raised — including one built by a library out of a URL that carried a credential. services/ai
+    # keeps its own results clean; this is the guard for everything else that can fail in here.
+    error = redact_secrets(str(exc))[:2000]
+    exhausted = job.attempts >= job.maxAttempts
+    retry_delay = timedelta(minutes=min(60, 2 ** max(job.attempts - 1, 0)))
+    await db.mediaprocessingjob.update(
+        where={"id": job_id},
+        data={
+            "status": FAILED if exhausted else QUEUED,
+            "lockedAt": None,
+            "lockedBy": None,
+            "runAfter": now if exhausted else now + retry_delay,
+            "completedAt": now if exhausted else None,
+            "error": error,
+        },
+    )

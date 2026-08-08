@@ -1,0 +1,680 @@
+{
+  "products": [
+    {
+      "_entryId": "fp1",
+      "name": "Sambalpuri stole"
+    },
+    {
+      "_entryId": "fp2",
+      "name": "Ikat cushion cover"
+    }
+  ],
+  "labelKeys": {
+    "costMaterialLine": "item",
+    "costLabourLine": "task",
+    "prototypeStageLog": "stageName",
+    "materialUsage": "material",
+    "prototypeIteration": "changesMade",
+    "buyerLink": "buyerName",
+    "costSheet": "productRef"
+  },
+  "cases": [
+    {
+      "name": "two sheets, lines interleaved",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costMaterialLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        },
+        {
+          "_entryId": "cs2",
+          "productRef": "fp2"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "m1",
+          "costSheetRef": "cs1",
+          "item": "Tussar yarn"
+        },
+        {
+          "_entryId": "m2",
+          "costSheetRef": "cs2",
+          "item": "Cotton yarn"
+        },
+        {
+          "_entryId": "m3",
+          "costSheetRef": "cs1",
+          "item": "Natural dye"
+        }
+      ]
+    },
+    {
+      "name": "a line naming no sheet at all",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costMaterialLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "m1",
+          "costSheetRef": "cs1",
+          "item": "Tussar yarn"
+        },
+        {
+          "_entryId": "m2",
+          "costSheetRef": "",
+          "item": "Zari thread"
+        }
+      ]
+    },
+    {
+      "name": "a line naming a sheet that was deleted",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costMaterialLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "m1",
+          "costSheetRef": "cs1",
+          "item": "Tussar yarn"
+        },
+        {
+          "_entryId": "m2",
+          "costSheetRef": "cmsdeletedsheet0001",
+          "item": "Lining cloth"
+        }
+      ]
+    },
+    {
+      "name": "both kinds of orphan land in one bucket, last",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costMaterialLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        },
+        {
+          "_entryId": "cs2",
+          "productRef": "fp2"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "m1",
+          "costSheetRef": "",
+          "item": "Zari thread"
+        },
+        {
+          "_entryId": "m2",
+          "costSheetRef": "cs2",
+          "item": "Cotton yarn"
+        },
+        {
+          "_entryId": "m3",
+          "costSheetRef": "cmsdeletedsheet0001",
+          "item": "Lining cloth"
+        },
+        {
+          "_entryId": "m4",
+          "costSheetRef": "cs1",
+          "item": "Tussar yarn"
+        }
+      ]
+    },
+    {
+      "name": "groups follow the parent's order, not the children's",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costLabourLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        },
+        {
+          "_entryId": "cs2",
+          "productRef": "fp2"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "l1",
+          "costSheetRef": "cs2",
+          "task": "Weaving"
+        },
+        {
+          "_entryId": "l2",
+          "costSheetRef": "cs1",
+          "task": "Dyeing"
+        }
+      ]
+    },
+    {
+      "name": "a sheet with no lines of its own gets no heading",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costLabourLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        },
+        {
+          "_entryId": "cs2",
+          "productRef": "fp2"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "l1",
+          "costSheetRef": "cs1",
+          "task": "Dyeing"
+        }
+      ]
+    },
+    {
+      "name": "an unsynced sheet claims none of the orphans",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costMaterialLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "",
+          "productRef": "fp1"
+        },
+        {
+          "_entryId": "cs2",
+          "productRef": "fp2"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "m1",
+          "costSheetRef": "",
+          "item": "Zari thread"
+        },
+        {
+          "_entryId": "m2",
+          "costSheetRef": "cs2",
+          "item": "Cotton yarn"
+        }
+      ]
+    },
+    {
+      "name": "a sheet that names no product falls back to its ordinal",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costMaterialLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        },
+        {
+          "_entryId": "cs2",
+          "productRef": ""
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "m1",
+          "costSheetRef": "cs1",
+          "item": "Tussar yarn"
+        },
+        {
+          "_entryId": "m2",
+          "costSheetRef": "cs2",
+          "item": "Cotton yarn"
+        }
+      ]
+    },
+    {
+      "name": "no parent rows at all — every line is an orphan",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costMaterialLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [],
+      "children": [
+        {
+          "_entryId": "m1",
+          "costSheetRef": "cs1",
+          "item": "Tussar yarn"
+        },
+        {
+          "_entryId": "m2",
+          "costSheetRef": "",
+          "item": "Zari thread"
+        }
+      ]
+    },
+    {
+      "name": "two sheets answering to the same id — the first claims the lines",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costMaterialLine",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        },
+        {
+          "_entryId": "cs1",
+          "productRef": "fp2"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "m1",
+          "costSheetRef": "cs1",
+          "item": "Tussar yarn"
+        }
+      ]
+    },
+    {
+      "name": "stage 13: stage logs under their prototype",
+      "stage": "PROTOTYPE_DEVELOPMENT",
+      "entity": "prototypeStageLog",
+      "parentStage": "PROTOTYPE_DEVELOPMENT",
+      "parentEntity": "prototype",
+      "parents": [
+        {
+          "_entryId": "p1",
+          "name": "Stole A"
+        },
+        {
+          "_entryId": "p2",
+          "name": "Cushion B"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "sl1",
+          "prototypeRef": "p2",
+          "stageName": "Warping"
+        },
+        {
+          "_entryId": "sl2",
+          "prototypeRef": "p1",
+          "stageName": "Dyeing"
+        }
+      ]
+    },
+    {
+      "name": "stage 13: material usage under the same prototypes",
+      "stage": "PROTOTYPE_DEVELOPMENT",
+      "entity": "materialUsage",
+      "parentStage": "PROTOTYPE_DEVELOPMENT",
+      "parentEntity": "prototype",
+      "parents": [
+        {
+          "_entryId": "p1",
+          "name": "Stole A"
+        },
+        {
+          "_entryId": "p2",
+          "name": "Cushion B"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "mu1",
+          "prototypeRef": "p1",
+          "material": "Tussar"
+        },
+        {
+          "_entryId": "mu2",
+          "prototypeRef": "p2",
+          "material": "Cotton"
+        }
+      ]
+    },
+    {
+      "name": "stage 14: the parent lives in another stage",
+      "stage": "PROTOTYPE_ITERATION",
+      "entity": "prototypeIteration",
+      "parentStage": "PROTOTYPE_DEVELOPMENT",
+      "parentEntity": "prototype",
+      "parents": [
+        {
+          "_entryId": "p1",
+          "name": "Stole A"
+        },
+        {
+          "_entryId": "p2",
+          "name": "Cushion B"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "it1",
+          "prototypeRef": "p1",
+          "changesMade": "Widened border"
+        },
+        {
+          "_entryId": "it2",
+          "prototypeRef": "p2",
+          "changesMade": "Softer weft"
+        }
+      ]
+    },
+    {
+      "name": "stage 14 with stage 13 never filled in",
+      "stage": "PROTOTYPE_ITERATION",
+      "entity": "prototypeIteration",
+      "parentStage": "PROTOTYPE_DEVELOPMENT",
+      "parentEntity": "prototype",
+      "parents": [],
+      "children": [
+        {
+          "_entryId": "it1",
+          "prototypeRef": "p1",
+          "changesMade": "Widened border"
+        },
+        {
+          "_entryId": "it2",
+          "prototypeRef": "p2",
+          "changesMade": "Softer weft"
+        }
+      ]
+    },
+    {
+      "name": "a sibling collection that declares no parent",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "buyerLink",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "b1",
+          "buyerName": "Tantuja"
+        }
+      ]
+    },
+    {
+      "name": "the parent collection itself",
+      "stage": "COSTING_MARKET_LINKAGE",
+      "entity": "costSheet",
+      "parentStage": "COSTING_MARKET_LINKAGE",
+      "parentEntity": "costSheet",
+      "parents": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        }
+      ],
+      "children": [
+        {
+          "_entryId": "cs1",
+          "productRef": "fp1"
+        }
+      ]
+    }
+  ],
+  "expected": [
+    {
+      "name": "two sheets, lines interleaved",
+      "groups": [
+        {
+          "heading": "Sambalpuri stole",
+          "rows": [
+            "Tussar yarn",
+            "Natural dye"
+          ]
+        },
+        {
+          "heading": "Ikat cushion cover",
+          "rows": [
+            "Cotton yarn"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a line naming no sheet at all",
+      "groups": [
+        {
+          "heading": "Sambalpuri stole",
+          "rows": [
+            "Tussar yarn"
+          ]
+        },
+        {
+          "heading": "No cost sheet recorded",
+          "rows": [
+            "Zari thread"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a line naming a sheet that was deleted",
+      "groups": [
+        {
+          "heading": "Sambalpuri stole",
+          "rows": [
+            "Tussar yarn"
+          ]
+        },
+        {
+          "heading": "No cost sheet recorded",
+          "rows": [
+            "Lining cloth"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "both kinds of orphan land in one bucket, last",
+      "groups": [
+        {
+          "heading": "Sambalpuri stole",
+          "rows": [
+            "Tussar yarn"
+          ]
+        },
+        {
+          "heading": "Ikat cushion cover",
+          "rows": [
+            "Cotton yarn"
+          ]
+        },
+        {
+          "heading": "No cost sheet recorded",
+          "rows": [
+            "Zari thread",
+            "Lining cloth"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "groups follow the parent's order, not the children's",
+      "groups": [
+        {
+          "heading": "Sambalpuri stole",
+          "rows": [
+            "Dyeing"
+          ]
+        },
+        {
+          "heading": "Ikat cushion cover",
+          "rows": [
+            "Weaving"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a sheet with no lines of its own gets no heading",
+      "groups": [
+        {
+          "heading": "Sambalpuri stole",
+          "rows": [
+            "Dyeing"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "an unsynced sheet claims none of the orphans",
+      "groups": [
+        {
+          "heading": "Ikat cushion cover",
+          "rows": [
+            "Cotton yarn"
+          ]
+        },
+        {
+          "heading": "No cost sheet recorded",
+          "rows": [
+            "Zari thread"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a sheet that names no product falls back to its ordinal",
+      "groups": [
+        {
+          "heading": "Sambalpuri stole",
+          "rows": [
+            "Tussar yarn"
+          ]
+        },
+        {
+          "heading": "Cost sheets 2",
+          "rows": [
+            "Cotton yarn"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "no parent rows at all — every line is an orphan",
+      "groups": [
+        {
+          "heading": "No cost sheet recorded",
+          "rows": [
+            "Zari thread",
+            "Tussar yarn"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "two sheets answering to the same id — the first claims the lines",
+      "groups": [
+        {
+          "heading": "Sambalpuri stole",
+          "rows": [
+            "Tussar yarn"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "stage 13: stage logs under their prototype",
+      "groups": [
+        {
+          "heading": "Stole A",
+          "rows": [
+            "Dyeing"
+          ]
+        },
+        {
+          "heading": "Cushion B",
+          "rows": [
+            "Warping"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "stage 13: material usage under the same prototypes",
+      "groups": [
+        {
+          "heading": "Stole A",
+          "rows": [
+            "Tussar"
+          ]
+        },
+        {
+          "heading": "Cushion B",
+          "rows": [
+            "Cotton"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "stage 14: the parent lives in another stage",
+      "groups": [
+        {
+          "heading": "Stole A",
+          "rows": [
+            "Widened border"
+          ]
+        },
+        {
+          "heading": "Cushion B",
+          "rows": [
+            "Softer weft"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "stage 14 with stage 13 never filled in",
+      "groups": [
+        {
+          "heading": "No prototype recorded",
+          "rows": [
+            "Widened border",
+            "Softer weft"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a sibling collection that declares no parent",
+      "groups": null
+    },
+    {
+      "name": "the parent collection itself",
+      "groups": null
+    }
+  ]
+}

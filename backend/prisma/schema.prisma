@@ -1,0 +1,1756 @@
+generator client {
+  provider                    = "prisma-client-py"
+  interface                   = "asyncio"
+  recursive_type_depth        = 5
+  enable_experimental_decimal = true
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Seven-tier role ladder, strictly ordered by privilege:
+/// MASTER_ADMIN > ADMIN > PROFESSOR > DESIGNER > RESEARCHER > FIELD_CONTRIBUTOR >
+/// CROWDSOURCE_VOLUNTEER. Each tier inherits everything below it; grantable can* booleans lift
+/// single capabilities.
+///
+/// DESIGNER sits between PROFESSOR and RESEARCHER because a designer runs a workshop and signs the
+/// report that comes out of it — strictly more than a researcher who documents what they find, and
+/// strictly less than a professor who edits the craft taxonomy everyone else records against. The
+/// rank numbers in app/core/deps.py leave gaps of ten precisely so a tier can be inserted without
+/// renumbering the ones around it; DESIGNER is 35.
+///
+/// A DESIGNER must also appear on the DesignerRoster to sign in — see that model. The role says
+/// what somebody may do; the roster says whether the institution still recognises them.
+enum UserRole {
+  MASTER_ADMIN
+  ADMIN
+  PROFESSOR
+  DESIGNER
+  RESEARCHER
+  FIELD_CONTRIBUTOR
+  CROWDSOURCE_VOLUNTEER
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+}
+
+enum RecordStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  /// Reviewer sent the record back with comments (reviewNotes); creator edits and resubmits.
+  NEEDS_REVISION
+}
+
+/// What KIND of workshop a `Workshop` row records.
+///
+/// Added because a design & prototype workshop and an ordinary documentation workshop are both
+/// `Workshop` rows and nothing distinguished them. A designer starting a 22-stage record has to
+/// pick the workshop it belongs to out of a list that also holds every craft-documentation visit
+/// ever recorded, and the two are not interchangeable: only a design-prototype workshop carries
+/// the sanction, the cluster and the dates a stage-1 cover page is built from.
+///
+/// `OTHER` is the default so every workshop recorded before this column keeps behaving exactly as
+/// it did — the list is unchanged unless somebody marks a row.
+enum WorkshopType {
+  DESIGN_PROTOTYPE
+  OTHER
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  PDF
+  DOCUMENT
+  OTHER
+}
+
+enum ProductType {
+  FINISHED_GOOD
+  SAMPLE
+  RAW_MATERIAL
+  COMPONENT
+  PACKAGING
+  OTHER
+}
+
+enum MarketDemand {
+  LOW
+  MEDIUM
+  HIGH
+  SEASONAL
+  UNKNOWN
+}
+
+enum MakerType {
+  ARTISAN
+  LOCAL_BLACKSMITH
+  CARPENTER
+  WORKSHOP
+  FACTORY
+  UNKNOWN
+  OTHER
+}
+
+enum TraditionType {
+  TRADITIONAL
+  MODERN
+  HYBRID
+  UNKNOWN
+}
+
+enum ReviewRecordType {
+  ARTISAN
+  WORKSHOP
+  PRODUCT
+  TOOL
+  // Processes and interviews carry a status and can be pinned PENDING by the late-submission
+  // gate, so they have to be reviewable like any other record.
+  PROCESS
+  QUESTIONNAIRE
+  MEDIA
+}
+
+enum MediaProcessingJobType {
+  TRANSCRIPTION
+  MEASUREMENT
+}
+
+enum MediaProcessingJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ProcessStepType {
+  SEQUENTIAL
+  GROUP
+}
+
+/// Tiers of cross-researcher data access, strictly increasing in privilege:
+/// DOWNLOAD (minimum) < COMMENT (medium) < EDIT (maximum). Each tier includes everything below it.
+enum DataAccessTier {
+  DOWNLOAD
+  COMMENT
+  EDIT
+}
+
+/// Lifecycle of a DataAccessGrant row. PENDING = a request from the grantee awaiting the owner's
+/// decision; GRANTED = active; DENIED = owner refused; REVOKED = owner withdrew a previously active grant.
+enum DataAccessStatus {
+  PENDING
+  GRANTED
+  DENIED
+  REVOKED
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String
+  passwordHash String?
+  avatarUrl    String?
+  role         UserRole     @default(RESEARCHER)
+  authProvider AuthProvider @default(LOCAL)
+  canManageQuestionnaire Boolean @default(false)
+  canManageCrafts        Boolean @default(false)
+  canManageWorkshops     Boolean @default(false)
+  canReview              Boolean @default(false)
+  canViewProvenance      Boolean @default(false)
+  canDownloadDataset     Boolean @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  artisans  Artisan[]              @relation("ArtisanCreatedBy")
+  crafts    Craft[]                @relation("CraftCreatedBy")
+  workshops Workshop[]             @relation("WorkshopCreatedBy")
+  products  ProductDocumentation[] @relation("ProductCreatedBy")
+  tools     ToolDocumentation[]    @relation("ToolCreatedBy")
+  processes Process[]              @relation("ProcessCreatedBy")
+  media     MediaFile[]            @relation("MediaUploadedBy")
+  requestedMediaProcessingJobs MediaProcessingJob[] @relation("MediaProcessingRequestedBy")
+  reviews   ReviewLog[]            @relation("ReviewReviewer")
+  questionnaireInterviews QuestionnaireInterview[] @relation("QuestionnaireCreatedBy")
+  questionnaireResponses QuestionnaireResponse[] @relation("QuestionnaireAnsweredBy")
+  appReleases AppRelease[] @relation("AppReleasePublishedBy")
+  feedback    Feedback?    @relation("FeedbackUser")
+  preferences UserPreference? @relation("UserPreferenceUser")
+  sectionStatusesSet QuestionnaireSectionStatus[] @relation("SectionStatusSetBy")
+  workshopAssignments     WorkshopAssignment[] @relation("WorkshopAssignmentUser")
+  workshopAssignmentsMade WorkshopAssignment[] @relation("WorkshopAssignmentAssignedBy")
+  workshopAccessRequests  WorkshopAssignment[] @relation("WorkshopAssignmentRequestedBy")
+  workshopAccessDecisions WorkshopAssignment[] @relation("WorkshopAssignmentDecidedBy")
+  managedSecretsUpdated   ManagedSecret[]      @relation("ManagedSecretUpdatedBy")
+  dataAccessAsOwner   DataAccessGrant[] @relation("DataAccessOwner")
+  dataAccessAsGrantee DataAccessGrant[] @relation("DataAccessGrantee")
+  dataAccessRequested DataAccessGrant[] @relation("DataAccessRequestedBy")
+  dataAccessDecided   DataAccessGrant[] @relation("DataAccessDecidedBy")
+  entryComments   EntryComment[]   @relation("EntryCommentAuthor")
+  recordRevisions RecordRevision[] @relation("RecordRevisionEditedBy")
+  tasksAssigned   AssignedTask[]   @relation("TaskAssignee")
+  tasksCreated    AssignedTask[]   @relation("TaskCreator")
+  designWorkshopsCreated DesignWorkshop[] @relation("DesignWorkshopCreatedBy")
+  designWorkshopsDeleted DesignWorkshop[] @relation("DesignWorkshopDeletedBy")
+  // Design workshops this account has been let into by an admin, and the grants it made as one.
+  designWorkshopsVisible DesignWorkshopViewer[] @relation("DesignWorkshopViewerUser")
+  designWorkshopViewersGranted DesignWorkshopViewer[] @relation("DesignWorkshopViewerGrantedBy")
+  dwStageEntriesCreated  DwStageEntry[]   @relation("DwStageEntryCreatedBy")
+  dwReportExports        DwReportExport[] @relation("DwReportExportGeneratedBy")
+  designerRosterEntries  DesignerRoster[] @relation("DesignerRosterAddedBy")
+  designerProfile        DesignerProfile? @relation("DesignerProfileUser")
+  // Custom questionnaires this designer built from the .xlsx pro-forma, and the answer sheets they
+  // filled in. Deliberately separate from `questionnaireInterviews` above: that relation is the ONE
+  // global artisan questionnaire, this one is a form the designer authored themselves.
+  questionnairesOwned        Questionnaire[]             @relation("QuestionnaireOwner")
+  questionnaireFormEntries   QuestionnaireFormEntry[]    @relation("QuestionnaireFormEntryCreatedBy")
+  questionnaireFormAnswers   QuestionnaireFormAnswer[]   @relation("QuestionnaireFormAnsweredBy")
+
+  @@index([role])
+}
+
+/// A documentation task assigned by an admin/master admin to a user, so field work is
+/// planned and tracked. Status is a plain String (OPEN | IN_PROGRESS | DONE | CANCELLED)
+/// for client compatibility.
+/// A documentation assignment: what somebody has been asked to record, and how far along they are.
+///
+/// One row is always ONE assignee, so progress and accountability stay per-person; assigning the
+/// same work to five researchers writes five rows sharing a `batchId`. The scope columns describe
+/// the work without naming a specific record, because the record usually does not exist yet — that
+/// is the point of the task. A task can therefore say "record products and tools for these three
+/// artisans in this workshop" or "answer questionnaire sections C and D for every artisan you have",
+/// and `targetCount` turns either into a countable goal.
+model AssignedTask {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  status      String    @default("OPEN")
+  dueAt       DateTime?
+  completedAt DateTime?
+  /// Legacy single-record link, kept so existing rows and the old create path keep working.
+  recordType  String?
+  recordId    String?
+  /// The workshop this work belongs to. Everything a researcher does is workshop-scoped, so the
+  /// assignment screen starts by picking one and every task it creates carries it.
+  workshopId  String?
+  workshop    Workshop? @relation("TaskWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
+  /// Which kinds of record to produce: artisan / product / process / tool / questionnaire / media.
+  /// A list, so "record products AND tools" is one task rather than two.
+  recordTypes String[]  @default([])
+  /// Optional narrowing to specific artisans. Empty = every artisan in scope for the assignee.
+  artisanIds  String[]  @default([])
+  /// Questionnaire sections this person is responsible for. Empty = not a questionnaire task.
+  sectionIds  String[]  @default([])
+  /// How many records of the given types to produce. Null = "as many as apply".
+  targetCount Int?
+  /// Assignee-reported progress toward targetCount, so a partly-done task is visible as such.
+  progressCount Int     @default(0)
+  /// Shared by every row created in one assignment action, so the creator can see and manage the
+  /// batch ("record tools for these 5 people") as a single unit.
+  batchId     String?
+  assigneeId  String
+  assignee    User      @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User      @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([assigneeId, status])
+  @@index([createdById])
+  @@index([workshopId])
+  @@index([batchId])
+}
+
+/// One piece of app feedback per user: a quantitative rating (1–5) plus a qualitative comment.
+/// Upserted, so a user can revisit and update their feedback at any time. The master admin reviews
+/// everyone's feedback on the View Data screen.
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  // Quantitative (each 1–5). `rating` is the overall score; the rest are per-aspect sub-ratings.
+  rating        Int?
+  easeOfUse     Int?
+  reliability   Int?
+  performance   Int?
+  design        Int?
+  features      Int?
+  recommend     Int?
+  // Qualitative free text. `comment` is the general note; the rest are targeted prompts.
+  comment         String?
+  likeMost        String?
+  improve         String?
+  bugs            String?
+  featureRequests String?
+  role            String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation("FeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([updatedAt])
+}
+
+/// One row per user holding their appearance + accessibility choices, upserted exactly like
+/// Feedback so a user can flip a switch on any device and have it follow their account. `theme`
+/// is a plain String (system | light | dark) rather than an enum, matching the client contract and
+/// keeping future options additive.
+model UserPreference {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  theme         String   @default("system")
+  reducedMotion Boolean  @default(false)
+  largerText    Boolean  @default(false)
+  highContrast  Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation("UserPreferenceUser", fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// A published Android app build that the master admin pushed out as an over-the-air update. The
+/// highest versionCode is the current release; clients compare their installed versionCode and
+/// self-update from `url`.
+model AppRelease {
+  id            String   @id @default(cuid())
+  versionCode   Int
+  versionName   String
+  objectKey     String
+  url           String?
+  notes         String?
+  publishedById String?
+  publishedBy   User?    @relation("AppReleasePublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+  publishedAt   DateTime @default(now())
+
+  @@index([versionCode])
+}
+
+model Craft {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  localName     String?
+  category      String?
+  description   String?
+  place         String?
+  extraMetadata Json?
+  recordedAt    DateTime @default(now())
+  recordedTimezone String @default("Asia/Kolkata")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdById   String?
+  /// The workshop this craft was documented at, named EXPLICITLY on the record. Additive to the
+  /// WorkshopCraft join (which every existing query reads through and which is kept in lock-step);
+  /// nullable, so every row recorded before this column keeps behaving exactly as before.
+  workshopId    String?
+
+  createdBy User?                  @relation("CraftCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  workshop  Workshop?              @relation("CraftWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
+  artisans  Artisan[]
+  products  ProductDocumentation[]
+  tools     ToolDocumentation[]
+  media     MediaFile[]
+  workshops WorkshopCraft[]
+
+  // `name` needs no index of its own: @unique already builds one, and that is what the alphabetical
+  // craft picker orders by.
+  @@index([workshopId])
+}
+
+/// TWO ANSWERS TO TWO DIFFERENT QUESTIONS, and reading one as the other is what this model was
+/// changed to stop.
+///
+/// Every one of the fifteen artisans on the live database that carries a location sits between
+/// 22.313 and 22.315 N, 87.309 and 87.313 E — Kharagpur, West Bengal — while the places their
+/// researchers typed are Bagru, Balotra, Kutch, Rudraprayag, Ballupur, Sanganer and Kappaladoddi,
+/// none of them within 1,500 km of that point. The coordinates are not wrong and are not a
+/// hardcoded constant: they jitter naturally and carry genuine accuracy values from 26 m to
+/// 2,506 m. They are real GPS fixes of the DESK THE RECORD WAS TYPED AT, which is ordinary,
+/// reasonable behaviour that the schema had no way to express — so the fix got read as the
+/// artisan's address, and the researchers hand-encoded the real village and district into a
+/// free-text `place` box because there was nowhere else to put them.
+///
+/// So the columns below are two groups, and the group a column belongs to decides who may write it:
+///
+///   PROVENANCE — latitude, longitude, altitude, accuracy, capturedAt, placeName, address.
+///     Where the DEVICE was. Written automatically. Never presented as the subject's address, and
+///     never copied into the group below.
+///
+///   STATED ADDRESS — state, district, village, pincode, subjectLatitude, subjectLongitude.
+///     Where the SUBJECT is, as a statement by the researcher. A geocoder may offer a value here;
+///     only a person may write one.
+///
+/// NOTHING IS BACKFILLED and no existing value moves. The fifteen rows keep exactly the
+/// coordinates they have, which are exactly what the provenance group means; their stated address
+/// stays empty until a researcher fills it in, and the mismatch between the two is FLAGGED in the
+/// form rather than guessed at here.
+model Location {
+  id            String   @id @default(cuid())
+  /// PROVENANCE. Where the device was — kept NOT NULL because that is what the fifteen live rows
+  /// already are, and because every record still has to carry a coordinate somebody stood at,
+  /// pointed at, or typed (see require_location in app/schemas/common.py).
+  latitude      Float
+  longitude     Float
+  altitude      Float?
+  /// PROVENANCE. Radius of the fix in metres. Load-bearing rather than decorative: a browser with
+  /// no satellite lock reports kilometres while returning coordinates that look every bit as
+  /// precise, and one live row has a 2,506 m radius. Past PINCODE_ACCURACY_LIMIT_METRES the clients
+  /// decline to derive an address from the point at all.
+  accuracy      Float?
+  address       String?
+  placeName     String?
+  /// STATED. Postal state or union territory, stored as the canonical name from the closed list in
+  /// services/address.py — which api/routes/reference.py also SERVES, so a form's dropdown and the
+  /// validator can never hold different lists. Free text here would split one state across four
+  /// spellings in every group-by and export, the way craft names did before title-casing.
+  state         String?
+  /// STATED. Canonical district within `state`, from the same served list. A REAL COLUMN rather
+  /// than an extraMetadata key: "District" has been a shipped, user-visible column since the
+  /// record-field registry was written (the data browser card, the browser table, every
+  /// details.txt in /export/dataset, the artisan sheet of /data/report), it read a metadata key
+  /// nothing has written since the artisan form stopped writing extraMetadata, and it has therefore
+  /// been blank on every record. Districts are only meaningful per state — several names are shared
+  /// by two states — so the pair is validated together, never apart.
+  district      String?
+  /// STATED. The village or hamlet, free text, because no closed list of Indian villages exists
+  /// that a field researcher could pick from. It sits BELOW district on purpose: district is the
+  /// finest administrative unit that can be checked, and village is the finest that can be named.
+  village       String?
+  /// STATED. Indian PIN code as the bare 6 digits ("380001"). Validated as exactly six ASCII digits
+  /// with a leading 1–9: the first digit is the postal zone and there is no zone 0.
+  pincode       String?
+  /// STATED. The optional precise pin a researcher drops on the SUBJECT'S place — deliberately not
+  /// `latitude`/`longitude`, which mean the device. One pair cannot mean both: the moment a pin and
+  /// a fix share a column, an export of "artisan coordinates" is a mixture of the two with no way
+  /// to tell which row is which, which is the bug this model was changed to end. NULL on every row
+  /// that has only ever been auto-captured, and NULL is the honest answer there.
+  subjectLatitude  Float?
+  subjectLongitude Float?
+  /// PROVENANCE. When the device produced the fix above.
+  capturedAt    DateTime?
+  extraMetadata Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  artisans  Artisan[]
+  workshops Workshop[]
+  products  ProductDocumentation[]
+  tools     ToolDocumentation[]
+  media     MediaFile[]
+  questionnaireInterviews QuestionnaireInterview[]
+
+  // Nothing reads this table by any column. `attach_location` writes a row, and every reader
+  // afterwards arrives by primary key through the `location` relation — so an index here is paid for
+  // on every record create and never collected on. (latitude, longitude) and placeName went for that
+  // reason, and because neither could have served its own query anyway: a bounding box or a radius
+  // wants GiST, not a btree on two independent floats, and a place name typed into a search box
+  // reaches Postgres as ILIKE '%…%'.
+  //
+  /// "Every record in Gujarat" is the query this column exists to make possible; without the index
+  /// it is a sequential scan of every location ever captured. Kept although no route issues it yet:
+  /// it is an equality against a closed list of canonical names, which is the one shape here a btree
+  /// genuinely answers, so this index is waiting for its query rather than hoping for one.
+  ///
+  /// `district` gets NO index of its own, and no composite with `state` either. A district is only
+  /// ever asked for inside a state, so this index already narrows the scan to one state's rows and
+  /// the district is a cheap filter on top; a second index would be written on every record create
+  /// to save a predicate no route issues yet. The moment "every record in Kutch" becomes a query
+  /// somebody runs, make it @@index([state, district]) and delete this one — the composite answers
+  /// the state-only query by prefix, so the pair would be two writes for one query shape.
+  @@index([state])
+}
+
+model Artisan {
+  id            String       @id @default(cuid())
+  name          String
+  localName     String?
+  gender        String?
+  phone         String?
+  email         String?
+  place         String
+  /// The artisan's Aadhaar number, stored as the bare 12 digits. This is the DEDUPLICATION KEY:
+  /// the same person documented at two workshops by two researchers must collapse to one record,
+  /// and this unique index is what enforces it. Validated (12 digits, leading 2–9, Verhoeff
+  /// checksum) in services/artisan_identity.py, and MASKED to "XXXX XXXX 9012" on every exported or
+  /// shared surface.
+  ///
+  /// REQUIRED to create an artisan, and enforced by ArtisanCreate rather than by NOT NULL. The
+  /// column stays nullable on purpose: production holds artisans recorded before this field existed,
+  /// and the only ways to satisfy a NOT NULL would be to invent numbers for them (fabricating a
+  /// national ID, which would also collide with this very unique index) or to delete them. Both are
+  /// unacceptable, so those rows keep NULL — readable, editable, and exempt from the unique index,
+  /// since Postgres permits any number of NULLs under one. Same pattern as dos/donts above.
+  aadhaarNumber String?      @unique
+  /// Does this artisan hold an Artisan Pehchan Card (the PM Vishwakarma ID)? Defaults to true,
+  /// matching the form's default answer.
+  pehchanCardAvailable Boolean @default(true)
+  /// The Pehchan card number, normalised to uppercase alphanumerics. Required exactly when
+  /// pehchanCardAvailable is true, and force-cleared to NULL when it is false, so a card number can
+  /// never be orphaned on a record that says it has no card.
+  pehchanCardNumber String?  @unique
+  address       String?
+  notes         String?
+  // Newline-separated, numbered guidance for working with this artisan: dos = positive prompt (what to
+  // do / emphasise), donts = negative prompt (what to avoid). Required on new records; nullable so the
+  // existing rows from before this field can be backfilled later instead of blocking the migration.
+  dos           String?
+  donts         String?
+  status        RecordStatus @default(PENDING)
+  reviewNotes   String?
+  reviewedById  String?
+  reviewedAt    DateTime?
+  extraMetadata Json?
+  recordedAt    DateTime     @default(now())
+  recordedTimezone String    @default("Asia/Kolkata")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  craftId       String?
+  locationId    String?
+  createdById   String
+  /// The workshop this artisan was documented at, named EXPLICITLY on the record. Additive to the
+  /// WorkshopArtisan join (which every existing query reads through and which is kept in lock-step);
+  /// nullable, so every row recorded before this column keeps behaving exactly as before.
+  workshopId    String?
+
+  craft     Craft?                 @relation(fields: [craftId], references: [id], onDelete: SetNull)
+  location  Location?              @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  createdBy User                   @relation("ArtisanCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  workshop  Workshop?              @relation("ArtisanWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
+  workshops WorkshopArtisan[]
+  products  ProductDocumentation[]
+  tools     ToolDocumentation[]
+  toolLinks ToolArtisan[]
+  media     MediaFile[]
+  questionnaireInterviews QuestionnaireInterviewArtisan[]
+  sectionStatuses QuestionnaireSectionStatus[]
+
+  // `name` earns its index by being the sort key of the artisan pickers, not by the search box:
+  // every text search in this app is a case-insensitive `contains`, which Postgres runs as ILIKE
+  // '%…%' and no btree can answer. That is why `place` and the denormalised name columns on
+  // Product/Tool carry no index — see the migration notes in 20260726200000_index_coverage.
+  @@index([name])
+  @@index([craftId])
+  @@index([createdById])
+  @@index([status])
+  // Equality first, then the sort column: every record list is `ORDER BY createdAt DESC LIMIT n`,
+  // so a workshop-filtered page reads n rows straight off the index instead of sorting the whole
+  // workshop. The bare [createdAt] serves the same list unfiltered, which is what an admin sees.
+  @@index([workshopId, createdAt])
+  @@index([createdAt])
+}
+
+model Workshop {
+  id            String       @id @default(cuid())
+  title         String
+  /// Whether this is a Design & Prototype Development Workshop or an ordinary one. See the enum.
+  workshopType  WorkshopType @default(OTHER)
+  date          DateTime
+  startDate     DateTime?
+  endDate       DateTime?
+  place         String
+  description   String?
+  notes         String?
+  status        RecordStatus @default(PENDING)
+  reviewNotes   String?
+  reviewedById  String?
+  reviewedAt    DateTime?
+  extraMetadata Json?
+  recordedAt    DateTime     @default(now())
+  recordedTimezone String    @default("Asia/Kolkata")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  locationId    String?
+  createdById   String
+
+  location  Location?              @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  createdBy User                   @relation("WorkshopCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  artisans  WorkshopArtisan[]
+  crafts    WorkshopCraft[]
+  products  ProductDocumentation[]
+  tools     ToolDocumentation[]
+  media     MediaFile[]
+  assignments WorkshopAssignment[] @relation("WorkshopAssignments")
+  tasks       AssignedTask[]       @relation("TaskWorkshop")
+  // Back-relations for the EXPLICIT workshopId column on the remaining record types. `artisans` /
+  // `crafts` above are the join-table links; these are the direct ones, kept in lock-step for
+  // artisans and crafts so both readings of "who was at this workshop" agree.
+  artisansLinked          Artisan[]                @relation("ArtisanWorkshop")
+  craftsLinked            Craft[]                  @relation("CraftWorkshop")
+  processes               Process[]                @relation("ProcessWorkshop")
+  questionnaireInterviews QuestionnaireInterview[] @relation("InterviewWorkshop")
+  designWorkshops         DesignWorkshop[]         @relation("DesignWorkshopWorkshop")
+
+  // `startDate` is both the list's primary sort key and the column its date-range filter reads;
+  // `date` is what the task-assignment picker orders by. `endDate` is only ever read off a row that
+  // has already been fetched, so it is not indexed.
+  @@index([date])
+  @@index([startDate])
+  @@index([createdById])
+  /// The design-workshop picker filters on this and orders by date, so the pair is one index.
+  @@index([workshopType, startDate])
+  @@index([status])
+  // Not the list order (that is startDate) — this is for the review queue and the dashboard's
+  // "recent submissions", which order workshops by createdAt like every other record type.
+  @@index([createdAt])
+}
+
+model WorkshopArtisan {
+  workshopId String
+  artisanId  String
+  role       String?
+  createdAt  DateTime @default(now())
+
+  workshop Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+  artisan  Artisan  @relation(fields: [artisanId], references: [id], onDelete: Cascade)
+
+  @@id([workshopId, artisanId])
+  @@index([artisanId])
+}
+
+model WorkshopCraft {
+  workshopId String
+  craftId    String
+  createdAt  DateTime @default(now())
+
+  workshop Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+  craft    Craft    @relation(fields: [craftId], references: [id], onDelete: Cascade)
+
+  @@id([workshopId, craftId])
+  @@index([craftId])
+}
+
+model ProductDocumentation {
+  id                         String       @id @default(cuid())
+  craftName                  String
+  place                      String
+  artisanName                String
+  productName                String
+  localName                  String?
+  productType                ProductType  @default(OTHER)
+  timeTakenToCompleteProduct String?
+  size                       String?
+  lengthInches               Decimal?     @db.Decimal(10, 2)
+  breadthInches              Decimal?     @db.Decimal(10, 2)
+  heightInches               Decimal?     @db.Decimal(10, 2)
+  measurementImageId         String?
+  measurementAnalysis        Json?
+  measurementAnalysisStatus  String?
+  costOfMaking               Decimal?     @db.Decimal(12, 2)
+  sellingPrice               Decimal?     @db.Decimal(12, 2)
+  marketDemand               MarketDemand @default(UNKNOWN)
+  rawMaterialsUsed           String?
+  mainToolsUsed              String?
+  productFunctionUse         String?
+  remarks                    String?
+  status                     RecordStatus @default(PENDING)
+  reviewNotes                String?
+  reviewedById               String?
+  reviewedAt                 DateTime?
+  extraMetadata              Json?
+  recordedAt                 DateTime     @default(now())
+  recordedTimezone           String       @default("Asia/Kolkata")
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+  artisanId                  String?
+  craftId                    String?
+  workshopId                 String?
+  locationId                 String?
+  createdById                String
+
+  artisan   Artisan?    @relation(fields: [artisanId], references: [id], onDelete: SetNull)
+  craft     Craft?      @relation(fields: [craftId], references: [id], onDelete: SetNull)
+  workshop  Workshop?   @relation(fields: [workshopId], references: [id], onDelete: SetNull)
+  location  Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  createdBy User        @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  media     MediaFile[]
+  mediaProcessingJobs MediaProcessingJob[]
+  processes Process[]
+
+  @@index([artisanId])
+  @@index([craftId])
+  @@index([createdById])
+  @@index([status])
+  @@index([workshopId, createdAt])
+  @@index([createdAt])
+}
+
+model ToolDocumentation {
+  id                            String        @id @default(cuid())
+  craftName                     String
+  place                         String
+  artisanName                   String
+  toolkitName                   String
+  localName                     String?
+  englishName                   String?
+  processUsedIn                 String?
+  material                      String?
+  yearsInUse                    Int?
+  height                        Decimal?      @db.Decimal(10, 2)
+  width                         Decimal?      @db.Decimal(10, 2)
+  lengthInches                  Decimal?      @db.Decimal(10, 2)
+  breadthInches                 Decimal?      @db.Decimal(10, 2)
+  measurementImageId            String?
+  measurementAnalysis           Json?
+  measurementAnalysisStatus     String?
+  thickness                     Decimal?      @db.Decimal(10, 2)
+  weight                        Decimal?      @db.Decimal(10, 2)
+  radius                        Decimal?      @db.Decimal(10, 2)
+  maker                         MakerType     @default(UNKNOWN)
+  traditionType                 TraditionType @default(UNKNOWN)
+  replacementCost               Decimal?      @db.Decimal(12, 2)
+  suggestionsForToolImprovement String?
+  remarks                       String?
+  status                        RecordStatus  @default(PENDING)
+  reviewNotes                   String?
+  reviewedById                  String?
+  reviewedAt                    DateTime?
+  extraMetadata                 Json?
+  recordedAt                    DateTime      @default(now())
+  recordedTimezone              String        @default("Asia/Kolkata")
+  createdAt                     DateTime      @default(now())
+  updatedAt                     DateTime      @updatedAt
+  artisanId                     String?
+  craftId                       String?
+  workshopId                    String?
+  locationId                    String?
+  createdById                   String
+
+  artisan   Artisan?    @relation(fields: [artisanId], references: [id], onDelete: SetNull)
+  craft     Craft?      @relation(fields: [craftId], references: [id], onDelete: SetNull)
+  workshop  Workshop?   @relation(fields: [workshopId], references: [id], onDelete: SetNull)
+  location  Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  createdBy User        @relation("ToolCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  media     MediaFile[]
+  mediaProcessingJobs MediaProcessingJob[]
+  artisanLinks ToolArtisan[]
+
+  @@index([artisanId])
+  @@index([craftId])
+  @@index([createdById])
+  @@index([status])
+  @@index([workshopId, createdAt])
+  @@index([createdAt])
+}
+
+// Many-to-many between a tool and the artisans who use it. Lets one documented tool be assigned to
+// several artisans (across the same or different crafts) instead of re-entering the tool per craft.
+model ToolArtisan {
+  id        String   @id @default(cuid())
+  toolId    String
+  artisanId String
+  createdAt DateTime @default(now())
+
+  tool    ToolDocumentation @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  artisan Artisan           @relation(fields: [artisanId], references: [id], onDelete: Cascade)
+
+  // No [toolId] of its own — it is the leading column of the unique below, which serves the
+  // tool-to-artisans lookup already.
+  @@unique([toolId, artisanId])
+  @@index([artisanId])
+}
+
+model MediaFile {
+  id               String       @id @default(cuid())
+  originalFilename String
+  mediaType        MediaType
+  mimeType         String
+  sizeBytes        BigInt
+  bucket           String
+  objectKey        String       @unique
+  url              String?
+  caption          String?
+  checksum         String?
+  transcriptText   String?
+  transcriptSummary String?
+  transcriptStatus String?
+  transcriptError  String?
+  linkedRecordType String?
+  linkedRecordId   String?
+  status           RecordStatus @default(PENDING)
+  reviewNotes      String?
+  reviewedById     String?
+  reviewedAt       DateTime?
+  extraMetadata    Json?
+  recordedAt       DateTime     @default(now())
+  recordedTimezone String       @default("Asia/Kolkata")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  uploadedById     String
+  artisanId        String?
+  craftId          String?
+  workshopId       String?
+  productId        String?
+  toolId           String?
+  questionnaireInterviewId String?
+  locationId       String?
+
+  uploadedBy User                  @relation("MediaUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  artisan    Artisan?              @relation(fields: [artisanId], references: [id], onDelete: SetNull)
+  craft      Craft?                @relation(fields: [craftId], references: [id], onDelete: SetNull)
+  workshop   Workshop?             @relation(fields: [workshopId], references: [id], onDelete: SetNull)
+  product    ProductDocumentation? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  tool       ToolDocumentation?    @relation(fields: [toolId], references: [id], onDelete: SetNull)
+  questionnaireInterview QuestionnaireInterview? @relation("QuestionnaireMedia", fields: [questionnaireInterviewId], references: [id], onDelete: SetNull)
+  location   Location?             @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  processingJobs MediaProcessingJob[]
+
+  @@index([mediaType])
+  @@index([uploadedById])
+  @@index([linkedRecordType, linkedRecordId])
+  @@index([createdAt])
+  @@index([status])
+  // The parent foreign keys. These are not for `where` clauses a route writes by hand — they are for
+  // the reverse walk `include: {media: true}` generates, which Prisma issues as a separate
+  // `WHERE "<fk>" IN (…the page's 20 parents…)`. craftId and questionnaireInterviewId were indexed;
+  // artisanId, productId and toolId were not, so the products and tools lists each sequentially
+  // scanned the whole of the largest table in the database once per page.
+  @@index([craftId])
+  @@index([questionnaireInterviewId])
+  @@index([artisanId])
+  @@index([productId])
+  @@index([toolId])
+  // Composite rather than bare workshopId: a workshop's media is the one parent set big enough that
+  // the data browser's `ORDER BY createdAt` over it is worth serving from the index too.
+  @@index([workshopId, createdAt])
+}
+
+model MediaProcessingJob {
+  id             String                   @id @default(cuid())
+  jobType        MediaProcessingJobType
+  status         MediaProcessingJobStatus @default(QUEUED)
+  priority       Int                      @default(100)
+  attempts       Int                      @default(0)
+  maxAttempts    Int                      @default(3)
+  error          String?
+  result         Json?
+  lockedAt       DateTime?
+  lockedBy       String?
+  runAfter       DateTime                 @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  mediaFileId    String
+  requestedById  String?
+  productId      String?
+  toolId         String?
+
+  mediaFile   MediaFile              @relation(fields: [mediaFileId], references: [id], onDelete: Cascade)
+  requestedBy User?                  @relation("MediaProcessingRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  product     ProductDocumentation?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  tool        ToolDocumentation?     @relation(fields: [toolId], references: [id], onDelete: SetNull)
+
+  @@index([status, runAfter, priority, createdAt])
+  @@index([mediaFileId])
+  @@index([requestedById])
+  @@index([productId])
+  @@index([toolId])
+}
+
+model QuestionnaireSection {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  title     String
+  sortOrder Int
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  questions QuestionnaireQuestion[]
+  sectionStatuses QuestionnaireSectionStatus[]
+
+  @@unique([sortOrder])
+  @@index([isActive, sortOrder])
+}
+
+/// Admin-set completion status for one (artisan, section) cell on the "Check completion" matrix.
+/// Absent row = no manual override (the matrix then falls back to data-derived completion). A row
+/// here is an explicit verdict by an admin/master admin that overrides the derived green.
+model QuestionnaireSectionStatus {
+  id        String   @id @default(cuid())
+  artisanId String
+  sectionId String
+  // COMPLETED (green) | NEEDS_REVIEW (yellow) | NEEDS_REDO (red).
+  status    String
+  setById   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  artisan Artisan              @relation(fields: [artisanId], references: [id], onDelete: Cascade)
+  section QuestionnaireSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  setBy   User                 @relation("SectionStatusSetBy", fields: [setById], references: [id], onDelete: Restrict)
+
+  @@unique([artisanId, sectionId])
+  @@index([sectionId])
+}
+
+model QuestionnaireQuestion {
+  id          String   @id @default(cuid())
+  sectionCode String
+  sectionTitle String
+  prompt      String
+  sortOrder   Int
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  sectionId   String?
+
+  section   QuestionnaireSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  responses QuestionnaireResponse[]
+
+  @@index([sectionCode])
+  @@index([sectionId])
+  @@index([isActive])
+}
+
+model QuestionnaireInterview {
+  id            String       @id @default(cuid())
+  title         String
+  interviewDate DateTime?
+  place         String?
+  language      String?
+  notes         String?
+  status        RecordStatus @default(PENDING)
+  /// Review audit, identical to every other reviewable record. These were MISSING here while
+  /// Artisan/Workshop/Product/Tool/Process/Media all had them, so the moment interviews became
+  /// reviewable every approve raised
+  ///   FieldNotFoundError: Could not find field at `updateOneQuestionnaireInterview.data.reviewNotes`
+  /// which escaped as a bare 500 ("Failed to fetch" in the browser, HTTP 500 on Android).
+  reviewNotes   String?
+  reviewedById  String?
+  reviewedAt    DateTime?
+  extraMetadata Json?
+  recordedAt    DateTime     @default(now())
+  recordedTimezone String    @default("Asia/Kolkata")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  createdById   String
+  locationId    String?
+  // Deterministic key for the exact set of artisans this interview covers (sorted, comma-joined
+  // artisan ids). Enforces ONE interview per artisan set: creation is idempotent on this key, so
+  // every client lands on the single canonical entry instead of spawning duplicates. NULL only when
+  // an interview has no artisans (those are not deduped). A subset is a different set => different key.
+  artisanSetKey String?      @unique
+  /// The workshop this interview was conducted at, named EXPLICITLY on the record — previously an
+  /// interview had no path to a workshop at all. Nullable, so every interview recorded before this
+  /// column keeps behaving exactly as before.
+  workshopId    String?
+
+  createdBy User                             @relation("QuestionnaireCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  location  Location?                        @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  workshop  Workshop?                        @relation("InterviewWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
+  artisans  QuestionnaireInterviewArtisan[]
+  responses QuestionnaireResponse[]
+  media     MediaFile[]                      @relation("QuestionnaireMedia")
+
+  @@index([createdById])
+  @@index([status])
+  @@index([interviewDate])
+  @@index([workshopId, createdAt])
+  @@index([createdAt])
+}
+
+model QuestionnaireInterviewArtisan {
+  interviewId String
+  artisanId   String
+  createdAt   DateTime @default(now())
+
+  interview QuestionnaireInterview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  artisan   Artisan                @relation(fields: [artisanId], references: [id], onDelete: Cascade)
+
+  @@id([interviewId, artisanId])
+  @@index([artisanId])
+}
+
+model QuestionnaireResponse {
+  id          String   @id @default(cuid())
+  interviewId String
+  questionId  String
+  answerText  String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  answeredById String
+
+  interview  QuestionnaireInterview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  question   QuestionnaireQuestion  @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  answeredBy User                   @relation("QuestionnaireAnsweredBy", fields: [answeredById], references: [id], onDelete: Restrict)
+
+  @@unique([interviewId, questionId])
+  @@index([questionId])
+  @@index([answeredById])
+}
+
+// ------------------------------------------------------------------------------------------------
+// Custom questionnaires: a form a DESIGNER authored themselves, from the downloadable .xlsx
+// pro-forma, and the answers recorded against it in the app.
+//
+// WHY THESE ARE FOUR NEW TABLES RATHER THAN A NULLABLE `questionnaireId` ON QuestionnaireSection /
+// QuestionnaireQuestion. That was the obvious extension and it was rejected for two concrete
+// reasons, both of which would have shipped as bugs:
+//
+//  1. IT WOULD HAVE SILENTLY DESTROYED THE GLOBAL QUESTIONNAIRE'S UNIQUENESS. QuestionnaireSection
+//     carries `code @unique` and `@@unique([sortOrder])`. Making those composite with a NULLABLE
+//     questionnaireId does not scope them — in Postgres, NULLs are DISTINCT in a unique index, so
+//     `UNIQUE(questionnaireId, sortOrder)` enforces NOTHING AT ALL across the rows where
+//     questionnaireId IS NULL, which is every row of the global questionnaire. The constraint that
+//     stops two sections landing on position 3 would have been dropped in all but name, and
+//     `reorder_sections` in the route depends on it holding.
+//
+//  2. CUSTOM SECTIONS WOULD HAVE LEAKED INTO SCREENS THAT ARE NOT ABOUT THEM. Four queries outside
+//     this feature read QuestionnaireSection with no questionnaire filter and would have started
+//     returning a designer's private sections: the task-assignment picker and task hydration in
+//     api/routes/tasks.py (three sites), the per-artisan consolidation + CSV export in
+//     services/questionnaire_consolidation.py, and the completion matrix. An admin assigning
+//     fieldwork would have been offered "Section 2 — Loom preferences" from one designer's private
+//     form as a documentation task for an artisan who has never seen it.
+//
+// The price of separate tables is that answers do not reuse QuestionnaireInterview. That turns out
+// to be a second reason rather than a cost: an interview REQUIRES a location, carries a unique
+// artisanSetKey enforcing one interview per artisan set, and goes through the review queue. A
+// designer answering their own eight-question form has no artisans, no location and nothing to
+// review, and would have had to invent all three to save a single answer.
+// ------------------------------------------------------------------------------------------------
+
+/// One custom questionnaire: the designer's own instrument, uploaded as .xlsx and answered in-app.
+///
+/// `version` is NOT a schema version — it is the count of DESTRUCTIVE-ish edits applied after the
+/// first answer existed (a supersede or a retire). A client caches a form and needs to know its
+/// copy is stale; comparing this integer is cheaper than diffing the question list.
+model Questionnaire {
+  id          String  @id @default(cuid())
+  title       String
+  description String?
+  ownerId     String
+  /// The workshop this questionnaire is attached to, set from the designer's dropdown. NULL means
+  /// "not attached yet" — a designer builds the form before deciding which workshop it belongs to,
+  /// and a questionnaire outlives the workshop it was used at (onDelete: SetNull, never Cascade:
+  /// deleting a workshop must not take a fortnight of recorded answers with it).
+  designWorkshopId String?
+  isActive    Boolean @default(true)
+  version     Int     @default(1)
+  /// The name of the .xlsx it was uploaded from, shown so a designer can tell two drafts apart.
+  sourceFilename String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner          User            @relation("QuestionnaireOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  designWorkshop DesignWorkshop? @relation("DesignWorkshopQuestionnaires", fields: [designWorkshopId], references: [id], onDelete: SetNull)
+  sections QuestionnaireFormSection[]
+  entries  QuestionnaireFormEntry[]
+
+  @@index([ownerId, createdAt])
+  @@index([designWorkshopId])
+  @@index([isActive, createdAt])
+}
+
+/// A section of a custom questionnaire. `code` is unique WITHIN its questionnaire and nowhere else —
+/// two designers both naming a section "A" is normal and must not collide.
+model QuestionnaireFormSection {
+  id              String  @id @default(cuid())
+  questionnaireId String
+  code            String
+  title           String
+  sortOrder       Int
+  /// Retired rather than deleted once any question under it has been answered. See
+  /// services/questionnaire_forms.py for the rule and why.
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  questionnaire Questionnaire              @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  questions     QuestionnaireFormQuestion[]
+
+  /// Scoped uniqueness, with NO nullable column in the key — which is exactly what the rejected
+  /// nullable-questionnaireId design could not give the global questionnaire.
+  @@unique([questionnaireId, code])
+  @@index([questionnaireId, sortOrder])
+}
+
+/// One question. Once it has an answer it becomes effectively IMMUTABLE — see `supersededById`.
+model QuestionnaireFormQuestion {
+  id         String  @id @default(cuid())
+  sectionId  String
+  prompt     String
+  helpText   String?
+  isRequired Boolean @default(false)
+  sortOrder  Int
+  isActive   Boolean @default(true)
+  /// When this question stopped being offered. Set together with isActive=false so "retired" is
+  /// distinguishable from "the designer unticked it before anyone answered".
+  retiredAt  DateTime?
+  /// THE QUESTION THAT REPLACED THIS ONE. A deliberately PLAIN COLUMN, not a Prisma relation: it is
+  /// only ever read to render "replaced by", never joined through, and a self-relation here would
+  /// cost every generated client an extra recursion level for nothing.
+  ///
+  /// Set when a designer rewrites the prompt of a question that already has answers. The recorded
+  /// answers stay attached to THIS row with the prompt they were given under, and the new wording
+  /// becomes a new row. The failure this prevents: "How many looms?" answered "12", reworded to
+  /// "How many weavers?", and a ministry report now states there are twelve weavers.
+  supersededById String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  section QuestionnaireFormSection  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  answers QuestionnaireFormAnswer[]
+
+  @@index([sectionId, sortOrder])
+  @@index([isActive])
+  @@index([supersededById])
+}
+
+/// ONE FILLED-IN COPY of a questionnaire — a sitting, a respondent, a session. A questionnaire can
+/// be answered many times over (five artisans, five entries), so answers hang off this and not off
+/// the questionnaire directly.
+///
+/// Answers that arrived ALREADY FILLED IN inside an uploaded .xlsx land here too, as an entry with
+/// `source = "UPLOAD"`. That is what keeps there from being two different notions of "an answer":
+/// the file's answers and the app's answers are the same rows, so the edit rules below apply to
+/// both without a special case.
+model QuestionnaireFormEntry {
+  id              String  @id @default(cuid())
+  questionnaireId String
+  title           String
+  respondentName  String?
+  /// APP (typed into the platform) | UPLOAD (came in already answered on the spreadsheet).
+  source          String  @default("APP")
+  notes           String?
+  createdById     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  questionnaire Questionnaire             @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  createdBy     User                      @relation("QuestionnaireFormEntryCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  answers       QuestionnaireFormAnswer[]
+
+  @@index([questionnaireId, createdAt])
+  @@index([createdById])
+}
+
+model QuestionnaireFormAnswer {
+  id           String  @id @default(cuid())
+  entryId      String
+  questionId   String
+  answerText   String?
+  notes        String?
+  answeredById String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entry      QuestionnaireFormEntry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  /// RESTRICT, and this is the enforcement point for the whole edit-after-answers rule. The service
+  /// layer refuses to delete an answered question, but a rule that lives only in Python is one
+  /// `delete_many` away from orphaning a designer's recorded fieldwork. The database refuses too.
+  question   QuestionnaireFormQuestion @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  answeredBy User                      @relation("QuestionnaireFormAnsweredBy", fields: [answeredById], references: [id], onDelete: Restrict)
+
+  /// One answer per question per sitting; re-saving updates rather than appends.
+  @@unique([entryId, questionId])
+  @@index([questionId])
+  @@index([answeredById])
+}
+
+model Process {
+  id                  String       @id @default(cuid())
+  name                String
+  preProcessAvailable Boolean      @default(false)
+  notes               String?
+  status              RecordStatus @default(PENDING)
+  reviewNotes         String?
+  reviewedById        String?
+  reviewedAt          DateTime?
+  extraMetadata       Json?
+  recordedAt          DateTime     @default(now())
+  recordedTimezone    String       @default("Asia/Kolkata")
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  productId           String
+  createdById         String
+  /// The workshop this process was documented at, named EXPLICITLY on the record. A process used to
+  /// reach a workshop only through its parent product; both readings still work, and this column is
+  /// nullable so every row recorded before it keeps behaving exactly as before.
+  workshopId          String?
+
+  product   ProductDocumentation @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdBy User                 @relation("ProcessCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  workshop  Workshop?            @relation("ProcessWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
+  steps     ProcessStep[]
+
+  @@index([productId])
+  @@index([createdById])
+  @@index([status])
+  @@index([workshopId, createdAt])
+  @@index([createdAt])
+}
+
+model ProcessStep {
+  id        String          @id @default(cuid())
+  processId String
+  name      String
+  stepType  ProcessStepType @default(SEQUENTIAL)
+  sortOrder Int
+  notes     String?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  process Process @relation(fields: [processId], references: [id], onDelete: Cascade)
+
+  @@index([processId])
+}
+
+model ReviewLog {
+  id         String           @id @default(cuid())
+  recordType ReviewRecordType
+  recordId   String
+  status     RecordStatus
+  notes      String?
+  reviewerId String
+  createdAt  DateTime         @default(now())
+
+  reviewer User @relation("ReviewReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([recordType, recordId])
+  @@index([reviewerId])
+  @@index([createdAt])
+}
+
+// Singleton row (id = "singleton") holding master-admin-configurable global settings. For now: how
+// audio transcripts are produced (raw / refined / refined+translated) and an optional off-peak window
+// during which the heavy transcription+refinement work runs, so it doesn't compete with daytime
+// uploads. Extend with more configurable fields over time.
+model AppSetting {
+  id                 String   @id @default("singleton")
+  transcriptionMode  String   @default("REFINED_TRANSLATED")
+  /// Speech-to-text providers in the order the master admin ranked them. One with no configured key
+  /// is skipped where it sits, so this ranks preference and never gates transcription.
+  sttProviderOrder   String[] @default(["elevenlabs", "deepgram", "whisper"])
+  batchWindowEnabled Boolean  @default(false)
+  batchWindowStart   String   @default("02:00")
+  batchWindowEnd     String   @default("05:00")
+  batchTimezone      String   @default("Asia/Kolkata")
+  updatedAt          DateTime @updatedAt
+  updatedById        String?
+}
+
+/// A workshop-to-researcher assignment made by an admin. Only researchers assigned to a workshop may
+/// create records tied to it, and a submission made outside the workshop's [startDate, endDate] window
+/// is flagged as needing admin approval. A workshop with NO assignment rows is open to everyone
+/// (backward compatible with data created before assignments existed).
+/// Who may work in a workshop, and at what level.
+///
+/// One row covers BOTH directions of the same relationship, because they settle into the same
+/// state: an admin granting access to somebody, and a newly-onboarded user asking for it. The
+/// difference is only where the row starts — an admin's grant begins GRANTED, a self-request begins
+/// PENDING and needs an admin decision — so a single table means the grant list and the request
+/// queue can never disagree about who currently has access.
+model WorkshopAssignment {
+  id           String   @id @default(cuid())
+  workshopId   String
+  userId       String
+  assignedById String?
+  /// VIEW (read the workshop's data), CONTRIBUTE (add records), EDIT (change anyone's records here).
+  /// Ordered, so a check is a rank comparison rather than a set membership test.
+  accessLevel  String   @default("CONTRIBUTE")
+  /// PENDING (requested, awaiting an admin) / GRANTED / DENIED / REVOKED. Only GRANTED confers
+  /// access; DENIED and REVOKED are kept rather than deleted so the decision stays auditable and a
+  /// user cannot silently re-request their way around a refusal.
+  status       String   @default("GRANTED")
+  /// Set when the row began as the user's own request, so the queue can tell the two apart.
+  requestedById String?
+  requestNote  String?
+  decidedById  String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workshop    Workshop @relation("WorkshopAssignments", fields: [workshopId], references: [id], onDelete: Cascade)
+  user        User     @relation("WorkshopAssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy  User?    @relation("WorkshopAssignmentAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  requestedBy User?    @relation("WorkshopAssignmentRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  decidedBy   User?    @relation("WorkshopAssignmentDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  // The unique below is the workshop-roster lookup `resolve_workshop_access` makes on every
+  // workshop-scoped write; a separate [workshopId] would only duplicate its leading column.
+  @@unique([workshopId, userId])
+  @@index([userId])
+  @@index([status])
+}
+
+/// A runtime-editable API key or service credential.
+///
+/// Keys used to live only in the EC2 `.env`, so rotating one meant an SSH session and a restart —
+/// and nobody but the person holding the server could see whether a provider was even configured.
+/// A master admin can now read (redacted), set and rotate them from the Settings hub, and the
+/// services read through `services/managed_secrets.py`, which prefers a stored value and falls back
+/// to the environment. That fallback is what makes this safe to deploy: an empty table behaves
+/// exactly like today.
+///
+/// `value` is encrypted at rest with Fernet (see managed_secrets.py) rather than stored in the
+/// clear, because a database dump of provider keys is a far worse leak than a config file on one
+/// box. It is NEVER returned to a client in full — only a masked preview plus a reachability check.
+model ManagedSecret {
+  id          String   @id @default(cuid())
+  /// The environment-variable name this overrides, e.g. "OPENAI_API_KEY".
+  key         String   @unique
+  /// Fernet ciphertext. Never logged, never serialised to a response.
+  valueEnc    String
+  /// Last four characters of the plaintext, so the UI can show "…a4f2" without decrypting.
+  hint        String?
+  description String?
+  /// Result of the most recent reachability probe: UNKNOWN / OK / FAILED.
+  lastStatus  String   @default("UNKNOWN")
+  lastCheckedAt DateTime?
+  lastError   String?
+  updatedById String?
+  updatedBy   User?    @relation("ManagedSecretUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// The verdict of the last "Test" of a provider key that lives in the deployed ENVIRONMENT.
+///
+/// WHY A SECOND TABLE. ManagedSecret is where a verdict belongs, but a row there only exists once
+/// somebody SAVES a key through the Settings hub, and its whole purpose is to be an override — the
+/// resolver prefers it over the environment. So recording an environment key's verdict by creating
+/// one would copy the deployed secret into the database and change which value the transcription
+/// chain uses, to persist a boolean. This table holds the boolean and nothing else, and it
+/// overrides nothing. On production, where every key comes from the environment, it is the
+/// difference between the provider ranking remembering what has been proven and resetting to
+/// "nothing verified" on every deploy.
+///
+/// THE VALUE IS NOT HERE, IN ANY FORM. Not the key, not a prefix, not a digest of it. `fingerprint`
+/// is HMAC-SHA256 of the value under a server-side pepper derived from SECRETS_ENCRYPTION_KEY (or
+/// JWT_SECRET), so it cannot be computed, reversed or brute-forced from a database dump alone — the
+/// pepper is not in the database. It exists for exactly one purpose: a rotated key must not inherit
+/// the old key's pass. On a mismatch the verdict is ignored and the engine reads as untested, which
+/// is also what happens if the pepper itself changes, i.e. the failure direction is "prove it
+/// again" rather than "trust something unproven".
+model SecretTestResult {
+  /// The environment-variable name, e.g. "ELEVENLABS_API_KEY". One verdict per key.
+  key         String   @id
+  /// OK or FAILED. There is no UNKNOWN: a row exists only because a test was actually run.
+  status      String
+  checkedAt   DateTime
+  /// The probe's short, redacted explanation of a failure. Never a provider response body.
+  error       String?
+  fingerprint String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// Tiered data-access sharing between researchers. OWNER = the author whose uploaded records are being
+/// shared; GRANTEE = the researcher who receives access at `tier` (DOWNLOAD < COMMENT < EDIT). Exactly
+/// one row per (owner, grantee) pair: status PENDING is an outstanding request raised by the grantee;
+/// GRANTED is active. `allData` true covers everything the owner uploaded; otherwise the covered set is
+/// the explicit `scopeItems` subset.
+model DataAccessGrant {
+  id            String           @id @default(cuid())
+  ownerId       String
+  granteeId     String
+  tier          DataAccessTier   @default(DOWNLOAD)
+  status        DataAccessStatus @default(PENDING)
+  allData       Boolean          @default(true)
+  requestNote   String?
+  decisionNote  String?
+  requestedById String?
+  decidedById   String?
+  decidedAt     DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  owner       User  @relation("DataAccessOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  grantee     User  @relation("DataAccessGrantee", fields: [granteeId], references: [id], onDelete: Cascade)
+  requestedBy User? @relation("DataAccessRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  decidedBy   User? @relation("DataAccessDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  scopeItems  DataAccessScopeItem[]
+
+  // [granteeId] stands alone because it is NOT the leading column of the unique, and it is the hot
+  // one: `records.owned_or_granted_where` reads this table by grantee on every download and export
+  // request from below professor. (It used to ride every LIST request too, under the older name
+  // `visibility_where`, before reading the repository was opened to every signed-in account.)
+  @@unique([ownerId, granteeId])
+  @@index([granteeId])
+  @@index([status])
+}
+
+/// One record in the subset covered by a non-allData DataAccessGrant.
+model DataAccessScopeItem {
+  id         String   @id @default(cuid())
+  grantId    String
+  recordType String
+  recordId   String
+  createdAt  DateTime @default(now())
+
+  grant DataAccessGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@unique([grantId, recordType, recordId])
+}
+
+/// A comment on any record (generic over recordType/recordId), left by the record owner, an admin, or a
+/// user holding COMMENT-tier-or-higher data access to the owner.
+model EntryComment {
+  id         String   @id @default(cuid())
+  recordType String
+  recordId   String
+  authorId   String
+  body       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  author User @relation("EntryCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([recordType, recordId])
+  @@index([authorId])
+}
+
+/// An immutable audit row capturing one edit to a record's fields. `changes` is a JSON object shaped
+/// {field: {old, new}}. Recorded whenever a record's fields change through the contribute path so an
+/// admin can reconstruct the original values alongside every subsequent edit and see who made each one.
+model RecordRevision {
+  id         String   @id @default(cuid())
+  recordType String
+  recordId   String
+  editedById String?
+  changes    Json
+  createdAt  DateTime @default(now())
+
+  editedBy User? @relation("RecordRevisionEditedBy", fields: [editedById], references: [id], onDelete: SetNull)
+
+  @@index([recordType, recordId])
+  @@index([editedById])
+}
+
+// ======================================================================================
+// Design & Prototype Workshop
+// ======================================================================================
+//
+// The 22-stage capture defined by the source requirements document, stored as a HYBRID: a
+// typed `DesignWorkshop` header carrying only what a list, a filter and a sort actually read,
+// plus one `DwStageEntry` row per record whose `data` is a JSON object keyed by the field keys
+// declared in `app/services/stage_schema.py`.
+//
+// The alternative shapes were both worse. Two and a half thousand typed columns would make
+// every new Standard-tier field a migration in the middle of a workshop season — and the
+// reviewer's own comments on the source document ("some of these could be optional fields",
+// "later we can refine") say plainly that the field list is not finished. A pure JSON document
+// per workshop, on the other hand, cannot answer "every Ikat workshop in Odisha in 2026"
+// without reading every row.
+//
+// So the registry is the schema, and the columns below are an INDEX over it. `promoted_values`
+// in stage_schema.py is the single writer of the denormalised columns; nothing else may set
+// them, or the two readings drift.
+
+/// Where a design workshop is in its life. Deliberately NOT `RecordStatus`: that enum models a
+/// review queue (PENDING -> APPROVED/REJECTED), and a workshop is not reviewed, it is run. A
+/// workshop can also be ARCHIVED long after it is COMPLETE, which the review enum cannot say.
+enum DesignWorkshopStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETE
+  SUBMITTED
+  ARCHIVED
+}
+
+model DesignWorkshop {
+  id         String               @id @default(cuid())
+  title      String
+  templateId String               @default("DCH_STANDARD")
+  status     DesignWorkshopStatus @default(DRAFT)
+
+  // Denormalised from stage 1 by promoted_values(). Never written by hand; see the note above.
+  workshopCode       String?
+  scheme             String?
+  craftName          String?
+  clusterName        String?
+  state              String?
+  district           String?
+  venue              String?
+  startDate          DateTime?
+  endDate            DateTime?
+  designerName       String?
+  implementingAgency String?
+  sponsor            String?
+
+  notes String?
+
+  /// The digest of the field registry this record was last written against. A phone that syncs
+  /// a draft written under an older registry is detectable here, which is what lets a migration
+  /// run once rather than being guessed at on every read.
+  schemaVersion String?
+
+  /// Set when a workshop is deleted. NOTHING in this table is hard-deleted: this is a research
+  /// data set, the repo has no soft delete anywhere else, and a designer's two weeks of
+  /// fieldwork is not something a mis-tap should end. Every read filters on `deletedAt: null`.
+  deletedAt   DateTime?
+  deletedById String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String
+
+  /// Optional link to the Workshop record the rest of the repository already knows about, so a
+  /// design workshop held at a documented workshop shares its artisans and location instead of
+  /// restating them.
+  workshopId String?
+
+  createdBy User            @relation("DesignWorkshopCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  deletedBy User?           @relation("DesignWorkshopDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  workshop  Workshop?       @relation("DesignWorkshopWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
+  entries   DwStageEntry[]
+  exports   DwReportExport[]
+  /// The colleagues an admin has let into this workshop besides `createdBy`. See
+  /// `DesignWorkshopViewer` for why the creator is not the whole team.
+  viewers   DesignWorkshopViewer[] @relation("DesignWorkshopViewers")
+  /// Custom questionnaires attached to this workshop through the designer's dropdown. Nullable on
+  /// the far side, so an unattached questionnaire is a first-class thing rather than an orphan.
+  questionnaires Questionnaire[] @relation("DesignWorkshopQuestionnaires")
+
+  // The list's default order, and the two filters a researcher reaches for first.
+  @@index([createdAt])
+  @@index([startDate])
+  @@index([createdById])
+  @@index([status])
+  @@index([craftName])
+  @@index([state, district])
+  @@index([workshopId])
+  @@index([deletedAt])
+}
+
+/// Who, besides the person who pressed "create", may open one design & prototype workshop.
+///
+/// A REAL WORKSHOP HAS A TEAM. Two designers, a master craftsperson and a reviewing officer work
+/// the same fortnight, and until this table existed the record was visible to exactly one account:
+/// `load_workshop_or_404` admitted `createdById` and admins and nobody else. A colleague could not
+/// open the workshop at all, and a designer who left mid-season took their fieldwork with them —
+/// there was no handover short of an admin editing the database.
+///
+/// WHAT IS BORROWED FROM `WorkshopAssignment`, and what deliberately is not. The shape is the same:
+/// one row per (record, user), unique on the pair, `@@index([userId])` for the reverse question,
+/// admin-only administration, and a whole-set PUT that replaces the roster. The request/approve
+/// LIFECYCLE is not — there is no `status`, no `requestedById`, no `decidedAt`. That vocabulary
+/// exists because a researcher may ASK for a workshop and be refused, and DENIED/REVOKED rows are
+/// kept so a refusal cannot be silently re-requested around. Nothing asks for a design workshop:
+/// an admin or master admin decides who is on the team, full stop. Modelling states nobody can
+/// enter would leave four of the five columns permanently equal to 'GRANTED' and invite a reader
+/// to believe a request queue exists somewhere.
+///
+/// Removing a viewer therefore DELETES the row rather than revoking it, which is the one place
+/// this departs from the sibling table's "nothing is ever deleted". A grant here carries no
+/// decision to audit — it never refused anybody and was never asked for — so a tombstone would
+/// record only that an admin changed their mind about a colleague.
+model DesignWorkshopViewer {
+  designWorkshopId String
+  userId           String
+  /// The admin who granted it. Nullable so the relation below can be SetNull.
+  grantedById      String?
+  createdAt        DateTime @default(now())
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopViewers", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+
+  /// CASCADE, and deliberately NOT the `Restrict` that every CREATOR relation on User carries.
+  ///
+  /// `Restrict` is right for authorship — `DesignWorkshop.createdBy`, `Artisan.createdBy` and the
+  /// rest — because deleting the account would erase who recorded the research. A viewer row is
+  /// not authorship: it says an account that no longer exists was once allowed to read something,
+  /// which is worth nothing to anybody. Restricting would instead add a brand-new reason an
+  /// account cannot be deleted (see `_undeletable_detail` in api/routes/users.py, where that is
+  /// already the ordinary case) — and a reason no admin could clear, because no screen offers
+  /// "take this person off every workshop". It also matches the two access tables that already
+  /// exist: `WorkshopAssignment.user` and `DataAccessGrant.grantee` are both Cascade.
+  user User @relation("DesignWorkshopViewerUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SetNull, matching `WorkshopAssignment.assignedBy`. The grant must outlive the admin who made
+  /// it: losing the granter mid-season must not quietly lock a working co-designer out of the
+  /// workshop they are halfway through, and "who let them in" is not worth an outage.
+  grantedBy User? @relation("DesignWorkshopViewerGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  /// The pair IS the identity — one grant per person per workshop — so a re-grant collides rather
+  /// than stacking a second row, and the PK serves the "may this user open this workshop" lookup
+  /// `load_workshop_or_404` makes on every read by a non-creator.
+  @@id([designWorkshopId, userId])
+  /// The other direction: "which workshops may this user see", which is the LIST endpoint's scope
+  /// clause. Not covered by the primary key above — userId is its SECOND column — so without this
+  /// the workshop list would sequentially scan the grant table for every non-admin request.
+  @@index([userId])
+}
+
+/// One record of one entity of one stage. A SINGLETON entity has exactly one row per workshop;
+/// a COLLECTION entity has as many as the designer created.
+///
+/// `data` holds the field values, keyed by `FieldSpec.key`. It is validated against the
+/// registry on write (`validate_entry`) and read back through it, so an unknown key cannot
+/// reach the report — but an unknown key does NOT reject the write, because a phone one release
+/// ahead of the server would otherwise lose a whole stage. See app/schemas/design_workshops.py.
+model DwStageEntry {
+  id               String @id @default(cuid())
+  designWorkshopId String
+  /// The StageSpec.key, e.g. PROTOTYPE_DEVELOPMENT. Stored rather than derived from entityKey
+  /// so a stage's rows can be fetched in one query without consulting the registry.
+  stageKey  String
+  /// The EntitySpec.key, e.g. `prototype`. Unique across the whole registry by rule.
+  entityKey String
+  /// Orders a collection's rows. A singleton's is always 0.
+  ordinal   Int    @default(0)
+  data      Json
+
+  /// Set by the client that created the row, and stable across a sync. It is what lets the
+  /// phone match a row it created offline to the row the server now has, without which every
+  /// reconnect would duplicate the whole collection.
+  clientKey String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  deletedAt   DateTime?
+
+  designWorkshop DesignWorkshop @relation(fields: [designWorkshopId], references: [id], onDelete: Cascade)
+  createdBy      User?          @relation("DwStageEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  /// The read pattern: every row of one stage of one workshop, in order.
+  @@index([designWorkshopId, stageKey, ordinal])
+  @@index([designWorkshopId, entityKey])
+  /// The CROSS-WORKSHOP read, which the two indexes above cannot serve because both lead with
+  /// `designWorkshopId` and a btree cannot be probed on its second column.
+  /// `/analytics/design-workshops` asks for a named handful of entity keys across the WHOLE
+  /// archive (see `ANALYSED_ENTITIES` in api/routes/analytics.py), so without this it is a
+  /// sequential scan whose cost is the size of the archive rather than the size of the answer:
+  /// measured warm on 6,952 rows it discarded 6,883 of them to return 69, at 4.30 ms and 312
+  /// shared buffers, against 0.30 ms and 62 buffers with the index.
+  ///
+  /// The four milliseconds are NOT the reason — the endpoint measures the same either way today
+  /// (37 ms vs 40 ms). The shape is: this is the one read in the design-workshop family whose
+  /// cost grows with the archive instead of with the result, on the one endpoint built to grow.
+  /// See the migration for the full before/after.
+  @@index([entityKey])
+  /// A client key identifies one row within one workshop. Partial on clientKey being non-null
+  /// is not expressible here, so the application skips the match when clientKey is null.
+  @@unique([designWorkshopId, entityKey, clientKey])
+  @@index([deletedAt])
+}
+
+/// Every report file ever produced for a workshop, whether by the server or on a phone with no
+/// network. The bytes are not stored here — only the fact, so a file handed to an office can be
+/// matched back to the record and the template it came from.
+model DwReportExport {
+  id               String  @id @default(cuid())
+  designWorkshopId String
+  format           String
+  templateId       String
+  fileName         String
+  fileSizeBytes    Int?
+  pageCount        Int?
+  checksumSha256   String?
+  /// True when the phone produced the file offline. The distinction matters for the archive:
+  /// an on-device export exists on exactly one device until someone copies it off.
+  generatedOnDevice Boolean @default(false)
+  /// The registry digest and template in force at generation, so a report can be reproduced.
+  schemaVersion String?
+  warnings      String?
+  storageKey    String?
+
+  generatedAt   DateTime @default(now())
+  generatedById String?
+
+  designWorkshop DesignWorkshop @relation(fields: [designWorkshopId], references: [id], onDelete: Cascade)
+  generatedBy    User?          @relation("DwReportExportGeneratedBy", fields: [generatedById], references: [id], onDelete: SetNull)
+
+  @@index([designWorkshopId, generatedAt])
+  @@index([generatedById])
+}
+
+// ======================================================================================
+// The designer: who may sign in as one, and what the app already knows about them
+// ======================================================================================
+
+/// The institution's roster of recognised designers. A DESIGNER account may sign in only while an
+/// ACTIVE row here carries its email.
+///
+/// TWO SEPARATE FACTS, DELIBERATELY. `User.role` says what somebody may DO; this table says whether
+/// the institution still recognises them at all. Collapsing the two into the role column would mean
+/// removing a departed designer's access by demoting them, which silently rewrites the authorship of
+/// every workshop they ran — the role is read when deciding who may review whose work, so a
+/// demotion is retroactive. Revoking a roster row ends the sessions and leaves the record intact.
+///
+/// Admin and above may edit the roster; nobody else may read it, because it is a list of named
+/// individuals and their institutional standing.
+model DesignerRoster {
+  id    String @id @default(cuid())
+  /// Lower-cased on write. The join key to User.email, which is itself unique — but this row may
+  /// exist BEFORE the account does, which is the point: an admin adds the designer to the roster
+  /// and the account provisions itself on first Google sign-in.
+  email String @unique
+  /// The name the admin entered, used to seed the account when it first appears and to show a
+  /// meaningful roster before anyone has signed in.
+  fullName    String?
+  institution String?
+  /// Free-text note from the admin: which programme this designer was empanelled under, and when.
+  notes       String?
+
+  /// False suspends sign-in without deleting the history of the empanelment. Preferred over
+  /// deleting the row, which would leave no record that the person was ever recognised.
+  isActive  Boolean   @default(true)
+  revokedAt DateTime?
+  /// Set the first time an account with this email signs in, so an admin can see which invitations
+  /// are outstanding rather than guessing.
+  firstSeenAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  addedById String?
+  addedBy   User?    @relation("DesignerRosterAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+
+  @@index([isActive])
+  @@index([addedById])
+}
+
+/// A designer's standing details, entered once and reused by every report they generate.
+///
+/// The reason this exists is in the requirement: a designer should not retype their institution,
+/// qualification and biography into stage 1 and stage 3 of every workshop they run. The profile is
+/// the source, and `prefill_designer_fields` copies it into a new workshop's stages — copies, not
+/// references, because a report is a historical document: if the designer moves institutions in
+/// 2027, the workshop they ran in 2026 must still name the institution they ran it from.
+///
+/// Editable by the owner and by admins, and by nobody else. A designer correcting their own
+/// biography needs no approval; another designer editing it is not a thing that should be possible.
+model DesignerProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  displayName    String?
+  /// Written in the local script where the designer wants it that way; printed verbatim.
+  localName      String?
+  designation    String?
+  institution    String?
+  department     String?
+  qualification  String?
+  specialisation String?
+  experienceYears Int?
+  /// The paragraph that appears as "Designer's profile" in stage 3 of every report.
+  biography      String?
+  phone          String?
+  email          String?
+  website        String?
+  addressLine    String?
+  city           String?
+  state          String?
+  pincode        String?
+  /// Media ids, resolved through MediaFile exactly as a stage field's photo is.
+  photoMediaId     String?
+  signatureMediaId String?
+
+  /// Empanelment identifiers a government report is expected to carry.
+  empanelmentNo   String?
+  empanelmentDate DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation("DesignerProfileUser", fields: [userId], references: [id], onDelete: Cascade)
+}

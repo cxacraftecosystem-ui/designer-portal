@@ -1,0 +1,507 @@
+"use client";
+
+/**
+ * RECORDING THE ANSWERS. The half of this feature the whole thing exists for.
+ *
+ * A designer downloads the pro-forma, types their questions into it, uploads it — and then answers
+ * it here. THE UPLOADED SHEET MAY HAVE CARRIED NO ANSWERS AT ALL, and that is the ordinary case, not
+ * the edge one: a designer who is about to run the interviews has an instrument, not data. So this
+ * screen never assumes a sitting exists, never assumes a question has been answered before, and
+ * starts a sitting from nothing in one press.
+ *
+ * WHAT A "SITTING" IS. One filled-in copy of the questionnaire — `QuestionnaireFormEntry` on the
+ * server. Answers that arrived in the spreadsheet's answer columns are sittings too (`source:
+ * "UPLOAD"`), stored in the same table as the ones typed here, which is why this screen needs no
+ * special case for either and why a designer who typed six interviews into Excel can carry on with
+ * the seventh in the app.
+ *
+ * SAVING IS BY SECTION, NOT BY FORM, and it is a PUT.
+ *
+ *   * By section because that is the unit a person finishes. A twelve-section instrument saved only
+ *     at the end is a lost interview when the tab closes.
+ *   * PUT because sending the same section twice must not produce two sets of answers.
+ *     `@@unique([entryId, questionId])` makes that true at the database as well, and `save_answers`
+ *     skips rows whose text did not change — so re-saving a section a designer merely walked back
+ *     through writes nothing and does not re-stamp authorship on answers somebody else recorded.
+ *
+ * RETIRED QUESTIONS ARE SHOWN AND NOT OFFERED. `save_answers` refuses them with a 422: a question
+ * that was superseded or retired keeps the answers it already has and must never collect new ones,
+ * or the wording a designer deliberately replaced quietly carries on gathering evidence. But the
+ * answers it already has must still be READABLE here, or a sitting shows four answers to what was a
+ * six-question form and looks like it lost two. So the form is loaded WITH retired questions, they
+ * are drawn read-only, and they are excluded when the payload is built.
+ */
+
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { Archive, ChevronLeft, ChevronRight, ClipboardList, Plus, Save } from "lucide-react";
+
+import { EmptyState } from "@/components/EmptyState";
+import { Field, TextArea, TextInput } from "@/components/FormControls";
+import { PageHeader } from "@/components/PageHeader";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
+import { Dropdown } from "@/components/ui/Dropdown";
+import { useToast } from "@/components/ui/Toast";
+import { formatDateTime } from "@/lib/format";
+import {
+  answerableQuestions,
+  answeredCount,
+  answersByQuestion,
+  createEntry,
+  getQuestionnaire,
+  saveAnswers,
+  type QForm,
+  type QFormEntry,
+  type QFormSection
+} from "@/lib/questionnaireForms";
+
+export default function AnswerQuestionnairePage() {
+  return (
+    // Next 16: `useSearchParams` must sit inside a Suspense boundary.
+    <Suspense fallback={<div className="panel p-4 text-sm text-ink-500">Loading…</div>}>
+      <AnswerPageBody />
+    </Suspense>
+  );
+}
+
+function AnswerPageBody() {
+  const params = useParams<{ id: string }>();
+  const id = params.id;
+  const search = useSearchParams();
+  const router = useRouter();
+  const { toast } = useToast();
+
+  const [form, setForm] = useState<QForm | null>(null);
+  const [entryId, setEntryId] = useState<string>("");
+  const [sectionIndex, setSectionIndex] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
+
+  /**
+   * The text in the boxes, keyed by question id.
+   *
+   * Held in React state rather than read off the DOM at save time, because the section the designer
+   * is leaving is the section being saved: by the time a "next" click has re-rendered, the inputs it
+   * would have been read from are gone. Seeded from the sitting's stored answers whenever the sitting
+   * changes, never on every render — retyping over somebody's answer as they type it is the failure
+   * that shape prevents.
+   */
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  /** Question ids whose box has been touched since the last successful save of their section. */
+  const dirty = useRef<Set<string>>(new Set());
+
+  const load = useCallback(async () => {
+    try {
+      // WITH retired questions — see the file header. The read-only rows they produce are the only
+      // place a previously-recorded answer to a retired question can still be seen.
+      const next = await getQuestionnaire(id, { includeRetired: true });
+      setForm(next);
+      setError(null);
+      return next;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load that questionnaire");
+      return null;
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /**
+   * Which sitting is open.
+   *
+   * `?entry=` wins when it names one that exists — that is the link from the detail page's list, and
+   * honouring it is what makes "Open" mean this sitting rather than whichever happens to be first.
+   * Otherwise nothing is auto-selected: picking a sitting for somebody would mean a designer who
+   * meant to start a new interview types it into the last one instead, over answers that were
+   * already there.
+   */
+  useEffect(() => {
+    if (!form || entryId) return;
+    const wanted = search.get("entry");
+    if (wanted && form.entries.some((entry) => entry.id === wanted)) setEntryId(wanted);
+  }, [form, entryId, search]);
+
+  const entry: QFormEntry | null = useMemo(
+    () => form?.entries.find((candidate) => candidate.id === entryId) ?? null,
+    [form, entryId]
+  );
+
+  /**
+   * Which sitting the boxes currently hold, so a re-read of the form does not retype them.
+   *
+   * `entry` is derived from `form`, so it is a NEW object every time the form is re-read — and every
+   * successful save re-reads it. Seeding on each of those would overwrite whatever the designer has
+   * typed into the next section while the save was in flight, which is a lost answer with nothing on
+   * screen to say so. Seeding is therefore keyed on the sitting's ID: switching sittings re-seeds,
+   * saving does not.
+   */
+  const seededFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!entry) {
+      if (seededFor.current === null) return;
+      seededFor.current = null;
+      setDraft({});
+      setNotes({});
+      dirty.current = new Set();
+      return;
+    }
+    if (seededFor.current === entry.id) return;
+    seededFor.current = entry.id;
+    const seededText: Record<string, string> = {};
+    const seededNotes: Record<string, string> = {};
+    for (const answer of entry.answers) {
+      seededText[answer.questionId] = answer.answerText ?? "";
+      seededNotes[answer.questionId] = answer.notes ?? "";
+    }
+    setDraft(seededText);
+    setNotes(seededNotes);
+    dirty.current = new Set();
+  }, [entry]);
+
+  const sections = form?.sections ?? [];
+  const section: QFormSection | null = sections[sectionIndex] ?? null;
+  const progress = form && entry ? answeredCount(form, entry) : null;
+
+  async function startSitting(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    // Built before any await: React nulls `currentTarget` across one.
+    const data = new FormData(event.currentTarget);
+    setStarting(true);
+    setError(null);
+    try {
+      const made = await createEntry(id, {
+        respondentName: String(data.get("respondentName") ?? "").trim() || undefined,
+        title: String(data.get("title") ?? "").trim() || undefined,
+        notes: String(data.get("notes") ?? "").trim() || undefined
+      });
+      // The create response is the raw row and carries no answers, so the form is re-read rather
+      // than patched locally — that is also what puts the new sitting into the picker.
+      await load();
+      setEntryId(made.id);
+      setSectionIndex(0);
+      setStartOpen(false);
+      // The URL is made to name the sitting so a reload, a bookmark or a back button all return to
+      // the interview in progress rather than to an unchosen picker.
+      router.replace(`/questionnaires/${id}/answer?entry=${made.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to start a sitting");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  /**
+   * Save the section on screen.
+   *
+   * ONLY THE QUESTIONS THAT WERE TOUCHED are sent. The endpoint is idempotent and would ignore
+   * unchanged rows anyway, but sending a whole section every time means a designer who opened a
+   * sitting to read it and moved on writes rows against every question in it — and a blank row is
+   * still a row, which changes nothing about what is answered but does put this user's id on
+   * answers they did not give.
+   */
+  const saveSection = useCallback(
+    async (target: QFormSection | null, options?: { silent?: boolean }): Promise<boolean> => {
+      if (!target || !entryId) return true;
+      const answers = answerableQuestions(target)
+        .filter((question) => dirty.current.has(question.id))
+        .map((question) => ({
+          questionId: question.id,
+          answerText: draft[question.id] ?? "",
+          notes: notes[question.id]?.trim() ? notes[question.id] : null
+        }));
+      if (!answers.length) return true;
+
+      setSaving(true);
+      setError(null);
+      try {
+        await saveAnswers(id, entryId, answers);
+        for (const answer of answers) dirty.current.delete(answer.questionId);
+        // Re-read so the progress counter and the detail page's "N of M answered" agree with what
+        // is stored rather than with what this tab believes it sent.
+        await load();
+        if (!options?.silent) {
+          toast({
+            tone: "success",
+            title: `Saved "${target.title}"`,
+            description: `${answers.length} ${answers.length === 1 ? "answer" : "answers"} recorded.`
+          });
+        }
+        return true;
+      } catch (err) {
+        // A 422 here is a real sentence written for the designer — "only the person who recorded
+        // this answer, or an admin, can change it", or a question that has since been retired. It is
+        // shown as a banner rather than a toast because it is something they must act on, and
+        // `aria-live="polite"` never interrupts.
+        setError(err instanceof Error ? err.message : "Unable to save those answers");
+        return false;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [draft, notes, entryId, id, load, toast]
+  );
+
+  async function goToSection(nextIndex: number) {
+    // Saving BEFORE moving is what makes "next" safe. A designer who fills a section in and presses
+    // next has finished it; asking them to also press Save is how a section gets lost.
+    const ok = await saveSection(section, { silent: true });
+    if (!ok) return;
+    setSectionIndex(nextIndex);
+    // The section heading is above the fold on arrival rather than wherever the previous section's
+    // scroll position left the page.
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  if (error && !form) {
+    return (
+      <>
+        <PageHeader title="Record answers" icon={<ClipboardList className="h-5 w-5" aria-hidden />} />
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      </>
+    );
+  }
+
+  if (!form) {
+    return (
+      <>
+        <PageHeader title="Record answers" icon={<ClipboardList className="h-5 w-5" aria-hidden />} />
+        <div className="panel p-4 text-sm text-ink-700">Loading…</div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <PageHeader
+        title={`Record answers · ${form.title}`}
+        description="One sitting is one filled-in copy of this questionnaire. Each section is saved as you move through it."
+        icon={<ClipboardList className="h-5 w-5" aria-hidden />}
+        actions={
+          <Link className="field-button-secondary" href={`/questionnaires/${id}`}>
+            Edit the questionnaire
+          </Link>
+        }
+      />
+
+      {error ? (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      ) : null}
+      {!form.isActive ? (
+        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
+          This questionnaire has been taken out of use, so no new sittings can be started against it. Answers already
+          recorded are still readable here.
+        </div>
+      ) : null}
+
+      <section className="panel mb-5 grid gap-3 p-4">
+        <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+          <FieldBlock label="Sitting">
+            <Dropdown
+              value={entryId}
+              onChange={(next) => {
+                setEntryId(next);
+                setSectionIndex(0);
+                router.replace(next ? `/questionnaires/${id}/answer?entry=${next}` : `/questionnaires/${id}/answer`);
+              }}
+              options={[
+                { value: "", label: form.entries.length ? "Choose a sitting" : "No sittings recorded yet" },
+                ...form.entries.map((candidate) => ({
+                  value: candidate.id,
+                  // Names the source, because a designer looking for the interview they typed in the
+                  // app has to tell it from the ones that arrived in the spreadsheet's columns.
+                  label: `${candidate.respondentName || candidate.title}${
+                    candidate.source === "UPLOAD" ? " · from the spreadsheet" : ""
+                  }`
+                }))
+              ]}
+              ariaLabel="Sitting"
+              searchable
+              // This dropdown SWITCHES the screen it sits on rather than filling in a form field, so
+              // focus must not jump to the next control.
+              advanceOnSelect={false}
+            />
+          </FieldBlock>
+          {form.isActive ? (
+            <button type="button" className="field-button" onClick={() => setStartOpen((open) => !open)}>
+              <Plus className="h-4 w-4" aria-hidden />
+              {startOpen ? "Close" : "Start a new sitting"}
+            </button>
+          ) : null}
+        </div>
+
+        {startOpen && form.isActive ? (
+          <form onSubmit={startSitting} className="grid gap-3 rounded-md border border-line-200 bg-surface-50 p-3 md:grid-cols-2">
+            <Field label="Who is answering">
+              <TextInput name="respondentName" maxLength={220} placeholder="Ramesh Kumar" />
+            </Field>
+            <Field label="Label for this sitting">
+              <TextInput name="title" maxLength={220} placeholder="Defaults to the name above" />
+            </Field>
+            <div className="md:col-span-2">
+              <Field label="Notes">
+                <TextArea name="notes" placeholder="Where and when this was recorded, anything about the conditions" />
+              </Field>
+            </div>
+            <div className="md:col-span-2">
+              <button className="field-button" disabled={starting}>
+                {starting ? "Starting…" : "Start recording answers"}
+              </button>
+            </div>
+          </form>
+        ) : null}
+
+        {entry ? (
+          <p className="text-xs text-ink-500">
+            {progress ? `${progress.answered} of ${progress.total} answered` : null}
+            {entry.createdByName ? ` · started by ${entry.createdByName}` : ""}
+            {entry.createdAt ? ` · ${formatDateTime(entry.createdAt)}` : ""}
+          </p>
+        ) : null}
+      </section>
+
+      {!sections.length ? (
+        <div className="panel p-4">
+          <EmptyState
+            title="This questionnaire has no questions yet"
+            body="Add sections and questions on the edit screen, or upload a filled-in pro-forma, and then come back to record the answers."
+          />
+        </div>
+      ) : !entry ? (
+        <div className="panel p-4">
+          <EmptyState
+            title="No sitting open"
+            body={
+              form.entries.length
+                ? "Choose a sitting above to carry on with it, or start a new one."
+                : "Start a sitting above. It works whether or not the spreadsheet you uploaded already had answers in it."
+            }
+          />
+        </div>
+      ) : section ? (
+        <section className="panel grid gap-4 p-4">
+          <header className="flex flex-wrap items-baseline justify-between gap-2">
+            <div>
+              <p className="eyebrow">
+                Section {sectionIndex + 1} of {sections.length}
+              </p>
+              <h2 className="font-display text-lg font-bold text-ink-900">{section.title}</h2>
+            </div>
+            <p className="text-xs text-ink-500">Saved automatically when you move to another section.</p>
+          </header>
+
+          <ol className="grid gap-4">
+            {section.questions.map((question, index) => {
+              const stored = answersByQuestion(entry).get(question.id);
+              if (!question.isActive) {
+                // READ-ONLY, and drawn rather than hidden. The recorded answer is still evidence; the
+                // question simply may not gather any more of it.
+                return (
+                  <li key={question.id} className="rounded-md border border-dashed border-line-200 bg-surface-50 p-3">
+                    <div className="flex items-start gap-2">
+                      <Archive className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
+                      <div className="min-w-0">
+                        <p className="text-sm text-ink-700">
+                          <span className="text-ink-500">{index + 1}.</span> {question.prompt}
+                        </p>
+                        <p className="mt-1 text-xs leading-5 text-ink-500">
+                          This question has been retired, so it can no longer be answered. What was recorded against it
+                          stays in the record.
+                        </p>
+                        {stored?.answerText ? (
+                          <p className="mt-2 rounded-md border border-line-200 bg-card px-3 py-2 text-sm text-ink-900">
+                            {stored.answerText}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </li>
+                );
+              }
+              return (
+                <li key={question.id} className="grid gap-1">
+                  <label className="grid gap-1">
+                    <span className="text-sm font-medium text-ink-900">
+                      <span className="text-ink-500">{index + 1}.</span> {question.prompt}
+                      {question.isRequired ? <span className="ml-1 text-error-600">*</span> : null}
+                    </span>
+                    {question.helpText ? <span className="text-xs leading-5 text-ink-500">{question.helpText}</span> : null}
+                    <textarea
+                      className="field-input min-h-16"
+                      value={draft[question.id] ?? ""}
+                      maxLength={8000}
+                      onChange={(event) => {
+                        dirty.current.add(question.id);
+                        setDraft((prev) => ({ ...prev, [question.id]: event.target.value }));
+                      }}
+                    />
+                  </label>
+                  <details className="text-xs text-ink-500">
+                    <summary className="cursor-pointer">Add a note about this answer</summary>
+                    <input
+                      className="field-input mt-1"
+                      value={notes[question.id] ?? ""}
+                      placeholder="Context, uncertainty, who said it"
+                      onChange={(event) => {
+                        dirty.current.add(question.id);
+                        setNotes((prev) => ({ ...prev, [question.id]: event.target.value }));
+                      }}
+                    />
+                  </details>
+                </li>
+              );
+            })}
+          </ol>
+
+          <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-line-200 pt-3">
+            <button
+              type="button"
+              className="field-button-secondary"
+              disabled={sectionIndex === 0 || saving}
+              onClick={() => goToSection(sectionIndex - 1)}
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+              Previous section
+            </button>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="field-button-secondary" disabled={saving} onClick={() => saveSection(section)}>
+                <Save className="h-4 w-4" aria-hidden />
+                {saving ? "Saving…" : "Save this section"}
+              </button>
+              {sectionIndex < sections.length - 1 ? (
+                <button type="button" className="field-button" disabled={saving} onClick={() => goToSection(sectionIndex + 1)}>
+                  Next section
+                  <ChevronRight className="h-4 w-4" aria-hidden />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="field-button"
+                  disabled={saving}
+                  onClick={async () => {
+                    const ok = await saveSection(section, { silent: true });
+                    if (!ok) return;
+                    toast({
+                      tone: "success",
+                      title: "Answers recorded",
+                      description: "Every section of this sitting has been saved. You can reopen it and carry on at any time."
+                    });
+                    router.push(`/questionnaires/${id}`);
+                  }}
+                >
+                  Finish this sitting
+                </button>
+              )}
+            </div>
+          </footer>
+        </section>
+      ) : null}
+    </>
+  );
+}
