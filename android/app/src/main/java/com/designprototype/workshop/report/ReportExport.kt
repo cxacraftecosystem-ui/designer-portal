@@ -7,8 +7,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.OutputStream
+import java.security.MessageDigest
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -59,6 +61,27 @@ object ReportExport {
      *
      * [droppedImages] is never empty-checked by this object: a report missing one photo is still
      * worth having in the field, so a photo that would not load is reported, not thrown.
+     *
+     * ── WHY [sizeBytes] AND [checksumSha256] ARE HERE, WHICH IS ABOUT A SCREEN ON A DIFFERENT CLIENT
+     *
+     * `DwReportExport` has columns for both, `POST /{id}/exports` accepts both, and the web's report
+     * history page is built on them: `frontend/lib/reportDiff.ts` answers "are these two files
+     * byte-identical?" from `checksumSha256` and NOTHING else, and `sameFileAs` exists to catch the
+     * mistake where a designer sends the same file twice believing it was revised. Until now
+     * [ReportScreen] recorded a phone's export with neither, so every report this app generates
+     * arrived in that history as a row the comparison could say nothing about — `checksumComparable`
+     * false, `sizeDelta` null, `sameFileAs` permanently empty. The evidence was there to record and
+     * simply was not being recorded.
+     *
+     * It is computed HERE rather than at the call site because this is the only place the bytes exist
+     * as a file: [publish] writes a temp file, hands it to the repository and deletes it. Hashing
+     * afterwards from Downloads would be a second read of a thirty-megabyte file through MediaStore,
+     * on Q+ from a Uri this object deliberately does not keep.
+     *
+     * THERE IS NO PAGE COUNT, and that is a refusal rather than an omission. A .docx has no page count
+     * until a word processor lays it out — there is no honest number to send — and threading one out
+     * of [PdfWriter] would change the renderer's contract for one client's optional field. A missing
+     * page count reads as "unknown" in the diff, which is what it is; a fabricated one would not.
      */
     data class Result(
         val displayLocation: String,
@@ -66,6 +89,10 @@ object ReportExport {
         val fileName: String,
         val mimeType: String,
         val droppedImages: List<String>,
+        /** The finished file's length. Null only if the file could not be measured after writing. */
+        val sizeBytes: Long? = null,
+        /** Lower-case hex SHA-256 of the bytes that were published, or null if it could not be taken. */
+        val checksumSha256: String? = null,
     )
 
     /**
@@ -138,6 +165,11 @@ object ReportExport {
                 fos.fd.sync()
                 result
             }
+            // Measured BEFORE the publish, from the temp file, while it is still the only copy this
+            // object can reach. See Result's KDoc for why the checksum is worth the read at all — it
+            // is the one thing that lets the web's report history say "you sent the same file twice".
+            val sizeBytes = tmp.length().takeIf { it > 0L }
+            val checksum = sha256Of(tmp)
             val location = repository.persistFileToDownloads(context, tmp, name, mimeType)
             return Result(
                 displayLocation = location,
@@ -145,11 +177,37 @@ object ReportExport {
                 fileName = name,
                 mimeType = mimeType,
                 droppedImages = dropped,
+                sizeBytes = sizeBytes,
+                checksumSha256 = checksum,
             )
         } finally {
             tmp.delete()
         }
     }
+
+    /**
+     * The SHA-256 of a file, lower-case hex — the same spelling [WorkshopDraftStore.importMedia]
+     * produces for a photograph, so two hashes in this app are always comparable strings.
+     *
+     * NULL RATHER THAN A THROW. A report that was written, published and is sitting in Downloads must
+     * not be reported as a failure because a bookkeeping hash could not be taken; the export record
+     * simply carries "unknown", which the diff already handles as an absence rather than as a
+     * difference. Streamed in 64 KB blocks and never read whole: a photo-heavy .docx is tens of
+     * megabytes, and this runs on the same 2 GB handsets [DocxWriter] refuses to buffer media for.
+     */
+    private fun sha256Of(file: File): String? = runCatching {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read == 0) continue
+                digest.update(buffer, 0, read)
+            }
+        }
+        digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+    }.getOrNull()
 
     /**
      * "DesignWorkshop_<title>_<stamp>.<ext>", with everything a file system might object to removed.

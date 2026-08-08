@@ -614,13 +614,13 @@ private fun DwPhotoMeasureOpen(
         }
 
         if (photos.size > 1) {
-            DwMeasureLabel("Photograph")
+            DwPanelLabel("Photograph")
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 photos.forEach { candidate ->
-                    DwMeasureChip(
+                    DwPanelChip(
                         label = candidate.displayName,
                         selected = candidate.id == photo.id,
                         enabled = enabled,
@@ -632,7 +632,7 @@ private fun DwPhotoMeasureOpen(
 
         // Two real buttons rather than a dropdown, because the choice IS the explanation and a designer
         // has to read both to make it.
-        DwMeasureLabel("Method")
+        DwPanelLabel("Method")
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -641,7 +641,7 @@ private fun DwPhotoMeasureOpen(
                 DwMeasureMode.SCALE to "Same plane (2 marks)",
                 DwMeasureMode.RECTIFY to "Tilted — rectify a rectangle (4 corners)",
             ).forEach { (value, label) ->
-                DwMeasureChip(
+                DwPanelChip(
                     label = label,
                     selected = mode == value,
                     enabled = enabled,
@@ -656,7 +656,7 @@ private fun DwPhotoMeasureOpen(
 
         // THE ASSUMPTION, ON SCREEN. See the file header for why this is not a comment.
         if (mode == DwMeasureMode.SCALE) {
-            DwMeasureNote(
+            DwPanelNote(
                 warning = true,
                 text = "This is only true when the reference and the thing you are measuring lie in the " +
                     "same flat plane, square to the camera. A scale card lying on a table and a pot " +
@@ -666,7 +666,7 @@ private fun DwPhotoMeasureOpen(
                     "method instead.",
             )
         } else {
-            DwMeasureNote(
+            DwPanelNote(
                 warning = false,
                 text = "Mark the four corners of the rectangle in order around it — 1, 2, 3, 4 walking " +
                     "round the edge, not in reading order. The tilt of that surface is then corrected " +
@@ -675,13 +675,13 @@ private fun DwPhotoMeasureOpen(
             )
         }
 
-        DwMeasureLabel("Marks — tap the photograph to place, drag a handle or nudge to adjust")
+        DwPanelLabel("Marks — tap the photograph to place, drag a handle or nudge to adjust")
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             needed.forEach { id ->
-                DwMeasureChip(
+                DwPanelChip(
                     label = "${MARK_BADGE.getValue(id)} · ${if (marks[id]?.placed == true) "placed" else "not placed"}",
                     selected = active == id,
                     enabled = enabled,
@@ -817,8 +817,13 @@ private fun DwPhotoMeasureOpen(
                     needed.forEach { id ->
                         val mark = marks[id] ?: return@forEach
                         DwMarkHandle(
-                            id = id,
-                            mark = mark,
+                            key = id,
+                            badge = MARK_BADGE.getValue(id),
+                            name = MARK_NAME.getValue(id),
+                            placed = mark.placed,
+                            // The two ends of the object being measured are drawn hollow so the
+                            // reference and the target read apart at a glance; the badge says which.
+                            outlined = id == DwMarkId.TGT_A || id == DwMarkId.TGT_B,
                             enabled = enabled,
                             isActive = active == id,
                             markColor = markColor,
@@ -908,13 +913,13 @@ private fun DwPhotoMeasureOpen(
         /* ── The known size ─────────────────────────────────────────────────────────────────── */
 
         if (mode == DwMeasureMode.SCALE) {
-            DwMeasureLabel("How long is the reference, really?")
+            DwPanelLabel("How long is the reference, really?")
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 SCALE_PRESETS.forEach { preset ->
-                    DwMeasureChip(
+                    DwPanelChip(
                         label = preset.label,
                         selected = false,
                         enabled = enabled,
@@ -936,13 +941,13 @@ private fun DwPhotoMeasureOpen(
             )
             DwUnitChips(selected = referenceUnit, enabled = enabled) { referenceUnit = it }
         } else {
-            DwMeasureLabel("How big is the rectangle, really?")
+            DwPanelLabel("How big is the rectangle, really?")
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 RECT_PRESETS.forEach { preset ->
-                    DwMeasureChip(
+                    DwPanelChip(
                         label = preset.label,
                         selected = false,
                         enabled = enabled,
@@ -1059,7 +1064,7 @@ private fun DwMeasurementReadout(
         // A refusal, with its reason. It is NOT styled as an error, because nothing has gone wrong
         // with the designer's work — the marks simply do not support a number, and the sentence says
         // which. See [DwPhotoMeasure]'s header for why a refusal beats a number with no error bar.
-        DwMeasureNote(warning = true, text = result.reason, polite = true)
+        DwPanelNote(warning = true, text = result.reason, polite = true)
         return
     }
 
@@ -1128,7 +1133,7 @@ private fun DwMeasurementReadout(
             )
         }
 
-        DwMeasureLabel("Propose this into")
+        DwPanelLabel("Propose this into")
         targets.forEach { target ->
             val converted = DwPhotoMeasure.convertLength(measurement.value, measurement.unit, target.unit)
             val convertedDoubt =
@@ -1191,11 +1196,25 @@ private fun DwMeasurementReadout(
  * mark that has to be aimed at is the last place to make an exception. But a 48dp disc drawn on a
  * photograph would hide the very corner it is marking, and six of them would overlap. So the disc is
  * small enough to see past and the transparent box around it is large enough to grab.
+ *
+ * INTERNAL, AND TAKING STRINGS RATHER THAN A [DwMarkId]. [DwSketchRectifyPanel] puts four handles on a
+ * photograph for exactly the same reason and with exactly the same accessibility contract, and a
+ * second copy of this would be a second place for the 48dp floor, the consumed drag and the
+ * "not placed yet" sentence to drift out of agreement. The two panels differ only in what the marks
+ * are called, so that is what is passed in.
+ *
+ * @param key what the two `pointerInput` blocks are keyed on — the caller's own identity for this
+ *   handle. A key that changed every frame would tear the gesture detectors down mid-drag.
+ * @param outlined draws the disc hollow (the object's two ends here; nothing in the sketch panel),
+ *   which is decoration ON TOP of [badge] and never the thing carrying which mark this is.
  */
 @Composable
-private fun DwMarkHandle(
-    id: DwMarkId,
-    mark: DwMark,
+internal fun DwMarkHandle(
+    key: Any,
+    badge: String,
+    name: String,
+    placed: Boolean,
+    outlined: Boolean,
     enabled: Boolean,
     isActive: Boolean,
     markColor: Color,
@@ -1204,7 +1223,6 @@ private fun DwMarkHandle(
     onSelect: () -> Unit,
     onDrag: (Offset) -> Unit,
 ) {
-    val isTarget = id == DwMarkId.TGT_A || id == DwMarkId.TGT_B
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -1216,17 +1234,17 @@ private fun DwMarkHandle(
             }
             .size(48.dp)
             .semantics {
-                contentDescription = MARK_NAME.getValue(id) +
-                    (if (mark.placed) "" else ", not placed yet") +
+                contentDescription = name +
+                    (if (placed) "" else ", not placed yet") +
                     ". Drag it, or select it and use the nudge arrows below the photograph."
             }
             // Selecting a handle consumes the tap, so it cannot also fall through to the photograph
             // and place whichever OTHER mark happened to be active.
-            .pointerInput(id, enabled) {
+            .pointerInput(key, enabled) {
                 if (!enabled) return@pointerInput
                 detectTapGestures { onSelect() }
             }
-            .pointerInput(id, enabled) {
+            .pointerInput(key, enabled) {
                 if (!enabled) return@pointerInput
                 detectDragGestures(
                     onDragStart = { onSelect() },
@@ -1243,15 +1261,15 @@ private fun DwMarkHandle(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(if (isActive) 30.dp else 26.dp)
-                .background(if (isTarget) discColor else markColor, CircleShape)
+                .background(if (outlined) discColor else markColor, CircleShape)
                 .border(
-                    BorderStroke(if (isActive) 3.dp else 2.dp, if (isTarget) markColor else discColor),
+                    BorderStroke(if (isActive) 3.dp else 2.dp, if (outlined) markColor else discColor),
                     CircleShape,
                 ),
         ) {
             Text(
-                MARK_BADGE.getValue(id),
-                color = if (isTarget) markColor else discColor,
+                badge,
+                color = if (outlined) markColor else discColor,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
             )
@@ -1308,8 +1326,9 @@ private fun DwNudgePad(
     }
 }
 
+/** One arrow of a nudge pad. Shared with [DwSketchRectifyPanel], which nudges corners the same way. */
 @Composable
-private fun DwNudgeButton(
+internal fun DwNudgeButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     description: String,
     enabled: Boolean,
@@ -1320,8 +1339,9 @@ private fun DwNudgeButton(
     }
 }
 
+/** Internal for the same reason [DwMarkHandle] is: [DwSketchRectifyPanel] zooms the same way. */
 @Composable
-private fun DwZoomButton(
+internal fun DwZoomButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     description: String,
     enabled: Boolean,
@@ -1338,8 +1358,9 @@ private fun DwZoomButton(
     }
 }
 
+/** The small caption above a group of controls. Shared with [DwSketchRectifyPanel]. */
 @Composable
-private fun DwMeasureLabel(text: String) {
+internal fun DwPanelLabel(text: String) {
     Text(text, color = MaterialTheme.field.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
 }
 
@@ -1349,9 +1370,11 @@ private fun DwMeasureLabel(text: String) {
  * `selected` is carried by the FILL and by the word inside it — a preset chip is never selected, and a
  * mark chip says "placed" or "not placed" in words next to its badge, so nothing here depends on
  * telling two purples apart in direct sunlight.
+ *
+ * Shared with [DwSketchRectifyPanel], so both on-photograph panels have one idea of what a chip is.
  */
 @Composable
-private fun DwMeasureChip(
+internal fun DwPanelChip(
     label: String,
     selected: Boolean,
     enabled: Boolean,
@@ -1368,9 +1391,14 @@ private fun DwMeasureChip(
     }
 }
 
-/** The assumption card, and the refusal card. Same shape; the colour says how loud it is. */
+/**
+ * The assumption card, and the refusal card. Same shape; the colour says how loud it is.
+ *
+ * Shared with [DwSketchRectifyPanel], whose refusals come from the same kind of place — marks that do
+ * not support the thing being asked for.
+ */
 @Composable
-private fun DwMeasureNote(warning: Boolean, text: String, polite: Boolean = false) {
+internal fun DwPanelNote(warning: Boolean, text: String, polite: Boolean = false) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1415,7 +1443,7 @@ private fun DwUnitChips(selected: String, enabled: Boolean, onSelect: (String) -
         // Straight off the module's own map, so a unit that can be chosen here is by construction a
         // unit it can convert. A hard-coded list would be a second opinion about what a length is.
         DwPhotoMeasure.LENGTH_UNITS.keys.forEach { unit ->
-            DwMeasureChip(
+            DwPanelChip(
                 label = unit,
                 selected = unit == selected,
                 enabled = enabled,

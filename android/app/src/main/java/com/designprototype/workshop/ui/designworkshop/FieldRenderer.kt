@@ -1067,6 +1067,50 @@ private fun MediaField(
         )
     }
 
+    /*
+     * "Straighten a photographed sketch into a plate", offered on the FILE field a plate belongs in.
+     *
+     * TWO FIELDS IN THE BUNDLED REGISTRY, NOT ONE: stage 11's `sketch.lineArtFile` — the pairing the
+     * feature was written for — and stage 16's `finalProduct.lineDrawing`, which is often a CAD
+     * export this panel has nothing to do with and just as often a technical drawing made on paper
+     * and photographed. [dwOffersSketchRectify] argues that second one, and DwSketchRectifyFieldTest
+     * names both and refuses the registry's other six FILE fields by name. This comment said
+     * "`sketch.lineArtFile` and nothing else", which was already untrue of the code beneath it and is
+     * the sentence a reader would trust instead of running the test.
+     *
+     * THE SOURCE PHOTOGRAPHS COME FROM THE ENTITY'S OTHER FIELDS, not from this one: a FILE field
+     * holds the destination, and what is being read is whatever was attached to `image`. That is also
+     * why the panel is here rather than on the photograph — attaching to a single-valued IMAGE field
+     * REPLACES its value, so a panel that wrote a plate onto `image` would detach the original
+     * photograph, which docs/MEDIA_PIPELINE.md §5 refuses.
+     *
+     * Its one write is `onChange`, from a button that spells out what it will attach, after the
+     * designer has looked at the plate it will attach.
+     */
+    if (dwOffersSketchRectify(field, siblings)) {
+        val sourceFields = remember(siblings) { dwSketchSourceFields(siblings) }
+        val sources = sourceFields.flatMap { imageField ->
+            val imageIds = if (DwFieldType.of(imageField.type) == DwFieldType.IMAGE_LIST) {
+                DwValues.list(rowValues[imageField.key])
+            } else {
+                listOfNotNull(DwValues.text(rowValues[imageField.key]).takeIf { it.isNotBlank() })
+            }
+            imageIds.mapNotNull(media.resolve)
+                .filter { it.mediaType.equals("IMAGE", ignoreCase = true) }
+                .map { DwSketchSource(fieldLabel = imageField.label, item = it) }
+        }
+        DwSketchRectifyPanel(
+            field = field,
+            sources = sources,
+            media = media,
+            currentFileName = ids.firstOrNull()?.let(media.resolve)?.displayName,
+            enabled = enabled,
+            onAttached = { id -> onChange(JsonPrimitive(id)) },
+            onMessage = services?.onMessage ?: {},
+            onError = services?.onError ?: {},
+        )
+    }
+
     if (caption != null) {
         Box(modifier = Modifier.padding(start = 12.dp, top = 2.dp)) {
             ScalarInput(
