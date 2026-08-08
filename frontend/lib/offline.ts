@@ -26,6 +26,12 @@
  *   - 4xx (validation, permission)   → permanent. Mark THAT entry with the server's reason, leave
  *                                      it in the outbox for the user to see and discard, and carry
  *                                      on to the next one. One bad record cannot strand the others.
+ *   - 422 naming an UNKNOWN KEY      → recorded and shown like a permanent one, but re-attempted by
+ *                                      the next app run. Nobody entered anything wrong: this build
+ *                                      and the server's disagree about the shape of the request, and
+ *                                      what clears it is an update rather than a person. See
+ *                                      `isSchemaRefusal` and `blocksRetry` below — the second is the
+ *                                      one that stops a refusal outliving the bug that caused it.
  *
  * A REPLAY IS RESUMABLE, because "create then upload" is two steps and only the first is cheap to
  * repeat — repeating it makes a second record. So each step is written back to the entry the moment
