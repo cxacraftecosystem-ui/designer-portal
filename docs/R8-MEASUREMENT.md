@@ -253,8 +253,9 @@ build file. `lintVital*` is excluded from (b) onwards purely for wall-clock; lin
 | d | + bundled ML Kit, `abiFilters` = `arm64-v8a` alone | 19,271,029 | 18.38 MB | +12,634,914 | 2.90× |
 | e | (c) with `useLegacyPackaging = true` | 16,103,260 | 15.36 MB | +9,467,145 | 2.43× |
 
-**(a) → (c) is what this lane delivers and what `build.gradle.kts` now does: 23,227,376 bytes —
-22.15 MB — that would otherwise have shipped, removed.** Proven off the artifacts rather than off the
+**(b) → (c) is what this lane delivers and what `build.gradle.kts` now does: 23,227,376 bytes —
+22.15 MB — that would otherwise have shipped, removed.** (a) → (c), +19,444,461 bytes, is what the
+decision itself costs once that is taken off. Proven off the artifacts rather than off the
 configuration: (b) carries
 `lib/{arm64-v8a,armeabi-v7a,x86,x86_64}/libmlkit_google_ocr_pipeline.so` and (c) carries only the two
 ARM entries.
