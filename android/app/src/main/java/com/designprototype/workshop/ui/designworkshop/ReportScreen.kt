@@ -267,6 +267,17 @@ fun ReportScreen(
                                 templateId = document.meta.templateId,
                                 fileName = exported.fileName,
                                 generatedAt = Instant.now().toString(),
+                                // THE CHECKSUM IS THE POINT OF THE RECORD, and until this was passed
+                                // it was the one thing the record did not carry. `DwReportExport` has
+                                // had the column since the feature shipped and the web's report
+                                // history is built on it: `reportDiff.identicalFile` and `sameFileAs`
+                                // — "the revised copy you sent was the same file as last time" —
+                                // answer from this and from nothing else. Every report this app
+                                // generated used to land in that history as a row the comparison
+                                // could say nothing about. Both come from ReportExport, which is the
+                                // only place the finished bytes exist as a file it can read.
+                                fileSizeBytes = exported.sizeBytes,
+                                checksumSha256 = exported.checksumSha256,
                                 warnings = (warnings + plan.warnings).joinToString("\n")
                                     .takeIf { it.isNotBlank() },
                             )
