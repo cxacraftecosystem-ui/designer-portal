@@ -18,10 +18,12 @@ BACKEND = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tools"))
 
-import report_figure_oracle as oracle
+# E402 below is unavoidable and deliberate: this is a standalone script, and neither the oracle
+# nor `app` is importable until the two sys.path entries above exist.
+import report_figure_oracle as oracle  # noqa: E402
 
-from app.services import report_chart, report_map, report_raster
-from app.services.report_model import MapPointKind
+from app.services import report_chart, report_map, report_raster  # noqa: E402
+from app.services.report_model import MapPointKind  # noqa: E402
 
 report_chart._ASPECT = 0.615
 report_map._PIN_RADIUS = dict(report_map._PIN_RADIUS) | {MapPointKind.VENUE: 11.4}

@@ -84,7 +84,18 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response, Streamin
 
 from app.core.db import db
 from app.core.deps import require_dataset_downloader
-from app.services.records import owned_or_granted_where
+from app.services.media_naming import (
+    RESERVED_NAMES as _RESERVED_NAMES,
+    clip as _clip,
+    display_filename,
+    display_stem,
+    folder_order,
+    interview_record,
+    safe_chars as _safe_chars,
+    unique_display_filename,
+    unique_display_stem,
+    unique_name,
+)
 from app.services.record_fields import (
     MEDIA_COLOR,
     MEDIA_COLUMNS,
@@ -106,18 +117,7 @@ from app.services.record_fields import (
     sheet_columns,
     sheet_row,
 )
-from app.services.media_naming import (
-    RESERVED_NAMES as _RESERVED_NAMES,
-    clip as _clip,
-    display_filename,
-    display_stem,
-    folder_order,
-    interview_record,
-    safe_chars as _safe_chars,
-    unique_display_filename,
-    unique_display_stem,
-    unique_name,
-)
+from app.services.records import owned_or_granted_where
 from app.services.s3 import get_object_bytes
 from app.services.transcript_format import transcript_cell
 from app.services.xlsx_report import XLSX_MIME, build_report_workbook
@@ -424,10 +424,7 @@ def _uniq(name: str, used: set[str]) -> str:
     stem, dot, ext = leaf.rpartition(".")
     n = 2
     while True:
-        if dot:
-            candidate = f"{head}{slash}{stem} ({n}).{ext}"
-        else:
-            candidate = f"{name} ({n})"
+        candidate = f"{head}{slash}{stem} ({n}).{ext}" if dot else f"{name} ({n})"
         if candidate.lower() not in used:
             used.add(candidate.lower())
             return candidate
@@ -1620,20 +1617,30 @@ async def _workshop_for_artisan(artisan: Any, scope: Scope) -> Any | None:
     link = await db.workshopartisan.find_first(
         where={"artisanId": artisan.id}, include={"workshop": True}
     )
-    if link is not None and getattr(link, "workshop", None) is not None:
-        if not scope.records or await db.workshop.find_first(
-            where=_and({"id": link.workshopId}, scope.records)
-        ):
-            return link.workshop
+    if (
+        link is not None
+        and getattr(link, "workshop", None) is not None
+        and (
+            not scope.records
+            or await db.workshop.find_first(where=_and({"id": link.workshopId}, scope.records))
+        )
+    ):
+        return link.workshop
     if artisan.craftId:
         craft_link = await db.workshopcraft.find_first(
             where={"craftId": artisan.craftId}, include={"workshop": True}
         )
-        if craft_link is not None and getattr(craft_link, "workshop", None) is not None:
-            if not scope.records or await db.workshop.find_first(
-                where=_and({"id": craft_link.workshopId}, scope.records)
-            ):
-                return craft_link.workshop
+        if (
+            craft_link is not None
+            and getattr(craft_link, "workshop", None) is not None
+            and (
+                not scope.records
+                or await db.workshop.find_first(
+                    where=_and({"id": craft_link.workshopId}, scope.records)
+                )
+            )
+        ):
+            return craft_link.workshop
     return None
 
 

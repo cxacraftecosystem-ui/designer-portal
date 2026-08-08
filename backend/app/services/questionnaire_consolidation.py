@@ -188,7 +188,7 @@ async def consolidate_for_artisan(
     if resolved_workshops is not None:
         ids, include_unassigned = resolved_workshops
         clause = workshop_clause(ids, include_unassigned)
-        and_clauses.append(clause if clause else {"id": {"in": []}})
+        and_clauses.append(clause or {"id": {"in": []}})
     if and_clauses:
         interview_where = {"AND": [interview_where, *and_clauses]}
 

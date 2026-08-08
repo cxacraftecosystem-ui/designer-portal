@@ -123,9 +123,9 @@ import logging
 import math
 import re
 import unicodedata
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -351,7 +351,7 @@ def plan_queries(brief: ResearchBrief, *, max_queries: int = 3) -> tuple[str, ..
     ]
 
     planned: list[str] = []
-    for extra in [()] + facets:
+    for extra in [(), *facets]:
         words = terms + tuple(word for word in extra if word not in terms)
         query = " ".join(words)[:_MAX_QUERY_CHARS].strip()
         if query and query not in planned:
@@ -611,7 +611,7 @@ def reject_outliers(
     if len(priced) < MIN_RETRIEVED_FOR_OUTLIER_REJECTION:
         return tuple(products), ()
 
-    from app.services.market_analysis import quantile  # noqa: PLC0415 - see the module docstring
+    from app.services.market_analysis import quantile  # see the module docstring
 
     logs = sorted(math.log(item.price) for item in priced)  # type: ignore[arg-type]
     p25 = quantile(logs, 0.25)
@@ -689,7 +689,7 @@ def to_products(
 
 
 def _describe(products: Sequence[RetrievedProduct]) -> Distribution | None:
-    from app.services.market_analysis import describe  # noqa: PLC0415 - see the module docstring
+    from app.services.market_analysis import describe  # see the module docstring
 
     return describe([item.price for item in products if item.price is not None])
 
@@ -865,7 +865,7 @@ def to_price_observations(
     in a report can be traced to the listing it came from — the same reason ``PriceObservation``
     has a label at all.
     """
-    from app.services.market_analysis import PriceObservation  # noqa: PLC0415 - module docstring
+    from app.services.market_analysis import PriceObservation  # module docstring
 
     products = result.products if isinstance(result, ResearchResult) else tuple(result)
     resolved_category = category or (
@@ -887,7 +887,7 @@ def to_price_observations(
     return out
 
 
-def surveyed_only(observations: Iterable["PriceObservation"]) -> list[PriceObservation]:
+def surveyed_only(observations: Iterable[PriceObservation]) -> list[PriceObservation]:
     """Only the observations somebody was asked for or stood in front of. The defensive filter."""
     return [item for item in observations if item.source != RETRIEVED_SOURCE]
 

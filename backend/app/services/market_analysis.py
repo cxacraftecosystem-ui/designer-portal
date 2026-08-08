@@ -494,7 +494,7 @@ def cluster_products(responses: list[dict[str, Any]], *, minimum_mentions: int =
     tag_lists: list[list[str]] = []
     for row in responses:
         raw = row.get("productsDiscussed")
-        tags = raw if isinstance(raw, list) else [t for t in str(raw or "").split(",")]
+        tags = raw if isinstance(raw, list) else str(raw or "").split(",")
         cleaned = sorted({str(t).strip().lower() for t in tags if str(t).strip()})
         if cleaned:
             tag_lists.append(cleaned)

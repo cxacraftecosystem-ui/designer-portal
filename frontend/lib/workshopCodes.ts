@@ -361,11 +361,6 @@ export function formatWorkshopCodeForPrint(code: string): string {
   return (code.match(/.{1,4}/g) ?? []).join(" ");
 }
 
-/** The word for a record type, for a heading or a refusal sentence. */
-export function workshopRecordTypeLabel(recordType: WorkshopRecordType): string {
-  return recordType === "artisan" ? "Artisan" : "Prototype";
-}
-
 /**
  * What to say when a well-formed code does not resolve.
  *

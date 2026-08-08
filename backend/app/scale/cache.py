@@ -36,7 +36,8 @@ and serve it for a full TTL.
 
 import asyncio
 import json
-from typing import Any, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
 
 from pydantic_core import to_json
 

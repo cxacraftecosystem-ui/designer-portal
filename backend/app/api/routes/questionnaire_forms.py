@@ -105,8 +105,7 @@ def _require_designer(user: Any) -> None:
 
 async def _require_questionnaire(questionnaire_id: str, user: Any) -> Any:
     _require_designer(user)
-    record = await require_record(db.questionnaire, questionnaire_id)
-    return record
+    return await require_record(db.questionnaire, questionnaire_id)
 
 
 async def _works_on_this_questionnaires_workshop(record: Any, user: Any) -> bool:

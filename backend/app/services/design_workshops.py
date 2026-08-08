@@ -31,8 +31,7 @@ are one feature and neither works alone — see the long note above ``REFERENCE_
 
 import logging
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, replace
-from dataclasses import field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,16 +40,15 @@ from fastapi import HTTPException, status
 from app.core.db import db
 from app.core.deps import is_admin
 from app.services import rich_text
-from app.services.design_workshop_viewers import has_viewer_grant
 from app.services.address import DISTRICTS_BY_STATE
+from app.services.design_workshop_viewers import has_viewer_grant
 from app.services.designers import prefill_from_profile
 from app.services.report_annexures import annexure_warnings, attach_transcripts
 from app.services.report_builder import ReferencedRecord, WorkshopData, build_report
 from app.services.report_docx import render_docx
 from app.services.report_model import ImageRef, PageSize, ReportMeta
 from app.services.report_pdf import render_pdf
-from app.services.report_templates import apply_report_settings
-from app.services.report_templates import template as get_template
+from app.services.report_templates import apply_report_settings, template as get_template
 from app.services.report_theme import resolve_accent, resolve_font, theme_from_accent
 from app.services.stage_schema import (
     PROMOTED_COLUMNS,
@@ -1527,7 +1525,7 @@ def report_meta(record: Any, template_id: str,
 
     subtitle_parts = [p for p in (record.craftName, record.clusterName, record.state) if p]
     derived_subtitle = (
-        " — ".join(subtitle_parts[:1] + [", ".join(subtitle_parts[1:])])
+        " — ".join([*subtitle_parts[:1], ", ".join(subtitle_parts[1:])])
         if len(subtitle_parts) > 1 else (subtitle_parts[0] if subtitle_parts else "")
     )
 

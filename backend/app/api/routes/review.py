@@ -2,7 +2,6 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from prisma import Json
 from pydantic import Field, ValidationError
 
 from app.core.db import db
@@ -29,10 +28,16 @@ from app.schemas.records import (
     drop_masked_identity_numbers,
 )
 from app.services.access import record_revision
-from app.services.records import clean_data, decimal_to_string, jsonify_metadata, merge_field_provenance
-from app.services.records import review_update
-from app.services.records import public_encode
+from app.services.records import (
+    clean_data,
+    decimal_to_string,
+    jsonify_metadata,
+    merge_field_provenance,
+    public_encode,
+    review_update,
+)
 from app.services.workshop_access import record_needs_admin_approval, stamp_workshop_submission
+from prisma import Json
 
 router = APIRouter(prefix="/review", tags=["review"])
 

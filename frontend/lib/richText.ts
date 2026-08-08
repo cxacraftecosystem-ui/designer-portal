@@ -401,10 +401,6 @@ export function blockLength(block: RichBlock): number {
   return total;
 }
 
-export function docText(doc: RichDoc): string {
-  return doc.blocks.map(blockText).join("\n");
-}
-
 /**
  * Whether one block counts as holding nothing — the exact rule `RichBlock.is_empty` applies.
  *
@@ -998,10 +994,6 @@ export function storedSignature(raw: unknown): string {
   // An empty document has exactly one signature whatever shape it arrived in.
   if (isEmptyDoc(doc)) return "EMPTY";
   return JSON.stringify(toStored(doc));
-}
-
-export function docsEqual(a: RichDoc, b: RichDoc): boolean {
-  return storedSignature(toStoredValue(a)) === storedSignature(toStoredValue(b));
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

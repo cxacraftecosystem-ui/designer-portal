@@ -239,6 +239,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Assignment
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -262,7 +263,6 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.Person
@@ -1569,7 +1569,7 @@ private fun HomeScreen(
                     // cannot be one — a router has no screen to open for it — so the shared model has
                     // no home for it, but the web app hands out this APK and this is the return leg.
                     if (group == NavGroup.ACCOUNT) {
-                        entries + IslandEntry("Open the web portal", Icons.Filled.OpenInNew) { openWebPortal(context) }
+                        entries + IslandEntry("Open the web portal", Icons.AutoMirrored.Filled.OpenInNew) { openWebPortal(context) }
                     } else {
                         entries
                     }

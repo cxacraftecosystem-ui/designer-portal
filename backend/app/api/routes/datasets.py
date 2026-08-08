@@ -54,8 +54,9 @@ unmasked as a side effect of being convenient.
 import csv
 import io
 import json
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Any, AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -332,7 +333,7 @@ def _presign_media_row(row: Any) -> dict[str, Any] | None:
             mime_type=str(mime_type),
             expires_in=PRESIGN_TTL_SECONDS,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - a storage misconfiguration must not 500 the whole index
         # Signing is a local computation, but it needs credentials to be configured. A storage
         # misconfiguration must not turn the whole media index into a 500 — the rows are still
         # worth having, and `downloadUrl` being absent says plainly that this one cannot be fetched.

@@ -19,8 +19,8 @@ from typing import Any
 from app.ai_features.errors import AiFeatureError
 from app.ai_features.registry import ALL_PROVIDERS, providers_for, readiness, resolve
 from app.ai_features.settings import (
-    AiFeatureSettings,
     ENV_VARS,
+    AiFeatureSettings,
     configured_vars,
     enable_var,
     get_ai_settings,

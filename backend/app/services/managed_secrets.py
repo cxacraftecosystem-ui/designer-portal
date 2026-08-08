@@ -64,7 +64,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
@@ -452,7 +452,7 @@ async def refresh_if_stale(force: bool = False) -> None:
                 data={
                     "lastStatus": _STATUS_FAILED,
                     "lastError": _UNDECRYPTABLE_ERROR,
-                    "lastCheckedAt": datetime.now(timezone.utc),
+                    "lastCheckedAt": datetime.now(UTC),
                 },
             )
 
@@ -721,7 +721,7 @@ async def test_secret(key: str) -> dict[str, Any]:
     """
     spec = MANAGED_KEYS[key]
     value = await get_secret(key)
-    checked_at = datetime.now(timezone.utc)
+    checked_at = datetime.now(UTC)
     if not value:
         ok, error = False, "Not configured"
     else:

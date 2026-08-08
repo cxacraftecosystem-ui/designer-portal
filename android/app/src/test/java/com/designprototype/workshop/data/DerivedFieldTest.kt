@@ -61,6 +61,9 @@ class DerivedFieldTest {
 
     // ── The wire shape ───────────────────────────────────────────────────────────────────────────
 
+    /** Matches the app's own decoder: the server may add keys this DTO does not know yet. */
+    private val json = Json { ignoreUnknownKeys = true }
+
     /**
      * The two keys have to survive the decode, or nothing below it can ever run.
      *
@@ -75,7 +78,7 @@ class DerivedFieldTest {
              "help":"Leave blank to derive it from the start and end dates.",
              "derivedKind":"DAYS_BETWEEN","derivedFrom":["startDate","endDate"]}
         """.trimIndent()
-        val decoded = Json { ignoreUnknownKeys = true }.decodeFromString(FieldDto.serializer(), wire)
+        val decoded = json.decodeFromString(FieldDto.serializer(), wire)
 
         assertEquals("DAYS_BETWEEN", decoded.derivedKind)
         assertEquals(listOf("startDate", "endDate"), decoded.derivedFrom)

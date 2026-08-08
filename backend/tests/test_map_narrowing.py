@@ -13,7 +13,6 @@ import pytest
 from app.api.routes.map_points import _atlas_place_matches, _pair_belongs
 from app.services.geography import AdminLevel
 
-
 # --- The level decides what a `state:` key means --------------------------------------------
 
 

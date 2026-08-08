@@ -354,7 +354,7 @@ def test_the_census_is_recounted_once_it_expires(corpus, monkeypatch: pytest.Mon
 def test_an_empty_corpus_is_distinguishable_from_a_database_that_would_not_answer(corpus) -> None:
     """The distinction the payload exists to make. Both render as "no numbers"; only one of them is
     a fact about the collection."""
-    corpus({name: 0 for name in _TOTALS})
+    corpus(dict.fromkeys(_TOTALS, 0))
     empty = asyncio.run(_get()).json()
 
     public.clear_census_cache()

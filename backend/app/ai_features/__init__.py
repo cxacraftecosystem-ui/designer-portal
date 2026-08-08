@@ -86,7 +86,7 @@ from app.ai_features.types import (
     VectorResult,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022 - grouped by role, with the headings below; alphabetical would lose them
     # the four capabilities
     "remove_background",
     "separate_foreground",

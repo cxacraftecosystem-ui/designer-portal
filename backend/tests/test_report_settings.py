@@ -28,8 +28,8 @@ from app.services.report_model import (
 from app.services.report_templates import (
     SpecialSection,
     apply_report_settings,
+    template as get_template,
 )
-from app.services.report_templates import template as get_template
 
 TEMPLATE_ID = "DETAILED_TECHNICAL"
 

@@ -283,7 +283,7 @@ class UnhandledErrorMiddleware:
 
         try:
             await self.app(scope, receive, wrapped_send)
-        except Exception as exc:  # noqa: BLE001 - deliberate catch-all; re-raised when unusable
+        except Exception as exc:  # deliberate catch-all; re-raised when unusable
             method = scope.get("method", "?")
             path = scope.get("path", "?")
             logger.exception("Unhandled error on %s %s: %s", method, path, exc)

@@ -1125,7 +1125,7 @@ async def update_task(
         if "sectionIds" in data:
             data["sectionIds"] = {"set": scope.sectionIds}
 
-    target = data["targetCount"] if "targetCount" in data else task.targetCount
+    target = data.get("targetCount", task.targetCount)
     if "progressCount" in data:
         # Never let a quota read as over-run: "8 of 5 done" is not progress, it is a bad client.
         reported = max(0, int(data["progressCount"]))

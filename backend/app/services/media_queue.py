@@ -5,7 +5,6 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi.encoders import jsonable_encoder
-from prisma import Json
 
 from app.core.config import Settings, get_settings
 from app.core.db import db
@@ -21,6 +20,7 @@ from app.services.app_settings import (
     within_processing_window,
 )
 from app.services.s3 import get_object_bytes
+from prisma import Json
 
 TRANSCRIPTION = "TRANSCRIPTION"
 MEASUREMENT = "MEASUREMENT"
@@ -444,10 +444,7 @@ async def _apply_measurement_result(job: Any, result: dict[str, Any]) -> None:
 
 
 def _merge_measurement_metadata(existing: Any, result: dict[str, Any]) -> dict[str, Any]:
-    if isinstance(existing, dict):
-        metadata = dict(existing)
-    else:
-        metadata = {}
+    metadata = dict(existing) if isinstance(existing, dict) else {}
     metadata["measurementProcessing"] = jsonable_encoder(result)
     return metadata
 

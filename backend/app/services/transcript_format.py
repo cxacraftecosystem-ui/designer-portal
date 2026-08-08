@@ -26,6 +26,7 @@ Rich text needs openpyxl >= 3.1 (pyproject pins >= 3.1.2). The caller renders th
 """
 
 import re
+from itertools import pairwise
 from typing import Any
 
 from openpyxl.cell.rich_text import CellRichText, TextBlock
@@ -77,7 +78,7 @@ def _display_lines(markdown: str) -> list[str]:
         # A later label on the same line means the model ran two turns together; cut before it.
         cuts = [m.start() for m in _SPEAKER_RE.finditer(line) if m.start() > 0]
         bounds = [0, *cuts, len(line)]
-        lines.extend(line[start:end].strip() for start, end in zip(bounds, bounds[1:]))
+        lines.extend(line[start:end].strip() for start, end in pairwise(bounds))
     return lines
 
 

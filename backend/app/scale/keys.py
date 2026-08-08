@@ -35,10 +35,11 @@ The layout::
 
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any
 
 KEY_PREFIX = "fr"
 

@@ -85,7 +85,7 @@ def _group_indian(digits: str) -> str:
         head = head[:-2]
     if head:
         parts.insert(0, head)
-    return ",".join(parts + [tail])
+    return ",".join([*parts, tail])
 
 
 def format_number(value: float) -> str:
@@ -311,8 +311,8 @@ def _axis_bounds(values: list[float]) -> tuple[float, float, float]:
     threefold one, and that is the single most common way a government figure misleads without a
     single wrong number in it.
     """
-    high = max(values + [0.0])
-    low = min(values + [0.0])
+    high = max([*values, 0.0])
+    low = min([*values, 0.0])
     if high == low:
         # Every value is zero. A flat axis of 0 to 1 draws a baseline and nothing above it, which
         # is the truthful picture, and it keeps every division below off zero.

@@ -656,7 +656,7 @@ def _read_questions(
                 )
             )
             raise _StopReading
-        final_code = code if code else derive_section_code(title, codes_taken)
+        final_code = code or derive_section_code(title, codes_taken)
         if code:
             codes_taken.add(code.lower())
         made = ParsedSection(code=final_code, title=title or final_code)

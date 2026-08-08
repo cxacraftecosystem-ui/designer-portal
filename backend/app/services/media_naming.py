@@ -52,7 +52,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -349,7 +349,7 @@ def _stamp(media: Any) -> str:
     except Exception:  # noqa: BLE001 - a bad tz string must not cost the file its timestamp
         tz = IST
     if recorded.tzinfo is None:
-        recorded = recorded.replace(tzinfo=timezone.utc)
+        recorded = recorded.replace(tzinfo=UTC)
     return recorded.astimezone(tz).strftime("%d%m%Y%H%M")
 
 
@@ -438,13 +438,13 @@ def _grid_axis(media: Any) -> str | None:
     """
     filename = _text(getattr(media, "originalFilename", None))
     caption = _text(getattr(media, "caption", None))
-    if _FILE_GRID_LB.search(filename) or re.match(r"^length\s*breadth\s+grid", caption, re.I):
+    if _FILE_GRID_LB.search(filename) or re.match(r"^length\s*breadth\s+grid", caption, re.IGNORECASE):
         return "Grid-Measurement-Length-Breadth"
-    if _FILE_GRID_H.search(filename) or re.match(r"^height\s+grid", caption, re.I):
+    if _FILE_GRID_H.search(filename) or re.match(r"^height\s+grid", caption, re.IGNORECASE):
         return "Grid-Measurement-Height"
     meta = getattr(media, "extraMetadata", None)
     is_grid = isinstance(meta, dict) and "measurementProcessing" in meta
-    if is_grid or re.match(r"^measurement\s+grid", caption, re.I):
+    if is_grid or re.match(r"^measurement\s+grid", caption, re.IGNORECASE):
         return "Grid-Measurement"
     return None
 
@@ -506,7 +506,7 @@ def _descriptor(
         name_part = clip_words(hyphenate(name), MAX_STEP_NAME_CHARS, MAX_STEP_NAME_CHARS * 3)
         return "-".join(p for p in (head, name_part, kind) if p)
 
-    if re.match(r"^pre-process\s+media", caption, re.I) or re.search(r"_PRE_", filename, re.I):
+    if re.match(r"^pre-process\s+media", caption, re.IGNORECASE) or re.search(r"_PRE_", filename, re.IGNORECASE):
         return f"Pre-Process-{kind}"
 
     return kind
@@ -564,7 +564,7 @@ def _assemble(parts: NameParts, suffix: str = "") -> str:
     """
     tail = "-".join(p for p in (parts.descriptor, parts.stamp) if p)
     ext = parts.extension
-    fixed = len(f"-{tail}{suffix}{ext}".encode("utf-8"))
+    fixed = len(f"-{tail}{suffix}{ext}".encode())
 
     budget = MAX_NAME_BYTES - fixed
     head = ""
@@ -583,7 +583,7 @@ def _assemble(parts: NameParts, suffix: str = "") -> str:
     # suffix so "AUX" and its duplicate are spelled the same way and still sort together.
     if stem.split(".")[0].upper() in RESERVED_NAMES:
         stem = f"{stem}_"
-    room = MAX_NAME_BYTES - len(f"{suffix}{ext}".encode("utf-8"))
+    room = MAX_NAME_BYTES - len(f"{suffix}{ext}".encode())
     return clip(stem, MAX_NAME_CHARS - len(suffix), room).strip("- .") + suffix + ext
 
 
@@ -655,7 +655,7 @@ def display_stem(media: Any, **kwargs: Any) -> str:
 # they wrote against a filename points at nothing.
 # ---------------------------------------------------------------------------
 
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def _order_key(media: Any) -> tuple[datetime, str]:
@@ -673,7 +673,7 @@ def _order_key(media: Any) -> tuple[datetime, str]:
         created = _EPOCH
     elif created.tzinfo is None:
         # Comparing an aware datetime against a naive one raises; the column is UTC either way.
-        created = created.replace(tzinfo=timezone.utc)
+        created = created.replace(tzinfo=UTC)
     return created, _text(getattr(media, "id", None))
 
 

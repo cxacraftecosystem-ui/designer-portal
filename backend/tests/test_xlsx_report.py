@@ -13,8 +13,8 @@ If a future change lets one of those through again, this fails here rather than 
 scholar's laptop with no way to tell what went wrong.
 """
 
-import re
 import posixpath
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from io import BytesIO

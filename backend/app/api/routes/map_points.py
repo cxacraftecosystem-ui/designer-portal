@@ -66,8 +66,8 @@ from app.services.geography import (
     SOURCE_PLACE_TEXT,
     SOURCE_SUBJECT_PIN,
     AdminLevel,
-    StatedPoint,
     DistrictAnchors,
+    StatedPoint,
     address_completeness,
     mean_point,
     parse_stated_key,
@@ -213,7 +213,7 @@ def _metres_across(points: list[tuple[float, float]]) -> int:
 
 
 def _empty_counts() -> dict[str, int]:
-    return {bucket: 0 for bucket in RECORD_TYPES}
+    return dict.fromkeys(RECORD_TYPES, 0)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -931,7 +931,7 @@ async def _none() -> None:
     ``gather_reads`` returns positionally, so a skipped read cannot simply be omitted without
     renumbering every unpack below it. This keeps the shape fixed and costs no round trip.
     """
-    return None
+    return
 
 
 def _is_filtered(*values: Any) -> bool:

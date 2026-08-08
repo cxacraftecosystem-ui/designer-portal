@@ -14,7 +14,7 @@ breaks: the same folder is named twice with the rows fed in a DIFFERENT order, b
 rows come back from Postgres is exactly what varies between two requests.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -29,8 +29,6 @@ from app.services.media_naming import (
     unique_display_stem,
     unique_name,
 )
-
-UTC = timezone.utc
 
 
 class Row:

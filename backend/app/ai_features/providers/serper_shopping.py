@@ -151,7 +151,7 @@ class SerperShoppingProvider(MarketResearchProvider):
 
 
 def _now() -> str:
-    from app.ai_features.market_research import utc_now_iso  # noqa: PLC0415 - avoids a cycle
+    from app.ai_features.market_research import utc_now_iso  # avoids a cycle
 
     return utc_now_iso()
 

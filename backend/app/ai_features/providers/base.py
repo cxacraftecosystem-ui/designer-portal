@@ -12,8 +12,8 @@ uvicorn boot pays for a feature nobody has turned on.
 """
 
 from abc import ABC, abstractmethod
-from io import BytesIO
 from collections.abc import Mapping, Sequence
+from io import BytesIO
 from typing import Any, ClassVar
 
 from app.ai_features.errors import ProviderFailed
@@ -32,8 +32,13 @@ from app.ai_features.types import (
 )
 
 
-class AiProvider(ABC):
-    """Common construction. Subclasses hold no state beyond settings and cached sessions."""
+class AiProvider(ABC):  # noqa: B024 - see below: abstract by intent, not by an abstract method
+    """Common construction. Subclasses hold no state beyond settings and cached sessions.
+
+    Deliberately has NO ``@abstractmethod``: each capability's entry point lives on the
+    capability-specific subclass, so there is no single method every provider must implement.
+    ``ABC`` is here to say "do not instantiate this directly", which is exactly what it says.
+    """
 
     provider_id: ClassVar[str] = ""
 
@@ -136,13 +141,15 @@ def extract_alpha(cutout_png: bytes, *, capability: Capability, provider: str) -
     Hosted providers return a cutout, not a matte. Rather than ask them twice — a second call is a
     second credit — the matte is recovered from the alpha they already sent.
     """
-    from PIL import Image  # noqa: PLC0415 - deliberate: Pillow is an optional dependency
+    from PIL import Image  # deliberate: Pillow is an optional dependency
 
     try:
         with Image.open(BytesIO(cutout_png)) as image:
             image.load()
             if image.mode != "RGBA":
-                image = image.convert("RGBA")
+                # Rebinding the name is safe: the `with` holds its own reference to the object
+                # it has to close, so the original image is still closed on the way out.
+                image = image.convert("RGBA")  # noqa: PLW2901
             return _encode_png(image.getchannel("A"))
     except Exception as exc:
         raise ProviderFailed(
@@ -167,7 +174,7 @@ def compose_layers(
     consequence, spelled out in :class:`~app.ai_features.types.SeparationResult`, is that
     re-compositing the pair is exact only where the matte is fully opaque or fully transparent.
     """
-    from PIL import Image, ImageChops  # noqa: PLC0415 - deliberate: Pillow is optional
+    from PIL import Image, ImageChops  # deliberate: Pillow is optional
 
     notes: list[str] = []
     try:

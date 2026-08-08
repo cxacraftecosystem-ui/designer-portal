@@ -20,7 +20,8 @@ are also the ones that are slow, which is convenient rather than coincidental.
 """
 
 import asyncio
-from typing import Any, Awaitable, Callable, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 from app.scale.flags import log_once, read_replica_url
 
@@ -70,9 +71,8 @@ async def _build(url: str) -> Any | None:
     """Construct and connect the replica client once, or demote permanently and return None."""
     global _client, _demoted
     try:
-        from prisma import Prisma
-
         from app.core.db import build_runtime_database_url
+        from prisma import Prisma
 
         # The same URL treatment the primary gets: the Supabase pooler rewrite and the deliberately
         # small connection limit. A replica pointed at the same pooler with an unbounded pool would

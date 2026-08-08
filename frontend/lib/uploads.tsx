@@ -156,33 +156,6 @@ export function useUploads() {
   return useContext(UploadsContext);
 }
 
-/**
- * Drop-in replacement for `useState<BatchProgress | null>(null)` that also publishes this section's
- * progress to the page-level tray. Swapping the useState line is the only change a media form needs.
- */
-export function useUploadSection(
-  id: string,
-  label: string
-): [BatchProgress | null, (progress: BatchProgress | null) => void] {
-  const { reportSection } = useUploads();
-  const [progress, setProgress] = useState<BatchProgress | null>(null);
-
-  const report = useCallback(
-    (next: BatchProgress | null) => {
-      setProgress(next);
-      reportSection(id, label, next);
-    },
-    [id, label, reportSection]
-  );
-
-  // Leaving the page mid-upload must not strand a ghost row in the tray.
-  useEffect(() => {
-    return () => reportSection(id, label, null);
-  }, [id, label, reportSection]);
-
-  return [progress, report];
-}
-
 export type EagerStagingSummary = {
   /** One entry per file, in the caller's order; null while a file has not started staging. */
   entries: Array<StageEntry | null>;
