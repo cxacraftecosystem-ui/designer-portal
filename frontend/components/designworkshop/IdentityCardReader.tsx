@@ -131,8 +131,11 @@ export function IdentityCardReader({
 
   const readable = files.filter((file) => file.mediaType === "IMAGE");
   const useLocal = browserReads === true && readHere;
-  // Either reader is a reason to be here. A deployment with no vision provider configured still has
-  // whatever the browser brought.
+  // BOTH ANSWERS ARE WAITED FOR. Either reader is a reason to be here — a deployment with no vision
+  // provider configured still has whatever the browser brought — but the local probe resolves in
+  // milliseconds and the route probe is a round trip, so rendering on the first answer would grow a
+  // checkbox under the designer's cursor a second after the panel appeared.
+  if (offered === null || browserReads === null) return null;
   if ((offered !== true && browserReads !== true) || !readable.length) return null;
 
   async function read(media: MediaFile) {
