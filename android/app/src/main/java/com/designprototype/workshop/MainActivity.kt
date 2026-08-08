@@ -7951,7 +7951,7 @@ private data class ActivityItem(
  * in opposite directions — one to record the work again, one to find signal — so the screen is given
  * the number it needs to tell them apart instead of being left to guess.
  */
-private data class MyActivity(val items: List<ActivityItem>, val failedLists: Int, val totalLists: Int) {
+private data class MyActivityResult(val items: List<ActivityItem>, val failedLists: Int, val totalLists: Int) {
     /** Nothing answered at all: the honest reading is "offline", not "you have nothing". */
     val allFailed: Boolean get() = failedLists == totalLists
 }
@@ -7967,16 +7967,17 @@ private data class MyActivity(val items: List<ActivityItem>, val failedLists: In
  * wrong one. The web page this mirrors keeps both for the same reason
  * (frontend/app/(protected)/activity/page.tsx).
  */
-private suspend fun loadMyActivity(repository: WorkshopRepository, userId: String): MyActivity {
+private suspend fun loadMyActivity(repository: WorkshopRepository, userId: String): MyActivityResult {
     val items = mutableListOf<ActivityItem>()
     var failed = 0
     var total = 0
     fun mine(createdById: String?) = createdById != null && createdById == userId
     // Each list is attempted independently: one type failing must not cost the designer the seven
-    // that answered, which is why this is not a single try around the lot.
-    fun <T> attempt(block: () -> List<T>): List<T> {
+    // that answered, which is why this is not a single try around the lot. `suspend` on the local
+    // function is what lets the repository calls stay inside it.
+    suspend fun <T> attempt(block: suspend () -> List<T>): List<T> {
         total++
-        return runCatching(block).getOrElse { failed++; emptyList() }
+        return runCatching { block() }.getOrElse { failed++; emptyList() }
     }
     attempt { repository.artisans(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.ARTISAN, it.id, it.name, "Artisan · ${it.place}", it.createdAt)) }
@@ -8010,7 +8011,7 @@ private suspend fun loadMyActivity(repository: WorkshopRepository, userId: Strin
                 )
             )
         }
-    return MyActivity(items.sortedByDescending { it.createdAt ?: "" }, failedLists = failed, totalLists = total)
+    return MyActivityResult(items.sortedByDescending { it.createdAt ?: "" }, failedLists = failed, totalLists = total)
 }
 
 @Composable
@@ -8020,7 +8021,7 @@ private fun MyActivityScreen(
     onOpen: (EntryMode, String) -> Unit,
     onError: (String) -> Unit
 ) {
-    var loaded by remember { mutableStateOf<MyActivity?>(null) }
+    var loaded by remember { mutableStateOf<MyActivityResult?>(null) }
     LaunchedEffect(Unit) {
         runCatching { loadMyActivity(repository, userId) }
             .onSuccess { loaded = it }
@@ -8028,7 +8029,7 @@ private fun MyActivityScreen(
                 onError(it.message ?: "Couldn't load your activity")
                 // Not `emptyList()`: a throw out of the gatherer is a total failure, and recording it
                 // as "nothing to show" is the very lie the failure count exists to prevent.
-                loaded = MyActivity(emptyList(), failedLists = 1, totalLists = 1)
+                loaded = MyActivityResult(emptyList(), failedLists = 1, totalLists = 1)
             }
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
