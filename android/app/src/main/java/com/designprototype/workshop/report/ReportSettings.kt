@@ -1,5 +1,6 @@
 package com.designprototype.workshop.report
 
+import com.designprototype.workshop.data.DwQuestionnaireCopy
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
@@ -368,21 +369,27 @@ val UNSUPPORTED_SECTIONS: Map<SpecialSection, String> = mapOf(
             "The recordings are on this phone but their transcripts are not: workshop audio is " +
             "transcribed after it reaches the server. The office's copy of this report will carry " +
             "them.",
-    // PHRASED CONDITIONALLY ("if a questionnaire is attached"), unlike every other entry here, and
-    // that is forced by the data rather than by taste. The transcript entry can be unconditional
-    // because `unsupportedSectionsIn` guards it with the designer's own `includeTranscripts` answer.
-    // There is no equivalent switch for this one — attaching the questionnaire IS the request, and it
-    // is a fact about a server row this device does not hold: `WorkshopRepository`'s "Custom
-    // questionnaires" block falls back to the device for NOTHING, deliberately, because a cached form
-    // cannot know a question was retired an hour ago. So a handset cannot tell an unattached workshop
-    // from an attached one while offline, and an unconditional "the answers are missing from this
-    // file" would be a false alarm on the majority of exports, which is how a designer learns to stop
-    // reading warnings.
+    // THE ANNEXURE IS DRAWN ON THIS DEVICE NOW — see `renderQuestionnaireAnnexure` — and this entry
+    // survives because it stopped being universally true rather than because it stopped being true.
+    // `DwQuestionnaireStore` holds the answers this handset has been shown, and the section prints
+    // from that copy; but a handset that has never once read this workshop's questionnaire list holds
+    // nothing, and for that state the old sentence is still the honest one. So the entry stays and is
+    // GUARDED, exactly as the transcript entry is, by the one thing that decides it — see
+    // [unsupportedSectionsIn] and [DwQuestionnaireCopy].
+    //
+    // ITS REASON HAS CHANGED AND IS REWRITTEN ACCORDINGLY. "This device keeps no copy of them" was
+    // the root cause and is now false; leaving it would send a designer to wait for the office over a
+    // gap they can close themselves in one tap with a bar of signal. What remains true is the
+    // conditional PHRASING, and for the reason it always had: attaching the questionnaire IS the
+    // request, there is no stage-20 switch to guard it with, and a device that has never read the
+    // list cannot tell an unattached workshop from an attached one. An unconditional "the answers are
+    // missing from this file" would be a false alarm on the majority of exports, which is how a
+    // designer learns to stop reading warnings.
     SpecialSection.ANNEXURE_QUESTIONNAIRES to
         "If a questionnaire is attached to this workshop, the answers recorded against it are not " +
-            "in this file. This device keeps no copy of them — the questionnaire screens read them " +
-            "over the network — so a report generated here has nothing to print. The office's copy " +
-            "of this report will carry them.",
+            "in this file. This device has not yet read them: open the questionnaire on this phone " +
+            "once while you have a connection and they are kept here for every export afterwards, " +
+            "including offline ones. The office's copy of this report will carry them either way.",
 )
 
 /**
@@ -404,11 +411,18 @@ val UNSUPPORTED_SECTIONS: Map<SpecialSection, String> = mapOf(
  * naming it here would print that sentence on every field copy of every workshop — including the
  * majority with no questionnaire attached at all, whose office copy carries nothing of the kind. A
  * report apologising for the absence of something that does not exist is exactly the defect the
- * transcript guard in [unsupportedSectionsIn] was added to prevent; here the guard cannot be written,
- * because the answers have no local copy for this device to count.
+ * transcript guard in [unsupportedSectionsIn] was added to prevent.
  *
- * The day the handset holds those answers, this becomes moot: the section is drawn, and it leaves
- * [UNSUPPORTED_SECTIONS] rather than joining this map.
+ * THAT ARGUMENT SURVIVES THE ANNEXURE LANDING, and the anticipated ending — "the day the handset
+ * holds those answers, the section is drawn and it leaves [UNSUPPORTED_SECTIONS] rather than joining
+ * this map" — is half right, so it is worth saying which half. The device draws the section now, from
+ * `DwQuestionnaireStore`. But the cover line's problem was never the drawing: it was that a cover is
+ * written before anything is known, on every export, including the ones where nothing is attached.
+ * That is still true of the state this map would have to speak for — a handset that has never read
+ * the list — so the entry still must not be added. Where the device DOES know a questionnaire is
+ * attached and lacks its answers, the annexure itself now says so, under its own heading, naming the
+ * questionnaire; a flat sentence on the cover would be a vaguer duplicate of a precise statement that
+ * is already in the file.
  */
 private val UNSUPPORTED_SECTION_NAMES: Map<SpecialSection, String> = mapOf(
     SpecialSection.ANNEXURE_TRANSCRIPTS to "the transcripts of the recordings",
@@ -426,16 +440,34 @@ private val UNSUPPORTED_SECTION_NAMES: Map<SpecialSection, String> = mapOf(
  * Driven by the sections the RESOLVED template actually carries, not by the stage-20 toggles: those
  * switches only ever REMOVE a section, so a toggle turned on for a template that does not carry that
  * annexure changes nothing on the server either and must not be reported here.
+ *
+ * TWO GUARDS NOW, ONE PER ANNEXURE, and neither is a preference. The transcript one is the designer's
+ * own `includeTranscripts` answer. The questionnaire one is [questionnaires]: what this handset
+ * actually holds for this workshop. Both exist to stop a warning that is true in general from being
+ * printed in the cases where it is false, which is the failure mode a warning nobody reads comes
+ * from.
+ *
+ * @param questionnaires what this device can say about the questionnaires attached to this workshop.
+ *   [DwQuestionnaireCopy.UNKNOWN] — the default, and the honest answer for any caller that has not
+ *   consulted `DwQuestionnaireStore` — keeps the conditional warning. Told that the answers are here
+ *   ([DwQuestionnaireCopy.ATTACHED]) or that there are none to have
+ *   ([DwQuestionnaireCopy.NONE_ATTACHED]), it drops: in the first case the annexure prints, and in the
+ *   second there is nothing anywhere to print, so warning about either would be disowning a section
+ *   the designer is in fact getting.
  */
 internal fun unsupportedSectionsIn(
     template: ReportTemplate,
     settings: Map<String, JsonElement>?,
+    questionnaires: DwQuestionnaireCopy = DwQuestionnaireCopy.UNKNOWN,
 ): List<SpecialSection> {
     val found = ArrayList<SpecialSection>()
     for (section in template.sections) {
         val special = section.special ?: continue
         if (special !in UNSUPPORTED_SECTIONS) continue
         if (special == SpecialSection.ANNEXURE_TRANSCRIPTS && !wantsTranscripts(null, settings)) continue
+        if (special == SpecialSection.ANNEXURE_QUESTIONNAIRES &&
+            questionnaires != DwQuestionnaireCopy.UNKNOWN
+        ) continue
         if (special !in found) found += special
     }
     return found
@@ -497,6 +529,13 @@ fun reportWarnings(
     template: ReportTemplate,
     settings: Map<String, JsonElement>?,
     format: String,
+    /**
+     * What this device holds about this workshop's questionnaires; see [unsupportedSectionsIn].
+     *
+     * DEFAULTED TO UNKNOWN so that a caller which has not looked keeps the conditional warning rather
+     * than silently promising an annexure it has nothing to draw. The report screen looks.
+     */
+    questionnaires: DwQuestionnaireCopy = DwQuestionnaireCopy.UNKNOWN,
 ): List<String> {
     val said = ArrayList<String>()
 
@@ -517,7 +556,7 @@ fun reportWarnings(
     // [unsupportedSectionsIn] carries the "which sections" judgement, including the reason the
     // transcript annexure is conditional: every template carries it and it prints nothing unless the
     // designer asked for it, so warning unconditionally would put a false alarm on every export.
-    for (special in unsupportedSectionsIn(template, settings)) {
+    for (special in unsupportedSectionsIn(template, settings, questionnaires)) {
         val reason = UNSUPPORTED_SECTIONS[special] ?: continue
         if (said.none { it == reason }) said += reason
     }
