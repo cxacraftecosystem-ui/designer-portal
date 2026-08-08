@@ -46,8 +46,10 @@ export default function NotFound() {
 
           It must stay a disjunction. The API deliberately answers 404 rather than 403 for a record
           the caller may not see, so that nobody can enumerate records by asking about them
-          (`_load_or_404` in backend/app/api/routes/data_browser.py, `load_workshop_or_404` in
-          design_workshops.py). Copy that said "this record was deleted" would hand back the exact
+          (`_require` in backend/app/api/routes/data_browser.py:653 — "reported as 'not found' rather
+          than 403 ... must not confirm that the record exists" — and `load_workshop_or_404` in
+          backend/app/services/design_workshops.py:94, whose rule design_workshops.py:938 restates).
+          Copy that said "this record was deleted" would hand back the exact
           fact the status code is chosen to withhold — it would confirm the id is real. Naming both
           causes and saying plainly that this page cannot tell them apart is the most a reader can
           honestly be given, and it is still enough to act on.
