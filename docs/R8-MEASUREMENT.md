@@ -201,3 +201,39 @@ That attribute requires native libraries to be **stored uncompressed** in the AP
 `lib/` row above reads STORED and why its "bytes in APK" equals its size on disk. R8 shrinks
 Java/Kotlin classes; it has no opinion about a `.so`. The 66% saving recorded at the top of this
 document buys nothing back here. **Filtering at package time is the only lever that exists.**
+
+## An ABI split and an App Bundle were both considered, and the delivery chain rules both out
+
+Checked before assuming, because "just use an App Bundle" is the reflex answer and it is wrong here.
+**This application is side-loaded and there is no store anywhere in the chain to pick a variant per
+device:**
+
+1. The portal's download button is a fixed, versionless address —
+   `frontend/components/settings/GetTheAppPanel.tsx:41`, `${API_BASE}/api/app/download`.
+2. That address is one redirect to one object, chosen only by highest `versionCode` and knowing
+   nothing whatever about the requesting device — `backend/app/api/routes/app_release.py:154`
+   `download_latest_apk()`, over the row `_latest_release()` picks at line 59.
+3. The handset's own updater fetches that same single file —
+   `android/…/data/WorkshopRepository.kt:1504` `downloadApk()` — and hands it to the system
+   installer at `MainActivity.kt:2413`.
+4. The prompt it answers **has no "Later"** — `MainActivity.kt:2322`,
+   `onDismissRequest = { /* required update: cannot be dismissed */ }`.
+
+**An App Bundle buys nothing and breaks the publisher.** Nothing in that chain can consume an `.aab`.
+Worse, `publishAppUpdate` (`WorkshopRepository.kt:1391`) publishes a build by reading
+`File(context.applicationInfo.sourceDir)` at line 1395 — under a bundle install that path is the
+**base split alone**, with the ABI split's native library in a sibling file that this code never
+looks at. The master admin would upload a base APK with no model in it and every phone in the field
+would install it. Play's per-ABI delivery, which the OCR decision document names as the condition
+under which the trade changes, is unavailable until that whole chain is replaced.
+
+**An ABI split makes two APKs for one URL and no chooser.** `splits { abi { … } }` would produce an
+arm64 APK and an armeabi-v7a APK, and the release table holds one row per `versionCode` and one
+object key. Whichever file reached the publisher becomes the one every handset gets; a phone of the
+other ABI answers `INSTALL_FAILED_NO_MATCHING_ABIS` to a dialog it cannot dismiss, which is an app
+that has stopped working in a village with no support channel. Giving the two APKs different
+`versionCode`s makes it worse rather than better: the higher one wins `_latest_release()` for ever.
+
+So the only shape this delivery chain can carry is **one universal APK that installs on every field
+handset**, and the only way to make it smaller is to stop putting architectures in it that no field
+handset has.
