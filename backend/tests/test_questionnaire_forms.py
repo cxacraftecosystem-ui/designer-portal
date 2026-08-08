@@ -1030,6 +1030,133 @@ async def test_a_questionnaire_attaches_to_a_workshop_and_shows_up_in_the_dropdo
     assert detached["designWorkshopId"] is None
 
 
+def _annexure_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Everything from the questionnaire annexure's heading to the end of the document."""
+    for index, block in enumerate(blocks):
+        if block["type"] == "HEADING" and "Questionnaire responses" in _runs_text(block["runs"]):
+            return blocks[index:]
+    return []
+
+
+def _runs_text(runs: list[dict[str, Any]]) -> str:
+    return "".join(run["text"] for run in runs)
+
+
+@pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
+@pytest.mark.anyio
+async def test_the_report_annexure_prints_a_two_section_form_section_by_section(client, world):
+    """THE ANNEXURE, THROUGH THE ROUTE A DESIGNER ACTUALLY PRESSES, ON A FORM WITH TWO SECTIONS.
+
+    The annexure's own test file builds its ``QuestionnaireItem``s by hand, so nothing there ever
+    reached ``report_items`` — the half that turns five tables into the list the document prints.
+    That half had the bug this test exists for. ``QuestionnaireFormQuestion.sortOrder`` is scoped to
+    its SECTION (the upload numbers each section's questions from 1), so a flat query ordered by
+    sortOrder alone comes back INTERLEAVED — A1, B1, A2, B2 — and the annexure, which starts a fresh
+    table every time the section label changes, printed one single-row table per question with the
+    label repeated above each, A/B/A/B down the page. Every question of one section separated from
+    its neighbours, in an appendix of evidence handed to a ministry officer.
+
+    A ONE-SECTION FIXTURE CANNOT SEE IT, which is exactly why this one has two sections of two
+    questions each and asserts the shape of the tables rather than only the presence of the text.
+
+    THROUGH THE PREVIEW ROUTE, not by calling ``report_items``: the Prisma singleton is bound to the
+    TestClient's event loop (see the ``world`` fixture), and going in by HTTP walks the whole chain a
+    designer's press does — ``load_workshop_or_404`` -> ``_report_inputs`` -> the template's
+    ``ANNEXURE_QUESTIONNAIRES`` -> ``attach_report_questionnaires`` -> ``report_items`` -> the
+    builder's one branch — rather than the last hop of it.
+    """
+    workshop = client.post(
+        "/api/design-workshops",
+        json={"title": f"Annexure order {world['stamp']}"},
+        headers=_headers(world),
+    )
+    assert workshop.status_code == 201, workshop.text
+    workshop_id = workshop.json()["id"]
+
+    created = _upload(
+        client,
+        world,
+        build_questionnaire_workbook(
+            title=f"Two sections {world['stamp']}",
+            description=None,
+            questionnaire_id="",
+            version=1,
+            sections=[
+                {
+                    "code": "CRAFT",
+                    "title": "About the craft",
+                    "questions": [
+                        {"id": "", "prompt": "How many looms do you own?",
+                         "answers": {"Ramesh": "12"}},
+                        {"id": "", "prompt": "Who taught you?",
+                         "answers": {"Ramesh": "My father"}},
+                    ],
+                },
+                {
+                    "code": "MAT",
+                    "title": "Materials",
+                    "questions": [
+                        {"id": "", "prompt": "Where do you buy your yarn?",
+                         "answers": {"Ramesh": "Panipat mandi"}},
+                        {"id": "", "prompt": "What does a kilo cost?",
+                         "answers": {"Ramesh": "Rs 240"}},
+                    ],
+                },
+            ],
+            entry_labels=["Ramesh"],
+        ),
+    )
+    assert created.status_code == 201, created.text
+    questionnaire_id = created.json()["questionnaire"]["id"]
+
+    attached = client.patch(
+        f"/api/questionnaires/{questionnaire_id}",
+        json={"designWorkshopId": workshop_id},
+        headers=_headers(world),
+    )
+    assert attached.status_code == 200, attached.text
+
+    preview = client.get(
+        f"/api/design-workshops/{workshop_id}/report/preview", headers=_headers(world)
+    )
+    assert preview.status_code == 200, preview.text
+    annexure = _annexure_blocks(preview.json()["blocks"])
+    assert annexure, "the questionnaire annexure never reached the preview at all"
+
+    # The respondent's own heading, and everything under it.
+    for index, block in enumerate(annexure):
+        if block["type"] == "HEADING" and _runs_text(block["runs"]) == "Ramesh":
+            sitting = annexure[index:]
+            break
+    else:
+        raise AssertionError("the sitting's heading is missing from the annexure")
+
+    # The Question|Answer tables, in document order, with the labels that precede them.
+    tables = [
+        b for b in sitting
+        if b["type"] == "TABLE" and [c["header"] for c in b["columns"]] == ["Question", "Answer"]
+    ]
+    assert len(tables) == 2, (
+        "one table per SECTION, not one per question — a table per row is what the interleaved "
+        f"ordering produced; got {len(tables)}"
+    )
+    assert [[_runs_text(row[0]) for row in table["rows"]] for table in tables] == [
+        ["How many looms do you own?", "Who taught you?"],
+        ["Where do you buy your yarn?", "What does a kilo cost?"],
+    ]
+    assert [[_runs_text(row[1]) for row in table["rows"]] for table in tables] == [
+        ["12", "My father"],
+        ["Panipat mandi", "Rs 240"],
+    ]
+
+    # Each table is labelled with its own section, once, in the form's order.
+    labels = [
+        _runs_text(b["runs"]) for b in sitting
+        if b["type"] == "PARAGRAPH" and _runs_text(b["runs"]).startswith(("CRAFT", "MAT"))
+    ]
+    assert labels == ["CRAFT — About the craft", "MAT — Materials"]
+
+
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_a_colleague_may_answer_a_questionnaire_but_may_not_reword_it(client, world):

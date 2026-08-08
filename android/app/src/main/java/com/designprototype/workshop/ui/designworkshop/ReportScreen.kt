@@ -941,6 +941,17 @@ private fun renderSpecialSection(
         // nothing — would be worse than the honest gap, because a heading in the contents that leads
         // nowhere reads as a corrupt file.
         SpecialSection.ANNEXURE_TRANSCRIPTS -> Unit
+
+        // The second, for the same KIND of reason and a sharper version of it: the answers recorded
+        // against a questionnaire live in `QuestionnaireFormAnswer` on the server, and
+        // `WorkshopRepository`'s "Custom questionnaires" block falls back to the device for NOTHING —
+        // deliberately, because a cached form cannot know that a question was retired an hour ago and
+        // an answer given under superseded wording is fabricated evidence. So there is nothing here
+        // to draw, and there is not supposed to be. The designer is told at the export screen (see
+        // `UNSUPPORTED_SECTIONS`); the cover note stays silent about it because this device cannot
+        // tell an unattached workshop from an attached one offline, and a report apologising for the
+        // absence of a questionnaire nobody attached is a false alarm on most exports.
+        SpecialSection.ANNEXURE_QUESTIONNAIRES -> Unit
     }
 }
 

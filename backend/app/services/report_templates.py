@@ -57,6 +57,14 @@ class SpecialSection(str, Enum):
     # the stage-20 `includeTranscripts` toggle — a template carrying this section prints nothing at
     # all when no transcripts were attached to the workshop data.
     ANNEXURE_TRANSCRIPTS = "ANNEXURE_TRANSCRIPTS"
+    # Every sitting recorded against a questionnaire the designer built and attached to THIS
+    # workshop, printed in full at the back. The blocks are built by
+    # app/services/report_questionnaires.py rather than by the builder, which reaches them from one
+    # branch of `ReportBuilder.build`. There is deliberately no stage-20 toggle beside
+    # `includeTranscripts`: attaching a questionnaire to a design workshop is already the designer
+    # saying they want it, and the section prints nothing at all when no questionnaire is attached or
+    # none of them has an answer — see that module's docstring for the argument in full.
+    ANNEXURE_QUESTIONNAIRES = "ANNEXURE_QUESTIONNAIRES"
     COMPLETENESS = "COMPLETENESS"
     # A map of India with the workshop's venue and its artisans' home districts pinned on it.
     # Prints nothing at all until stage 1 names a state or a district, because a map of the whole
@@ -240,6 +248,30 @@ TRANSCRIPT_ANNEXURE = TemplateSection(
     page_break_before=True,
 )
 
+# The questionnaire annexure, carried by EVERY template for the reason the transcript annexure above
+# is: which office asked for the report does not change whether the survey's own answers belong in
+# it. It prints nothing unless a questionnaire is attached to this workshop AND something was
+# answered against it (see app/services/report_questionnaires.py), so a template carrying it is
+# byte-for-byte the template it was before whenever nothing is attached — which is most workshops.
+#
+# BEFORE THE TRANSCRIPTS, and that order is an argument rather than a coin toss. Both annexures are
+# the survey's evidence, and one of them is the instrument the designer wrote and administered while
+# the other is whatever a microphone happened to be running for. The structured answers to a question
+# somebody chose to ask are what an officer checks the body's claims against; the recordings are what
+# they reach for when the answers raise a question of their own.
+#
+# CARRIED BY PHOTO_CATALOGUE TOO, deliberately, and it is worth saying why since that template
+# refuses the cost breakdown on the grounds that it goes to a buyer. Questionnaire sittings are the
+# same class of data as the transcript annexure PHOTO_CATALOGUE already carries — a named person's
+# verbatim answers — so leaving this one out and keeping that one would be one template holding two
+# opinions about one question. If a buyer-facing catalogue should carry neither, that is a single
+# decision about both and belongs in one edit, not in a silent asymmetry here.
+QUESTIONNAIRE_ANNEXURE = TemplateSection(
+    special=SpecialSection.ANNEXURE_QUESTIONNAIRES,
+    heading="Annexure — Questionnaire responses",
+    page_break_before=True,
+)
+
 
 DCH_THEME = ReportTheme(
     accent="1F3864", accent_soft="2F5496", table_header_fill="1F3864",
@@ -268,7 +300,8 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             "(Handicrafts): cover, contents, every stage in the reader's order, photographs, "
             "cost sheets and sign-off."
         ),
-        sections=(*_standard_sections(figures=True), TRANSCRIPT_ANNEXURE),
+        sections=(*_standard_sections(figures=True), QUESTIONNAIRE_ANNEXURE,
+                  TRANSCRIPT_ANNEXURE),
         organisation="Office of the Development Commissioner (Handicrafts)",
         theme=DCH_THEME,
     ),
@@ -280,7 +313,7 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             "the section names a DIC submission expects and the administrative annexure "
             "brought forward."
         ),
-        sections=(*_standard_sections(), TRANSCRIPT_ANNEXURE),
+        sections=(*_standard_sections(), QUESTIONNAIRE_ANNEXURE, TRANSCRIPT_ANNEXURE),
         organisation="District Industries Centre",
         theme=DIC_THEME,
     ),
@@ -313,6 +346,7 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             TemplateSection(stage_key="POST_WORKSHOP_FOLLOWUP",
                             presentation=Presentation.TABLE),
             TemplateSection(special=SpecialSection.SIGNATURES, page_break_before=True),
+            QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
         ),
         theme=AGENCY_THEME,
@@ -343,6 +377,7 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             TemplateSection(stage_key="WORKSHOP_OUTCOMES", presentation=Presentation.NARRATIVE,
                             include_photos=False),
             TemplateSection(special=SpecialSection.SIGNATURES),
+            QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
         ),
         theme=DCH_THEME,
@@ -359,6 +394,7 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             *_standard_sections(photo_columns=2, figures=True),
             TemplateSection(special=SpecialSection.ANNEXURE_MEDIA, page_break_before=True,
                             heading="Annexure — Photographic record"),
+            QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
             TemplateSection(special=SpecialSection.COMPLETENESS,
                             heading="Annexure — Data completeness"),
@@ -389,6 +425,7 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             TemplateSection(stage_key="WORKSHOP_PLAN_PARTICIPANTS_OPENING",
                             presentation=Presentation.TABLE, include_photos=False,
                             heading="The makers"),
+            QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
         ),
         number_headings=False,
