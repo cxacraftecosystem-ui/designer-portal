@@ -30,6 +30,7 @@
  */
 
 import { API_BASE, ApiError, apiFetch, assertApiConfigured, buildQuery, describeApiDetail, getToken } from "@/lib/api";
+import { prepareIdentityPhotograph } from "@/lib/identityCardImage";
 import type { MarketFindingsPayload } from "@/lib/marketAnalysis";
 import type { DwReportHistory } from "@/lib/reportDiff";
 import { isStoredRichTextEmpty, richSummary, type StoredRichDoc } from "@/lib/richText";
@@ -1104,10 +1105,19 @@ export type DwIdentityOcrResult = {
   requiresConfirmation?: boolean | null;
 };
 
-/** Read an identity number off a photograph of a card. The caller must not auto-commit the answer. */
-export function readIdentityCard(file: File): Promise<DwIdentityOcrResult> {
+/**
+ * Read an identity number off a photograph of a card. The caller must not auto-commit the answer.
+ *
+ * THE PHOTOGRAPH IS REDRAWN BEFORE IT LEAVES THE TAB — see `lib/identityCardImage.ts`. Every path
+ * that sends a card to the server goes through this one function, so the scale-down and the loss of
+ * the EXIF block (which on a field photograph holds the GPS fix, the device serial and the second
+ * the card was photographed) happen once here rather than being remembered at two call sites. A
+ * failure to re-encode returns the original file, so this can never be the reason a card "could not
+ * be read".
+ */
+export async function readIdentityCard(file: File): Promise<DwIdentityOcrResult> {
   const form = new FormData();
-  form.append("file", file);
+  form.append("file", await prepareIdentityPhotograph(file));
   return apiFetch<DwIdentityOcrResult>(DW_OCR_IDENTITY_PATH, { method: "POST", body: form });
 }
 
