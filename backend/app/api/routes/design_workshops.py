@@ -25,8 +25,12 @@ because one of them is not a rank threshold:
 * CREATING one needs BOTH ``assert_can_create_records`` (Researcher and above, the repository-wide
   rule for making any record) AND ``_require_designer``, which is ``can_run_design_workshops`` — a
   SET, ``{DESIGNER, ADMIN, MASTER_ADMIN}``, not a floor. A PROFESSOR outranks a designer on every
-  other surface in this codebase and still cannot start a workshop. The same pair gates ``PATCH``,
-  every stage write, and the two capture aids (OCR and dictation).
+  other surface in this codebase and still cannot start a workshop. ``PATCH``, every stage write and
+  the two capture aids (OCR and dictation) call ``_require_designer`` ALONE:
+  ``assert_can_create_records`` appears on the create route and nowhere else in this file. No caller
+  gets in that way who would not get in anyway — the designer set sits above Researcher on the
+  ladder, so whatever ``_require_designer`` admits ``can_create_records`` admits too — but which gate
+  is written where is exactly what this header is read for, so it says which.
 * OPENING someone else's is decided entirely by ``load_workshop_or_404``: the creator, an admin, or
   an account an admin has given a ``DesignWorkshopViewer`` row. A grant carries read AND the stage
   writes that go through that helper — see ``services/design_workshop_viewers.py`` for what it
