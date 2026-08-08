@@ -51,6 +51,10 @@ from typing import Any
 
 from app.services import rich_text
 from app.services.report_annexures import append_transcript_annexure, transcripts_of
+from app.services.report_questionnaires import (
+    append_questionnaire_annexure,
+    questionnaires_of,
+)
 from app.services.report_model import (
     Align,
     ChartBlock,
@@ -1936,6 +1940,26 @@ class ReportBuilder:
                 append_transcript_annexure(
                     self.doc,
                     transcripts_of(self.data),
+                    heading=section.heading,
+                    numbered=self.template.number_headings,
+                    page_break_before=section.page_break_before,
+                )
+            elif section.special is SpecialSection.ANNEXURE_QUESTIONNAIRES:
+                # THE ONLY PLACE QUESTIONNAIRE DATA ENTERS A REPORT. Before this branch existed it
+                # entered by no path at all: `questionnaire` appeared nowhere in this module or in
+                # report_templates, and no REF field, no hydration mapping and no template section
+                # reached `QuestionnaireFormAnswer` — so the report described a survey (stages 7 and
+                # 8 are about nothing else) whose recorded answers sat in a table it never opened.
+                #
+                # ONE CALL AND NOTHING ELSE, exactly as the transcript branch above. The heading
+                # wording, the index table, the provenance lines and the truncation notes stay
+                # `report_questionnaires`', so this branch cannot grow a second opinion about any of
+                # them. With nothing attached — no questionnaire on this workshop, or none of them
+                # answered — it appends nothing at all, not even the page break, so every existing
+                # template still renders byte-for-byte as it did.
+                append_questionnaire_annexure(
+                    self.doc,
+                    questionnaires_of(self.data),
                     heading=section.heading,
                     numbered=self.template.number_headings,
                     page_break_before=section.page_break_before,

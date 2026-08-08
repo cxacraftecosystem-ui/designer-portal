@@ -90,6 +90,7 @@ from app.services.design_workshops import (
     REFERENCE_LIMIT_MAX,
     assemble_workshop_data,
     attach_district_anchors,
+    attach_report_questionnaires,
     attach_report_references,
     attach_report_transcripts,
     entry_rows,
@@ -1164,18 +1165,30 @@ async def _report_inputs(
     # threw the whole result away. The cost tracked the size of the archive rather than the size of
     # the workshop, on both Preview and Generate. `apply_report_settings` can only REMOVE sections
     # and MAP is not one of the toggles it removes, so the base template is the right thing to ask.
-    draws_map = any(
-        section.special is SpecialSection.MAP for section in get_template(template_id).sections
-    )
+    specials = {section.special for section in get_template(template_id).sections}
+    draws_map = SpecialSection.MAP in specials
     if draws_map:
         loads.append(attach_district_anchors(data))
+    # THE SAME "ONLY WHEN SOMETHING DRAWS IT" RULE, and it is not a micro-optimisation here either:
+    # this is five queries against the questionnaire tables, and `PHOTO_CATALOGUE` — or any template
+    # a later release ships without the annexure — would throw every row away. `apply_report_settings`
+    # can only REMOVE sections, so the base template is the right thing to ask, exactly as the map
+    # above asks it.
+    draws_questionnaires = SpecialSection.ANNEXURE_QUESTIONNAIRES in specials
+    if draws_questionnaires:
+        loads.append(attach_report_questionnaires(data, workshop_id))
     loads.append(
         attach_report_transcripts(data, entries, viewer=viewer, requested=transcripts)
     )
 
     results = await gather_reads(*loads)
     reference_photos = results[0]
+    # The LAST two loads, in the order they were appended: the questionnaire annexure's warnings when
+    # it was loaded at all, and the transcript annexure's always. Indexed from the end rather than by
+    # position because the map load in the middle is conditional.
     warnings = list(results[-1])
+    if draws_questionnaires:
+        warnings = list(results[-2]) + warnings
 
     resolver = await media_resolver(entries, viewer=viewer, extra_ids=reference_photos)
     if resolver.withheld:

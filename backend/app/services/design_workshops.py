@@ -46,6 +46,7 @@ from app.services.design_workshop_viewers import has_viewer_grant
 from app.services.designers import prefill_from_profile
 from app.services.report_annexures import annexure_warnings, attach_transcripts
 from app.services.report_builder import ReferencedRecord, WorkshopData, build_report
+from app.services.report_questionnaires import attach_questionnaires, questionnaire_warnings
 from app.services.report_docx import render_docx
 from app.services.report_model import ImageRef, PageSize, ReportMeta
 from app.services.report_pdf import render_pdf
@@ -1588,6 +1589,42 @@ async def attach_report_transcripts(
         return warnings
     attach_transcripts(data, items)
     return warnings + annexure_warnings(items)
+
+
+async def attach_report_questionnaires(data: WorkshopData, workshop_id: str) -> list[str]:
+    """Load this workshop's own questionnaires onto ``data``. Returns the warnings to show.
+
+    NO TOGGLE TO CONSULT, unlike :func:`attach_report_transcripts`, and that is the design decision
+    rather than a missing parameter. A transcript is produced automatically by the media queue from a
+    recording made for some other purpose, so an annexure of them is something that could happen TO a
+    designer — hence ``includeTranscripts``. A questionnaire sitting has no such path: the designer
+    built the form, attached it to THIS workshop from a dropdown, and typed the answers in.
+    **Attaching it is the opt-in**, and ``PATCH {isActive: false}`` or detaching it is the way out.
+    See ``report_questionnaires``' module docstring for the argument in full.
+
+    THE QUERY IS PAID ONLY WHEN THE TEMPLATE DRAWS THE SECTION — the caller checks that, exactly as
+    it already does for the map's district anchors, because five of six templates carrying a section
+    is not the same as six.
+
+    A questionnaire attached but never answered raises a warning rather than printing an empty
+    heading: the designer chose that form for this workshop and would otherwise have to notice the
+    shortfall themselves in a sixty-page document.
+    """
+    from app.services.questionnaire_forms import report_items
+
+    try:
+        items = await report_items(workshop_id)
+    except Exception:
+        # Blind, and for the reason ``_load_one_reference_model`` is blind: one unreadable annexure
+        # must not lose a report that is the end of two weeks of fieldwork. The designer is told.
+        logger.exception("Could not load questionnaires for workshop %s", workshop_id)
+        return [
+            "The questionnaire annexure could not be loaded and was left out of this report."
+        ]
+    if not items:
+        return []
+    attach_questionnaires(data, items)
+    return questionnaire_warnings(items)
 
 
 def resolve_template_id(requested: Any, settings: Mapping[str, Any] | None, record: Any) -> str:
