@@ -1,4 +1,13 @@
-# Reading an Aadhaar card on the handset: no recogniser ships, and why
+# Reading an Aadhaar card on the handset
+
+> **THIS DECISION WAS OVERRULED ON 2026-08-09 AND THE BUNDLED RECOGNISER SHIPS.** The user read the
+> argument below and decided the other way. Everything below stands unedited — the measurements were
+> right and they are still the cost — and what the overrule changes, why it reads differently from
+> the other side, and what the decision actually costs when it is measured instead of estimated, is
+> recorded at the end under **"Overruled"**. A decision document that quietly deletes the case it
+> lost is worth less than none.
+
+## The original recommendation, as written on 2026-08-08
 
 **Decision:** do **not** add an on-device text recogniser to the Android app. Neither ML Kit Text
 Recognition variant is acceptable here, and there is no third option that is. The handset gets the
@@ -239,3 +248,65 @@ Fixed by mirroring the server's set, never re-deriving it:
 
 The stage form was never exposed: the whole design-workshop destination is already behind
 `canRunDesignWorkshops` in `AppNavigation.kt` and `ROUTE_GUARDS`.
+
+---
+
+# Overruled — 2026-08-09. The bundled recogniser ships.
+
+The user read the case above and decided the other way: **bundled ML Kit goes in, so the read happens
+on the device and needs no connection.** This section says why the same facts read differently to
+somebody who values an offline read above APK bytes, and what the decision costs when it is measured
+rather than estimated.
+
+Nothing above has been altered. The arithmetic in it is correct and it is still the bill.
+
+## What the "no" got wrong was not the arithmetic — it was where the comparison was standing
+
+The refusal turns on one sentence: the recogniser "buys **typing, not checking**", about ten seconds
+per artisan, and a misread digit and a mistyped digit die on the same Verhoeff check.
+
+That is true **on a desk with a connection**, where the server reader is standing right there and the
+only thing an on-device reader adds is speed. It is not true in the courtyard, and the courtyard is
+the only place this control is ever used. With no signal, `POST /design-workshops/ocr/identity` is
+not a slower reader — it is **no reader**. The disabled control and the honest sentence the app puts
+under it are an accurate description of nothing happening at all.
+
+So the trade was never "ten seconds against 17 MB". It is "the capability existing at the moment it
+is wanted, against 17 MB", and the document above priced the first term at its value in the one place
+the feature is not needed. That is the whole of the disagreement, and once it is named the "no" does
+not survive it. Every other line of the analysis above — the model is unshrinkable, R8 cannot touch
+it, the update cost is borne on every release — remains true and is now the thing to minimise rather
+than the thing to refuse.
+
+## And there is a second gain the size argument never weighed: the card image stops leaving the phone
+
+Today a read means uploading a photograph of somebody's Aadhaar card to a third-party vision model —
+`"provider": "gemini"` in the payload printed above. This document already treats that as serious
+enough to gate the control on it: *"a researcher photographs somebody's Aadhaar card and the image is
+uploaded to a third-party vision model before anything refuses it — the photograph is taken and
+transmitted, and only then declined."*
+
+An on-device read removes that transmission entirely for every read it serves. The most sensitive
+identifier in the country stops being sent to a third party to be read, and the app stops needing a
+network round trip, a provider quota and a provider cooldown to do it. That gain is not measured in
+megabytes and does not appear anywhere in the table above, and on this application's own stated
+values it is worth more than the bytes it costs.
+
+## What is NOT claimed by the overrule
+
+- **Accuracy on real cards is still unmeasured**, exactly as the section above says. There is no
+  device, no corpus of card photographs and no way to produce a number here. Bundled ML Kit is
+  Google's own recogniser rather than a home-made one, which is a reason to expect it to work, not
+  evidence that it does.
+- **The candidate is still a candidate.** The rule the original lane exists to enforce is unchanged:
+  an OCR result is confirmed by a human against the card in their hand, and `ArtisanIdentity`'s
+  Verhoeff check still refuses anything that fails it. Moving the reader on-device changes where the
+  reading happens, not who is responsible for it.
+- **The server reader is not removed.** It is the path for the web client, which has no bundled
+  model, and it is what the `Gemini` provider is still for.
+- **The Aadhaar QR code is still no help.** Nothing about the overrule changes the UIDAI Secure QR
+  specification: it carries a reference id, not the twelve digits.
+- **The barcode decision does not fall with it.** `docs/DECISION-qr-scanning-on-android.md` chose
+  ZXing over 9.44 MB of bundled ML Kit barcode scanning. Text recognition and barcode scanning are
+  separate bundled models in separate native libraries; adding one does not make the other free. It
+  would share `com.google.mlkit:common` and `vision-common` only, which is the small part.
