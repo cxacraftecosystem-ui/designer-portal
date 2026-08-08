@@ -1068,8 +1068,15 @@ private fun MediaField(
     }
 
     /*
-     * "Straighten a photographed sketch into a plate", offered on the FILE field a plate belongs in —
-     * `sketch.lineArtFile` and nothing else in the bundled registry. See [dwOffersSketchRectify].
+     * "Straighten a photographed sketch into a plate", offered on the FILE field a plate belongs in.
+     *
+     * TWO FIELDS IN THE BUNDLED REGISTRY, NOT ONE: stage 11's `sketch.lineArtFile` — the pairing the
+     * feature was written for — and stage 16's `finalProduct.lineDrawing`, which is often a CAD
+     * export this panel has nothing to do with and just as often a technical drawing made on paper
+     * and photographed. [dwOffersSketchRectify] argues that second one, and DwSketchRectifyFieldTest
+     * names both and refuses the registry's other six FILE fields by name. This comment said
+     * "`sketch.lineArtFile` and nothing else", which was already untrue of the code beneath it and is
+     * the sentence a reader would trust instead of running the test.
      *
      * THE SOURCE PHOTOGRAPHS COME FROM THE ENTITY'S OTHER FIELDS, not from this one: a FILE field
      * holds the destination, and what is being read is whatever was attached to `image`. That is also

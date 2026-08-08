@@ -219,8 +219,15 @@ object DwSketchRectify {
      * Sorting by angle about the centroid is what makes it unrepresentable: points taken in angular
      * order around an interior point cannot cross, for any four points that have an interior at all.
      * The rotation afterwards picks the corner nearest the origin as TL, so the output is not merely
-     * non-crossing but consistently labelled — which is what lets the panel say "drag the top-left
-     * handle" and mean it.
+     * non-crossing but consistently labelled — which is what lets [rectifyHomography] send the
+     * PLATE's top-left pixel to the SHEET's top-left corner, so a plate comes out upright rather than
+     * a quarter turn round.
+     *
+     * IT DOES NOT NAME THE PANEL'S HANDLES, and reading it that way is how a false label ships.
+     * [DwSketchRectifyPanel] calls this once, in its `build()`, on a COPY of the four marks, and
+     * hands the result to [makePlate] — which never calls it. The handles on screen keep whatever
+     * index the designer placed them at and are never re-ordered, so that panel's `CORNER_NAME`
+     * makes no positional claim and records there why not.
      *
      * Returns null only for input that is not four finite points; every genuine degeneracy (coincident
      * points, three in a line) is left to [DwPhotoMeasure.solveHomography], which already tests for all
