@@ -523,6 +523,137 @@ def promoted_values(entity_key: str, data: dict[str, Any]) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------------------
+# Reference hydration — which display fields a chosen record copies onto the row
+# --------------------------------------------------------------------------------------
+
+# WHICH FIELDS A CHOSEN RECORD WRITES ONTO THE ENTRY, keyed by "entityKey.refFieldKey" and
+# mapping the reference's own data keys to the entity's field keys. The two vocabularies are
+# deliberately not assumed to match: a tool's `usedFor` comes from `processUsedIn`, a product's
+# single photograph seeds a gallery, and a participant's `specialisation` is really the craft
+# they are documented under.
+#
+# THIS IS DENORMALISATION, ON PURPOSE, AND IT IS NOT A CACHE.
+#
+# A workshop report is a historical document. It is generated months after the workshop, often
+# years after, and submitted to an office that keeps it. The artisan record it was built from is
+# live data in a different part of this system: it gets corrected, merged into a duplicate
+# discovered later, or deleted outright when a researcher cleans up a double entry. If the
+# report resolved the name through the id at render time, every one of those perfectly ordinary
+# edits would silently rewrite a submitted document — and a deletion would render it as a blank
+# cell in a participant table, which is worse than useless because the table is the proof of who
+# attended.
+#
+# So the name is COPIED onto the entry at save time and the report prints the copy. The id stays
+# beside it and is never removed: it is the join key, and it is what makes "every workshop this
+# artisan has attended" and "did the products we prototyped in 2026 still sell in 2028"
+# answerable at all. The copy is what the document says; the id is what the research follows.
+# Losing either one loses a different half of the record.
+#
+# ── WHY IT LIVES IN THE REGISTRY AND NOT BESIDE `hydrate_entries` ──────────────────────────
+#
+# It was declared in ``design_workshops``, next to the code that applies it, which put it out of
+# reach of two things that need it. ``validate_registry`` below now refuses a mapping whose
+# target is not a field of the entity — a rename that used to hydrate NOTHING, silently, because
+# ``hydrate_entries`` skips a target it cannot resolve. And ``field_to_dict`` now PUBLISHES the
+# mapping to the clients, so the picker on a handset fills the row in by the server's rule
+# instead of by matching key names. Matching names is not a smaller version of this table, it is
+# a different and wrong one: on ``existingProduct`` the reference's ``data["name"]`` is the
+# ARTISAN's name under ``artisanRef`` and the PRODUCT's name under ``productRef``, and the entity
+# has a ``name`` field of its own that means the product — so a name-matching client writes a
+# participant's name into a ministry report's product table, and the only-fill-blanks rule then
+# refuses to correct it for ever.
+REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
+    "workshopSetup.craftRef": {
+        "craftName": "craftName",
+        "craftLocalName": "craftLocalName",
+    },
+    "participant.artisanRef": {
+        "name": "name",
+        "localName": "localName",
+        "specialisation": "specialisation",
+        "experienceYears": "experienceYears",
+        "gender": "gender",
+        "phone": "phone",
+        "village": "village",
+        "photo": "photo",
+    },
+    "tool.toolRef": {
+        "name": "name",
+        "localName": "localName",
+        "material": "material",
+        "usedFor": "usedFor",
+        "cost": "cost",
+        "photo": "photo",
+    },
+    # THE DOCUMENTED PROCESS IS THE STAGE'S SUBSTANTIVE NARRATIVE, and it used to contribute a
+    # single word. The `Process` table holds five things — a name, free-text notes, a
+    # pre-process flag, the product it hangs off, and its own sub-steps — and three of the five
+    # are copied here:
+    #
+    #  * `notes` -> `description`. The registry calls that box "What happens", which is what a
+    #    process's notes ARE. This is the copy that turns a one-word row into a paragraph.
+    #  * `productName` -> `documentedFor`. Pure provenance, and the reason it is not optional:
+    #    `processStep.processRef` is deliberately WORKSHOP-scoped (see the note on the field)
+    #    because "Tie and dye" at Bagru and "Tie and dye" at Bhuj are two different sequences
+    #    under one name, and the picker's only way of telling them apart on screen is the
+    #    product name in its sublabel. Copying it is what lets the PRINTED report make the same
+    #    distinction the designer made when choosing.
+    #
+    # The two that are NOT copied, so that the omission is a decision rather than an oversight:
+    #
+    #  * `steps`. A `Process` owns an ordered list of sub-steps, and `processStep` IS the
+    #    workshop's own ordered list of steps — so copying one into a row of the other would
+    #    print a whole sequence inside one of its own steps, and print it again on every row
+    #    that names the same process.
+    #  * `preProcessAvailable`. It is a property of the whole process, not of the step in front
+    #    of the reader; "Pre-process available: Yes" under step 3 of 7 answers a question nobody
+    #    asked of that row.
+    "processStep.processRef": {
+        "name": "name",
+        "notes": "description",
+        "productName": "documentedFor",
+    },
+    # NOT WIDENED, AND THE REASON IS NOT THE PHOTOGRAPH RULE. `report_builder.ReferencedRecord`
+    # explains why hydration must never seed these two entities' galleries; that reasoning covers
+    # the photograph and nothing else, so the rest was decided on its own terms:
+    #
+    #  * `existingProduct.artisanRef` copies the artisan's NAME because the row has a "Made by"
+    #    box for it. It copies no village, phone or specialisation because the entity declares no
+    #    box for any of them — this row documents a PRODUCT — and the roster row at stage 3
+    #    already carries all three against the same artisan. A second copy here could only ever
+    #    disagree with the first.
+    #  * `prototype.productRef` copies the product's NAME into "Developed from" and stops there.
+    #    A prototype is defined by how it DIFFERS from the product it derives from, so the
+    #    fields that look symmetrical with `existingProduct` are exactly the ones the workshop
+    #    exists to change: `materials` is a required answer about what the prototype is actually
+    #    made of, and the product's `price` is a SELLING price with nothing on the prototype to
+    #    receive it but `materialCost` and `labourCost`, which are costs. Worse, the
+    #    only-fill-blanks rule would leave any of those standing untouched and indistinguishable
+    #    from an answer the designer gave.
+    "existingProduct.artisanRef": {"name": "artisanName"},
+    "existingProduct.productRef": {
+        "name": "name",
+        "category": "category",
+        "material": "material",
+        "price": "price",
+        "use": "use",
+        "photo": "productPhotos",
+    },
+    "prototype.productRef": {"name": "productName"},
+}
+
+
+def reference_hydration_for(entity_key: str, field_key: str) -> dict[str, str]:
+    """The mapping one REF field hydrates through, or an empty dict when it hydrates nothing.
+
+    Empty is the FAIL-CLOSED answer and clients must treat it that way: a field with no entry
+    writes nothing, the designer types one box, and the server fills it at save regardless. A
+    guessed entry costs a wrong value nobody can see is wrong.
+    """
+    return REFERENCE_HYDRATION.get(f"{entity_key}.{field_key}", {})
+
+
+# --------------------------------------------------------------------------------------
 # The registry
 # --------------------------------------------------------------------------------------
 
@@ -754,6 +885,34 @@ def validate_registry() -> list[str]:
                 f"{path!r}"
             )
         columns_seen[column] = path
+
+    # EVERY HYDRATION TARGET MUST BE A REAL FIELD OF A REAL ENTITY, and this check is the only
+    # thing standing between a rename and a report with a hole in it. ``hydrate_entries`` looks
+    # the target up with ``entity.field(target_key)`` and SKIPS a target it cannot resolve — no
+    # error, no log — so a mapping that names a field somebody renamed copies nothing at all, on
+    # every save, for ever, and the first symptom is a submitted document whose process table has
+    # a name and no description. The source key is deliberately NOT checked: it names a key of a
+    # ``REFERENCE_MODELS`` data lambda, which lives with the database code and is the one half of
+    # the pair this module must not import.
+    for path, mapping in REFERENCE_HYDRATION.items():
+        entity_key, _, ref_field_key = path.partition(".")
+        entity = next((e for _s, e in all_entities() if e.key == entity_key), None)
+        if entity is None:
+            problems.append(f"hydration path {path!r} names entity {entity_key!r}, which does "
+                            "not exist")
+            continue
+        ref_field = entity.field(ref_field_key)
+        if ref_field is None:
+            problems.append(f"hydration path {path!r} names no field of {entity_key!r}")
+        elif ref_field.type is not FieldType.REF:
+            problems.append(f"hydration path {path!r} names {ref_field.type.value} field "
+                            f"{ref_field_key!r}; only a REF field hydrates a row")
+        for source_key, target_key in mapping.items():
+            if entity.field(target_key) is None:
+                problems.append(
+                    f"hydration {path}[{source_key!r}] writes {target_key!r}, which is not a "
+                    f"field of {entity_key!r}"
+                )
 
     return problems
 
@@ -1176,7 +1335,14 @@ def stage_completeness(
 # --------------------------------------------------------------------------------------
 
 
-def field_to_dict(f: FieldSpec) -> dict[str, Any]:
+def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
+    """One field as the clients read it.
+
+    ``entity_key`` is what makes ``refHydration`` emittable at all: the hydration table is keyed
+    by ``"entityKey.fieldKey"`` because field keys are unique only within an entity. It is
+    optional so a field can still be serialised on its own — a caller that omits it gets a field
+    with no mapping, which is the same fail-closed answer as a field that has none.
+    """
     out: dict[str, Any] = {
         "key": f.key,
         "label": f.label,
@@ -1201,6 +1367,16 @@ def field_to_dict(f: FieldSpec) -> dict[str, Any]:
         # ``GET .../references``, so server and client agree on how wide the net is by
         # construction instead of by both remembering the same rule.
         out["refScope"] = f.ref_scope or REF_SCOPE_ALL
+        # WHICH BOXES THIS PICKER FILLS IN, AND WHICH OF THE RECORD'S VALUES GOES IN EACH.
+        #
+        # Published rather than left for each client to work out, because the obvious way to work
+        # it out is to match key names and that is actively wrong — see the long note above
+        # REFERENCE_HYDRATION for the participant's name landing in the product's name box.
+        # Omitted entirely when the field hydrates nothing, so a client that reads it can fail
+        # closed on the absence instead of guessing.
+        hydration = reference_hydration_for(entity_key, f.key)
+        if hydration:
+            out["refHydration"] = dict(hydration)
     if f.ref_filter_by:
         out["refFilterBy"] = f.ref_filter_by
     if f.max_length:
@@ -1233,7 +1409,7 @@ def entity_to_dict(e: EntitySpec) -> dict[str, Any]:
         "description": e.description,
         "parent": e.parent,
         "labelField": e.label_field,
-        "fields": [field_to_dict(f) for f in e.fields if not f.deprecated],
+        "fields": [field_to_dict(f, e.key) for f in e.fields if not f.deprecated],
     }
 
 
