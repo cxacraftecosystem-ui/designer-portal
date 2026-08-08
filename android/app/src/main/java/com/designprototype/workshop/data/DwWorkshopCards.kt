@@ -104,6 +104,10 @@ fun workshopCardSource(recordType: DwWorkshopRecordType, schema: SchemaResponse)
     when (recordType) {
         DwWorkshopRecordType.PROTOTYPE -> findPrototypeSource(schema)
         DwWorkshopRecordType.ARTISAN -> findRosterSource(schema)
+        // Every other record type lives in the REPOSITORY rather than inside a design workshop, so
+        // there is no stage collection to draw a sheet from and null is the true answer. Their codes
+        // are drawn on their own record screens, which is where their ids are.
+        else -> null
     }
 
 // --------------------------------------------------------------------------------------
@@ -302,6 +306,20 @@ fun workshopCardSpecs(
                 DwValues.text(row["serialNo"]).let { if (it.isBlank()) "" else "S. No. $it" },
                 DwValues.text(row["village"]),
             ).filter { it.isNotBlank() },
+        )
+
+        // No other record type has rows inside a design workshop, so this is unreachable from the
+        // Cards & tags screen — [workshopCardSource] answers null for them first. It is written
+        // rather than thrown so that a caller who later adds a sheet for a new kind gets a card with
+        // a correct symbol and NO invented supporting lines, rather than a crash: the supporting
+        // lines are the one place a field that must never be printed could arrive, so the safe
+        // default for a kind nobody has thought about is to print none.
+        else -> DwCardSpec(
+            key = key,
+            recordType = recordType,
+            id = workshopCodeIdForRow(row),
+            title = dwCardRowTitle(source.entity, row, index),
+            lines = emptyList(),
         )
     }
 }

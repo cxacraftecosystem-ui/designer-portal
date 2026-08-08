@@ -18,6 +18,7 @@ import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { UploadTray } from "@/components/media/UploadTray";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
@@ -586,6 +587,10 @@ function WorkshopsPageBody() {
           Browse workshops below. Ask the master admin for workshop creation access to add or edit workshops.
         </div>
       )}
+      {/* The workshop's own code, drawn live for the workshop in the form. A workshop is edited
+          INLINE on this list rather than at a /[id]/edit route, so this is the record's detail view
+          and this is where its code belongs. */}
+      {editing ? <RecordCodeCard recordType="workshop" id={editing.id} title={editing.title} className="mb-5" /> : null}
       {/* Same provenance block the artisan/product/tool edit surfaces carry, for the workshop being
           edited. empty:hidden — FieldProvenance renders nothing without provenance access. */}
       {editing ? (

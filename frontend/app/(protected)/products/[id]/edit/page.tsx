@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { ProductForm } from "@/components/forms/ProductForm";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { apiFetch } from "@/lib/api";
 import type { ProductDocumentation } from "@/lib/types";
 
@@ -27,6 +28,9 @@ export default function EditProductPage() {
       {record ? (
         <div className="grid gap-6">
           <ProductForm initial={record} />
+          {/* The code for THIS product, drawn live. Stuck on the piece, it is what tells a later
+              photograph, measurement or market note which record it belongs to. */}
+          <RecordCodeCard recordType="product" id={record.id} title={record.productName} />
           <FieldProvenance extraMetadata={record.extraMetadata} title="Product field contributions" />
         </div>
       ) : (
