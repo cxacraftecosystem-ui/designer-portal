@@ -114,10 +114,17 @@ export function DeadEndPanel({
   children: React.ReactNode;
 }) {
   return (
-    // aria-live so a screen reader hears the outcome: on the error boundary this panel REPLACES the
-    // page under a reader who is already on it, and a silent swap is indistinguishable from a page
-    // that simply stopped responding.
-    <section className="panel px-6 py-14 text-center" aria-live="polite">
+    /*
+     * Deliberately NOT `aria-live`, though `RouteLocked` and `AdminViewHidden` in AppShell both are.
+     *
+     * Theirs is a panel whose content never changes after it mounts. This one settles twice — the
+     * address is filled in after mount, and the buttons appear when `/me` answers — and a live region
+     * re-announces the content that changed inside it, so a screen-reader user would be read the
+     * whole panel again a second and a third time. It buys nothing either: a live region only
+     * announces mutations inside a region that ALREADY existed, and this region is inserted at the
+     * same moment as the text in it. The `<h1>` is what carries the news, on both screens.
+     */
+    <section className="panel px-6 py-14 text-center">
       <div
         className={
           tone === "alert"
