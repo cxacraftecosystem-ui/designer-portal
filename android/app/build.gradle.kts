@@ -59,6 +59,60 @@ android {
         compose = true
     }
 
+    /**
+     * R8 on the RELEASE build, and the reason is the handset rather than the metric.
+     *
+     * There was no `buildTypes` block here at all, so shrinking was off for every build and the
+     * whole dependency set — Compose, media3, ExoPlayer, Coil, Retrofit, OkHttp, Play Services
+     * credentials — shipped whole, including every class no screen in this application ever
+     * touches. This APK is installed over mobile data in a district town, onto whatever handset was
+     * cheapest that year, and then carried into a village. Megabytes here are not a vanity figure:
+     * they are the download that fails at one bar and the storage a designer has to clear to accept
+     * an update.
+     *
+     * WHY THIS IS SAFE TO TURN ON, which is the question that kept it off until it was checked
+     * rather than assumed. The libraries that are reached REFLECTIVELY — and therefore the ones R8
+     * cannot see the use of — all ship their own consumer rules inside their artifacts, which R8
+     * applies automatically. Verified by unzipping them out of the Gradle cache rather than trusted:
+     * `kotlinx-serialization-core` carries `META-INF/proguard/kotlinx-serialization-common.pro`
+     * (and the `META-INF/com.android.tools/proguard/` copy), `retrofit-2.11.0` carries
+     * `META-INF/proguard/retrofit2.pro`, `okhttp-4.12.0` carries `META-INF/proguard/okhttp3.pro`.
+     * `proguard-rules.pro` therefore holds only what is specific to this app: our own
+     * `@Serializable` wire types and the two Retrofit interfaces reached through a dynamic proxy.
+     *
+     * WHAT IS STILL NOT PROVEN, stated because a shrunk build fails in a way that a green build
+     * hides. R8's failure mode is not a compile error — it is a `SerializationException` or a
+     * `NoSuchMethodError` at the first sync, on a build that installed and ran fine on a desk. This
+     * machine has no device and no emulator (`adb` is not installed), so nothing here exercises the
+     * shrunk APK at runtime. What IS checked is: the release build completes, the mapping is
+     * emitted, and `r8-removed.txt` is read to confirm nothing load-bearing was dropped. Before this
+     * ships, a release build must be run on real hardware through the offline loop — the same
+     * hardware gap the handover already records against the offline claim itself.
+     *
+     * `isShrinkResources` needs `isMinifyEnabled`; enabling it alone is an error rather than a
+     * smaller APK.
+     */
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                // The AGP-supplied baseline, which already carries the Android platform and Compose
+                // keeps. `-optimize` is deliberately NOT used: it is the aggressive variant, and the
+                // extra few per cent is not worth a second variable in a change that cannot be
+                // exercised on hardware here.
+                getDefaultProguardFile("proguard-android.txt"),
+                "proguard-rules.pro",
+            )
+        }
+        debug {
+            // Left unshrunk on purpose. The debug build is what the JVM unit tests and any
+            // day-to-day install run against, and shrinking it would make a stack trace during
+            // development point at an obfuscated name for no benefit.
+            isMinifyEnabled = false
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
