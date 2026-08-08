@@ -16,6 +16,7 @@ import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { UploadTray } from "@/components/media/UploadTray";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
@@ -349,6 +350,10 @@ function CraftsPageBody() {
           Browse the craft vocabulary below. Ask the master admin for craft creation access to add or edit crafts.
         </div>
       )}
+      {/* The craft's own code, drawn live for the craft in the form. A craft is edited INLINE on this
+          list rather than at a /[id]/edit route, so this is the record's detail view and this is
+          where its code belongs. */}
+      {editing ? <RecordCodeCard recordType="craft" id={editing.id} title={editing.name} className="mb-5" /> : null}
       {/* Same provenance block the artisan/product/tool/workshop edit surfaces carry, for the craft
           being edited. empty:hidden — FieldProvenance renders nothing without provenance access. */}
       {editing ? (

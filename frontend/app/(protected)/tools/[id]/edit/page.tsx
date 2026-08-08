@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { ToolForm } from "@/components/forms/ToolForm";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { apiFetch } from "@/lib/api";
 import type { ToolDocumentation } from "@/lib/types";
 
@@ -27,6 +28,9 @@ export default function EditToolPage() {
       {record ? (
         <div className="grid gap-6">
           <ToolForm initial={record} />
+          {/* The code for THIS tool. A tool is the record most often shared between artisans, so the
+              tag tied to it is what keeps an assignment attached to the right toolkit. */}
+          <RecordCodeCard recordType="tool" id={record.id} title={record.toolkitName} />
           <FieldProvenance extraMetadata={record.extraMetadata} title="Tool field contributions" />
         </div>
       ) : (

@@ -4,14 +4,14 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * The code printed on an artisan card and on a prototype tag, on the handset — the Kotlin port of
- * `frontend/lib/workshopCodes.ts`, and the reasoning behind every character of it.
+ * The code drawn beside — and printed on — every record this repository issues, on the handset: the
+ * Kotlin port of `frontend/lib/workshopCodes.ts`, and the reasoning behind every character of it.
  *
  * THE PROBLEM. The worst thing that happens in a workshop is not a lost file, it is a mis-typed
  * identifier: two days of prototype iteration attached to the wrong prototype, or a day of
  * measurements attached to the wrong artisan. Nobody finds out, because both records look complete.
- * Prototype rows and artisan records already carry identifiers; a scan removes the typing, and
- * removing the typing removes the class of error.
+ * Every record here already carries an identifier; a scan removes the typing, and removing the
+ * typing removes the class of error.
  *
  * ── THE PAYLOAD ──────────────────────────────────────────────────────────────────────────────
  *
@@ -19,8 +19,16 @@ import kotlinx.serialization.json.JsonPrimitive
  *     ─┬── ┬ ─────────────┬─────────── ─┬──
  *      │   │              │             └─ check: four characters over everything to its left
  *      │   │              └─ the record's id, upper-cased
- *      │   └─ record type: A artisan, P prototype
+ *      │   └─ record type: one letter, see [DwWorkshopRecordType]
  *      └─ namespace "DPW" + payload version 1
+ *
+ * **NOTHING IS EVER SAVED.** There is no stored PNG, no cached bitmap, no column on the record. The
+ * payload is a pure function of a record's type and id, so every screen that shows a code
+ * regenerates it — encoding a payload and scoring eight QR masks is under a millisecond on the
+ * cheapest handset in the room, and the alternative is an asset that goes stale, needs invalidating,
+ * and occupies storage on a field device for something that costs nothing to redraw. If you are
+ * reading this because you are about to "optimise" it into a stored image: the id it depends on is
+ * immutable, so a cached image can only ever be as correct as this function, and never more.
  *
  * **It is not a URL, and that is the first decision.** A URL is what every QR generator produces by
  * default and it is wrong here twice over. A card printed at a workshop in 2026 has to scan in
@@ -119,18 +127,61 @@ const val WORKSHOP_CODE_VERSION = 1
 val SUPPORTED_VERSIONS: Set<Int> = setOf(1)
 
 /**
- * The kinds of record a code can point at, and the single letter each occupies in the payload.
+ * The kinds of record a code can point at — every record type this repository issues — and the
+ * single letter each occupies in the payload.
  *
- * NEVER REUSE A RETIRED LETTER. A letter is stamped on cards that outlive the build that printed
- * them, so handing `A` to something that is not an artisan would make every card already in a
- * workshop resolve, confidently, to the wrong kind of record.
+ * **NEVER REUSE A RETIRED LETTER, AND NEVER MOVE A LIVE ONE.** A letter is stamped on cards and tags
+ * that outlive the build that printed them, so handing `A` to something that is not an artisan would
+ * make every card already in a workshop resolve, confidently, to the wrong kind of record. That is
+ * also why `P` stays with the prototype it has always meant and the product takes `D` instead: tags
+ * reading `DPW1:P:…` are tied to objects in workshops today.
+ *
+ * The letters avoid `I`, `L`, `O` and `U`. The check digit's Crockford alphabet drops them because
+ * they are what people get wrong reading a code off a card, and a type letter is typed by the same
+ * person in the same box — but unlike the check it is NOT confusable-corrected on the way in (see
+ * [decodeWorkshopCode]), because a corrected type letter would silently point at a different kind of
+ * record. Not using them at all is the way to keep that true.
+ *
+ * DECLARATION ORDER IS THE DASHBOARD'S, and it is load-bearing rather than tidy: [entries] is read
+ * back out by [knownRecordTypesSentence] into the sentence a caller sees when it asks for a code for
+ * something that is not a record, and the web builds the same sentence out of the same order. Two
+ * clients that listed the types differently would explain one refusal two different ways.
+ *
+ * ⚠ KEEP THIS ENUM IN EXACT STEP WITH `TYPE_LETTER` in `frontend/lib/workshopCodes.ts`. A letter that
+ * means one thing on the handset and another in the browser produces a code that opens the wrong
+ * record — which is the entire failure this file exists to prevent, arriving by the front door.
+ * `DwWorkshopCodesTest` pins every letter so the drift is a failing test, not a mis-scanned tag.
  *
  * [wire] is the spelling the web uses for the same value, so a record type that arrives as a string
  * — out of the stage registry, or off a saved intent — reaches [encodeWorkshopCode] unchanged.
+ * [label] is the word for a heading, [plural] the word for the middle of a sentence.
  */
-enum class DwWorkshopRecordType(val wire: String, val letter: String) {
-    ARTISAN("artisan", "A"),
-    PROTOTYPE("prototype", "P");
+enum class DwWorkshopRecordType(
+    val wire: String,
+    val letter: String,
+    val label: String,
+    val plural: String,
+) {
+    ARTISAN("artisan", "A", "Artisan", "artisans"),
+    CRAFT("craft", "C", "Craft", "crafts"),
+    WORKSHOP("workshop", "W", "Workshop", "workshops"),
+
+    /** proDuct. `P` was already the prototype's when products got a code. */
+    PRODUCT("product", "D", "Product", "products"),
+
+    /** proceSs. `P` and `C` were both taken by the time a process got a code. */
+    PROCESS("process", "S", "Process", "processes"),
+    TOOL("tool", "T", "Tool", "tools"),
+
+    /**
+     * The record is a `QuestionnaireInterview`; `Q` is the letter its endpoint and its queue use.
+     * Labelled "Interview" and not "Questionnaire" because the questionnaire is the FORM and the
+     * record is one sitting with one artisan set — the same distinction the dashboard tile makes
+     * when it says "Take interview".
+     */
+    QUESTIONNAIRE("questionnaire", "Q", "Interview", "interviews"),
+    MEDIA("media", "M", "Media file", "media files"),
+    PROTOTYPE("prototype", "P", "Prototype", "prototypes");
 
     companion object {
         /**
@@ -142,6 +193,19 @@ enum class DwWorkshopRecordType(val wire: String, val letter: String) {
 
         fun ofLetter(raw: String): DwWorkshopRecordType? = entries.firstOrNull { it.letter == raw }
     }
+}
+
+/**
+ * "artisans, crafts, … and prototypes" — the list a refusal names when a caller asks for a code for
+ * something that is not a record.
+ *
+ * Built from the enum rather than written as prose so that adding a record type updates the sentence
+ * with it. A hand-written list is how a caller comes to be told that codes exist for two kinds of
+ * record on a build that prints nine.
+ */
+private fun knownRecordTypesSentence(): String {
+    val words = DwWorkshopRecordType.entries.map { it.plural }
+    return words.dropLast(1).joinToString(", ") + " and " + words.last()
 }
 
 /** What a code resolves to, once it has been read. */
@@ -163,6 +227,11 @@ data class DwWorkshopCodeRef(
  * Matched with `Regex.matches`, which requires the WHOLE input. Java's `$` alone would also accept
  * a trailing newline, which JavaScript's does not, and a code carrying one would then encode into a
  * payload no scanner could read back.
+ *
+ * CHECKED AGAINST EVERY RECORD TYPE IN [DwWorkshopRecordType], not assumed: `backend/prisma/schema.prisma`
+ * declares `id String @id @default(cuid())` on Craft, Workshop, ProductDocumentation,
+ * ToolDocumentation, Process, QuestionnaireInterview and MediaFile exactly as it does on Artisan, so
+ * every id this grammar now admits is the same 25-character lower-case cuid it already admitted.
  */
 private val ID_PATTERN = Regex("^[a-z0-9][a-z0-9-]{7,63}$")
 
@@ -294,7 +363,7 @@ fun encodeWorkshopCode(recordType: String, id: String?): DwEncodeResult {
     val type = DwWorkshopRecordType.ofWire(recordType)
         ?: return DwEncodeResult.Refused(
             DwEncodeRefusal.UNKNOWN_RECORD_TYPE,
-            "No code can be printed for a “$recordType” — codes exist for artisans and prototypes."
+            "No code can be printed for a “$recordType” — codes exist for ${knownRecordTypesSentence()}."
         )
 
     val trimmed = jsTrim(id ?: "")
@@ -516,10 +585,7 @@ fun decodeWorkshopCode(input: String?): DwDecodeResult {
 fun formatWorkshopCodeForPrint(code: String): String = code.chunked(4).joinToString(" ")
 
 /** The word for a record type, for a heading or a refusal sentence. */
-fun workshopRecordTypeLabel(recordType: DwWorkshopRecordType): String = when (recordType) {
-    DwWorkshopRecordType.ARTISAN -> "Artisan"
-    DwWorkshopRecordType.PROTOTYPE -> "Prototype"
-}
+fun workshopRecordTypeLabel(recordType: DwWorkshopRecordType): String = recordType.label
 
 /**
  * What to say when a well-formed code does not resolve.
@@ -533,14 +599,20 @@ fun workshopRecordTypeLabel(recordType: DwWorkshopRecordType): String = when (re
  * A function rather than a constant so the record type can be named — "no prototype in this
  * workshop" is far more useful than "no record", and it gives nothing away.
  */
-fun unresolvedWorkshopCodeMessage(recordType: DwWorkshopRecordType): String = when (recordType) {
-    DwWorkshopRecordType.PROTOTYPE ->
-        "No prototype in this workshop matches that tag. It may belong to another workshop, or the " +
+fun unresolvedWorkshopCodeMessage(recordType: DwWorkshopRecordType): String {
+    if (recordType == DwWorkshopRecordType.PROTOTYPE) {
+        // A prototype is a row inside one design workshop rather than a repository record, so the two
+        // places it can be — another workshop, or a device this one has not synced with — are named.
+        return "No prototype in this workshop matches that tag. It may belong to another workshop, or the " +
             "row may not have reached this device yet — open the workshop that made it, or find the " +
             "prototype in the list."
-    DwWorkshopRecordType.ARTISAN ->
-        "No artisan you can open matches that card. It may not be in the repository, or it may " +
-            "belong to work you do not have access to — search for the artisan by name instead."
+    }
+    // `lowercase()` and not `toLowerCase()`: the latter is the DEFAULT locale, and on a handset set to
+    // Turkish it maps `I` to a dotless `ı`, so an "Interview" would be described to a designer with a
+    // character the web never writes. Every label here is ASCII, so the root-locale mapping is exact.
+    val noun = recordType.label.lowercase()
+    return "No $noun you can open matches that code. It may not be in the repository, or it may " +
+        "belong to work you do not have access to — search for the $noun by name instead."
 }
 
 // --------------------------------------------------------------------------------------

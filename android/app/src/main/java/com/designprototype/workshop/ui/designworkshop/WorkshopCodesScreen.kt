@@ -39,12 +39,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -55,12 +51,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.draw.drawBehind
 import com.designprototype.workshop.data.DwCardHit
 import com.designprototype.workshop.data.DwCardRender
 import com.designprototype.workshop.data.DwCardSource
 import com.designprototype.workshop.data.DwDecodeResult
-import com.designprototype.workshop.data.DwQrSymbol
 import com.designprototype.workshop.data.DwWorkshopCodeRef
 import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.data.SchemaResponse
@@ -78,7 +72,10 @@ import com.designprototype.workshop.data.workshopCardSource
 import com.designprototype.workshop.data.workshopCardSpecs
 import com.designprototype.workshop.data.workshopRecordTypeLabel
 import com.designprototype.workshop.report.renderCardSheetPdf
+import com.designprototype.workshop.ui.DwQrSymbolImage
+import com.designprototype.workshop.ui.RecordCodeOutcome
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.lookUpRecordCode
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -268,7 +265,23 @@ fun WorkshopCodesScreen(
                     // `GET /artisans/{id}` answers 404 both for a record that does not exist and for
                     // one this designer may not see, and telling the two apart here would hand back
                     // exactly the fact the API withholds.
-                    else -> lookUpArtisan(repository, ref.id)
+                    ref.recordType == DwWorkshopRecordType.ARTISAN -> lookUpArtisan(repository, ref.id)
+                    // EVERY OTHER RECORD TYPE, and this branch is why it is a branch. This `when` used
+                    // to end at `else -> lookUpArtisan`, which was correct while the grammar carried
+                    // exactly two letters: anything that was not a prototype was an artisan. The
+                    // moment nine letters existed, that `else` started asking `GET /artisans/{id}`
+                    // about a TOOL id — which 404s, and is then reported as "no artisan you can open
+                    // matches that code … search for the artisan by name instead". A designer standing
+                    // at this screen with a tool tag would be told, confidently, the wrong thing about
+                    // a record this build opens perfectly well from Search. `lookUpRecordCode` asks the
+                    // endpoint that actually holds the record and names it correctly; its refusals are
+                    // the same flattened sentence for the same reason.
+                    else -> when (val answer = lookUpRecordCode(repository, ref)) {
+                        is RecordCodeOutcome.Found ->
+                            DwLookupOutcome.Found(DwCardHit(answer.hit.label, answer.hit.detail.orEmpty()))
+
+                        is RecordCodeOutcome.Refused -> DwLookupOutcome.Refused(answer.message)
+                    }
                 }
             }
         )
@@ -468,53 +481,10 @@ private fun DwCardPreview(card: DwCardRender) {
     }
 }
 
-/**
- * A QR symbol, drawn straight onto the canvas from [DwQrEncode]'s module matrix.
- *
- * NO LIBRARY AND NO BITMAP. `drawBehind` runs on the draw pass rather than composition, so scrolling a
- * sheet of thirty tags repaints rather than recomposes, and nothing is allocated per frame.
- *
- * THE QUIET ZONE IS DRAWN, not assumed: four light modules on every side are what a scanner uses to
- * find the symbol at all, and a symbol laid straight onto a tinted card has none. The light modules
- * are painted WHITE rather than in a theme colour for the same reason a printed card is white — this
- * is a depiction of paper, and a symbol inverted for dark mode is a symbol most scanners refuse.
- *
- * The module size is computed from the box and each run is drawn on absolute boundaries rather than by
- * accumulating a step, so rounding cannot open a hairline between two runs of one row — a seam across
- * a module is exactly the artefact that makes a camera hesitate.
- */
-@Composable
-private fun DwQrSymbolImage(symbol: DwQrSymbol, label: String, modifier: Modifier = Modifier) {
-    val quiet = 4
-    val extent = symbol.size + quiet * 2
-    Box(
-        modifier = modifier
-            .background(Color.White, RoundedCornerShape(2.dp))
-            // The symbol is an image with meaning — a designer using TalkBack needs to know which card
-            // this one is, and "QR code" alone would say the same thing thirty times.
-            .semantics { contentDescription = label }
-            .drawBehind {
-                val unit = size.minDimension / extent
-                for (row in 0 until symbol.size) {
-                    var column = 0
-                    while (column < symbol.size) {
-                        if (!symbol.matrix[row][column]) {
-                            column++
-                            continue
-                        }
-                        var run = 1
-                        while (column + run < symbol.size && symbol.matrix[row][column + run]) run++
-                        drawRect(
-                            color = Color.Black,
-                            topLeft = Offset((column + quiet) * unit, (row + quiet) * unit),
-                            size = Size(run * unit, unit)
-                        )
-                        column += run
-                    }
-                }
-            }
-    )
-}
+// The symbol itself is drawn by `ui/RecordCodeCard.DwQrSymbolImage`, which used to live here as a
+// private copy. It moved when every record type got a code on its own screen: two implementations of
+// "draw this matrix" are two chances to get the quiet zone or the rounding wrong, in one feature a
+// designer moves between within a single workshop.
 
 // --------------------------------------------------------------------------------------
 // Reading a code back
