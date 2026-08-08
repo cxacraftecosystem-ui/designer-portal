@@ -677,9 +677,27 @@ export function stageHoldsSomething(stage: DwDraftStage | undefined): boolean {
  * back before the transaction commits. The unsafe shape — load, edit in a handler, save later — has
  * a window in which another stage page's save lands and is then overwritten; the window is small and
  * the loss is total and silent, which is the worst possible combination.
+ *
+ * `options.prepare` EXISTS SO A TRANSFORM CAN DEPEND ON ANOTHER STORE WITHOUT LEAVING THE
+ * TRANSACTION. A value read before the transaction opens is a value that may already be stale by
+ * the time the put lands — {@link putDraftStage} is the case that proves it, where a media row read
+ * a moment early made the write reinstate a `dwlocal:` reference the server had just confirmed.
+ * Naming the extra stores in `options.stores` puts them in the SAME transaction, so a writer over
+ * the same scope is serialised either wholly before this read or wholly after this write, and
+ * neither order can strand the draft. `prepare` obeys the rule {@link transact} states: it may await
+ * {@link req} and nothing else.
  */
-async function mutate(id: string, transform: (draft: DwDraft) => DwDraft): Promise<DwDraft | null> {
-  const next = await transact([STORE_DRAFTS], "readwrite", async (stores) => {
+async function mutate<P = undefined>(
+  id: string,
+  transform: (draft: DwDraft, prepared: P) => DwDraft,
+  options?: {
+    /** Object stores to open ALONGSIDE `drafts` for `prepare` to read. */
+    stores?: string[];
+    /** Runs inside the transaction, after the draft is found and before `transform`. */
+    prepare?: (stores: Record<string, IDBObjectStore>, draft: DwDraft) => Promise<P>;
+  }
+): Promise<DwDraft | null> {
+  const next = await transact([STORE_DRAFTS, ...(options?.stores ?? [])], "readwrite", async (stores) => {
     const store = stores[STORE_DRAFTS];
     const rows = await req<Record<string, unknown>[]>(store.getAll() as IDBRequest<Record<string, unknown>[]>);
     // Owner-filtered exactly like the reads. Two designers on one laptop can legitimately hold two
@@ -688,8 +706,11 @@ async function mutate(id: string, transform: (draft: DwDraft) => DwDraft): Promi
     // "whichever came first in key order" is who would have been written into.
     const current = rows.map(migrateDraft).find((draft) => matchesId(draft, id) && draftBelongsToSession(draft));
     if (!current) return null;
+    // After the owner check, so a draft belonging to the other session on this laptop is never even
+    // read from the extra stores.
+    const prepared = (options?.prepare ? await options.prepare(stores, current) : undefined) as P;
     const updated: DwDraft = {
-      ...transform(current),
+      ...transform(current, prepared),
       schemaVersion: DW_DRAFT_SCHEMA_VERSION,
       // The identity of a draft is not the transform's to change: rewriting `localId` would orphan
       // every media row that points at it and every open tab holding the id in its URL.
@@ -807,69 +828,144 @@ export async function putDraftStage(
   // would then autosave the OLD `dwlocal:` reference back over the real media id. The tile would go
   // blank (the blob is gone, correctly, because the server confirmed it) and the stage would be held
   // back for ever on a reference nothing can resolve. Resolving at the write, inside the same
-  // transaction that reads the media rows, is the only place that cannot race the page.
-  const confirmed = await confirmedMediaMap(id);
-  const resolve = (values: DwEntryData): DwEntryData => {
-    if (!confirmed.size) return values;
-    const swap = (value: DwValue | undefined): DwValue | undefined => {
-      if (typeof value === "string") return confirmed.get(value) ?? value;
-      if (Array.isArray(value)) return value.map((item) => confirmed.get(item) ?? item);
-      return value;
-    };
-    return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, swap(value)]));
-  };
-
-  return mutate(id, (draft) => {
-    const previous = draft.stages[stageKey] ?? emptyStage(stageKey);
-    const now = Date.now();
-    return {
-      ...draft,
-      stages: {
-        ...draft.stages,
-        [stageKey]: {
-          ...previous,
-          singletons: Object.fromEntries(
-            Object.entries(data.singletons).map(([entityKey, values]) => [entityKey, resolve(values)])
-          ),
-          collections: Object.fromEntries(
-            Object.entries(data.collections).map(([entityKey, rows]) => [
-              entityKey,
-              rows.map((row) => resolve(row) as DwRow)
-            ])
-          ),
-          // Unioned, never replaced. A deletion made in an earlier session is still a deletion that
-          // has to reach the server, and the next autosave from a form that has forgotten about it
-          // would otherwise disarm the sweep and leave the row alive for ever.
-          removedFrom: Array.from(new Set([...previous.removedFrom, ...(data.removedFrom ?? [])])),
-          updatedAt: now,
-          dirtyAt: now,
-          // A stage first written while the workshop has NO server record is reconciled by
-          // definition: there is nothing up there for it to overwrite, and it is created together
-          // with the workshop on the next connection. Anything else keeps whatever the fold or the
-          // last push recorded — a local write must never be able to claim this device has seen the
-          // server's copy of a stage it has not read. See {@link DwDraftStage.serverLoadedAt}.
-          serverLoadedAt: previous.serverLoadedAt ?? (draft.remoteId === null ? now : null),
-          // A fresh edit clears the last refusal: the designer may have just fixed exactly what the
-          // server complained about, and a stale red message on a corrected stage is worse than none.
-          failure: null
+  // transaction that reads the media rows, is the only place that cannot race the page — so the
+  // media read is `prepare`d over [drafts, media] rather than awaited out here. It used to be
+  // awaited out here, in two earlier read-only transactions, and `confirmLocalMedia` opening its own
+  // [drafts, media] readwrite between them and this put was enough to strand the stage.
+  return mutate<Map<string, string>>(
+    id,
+    (draft, confirmed) => {
+      const resolve = (values: DwEntryData): DwEntryData => {
+        if (!confirmed.size) return values;
+        const swap = (value: DwValue | undefined): DwValue | undefined => {
+          if (typeof value === "string") return confirmed.get(value) ?? value;
+          if (Array.isArray(value)) return value.map((item) => confirmed.get(item) ?? item);
+          return value;
+        };
+        return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, swap(value)]));
+      };
+      const previous = draft.stages[stageKey] ?? emptyStage(stageKey);
+      const now = Date.now();
+      return {
+        ...draft,
+        stages: {
+          ...draft.stages,
+          [stageKey]: {
+            ...previous,
+            singletons: Object.fromEntries(
+              Object.entries(data.singletons).map(([entityKey, values]) => [entityKey, resolve(values)])
+            ),
+            collections: Object.fromEntries(
+              Object.entries(data.collections).map(([entityKey, rows]) => [
+                entityKey,
+                rows.map((row) => resolve(row) as DwRow)
+              ])
+            ),
+            // Unioned, never replaced. A deletion made in an earlier session is still a deletion that
+            // has to reach the server, and the next autosave from a form that has forgotten about it
+            // would otherwise disarm the sweep and leave the row alive for ever.
+            removedFrom: Array.from(new Set([...previous.removedFrom, ...(data.removedFrom ?? [])])),
+            updatedAt: now,
+            dirtyAt: now,
+            // A stage first written while the workshop has NO server record is reconciled by
+            // definition: there is nothing up there for it to overwrite, and it is created together
+            // with the workshop on the next connection. Anything else keeps whatever the fold or the
+            // last push recorded — a local write must never be able to claim this device has seen the
+            // server's copy of a stage it has not read. See {@link DwDraftStage.serverLoadedAt}.
+            serverLoadedAt: previous.serverLoadedAt ?? (draft.remoteId === null ? now : null),
+            // A fresh edit clears the last refusal: the designer may have just fixed exactly what the
+            // server complained about, and a stale red message on a corrected stage is worse than none.
+            failure: null
+          }
         }
-      }
-    };
-  });
+      };
+    },
+    { stores: [STORE_MEDIA], prepare: (stores, draft) => confirmedMediaMap(stores[STORE_MEDIA], draft.localId) }
+  );
+}
+
+/** What a push was built from — the state the server's acceptance is an acceptance OF. */
+export type DwPushedSnapshot = {
+  /** The stage's `dirtyAt` when the payload was built. */
+  dirtyAt: number | null;
+  /** The `emptiedEntities` the payload actually carried. */
+  removedFrom: readonly string[];
+};
+
+/**
+ * The unsent work a stage still holds once the server has ACCEPTED a push.
+ *
+ * AN ACKNOWLEDGEMENT CLEARS ONLY THE STAGE IT ACTUALLY DESCRIBED, and both fields are answered by
+ * the one question rather than separately — keeping them apart is what let them drift. `dirtyAt` had
+ * the comparison and `removedFrom` was emptied unconditionally, so a row deleted while the banner's
+ * pass had that same stage in flight lost its deletion flag to a push that never carried it: the
+ * next PUT then sent `replaceCollections: false` and `emptiedEntities: []`, the sweep never reached
+ * the server, the row stayed alive in the repository, and the next clean read put it back on the
+ * designer's screen and into the officer's .docx. `removedFrom` is documented at
+ * {@link DwDraftStage.removedFrom} as "cleared only by a push the server accepted", and a push that
+ * did not carry the deletion did not accept it.
+ *
+ * WHY NOT SUBTRACT THE ACKNOWLEDGED KEYS INSTEAD. `removedFrom` holds ENTITY keys, not row keys, so
+ * it cannot tell one deletion from a second deletion out of the same collection. Deleting a second
+ * participant while a push that already named `participant` is in flight leaves the list reading
+ * exactly as it did before, and subtracting would drop it — the identical resurrection, one row
+ * further along. The stage is dirty either way, so the only question that decides the sweep is
+ * whether this device has touched the stage since the payload was built; when it has, the flag is
+ * kept and the next pass re-arms `replaceCollections`. That costs a redundant sweep in the case
+ * where the later edit was mere typing, and a redundant sweep sends the stage's current rows in the
+ * same payload — the failure it protects against is a row the designer watched disappear coming
+ * back with nothing on screen admitting it.
+ */
+export function unsentAfterPush(
+  stage: DwDraftStage,
+  sent: DwPushedSnapshot
+): { dirtyAt: number | null; removedFrom: string[] } {
+  const sentDirtyAt = sent.dirtyAt ?? 0;
+  /*
+    THE SECOND TEST IS FOR A CLOCK THAT DID NOT MOVE, and without it this rule still loses the
+    deletion it was written to keep.
+
+    A designer typing — or deleting — while the request is in flight leaves a NEWER `dirtyAt`
+    behind, and that is the ordinary signal: `removedFrom` only ever GROWS through `putDraftStage`,
+    which stamps `dirtyAt` in the same write, so the comparison answers for both fields. But
+    `dirtyAt` is `Date.now()`, and two writes can carry the SAME number — a browser that coarsens
+    the clock against fingerprinting advances it in steps of 100 ms, and the whole race here is
+    measured in milliseconds. A deletion written in the payload's own tick is then not "newer", the
+    flag is cleared by an acknowledgement that never carried it, and the row is back on the
+    designer's screen and in the officer's .docx: the exact failure, one clock tick wide.
+
+    So the growth of `removedFrom` is asked DIRECTLY as well. It is not a timestamp and cannot be
+    coarsened away, and it can only ever ADD a keep — the equality guard means an ordinary push,
+    whose list is what it sent, still settles the stage. It is NOT a subtraction: see above for why
+    subtracting the acknowledged keys resurrects the second deletion out of one collection.
+  */
+  const deletedSince = stage.removedFrom.some((key) => !sent.removedFrom.includes(key));
+  const superseded =
+    stage.dirtyAt !== null && (stage.dirtyAt > sentDirtyAt || (stage.dirtyAt === sentDirtyAt && deletedSince));
+  return {
+    dirtyAt: superseded ? stage.dirtyAt : null,
+    removedFrom: superseded ? stage.removedFrom : []
+  };
 }
 
 /**
  * Record that a stage reached the server.
  *
- * `sinceDirtyAt` is the `dirtyAt` the pushed payload was built from, and comparing against it is
- * load-bearing: a designer typing while the request is in flight leaves a NEWER `dirtyAt` behind,
- * and clearing it unconditionally would mark keystrokes as sent that were never in the payload —
- * they would then never be sent at all, and nothing on screen would say a word about it.
+ * `sinceDirtyAt` is the `dirtyAt` the pushed payload was built from and `sinceRemovedFrom` is the
+ * `emptiedEntities` it carried; comparing against both is load-bearing. A designer typing while the
+ * request is in flight leaves a NEWER `dirtyAt` behind, and one deleting a row leaves a key in
+ * `removedFrom` that this payload never named — clearing either unconditionally marks work as sent
+ * that was never in the payload, after which it is never sent at all and nothing on screen says a
+ * word about it. See {@link unsentAfterPush}.
  */
 export async function markStagePushed(
   id: string,
   stageKey: string,
-  options: { completeness?: DwStageCompleteness | null; sinceDirtyAt: number | null }
+  options: {
+    completeness?: DwStageCompleteness | null;
+    sinceDirtyAt: number | null;
+    sinceRemovedFrom: readonly string[];
+  }
 ): Promise<DwDraft | null> {
   return mutate(id, (draft) => {
     const stage = draft.stages[stageKey];
@@ -881,8 +977,7 @@ export async function markStagePushed(
         ...draft.stages,
         [stageKey]: {
           ...stage,
-          dirtyAt: stage.dirtyAt !== null && stage.dirtyAt > (options.sinceDirtyAt ?? 0) ? stage.dirtyAt : null,
-          removedFrom: [],
+          ...unsentAfterPush(stage, { dirtyAt: options.sinceDirtyAt, removedFrom: options.sinceRemovedFrom }),
           lastPushedAt: now,
           // The server has just taken this device's copy, so the two agree — from here on this
           // stage may be re-sent without any risk of overwriting an answer this browser never read.
@@ -997,11 +1092,15 @@ export async function stageLocalMedia(
  *
  * Empty for a draft that has never uploaded anything, which is the common case, so the substitution
  * above costs one indexed read and then nothing.
+ *
+ * TAKES AN OPEN STORE RATHER THAN OPENING ONE. Its caller must see these rows and write the draft
+ * atomically, and a helper that opened its own transaction is exactly what made that impossible —
+ * see {@link putDraftStage}.
  */
-async function confirmedMediaMap(workshopId: string): Promise<Map<string, string>> {
-  const draft = await loadDraft(workshopId);
-  if (!draft) return new Map();
-  const rows = await draftMedia(draft.localId);
+async function confirmedMediaMap(store: IDBObjectStore, localDraftId: string): Promise<Map<string, string>> {
+  const rows = await req<DwDraftMedia[]>(
+    store.index(MEDIA_BY_DRAFT).getAll(localDraftId) as IDBRequest<DwDraftMedia[]>
+  );
   const out = new Map<string, string>();
   for (const row of rows) {
     if (row.remoteMediaId) out.set(`${LOCAL_MEDIA_PREFIX}${row.id}`, row.remoteMediaId);
@@ -1901,6 +2000,44 @@ async function runSync(): Promise<DwSyncResult> {
 
       /* 3. The stages. ------------------------------------------------------------------------ */
       draft = (await loadDraft(draft.localId)) ?? draft;
+
+      /*
+        THE REPAIR BRANCH, for a draft that was stranded before the fix in `putDraftStage` landed.
+
+        A `dwlocal:` reference whose media row ALREADY carries a `remoteMediaId` is unreachable by
+        the loop above — it skips a confirmed row — so nothing else in this pass will ever rewrite
+        it, the stage is held back below for ever behind "it sends itself as soon as they upload",
+        and the only way out was for the designer to find that exact field and type into it. The
+        substitution is the same one `confirmLocalMedia` makes and is idempotent; it is done only
+        when a stranded reference is actually present so an ordinary pass writes nothing.
+
+        THE STAGES ARE ASKED FIRST AND THE MEDIA ONLY IF THEY SAY SO, which is not tidiness: this is
+        the third `draftMedia` call of a single pass over one workshop (`pendingWork` and the upload
+        loop above are the others) and every one of them deserialises the blob of every unconfirmed
+        photograph the draft holds. A draft with no `dwlocal:` reference left anywhere — every draft,
+        nearly always — cannot possibly be stranded, and the scan of `stages` that proves it is
+        memory the pass has already loaded. Paying a fortnight of photographs for that answer, on
+        every pass, on the laptop least able to afford it, is what the index at `MEDIA_BY_DRAFT` was
+        created to avoid.
+      */
+      const held = new Set<string>();
+      for (const stage of Object.values(draft.stages)) for (const ref of unresolvedMediaRefs(stage)) held.add(ref);
+      if (held.size) {
+        const stranded: Array<[string, string]> = [];
+        for (const media of await draftMedia(draft.localId)) {
+          const ref = `${LOCAL_MEDIA_PREFIX}${media.id}`;
+          if (media.remoteMediaId && held.has(ref)) stranded.push([ref, media.remoteMediaId]);
+        }
+        if (stranded.length) {
+          draft =
+            (await mutate(draft.localId, (current) => {
+              let next = current;
+              for (const [ref, mediaId] of stranded) next = rewriteMediaRefs(next, ref, mediaId);
+              return next;
+            })) ?? draft;
+        }
+      }
+
       for (const stageKey of item.stageKeys) {
         const stage = draft.stages[stageKey];
         if (!stage || stage.failure?.permanent) continue;
@@ -2054,10 +2191,11 @@ async function runSync(): Promise<DwSyncResult> {
               ...current.stages,
               [stageKey]: {
                 ...target,
-                // Cleared only when the edit that produced this push is the newest one. A designer
-                // typing while the pass runs must not have their newer keystrokes marked as sent.
-                dirtyAt: target.dirtyAt !== null && target.dirtyAt > (stage.dirtyAt ?? 0) ? target.dirtyAt : null,
-                removedFrom: [],
+                // `stage` is the snapshot this PUT was built from, so it is exactly what the server
+                // has now accepted; `target` is whatever the designer has since typed or deleted.
+                // Answering both fields against the payload rather than clearing them is the whole
+                // guard — see {@link unsentAfterPush}.
+                ...unsentAfterPush(target, { dirtyAt: stage.dirtyAt, removedFrom: stage.removedFrom }),
                 lastPushedAt: now,
                 completeness: saved.completeness ?? target.completeness,
                 failure: rejected
