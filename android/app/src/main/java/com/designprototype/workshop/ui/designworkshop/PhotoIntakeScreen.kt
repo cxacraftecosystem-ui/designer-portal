@@ -780,6 +780,14 @@ private data class DwIntakeOutcome(
  *
  * A NULL HASH IS "UNKNOWN", NEVER "UNIQUE". A descriptor written before the store computed one may
  * not be reported as a duplicate OR as distinct, so it simply takes the ordinary path.
+ *
+ * THE WEB DOES NOT DO THIS, and the asymmetry is deliberate rather than drift. `stageLocalMedia`
+ * stages every file it is handed, and `docs/MEDIA_PIPELINE.md` §5 lists checksum dedupe as "noted,
+ * not built" — but what it declines there is a SERVER lookup, which needs an endpoint and a policy
+ * for what one file in two records means. This is neither: both references name bytes this handset
+ * already holds, so no fact about the workshop changes, and the phone is the client where a duplicate
+ * six-megabyte copy costs storage that runs out. The count is stated in the message for that reason —
+ * a saving the designer cannot see is indistinguishable from a photograph that went missing.
  */
 private suspend fun dwConfirmIntake(
     context: Context,
@@ -797,10 +805,33 @@ private suspend fun dwConfirmIntake(
     val writes = ArrayList<DwIntakeWrite>()
     val unreadable = ArrayList<String>()
     val unresolved = LinkedHashSet<Uri>()
+    /**
+     * Chosen a destination the list no longer offers — named, never skipped.
+     *
+     * `continue` alone was the whole handling here, and it is the silent-emptiness failure wearing a
+     * bulk importer's clothes: the caller drops every row whose photograph is not in [unresolved], so
+     * a `continue` would take the row off the screen having attached nothing and said nothing. The
+     * designer would find the gap at delivery. Reachable whenever the destination list is rebuilt
+     * between choosing and confirming — it is remembered on the draft, which a Confirm itself
+     * replaces — so it costs one branch to make impossible rather than merely unlikely.
+     *
+     * A DIVERGENCE FROM THE WEB, NAMED RATHER THAN QUIET. `.../[id]/photos/page.tsx` still writes
+     * `if (!destination) continue;` and drops the row the same way. Diverging is right here because
+     * the two clients do not disagree about any ANSWER — not one photograph is attached differently —
+     * only about whether a photograph that went nowhere is mentioned, and the rule that the web wins
+     * is about computed results, not about staying quiet in the same places. The web should take the
+     * same branch; until it does, this client says more than its laptop does and never less.
+     */
+    val unplaceable = ArrayList<String>()
     var reused = 0
 
     for (line in chosen) {
-        val destination = destinations[line.choice] ?: continue
+        val destination = destinations[line.choice]
+        if (destination == null) {
+            unplaceable.add(line.row.fileName)
+            unresolved.add(line.uri)
+            continue
+        }
         val imported = runCatching {
             WorkshopDraftStore.importMedia(
                 context = context,
@@ -934,6 +965,18 @@ private suspend fun dwConfirmIntake(
                 "${missed.size} could not be placed because the row they were headed for is no longer " +
                     "in this workshop: ${missed.joinToString(", ").take(200)}. They are still on this " +
                     "device — choose another destination for them."
+            )
+        }
+        // Worded apart from `missed` rather than folded into it, because these were never copied:
+        // saying "they are still on this device" of a file this app has not touched would send a
+        // designer looking in the wrong place for it.
+        if (unplaceable.isNotEmpty()) {
+            val one = unplaceable.size == 1
+            add(
+                "${unplaceable.size} ${if (one) "was" else "were"} headed for a place this workshop no " +
+                    "longer offers, so ${if (one) "it was" else "they were"} not attached: " +
+                    "${unplaceable.joinToString(", ").take(200)}. ${if (one) "It is" else "They are"} " +
+                    "still in the list below — choose again."
             )
         }
         if (unreadable.isNotEmpty()) {

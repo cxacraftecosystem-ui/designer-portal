@@ -196,6 +196,7 @@ import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
 import com.designprototype.workshop.ui.designworkshop.DesignerProfileScreen
 import com.designprototype.workshop.ui.designworkshop.DesignerRosterScreen
+import com.designprototype.workshop.ui.designworkshop.PhotoIntakeScreen
 import com.designprototype.workshop.ui.designworkshop.ReportScreen
 import com.designprototype.workshop.ui.designworkshop.StageIndexScreen
 import com.designprototype.workshop.ui.designworkshop.StageScreen
@@ -1424,7 +1425,8 @@ private fun HomeScreen(
         is Screen.DesignWorkshopStages,
         is Screen.DesignWorkshopStage,
         is Screen.DesignWorkshopReport,
-        is Screen.DesignWorkshopCodes -> NavDestination.DESIGN_WORKSHOPS
+        is Screen.DesignWorkshopCodes,
+        is Screen.DesignWorkshopPhotos -> NavDestination.DESIGN_WORKSHOPS
         // Same reasoning at all three depths: the row opens the list the designer is already inside.
         is Screen.Questionnaires,
         is Screen.QuestionnaireDetail,
@@ -2015,6 +2017,7 @@ private fun HomeScreen(
                 },
                 onOpenReport = { message = null; screen = Screen.DesignWorkshopReport(s.workshopId) },
                 onOpenCodes = { message = null; screen = Screen.DesignWorkshopCodes(s.workshopId) },
+                onOpenPhotos = { message = null; screen = Screen.DesignWorkshopPhotos(s.workshopId) },
                 onError = { showMessage(it) }
             )
 
@@ -2050,6 +2053,13 @@ private fun HomeScreen(
             )
 
             is Screen.DesignWorkshopCodes -> WorkshopCodesScreen(
+                repository = repository,
+                workshopId = s.workshopId,
+                onMessage = { showMessage(it) },
+                onError = { showMessage(it) }
+            )
+
+            is Screen.DesignWorkshopPhotos -> PhotoIntakeScreen(
                 repository = repository,
                 workshopId = s.workshopId,
                 onMessage = { showMessage(it) },
