@@ -201,8 +201,9 @@ class DwWorkshopCodesTest {
             messageOf(decodeWorkshopCode("DPW1:A:CM:NEWD"))
         )
         assertEquals(
-            "No code can be printed for a “craft” — codes exist for artisans and prototypes.",
-            messageOf(encodeWorkshopCode("craft", ARTISAN_ID))
+            "No code can be printed for a “designer” — codes exist for artisans, crafts, workshops, " +
+                "products, processes, tools, interviews, media files and prototypes.",
+            messageOf(encodeWorkshopCode("designer", ARTISAN_ID))
         )
         assertEquals(
             "This record has no identifier yet, so there is nothing to print on a code. Save it first.",
@@ -310,9 +311,18 @@ class DwWorkshopCodesTest {
             DwEncodeRefusal.ID_NOT_AN_IDENTIFIER,
             refusalOf(encodeWorkshopCode("artisan", "CmSik2jg8000eh8xc1lcy661a"))
         )
-        // A record type this build does not print, in the two spellings a caller could reach for.
-        assertEquals(DwEncodeRefusal.UNKNOWN_RECORD_TYPE, refusalOf(encodeWorkshopCode("craft", ARTISAN_ID)))
-        assertEquals(DwEncodeRefusal.UNKNOWN_RECORD_TYPE, refusalOf(encodeWorkshopCode("Artisan", ARTISAN_ID)))
+        // A record type this build does not print, in the spellings a caller could reach for. It used
+        // to read "craft" — crafts now carry a letter of their own, so the assertion is re-pointed at
+        // things this repository genuinely does not issue codes for rather than dropped, and the
+        // capitalised spelling stays: `ofWire` is exact on purpose, because a case-insensitive port
+        // would print a card the web could not have printed.
+        for (notARecord in listOf("designer", "location", "user", "review", "Artisan", "")) {
+            assertEquals(
+                "encoding a “$notARecord” must be refused as an unknown record type",
+                DwEncodeRefusal.UNKNOWN_RECORD_TYPE,
+                refusalOf(encodeWorkshopCode(notARecord, ARTISAN_ID))
+            )
+        }
     }
 
     @Test
@@ -451,10 +461,90 @@ class DwWorkshopCodesTest {
             unresolvedWorkshopCodeMessage(DwWorkshopRecordType.PROTOTYPE)
         )
         assertEquals(
-            "No artisan you can open matches that card. It may not be in the repository, or it may " +
+            "No artisan you can open matches that code. It may not be in the repository, or it may " +
                 "belong to work you do not have access to — search for the artisan by name instead.",
             unresolvedWorkshopCodeMessage(DwWorkshopRecordType.ARTISAN)
         )
+        // EVERY type, not only the two that were here first: the sentence is built from the record
+        // type's own word now, and a word that leaked WHICH of the two situations happened would undo
+        // the API's 404 one card at a time.
+        for (type in DwWorkshopRecordType.entries) {
+            val message = unresolvedWorkshopCodeMessage(type).lowercase()
+            for (giveaway in listOf("permission", "not allowed", "forbidden", "403", "exists")) {
+                assertFalse("$type must not hint at $giveaway", message.contains(giveaway))
+            }
+        }
+        assertEquals("Interview", workshopRecordTypeLabel(DwWorkshopRecordType.QUESTIONNAIRE))
+        assertEquals("Media file", workshopRecordTypeLabel(DwWorkshopRecordType.MEDIA))
+    }
+
+    @Test
+    fun `every record type has the same letter here as in the browser, and no two share one`() {
+        // THE FAILURE THIS PREVENTS: a letter meaning one kind of record on the handset and another in
+        // the browser produces a code that scans cleanly and opens the WRONG record, with the check
+        // digit agreeing all the way. Every value below was read off `frontend/lib/workshopCodes.ts`,
+        // and every code string was printed by that module — see the file header. Changing one strands
+        // every card and tag already printed against it.
+        val letters = linkedMapOf(
+            DwWorkshopRecordType.ARTISAN to "A",
+            DwWorkshopRecordType.CRAFT to "C",
+            DwWorkshopRecordType.WORKSHOP to "W",
+            DwWorkshopRecordType.PRODUCT to "D",
+            DwWorkshopRecordType.PROCESS to "S",
+            DwWorkshopRecordType.TOOL to "T",
+            DwWorkshopRecordType.QUESTIONNAIRE to "Q",
+            DwWorkshopRecordType.MEDIA to "M",
+            DwWorkshopRecordType.PROTOTYPE to "P",
+        )
+
+        // The list is the WHOLE list, in the order the "codes exist for…" sentence reads it out: a type
+        // added to the enum and forgotten here fails on size, and one moved fails on order.
+        assertEquals(letters.keys.toList(), DwWorkshopRecordType.entries.toList())
+
+        val seen = mutableMapOf<String, DwWorkshopRecordType>()
+        for ((type, letter) in letters) {
+            assertEquals("$type's letter", letter, type.letter)
+            // INJECTIVE. [DwWorkshopRecordType.ofLetter] takes the FIRST entry with a letter, so a
+            // duplicate would not be a compile error — it would silently drop one record type out of
+            // the decoder and resolve every code of that type to the other one.
+            assertNull("$letter is already ${seen[letter]}", seen.put(letter, type))
+            // None of the letters people misread off a card. The check digit's alphabet drops I, L, O
+            // and U; the type letter is typed by the same person in the same box and is NOT
+            // confusable-corrected, so it must not use them either.
+            assertFalse("$letter is a confusable", letter in "ILOU")
+
+            // Whole strings, not a round trip: these are what a printed card carries.
+            val expected = "DPW1:$letter:CMSIK2JG8000EH8XC1LCY661A"
+            assertEquals(
+                "$expected:${workshopCodeCheck(expected)}",
+                codeOf(encodeWorkshopCode(type, ARTISAN_ID))
+            )
+            assertEquals(
+                DwWorkshopCodeRef(type, ARTISAN_ID),
+                refOf(decodeWorkshopCode("$expected:${workshopCodeCheck(expected)}"))
+            )
+            // And the wire name is the web's spelling, which is what lets a scanned code route through
+            // the same `searchRecordEntryMode` a tapped search hit does.
+            assertEquals(type, DwWorkshopRecordType.ofWire(type.wire))
+        }
+    }
+
+    @Test
+    fun `the anti-PII gate applies to every record type, not only the two it was written for`() {
+        // The gate sits before the letter lookup's success path, so a new record type cannot route
+        // around it — but that is exactly the sort of thing a refactor breaks silently, and the field
+        // it would leak is Aadhaar, this repository's deduplication key.
+        for (type in DwWorkshopRecordType.entries) {
+            for (sensitive in listOf("234567890123", "2345 6789 0123", "XXXX XXXX 9012", "VW1234567890")) {
+                assertEquals(
+                    "$type must refuse '$sensitive' as sensitive",
+                    DwEncodeRefusal.ID_LOOKS_SENSITIVE,
+                    refusalOf(encodeWorkshopCode(type, sensitive))
+                )
+            }
+            // And an unsaved record still refuses with NO_ID rather than encoding an empty reference.
+            assertEquals(DwEncodeRefusal.NO_ID, refusalOf(encodeWorkshopCode(type, null)))
+        }
     }
 
     // ----------------------------------------------------------------------------------

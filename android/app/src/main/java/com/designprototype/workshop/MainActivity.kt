@@ -131,6 +131,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.designprototype.workshop.data.ApiClient
+import com.designprototype.workshop.data.ArtisanIdentity
 import com.designprototype.workshop.data.ArtisanCreateRequest
 import com.designprototype.workshop.data.CarryContext
 import com.designprototype.workshop.data.CarryContextStore
@@ -190,9 +191,13 @@ import com.designprototype.workshop.ui.rememberCarryPrefill
 import com.designprototype.workshop.ui.Coral
 import com.designprototype.workshop.ui.ConsolidatedQuestionnaireScreen
 import com.designprototype.workshop.ui.DataBrowserScreen
+import com.designprototype.workshop.ui.RecordCodeSection
 // The Design & Prototype Workshop capture surface. Four screens, all of them rendered entirely
 // from the field registry — see ui/designworkshop/FieldRenderer.kt for why there is no per-stage
 // form code here or anywhere else.
+import com.designprototype.workshop.data.DwWorkshopRecordType
+import com.designprototype.workshop.ui.designworkshop.DwIdentityCardControl
+import com.designprototype.workshop.ui.designworkshop.DwIdentityKind
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
 import com.designprototype.workshop.ui.designworkshop.DwLanguagePackOfferCard
@@ -2441,12 +2446,19 @@ private fun searchFocusLabel(recordType: String): String = when (recordType) {
 }
 
 /**
- * The record type a search hit belongs to, as the app's own [EntryMode].
+ * The record type a search hit — or a scanned code — belongs to, as the app's own [EntryMode].
  *
  * [SearchRecordTypes] is the contract the search screen reports against; anything unrecognised falls
  * back to ARTISAN rather than throwing, because a new bucket appearing server-side must not crash a
  * tap. MEDIA is included: it has no edit form (the web opens the object itself), and [EditScreen]
  * shows the file with its transcript instead.
+ *
+ * IT COVERS MORE THAN THE FIVE SEARCH BUCKETS, and deliberately. `RecordCodeLookupPanel` reports
+ * through this same callback using [DwWorkshopRecordType.wire], which is the identical singular
+ * vocabulary and reaches three types `GET /search` has no bucket for — a craft, a process and an
+ * interview. Routing them here rather than in a second mapper beside it is what keeps a scanned code
+ * and a tapped result landing on one screen; a code that fell through to `else` would have opened
+ * somebody's craft as an artisan.
  */
 private fun searchRecordEntryMode(recordType: String): EntryMode = when (recordType) {
     SearchRecordTypes.ARTISAN -> EntryMode.ARTISAN
@@ -2454,6 +2466,9 @@ private fun searchRecordEntryMode(recordType: String): EntryMode = when (recordT
     SearchRecordTypes.PRODUCT -> EntryMode.PRODUCT
     SearchRecordTypes.TOOL -> EntryMode.TOOL
     SearchRecordTypes.MEDIA -> EntryMode.MEDIA
+    DwWorkshopRecordType.CRAFT.wire -> EntryMode.CRAFT
+    DwWorkshopRecordType.PROCESS.wire -> EntryMode.PROCESS
+    DwWorkshopRecordType.QUESTIONNAIRE.wire -> EntryMode.QUESTIONNAIRE
     else -> EntryMode.ARTISAN
 }
 
@@ -4591,83 +4606,32 @@ private val EMAIL_RE = Regex("""[^\s@]+@[^\s@]+\.[^\s@]+""")
 // a round trip that may not even complete.
 // ---------------------------------------------------------------------------
 
-private const val AADHAAR_LENGTH = 12
+// THE RULES THEMSELVES NOW LIVE IN data/ArtisanIdentity.kt, NOT HERE, and the move is worth a
+// sentence because the call sites below are unchanged. They were `private` inside this 14,000-line
+// file, so nothing else on the handset could reach them: the design-workshop stage field that holds
+// the same number (`artisanCardNo`) had no checksum at all, the card-reading panel had no way to
+// refuse a candidate the server would have refused, and no JVM unit test could see any of it. The
+// second copy was already being written when the shared object was made instead.
+//
+// TWO VALIDATORS THAT DISAGREE ABOUT ONE NUMBER is the failure this closes: a designer offline is
+// told the number is fine, and the server refuses it after a sync they cannot watch, with the card
+// long since back in the artisan's pocket.
 
-// Verhoeff tables: `D` is the dihedral-group multiplication table, `P` the position permutation
-// applied to each digit by its distance from the right. UIDAI computes this checksum over the first
-// 11 digits because it catches every single-digit error and every adjacent transposition — the two
-// ways a 12-digit number gets misread off a card.
-private val VERHOEFF_D = arrayOf(
-    intArrayOf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
-    intArrayOf(1, 2, 3, 4, 0, 6, 7, 8, 9, 5),
-    intArrayOf(2, 3, 4, 0, 1, 7, 8, 9, 5, 6),
-    intArrayOf(3, 4, 0, 1, 2, 8, 9, 5, 6, 7),
-    intArrayOf(4, 0, 1, 2, 3, 9, 5, 6, 7, 8),
-    intArrayOf(5, 9, 8, 7, 6, 0, 4, 3, 2, 1),
-    intArrayOf(6, 5, 9, 8, 7, 1, 0, 4, 3, 2),
-    intArrayOf(7, 6, 5, 9, 8, 2, 1, 0, 4, 3),
-    intArrayOf(8, 7, 6, 5, 9, 3, 2, 1, 0, 4),
-    intArrayOf(9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
-)
-
-private val VERHOEFF_P = arrayOf(
-    intArrayOf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
-    intArrayOf(1, 5, 7, 6, 2, 8, 3, 0, 9, 4),
-    intArrayOf(5, 8, 0, 3, 7, 9, 6, 1, 4, 2),
-    intArrayOf(8, 9, 1, 6, 0, 4, 3, 5, 2, 7),
-    intArrayOf(9, 4, 5, 3, 1, 2, 6, 8, 7, 0),
-    intArrayOf(4, 2, 8, 6, 5, 7, 3, 9, 0, 1),
-    intArrayOf(2, 7, 9, 3, 8, 0, 6, 4, 1, 5),
-    intArrayOf(7, 0, 4, 6, 9, 1, 3, 2, 5, 8)
-)
-
-/** True when [digits] satisfies the Verhoeff checksum (the 12th digit checks the first 11). */
-private fun verhoeffOk(digits: String): Boolean {
-    var checksum = 0
-    digits.reversed().forEachIndexed { index, char ->
-        checksum = VERHOEFF_D[checksum][VERHOEFF_P[index % 8][char - '0']]
-    }
-    return checksum == 0
-}
+private const val AADHAAR_LENGTH = ArtisanIdentity.AADHAAR_LENGTH
 
 /**
  * The reason [value] is not a usable Aadhaar number, or null when it is fine (blank included — the
- * field is optional). Each message names the specific problem, because "invalid Aadhaar number"
- * gives a field researcher nothing to act on. Wording matches the API's, so the inline error a
- * researcher sees offline is the same sentence the server would have sent back.
+ * field is optional here and presence is checked separately on the create path).
  */
-private fun aadhaarValidationError(value: String?): String? {
-    val digits = value?.trim().orEmpty()
-    if (digits.isEmpty()) return null
-    // ASCII digits only, NOT Char.isDigit(): that returns true for Devanagari "१", fullwidth "２" and
-    // every other decimal script, and `char - '0'` on one of those indexes far off the end of the
-    // Verhoeff tables — an ArrayIndexOutOfBoundsException thrown straight out of a Compose callback.
-    // The server rejects the same characters (they would otherwise be stored verbatim and defeat the
-    // unique index), so rejecting them here keeps both sides answering the same sentence.
-    if (!digits.all { it in '0'..'9' }) return "Aadhaar number must be 12 digits — remove any letters or symbols."
-    if (digits.length != AADHAAR_LENGTH) return "Aadhaar number must be exactly 12 digits (this one has ${digits.length})."
-    if (digits[0] == '0' || digits[0] == '1') return "Aadhaar numbers never start with 0 or 1 — please re-check the first digit."
-    if (!verhoeffOk(digits)) {
-        return "That Aadhaar number fails its checksum, so at least one digit is wrong. " +
-            "Please re-read the card and enter it again."
-    }
-    return null
-}
+private fun aadhaarValidationError(value: String?): String? = ArtisanIdentity.aadhaarError(value)
 
 /**
  * "123456789012" -> "XXXX XXXX 9012", the form every surface EXCEPT the edit form uses.
  *
  * Aadhaar is regulated personal data, so a browse screen shows only the last four digits — enough to
- * confirm this is the right person, not enough to be a usable identifier. Mirrors the API's own
- * masking (which the data browser, the .xlsx report and exports already get), including its refusal
- * to partially reveal a malformed short value.
+ * confirm this is the right person, not enough to be a usable identifier.
  */
-private fun maskAadhaar(value: String?): String? {
-    val digits = value?.trim().orEmpty()
-    if (digits.isEmpty()) return null
-    if (digits.length < 4) return "XXXX XXXX XXXX"
-    return "XXXX XXXX ${digits.takeLast(4)}"
-}
+private fun maskAadhaar(value: String?): String? = ArtisanIdentity.mask(value)
 
 /**
  * Displays the stored bare digits as the "1234 5678 9012" grouping printed on the card, so a
@@ -5793,6 +5757,10 @@ private fun EditScreen(
                     onDone = onDone,
                     onError = onError
                 )
+                // THE RECORD'S OWN CODE, drawn live from its id and stored nowhere — see
+                // [RecordCodeSection]. It is the same payload the workshop roster card carries, so a
+                // card cut off a printed sheet in January and this screen in June are one code.
+                RecordCodeSection(repository, DwWorkshopRecordType.ARTISAN, recordId, d.name)
                 ArtisanQuestionnairePanel(answers = answers, loading = answersLoading)
             }
         }
@@ -5804,15 +5772,20 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load product") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else ProductForm(
-                repository = repository,
-                crafts = crafts,
-                artisans = artisans,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                ProductForm(
+                    repository = repository,
+                    crafts = crafts,
+                    artisans = artisans,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.PRODUCT, recordId, d.productName)
+            }
         }
         EntryMode.PROCESS -> {
             var detail by remember(recordId) { mutableStateOf<ProcessDetailDto?>(null) }
@@ -5822,13 +5795,18 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load process") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else ProcessForm(
-                repository = repository,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                ProcessForm(
+                    repository = repository,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.PROCESS, recordId, d.name)
+            }
         }
         EntryMode.TOOL -> {
             var detail by remember(recordId) { mutableStateOf<ToolDetailDto?>(null) }
@@ -5838,15 +5816,20 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load tool") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else ToolForm(
-                repository = repository,
-                crafts = crafts,
-                artisans = artisans,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                ToolForm(
+                    repository = repository,
+                    crafts = crafts,
+                    artisans = artisans,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.TOOL, recordId, d.toolkitName)
+            }
         }
         EntryMode.WORKSHOP -> {
             var detail by remember(recordId) { mutableStateOf<WorkshopDetailDto?>(null) }
@@ -5856,14 +5839,19 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load workshop") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else WorkshopForm(
-                repository = repository,
-                artisans = artisans,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                WorkshopForm(
+                    repository = repository,
+                    artisans = artisans,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.WORKSHOP, recordId, d.title)
+            }
         }
         EntryMode.CRAFT -> {
             var detail by remember(recordId) { mutableStateOf<CraftDto?>(null) }
@@ -5873,23 +5861,35 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load craft") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else CraftForm(
-                repository = repository,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                CraftForm(
+                    repository = repository,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.CRAFT, recordId, d.name)
+            }
         }
         // A media file has no edit form — the web's search results open the object itself. Search is
         // the only route that lands here, so show the file with its transcript rather than the
         // "cannot be edited" dead end it used to hit.
-        EntryMode.MEDIA -> ViewDataDetail(
-            repository = repository,
-            mode = EntryMode.MEDIA,
-            recordId = recordId,
-            onError = onError
-        )
+        EntryMode.MEDIA -> {
+            ViewDataDetail(
+                repository = repository,
+                mode = EntryMode.MEDIA,
+                recordId = recordId,
+                onError = onError
+            )
+            // A media file has no edit form, but it IS a record somebody created and it has an id, so
+            // it gets a code like everything else. No title is passed: the file's own name is not
+            // loaded on this branch, and inventing one would put a caption on a card that did not come
+            // off the record.
+            RecordCodeSection(repository, DwWorkshopRecordType.MEDIA, recordId)
+        }
         else -> Text("This record type cannot be edited here.", color = Muted)
     }
     if (canDelete && mode != EntryMode.MEDIA && mode != EntryMode.USERS && mode != EntryMode.VIEW_DATA) {
@@ -5933,6 +5933,7 @@ private fun InterviewEditLoader(
             onError = onError,
             onSaved = onDone
         )
+        RecordCodeSection(repository, DwWorkshopRecordType.QUESTIONNAIRE, recordId, d.title)
         if (canDelete) {
             DeleteRecordSection(repository, EntryMode.QUESTIONNAIRE, recordId, onDeleted = onDone, onError = onError)
         }
@@ -6049,6 +6050,32 @@ private fun ArtisanForm(
     val scope = rememberCoroutineScope()
     val media = rememberMediaCaptureState()
     val isEdit = editing != null
+    /**
+     * Whether to offer the identity-card reader at all — the DESIGNER SET, which is not the rule
+     * that opened this screen.
+     *
+     * TWO DIFFERENT PERMISSIONS, AND THEY DO NOT NEST. This form is reached through
+     * `UserDto.canCreateRecords()`, a rank threshold at RESEARCHER and above. The endpoint the
+     * reader posts to, `POST /design-workshops/ocr/identity`, begins with `_require_designer` —
+     * `can_run_design_workshops`, the SET {DESIGNER, ADMIN, MASTER_ADMIN}. A PROFESSOR passes the
+     * first and fails the second while OUTRANKING a designer, which is the intended rule and not an
+     * oversight (see `FieldPermissions.canRunDesignWorkshops` and `deps.can_run_design_workshops`).
+     * `backend/tests/test_design_workshop_gate.py` asserts the 403 for RESEARCHER and PROFESSOR by
+     * name; it was run rather than assumed.
+     *
+     * Without this the button appears for a researcher, who photographs somebody's Aadhaar card and
+     * has it uploaded to a third-party vision model BEFORE the 403 arrives — the photograph is taken
+     * and sent, and only then refused. Hiding the control is the only point at which that is
+     * preventable on this side.
+     *
+     * `remember`ed with no key on purpose: a role cannot change while this screen is mounted (it
+     * takes a fresh sign-in, which rebuilds the tree), so the boolean is stable and the control
+     * cannot appear and disappear between frames — the hazard `DwIdentityCardControl`'s own header
+     * warns about. Fails CLOSED: no cached user, no reader.
+     */
+    val canReadIdentityCards = remember {
+        repository.cachedUser()?.let { FieldPermissions.canRunDesignWorkshops(it) } == true
+    }
     var name by remember(editing) { mutableStateOf(editing?.name ?: prefill?.artisanName ?: "") }
     var localName by remember(editing) { mutableStateOf(editing?.localName ?: "") }
     var gender by remember(editing) { mutableStateOf(editing?.gender?.takeIf { it.isNotBlank() } ?: "Male") }
@@ -6376,6 +6403,31 @@ private fun ArtisanForm(
             required = aadhaarRequired,
             focusRequester = aadhaarFocus
         ) { aadhaar = it; aadhaarError = null }
+        /*
+         * PHOTOGRAPH THE CARD INSTEAD OF TYPING TWELVE DIGITS — or pick a photograph of it that is
+         * already on this phone. This is the box where the repository's deduplication key is
+         * actually entered, and until now it was the one identity field on the handset with no
+         * camera path at all: the reader existed only on the design-workshop stage form.
+         *
+         * NOTHING IS WRITTEN FROM HERE WITHOUT A TAP on a button that spells the number out. `onUse`
+         * is the only route from the reader into `aadhaar`, it is reached from that tap alone, and
+         * the value it carries has been through the same Verhoeff check the box below it applies —
+         * see DwIdentityCardControl for why an auto-filled deduplication key is worse than an empty
+         * box. The photograph is not kept, on this device or on the server.
+         *
+         * OFFERED TO THE DESIGNER SET ONLY — see [canReadIdentityCards] above, which is a different
+         * rule from the one that opened this screen.
+         */
+        if (canReadIdentityCards) {
+            DwIdentityCardControl(
+                targetLabel = "the Aadhaar number",
+                kind = DwIdentityKind.AADHAAR,
+                repository = repository,
+                enabled = !saving,
+                onUse = { digits -> aadhaar = digits; aadhaarError = null },
+                onError = onError,
+            )
+        }
         DropdownField(
             label = "Artisan Pehchan Card available",
             options = listOf("yes" to "Yes", "no" to "No"),
@@ -6410,6 +6462,23 @@ private fun ArtisanForm(
                 .fillMaxWidth()
                 .focusRequester(pehchanFocus)
         )
+        // Only when the artisan holds a card, and only for the designer set. Offering to photograph
+        // a document the record has just said does not exist is an invitation to photograph
+        // SOMETHING — and for this class of data the wrong photograph being taken at all is the
+        // incident, not the wrong value being stored.
+        if (canReadIdentityCards && pehchanAvailable) {
+            DwIdentityCardControl(
+                targetLabel = "the Pehchan card number",
+                kind = DwIdentityKind.PEHCHAN,
+                repository = repository,
+                enabled = !saving,
+                // Normalised by the reader to the ONE spelling the server stores. A Pehchan number
+                // has no checksum, so normalisation is the only thing standing between one card and
+                // two differently-punctuated records of it.
+                onUse = { value -> pehchanNumber = value; pehchanError = null },
+                onError = onError,
+            )
+        }
         NumberedListInput(
             label = "Do's (positive prompt)",
             items = dosItems,

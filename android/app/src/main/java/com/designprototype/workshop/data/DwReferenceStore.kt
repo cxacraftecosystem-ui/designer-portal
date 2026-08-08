@@ -179,19 +179,64 @@ data class DwReferenceResponseDto(
     val filtered: Boolean = false,
 )
 
-/** The wire shape of `POST /design-workshops/ocr/identity`. */
+/**
+ * One number the server claims to have read, AFTER its own filtering.
+ *
+ * Every 12-digit candidate that reaches here has already survived the UIDAI Verhoeff checksum in
+ * `backend/app/services/identity_ocr.py` — roughly nine misreads in ten die there. The client checks
+ * it again anyway ([ArtisanIdentity.aadhaarError]) because a number that satisfies the server's rule
+ * and fails the handset's would mean the two ports have drifted, and the moment to find that out is
+ * before a designer is offered the number, not after it is stored.
+ */
+@Serializable
+data class DwIdentityCandidateDto(
+    /** The digits themselves, unconfirmed. NEVER written to a field without a human tap. */
+    val value: String = "",
+    /** AADHAAR | PEHCHAN. Shown so a misclassification is visible rather than silent. */
+    val kind: String = "",
+    /** 0..0.95 — the server clamps below 1.0 on purpose. Shown as words, not a percentage. */
+    val confidence: Double = 0.0,
+    /** AADHAAR only: "XXXX XXXX 9012", the ONLY form any surface but the confirm panel may print. */
+    val masked: String = "",
+)
+
+/**
+ * The wire shape of `POST /design-workshops/ocr/identity`.
+ *
+ * THESE FIELD NAMES ARE THE SERVER'S, CHECKED AGAINST IT RATHER THAN REMEMBERED. This DTO previously
+ * declared `number`, `documentType`, `name`, `confidence` and `message` — none of which the endpoint
+ * has ever sent. `IdentityOcrResult.payload()` returns `aadhaarCandidates` / `pehchanCandidates` /
+ * `rejectedAadhaarCount` / `provider` / `requiresConfirmation`, and because this client decodes with
+ * `ignoreUnknownKeys = true` the mismatch did not throw: every field defaulted, `number` came back
+ * "", and a PERFECT read was reported to the designer as "no number could be read from that
+ * photograph". The card looked unreadable; the reader was simply listening on the wrong keys.
+ * `DwIdentityOcrWireTest` pins this against the exact JSON the server emits so it cannot drift back.
+ */
 @Serializable
 data class DwIdentityOcrDto(
-    /** The number as the model read it, unconfirmed. NEVER written to a field without a human tap. */
-    val number: String = "",
-    /** AADHAAR | PEHCHAN | OTHER, when the server can tell. Shown so a misclassification is visible. */
-    val documentType: String = "",
-    /** The name printed on the card, when it was legible. Offered alongside the number, never forced. */
-    val name: String = "",
-    /** 0..1 where the server supplies one. Shown as words, not as a number — see the OCR card. */
-    val confidence: Double? = null,
-    /** Why nothing could be read, when nothing could be. Surfaced verbatim. */
-    val message: String = "",
+    /** Verhoeff-valid 12-digit candidates, best first. Empty is an ordinary answer, not an error. */
+    val aadhaarCandidates: List<DwIdentityCandidateDto> = emptyList(),
+    /** Normalised PM Vishwakarma artisan IDs. No checksum exists for these — see ArtisanIdentity. */
+    val pehchanCandidates: List<DwIdentityCandidateDto> = emptyList(),
+    /**
+     * How many 12-digit runs the model produced that FAILED the checksum.
+     *
+     * A count and never the values — a rejected candidate is still somebody's misread identity
+     * number. Worth showing, because "3 readings were rejected" tells a designer the card was found
+     * and misread (move to better light) while "nothing was read" tells them it was not found at
+     * all (fill the frame). Those are different next actions.
+     */
+    val rejectedAadhaarCount: Int = 0,
+    /** Which vision provider answered. Diagnostic only; never shown beside a number. */
+    val provider: String = "",
+    /**
+     * The server saying, in the payload, that this is a suggestion and not a commit.
+     *
+     * Defaults TRUE so that a server which omits it — an older deployment, a proxy that rewrote the
+     * body — is read as "a human must confirm this" rather than as permission to write. The client
+     * never auto-commits regardless; this is the belt to that braces.
+     */
+    val requiresConfirmation: Boolean = true,
 )
 
 object DwReferenceStore {

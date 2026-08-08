@@ -1,12 +1,12 @@
 /**
- * The code printed on an artisan card and on a prototype tag, and the reasoning behind every
- * character of it.
+ * The code printed on — and drawn live beside — every record this repository issues, and the
+ * reasoning behind every character of it.
  *
  * THE PROBLEM. The worst thing that happens in a workshop is not a lost file, it is a mis-typed
  * identifier: two days of prototype iteration attached to the wrong prototype, or a day of
  * measurements attached to the wrong artisan. Nobody finds out, because both records look complete.
- * Prototype rows and artisan records already carry identifiers; a scan removes the typing, and
- * removing the typing removes the class of error.
+ * Every record here already carries an identifier; a scan removes the typing, and removing the
+ * typing removes the class of error.
  *
  * ── THE PAYLOAD ──────────────────────────────────────────────────────────────────────────────
  *
@@ -14,8 +14,16 @@
  *     ─┬── ┬ ─────────────┬─────────── ─┬──
  *      │   │              │             └─ check: four characters over everything to its left
  *      │   │              └─ the record's id, upper-cased
- *      │   └─ record type: A artisan, P prototype
+ *      │   └─ record type: one letter, see TYPE_LETTER
  *      └─ namespace "DPW" + payload version 1
+ *
+ * **NOTHING IS EVER SAVED.** There is no stored PNG, no cached SVG, no column on the record. The
+ * payload is a pure function of a record's type and id, so every surface that shows a code
+ * regenerates it — encoding a payload and scoring eight QR masks is well under a millisecond, and
+ * the alternative is an asset that goes stale, needs invalidating, and occupies storage on a field
+ * handset for something that costs nothing to redraw. If you are reading this because you are about
+ * to "optimise" it into a stored image: the id it depends on is immutable, so a cached image can
+ * only ever be as correct as this function, and never more.
  *
  * **It is not a URL, and that is the first decision.** A URL is what every QR generator produces by
  * default and it is wrong here twice over. A card printed at a workshop in 2026 has to scan in
@@ -93,12 +101,127 @@ export const WORKSHOP_CODE_VERSION = 1;
  */
 export const SUPPORTED_VERSIONS: ReadonlySet<number> = new Set([1]);
 
-/** The kinds of record a code can point at. */
-export type WorkshopRecordType = "artisan" | "prototype";
+/**
+ * The kinds of record a code can point at: every record type this repository issues.
+ *
+ * The order is the dashboard's — artisan, craft, workshop, product, process, tool, interview, media
+ * — with `prototype` last because it is a row inside a design workshop rather than a record in the
+ * repository proper. That order is read back out in the "codes exist for…" refusal below, so both
+ * clients must declare it identically or they explain one refusal two ways.
+ */
+export type WorkshopRecordType =
+  | "artisan"
+  | "craft"
+  | "workshop"
+  | "product"
+  | "process"
+  | "tool"
+  | "questionnaire"
+  | "media"
+  | "prototype";
 
-/** The single letter each record type occupies in the payload. Never reuse a retired letter. */
-const TYPE_LETTER: Record<WorkshopRecordType, string> = { artisan: "A", prototype: "P" };
-const TYPE_FROM_LETTER: Record<string, WorkshopRecordType> = { A: "artisan", P: "prototype" };
+/**
+ * The single letter each record type occupies in the payload.
+ *
+ * **NEVER REUSE A RETIRED LETTER, AND NEVER MOVE A LIVE ONE.** A letter is stamped on cards and tags
+ * that outlive the build that printed them, so handing `A` to something that is not an artisan would
+ * make every card already in a workshop resolve, confidently, to the wrong kind of record. That is
+ * also why `P` stays with the prototype it has always meant and the product takes `D` instead: tags
+ * reading `DPW1:P:…` are tied to objects in workshops today.
+ *
+ * The letters avoid `I`, `L`, `O` and `U`. The check digit's Crockford alphabet drops them because
+ * they are what people get wrong reading a code off a card, and a type letter is typed by the same
+ * person in the same box — but unlike the check it is NOT confusable-corrected on the way in (see
+ * {@link decodeWorkshopCode}), because a corrected type letter would silently point at a different
+ * kind of record. Not using them at all is the way to keep that true.
+ *
+ * ⚠ KEEP THIS TABLE IN EXACT STEP WITH `DwWorkshopRecordType` in
+ * `android/app/src/main/java/com/designprototype/workshop/data/DwWorkshopCodes.kt`. A letter that
+ * means one thing on the handset and another in the browser produces a code that opens the wrong
+ * record — which is the entire failure this file exists to prevent, arriving by the front door.
+ */
+const TYPE_LETTER: Record<WorkshopRecordType, string> = {
+  artisan: "A",
+  craft: "C",
+  workshop: "W",
+  /** proDuct. `P` was already the prototype's when products got a code. */
+  product: "D",
+  /** proceSs. `P` and `C` were both taken by the time a process got a code. */
+  process: "S",
+  tool: "T",
+  /** The record is a `QuestionnaireInterview`; `Q` is the letter its endpoint and its queue use. */
+  questionnaire: "Q",
+  media: "M",
+  prototype: "P"
+};
+
+/**
+ * The reverse table, INVERTED from {@link TYPE_LETTER} rather than written out a second time.
+ *
+ * Two hand-maintained tables is how a letter comes to encode one type and decode to another — the
+ * code would print correctly and open the wrong record, with the check digit agreeing all the way.
+ * Inversion cannot drift; it can only collapse two types onto one letter, and
+ * `e2e/workshop-codes.spec.ts` asserts the table is injective so that a duplicate is a failing test
+ * rather than a silently lost record type.
+ */
+const TYPE_FROM_LETTER: Record<string, WorkshopRecordType> = Object.fromEntries(
+  Object.entries(TYPE_LETTER).map(([type, letter]) => [letter, type as WorkshopRecordType])
+);
+
+/**
+ * Every record type, in the order the refusal below names them and a picker should offer them.
+ *
+ * Read out of {@link TYPE_LETTER}'s declaration order rather than listed a second time — a type
+ * added to the letter table but forgotten in a hand-written list would be encodable and invisible.
+ * That is why the letter table is written in dashboard order despite its letters not being.
+ */
+export const WORKSHOP_RECORD_TYPES: readonly WorkshopRecordType[] = Object.keys(TYPE_LETTER) as WorkshopRecordType[];
+
+/** The word for a record type in a heading — Android's `workshopRecordTypeLabel`, verbatim. */
+const TYPE_LABEL: Record<WorkshopRecordType, string> = {
+  artisan: "Artisan",
+  craft: "Craft",
+  workshop: "Workshop",
+  product: "Product",
+  process: "Process",
+  tool: "Tool",
+  // "Interview" and not "Questionnaire": the questionnaire is the FORM, the record is one sitting
+  // with one artisan set. Android's dashboard tile says "Take interview" for the same reason.
+  questionnaire: "Interview",
+  media: "Media file",
+  prototype: "Prototype"
+};
+
+/** The plural of {@link TYPE_LABEL}, lower case, for the middle of a sentence. */
+const TYPE_PLURAL: Record<WorkshopRecordType, string> = {
+  artisan: "artisans",
+  craft: "crafts",
+  workshop: "workshops",
+  product: "products",
+  process: "processes",
+  tool: "tools",
+  questionnaire: "interviews",
+  media: "media files",
+  prototype: "prototypes"
+};
+
+/** The word for a record type, for a heading or a refusal sentence. */
+export function workshopRecordTypeLabel(recordType: WorkshopRecordType): string {
+  return TYPE_LABEL[recordType];
+}
+
+/**
+ * "artisans, crafts, … and prototypes" — the list a refusal names when a caller asks for a code for
+ * something that is not a record.
+ *
+ * Built from the table rather than written as prose so that adding a record type updates the
+ * sentence with it. A hand-written list is how a caller comes to be told that codes exist for two
+ * kinds of record on a build that prints nine.
+ */
+function knownRecordTypesSentence(): string {
+  const words = WORKSHOP_RECORD_TYPES.map((type) => TYPE_PLURAL[type]);
+  return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
 
 /** What a code resolves to, once it has been read. */
 export type WorkshopCodeRef = {
@@ -115,6 +238,13 @@ export type WorkshopCodeRef = {
  * allowed for UUIDs; `_` is not, because QR alphanumeric mode cannot carry it. The 8-character
  * floor keeps short human-typed strings ("prototype 3", "ram") out; the 64-character ceiling keeps
  * a runaway value from producing a symbol too dense to scan from a printed card.
+ *
+ * CHECKED AGAINST EVERY RECORD TYPE IN {@link TYPE_LETTER}, not assumed: `backend/prisma/schema.prisma`
+ * declares `id String @id @default(cuid())` on Craft, Workshop, ProductDocumentation,
+ * ToolDocumentation, Process, QuestionnaireInterview and MediaFile exactly as it does on Artisan, so
+ * every id this grammar now admits is the same 25-character lower-case cuid it already admitted. A
+ * record type whose ids were not that shape would have to widen this pattern deliberately — and
+ * widening it is how a field that is not an identifier gets through the gate below.
  */
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{7,63}$/;
 
@@ -191,7 +321,7 @@ export function encodeWorkshopCode(ref: {
     return {
       ok: false,
       reason: "UNKNOWN_RECORD_TYPE",
-      message: `No code can be printed for a “${ref.recordType}” — codes exist for artisans and prototypes.`
+      message: `No code can be printed for a “${ref.recordType}” — codes exist for ${knownRecordTypesSentence()}.`
     };
   }
 
@@ -374,9 +504,13 @@ export function formatWorkshopCodeForPrint(code: string): string {
  * this workshop" is far more useful than "no record", and it gives nothing away.
  */
 export function unresolvedWorkshopCodeMessage(recordType: WorkshopRecordType): string {
-  return recordType === "prototype"
-    ? "No prototype in this workshop matches that tag. It may belong to another workshop, or the row may not have reached this device yet — open the workshop that made it, or find the prototype in the list."
-    : "No artisan you can open matches that card. It may not be in the repository, or it may belong to work you do not have access to — search for the artisan by name instead.";
+  if (recordType === "prototype") {
+    // A prototype is a row inside one design workshop rather than a repository record, so the two
+    // places it can be — another workshop, or a device this one has not synced with — are named.
+    return "No prototype in this workshop matches that tag. It may belong to another workshop, or the row may not have reached this device yet — open the workshop that made it, or find the prototype in the list.";
+  }
+  const noun = TYPE_LABEL[recordType].toLowerCase();
+  return `No ${noun} you can open matches that code. It may not be in the repository, or it may belong to work you do not have access to — search for the ${noun} by name instead.`;
 }
 
 /**

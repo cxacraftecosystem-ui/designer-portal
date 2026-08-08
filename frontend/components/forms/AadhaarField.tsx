@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
+import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { apiFetch, buildQuery } from "@/lib/api";
 import type { AadhaarLookupResult, ArtisanIdentityMatch } from "@/lib/types";
 
@@ -161,6 +162,7 @@ export function AadhaarField({
   defaultValue,
   excludeArtisanId,
   required = false,
+  offerCardCapture = false,
   onValueChange
 }: {
   name?: string;
@@ -177,6 +179,14 @@ export function AadhaarField({
    * create but not when editing a record that never had one (see ArtisanForm).
    */
   required?: boolean;
+  /**
+   * Offer "photograph the card / choose a photo" under the box.
+   *
+   * Off by default, and deliberately the CALLER's decision rather than this component's: a control
+   * that offers to photograph a national identity document is only appropriate where the researcher
+   * is sitting with the artisan and the card, which is the artisan form and nowhere else so far.
+   */
+  offerCardCapture?: boolean;
   onValueChange?: (digits: string) => void;
 }) {
   const baseId = useId();
@@ -327,6 +337,32 @@ export function AadhaarField({
             Keep the stored number
           </button>
         </p>
+      ) : null}
+      {offerCardCapture ? (
+        <IdentityCardCapture
+          kind="AADHAAR"
+          targetLabel="the Aadhaar number"
+          // What the box holds NOW, in the form a researcher can compare — including a mask, so
+          // "confirming replaces it" is said even to an editor who cannot read what they are
+          // replacing.
+          currentValue={keptMask ?? grouped(digits)}
+          // The one checksum on this client, handed down rather than re-derived. See the prop's note
+          // in IdentityCardCapture for why it is injected and not imported.
+          aadhaarProblem={aadhaarValidationError}
+          onUse={(value) => {
+            // A number read off the card REPLACES one the editor is not permitted to see, so the
+            // mask has to be stood down here too. Without this the form would post the mask back,
+            // the API would read it as "unchanged", and the number the researcher just confirmed
+            // against the card would silently never be saved.
+            setReplacing(true);
+            setDigits(value);
+            setProblemShown(false);
+            // The box was not typed in, so no native input event reached the form's `onInput` and
+            // nothing raised the dirty flag — a confirmed number that leaves without warning is
+            // exactly the loss the leave guard exists to prevent.
+            onValueChange?.(value);
+          }}
+        />
       ) : null}
       {checking ? <p className="text-xs text-ink-muted">Checking for an existing artisan...</p> : null}
       {match ? (

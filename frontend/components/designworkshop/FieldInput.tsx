@@ -229,6 +229,38 @@ function labelText(field: DwField): string {
   return field.required ? `${field.label} *` : field.label;
 }
 
+/**
+ * What a DERIVED field computes to right now, worded for a placeholder — or undefined when the box
+ * is filled, the field is not derived, or the sources are not all there yet.
+ *
+ * ONE FUNCTION FOR BOTH NUMERIC BRANCHES, and the duplication it replaces was a live gap rather than
+ * a tidiness point. The `INT | DECIMAL | PERCENT` branch carried this inline, and MONEY — a
+ * completely separate control, because a money value is a STRING on the wire and a number input
+ * would eat its trailing zero — carried nothing. Four of the registry's five derived fields are
+ * MONEY (`prototypeCostLine.amount`, `costMaterialLine.amount`, `costLabourLine.amount`,
+ * `costSheet.totalCost`), so a designer read "Derived as persons × days × rate" under a box that
+ * stayed empty however carefully they filled the row — the exact promise `derived_kind` was added to
+ * the registry to keep. The handset kept it: `FieldRenderer` hands `rowValues` to MONEY along with
+ * the other three.
+ *
+ * THE WORDING IS ANDROID'S, character for character (`FieldRenderer.derivedHint`), unit and all. A
+ * designer who checks an amount on the phone and again on a laptop must not have to work out whether
+ * two differently-phrased lines are saying the same thing.
+ *
+ * DECLARED HERE RATHER THAN ABOVE `FieldHint`, where it first landed, because inserting it there put
+ * it BETWEEN `FieldHint`'s doc block and `FieldHint` — leaving a reader of this function facing an
+ * essay about `role="alert"` and `aria-describedby` as its apparent documentation, and `FieldHint`
+ * undocumented. That is the same orphaning the commit before this one repaired in `lib/offline.ts`,
+ * reintroduced two files away in the act of repairing it.
+ */
+function derivedPlaceholder(field: DwField, value: DwValue | undefined, row: DwEntryData): string | undefined {
+  if (!isDerived(field)) return undefined;
+  if (!(value === null || value === undefined || value === "")) return undefined;
+  const computed = deriveValue(field, row);
+  if (computed === null) return undefined;
+  return `${computed}${field.unit ? ` ${field.unit}` : ""} (computed)`;
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * The component
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -434,14 +466,7 @@ export function FieldInput({
           id={controlId}
           className="field-input"
           type="number"
-          placeholder={
-            isDerived(field) && (value === null || value === undefined || value === "")
-              ? (() => {
-                  const computed = deriveValue(field, row);
-                  return computed === null ? undefined : `${computed}${field.unit ? ` ${field.unit}` : ""} (computed)`;
-                })()
-              : undefined
-          }
+          placeholder={derivedPlaceholder(field, value, row)}
           // A DECIMAL with step=1 is a spinner that refuses 12.5 and a browser that reports the
           // field invalid on a perfectly good answer; "any" is the only correct step for a
           // non-integer. INT keeps 1 so the arrows do what an integer field promises.
@@ -472,6 +497,10 @@ export function FieldInput({
             // and the trailing zero the API took care to keep is gone from the cost sheet.
             type="text"
             inputMode="decimal"
+            // A DERIVED AMOUNT SHOWS ITSELF HERE TOO — see derivedPlaceholder for why this branch
+            // went without one and what it cost. Placeholder and not a written value, for the reason
+            // written there: blank still means "derive this for me".
+            placeholder={derivedPlaceholder(field, value, row)}
             aria-describedby={describedBy}
             aria-invalid={invalid}
             value={inputValue(value)}

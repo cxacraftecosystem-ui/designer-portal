@@ -495,6 +495,13 @@ fun SearchScreen(
                 Text(if (loading) "Searching…" else "Search")
             }
 
+            // A CODE IS A SEARCH WHOSE QUERY IS EXACT, so it sits with the search box rather than
+            // behind a destination of its own: when a designer has the tag in their hand there is
+            // nothing to type and nothing to narrow. It reads every record type this app prints a
+            // code for and hands the hit back through the SAME `onOpenRecord` a tapped result uses,
+            // so a code and a search hit for one record cannot lead to two different places.
+            RecordCodeLookupPanel(repository = repository, onOpen = onOpenRecord)
+
             error?.let { message ->
                 Text(
                     message,

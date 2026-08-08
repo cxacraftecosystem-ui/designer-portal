@@ -24,12 +24,16 @@ import { test, expect } from "@playwright/test";
 import {
   SUPPORTED_VERSIONS,
   WORKSHOP_CODE_VERSION,
+  WORKSHOP_RECORD_TYPES,
   decodeWorkshopCode,
   encodeWorkshopCode,
   formatWorkshopCodeForPrint,
   workshopCodeCheck,
   workshopCodeIdForRow,
-  workshopCodeMatchesRow
+  unresolvedWorkshopCodeMessage,
+  workshopCodeMatchesRow,
+  workshopRecordTypeLabel,
+  type WorkshopRecordType
 } from "@/lib/workshopCodes";
 import { buildQrMatrix, encodeQr, isQrAlphanumeric, qrCapacity, QrEncodeError, qrSvgPath, type QrEccLevel } from "@/lib/qrEncode";
 
@@ -144,8 +148,106 @@ test("no sensitive field can be encoded, whatever a caller hands over", () => {
   // An id with a capital in it is refused rather than upper-cased into an id that does not exist:
   // the payload is upper case, so a mixed-case id could not be decoded back to itself.
   expect(encodeWorkshopCode({ recordType: "artisan", id: "CmSik2jg8000eh8xc1lcy661a" }).ok).toBe(false);
-  // A record type this build does not print.
-  expect(encodeWorkshopCode({ recordType: "craft", id: ARTISAN_ID }).ok).toBe(false);
+  // A record type this build does not print. It used to be "craft" — crafts now carry a letter of
+  // their own, so the assertion is re-pointed at things this repository genuinely does not issue
+  // codes for rather than dropped: a caller handing over a designer, a location or a free-text label
+  // must still be refused, and the refusal must still be UNKNOWN_RECORD_TYPE rather than a silently
+  // encoded code with a letter nobody assigned.
+  for (const notARecord of ["designer", "location", "user", "review", "", "Artisan"]) {
+    const refused = encodeWorkshopCode({ recordType: notARecord, id: ARTISAN_ID });
+    expect(`${notARecord}=${refused.ok}`).toBe(`${notARecord}=false`);
+    expect(refused.ok === false && refused.reason).toBe("UNKNOWN_RECORD_TYPE");
+  }
+});
+
+test("every record type this repository issues has a letter, and no two share one", () => {
+  // THE FAILURE THIS PREVENTS: a letter meaning one kind of record here and another on the handset
+  // produces a code that scans cleanly and opens the WRONG record, with the check digit agreeing all
+  // the way. The letters are therefore pinned as values, not merely asserted to exist — changing one
+  // strands every card and tag already printed against it.
+  const letters: Record<WorkshopRecordType, string> = {
+    artisan: "A",
+    craft: "C",
+    workshop: "W",
+    product: "D",
+    process: "S",
+    tool: "T",
+    questionnaire: "Q",
+    media: "M",
+    prototype: "P"
+  };
+
+  // The list is the whole list: a type added to the grammar and forgotten here fails on length.
+  expect([...WORKSHOP_RECORD_TYPES].sort()).toEqual(Object.keys(letters).sort());
+
+  const seen = new Map<string, string>();
+  for (const [recordType, letter] of Object.entries(letters) as [WorkshopRecordType, string][]) {
+    const encoded = encodeWorkshopCode({ recordType, id: ARTISAN_ID });
+    expect(`${recordType}=${encoded.ok}`).toBe(`${recordType}=true`);
+    if (!encoded.ok) continue;
+    expect(encoded.code).toBe(
+      `DPW1:${letter}:${ARTISAN_ID.toUpperCase()}:${workshopCodeCheck(`DPW1:${letter}:${ARTISAN_ID.toUpperCase()}`)}`
+    );
+
+    // INJECTIVE. TYPE_FROM_LETTER is inverted from TYPE_LETTER, so a duplicate letter would not be a
+    // type error — it would silently drop one record type out of the decoder, and every code of that
+    // type would resolve to the other one.
+    expect(seen.get(letter) ?? recordType).toBe(recordType);
+    seen.set(letter, recordType);
+
+    // And it comes back as the same type, which is the half a printed card depends on.
+    const decoded = decodeWorkshopCode(encoded.code);
+    expect(decoded.ok && decoded.ref).toEqual({ recordType, id: ARTISAN_ID });
+  }
+
+  // None of the letters people misread off a card. The check digit's alphabet drops I, L, O and U;
+  // the type letter is typed by the same person in the same box and is NOT confusable-corrected, so
+  // it must not use them either.
+  for (const letter of Object.values(letters)) expect("ILOU".includes(letter)).toBe(false);
+});
+
+test("the anti-PII gate applies to every record type, not only the two it was written for", () => {
+  // The gate lives before the letter lookup's success path, so adding a record type cannot route
+  // around it — but that is the sort of thing a refactor breaks silently, and the field it would
+  // leak is Aadhaar.
+  for (const recordType of WORKSHOP_RECORD_TYPES) {
+    for (const sensitive of ["234567890123", "2345 6789 0123", "XXXX XXXX 9012", "VW1234567890"]) {
+      const refused = encodeWorkshopCode({ recordType, id: sensitive });
+      expect(`${recordType}/${sensitive}=${refused.ok}`).toBe(`${recordType}/${sensitive}=false`);
+      expect(refused.ok === false && refused.reason).toBe("ID_LOOKS_SENSITIVE");
+    }
+    // And an unsaved record still refuses with NO_ID rather than encoding an empty reference.
+    expect(encodeWorkshopCode({ recordType, id: null })).toMatchObject({ ok: false, reason: "NO_ID" });
+  }
+});
+
+test("a cuid from any record type fits the symbol the print box was sized for", () => {
+  // WorkshopCodeSheet's 26mm box clears 0.6mm per module up to version 4. Every id in this
+  // repository is a 25-character cuid (backend/prisma/schema.prisma), and the type letter is one
+  // character, so no new record type can push the payload past the version this box was sized for.
+  for (const recordType of WORKSHOP_RECORD_TYPES) {
+    const encoded = encodeWorkshopCode({ recordType, id: ARTISAN_ID });
+    expect(encoded.ok).toBe(true);
+    if (!encoded.ok) continue;
+    expect(isQrAlphanumeric(encoded.code)).toBe(true);
+    expect(`${recordType}=${encodeQr(encoded.code, "Q").version}`).toBe(`${recordType}=3`);
+  }
+});
+
+test("every record type is named in words, and a refusal never says the record exists", () => {
+  for (const recordType of WORKSHOP_RECORD_TYPES) {
+    const label = workshopRecordTypeLabel(recordType);
+    expect(label.length).toBeGreaterThan(0);
+
+    // THE RULE THIS PINS: the API answers 404 rather than 403 for a record the caller may not see,
+    // so that a card cannot be used to enumerate the repository. The sentence the scanner shows must
+    // not undo that by hinting which of the two happened.
+    const message = unresolvedWorkshopCodeMessage(recordType);
+    for (const giveaway of ["permission", "not allowed", "forbidden", "403", "exists", "belongs to another user"]) {
+      expect(`${recordType}:${message.toLowerCase().includes(giveaway)}`).toBe(`${recordType}:false`);
+    }
+  }
+  expect(workshopRecordTypeLabel("questionnaire")).toBe("Interview");
 });
 
 test("a payload can only contain characters a compact QR symbol carries", () => {
