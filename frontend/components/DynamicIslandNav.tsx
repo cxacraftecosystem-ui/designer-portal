@@ -109,23 +109,29 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/media", label: "Upload media", icon: ImageIcon, group: "Record", can: everyone, gate: "get_current_user" },
   { href: "/crafts", label: "Add craft", icon: Brush, group: "Record", can: canManageCrafts, gate: "require_craft_manager" },
   { href: "/workshops", label: "Record workshop", icon: Users, group: "Record", can: canManageWorkshops, gate: "require_workshop_manager" },
-  // The 22-stage Design & Prototype Workshop record. Gated on record creation to mirror
-  // `assert_can_create_records`, which is what `POST /design-workshops` calls — the two tiers below
-  // Researcher have nothing to open here, and an ungated entry would land them on a refusal.
+  // The 22-stage Design & Prototype Workshop record.
   //
-  // LABELLED IN THE PLURAL, deliberately, and this is the one place in the menu where the wording
-  // is not lifted from Android: the Android app has no equivalent entry to copy (its 22-stage work
-  // lives in the draft store, reached from the dashboard), and its own name for itself — the
-  // literal string "Design Workshop" in MainActivity — is the APPLICATION's title. A singular entry
-  // here would read as "go to the app you are already in" rather than "the list of workshop
-  // records". When Android grows this screen, both labels move together.
+  // `can_run_design_workshops`, and this line used to say `canCreateRecords` / the create
+  // dependency. That was wrong on both halves. `POST /design-workshops` runs BOTH
+  // `assert_can_create_records` AND `_require_designer`, and the second one binds; the LIST route
+  // runs `_require_designer` on its own (backend/app/api/routes/design_workshops.py:194). So a
+  // RESEARCHER — and a PROFESSOR, who outranks a designer and is still outside the set — saw this
+  // entry, pressed it, and landed on the route guard's "Designer access required" panel, which
+  // `lib/permissions.ts` has been enforcing on the same path all along. A nav entry that only ever
+  // opens a padlock is worse than no entry.
+  //
+  // LABELLED IN THE PLURAL while the dashboard tile beside it is singular ("Design workshop"), and
+  // the difference is deliberate on both clients: the tile names the THING you are about to make,
+  // the menu names the LIST you are about to open. Android's dashboard card copies the tile
+  // (`DesignWorkshopCard.LABEL`) and its own menu row copies this one; a Kotlin test asserts the
+  // two differ so neither can be "tidied" into the other.
   {
     href: "/design-workshops",
     label: "Design workshops",
     icon: DraftingCompass,
     group: "Record",
-    can: canCreateRecords,
-    gate: "assert_can_create_records"
+    can: canRunDesignWorkshops,
+    gate: "can_run_design_workshops (_require_designer)"
   },
   // A questionnaire the designer authored themselves, from the .xlsx pro-forma. DISTINCT FROM "Take
   // interview" above, which is the one shared artisan questionnaire every researcher answers — two
