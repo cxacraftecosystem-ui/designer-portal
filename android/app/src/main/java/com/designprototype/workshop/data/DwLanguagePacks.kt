@@ -68,7 +68,36 @@ enum class DwPackState {
      */
     NETWORK_ONLY,
 
-    /** This device's recogniser cannot do this language at all, offline or on. Nothing to offer. */
+    /**
+     * NO OFFLINE PACK FOR THIS LANGUAGE, AND THE ONLINE QUESTION WAS NEVER ASKED.
+     *
+     * This is the state seventeen of the nineteen are actually in on the fleet's Galaxy M32, and it
+     * exists because they used to be called [UNSUPPORTED], which was a claim nobody had measured.
+     *
+     * MEASURED (docs/DICTATION-LANGUAGE-PACK-MEASUREMENT.md, the handset's own logcat): the
+     * on-device recogniser's `supportedOnDeviceLanguages` is thirty entries long and contains
+     * exactly two of ours, `hi-IN` and `en-IN`. The other seventeen are in none of the four lists.
+     * The old `else` branch read that as "cannot do this language at all, offline or on" — but
+     * `onlineLanguages` was EMPTY, and this file says two hundred lines up why: a recogniser built
+     * with `createOnDeviceSpeechRecognizer` returns an empty online list BY CONSTRUCTION, so empty
+     * means "not asked", not "nothing online". Turning a question we declined to ask into a verdict
+     * is precisely what the honest-unknown rule at the top of this file forbids, and it was being
+     * done seventeen times on every settings screen.
+     *
+     * It matters more than a label: dictation in these languages WORKS on that handset. The code-13
+     * fallback hands them to the network recogniser and the words come back. The sentence attached
+     * to [UNSUPPORTED] told the designer to "type the answer in, or pick another language" — advice
+     * to abandon a control that works, printed over a control that works.
+     */
+    NO_OFFLINE_PACK,
+
+    /**
+     * This device's recogniser cannot do this language at all, offline or on. Nothing to offer.
+     *
+     * Reachable ONLY when some engine actually answered with a non-empty online list and this
+     * language was absent from it — i.e. when the claim has been measured. On a handset that answers
+     * about on-device support alone, the honest state is [NO_OFFLINE_PACK] instead.
+     */
     UNSUPPORTED,
 
     /**
@@ -166,6 +195,11 @@ fun dwPackState(tag: String, support: DwRecognitionSupport?): DwPackState {
         support.pendingOnDevice.coversTag(tag) -> DwPackState.DOWNLOADING
         support.supportedOnDevice.coversTag(tag) -> DwPackState.DOWNLOADABLE
         support.online.coversTag(tag) -> DwPackState.NETWORK_ONLY
+        // NOT IN ANY LIST. Which of the two "no" states that is depends on whether the engine was
+        // in a position to answer about online support at all. An empty `online` list is the
+        // signature of an on-device-only recogniser, which returns one by construction — so it is
+        // the absence of an answer, and [DwPackState.UNSUPPORTED] would be inventing one.
+        support.online.isEmpty() -> DwPackState.NO_OFFLINE_PACK
         else -> DwPackState.UNSUPPORTED
     }
 }
@@ -233,9 +267,12 @@ fun dwPackOffer(state: DwPackState, connection: DwConnection): DwPackOffer = whe
     DwPackState.DOWNLOADING -> DwPackOffer.IN_PROGRESS
     DwPackState.DOWNLOADABLE ->
         if (connection == DwConnection.NONE) DwPackOffer.NO_CONNECTION else DwPackOffer.DOWNLOAD
-    // Both mean "no offline pack is coming". NETWORK_ONLY keeps its own state so the UI can add the
-    // consolation that the network engine still serves it, but neither is downloadable.
-    DwPackState.NETWORK_ONLY, DwPackState.UNSUPPORTED -> DwPackOffer.UNAVAILABLE
+    // All three mean "no offline pack is coming, and no button can change that". They keep separate
+    // states because the SENTENCE differs — the network still serves NETWORK_ONLY, nothing serves
+    // UNSUPPORTED, and NO_OFFLINE_PACK is the honest "this phone has no pack and would not say
+    // whether the network has it" — but none of them is downloadable.
+    DwPackState.NETWORK_ONLY, DwPackState.NO_OFFLINE_PACK, DwPackState.UNSUPPORTED ->
+        DwPackOffer.UNAVAILABLE
     DwPackState.UNKNOWN -> DwPackOffer.UNKNOWN
 }
 
@@ -271,6 +308,12 @@ fun dwPackStateLabel(state: DwPackState): String = when (state) {
     DwPackState.DOWNLOADING -> "Downloading"
     DwPackState.DOWNLOADABLE -> "Not downloaded"
     DwPackState.NETWORK_ONLY -> "Needs signal"
+    // NOT the same words as NETWORK_ONLY, though the courtyard consequence is identical. Reusing
+    // "Needs signal" was the first attempt and a test refused it: two states behind one label read
+    // as one state, and these two make different promises. NETWORK_ONLY has been told the online
+    // engine serves the language; this one has not asked, so it says what it actually knows — there
+    // is no pack on the phone — and leaves the rest to the sentence.
+    DwPackState.NO_OFFLINE_PACK -> "No offline pack"
     DwPackState.UNSUPPORTED -> "Not on this phone"
     DwPackState.UNKNOWN -> "Unknown"
 }
@@ -287,9 +330,17 @@ fun dwPackStateSentence(label: String, state: DwPackState): String = when (state
     DwPackState.NETWORK_ONLY ->
         "$label has no offline pack on this phone. Dictation in $label works while there is signal " +
             "and not in a courtyard without one."
+    // Says the two things that were measured and stops. It does NOT promise the network will serve
+    // $label — this phone was never asked — and it does not tell the designer to give up on it,
+    // which is what the UNSUPPORTED sentence below used to do to seventeen working languages.
+    DwPackState.NO_OFFLINE_PACK ->
+        "This phone's speech service offers no offline pack for $label — the list of packs it " +
+            "carries is Google's, not this app's, and most Indian languages are not on it. " +
+            "Dictation in $label is handed to the online recogniser instead, so it needs a " +
+            "connection. If it fails even with signal, type the answer in."
     DwPackState.UNSUPPORTED ->
-        "This phone's speech recogniser does not offer $label. Type the answer in, or pick another " +
-            "language."
+        "This phone's speech recogniser does not offer $label, offline or online. Type the answer " +
+            "in, or pick another language."
     DwPackState.UNKNOWN ->
         "This phone cannot say whether $label is installed. Android 13 added the way to ask; on " +
             "older versions dictation will simply tell you if the language is missing."

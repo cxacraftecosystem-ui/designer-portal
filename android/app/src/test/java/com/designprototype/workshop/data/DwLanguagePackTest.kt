@@ -23,9 +23,33 @@ class DwLanguagePackTest {
     private val tags = DW_DICTATION_LANGUAGES.map { it.tag }
 
     /** The M32 as verified in docs/DICTATION-DEVICE-VERIFICATION.md: English there, Hindi not. */
+    /**
+     * WHAT THE FLEET'S GALAXY M32 ACTUALLY ANSWERS. Measured, not imagined.
+     *
+     * Captured 2026-08-09 from the handset itself by `androidTest/DwLanguagePackProbeTest`, which
+     * calls `checkRecognitionSupport` and prints the four lists; the run is written up in
+     * docs/DICTATION-LANGUAGE-PACK-MEASUREMENT.md.
+     *
+     * THE VERSION THIS REPLACES WAS INVENTED, and it is why the defect below survived review. It
+     * claimed this phone could fetch on-device packs for Odia, Bengali, Tamil, Telugu, Marathi and
+     * Gujarati. The phone offers none of them: its `supportedOnDeviceLanguages` is the thirty
+     * entries below, and the only two of our nineteen on it are `hi-IN` and `en-IN`. A fixture named
+     * after a specific handset, asserting capabilities that handset does not have, made the suite
+     * agree with a device that does not exist — so the tests passed while the settings screen told
+     * seventeen languages they were unsupported.
+     *
+     * `online` is empty because an on-device recogniser returns an empty online list BY
+     * CONSTRUCTION. That emptiness is the absence of an answer, and treating it as a finding is the
+     * bug these tests now pin.
+     */
     private val galaxyM32 = DwRecognitionSupport(
-        installedOnDevice = listOf("en-IN", "en-US"),
-        supportedOnDevice = listOf("hi-IN", "or-IN", "bn-IN", "ta-IN", "te-IN", "mr-IN", "gu-IN"),
+        installedOnDevice = listOf("en-GB"),
+        supportedOnDevice = listOf(
+            "en-US", "de-DE", "es-ES", "fr-FR", "it-IT", "en-AU", "en-IE", "en-SG", "ja-JP",
+            "de-AT", "de-BE", "de-CH", "en-CA", "en-IN", "es-US", "fr-BE", "fr-CA", "fr-CH",
+            "hi-IN", "id-ID", "it-CH", "ko-KR", "pt-BR", "th-TH", "cmn-Hans-CN", "cmn-Hant-TW",
+            "pl-PL", "ru-RU", "tr-TR", "vi-VN",
+        ),
         pendingOnDevice = emptyList(),
         online = emptyList(),
     )
@@ -135,10 +159,37 @@ class DwLanguagePackTest {
         assertEquals(DwPackOffer.UNAVAILABLE, dwPackOffer(DwPackState.NETWORK_ONLY, DwConnection.UNMETERED))
     }
 
+    /**
+     * The seventeen. This is the state most of the list is really in, and it used to be UNSUPPORTED.
+     *
+     * `galaxyM32` has an empty `online` list because that is what an on-device recogniser returns —
+     * so "not in any list" is the absence of an answer about online support, not a finding. Calling
+     * it UNSUPPORTED printed "does not offer Manipuri (Meitei) ... pick another language" over a
+     * language the network recogniser dictates perfectly well.
+     */
     @Test
-    fun `a language in no list at all is unsupported`() {
-        assertEquals(DwPackState.UNSUPPORTED, dwPackState("mni-IN", galaxyM32))
+    fun `a language in no list, from an engine that never answered about online, is not called unsupported`() {
+        assertEquals(DwPackState.NO_OFFLINE_PACK, dwPackState("mni-IN", galaxyM32))
+        // Still nothing to download — the correction is to the sentence, not to the button.
+        assertEquals(DwPackOffer.UNAVAILABLE, dwPackOffer(DwPackState.NO_OFFLINE_PACK, DwConnection.UNMETERED))
+        assertFalse(dwMayAsk(dwPackOffer(DwPackState.NO_OFFLINE_PACK, DwConnection.UNMETERED), requested = false, refused = false))
     }
+
+    /**
+     * UNSUPPORTED survives, but only where it has been earned: an engine that DID answer about
+     * online support, with this language absent from that answer.
+     */
+    @Test
+    fun `a language absent from an engine that did report online languages is unsupported`() {
+        val answered = DwRecognitionSupport(
+            installedOnDevice = listOf("en-IN"),
+            supportedOnDevice = listOf("hi-IN"),
+            online = listOf("hi-IN", "en-IN", "bn-IN"),
+        )
+        assertEquals(DwPackState.UNSUPPORTED, dwPackState("mni-IN", answered))
+        assertEquals(DwPackState.NETWORK_ONLY, dwPackState("bn-IN", answered))
+    }
+
 
     // ---------------------------------------------------------------------------------------
     // The offer decision — the one that spends somebody's prepaid data
@@ -242,15 +293,25 @@ class DwLanguagePackTest {
     // The M32, end to end
     // ---------------------------------------------------------------------------------------
 
+    /**
+     * The whole list as the real handset produces it — the test the fabricated fixture was hiding.
+     *
+     * Two downloadable, seventeen with no offline pack, and NOT ONE called unsupported. English
+     * (India) is downloadable rather than installed: what is installed is `en-GB`, and this file's
+     * `dwTagCovers` deliberately refuses to let one region's pack stand in for another's.
+     */
     @Test
-    fun `on the verified M32 Hindi and Odia are downloadable and English already works`() {
+    fun `on the real M32 exactly two of the nineteen can be fetched and none is called unsupported`() {
         val states = dwPackStates(tags, galaxyM32)
-        assertEquals(DwPackState.DOWNLOADABLE, states["hi-IN"])
-        assertEquals(DwPackState.DOWNLOADABLE, states["or-IN"])
-        assertEquals(DwPackState.INSTALLED, states["en-IN"])
-        // Sanskrit, Konkani, Manipuri, Kashmiri, Sindhi, Nepali and the rest are in none of the
-        // lists this handset returned, and the honest answer is that it cannot do them.
-        assertEquals(DwPackState.UNSUPPORTED, states["sa-IN"])
+        assertEquals(
+            listOf("hi-IN", "en-IN"),
+            states.filterValues { it == DwPackState.DOWNLOADABLE }.keys.toList()
+        )
+        assertEquals(17, states.count { it.value == DwPackState.NO_OFFLINE_PACK })
+        assertEquals(0, states.count { it.value == DwPackState.UNSUPPORTED })
+        // Odia — the language of the state these workshops are run in — is one of the seventeen.
+        // The fixture this replaces claimed it was downloadable, which is why nobody looked.
+        assertEquals(DwPackState.NO_OFFLINE_PACK, states["or-IN"])
     }
 
     @Test
