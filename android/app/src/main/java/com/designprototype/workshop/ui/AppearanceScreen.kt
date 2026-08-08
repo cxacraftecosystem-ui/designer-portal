@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
@@ -55,6 +56,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.PreferencesDto
+import com.designprototype.workshop.ui.designworkshop.DwLanguagePackSettings
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -457,6 +459,29 @@ fun AppearanceScreen(
                 )
             }
             SaveStatusLine(saving = saving, error = error)
+        }
+
+        /*
+         * ---- Offline dictation languages -------------------------------------------------------
+         *
+         * THE PERMANENT HOME OF THE LANGUAGE-PACK LIST. `NavDestination.SETTINGS` routes here, so
+         * this screen is what "Settings" means to a designer on Android, and a first-run offer that
+         * could only ever be seen once would be an offer that is lost the moment it is dismissed.
+         * Everything the card at first run showed is here, for good.
+         *
+         * LAST, AND SAYING WHOSE SETTING IT IS. The two cards above belong to the ACCOUNT and follow
+         * the designer to any handset they sign in on; a speech pack is bytes on this phone and
+         * follows nobody. Sitting it below them with that stated in its own copy is what stops a
+         * designer downloading Odia here and expecting to find it on the office tablet.
+         *
+         * The screen heading stays "Appearance & accessibility" verbatim: it is mirrored by the
+         * web's /settings page, which has no dictation of any kind, and renaming it here to cover a
+         * phone-only card would put the two clients' menus out of step for a card the web cannot
+         * have.
+         */
+        PreferenceCard {
+            PreferenceCardHeading(Icons.Filled.RecordVoiceOver, "Offline dictation languages")
+            DwLanguagePackSettings()
         }
     }
 }

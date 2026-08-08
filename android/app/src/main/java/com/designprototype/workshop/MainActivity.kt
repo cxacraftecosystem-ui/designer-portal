@@ -194,6 +194,8 @@ import com.designprototype.workshop.ui.DataBrowserScreen
 // form code here or anywhere else.
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
+import com.designprototype.workshop.ui.designworkshop.DwLanguagePackOfferCard
+import com.designprototype.workshop.ui.designworkshop.dwPackOfferSeen
 import com.designprototype.workshop.ui.designworkshop.DesignerProfileScreen
 import com.designprototype.workshop.ui.designworkshop.DesignerRosterScreen
 import com.designprototype.workshop.ui.designworkshop.ReportScreen
@@ -1115,6 +1117,23 @@ private fun HomeScreen(
     var showWalkthrough by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (!walkthroughSeen(context)) showWalkthrough = true }
 
+    /*
+     * The offline-dictation offer, shown ONCE on the dashboard after installing.
+     *
+     * A CARD ON THE DASHBOARD AND EMPHATICALLY NOT A DIALOG — unlike the walkthrough above, which
+     * has earned its modal by being the ten-step order of the whole documentation process. This one
+     * is a convenience about speech packs, and a modal that stood between a designer and the stage
+     * they came to fill in would make the feature worse than not shipping it. It renders inside the
+     * dashboard's own scroller, above the tiles, and "Not now" is a one-tap exit that costs nothing:
+     * the same list is permanent under Settings › Appearance & accessibility.
+     *
+     * The flag is read on this device only (`dictation_language_packs` SharedPreferences), because
+     * an installed pack is a property of the handset and not of the account — the same designer on a
+     * second phone genuinely has not been offered anything yet.
+     */
+    var showPackOffer by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { if (!dwPackOfferSeen(context)) showPackOffer = true }
+
     // Surface a message, but swallow the noise from a coroutine being cancelled when a screen is
     // left during navigation (e.g. "The coroutine scope left the composition") — that is expected,
     // not a real error, and must not get stuck on screen.
@@ -1642,6 +1661,11 @@ private fun HomeScreen(
 
         when (val s = screen) {
             is Screen.Dashboard -> {
+                // Above the tiles, below the header: the first thing read on the first run, and gone
+                // for good after one tap on either of its buttons.
+                if (showPackOffer) {
+                    DwLanguagePackOfferCard(onDismiss = { showPackOffer = false })
+                }
                 carryForward?.let { prefill ->
                     CarryForwardPanel(
                         repository = repository,
