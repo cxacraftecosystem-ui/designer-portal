@@ -92,6 +92,7 @@ import com.designprototype.workshop.report.TableColumn
 import com.designprototype.workshop.report.TemplateSection
 import com.designprototype.workshop.report.TocBlock
 import com.designprototype.workshop.report.cleanText
+import com.designprototype.workshop.report.fieldCopyNote
 import com.designprototype.workshop.report.formatReportDate
 import com.designprototype.workshop.report.normaliseHex
 import com.designprototype.workshop.report.plainRuns
@@ -704,6 +705,10 @@ internal fun buildWorkshopDocument(
     // a stage can carry two hundred lines, so re-walking the draft per cell is quadratic in exactly
     // the stage that is largest — the same reason `ReportBuilder._rows_by_id` is built in __init__.
     val refs = DwRefLabels(schema, draft)
+    // ONE PER DOCUMENT, and that is what makes a figure print once. DCH_STANDARD asks for the yield
+    // chart at the front AND carries the outcomes stage that owns it; a builder rebuilt per section
+    // would print the same picture twice — see [DwFigures].
+    val figures = DwFigures(schema, draft)
     val stages = schema.stages.associateBy { it.key }
 
     // THE TEMPLATE'S SECTION LIST IS THE DOCUMENT, and this loop is the whole of `ReportBuilder.build`.
@@ -714,10 +719,14 @@ internal fun buildWorkshopDocument(
     template.sections.forEach { section ->
         val special = section.special
         if (special != null) {
-            renderSpecialSection(builder, special, section, resolved, schema, draft, imageFor, refs)
+            renderSpecialSection(
+                builder, special, section, resolved, schema, draft, imageFor, refs, figures,
+            )
         } else {
             stages[section.stageKey]?.let { stage ->
-                renderStageSection(builder, stage, section, resolved, schema, draft, imageFor, refs)
+                renderStageSection(
+                    builder, stage, section, resolved, schema, draft, imageFor, refs, figures,
+                )
             }
         }
     }
@@ -748,6 +757,7 @@ private fun renderStageSection(
     draft: WorkshopDraft?,
     imageFor: (String) -> ImageRef?,
     refs: DwRefLabels,
+    figures: DwFigures,
 ) {
     val template = plan.template
     val options = RenderOptions(
@@ -843,6 +853,21 @@ private fun renderStageSection(
         }
     }
 
+    if (section.includeFigures) {
+        // AFTER the stage's own content, never before it. A figure is a summary of the table above
+        // it, and a reader who meets the picture first reads the numbers in the table as a breakdown
+        // of the chart rather than as the record the chart was derived from.
+        //
+        // `includeFigures` is the switch PHOTO_CATALOGUE turns OFF on its price list, and it is not
+        // decoration: the cost-by-head figure prints the maker's material and labour cost beside the
+        // price the buyer is being quoted, so honouring it is what stops a handset handing a buyer
+        // the cluster's margin.
+        figures.chartsFor(stage.key).forEach { chart ->
+            builder.add(chart)
+            wrote = true
+        }
+    }
+
     // A heading with nothing under it is the commonest way a generated report looks broken. Saying
     // so beats a blank half page, and a template can turn it off.
     if (!wrote && template.showEmptyNote) builder.para("Not recorded.", style = ParaStyle.NOTE)
@@ -851,13 +876,15 @@ private fun renderStageSection(
 /**
  * The sections that are not one of the 22 stages.
  *
- * The six this device can build are built — the cover, the contents, the metric row, the
- * acknowledgement, the photographic record and the completeness table. The three it cannot — the
- * map, the infographics and the transcript annexure — are SKIPPED IN SILENCE HERE AND NAMED IN THE
- * WARNINGS, which [reportPlanFor] assembled from this same template. That split is deliberate: a
- * warning belongs to the act of generating and not to the document, so the officer who opens the
- * .docx next month does not find a note about what a handset could not draw on the day, while the
- * designer standing beside them on the day is told plainly.
+ * NINE OF THE TEN ARE BUILT HERE — the cover, the contents, the metric row, the acknowledgement, the
+ * photographic record, the completeness table, the sign-off, the locator map and the infographics.
+ * The tenth, the transcript annexure, is SKIPPED IN SILENCE HERE AND NAMED IN THE WARNINGS, which
+ * [reportPlanFor] assembled from this same template. That split is deliberate: a warning belongs to
+ * the act of generating and not to the document, so the officer who opens the .docx next month does
+ * not find a note about what a handset could not draw on the day, while the designer standing beside
+ * them on the day is told plainly. The document itself carries one provenance line on its cover
+ * ([fieldCopyNote]) naming what the office's copy additionally has — which is a statement of fact
+ * about the file, and belongs in it.
  */
 private fun renderSpecialSection(
     builder: DocumentBuilder,
@@ -868,6 +895,7 @@ private fun renderSpecialSection(
     draft: WorkshopDraft?,
     imageFor: (String) -> ImageRef?,
     refs: DwRefLabels,
+    figures: DwFigures,
 ) {
     when (special) {
         SpecialSection.COVER -> renderCover(builder, section, plan, schema, draft, imageFor, refs)
@@ -891,18 +919,16 @@ private fun renderSpecialSection(
             renderMediaAnnexure(builder, section, plan, schema, draft, imageFor)
         SpecialSection.COMPLETENESS ->
             renderCompletenessAnnexure(builder, section, plan, schema, draft, refs)
+        SpecialSection.MAP -> renderMap(builder, section, plan, draft)
+        SpecialSection.CHART -> renderCharts(builder, section, plan, figures)
 
-        // Not drawn on this device. The designer was told why by `reportWarnings`; emitting half of
-        // one here — a numbered heading over an empty frame — would be worse than the honest gap,
-        // because a heading in the contents that leads to nothing reads as a corrupt file.
-        //
-        // ANNEXURE_TRANSCRIPTS IS NOT HERE FOR THE REASON THE OTHER TWO WERE. The map and the
-        // figures are drawings this device cannot make; the transcripts are text it does not HAVE.
-        // Design-workshop audio is transcribed server-side by the media queue and the text lands on
-        // `MediaFile.transcriptText`, which no draft on this handset carries and no endpoint this
-        // client binds ever asks for — see the ledger entry for `includeTranscripts`.
-        SpecialSection.MAP,
-        SpecialSection.CHART,
+        // The one section this device still does not emit, and the reason is the TEXT and not the
+        // drawing: design-workshop audio is transcribed server-side by the media queue and the words
+        // land on `MediaFile.transcriptText`, which no draft on this handset carries and no endpoint
+        // this client binds ever asks for. The recordings are here; their transcripts are not — see
+        // the ledger entry for `includeTranscripts`. Emitting half of one — a numbered heading over
+        // nothing — would be worse than the honest gap, because a heading in the contents that leads
+        // nowhere reads as a corrupt file.
         SpecialSection.ANNEXURE_TRANSCRIPTS -> Unit
     }
 }
@@ -1134,10 +1160,16 @@ private fun renderCover(
         .filter { it.isNotEmpty() }
         .take(6)
 
-    val generatedOn = plan.meta.generatedAt.take(10)
-        .takeIf { it.isNotBlank() }
-        ?.let { "Generated on ${formatReportDate(it)}" }
-        .orEmpty()
+    // THE ONE LINE THAT SAYS WHICH COPY THIS IS, in the slot the server prints "Generated on <date>"
+    // in and carrying that same date. See [fieldCopyNote] for why it is in the FILE and not only in
+    // the export warnings: the warnings are dismissed on the day, and the person who needs to know
+    // that the office's copy of the same workshop carries more is the officer opening the .docx next
+    // month. It is a cover footer line, so it is never a heading and never enters the contents.
+    val generatedOn = fieldCopyNote(
+        plan.template,
+        plan.settings,
+        plan.meta.generatedAt.take(10).let(::formatReportDate),
+    )
 
     builder.add(
         CoverBlock(
@@ -1238,8 +1270,12 @@ private fun renderSignatures(
  * A boolean is rejected before the numeric read: in Python `bool` is an `int` subclass, so a BOOL
  * field would otherwise contribute 1 to a stated count. NaN and the infinities are rejected because
  * they survive a parse happily and then poison every total they touch.
+ *
+ * INTERNAL because the infographics read every number they chart through it ([DwFigures]). One
+ * definition, so the cost-by-head figure and the metric row above it cannot disagree about whether a
+ * cell holding "true" or "NaN" is a number.
  */
-private fun asFiniteNumber(value: JsonElement?): Double? {
+internal fun asFiniteNumber(value: JsonElement?): Double? {
     val primitive = value as? JsonPrimitive ?: return null
     if (!primitive.isString && (primitive.content == "true" || primitive.content == "false")) return null
     return primitive.content.trim().toDoubleOrNull()?.takeIf { it.isFinite() }

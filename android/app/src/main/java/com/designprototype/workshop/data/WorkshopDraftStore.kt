@@ -194,26 +194,6 @@ data class DraftMedia(
     val isConfirmedRemote: Boolean get() = !remoteMediaId.isNullOrBlank()
 }
 
-/** A report generated from the draft and kept beside it, so it can be re-shared without regenerating. */
-@Serializable
-data class DraftExport(
-    val id: String = "",
-    /** Relative to the workshop directory ("exports/…"), for the reasons on [DraftMedia.relativePath]. */
-    val relativePath: String = "",
-    /** "docx" | "pdf" — lower-case, extension-shaped, because that is what the share sheet wants. */
-    val format: String = "",
-    val generatedAt: String = "",
-    val sizeBytes: Long = 0L,
-    /**
-     * The draft's [WorkshopDraft.updatedAt] at the moment this file was written.
-     *
-     * Lets a screen say "this PDF is older than your edits" instead of silently handing over a
-     * report that is missing the last four stages. A stale export shared with a client is worse than
-     * no export, because nothing about the file itself admits that it is stale.
-     */
-    val sourceUpdatedAt: String = ""
-)
-
 /**
  * One row of a repeating group — a dyeing batch, a tool in an inventory, a costing line.
  *
@@ -331,7 +311,6 @@ data class WorkshopDraft(
     val stages: Map<String, StageDraft> = emptyMap(),
     /** Every durable file this workshop owns, referenced from stages by [DraftMedia.id]. */
     val media: List<DraftMedia> = emptyList(),
-    val exports: List<DraftExport> = emptyList(),
     /** Server id once the workshop has been created remotely; null while it exists only on this device. */
     val remoteId: String? = null,
     /** The account that owns this draft, so a shared field handset never shows one designer another's work. */
@@ -385,7 +364,6 @@ data class WorkshopDraftSummary(
     val updatedAt: String,
     val stageCount: Int,
     val mediaCount: Int,
-    val exportCount: Int,
     val completeness: DraftCompleteness,
     /**
      * True when this workshop's draft.json could not be read and has been quarantined.
@@ -452,19 +430,18 @@ object WorkshopDraftStore {
     private fun mediaDir(context: Context, workshopId: String): File =
         File(workshopDir(context, workshopId), "media").apply { mkdirs() }
 
-    /** Where a generated .docx/.pdf is written. Created on demand so the writer never has to. */
-    fun exportsDir(context: Context, workshopId: String): File =
-        File(workshopDir(context, workshopId), "exports").apply { mkdirs() }
-
-    /** Resolve a [DraftMedia] (or [DraftExport]) relative path back to a real file on this device. */
+    /**
+     * Resolve a [DraftMedia] relative path back to a real file on this device.
+     *
+     * THERE IS NO `exportsDir` BESIDE THIS ONE ANY MORE, and that is a decision rather than an
+     * omission — see [com.designprototype.workshop.report.ReportExport] for where a generated report
+     * actually lands and why it does not also land here.
+     */
     fun mediaFile(context: Context, workshopId: String, relativePath: String): File =
         File(workshopDir(context, workshopId), relativePath)
 
     fun mediaFile(context: Context, workshopId: String, media: DraftMedia): File =
         mediaFile(context, workshopId, media.relativePath)
-
-    fun exportFile(context: Context, workshopId: String, export: DraftExport): File =
-        mediaFile(context, workshopId, export.relativePath)
 
     /** Anything that is not plainly safe in a filename becomes '_'; empty ids get a stable stand-in. */
     private fun safeName(raw: String): String =
@@ -692,12 +669,9 @@ object WorkshopDraftStore {
      *
      * For facts ABOUT the document rather than facts IN it: the server id a create just returned, a
      * media file's acknowledged remote id, a stage's sync signature. None of those are edits the
-     * designer made, and stamping them as edits does two visible kinds of damage. The workshop list
-     * is sorted by `updatedAt`, so a background sync pass would silently reshuffle it under the
-     * designer's thumb — a row they were reaching for moves because a photograph finished uploading.
-     * And [DraftExport.sourceUpdatedAt] exists to say "this PDF is older than your edits", so a sync
-     * that bumped the stamp would mark every report in the workshop stale without a single field
-     * having changed, which is precisely the warning that has to stay trustworthy.
+     * designer made, and stamping them as edits is visibly damaging: the workshop list is sorted by
+     * `updatedAt`, so a background sync pass would silently reshuffle it under the designer's thumb —
+     * a row they were reaching for moves because a photograph finished uploading.
      *
      * Returns null when there is no draft on disk. Bookkeeping about a workshop that has been
      * deleted must not resurrect it as an empty document.
@@ -755,7 +729,6 @@ object WorkshopDraftStore {
                         updatedAt = "",
                         stageCount = 0,
                         mediaCount = File(dir, "media").listFiles()?.size ?: 0,
-                        exportCount = File(dir, "exports").listFiles()?.size ?: 0,
                         completeness = DraftCompleteness(emptyList(), 0, 0),
                         damaged = true
                     )
@@ -767,7 +740,6 @@ object WorkshopDraftStore {
                         updatedAt = draft.updatedAt,
                         stageCount = draft.stages.size,
                         mediaCount = draft.media.size,
-                        exportCount = draft.exports.size,
                         completeness = completeness(draft)
                     )
                 }
@@ -1094,38 +1066,6 @@ object WorkshopDraftStore {
         withContext(Dispatchers.IO) {
             draft.media.filterNot { mediaFile(context, draft.workshopId, it).exists() }
         }
-
-    // ── Exports ──────────────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Record a generated report that has already been written into [exportsDir].
-     *
-     * Kept beside the draft rather than in cacheDir so a report generated in the field can be shared
-     * days later, from a bus, with no connection and no regeneration — and so [DraftExport.sourceUpdatedAt]
-     * can tell the designer when the file they are about to send predates their last four stages.
-     */
-    suspend fun registerExport(
-        context: Context,
-        workshopId: String,
-        file: File,
-        format: String
-    ): DraftExport {
-        val export = DraftExport(
-            id = UUID.randomUUID().toString(),
-            relativePath = "exports/${file.name}",
-            format = format.lowercase(),
-            generatedAt = Instant.now().toString(),
-            sizeBytes = withContext(Dispatchers.IO) { file.length() }
-        )
-        var stored = export
-        update(context, workshopId) { draft ->
-            stored = export.copy(sourceUpdatedAt = draft.updatedAt)
-            // Replaces any earlier export of the same filename so regenerating a report does not
-            // grow the list without bound; the file on disk was overwritten by the writer anyway.
-            draft.copy(exports = draft.exports.filterNot { it.relativePath == stored.relativePath } + stored)
-        }
-        return stored
-    }
 
     // ── Completeness ─────────────────────────────────────────────────────────────────────────────
 

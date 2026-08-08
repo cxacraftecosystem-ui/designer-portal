@@ -523,15 +523,24 @@ class PdfWriter(
     }
 
     /**
-     * The intrinsic pixel size of a photo, cached by source and probed WITHOUT decoding it.
+     * The intrinsic pixel size of a photo, cached by source.
      *
-     * `inJustDecodeBounds` reads the header only, so this costs a few kilobytes per photo instead of
-     * the whole bitmap — which matters because both passes call it for every image and the layout
-     * pass would otherwise decode the entire report's photography to learn a pair of integers.
+     * WHAT THE PROBE ACTUALLY COSTS, because the sentence that used to stand here said "a few
+     * kilobytes per photo" and stopped the next reader noticing otherwise. `inJustDecodeBounds`
+     * makes the DECODE read the header only — that part is true and is why no bitmap is allocated —
+     * but the bytes it decodes from still have to be FETCHED, and [loadImage] on this surface is
+     * `File(source).readBytes()`: the entire 4-6 MB file into a fresh array, every call. The probe is
+     * a whole-file read that then looks at the first few hundred bytes of it.
+     *
+     * THE CACHE IS THEREFORE THE POINT, not an optimisation. It is what makes the measuring pass —
+     * which runs up to three times to settle the contents page — cost ONE read per photograph rather
+     * than three, and what makes the drawing pass's [drawImage] cost none.
      *
      * The BYTES are deliberately not cached alongside the size. Holding sixty full-resolution JPEGs
-     * (4-6 MB each) is enough to be killed on a mid-range phone even with `largeHeap`, so the loader
-     * is asked again at draw time, when the bytes are needed for a few milliseconds and then freed.
+     * is enough to be killed on a mid-range phone even with `largeHeap`, so the loader is asked again
+     * at draw time, when the bytes are needed for a few milliseconds and then freed. Two whole-file
+     * reads per printed photograph is the floor this trade sets, and it is the right trade: the
+     * alternative is the export dying with an officer waiting.
      */
     private val sizeCache = HashMap<String, Pair<Int, Int>?>()
 
@@ -574,12 +583,24 @@ class PdfWriter(
         return sample
     }
 
-    private fun decodeFitted(ref: ImageRef, boxW: Float, boxH: Float): Bitmap? {
+    /**
+     * Decode [ref] downsampled to the box it will occupy.
+     *
+     * [intrinsic] is the photo's FILE-orientation size, which [drawImage] has already obtained from
+     * [intrinsicSize] for this same source. Taking it as an argument rather than re-running
+     * `inJustDecodeBounds` here is not a micro-optimisation: that probe costs a whole-file read (see
+     * [sizeCache]), so re-running it made every printed photograph three whole-file reads instead of
+     * two, on the export a designer runs at the close of the workshop with an officer waiting.
+     */
+    private fun decodeFitted(
+        ref: ImageRef,
+        intrinsic: Pair<Int, Int>,
+        boxW: Float,
+        boxH: Float,
+    ): Bitmap? {
+        if (intrinsic.first <= 0 || intrinsic.second <= 0) return null
         val data = bytesFor(ref) ?: return null
         if (data.isEmpty()) return null
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         // The box is expressed in the DISPLAY orientation, so undo the quarter turn before asking
         // for a sample size — otherwise a portrait photo shown landscape is downsampled against the
         // wrong axis and comes back either blurry or twice the size it needed to be.
@@ -587,7 +608,7 @@ class PdfWriter(
         val reqW = ((if (quarter) boxH else boxW) * IMAGE_OVERSAMPLE).roundToInt()
         val reqH = ((if (quarter) boxW else boxH) * IMAGE_OVERSAMPLE).roundToInt()
         val opts = BitmapFactory.Options().apply {
-            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, reqW, reqH)
+            inSampleSize = sampleSizeFor(intrinsic.first, intrinsic.second, reqW, reqH)
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         return runCatching { BitmapFactory.decodeByteArray(data, 0, data.size, opts) }.getOrNull()
@@ -625,7 +646,7 @@ class PdfWriter(
                 Align.RIGHT -> x + width - w
                 else -> x
             }
-            val bitmap = decodeFitted(ref, w, h)
+            val bitmap = decodeFitted(ref, size, w, h)
             if (bitmap != null) {
                 // THE EXIF QUARTER TURN, as a Matrix. This client stores camera output unrotated
                 // with the orientation only in EXIF, so skipping this lays every portrait photo of a
@@ -649,6 +670,16 @@ class PdfWriter(
                 // Freed immediately, not left to the GC: a sixty-photo annexure holds one bitmap at a
                 // time this way and the whole report's worth otherwise.
                 bitmap.recycle()
+            } else {
+                // A PHOTOGRAPH THAT PROBED AND THEN WOULD NOT DECODE IS REPORTED HERE, and it has to
+                // be reported here now that [sizeCache] survives the measure->draw boundary. It used
+                // to be cleared wholesale, so the drawing pass re-probed every image and [intrinsicSize]
+                // recorded the drop itself; keeping the successful probes is what took a printed photo
+                // from three whole-file reads to two, and it also took away the only place this
+                // failure was noticed. Without this the picture is a blank space and
+                // "N photograph(s) could not be embedded" — the one sentence that tells the designer
+                // a picture is gone — says nothing at all.
+                droppedImages.add(ref.source)
             }
         }
         y -= h
@@ -1341,12 +1372,17 @@ class PdfWriter(
                 if (stable || iterations >= 3) break
             }
 
-            // Both are rebuilt by the drawing pass. droppedImages would otherwise report every
-            // missing photo once per measuring iteration, and the size cache is cleared only so a
-            // photo that failed to load gets one more chance — the loader may have been reading from
-            // storage that was momentarily busy.
+            // droppedImages would otherwise report every missing photo once per measuring
+            // iteration, so it is rebuilt wholesale by the drawing pass.
             droppedImages.clear()
-            sizeCache.clear()
+            // THE SIZE CACHE LOSES ONLY ITS FAILURES. The stated reason for clearing it is "a photo
+            // that failed to load gets one more chance — the loader may have been reading from
+            // storage that was momentarily busy", and that reason covers the null entries and
+            // nothing else. Clearing it wholesale threw away every SUCCESSFUL probe as well, and
+            // since each probe is a whole-file read (see [sizeCache]), it made the drawing pass
+            // re-read every photograph in the report to relearn a pair of integers it already knew —
+            // three whole-file reads per printed photo where two will do.
+            sizeCache.entries.removeAll { it.value == null }
 
             runPass(drawing = true)
             if (pageStarted) {
