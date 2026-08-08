@@ -79,7 +79,20 @@ data class PendingEntry(
      */
     val failure: String? = null,
     /** When [failure] was recorded, ISO-8601. */
-    val failedAt: String? = null
+    val failedAt: String? = null,
+    /**
+     * The app run that recorded a refusal ONLY AN UPDATE CAN CLEAR. Null on every other failure.
+     *
+     * The same field, for the same reason, as [StageSyncRecord.skewRun] — and it belongs here too
+     * because a queued record is posted as an `APIModel` (`extra="forbid"`), so a handset that has
+     * learned a new key before the API has gets `extra_forbidden` on a create exactly as the design
+     * workshop pass does. Marked plainly permanent, that stranded a queued artisan AND their
+     * photographs for good, on the device least able to be told to clear its storage.
+     *
+     * Defaulted, so an entry queued by an earlier build decodes with null and behaves exactly as it
+     * did — sticking until a person deals with it. See [blocksRetry] for the whole policy.
+     */
+    val skewRun: String? = null
 )
 
 /** One captured media item to stage for an offline entry (input form for staging). */
@@ -238,15 +251,30 @@ object OfflineOutbox {
     /**
      * Record why the server will never accept this entry. The entry and its files are KEPT: a refusal
      * is a reason to stop retrying and tell someone, not a reason to destroy the only copy.
+     *
+     * @param skewRun pass [APP_RUN] — and ONLY that — when the refusal is one no person can act on
+     *   because this build of the app and this build of the API disagree about the shape of the
+     *   request. Written on EVERY call rather than only when set, so an entry refused for a dialect
+     *   mismatch on one pass and for a genuinely bad field on the next stops being retried: a stale
+     *   run stamp would go on describing a refusal that is no longer what is standing in the way.
      */
-    suspend fun markFailure(context: Context, entryId: String, reason: String) = withContext(Dispatchers.IO) {
+    suspend fun markFailure(
+        context: Context,
+        entryId: String,
+        reason: String,
+        skewRun: String? = null,
+    ) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = read(context)
             if (current.any { it.id == entryId }) {
                 write(
                     context,
                     current.map {
-                        if (it.id == entryId) it.copy(failure = reason, failedAt = Instant.now().toString()) else it
+                        if (it.id == entryId) {
+                            it.copy(failure = reason, failedAt = Instant.now().toString(), skewRun = skewRun)
+                        } else {
+                            it
+                        }
                     }
                 )
             }

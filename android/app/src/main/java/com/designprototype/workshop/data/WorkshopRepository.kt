@@ -113,17 +113,59 @@ private val errorBodyJson = Json { ignoreUnknownKeys = true; isLenient = true }
  *
  * Retrofit buffers the error body, but reading it CONSUMES the buffer — call this once per failure.
  */
-fun Throwable.apiErrorMessage(fallback: String): String {
+fun Throwable.apiErrorMessage(fallback: String): String = apiRefusal(fallback).message
+
+/**
+ * A refusal the server ANSWERED with, read from the error body ONCE and split into the two facts a
+ * caller needs: what to put on screen, and whether anybody can do anything about it.
+ *
+ * THE TWO HAVE TO COME OUT OF ONE READ. Retrofit buffers the error body and `string()` consumes the
+ * buffer, so a second pass over it hands back an empty string — which is why [apiErrorMessage] has
+ * always carried "call this once per failure". Asking the same exception "what did it say" and "was
+ * it a schema refusal" as two calls would silently answer the second one no, for every failure,
+ * which is the sort of bug that only shows up as a stage that never syncs.
+ */
+data class ApiRefusal(
+    /** The sentence the API meant a person to read, or the best available fallback. */
+    val message: String,
+    /**
+     * Did the server refuse the SHAPE of the request rather than anything a person entered?
+     *
+     * `APIModel` is `extra="forbid"` (`backend/app/schemas/common.py`), so a client that sends a key
+     * the server does not know gets a 422 whose body names it with pydantic's own discriminator:
+     *
+     *     {"detail":[{"type":"extra_forbidden","loc":["body","entries",0,"merge"], …}]}
+     *
+     * `type` is matched, never the prose: the message is written for people and may be reworded or
+     * translated, while the discriminator is part of pydantic's contract. The port of
+     * `isSchemaRefusal` in `frontend/lib/offline.ts`, matched key for key.
+     *
+     * IT IS NOT HYPOTHETICAL. On 2026-08-08 a client sent the then-new `merge` flag to an API that
+     * predated it and every stage save came back "merge: Extra inputs are not permitted". A handset
+     * updates when it next sees wifi and the API updates when somebody deploys it, so a client
+     * running ahead of the server is an ordinary state here rather than a mistake — and the one
+     * refusal whose fix is an update rather than an edit.
+     */
+    val schemaSkew: Boolean,
+)
+
+/** See [ApiRefusal]. Call once per failure — it consumes the buffered error body. */
+fun Throwable.apiRefusal(fallback: String): ApiRefusal {
     val plain = message?.takeIf { it.isNotBlank() } ?: fallback
     // Not an HTTP failure at all (no connection, timeout, serialization): the platform message is all
     // there is, and it is more informative than anything this function could invent.
-    val http = this as? HttpException ?: return plain
+    val http = this as? HttpException ?: return ApiRefusal(plain, schemaSkew = false)
     val raw = runCatching { http.response()?.errorBody()?.string() }.getOrNull()
-    if (raw.isNullOrBlank()) return plain
+    if (raw.isNullOrBlank()) return ApiRefusal(plain, schemaSkew = false)
     val detail = (runCatching { errorBodyJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject)
         ?.get("detail")
-        ?: return plain
-    return detailMessage(detail) ?: plain
+        ?: return ApiRefusal(plain, schemaSkew = false)
+    // Only a 422 qualifies: a 500 carrying the same words is a server fault, not a dialect mismatch,
+    // and no update to either side is going to change it.
+    val skew = http.code() == 422 && (detail as? JsonArray)?.any { entry ->
+        ((entry as? JsonObject)?.get("type") as? JsonPrimitive)?.contentOrNull == "extra_forbidden"
+    } == true
+    return ApiRefusal(detailMessage(detail) ?: plain, schemaSkew = skew)
 }
 
 /** Pull the human-readable text out of whichever `detail` shape FastAPI returned. */
@@ -2535,16 +2577,35 @@ class WorkshopRepository(
             if (!ConnectivityObserver.isOnline(context)) return@withLock 0
             var synced = 0
             for (queued in queue) {
-                // Already triaged as permanent: this one is waiting on a person, not on the network.
-                if (queued.failure != null) continue
+                // Already triaged as permanent: this one is waiting on a person, not on the network —
+                // UNLESS it is waiting on an update instead, in which case this run is the one that
+                // gets to find out whether the update has landed. The identical gate the design
+                // workshop pass uses (`WorkshopSync.pushStages`) and the web outbox uses
+                // (`frontend/lib/offline.ts`), because it is the identical defect: a record refused
+                // for a key the API had not learned yet stayed refused after the API learned it.
+                if (blocksRetry(queued.failure != null, queued.skewRun)) continue
                 when (val outcome = replayEntry(context, queued)) {
                     ReplayOutcome.Synced -> {
                         OfflineOutbox.remove(context, queued)
                         synced++
                     }
                     is ReplayOutcome.Rejected -> {
-                        OfflineOutbox.markFailure(context, queued.id, outcome.reason)
-                        notifyUser(context, "\"${queued.label}\" could not be uploaded. ${outcome.reason}")
+                        OfflineOutbox.markFailure(
+                            context,
+                            queued.id,
+                            outcome.reason,
+                            skewRun = if (outcome.schemaSkew) APP_RUN else null,
+                        )
+                        // SAID WHEN IT CHANGES, NOT ON EVERY PASS THAT REACHES IT. Until a schema
+                        // refusal could be re-attempted, an entry was refused exactly once and this
+                        // fired exactly once; a skew that is still open would otherwise raise the
+                        // identical sentence every time the app is opened, which is how a researcher
+                        // learns to dismiss this notification without reading it — and the one that
+                        // matters is then dismissed too. The refusal is still listed the whole time
+                        // by `outboxFailures`, so nothing is hidden by staying quiet.
+                        if (queued.failure != outcome.reason) {
+                            notifyUser(context, "\"${queued.label}\" could not be uploaded. ${outcome.reason}")
+                        }
                     }
                     // Transient: stop here so the queue keeps its order and nothing is marked failed
                     // for a reason that is really "the signal went away again".
@@ -2593,7 +2654,16 @@ class WorkshopRepository(
         data object Retry : ReplayOutcome
 
         /** The server's final answer. Keep the entry AND its files; tell the researcher. */
-        data class Rejected(val reason: String) : ReplayOutcome
+        data class Rejected(
+            val reason: String,
+            /**
+             * True when the server could not read the SHAPE of what was sent — this build of the app
+             * speaking a dialect this build of the API does not know. Nothing on the record is wrong
+             * and no person can settle it; only an update to one of the two can, so the entry is
+             * re-attempted by the next app run rather than held for ever. See [blocksRetry].
+             */
+            val schemaSkew: Boolean = false,
+        ) : ReplayOutcome
     }
 
     /**
@@ -2611,8 +2681,19 @@ class WorkshopRepository(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                return if (isTransient(e)) ReplayOutcome.Retry
-                else ReplayOutcome.Rejected(e.apiErrorMessage("The server rejected this record."))
+                if (isTransient(e)) return ReplayOutcome.Retry
+                // `apiRefusal`, not `apiErrorMessage`: both facts have to come out of ONE read of the
+                // error body, because reading it consumes Retrofit's buffer. `isTransient` above is
+                // safe to ask first — it reads only the status code.
+                val refusal = e.apiRefusal("The server rejected this record.")
+                return ReplayOutcome.Rejected(
+                    if (refusal.schemaSkew) {
+                        skewSentence("What this copy of the app sent for this record", refusal.message)
+                    } else {
+                        refusal.message
+                    },
+                    schemaSkew = refusal.schemaSkew,
+                )
             }
             entry = entry.copy(createdId = created.id, createdStepIds = created.stepIds)
             OfflineOutbox.update(context, entry)
@@ -2667,6 +2748,11 @@ class WorkshopRepository(
         if (refused.isNotEmpty()) {
             // The record IS saved, so the entry must never be replayed — but its files are still only
             // here, so it must not be deleted either. Kept, with the reason, exactly as the web does.
+            //
+            // `schemaSkew` stays false, and deliberately so rather than by omission: a media upload is
+            // multipart form-data rather than an `APIModel` body, so `extra_forbidden` cannot arise
+            // here — and re-attempting it every app run would re-POST a record that is ALREADY on the
+            // server. This one really does wait for a person.
             return ReplayOutcome.Rejected(
                 "It was saved, but ${refused.size} file(s) were refused: ${refused.distinct().joinToString(" ")} " +
                     "Re-attach them on the record."
