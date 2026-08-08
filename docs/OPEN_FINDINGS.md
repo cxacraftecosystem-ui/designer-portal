@@ -222,3 +222,34 @@ SERVER (the shared hop): `backend/app/services/design_workshops.py:907-911` matc
 **Evidence.** VERIFIED IN FULL. `report/ReportSettings.kt:329-332` reads verbatim: "This is the one of the three that genuinely could be — the recordings are already transcribed on the handset — and it is the edge-first gap worth closing next." That sentence is false. `DraftMedia` (`data/WorkshopDraftStore.kt:101-168`) carries relativePath, mime, mediaType, size, capturedAt, stageId, fieldKey, caption, width/height, rotationDegrees, mirrored, exifDateTime, latitude, longitude and sha256 — and no transcript field of any kind. A grep for "transcript" over `android/…/data/` returns hits only in `ApiModels.kt` (where `transcriptStatus`/`transcriptText`/`transcriptError` are fields of `MediaFileDto`, an API RE
 
 **Fix.** Correct `report/ReportSettings.kt:329-332` so it no longer claims the recordings are transcribed on the handset, and re-point "the edge-first gap worth closing next" at `includeCompletenessAnnexure` on the line below (`:333-335`), whose scores this same file records as being computed on the device. Note in the same edit that the widest on-device win is not a SETTING at all and so has no entry in this ledger: the CHART and MAP sections in `UNSUPPORTED_SECTIONS` (`:355-360`), which the DEFAULT template carries (`report/ReportTemplates.kt:284`) whereas the completeness annexure appears in the archival template only (`:386-389`). Do this as part of group-c so the ledger and the code land togethe
+
+---
+
+### [MEDIUM] [BUG] A stage refused for a SCHEMA mismatch is blamed on the designer's answers (web, SMALL, CERTAIN)
+
+**Consequence.** A designer sees: *"The repository refused stage 'CLUSTER_CRAFT_BACKGROUND':
+merge: Extra inputs are not permitted … it will keep being refused until the answer that caused it
+is corrected — this is not a connection problem. Open the stage, then use Try again."*
+
+No answer they typed has anything to do with it, so the instruction is impossible to act on: they
+will open the stage, read every field, find nothing wrong, press Try again, and get the same
+sentence. This was observed for real on 2026-08-08 while the client was newer than the API and sent
+the then-unknown `merge` key.
+
+**Evidence.** `frontend/lib/designWorkshopStore.ts:2034-2040` builds ONE sentence for every 422/4xx
+the server answers with, and it asserts a cause: "the answer that caused it". That is right for a
+field-level validation refusal and wrong for a SCHEMA refusal, where the client is speaking a
+dialect the server does not know. `APIModel` is `extra="forbid"`
+(`backend/app/schemas/common.py:13`), so any key a newer client adds produces exactly this shape.
+The two cases are distinguishable: pydantic's body names the offending `loc`, and an extra-input
+refusal names a key that is not a registry field at all.
+
+**Fix.** Split the sentence on whether the refusal names a FIELD THE DESIGNER CAN OPEN. Where it
+does, keep today's wording. Where it does not — an unknown/extra input — say that this copy of the
+app and the repository are out of step, that no edit to the stage will clear it, and that the work
+is safe on the device until one of the two is updated. Do NOT tell somebody to correct an answer
+when nothing they can reach is wrong.
+
+**Note.** Deliberately not fixed in the same pass that found it: the line sits inside the same
+function the web-sync lane was editing concurrently, and two agents in one hunk is how work gets
+lost. It is small and self-contained.
