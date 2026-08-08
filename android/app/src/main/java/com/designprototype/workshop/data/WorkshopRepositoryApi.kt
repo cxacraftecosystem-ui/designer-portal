@@ -116,13 +116,17 @@ interface WorkshopRepositoryApi {
         // The shared workshop scope, plural. BROADER than the singular `workshopId` filter the form
         // pickers use: it also counts an artisan who merely SAT IN an interview taken at the
         // workshop, so this list and the completion matrix cannot disagree about who was there.
-        @Query("workshopIds") workshopIds: String? = null
+        @Query("workshopIds") workshopIds: String? = null,
+        // WHO RECORDED THE ROW — see the block comment on [WorkshopRepository.artisans] for why
+        // filtering this on the SERVER is the only correct way to build a "my records" list.
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<ArtisanDto>
 
     @GET("crafts")
     suspend fun crafts(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 100
+        @Query("pageSize") pageSize: Int = 100,
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<CraftDto>
 
     @POST("artisans")
@@ -157,7 +161,8 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
         @Query("artisanId") artisanId: String? = null,
-        @Query("artisanName") artisanName: String? = null
+        @Query("artisanName") artisanName: String? = null,
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<ProductDetailDto>
 
     @GET("products/{id}")
@@ -169,7 +174,8 @@ interface WorkshopRepositoryApi {
     @GET("tools")
     suspend fun tools(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 100
+        @Query("pageSize") pageSize: Int = 100,
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<ToolDetailDto>
 
     @GET("tools/{id}")
@@ -190,7 +196,8 @@ interface WorkshopRepositoryApi {
     @GET("workshops")
     suspend fun workshops(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 100
+        @Query("pageSize") pageSize: Int = 100,
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<WorkshopDetailDto>
 
     @GET("workshops/{id}")
@@ -266,7 +273,12 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 20,
         @Query("linkedRecordType") linkedRecordType: String? = null,
-        @Query("linkedRecordId") linkedRecordId: String? = null
+        @Query("linkedRecordId") linkedRecordId: String? = null,
+        // `uploadedBy`, NOT `createdBy`. A media row's owner column is `uploadedById` while every
+        // record's is `createdById`, and the query key follows the column on both sides of the wire —
+        // spelling this one `createdBy` would be silently ignored by the API and hand back the whole
+        // repository, which is the exact failure the owner filter exists to prevent.
+        @Query("uploadedBy") uploadedBy: String? = null
     ): PageResponse<MediaFileDto>
 
     // The media processing queue: what became of the transcription job an audio upload enqueued.
@@ -353,7 +365,8 @@ interface WorkshopRepositoryApi {
     suspend fun processes(
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
-        @Query("productId") productId: String? = null
+        @Query("productId") productId: String? = null,
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<ProcessDetailDto>
 
     @GET("processes/{id}")
@@ -416,7 +429,8 @@ interface WorkshopRepositoryApi {
     @GET("questionnaire/interviews")
     suspend fun interviews(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 100
+        @Query("pageSize") pageSize: Int = 100,
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<QuestionnaireInterviewDetailDto>
 
     @GET("questionnaire/interviews/{id}")
