@@ -1682,11 +1682,19 @@ export function buildStageEntries(
         Omitting the entry entirely is safe because `save_stage` only touches the entities the
         payload names — the collection sweep is scoped by `touched_entities`, and a singleton is
         never swept by omission at all.
+
+        AND WHEN IT IS ANSWERED, IT IS SENT AS A MERGE. Withholding the empty case was only half
+        the guard, and the half that left the banner lying: a designer who typed ONE field into a
+        stage this browser had never read sent `{artisanHouseholds: 412}`, `save_stage` replaced
+        the singleton's `data` with exactly that, and the seven fields written in the office were
+        gone — while the amber banner above the form promised in so many words that nothing left
+        blank would overwrite an answer recorded elsewhere. `merge` is that promise, kept on the
+        server: keys this browser never had are preserved, keys it did have still win.
       */
       const neverRead = (stage?.serverLoadedAt ?? null) === null;
       const answered = Object.values(values).some((value) => isFilled(value));
       if (!neverRead || answered) {
-        entries.push({ entityKey: entity.key, data: values });
+        entries.push({ entityKey: entity.key, data: values, merge: neverRead });
         rowKeys.push(null);
       }
       continue;
