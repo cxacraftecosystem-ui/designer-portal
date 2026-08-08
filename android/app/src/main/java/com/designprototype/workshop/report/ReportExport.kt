@@ -26,6 +26,20 @@ import java.time.format.DateTimeFormatter
  * app-private fallback that keeps a refused permission from destroying an export the designer just
  * waited out a progress bar for. A second copy of that logic would be a second copy to get wrong,
  * and it would get wrong exactly the handsets nobody develops on.
+ *
+ * THE REPORT IS PUBLISHED AND NOT RETAINED, and that is a decision. `WorkshopDraftStore` used to
+ * carry a whole export-retention subsystem — `DraftExport`, `exports`, `exportsDir`, `exportFile`,
+ * `registerExport`, `exportCount` — complete, documented, and with no call site anywhere in
+ * `android/app/src`: no `DraftExport` was ever constructed, so `draft.exports` was permanently empty
+ * and the "this PDF is older than your edits" warning it was built around could not fire. It has
+ * been removed rather than wired, because the capability it promised is one Downloads already
+ * provides: [Result.displayLocation] is where the file went and [Result.shareUri] covers the one
+ * case it could not go there. Wiring it instead would have kept a SECOND full copy of every
+ * generated report — tens of megabytes for a photo-heavy workshop — inside `filesDir` on the same
+ * space-constrained handsets that make [DocxWriter] refuse to hold its own media parts in memory,
+ * and it had no retention rule at all: `registerExport` deduplicated by file name, and the file name
+ * carries a timestamp, so nothing would ever have been replaced. Anyone reviving it needs the
+ * retention rule first, not the store.
  */
 object ReportExport {
 

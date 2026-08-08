@@ -57,8 +57,13 @@ import kotlin.math.min
  * The same grouping the report's cost tables apply to every money value, repeated here rather than
  * shared because a chart axis that grouped Western while the cost table beside it grouped Indian
  * would read as two different numbers to an officer checking one against the other.
+ *
+ * INTERNAL rather than private because the price-band histogram labels its bands with it
+ * ([com.designprototype.workshop.ui.designworkshop.priceBands]) and the server labels the same bands
+ * through the same `_group_indian`. A second grouping there would put "₹ 1,00,000–1,24,999" on this
+ * figure's axis and "₹ 100,000–124,999" in its band label, in one picture.
  */
-private fun groupIndian(digits: String): String {
+internal fun groupIndian(digits: String): String {
     if (digits.length <= 3) return digits
     var head = digits.substring(0, digits.length - 3)
     val tail = digits.substring(digits.length - 3)
