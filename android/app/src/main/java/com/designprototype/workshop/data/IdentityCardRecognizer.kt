@@ -149,12 +149,38 @@ object MlKitIdentityCardRecognizer : IdentityCardRecognizer {
      * Two passes over the stream, because `inJustDecodeBounds` reads the header only and the stream
      * cannot be rewound once consumed — a single reused `InputStream` here silently decodes null,
      * which reads as "that photograph could not be opened" for a file that is perfectly fine.
+     *
+     * ── THE DEFECT THIS SHAPE REPLACED, WHICH DISABLED THE WHOLE RECOGNISER ───────────────────
+     *
+     * The measuring pass was written as
+     *
+     *     context.contentResolver.openInputStream(source)?.use {
+     *         BitmapFactory.decodeStream(it, null, bounds)
+     *     } ?: return null
+     *
+     * and the elvis is applied to the value of `use { … }`, not to the stream. `decodeStream`
+     * with `inJustDecodeBounds = true` RETURNS NULL BY CONTRACT — that is the entire point of the
+     * flag; the answer comes back in `bounds`. So the elvis fired on every single call, for every
+     * image, on every device: [decodeBounded] returned null, [scan] threw "That photograph could
+     * not be opened on this device.", and `DwIdentityCardControl.send` caught it and fell through
+     * to the server. The on-device reader — and the 19.5 MB of bundled model shipped to make it
+     * possible — was unreachable in one hundred per cent of reads.
+     *
+     * NOTHING IN THIS REPOSITORY COULD HAVE CAUGHT IT. `BitmapFactory` is an android.jar stub in a
+     * JVM unit test, R8 keeps the code because it IS called, and the failure presents to a designer
+     * as "the card would not read" — indistinguishable from a bad photograph, and invisible
+     * whenever there is a connection, because the server answers instead. It was found by
+     * installing the release build on the Galaxy M32 and watching `dumpsys meminfo`:
+     * `libmlkit_google_ocr_pipeline.so` never appeared in `.so mmap`, because no ML Kit class was
+     * ever touched.
+     *
+     * So the null check now covers exactly what it was meant to cover — a content Uri that will not
+     * open — and the decode's own answer is read from `bounds`, which is where it lives.
      */
     private fun decodeBounded(context: Context, source: Uri): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(source)?.use {
-            BitmapFactory.decodeStream(it, null, bounds)
-        } ?: return null
+        val header = context.contentResolver.openInputStream(source) ?: return null
+        header.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
         var sample = 1
