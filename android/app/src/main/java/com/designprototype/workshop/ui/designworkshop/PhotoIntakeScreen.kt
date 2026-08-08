@@ -54,7 +54,6 @@ import com.designprototype.workshop.data.DwIntakePhoto
 import com.designprototype.workshop.data.DwPhotoIntake
 import com.designprototype.workshop.data.DwPhotoIntakeRow
 import com.designprototype.workshop.data.DwStageData
-import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.DwWorkshopAnchor
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.StageDraft
@@ -594,8 +593,15 @@ private fun DwIntakeRowCard(
 // What the screen holds
 // --------------------------------------------------------------------------------------
 
-/** Where one confirmed photograph is going: a stage, an entity, optionally a row, and a field. */
-private data class DwIntakeDestination(
+/**
+ * Where one confirmed photograph is going: a stage, an entity, optionally a row, and a field.
+ *
+ * `internal` rather than private, with [dwIntakeDestinations], so [DwIntakeDestinationsTest] can hold
+ * the walk to its rules by value. It holds no Android type on purpose — a `Uri` or a `Context` here
+ * would put the one decision about WHERE a photograph may go beyond the reach of every test this
+ * module can run, since app/build.gradle.kts declares JUnit 4 and no Robolectric.
+ */
+internal data class DwIntakeDestination(
     /** The picker's stored value, and the identity writes are grouped by. */
     val key: String,
     val stageKey: String,
@@ -617,7 +623,7 @@ private data class DwIntakeLine(
     val choice: String,
 )
 
-private fun dwDestinationKey(stageKey: String, entityKey: String, rowKey: String?, fieldKey: String): String =
+internal fun dwDestinationKey(stageKey: String, entityKey: String, rowKey: String?, fieldKey: String): String =
     "$stageKey|$entityKey|${rowKey.orEmpty()}|$fieldKey"
 
 /**
@@ -633,7 +639,7 @@ private fun dwDestinationKey(stageKey: String, entityKey: String, rowKey: String
  * photograph cannot be written into a row nothing can address, and offering it would be a
  * confirmation that quietly did nothing.
  */
-private fun dwIntakeDestinations(
+internal fun dwIntakeDestinations(
     schema: SchemaResponse,
     stageData: Map<String, DwStageData>,
 ): List<DwIntakeDestination> {
@@ -662,11 +668,26 @@ private fun dwIntakeDestinations(
                 continue
             }
             data?.collections?.get(entity.key).orEmpty().forEachIndexed { index, row ->
-                val rowKey = DwPhotoIntake.rowKeyOf(row) ?: return@forEachIndexed
-                val label = entity.labelField.takeIf { it.isNotEmpty() }
-                    ?.let { DwValues.text(row[it]).trim() }
-                    ?.takeIf { it.isNotEmpty() }
-                    ?: "row ${index + 1}"
+                /*
+                 * AN EMPTY KEY IS NOT A KEY, and this is `if (!rowKey) return` from page.tsx rather
+                 * than the null check that let "" through.
+                 *
+                 * `dwDestinationKey` folds null and "" into the same string, so two rows carrying an
+                 * empty key produced ONE destination key between them: the picker would have offered
+                 * two options with one value — the very thing the option list below refuses to do —
+                 * and `indexOfFirst` at Confirm would have attached the photograph to whichever of
+                 * them came first, silently and possibly to the wrong one. A row nothing can address
+                 * contributes no destination at all, which is also what the browser decides.
+                 *
+                 * The ordinal below still counts EVERY row, skipped ones included, so a row named
+                 * "row 3" here is the third row on both clients.
+                 */
+                val rowKey = DwPhotoIntake.rowKeyOf(row)?.takeIf { it.isNotEmpty() }
+                    ?: return@forEachIndexed
+                // [DwPhotoIntake.rowLabelOf] rather than a second spelling written here: it is the
+                // port of page.tsx's own `typeof labelValue === "string" && labelValue.trim()`, and
+                // it trims the way JavaScript does. See its KDoc for the no-break space this closes.
+                val label = DwPhotoIntake.rowLabelOf(entity.labelField, row) ?: "row ${index + 1}"
                 targets.forEach { target ->
                     out.add(
                         DwIntakeDestination(
