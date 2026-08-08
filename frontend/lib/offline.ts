@@ -91,6 +91,13 @@ export type OutboxEntry = {
   /** Set when the server rejected this permanently; the entry stays for the user to read and discard. */
   failure: string | null;
   /**
+   * Set INSTEAD OF a plain permanent mark when the refusal was a client/server dialect mismatch:
+   * holds the {@link APP_RUN_ID} that recorded it, so the next run tries again. See
+   * {@link blocksRetry}. Optional because entries written before this existed simply have none, and
+   * absence means "only a person can clear this" — the behaviour they already had.
+   */
+  skewRun?: string | null;
+  /**
    * Replay progress. All optional: entries written before this existed simply have none, and start
    * their replay from the top exactly as they used to.
    *
@@ -201,8 +208,8 @@ export async function discardOutboxEntry(id: number): Promise<void> {
   await refreshOutbox();
 }
 
-async function markFailure(entry: OutboxEntry, failure: string): Promise<void> {
-  await tx("readwrite", (store) => store.put({ ...entry, attempts: entry.attempts + 1, failure }));
+async function markFailure(entry: OutboxEntry, failure: string, skewRun: string | null = null): Promise<void> {
+  await tx("readwrite", (store) => store.put({ ...entry, attempts: entry.attempts + 1, failure, skewRun }));
 }
 
 /**
@@ -287,11 +294,98 @@ export function isTransient(error: unknown): boolean {
  * the server is an ordinary state here rather than a mistake, and it deserves a sentence that says
  * so.
  */
-export function isSchemaRefusal(error: unknown): boolean {
+export function isSchemaRefusal(error: unknown): error is ApiError {
   if (!(error instanceof ApiError) || error.status !== 422) return false;
   const detail = (error.payload as { detail?: unknown } | null | undefined)?.detail;
   if (!Array.isArray(detail)) return false;
   return detail.some((entry) => (entry as { type?: unknown } | null)?.type === "extra_forbidden");
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * How long a recorded refusal is allowed to bind
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * THIS RUN OF THE APP. One string, minted when the bundle is first evaluated and stable for the
+ * life of the page — a client-side navigation does not re-evaluate a module, a reload does.
+ *
+ * Its only job is to be DIFFERENT next time, so a failure record can say "the app that recorded me
+ * is not the app reading me" without anything having to know what changed.
+ *
+ * `randomUUID` is absent outside a secure context (an http:// LAN address, which is how a field
+ * laptop reaches a locally-hosted stack), so the fallback is not decoration — without it this module
+ * would throw at import time on exactly those machines. Same shape and same reason as
+ * `newClientKey` in `lib/designWorkshops.ts`.
+ */
+export const APP_RUN_ID: string = (() => {
+  const api = typeof crypto !== "undefined" ? crypto : undefined;
+  if (api && typeof api.randomUUID === "function") return api.randomUUID();
+  return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+})();
+
+/** The two fields {@link blocksRetry} reads. Satisfied structurally by every failure record here. */
+export type RecordedRefusal = {
+  /** True when the server ANSWERED and refused, so waiting for a better signal cannot help. */
+  permanent: boolean;
+  /**
+   * The {@link APP_RUN_ID} that recorded a refusal ONLY AN UPDATE CAN CLEAR. Null/absent on every
+   * other failure, which is most of them.
+   */
+  skewRun?: string | null;
+};
+
+/**
+ * Must this recorded refusal stop the pass from trying the item again on its own?
+ *
+ * ── WHY "PERMANENT" WAS NOT ENOUGH ──────────────────────────────────────────────────────────────
+ *
+ * `permanent` means "the server answered, so a better connection will not help", and it is used for
+ * two refusals that are nothing alike:
+ *
+ *   • a refusal the DESIGNER can fix — a rejected field, a workshop an admin deleted, a duplicate.
+ *     Retrying it unchanged really will get the same answer for ever, and the banner is right to ask
+ *     a person for a decision. `skewRun` is null and this returns true, exactly as before.
+ *
+ *   • a SCHEMA refusal ({@link isSchemaRefusal}) — this build of the client and this build of the
+ *     server disagree about the shape of the request. Nobody typed anything wrong and no edit can
+ *     clear it; what clears it is an UPDATE TO ONE OF THE TWO. Marking that permanent means the app
+ *     can never recover from a skew even after the skew has gone. It happened: on 2026-08-08 a
+ *     client sent the then-unknown `merge` key, every stage came back "merge: Extra inputs are not
+ *     permitted", and the record of that refusal outlived the fix — the same banner was still on
+ *     screen after the API had been taught `merge`, telling a designer to go and correct an answer
+ *     that was never wrong.
+ *
+ * ── THE TRIGGER, AND WHY IT IS THE APP RUN ──────────────────────────────────────────────────────
+ *
+ * A schema refusal is re-attempted ONCE PER APP RUN: the run that recorded it does not try again
+ * (see the note below), and the next one does, with nobody pressing anything.
+ *
+ * NOT ON EVERY PASS. A pass runs on the `online` event and on every "Sync now", and in a village
+ * with a marginal signal the connectivity event alone fires dozens of times an hour. Against a
+ * server that really is too old, 22 stages × every flap is a prepaid-data bill for 422s nobody will
+ * read, and a banner that never settles.
+ *
+ * NOT ON A CLIENT BUILD CHANGE, WHICH IS THE OBVIOUS ANSWER AND THE WRONG ONE. A skew closes when
+ * EITHER side is updated, and the client cannot see the server's build: there is no version on any
+ * response, and the one server digest the client does hold — `registryVersion` — is documented in
+ * `backend/app/services/stage_schema.py::registry_version` as a digest of registry KEYS, TYPES,
+ * TIERS, DERIVATIONS and HYDRATION, which the wire schema `extra="forbid"` guards is not part of.
+ * Measured, not assumed: the 2026-08-08 skew was closed by teaching the API `merge`
+ * (`backend/app/schemas/design_workshops.py`), which moved no registry digest — so a build check
+ * would have gone on refusing the stage for ever, which is the bug.
+ *
+ * The app run is the coarser signal that covers both: every client update is DELIVERED by a new app
+ * run, so it is a strict superset of the build check, and it also comes round after a server update
+ * without needing to observe one. Its cost is bounded by something a person does — one extra request
+ * per stranded item per time the app is opened — which is the property "every pass" does not have.
+ *
+ * A run that has already tried is remembered by RE-RECORDING the failure with the current run id, so
+ * the second pass of one page load does not re-send what the first one just had refused.
+ */
+export function blocksRetry(refusal: RecordedRefusal | null | undefined): boolean {
+  if (!refusal?.permanent) return false;
+  if (!refusal.skewRun) return true;
+  return refusal.skewRun === APP_RUN_ID;
 }
 
 export function isUnreachable(error: unknown, depth = 0): boolean {
@@ -327,7 +421,11 @@ async function runSync(): Promise<SyncResult> {
   let stoppedOffline = false;
 
   for (const entry of entries) {
-    if (entry.failure) continue; // Already triaged as permanent; waiting on the user, not the network.
+    // Already triaged. `blocksRetry` — not a bare `entry.failure` test — because a refusal recorded
+    // because the client and the server disagree about the SHAPE of the request is waiting on an
+    // update, not on the user, and holding it for ever means one queued artisan and their
+    // photographs are stranded by a skew that an update has since closed.
+    if (blocksRetry({ permanent: entry.failure !== null, skewRun: entry.skewRun })) continue;
     // Everything this pass achieves is recorded on `progress` and written through as it happens, so
     // that an interruption resumes rather than restarts. See the resumability note at the top.
     const progress: OutboxEntry = { ...entry };
@@ -437,6 +535,23 @@ async function runSync(): Promise<SyncResult> {
       if (isTransient(error)) {
         stoppedOffline = true;
         break; // Still offline (or the API is down) — everything behind this stays queued.
+      }
+      // A SCHEMA REFUSAL IS NOT THE USER'S FAULT AND MUST NOT BE HELD FOR EVER. The server could not
+      // read the shape of what this build sent, so there is nothing on the record for anybody to
+      // correct and no reason to keep the entry — and its photographs — parked once one of the two
+      // has been updated. Recorded, shown, and re-attempted by the next app run: see `blocksRetry`.
+      if (isSchemaRefusal(error)) {
+        const files = pendingFileCount(progress);
+        await markFailure(
+          progress,
+          `This copy of the app and the repository are out of step, so the repository could not read what was sent: ` +
+            `${error.message} Nothing you entered is wrong and nothing has been thrown away — this entry` +
+            `${files ? ` and its ${files} file(s)` : ""} stays on this device and will be sent by itself once one of ` +
+            "the two has been updated. You do not have to do anything.",
+          APP_RUN_ID
+        );
+        failed += 1;
+        continue;
       }
       await markFailure(progress, error instanceof Error ? error.message : "The server rejected this entry.");
       failed += 1;
