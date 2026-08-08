@@ -47,7 +47,36 @@ names the fix ("download it in the phone's speech or keyboard settings, choose a
 type the answer in") rather than telling the designer to try again.
 
 That is the honest floor. Downloading a language pack is the only thing that makes Hindi dictation
-work in a village with no signal, and the app cannot do it for them.
+work in a village with no signal.
+
+## What changed after that: the app now offers the pack
+
+The paragraph above used to end "…and the app cannot do it for them." That was true of the API the
+code was using and not of the platform. From **API 33** Android will answer both halves of this
+without being made to fail first:
+
+- `SpeechRecognizer.checkRecognitionSupport(intent, executor, callback)` returns a
+  `RecognitionSupport` carrying `installedOnDeviceLanguages`, `pendingOnDeviceLanguages`,
+  `supportedOnDeviceLanguages` (supported but **not** downloaded) and `onlineLanguages`. That is how
+  the app knows the Hindi pack is missing without producing a code 13 in a courtyard.
+- `SpeechRecognizer.triggerModelDownload(intent)` asks for one. API 34 adds the
+  `(intent, executor, ModelDownloadListener)` overload with `onProgress` / `onSuccess` /
+  `onScheduled` / `onError`.
+
+`triggerModelDownload` is documented as an **attempt**, not a promise — "This might trigger user
+interaction to approve the download. Callers can verify the status of the request via
+`checkRecognitionSupport`" — and on Android 13 it reports nothing at all. Both facts are said on
+screen rather than papered over with a spinner. **No size is ever printed: the platform does not
+report one**, in either call, and a figure beside somebody's prepaid data bundle would be invented.
+
+**Where it is reached.** A dismissible card on the dashboard, once, after install; the offer that
+opens when a language whose pack is missing is chosen in the dictation language list; and a permanent
+list of all nineteen under Settings › Appearance & accessibility. Nothing downloads by itself,
+nothing is ticked to begin with, and no download is offered where there is no connection to carry it.
+
+**Below API 33 the answer is "unknown", in that word.** minSdk here is 26 and much of the fleet is
+Android 8 and 9, where the platform cannot be asked at all. Those handsets keep exactly the floor
+described above, and the settings list says so instead of guessing.
 
 ## The other half of the same defect
 

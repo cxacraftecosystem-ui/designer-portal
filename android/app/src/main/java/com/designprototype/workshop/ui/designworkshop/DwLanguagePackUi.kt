@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +66,11 @@ import com.designprototype.workshop.data.dwPackStates
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 
 /**
  * Offering the nineteen dictation language packs, instead of failing on the one the designer picked.
@@ -143,6 +149,19 @@ internal fun dwConnection(context: Context): DwConnection {
 // The controller
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * How long the platform gets to answer `checkRecognitionSupport` before the answer is "unknown".
+ *
+ * Fifteen seconds: long enough for a cold bind to another app's recognition service on the slowest
+ * handset in the fleet, short enough that a designer standing in a courtyard is not left holding a
+ * spinner. This is the ONLY thing standing between a wedged OEM recogniser and a settings list that
+ * never finishes loading.
+ */
+private const val PACK_CHECK_TIMEOUT_MS: Long = 15_000
+
+/** Carries the platform's error code out of the callback and into the coroutine that is waiting. */
+private class DwPackCheckFailure(val code: Int) : Exception()
+
 /** What has happened to one download request in this sitting. Never persisted; it is about now. */
 internal data class DwPackRequestNote(
     val text: String,
@@ -166,7 +185,11 @@ internal data class DwPackRequestNote(
  * reason.
  */
 @Stable
-internal class DwLanguagePackController(private val context: Context) {
+internal class DwLanguagePackController(
+    private val context: Context,
+    /** The composition's own scope, so a check dies with the surface that asked for it. */
+    private val scope: CoroutineScope,
+) {
 
     /** The device's own answer, or null while it has not been obtained. Null means UNKNOWN. */
     var support by mutableStateOf<DwRecognitionSupport?>(null)
@@ -229,6 +252,20 @@ internal class DwLanguagePackController(private val context: Context) {
      * API 33 that control is the ONLY way to find out.
      */
     fun refresh() {
+        scope.launch { refreshNow() }
+    }
+
+    /**
+     * The check itself, with a deadline.
+     *
+     * THE DEADLINE IS NOT DEFENSIVE PROGRAMMING, it is the difference between "unknown" and a
+     * spinner that never stops. `checkRecognitionSupport` hands its answer to a callback supplied by
+     * another app's service; if that service is wedged — and the recognisers on budget handsets are
+     * the ones that wedge — nothing ever arrives, `checking` stays true, the "Check again" button
+     * stays disabled and the designer is left watching a wheel with no way out. On the deadline the
+     * state becomes the honest one this whole feature is built on: we asked, and we do not know.
+     */
+    private suspend fun refreshNow() {
         connection = dwConnection(context)
         if (!platformCanAnswer) {
             cannotAsk = DW_PACK_CANNOT_ASK_SENTENCE
@@ -241,21 +278,37 @@ internal class DwLanguagePackController(private val context: Context) {
             return
         }
         checking = true
-        checkSupport(
-            engine = engine,
-            onAnswer = { answer ->
-                support = answer
-                checking = false
+        val answer = withTimeoutOrNull(PACK_CHECK_TIMEOUT_MS) {
+            suspendCancellableCoroutine<Result<DwRecognitionSupport>> { continuation ->
+                checkSupport(
+                    engine = engine,
+                    // `isActive` guards a service that calls back twice, which would otherwise throw
+                    // IllegalStateException out of somebody else's binder thread.
+                    onAnswer = { answer -> if (continuation.isActive) continuation.resume(Result.success(answer)) },
+                    onFailure = { code -> if (continuation.isActive) continuation.resume(Result.failure(DwPackCheckFailure(code))) },
+                )
+            }
+        }
+        checking = false
+        val landed = answer?.getOrNull()
+        when {
+            landed != null -> {
+                support = landed
                 cannotAsk = null
-            },
-            onFailure = { code ->
-                checking = false
-                // The answer stays whatever it was — a failed re-check must not wipe a good list and
-                // replace nineteen honest rows with nineteen "unknown"s.
+            }
+            // Failure and timeout both LEAVE `support` alone: a re-check that fails must not wipe a
+            // good list and replace nineteen honest rows with nineteen "unknown"s.
+            answer != null -> {
+                val code = (answer.exceptionOrNull() as? DwPackCheckFailure)?.code
                 cannotAsk = "This phone would not say which language packs it has (code $code). " +
                     "Dictation still works and still says when a language is missing."
-            },
-        )
+            }
+            else -> {
+                cannotAsk = "This phone's speech service did not answer, so which packs are " +
+                    "installed is unknown. Dictation still works and still says when a language " +
+                    "is missing."
+            }
+        }
     }
 
     /**
@@ -416,7 +469,8 @@ internal class DwLanguagePackController(private val context: Context) {
 @Composable
 internal fun rememberDwLanguagePacks(active: Boolean): DwLanguagePackController {
     val context = LocalContext.current.applicationContext
-    val controller = remember(context) { DwLanguagePackController(context) }
+    val scope = rememberCoroutineScope()
+    val controller = remember(context, scope) { DwLanguagePackController(context, scope) }
     // Keyed on `active` so leaving and returning re-asks: a pack downloaded from Settings must be
     // reflected the next time the language chooser is opened, without restarting the app.
     DisposableEffect(active) {
@@ -476,6 +530,8 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
         }
         val missingButOffline = controller.connection == DwConnection.NONE &&
             DW_DICTATION_LANGUAGES.any { states[it.tag] == DwPackState.DOWNLOADABLE }
+        // A list with no button under it must say WHY there is no button, or it reads as a list that
+        // failed to finish loading. Each arm covers one of the three ways that happens.
         when {
             missingButOffline -> Text(
                 DW_PACK_NO_CONNECTION_SENTENCE,
@@ -486,6 +542,14 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
                 Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, fontSize = 12.sp)
                 Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, fontSize = 12.sp)
             }
+            controller.support != null -> Text(
+                "There is nothing to fetch. Every language marked “${dwPackStateLabel(DwPackState.INSTALLED)}” " +
+                    "is already on the phone, and the ones marked " +
+                    "“${dwPackStateLabel(DwPackState.UNSUPPORTED)}” have no offline pack this " +
+                    "recogniser can add.",
+                color = MaterialTheme.field.muted,
+                fontSize = 12.sp
+            )
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -669,11 +733,13 @@ internal fun DwLanguagePackOfferCard(onDismiss: () -> Unit) {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The settings card: the nineteen, their state, and the control that fetches the missing ones.
+ * The settings body: the nineteen, their state, and the control that fetches the missing ones.
  *
- * Takes its own frame from the caller ([content] is dropped into the screen's own card shape) so it
- * sits with the appearance and accessibility cards rather than inventing a second card style beside
- * them.
+ * Draws no card of its own — the caller drops it inside its screen's existing card shape, so it sits
+ * with the appearance and accessibility cards rather than inventing a second card style beside them.
+ *
+ * `active = true` unconditionally, because reaching this composable at all means the designer has
+ * navigated to Settings to look at exactly this list. The binding lasts as long as the screen.
  */
 @Composable
 internal fun DwLanguagePackSettings(modifier: Modifier = Modifier) {
@@ -719,23 +785,40 @@ internal fun DwLanguagePackOfferDialog(
     // One tap per language per sitting: once the request has gone out, the confirm button becomes
     // "Close" rather than a second "Download" that would ask the service for the same file again.
     val canDownload = offer == DwPackOffer.DOWNLOAD && note == null
+    // The answer has not landed yet. Saying "unknown" here would be a claim rather than a wait, and
+    // the wait resolves into the real sentence in the same dialog a moment later.
+    val stillAsking = controller.checking && controller.support == null
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("$label dictation") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(dwPackStateSentence(label, state), color = MaterialTheme.field.body, fontSize = 13.sp)
-                when (offer) {
-                    DwPackOffer.DOWNLOAD -> {
-                        Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, fontSize = 12.sp)
-                        Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                if (stillAsking) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        Text(
+                            "Asking this phone whether the $label pack is installed…",
+                            color = MaterialTheme.field.muted,
+                            fontSize = 13.sp
+                        )
                     }
-                    DwPackOffer.NO_CONNECTION ->
-                        Text(DW_PACK_NO_CONNECTION_SENTENCE, color = MaterialTheme.field.muted, fontSize = 12.sp)
-                    // INSTALLED / IN_PROGRESS / UNAVAILABLE / UNKNOWN all have their whole answer in
-                    // the state sentence above; a second line would only restate it.
-                    else -> Unit
+                } else {
+                    Text(dwPackStateSentence(label, state), color = MaterialTheme.field.body, fontSize = 13.sp)
+                    when (offer) {
+                        DwPackOffer.DOWNLOAD -> {
+                            Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, fontSize = 12.sp)
+                            Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        }
+                        DwPackOffer.NO_CONNECTION ->
+                            Text(DW_PACK_NO_CONNECTION_SENTENCE, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        // INSTALLED / IN_PROGRESS / UNAVAILABLE / UNKNOWN all have their whole answer
+                        // in the state sentence above; a second line would only restate it.
+                        else -> Unit
+                    }
                 }
                 note?.let {
                     Text(

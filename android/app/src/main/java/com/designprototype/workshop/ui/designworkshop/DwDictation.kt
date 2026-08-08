@@ -548,10 +548,13 @@ internal fun DwDictationButton(
                           it can be read once rather than acknowledged nineteen times.
                         */
                         val packState = dwPackState(chosen, packs.support)
-                        packOffer = if (packState == DwPackState.INSTALLED || packState == DwPackState.UNKNOWN) {
-                            null
-                        } else {
-                            chosen
+                        packOffer = when {
+                            // The check is still outstanding — a designer who taps a language a
+                            // half-second after opening the list must not silently miss the offer.
+                            // The dialog opens saying it is asking, and resolves in place.
+                            packs.checking -> chosen
+                            packState == DwPackState.INSTALLED || packState == DwPackState.UNKNOWN -> null
+                            else -> chosen
                         }
                     }
                     showLanguages = false
