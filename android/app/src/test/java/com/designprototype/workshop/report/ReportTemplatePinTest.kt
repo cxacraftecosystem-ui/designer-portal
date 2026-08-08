@@ -33,7 +33,7 @@ import org.junit.Test
  * has a cover section" passes against a port whose DCH sections are in the wrong order, whose photo
  * catalogue numbers its headings, or whose compact summary caps at ADVANCED — every one of which is
  * a different document from the office's for the same workshop, and none of which anybody would see
- * without opening the two files side by side. The pin carries 6 templates, 110 sections, 38
+ * without opening the two files side by side. The pin carries 6 templates, 116 sections, 38
  * `apply_report_settings` cases and the accent, font, template-id, palette, cover-meta and date
  * arithmetic besides, and the whole of each is compared.
  *

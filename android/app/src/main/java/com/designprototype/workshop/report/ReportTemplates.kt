@@ -61,6 +61,21 @@ enum class SpecialSection {
     SIGNATURES,
     ANNEXURE_MEDIA,
     ANNEXURE_TRANSCRIPTS,
+
+    /**
+     * Every sitting recorded against a questionnaire the designer built and attached to THIS
+     * workshop.
+     *
+     * DECLARED HERE AND DRAWN BY NOTHING ON THIS DEVICE, exactly as [ANNEXURE_TRANSCRIPTS] is, and
+     * for the same kind of reason: the gap is DATA rather than drawing. The answers live in
+     * `QuestionnaireFormAnswer` on the server; a handset holds no local copy of them and the
+     * questionnaire screens read them over the network. So the enum member exists — the catalogue
+     * must match the server's section for section, and `ReportTemplatePinTest` diffs the two by
+     * value — and [UNSUPPORTED_SECTIONS] carries the sentence that tells the designer the office's
+     * copy will have what this file does not. A section silently missing from the field copy is the
+     * divergence this port exists to end.
+     */
+    ANNEXURE_QUESTIONNAIRES,
     COMPLETENESS,
     MAP,
     CHART,
@@ -220,6 +235,23 @@ val TRANSCRIPT_ANNEXURE = TemplateSection(
     pageBreakBefore = true,
 )
 
+/**
+ * The questionnaire annexure, carried by EVERY template, immediately before the transcripts.
+ *
+ * Mirrors `report_templates.QUESTIONNAIRE_ANNEXURE` on the server field for field — the heading
+ * string included, because `ReportTemplatePinTest` diffs the two catalogues by value and a heading
+ * that differs by one character is a section the two documents name differently.
+ *
+ * There is no stage-20 toggle beside `includeTranscripts` for this one, on the server either:
+ * attaching a questionnaire to a design workshop is already the designer asking for it. See
+ * `backend/app/services/report_questionnaires.py` for the argument in full.
+ */
+val QUESTIONNAIRE_ANNEXURE = TemplateSection(
+    special = SpecialSection.ANNEXURE_QUESTIONNAIRES,
+    heading = "Annexure — Questionnaire responses",
+    pageBreakBefore = true,
+)
+
 private fun standardSections(
     photos: Boolean = true,
     photoColumns: Int = 2,
@@ -281,7 +313,7 @@ val REPORT_TEMPLATES: List<ReportTemplate> = listOf(
         description = "The full narrative report for submission to the Development Commissioner " +
             "(Handicrafts): cover, contents, every stage in the reader's order, photographs, " +
             "cost sheets and sign-off.",
-        sections = standardSections(figures = true) + TRANSCRIPT_ANNEXURE,
+        sections = standardSections(figures = true) + QUESTIONNAIRE_ANNEXURE + TRANSCRIPT_ANNEXURE,
         organisation = "Office of the Development Commissioner (Handicrafts)",
         theme = DCH_THEME,
     ),
@@ -291,7 +323,7 @@ val REPORT_TEMPLATES: List<ReportTemplate> = listOf(
         description = "The District Industries Centre format. The same content as the DCH report " +
             "with the section names a DIC submission expects and the administrative annexure " +
             "brought forward.",
-        sections = standardSections() + TRANSCRIPT_ANNEXURE,
+        sections = standardSections() + QUESTIONNAIRE_ANNEXURE + TRANSCRIPT_ANNEXURE,
         organisation = "District Industries Centre",
         theme = DIC_THEME,
     ),
@@ -328,6 +360,7 @@ val REPORT_TEMPLATES: List<ReportTemplate> = listOf(
             ),
             TemplateSection(stageKey = "POST_WORKSHOP_FOLLOWUP", presentation = Presentation.TABLE),
             TemplateSection(special = SpecialSection.SIGNATURES, pageBreakBefore = true),
+            QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
         ),
         theme = AGENCY_THEME,
@@ -367,6 +400,7 @@ val REPORT_TEMPLATES: List<ReportTemplate> = listOf(
                 includePhotos = false,
             ),
             TemplateSection(special = SpecialSection.SIGNATURES),
+            QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
         ),
         theme = DCH_THEME,
@@ -382,6 +416,7 @@ val REPORT_TEMPLATES: List<ReportTemplate> = listOf(
                 special = SpecialSection.ANNEXURE_MEDIA, pageBreakBefore = true,
                 heading = "Annexure — Photographic record",
             ),
+            QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
             TemplateSection(
                 special = SpecialSection.COMPLETENESS,
@@ -418,6 +453,7 @@ val REPORT_TEMPLATES: List<ReportTemplate> = listOf(
                 presentation = Presentation.TABLE, includePhotos = false,
                 heading = "The makers",
             ),
+            QUESTIONNAIRE_ANNEXURE,
             TRANSCRIPT_ANNEXURE,
         ),
         numberHeadings = false,
