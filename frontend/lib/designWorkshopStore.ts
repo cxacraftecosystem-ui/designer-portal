@@ -112,7 +112,7 @@ import { uploadMediaBatch } from "@/lib/media";
 // wrong one either strands a queue for ever or replays a rejection until somebody clears storage.
 // `isUnreachable`, NOT `isTransient`: the latter answers "is it worth retrying" and says yes to
 // every 5xx, which is how a stage the server had permanently refused was reported as a lost signal.
-import { isSchemaRefusal, isUnreachable } from "@/lib/offline";
+import { APP_RUN_ID, blocksRetry, isSchemaRefusal, isUnreachable } from "@/lib/offline";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Constants
@@ -129,7 +129,17 @@ const STORE_REGISTRY = "registry";
 const MEDIA_BY_DRAFT = "byDraft";
 
 /** The document version. Bump it and add a rung to {@link migrateDraft} in the same commit. */
-export const DW_DRAFT_SCHEMA_VERSION = 2;
+export const DW_DRAFT_SCHEMA_VERSION = 3;
+
+/**
+ * The `skewRun` stamped on a refusal recorded BEFORE this store could tell the two kinds apart.
+ *
+ * Deliberately a fixed string rather than a real {@link APP_RUN_ID}: it can never equal the running
+ * one, so every such refusal is re-attempted exactly once and then re-recorded under the new policy
+ * — genuinely refused items come straight back with their sentence and stick, and the ones that were
+ * only ever a version skew go up. See the v3 rung in {@link migrateDraft}.
+ */
+const PRE_SKEW_POLICY_RUN = "recorded-before-the-skew-retry-policy";
 
 /**
  * Prefix of a workshop id that exists only in this browser.
@@ -200,6 +210,17 @@ export type DwDraftFailure = {
    * stage must not block the twenty behind it forever with nothing on screen saying why.
    */
   permanent: boolean;
+  /**
+   * The app run that recorded a refusal ONLY AN UPDATE CAN CLEAR — a SCHEMA refusal, where this
+   * build of the client and this build of the server disagree about the shape of the request.
+   *
+   * Null on every other failure, which keeps `permanent` meaning exactly what it always meant for
+   * them. "Permanent" is the right marking for a refusal the DESIGNER can fix; it is the wrong one
+   * for a dialect mismatch, whose fix is an update to one of the two and which would otherwise leave
+   * the app unable to recover from a skew after the skew had gone. The whole policy, and why the
+   * trigger is an app run rather than a build number, is in {@link blocksRetry}.
+   */
+  skewRun?: string | null;
   at: number;
   attempts: number;
 };
@@ -398,6 +419,18 @@ async function transact<T>(
  * alone. The alternative — refusing it — tells a designer their fortnight is corrupt because a
  * colleague's laptop updated first, which is a worse answer than a missing column.
  */
+/**
+ * One v2 failure record, marked so the v3 policy gives it a single re-attempt. See the v3 rung.
+ *
+ * Only PERMANENT failures are touched. A non-permanent one (a stage waiting on a photograph) is
+ * already re-tried on every pass and stamping it would be claiming a skew that was never diagnosed.
+ */
+function reTriagedFailure(raw: unknown): unknown {
+  const failure = raw as { permanent?: unknown } | null | undefined;
+  if (!failure || failure.permanent !== true) return raw ?? null;
+  return { ...failure, skewRun: PRE_SKEW_POLICY_RUN };
+}
+
 function migrateDraft(raw: Record<string, unknown>): DwDraft {
   let document = raw;
   let version = typeof document.schemaVersion === "number" ? document.schemaVersion : 0;
@@ -441,6 +474,38 @@ function migrateDraft(raw: Record<string, unknown>): DwDraft {
                   }
                 ];
               }
+            )
+          )
+        };
+        break;
+      case 2:
+        /*
+          v3 RE-TRIAGES EVERY REFUSAL A v2 DOCUMENT RECORDED, because v2 could not tell the two kinds
+          apart and this rung is the only thing that can reach the ones already on disk.
+
+          A v2 `failure` says `permanent: true` for a rejected field (the designer's to fix, so it
+          must go on sticking) and for a schema refusal (nobody's to fix, and it must NOT). The
+          record does not say which — the discriminator was in the ApiError, which was thrown away
+          the moment the sentence was written. It is not recoverable from the prose either: the
+          sentence was reworded on 2026-08-08 and a message match would be a guess.
+
+          So the rung does not guess. It stamps a `skewRun` that can never equal the running one,
+          which buys each stranded item EXACTLY ONE re-attempt under the new policy: a genuine
+          refusal answers the same way and is re-recorded with `skewRun: null`, sticking for good; a
+          skew that has since been closed simply syncs. The cost is one request per already-failed
+          item, once per browser — and the alternative is the reported defect, where a stage refused
+          for a `merge` key the API has since learned goes on telling a designer to correct an answer
+          that was never wrong, with no way out but a button they have no reason to press.
+
+          Nothing is cleared and no sentence is lost: the banner reads exactly as it did until the
+          re-attempt answers.
+        */
+        document = {
+          ...document,
+          failure: reTriagedFailure(document.failure),
+          stages: Object.fromEntries(
+            Object.entries((document.stages ?? {}) as Record<string, Record<string, unknown>>).map(
+              ([key, stage]) => [key, { ...stage, failure: reTriagedFailure(stage.failure) }]
             )
           )
         };
@@ -1868,8 +1933,17 @@ export function syncDesignWorkshopDrafts(): Promise<DwSyncResult> {
   return syncing;
 }
 
-function failure(message: string, permanent: boolean, attempts: number): DwDraftFailure {
-  return { message, permanent, at: Date.now(), attempts };
+/**
+ * @param skewRun pass {@link APP_RUN_ID} — and ONLY that — when the refusal is one no edit can clear
+ *   and only an update to the client or the server will. See {@link DwDraftFailure.skewRun}.
+ */
+function failure(
+  message: string,
+  permanent: boolean,
+  attempts: number,
+  skewRun: string | null = null
+): DwDraftFailure {
+  return { message, permanent, skewRun, at: Date.now(), attempts };
 }
 
 async function runSync(): Promise<DwSyncResult> {
@@ -1897,7 +1971,9 @@ async function runSync(): Promise<DwSyncResult> {
   for (const item of work) {
     let draft = item.draft;
     if (!draftBelongsToSession(draft)) continue; // Somebody else's fieldwork on a shared laptop.
-    if (draft.failure?.permanent) continue; // Waiting on the designer, not on the network.
+    // Waiting on the designer, not on the network — UNLESS it is waiting on an update instead, in
+    // which case this run is the one that gets to find out whether the update has landed.
+    if (blocksRetry(draft.failure)) continue;
 
     try {
       /* 1. The workshop itself. ------------------------------------------------------------- */
@@ -2040,7 +2116,7 @@ async function runSync(): Promise<DwSyncResult> {
 
       for (const stageKey of item.stageKeys) {
         const stage = draft.stages[stageKey];
-        if (!stage || stage.failure?.permanent) continue;
+        if (!stage || blocksRetry(stage.failure)) continue;
         const outstanding = unresolvedMediaRefs(stage);
         if (outstanding.length) {
           // HELD BACK, NOT TRIMMED. Sending the stage without the reference would omit the key, and
@@ -2096,7 +2172,12 @@ async function runSync(): Promise<DwSyncResult> {
               `This build's field registry has no stage called “${stageKey}”, so its answers cannot be sent. They are still ` +
                 "on this device. Reload the page once you have a connection to pick up the current field list.",
               true,
-              (stage.failure?.attempts ?? 0) + 1
+              (stage.failure?.attempts ?? 0) + 1,
+              // A SKEW LIKE ANY OTHER, and the one whose own sentence gave the instruction away: it
+              // tells the designer to reload, and until this argument existed a reload changed
+              // nothing, because the pass stepped over the stage for ever on the strength of
+              // `permanent`. The app must be able to keep the promise it printed.
+              APP_RUN_ID
             )
           );
           result.failed += 1;
@@ -2180,22 +2261,36 @@ async function runSync(): Promise<DwSyncResult> {
             read every field, find nothing wrong, press Try again, get the same sentence — for ever.
             Telling somebody to correct an answer when nothing they can reach is wrong is how an app
             teaches people that its warnings are noise.
+
+            AND THE SENTENCE WAS ONLY HALF OF IT. Correcting the words left the RETRY POLICY behind
+            them saying the same false thing: `permanent` meant the pass stepped over this stage for
+            ever, so the app could not recover from a skew even after an update had closed it. That
+            is the state this defect was reported in — the API had been taught `merge` and answered
+            200 to the very PUT the banner was still refusing to make. `skewRun` is what ends it: the
+            refusal is recorded and shown exactly as before, and the NEXT app run tries again on its
+            own. See `blocksRetry` for why the trigger is an app run and not a build number.
           */
+          // Read before the branch: `isSchemaRefusal` is a type guard, so testing it narrows `error`
+          // to `never` in the arm where it is false — this block has already established that the
+          // error IS an `ApiError`, and there is nothing left to subtract.
+          const said = error.message;
           const schemaRefusal = isSchemaRefusal(error);
           await noteStageFailure(
             draft.localId,
             stageKey,
             failure(
               schemaRefusal
-                ? `The repository could not read what this copy of the app sent for stage “${stageKey}”: ${error.message} ` +
+                ? `The repository could not read what this copy of the app sent for stage “${stageKey}”: ${said} ` +
                   "Nothing you typed is wrong and nothing has been thrown away — this app and the repository are out of " +
-                  "step, and no edit to the stage will clear it. Your work is safe on this device until one of the two is " +
-                  "updated. Tell whoever runs the repository if it keeps happening."
-                : `The repository refused stage “${stageKey}”: ${error.message} It is still on this device and nothing has been ` +
+                  "step, and no edit to the stage will clear it. Your work is safe on this device, and it will be sent by " +
+                  "itself the next time you open the app after either has been updated; you do not have to do anything. " +
+                  "Tell whoever runs the repository if it keeps happening."
+                : `The repository refused stage “${stageKey}”: ${said} It is still on this device and nothing has been ` +
                   "thrown away, but it will keep being refused until the answer that caused it is corrected — this is not a " +
                   "connection problem. Open the stage, then use Try again.",
               true,
-              (stage.failure?.attempts ?? 0) + 1
+              (stage.failure?.attempts ?? 0) + 1,
+              schemaRefusal ? APP_RUN_ID : null
             )
           );
           result.failed += 1;
@@ -2262,6 +2357,13 @@ async function runSync(): Promise<DwSyncResult> {
         break;
       }
       const status = error instanceof ApiError ? error.status : 0;
+      // THE SAME SPLIT AS THE STAGE ARM, AT WORKSHOP LEVEL. `createDesignWorkshop` and
+      // `patchDesignWorkshop` post an `APIModel` too, so a client that has learned a new header
+      // field before the API has gets `extra_forbidden` here — and marking that plainly permanent
+      // strands not one stage but the WHOLE fortnight, header, stages, photographs and all, behind a
+      // refusal nobody can act on. It is the more expensive half of the same bug, so it gets the same
+      // answer: say what happened, and let the next app run find out whether the skew has closed.
+      const schemaRefusal = isSchemaRefusal(error);
       await mutate(draft.localId, (current) => ({
         ...current,
         failure: failure(
@@ -2270,11 +2372,17 @@ async function runSync(): Promise<DwSyncResult> {
               // an echo of our own create. Nothing has been sent and nothing has been thrown away.
               "This workshop has been deleted on the server, so nothing more can be sent to it. Everything you captured is " +
                 "still on this device. Ask an admin to restore it, then sync again."
-            : error instanceof Error
-              ? error.message
-              : "The server refused this workshop.",
+            : schemaRefusal
+              ? `The repository could not read what this copy of the app sent for this workshop: ${error.message} Nothing ` +
+                "you typed is wrong and nothing has been thrown away — this app and the repository are out of step. " +
+                "Everything you captured is safe on this device, and it will be sent by itself the next time you open the " +
+                "app after either has been updated; you do not have to do anything."
+              : error instanceof Error
+                ? error.message
+                : "The server refused this workshop.",
           true,
-          (current.failure?.attempts ?? 0) + 1
+          (current.failure?.attempts ?? 0) + 1,
+          schemaRefusal ? APP_RUN_ID : null
         )
       }));
       result.failed += 1;
@@ -2321,6 +2429,11 @@ async function noteMediaFailure(localMediaId: string, message: string): Promise<
  * The manual retry behind the banner's button. Nothing is deleted and nothing is re-sent here — the
  * refusal is simply cleared, because the designer has been told what it was and has decided the
  * conditions have changed (an admin restored the workshop, a colleague freed the duplicate name).
+ *
+ * IT IS NOW FOR THOSE CASES ONLY. A refusal whose cause is a client/server version skew clears
+ * itself on the next app run ({@link blocksRetry}) precisely because a designer has no way of
+ * knowing when to press this, and no reason to think a refusal blaming their answers would be
+ * cleared by pressing it. This button stays for the refusals a person genuinely decides about.
  */
 export async function retryDraft(id: string): Promise<void> {
   await mutate(id, (draft) => ({
