@@ -267,3 +267,25 @@ refusals already on disk; and the same policy is mirrored on the handset, which 
 `merge` flag (`android/.../data/WorkshopSync.kt`, `blocksRetry` + `ApiRefusal.schemaSkew`). Pinned by
 `frontend/e2e/schema-skew-retry-unit.spec.ts`, `frontend/e2e/design-workshop-schema-skew.spec.ts` and
 `android/app/src/test/.../DwSchemaSkewRetryTest.kt`.
+
+**VERIFIED 2026-08-09, and it was resolved in THREE halves, not two.** The browser spec above had
+never been run — it skips without credentials — so it was run against the live stack for the first
+time here (`designer@example.org`, seeded by `backend/scripts/seed_test_accounts.py`) and both cases
+pass: a stage refused for a schema reason, then a server that accepts, ends up synced with nobody
+clicking, including from a record wound back to the exact v2 shape the defect was reported in. Two
+gaps were found and closed in the same pass:
+
+1. **The records outbox had the policy and no trigger for it.** `lib/offline.ts` re-attempts once per
+   APP RUN and writes a sentence promising the entry "will be sent by itself"; `OutboxBanner` drained
+   only on the `online` event and on a click, and `online` never fires for a tab that was never
+   offline — the laptop reopened the next morning on office wifi. MEASURED with an entry refused by
+   an earlier run seeded into IndexedDB: **zero** replay requests across a reload before, one after.
+   Fixed by the mount drain its sibling `DraftSyncBanner` already had and explains. Pinned by
+   `frontend/e2e/outbox-schema-skew-drain.spec.ts`, which also pins the other direction — a field the
+   validator rejected is re-recorded without a run stamp and the run after that leaves it alone.
+2. **Android's records outbox was not mirrored.** `WorkshopRepository.syncOutbox` still stepped over
+   every failed entry for ever (`if (queued.failure != null) continue`), and a queued create posts an
+   `APIModel`, so `extra_forbidden` is reachable there exactly as it is for a stage. `PendingEntry`
+   now carries `skewRun`, `replayEntry` reads the error body once through `apiRefusal`, and both
+   queues on the handset use one `blocksRetry` and one `skewSentence`. Pinned by
+   `android/app/src/test/.../OutboxSchemaSkewRetryTest.kt`.
