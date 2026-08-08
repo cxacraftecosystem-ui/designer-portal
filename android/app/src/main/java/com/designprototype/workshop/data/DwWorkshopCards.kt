@@ -163,10 +163,34 @@ fun workshopCardRows(
  * One card's worth of input — ONLY what may be printed.
  *
  * The caller supplies a title and at most two supporting lines, and this shape has nowhere to put
- * anything else. That is deliberate and it is the same guarantee `WorkshopCodeSheet.tsx` makes: a
- * card is a public object the moment it leaves the room, so no identity number can reach it — no
- * Aadhaar, no Pehchan, no artisan card number — and a struct with no field for one cannot become the
- * place one leaks.
+ * anything else. A card is a public object the moment it leaves the room, so the SUPPORTING LINES are
+ * a closed set chosen by hand at [workshopCardSpecs] — serial and village, prototype code and
+ * materials — and no Aadhaar, Pehchan, artisan card number or phone can reach them. That much this
+ * struct really does guarantee, and it is the guarantee `WorkshopCodeSheet.tsx` makes about its own
+ * `lines`.
+ *
+ * ── [title] IS NOT COVERED BY THAT, AND THE GAP IS REAL ───────────────────────────────────────
+ *
+ * [title] comes from [dwCardRowTitle], whose second rule is "the first prose anybody typed" — a walk
+ * over every live TEXT/LONG_TEXT field in registry order. On the bundled roster that order is
+ * name, localName, gender, artisanCardNo, so a participant row whose `name` is still blank (it is
+ * `required`, which is a SUBMISSION gate and not an entry-time one — a blank required box is the
+ * normal mid-workshop state, and tags are printed at the START of a workshop) but whose
+ * `artisanCardNo` has been filled is titled with the artisan's government card number, printed large
+ * on a card that is tied to an object and carried out of the room.
+ *
+ * That `artisanCardNo` is the field to worry about is not a guess: [DwIdentityOcr]'s own
+ * `isIdentityNumberField` names it as "the registry's one identity-number field today (stage 3, the
+ * participant roster)" — the same roster this function's ARTISAN branch prints from.
+ *
+ * NOT FIXED HERE, deliberately. `rowTitle` in `lib/designWorkshops.ts` has the identical walk and the
+ * web's sheet titles its cards the same way, so narrowing it on this client alone would make the two
+ * sheets print different names for one row — a divergence, on top of a leak that would still ship
+ * from the browser. The fix belongs in both `rowTitle`s at once, and it needs a predicate on each:
+ * Android has one already (`isIdentityNumberField`, though it is `internal` to `ui.designworkshop`
+ * and the data layer must not reach into a UI package, so it would have to move), and the WEB HAS NO
+ * TWIN OF IT AT ALL — grep `frontend/` for the name returns nothing. Until both exist this is a known
+ * hole, written down rather than implied away.
  *
  * [key] is a stable identity for the list, and it is NOT the id: an unsaved row does not have one.
  */
