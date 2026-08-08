@@ -215,6 +215,23 @@ A local read sends nothing, so the transport argument for that gate does not app
 may read an artisan's identity card is an organisational rule and not a transport one, and this
 client's standing rule is to mirror `deps.py` and never invent a permission.
 
+### What all of that cost, measured the same way as the table above
+
+Two production builds in this worktree, before and after, summing the scripts each prerendered page
+tells the browser to fetch:
+
+| Route | before (gzip) | after (gzip) | added |
+|---|---|---|---|
+| `/artisans/new` | 382,477 | 383,895 | **+1,418** |
+| `/dashboard` | 280,552 | 280,903 | +351 |
+| `/login` | 233,270 | 233,270 | 0 |
+
+The local reader, the pure parsing rule, the photograph preparation and both controls' new copy
+together weigh **1,418 gzipped bytes** on the page that has the identity boxes — 0.37% of what that
+page already weighed, against the 4,453,109 bytes the rejected option would have added. The 351
+bytes on `/dashboard` are `lib/identityCardImage.ts` arriving through `lib/designWorkshops.ts`,
+which that page already imports.
+
 ---
 
 ## 5. The defect this lane found, which is worth more than the feature
