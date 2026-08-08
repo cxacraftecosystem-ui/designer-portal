@@ -124,8 +124,21 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Design workshops",
     icon: DraftingCompass,
     group: "Record",
-    can: canCreateRecords,
-    gate: "assert_can_create_records"
+    // A SET, NOT A RANK THRESHOLD, and the difference is two real roles. `canCreateRecords` is
+    // "Researcher and above", while `DESIGN_WORKSHOP_ROLES` is {Designer, Admin, Master Admin} — a
+    // Professor outranks a Designer and is deliberately outside it. Gating on rank therefore showed
+    // this entry to exactly the two roles that cannot create a workshop.
+    //
+    // MEASURED AGAINST THE RUNNING API, not inferred: POST /api/design-workshops answers 201 for
+    // designer and 403 for professor and researcher, while GET answers 200 for all three. So the
+    // LIST is open to any signed-in account and it is the create action behind this entry that
+    // always refuses them — the server was never at risk, but an entry that leads somewhere its
+    // primary action is refused is how an interface teaches people to distrust the ones that work.
+    //
+    // Android has had this right since the entry was added (`AppNavigation.kt`, gate
+    // `can_run_design_workshops`); the web was the surface that was behind.
+    can: canRunDesignWorkshops,
+    gate: "can_run_design_workshops"
   },
   // A questionnaire the designer authored themselves, from the .xlsx pro-forma. DISTINCT FROM "Take
   // interview" above, which is the one shared artisan questionnaire every researcher answers — two

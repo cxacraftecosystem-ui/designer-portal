@@ -176,7 +176,30 @@ function DashboardView() {
       icon: Layers,
       newHref: "/design-workshops?new=1",
       updateHref: "/design-workshops",
-      visible: creator,
+      /*
+        `canRunDesignWorkshops` AND NOT `creator`, BECAUSE THE TWO DISAGREE ABOUT TWO ROLES.
+
+        `canCreateRecords` is a RANK THRESHOLD — Researcher and above — while running a design
+        workshop is a SET (`DESIGN_WORKSHOP_ROLES`: Designer, Admin, Master Admin). A Professor
+        outranks a Designer and is deliberately outside the set, so a rank test admits exactly the
+        two people the server refuses.
+
+        MEASURED AGAINST THE RUNNING API RATHER THAN INFERRED, because the first attempt at this
+        note asserted the list route was gated too and that is false:
+
+            POST /api/design-workshops   designer 201 · professor 403 · researcher 403
+            GET  /api/design-workshops   designer 200 · professor 200 · researcher 200
+
+        So LISTING is open to any signed-in account and only CREATING is gated
+        (`create_design_workshop` runs `assert_can_create_records` AND `_require_designer`;
+        `_require_designer` is not on the list route at all). That makes this a tile whose primary
+        action — "New workshop" — always 403s for two roles that can nonetheless see everything it
+        links to. The server was never at risk; the interface was lying about what it would do, and
+        a control that always refuses is how people learn to distrust the ones that work.
+
+        `permissions.ts` already had `canRunDesignWorkshops`; only these call sites were wrong.
+      */
+      visible: canRunDesignWorkshops(user),
       newLabel: "New workshop"
     },
     { label: "Artisan", icon: UserIcon, newHref: "/artisans/new", updateHref: "/artisans", visible: creator },
