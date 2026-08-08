@@ -40,6 +40,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DwPackState
+import com.designprototype.workshop.data.dwPackState
+import com.designprototype.workshop.data.dwPackStateLabel
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
@@ -106,6 +109,16 @@ import com.designprototype.workshop.ui.field
  * round it ("…dictation on this phone needs a connection; your keyboard's own microphone may have an
  * offline language pack"), because a designer who thinks the feature is broken stops using it
  * permanently, whereas one who knows it needs signal uses it in the evening at the guest house.
+ *
+ * ── AND NOW THE APP OFFERS TO FIX IT RATHER THAN ONLY EXPLAINING IT ───────────────────────────
+ *
+ * All of the above is still the floor, and it is still reached on Android 12 and below. But the
+ * fallback needs a connection, and Odia — the language of the state these workshops are run in — is
+ * no likelier to be installed than Hindi was. From API 33 the platform will say which of the
+ * nineteen packs are present WITHOUT being made to fail first
+ * (`SpeechRecognizer.checkRecognitionSupport`) and will accept a request to fetch one
+ * (`triggerModelDownload`). `DwLanguagePackUi.kt` does both; picking a language whose pack is
+ * missing now opens an offer instead of waiting to produce a code 13 in a courtyard.
  */
 
 /**
@@ -195,6 +208,23 @@ internal fun DwDictationButton(
     var recognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
     /** Set while a network failure is being retried on-device, so the retry cannot itself retry. */
     var retried by remember { mutableStateOf(false) }
+
+    /**
+     * The language just chosen whose pack is NOT on this phone, or null when there is nothing to
+     * offer. Drives [DwLanguagePackOfferDialog].
+     */
+    var packOffer by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * WHAT THIS PHONE CAN ACTUALLY DICTATE WITHOUT SIGNAL, asked instead of discovered by failing.
+     *
+     * `active` is what keeps this cheap. A stage screen composes one of these buttons per prose
+     * field — hundreds across a workshop — and binding a `SpeechRecognizer` in each would be an IPC
+     * handshake per field. It goes live only while the designer has the language list open or the
+     * offer in front of them, which is also exactly when the answer is wanted: by the time they tap
+     * a language, the check started when they opened the list has usually landed.
+     */
+    val packs = rememberDwLanguagePacks(active = showLanguages || packOffer != null)
 
     // rememberUpdatedState so the listener — which is created once per session and outlives several
     // recompositions — always calls the CURRENT lambdas. Capturing them directly would have a long
@@ -502,10 +532,47 @@ internal fun DwDictationButton(
                     if (chosen.isNotBlank()) {
                         tag = chosen
                         lastDictationTag = chosen
+                        /*
+                          THE OFFER AT THE POINT OF CHOOSING, and the two states it deliberately
+                          stays silent for.
+
+                          INSTALLED needs no dialog: the designer picked a language that already
+                          works offline, and interrupting that with a panel saying so would put a
+                          dismissal between them and the microphone.
+
+                          UNKNOWN needs no dialog either, and that is the harder call. On API < 33
+                          the phone cannot be asked, so the honest answer is "we do not know" — but
+                          a dialog carrying that sentence on EVERY language choice is a dialog a
+                          designer learns to dismiss without reading, and the next one that matters
+                          goes with it. The unknown is stated permanently in Settings instead, where
+                          it can be read once rather than acknowledged nineteen times.
+                        */
+                        val packState = dwPackState(chosen, packs.support)
+                        packOffer = if (packState == DwPackState.INSTALLED || packState == DwPackState.UNKNOWN) {
+                            null
+                        } else {
+                            chosen
+                        }
                     }
                     showLanguages = false
                 }
             )
+            // What the phone can do with the language currently selected, in one line, BEFORE the
+            // designer commits to it. `dwPackStateLabel` is the same word this language carries in
+            // the settings list, so the two surfaces cannot describe one pack differently.
+            val currentState = dwPackState(tag, packs.support)
+            if (currentState != DwPackState.UNKNOWN) {
+                Text(
+                    "${DW_DICTATION_LANGUAGES.firstOrNull { it.tag == tag }?.label ?: tag}: " +
+                        dwPackStateLabel(currentState).lowercase(),
+                    color = if (currentState == DwPackState.INSTALLED) {
+                        MaterialTheme.field.success
+                    } else {
+                        MaterialTheme.field.muted
+                    },
+                    fontSize = 11.sp
+                )
+            }
             Text(
                 "The recogniser has to be told which language to expect. Choosing the wrong one " +
                     "does not fail — it transcribes the sounds into the wrong script, which is " +
@@ -514,6 +581,18 @@ internal fun DwDictationButton(
                 fontSize = 11.sp
             )
         }
+    }
+
+    // A dialog rather than a strip under the field: this button is drawn into a text field's
+    // trailing-icon slot, which is a few dp wide, and an offer that has to fit there would be an
+    // offer nobody could read. It opens only in response to the designer's own tap on a language.
+    packOffer?.let { chosen ->
+        DwLanguagePackOfferDialog(
+            controller = packs,
+            tag = chosen,
+            label = DW_DICTATION_LANGUAGES.firstOrNull { it.tag == chosen }?.label ?: chosen,
+            onDismiss = { packOffer = null }
+        )
     }
 }
 
