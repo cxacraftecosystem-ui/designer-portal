@@ -133,6 +133,20 @@ difference being the recogniser. Sizes are `ls -la` on `app/build/outputs/apk/re
 | Before — merge base `af4add7`, no recogniser, all ABIs | **6,636,115** | — |
 | After — bundled ML Kit Latin, `abiFilters` = the two ARM ABIs | **26,195,264** | **+19,559,149 · 3.95×** |
 
+> **⟲ THE NUMBER THAT SHIPS IS 26,211,648 BYTES, AND IT IS NEITHER OF THE TWO IN THIS DOCUMENT.**
+> Two lanes measured this independently and reported **26,195,264** (row above) and **26,080,576**
+> (the table under "What it actually costs"). Both are honest measurements of their own branch;
+> neither is a measurement of the tree that merges them. Measured on the merged tree by
+> `os.path.getsize` on `app/build/outputs/apk/release/app-release.apk` after a real
+> `:app:assembleRelease` (`grep -c '^e: '` = 0):
+>
+>     26,211,648 bytes
+>
+> against the 6,636,115 baseline that is **+19,575,533 bytes, 3.95×** — the shape both lanes gave,
+> to the byte-count of the artifact that actually installs. The ABIs were read out of the APK's own
+> central directory with `zipfile`: `arm64-v8a` and `armeabi-v7a`, nothing else. When a number in
+> this document and a number off the APK disagree, the APK is right.
+
 Where those 19,559,149 bytes went, read out of the APK with `unzip -v` (native libraries are
 `Stored`, 0% — see `extractNativeLibs="false"` below, confirmed in the packaged manifest):
 
@@ -148,8 +162,16 @@ could do nothing at all about the rest, exactly as the original argument said it
 
 ### The one lever that was pulled: `abiFilters`
 
-The `defaultConfig` now carries `ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }`. Measured
-sizes of the two x86 copies inside the AAR, which are **not** in the APK because of it:
+`buildTypes.release` carries `ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }`, behind a
+`releaseAllAbis` escape hatch in gitignored `local.properties`; `debug` is deliberately left
+unfiltered so the x86_64 emulator still works. **It is NOT in `defaultConfig`, and the difference is
+not cosmetic** — see the comment at that spot in `android/app/build.gradle.kts`. Both lanes wrote an
+ARM filter, one into `defaultConfig` and one into `release`, git merged both cleanly because they
+sit in different regions of the file, and AGP unions the two sets: the escape hatch could no longer
+widen anything while still printing the line saying it had, and `debug` silently lost the emulator.
+The merge kept one block.
+
+Measured sizes of the two x86 copies inside the AAR, which are **not** in the APK because of it:
 
 | Avoided | Bytes |
 |---|---|
@@ -351,13 +373,144 @@ the only rule that can match them is the new one. `mapping.txt` shows
 `MlKitIdentityCardRecognizer`, `IdentityCardText`, `TextRecognition`, `TextRecognizerOptions` and
 `InputImage` all present in the shrunk build.
 
+> **⟲ Correction: "the only rule that can match them is the new one" is false.**
+> `com.google.firebase:firebase-components:16.1.0` is pulled in by
+> `play-services-mlkit-text-recognition-common`, `com.google.mlkit:common` **and**
+> `com.google.mlkit:vision-common` (`:app:dependencies --configuration releaseRuntimeClasspath`), and
+> its consumer `proguard.txt` is three lines, the third being
+> `-keep class * implements com.google.firebase.components.ComponentRegistrar`. It appears in this
+> build's own merged `app/build/outputs/mapping/release/configuration.txt` under that artifact's
+> banner. The claim that every `proguard.txt` in the graph had been read and none kept a registrar
+> did not hold — one does, and it is the one named after the interface the rule itself cites.
+>
+> The rule stays: `-keep class *` alone does not name the no-arg constructor that
+> `Class.forName(name).newInstance()` needs, and that is what the body adds. What changes is the
+> claim. The seeds, the identity mapping and the `r8-removed.txt` entries quoted above are all real
+> and were re-confirmed on the merged tree — they just do not prove that this file caused them.
+>
+> The failure this section imagines — a crash at the first tap on a build that installed perfectly —
+> **did happen**, and had nothing to do with R8. See "IT HAS NOW BEEN RUN ON THE HANDSET".
+
 ---
 
-# ⟲ What is still not proven, and it is the important part
+# ⟲⟲ IT HAS NOW BEEN RUN ON THE HANDSET — 2026-08-09 — AND IT DID NOT WORK
 
-**No recognition has ever been run.** ML Kit cannot run in a JVM unit test — it is a native pipeline
-behind a Play Services `Task` — and this machine has no device and no emulator (`adb` is not
-installed). So:
+Read this section before the one below it, which was written when there was no device and is kept
+because its list of what-was-owed is exactly what got checked.
+
+**Device:** Samsung SM-M325F (Galaxy M32), Android 13, 5.8 GB RAM, arm64-v8a, over wireless adb.
+**Build:** the shrunk, R8-minified **release** APK measured above, debug-signed so it could be
+installed, pointed at a local API through `adb reverse tcp:8000 tcp:8000`.
+**Card:** a rendered test specimen, banner-labelled as one, carrying the repository's own
+Verhoeff-valid fixture `2345 6789 0124` printed large and alone, **plus** `VID : 2345 6789 0124 5678`
+— a sixteen-digit run whose first twelve digits are that same valid number — plus a date of birth, a
+pin code, a mobile number and an enrolment number.
+
+## The recogniser never ran. Not on this card — on any card, on any device, ever.
+
+`MlKitIdentityCardRecognizer.decodeBounded` measured the image with
+
+```kotlin
+context.contentResolver.openInputStream(source)?.use {
+    BitmapFactory.decodeStream(it, null, bounds)
+} ?: return null
+```
+
+The elvis binds to the value of `use { … }`, not to the stream, and `BitmapFactory.decodeStream`
+with `inJustDecodeBounds = true` **returns null by contract** — that is the whole point of the flag;
+the answer arrives in `bounds`. So `decodeBounded` returned null on every call, `scan` threw "That
+photograph could not be opened on this device.", and `DwIdentityCardControl.send` caught it and fell
+through to the server. **The 19.5 MB of bundled model shipped and was unreachable in 100% of reads.**
+
+Nothing in this repository could have found it. `BitmapFactory` is an `android.jar` stub in a JVM
+test; R8 keeps the code because it *is* called; and the symptom on a designer's screen is "the card
+would not read", which is indistinguishable from a bad photograph and **invisible wherever there is
+a connection, because the server answers instead**. It was found by installing the release build and
+watching `dumpsys meminfo`: `libmlkit_google_ocr_pipeline.so` never appeared in `.so mmap`, because
+no ML Kit class was ever touched. Fixed in `IdentityCardRecognizer.kt`, which now carries the whole
+story at the function.
+
+## After the fix, from the device's own logs and UI tree
+
+Same handset, same release build, rebuilt with the one-line fix:
+
+```
+04:57:09.165  wm_on_activity_result_called: MainActivity, ACTIVITY_RESULT
+04:57:09.425  DecoupledTextDelegate: Start loading thick OCR module.
+04:57:09.427  DynamiteModule: Considering local module com.google.mlkit.dynamite.text.latin:10000
+                              and remote module com.google.mlkit.dynamite.text.latin:0
+04:57:09.427  DynamiteModule: Selected local version of com.google.mlkit.dynamite.text.latin
+04:57:09.630  native: tflite_model_pooled_runner.cc:625] Loading
+              mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Latn_ctc/optical/conv_model.fb
+04:57:09.632  native: … /optical/lstm_model.fb
+04:57:09.790  tflite: Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate)
+```
+
+**"Selected LOCAL version … remote module :0"** is the offline claim, in Google's own words: the
+model came out of this APK's `assets/`, not out of Play Services. And the whole read — decode, a
+first-ever cold model load, and recognition — ran between `09.165` and `09.79`: **under one second**
+on the target handset, which was previously unmeasured.
+
+What the artisan form then showed, read out of the `uiautomator` tree rather than off a screenshot:
+
+```
+Check this against the card before using it
+Use 2345 6789 0124
+Aadhaar · read on this phone
+```
+
+- **One candidate, not two.** The VID line contributed nothing, on real recognised text and not
+  only in a unit test — the maximal-run rule holds where the server's regex does not.
+- **"read on this phone"**, so the server was never asked. (It could not have answered: this local
+  backend returns "Identity-card scanning is switched off", which is precisely the message the
+  broken build produced instead of a number.)
+- Tapping the button put `2345 6789 0124` into the Aadhaar box and dismissed the panel.
+
+## The safety properties, attacked on the device
+
+- **No number reaches a log.** `adb logcat -d -b all` across the whole read: **zero** occurrences of
+  `234567890124`, `2345 6789 0124` or `2345-6789-0124`. Not a grep of the source — a capture of the
+  device during the read, which is the only test that counts.
+- **A Verhoeff failure cannot reach the field.** Both readers converge on `identityChoices`, which
+  gates on `ArtisanIdentity.isAadhaar` → `aadhaarError`, whose third rule is the checksum. There is
+  no other route from a reader to `onUse`.
+- **The parsing tests are real.** Breaking `scanDigitRuns` so a run stops at twelve digits — which
+  is exactly the server's VID defect — turned two tests red with the fabricated number in the
+  failure message (`the sixteen-digit VID beside the number yields nothing at all` and `a
+  thirteen-digit run is not a twelve-digit number with a digit after it`). Restored, green again.
+
+## ML Kit phones home, and the privacy paragraph above should say so
+
+During the read the app logged `TransportRuntime.SQLiteEventStore: Storing event … name=FIREBASE_ML_SDK
+for destination cct`, queued for `firebaselogging.googleapis.com`. That is ML Kit's own usage
+telemetry — **not** the card, not the recognised text, and it does not block or delay the read, which
+completes with no network at all. But "the card image stops leaving the phone" is the correct claim
+and "nothing leaves the phone" is not, and this document should not be read as making the second one.
+
+## What is STILL not verified on hardware
+
+- **A genuinely radio-off read.** This phone is reached over wireless adb, and Samsung refuses
+  `input`, `svc` and `cmd` binder calls from any process detached from the adb session — so the
+  handset cannot be taken offline and driven at the same time. What is proven instead is the part
+  that carries the claim: the model is loaded from the APK (`Selected local version`), and the
+  candidate is labelled `read on this phone`, so no network was involved in producing it. The
+  remaining untested surface is the wording of the offline helper sentences, and
+  `usable = enabled && !working && (readableOnDevice || online)` — in which `readableOnDevice` is
+  true for an Aadhaar field, so connectivity cannot disable the buttons.
+- **The scratch directory after a camera capture, and after a mid-read process kill.** A release
+  build is not debuggable, so `run-as` cannot read `filesDir`. The **picker** path was the one
+  exercised and it copies nothing at all — the bytes are read straight from the content Uri.
+- **Accuracy on a real laminated card in courtyard light.** One rendered specimen is not a corpus.
+  What is now known is that the pipeline runs, in under a second, and that its output survives the
+  filter; nothing here says how often a real card is read correctly.
+
+---
+
+# ⟲ What was still not proven when this lane handed over
+
+**No recognition had ever been run.** ML Kit cannot run in a JVM unit test — it is a native pipeline
+behind a Play Services `Task` — and the machine this lane was written on had no device and no
+emulator (`adb` was not installed). So:
 
 - **every claim about accuracy is unmade.** Whether ML Kit reads a laminated card at an angle in
   courtyard light, whether it groups the twelve digits onto one line rather than splitting them
@@ -378,6 +531,25 @@ This is the same hardware gap the handover already records against the offline c
 Also unmeasured: **how long a read takes** on that handset, and how much heap the decode costs. The
 decode is bounded to a 2,200 px longest edge for exactly that reason, which is a judgement rather than
 a measurement.
+
+> **⟲ Three corrections to the paragraphs above, made when the device work was actually done.**
+>
+> 1. **The list was right and it was worth insisting on.** Doing it found a defect that made the
+>    whole feature dead — see the section above this one. Everything the handover said could only be
+>    checked on hardware was the thing that was broken.
+> 2. **The registrar keep rule was *not* "the difference between working and a crash".**
+>    `com.google.firebase:firebase-components:16.1.0` is inside ML Kit's own dependency graph and
+>    ships `-keep class * implements ComponentRegistrar` as a consumer rule; it is in this build's
+>    merged `configuration.txt`. The rule in `proguard-rules.pro` adds the no-arg constructor the
+>    library rule does not name, which is worth keeping — but the registrars were never at risk of
+>    being deleted, and saying they were sent the next reader looking in the wrong place. The real
+>    hazard was three lines away, in `decodeBounded`.
+> 3. **The counts.** `IdentityCardTextTest` holds **20** cases, not 18, and the suite on the merged
+>    tree is **718** passing, 0 failing — the two lanes' numbers (688 and 657) each describe their
+>    own branch.
+>
+> **The read takes under a second** on the M32, cold model load included. Peak heap is still
+> unmeasured; the 2,200 px bound remains a judgement.
 
 ## Why the small one is still disqualified
 
