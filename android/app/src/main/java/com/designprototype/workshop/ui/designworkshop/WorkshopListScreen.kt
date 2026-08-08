@@ -114,6 +114,19 @@ private data class WorkshopRow(
 @Composable
 fun WorkshopListScreen(
     repository: WorkshopRepository,
+    /**
+     * Arrive with the "New design workshop" dialog already open.
+     *
+     * The dashboard's Design workshop card is the only caller that passes true, and it is what makes
+     * that card's primary button start a workshop in one tap instead of landing on a list with the
+     * form shut — the state the web tile's "New workshop" was in until this change.
+     *
+     * CONSUMED ONCE PER ARRIVAL. `remember(startCreating)` seeds [showCreate] and then leaves it
+     * alone, so cancelling the dialog leaves the designer on the list instead of watching it reopen
+     * on the next recomposition. The route out of a workshop rebuilds this screen with false, so
+     * backing out never re-offers the form (MainActivity's `goBack`).
+     */
+    startCreating: Boolean = false,
     onOpen: (workshopId: String) -> Unit,
     onMessage: (String) -> Unit,
     onError: (String) -> Unit,
@@ -126,7 +139,7 @@ fun WorkshopListScreen(
     var rows by remember { mutableStateOf<List<WorkshopRow>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var search by remember { mutableStateOf("") }
-    var showCreate by remember { mutableStateOf(false) }
+    var showCreate by remember(startCreating) { mutableStateOf(startCreating) }
     var busy by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
     var offline by remember { mutableStateOf(false) }

@@ -9,6 +9,7 @@ import {
   Camera,
   ClipboardCheck,
   ClipboardList,
+  DraftingCompass,
   Eye,
   GitBranch,
   Hammer,
@@ -173,10 +174,21 @@ function DashboardView() {
     // was not on the dashboard at all and could be reached only by typing the URL.
     {
       label: "Design workshop",
-      icon: Layers,
+      // The nav entry's and the page header's own icon, not `Layers` — which the Consolidated
+      // questionnaire tile further down also uses, so the grid carried the same glyph twice under
+      // two different words. Each client is internally consistent instead: DraftingCompass here and
+      // in DynamicIslandNav, `Icons.Filled.DesignServices` on both of Android's.
+      icon: DraftingCompass,
       newHref: "/design-workshops?new=1",
       updateHref: "/design-workshops",
-      visible: creator,
+      // `canRunDesignWorkshops` and NOT `creator`, which is what this line used to say. The two
+      // differ for a RESEARCHER and a PROFESSOR, and both were being shown a tile whose every
+      // destination is `ROUTE_GUARDS`' "Designer access required" panel (lib/permissions.ts:277-283)
+      // — because the server gates even the LIST route on `_require_designer`
+      // (backend/app/api/routes/design_workshops.py:194), not on `assert_can_create_records`. It is
+      // a SET, {DESIGNER, ADMIN, MASTER_ADMIN}, so a professor outranks a designer and is still
+      // outside it; Android's card reads the same predicate (`DesignWorkshopCard.visibleTo`).
+      visible: canRunDesignWorkshops(user),
       newLabel: "New workshop"
     },
     { label: "Artisan", icon: UserIcon, newHref: "/artisans/new", updateHref: "/artisans", visible: creator },

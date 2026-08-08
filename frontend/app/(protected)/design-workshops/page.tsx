@@ -28,9 +28,9 @@
  * of a fortnight in the field the one act that needs signal.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { CloudOff, DraftingCompass, Plus } from "lucide-react";
 
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
@@ -68,7 +68,7 @@ import {
 } from "@/lib/designWorkshopStore";
 import { isTransient, isUnreachable } from "@/lib/offline";
 import { formatDate } from "@/lib/format";
-import { canCreateRecords, isAdmin } from "@/lib/permissions";
+import { canRunDesignWorkshops, isAdmin } from "@/lib/permissions";
 import type { PageResult, Workshop } from "@/lib/types";
 import { listResource } from "@/lib/api";
 import { sortWorkshopsByOccurrence } from "@/components/forms/WorkshopSelect";
@@ -90,11 +90,32 @@ const STATUS_OPTIONS = [
 ];
 
 export default function DesignWorkshopsPage() {
+  // Next 16: `useSearchParams` — the `?new=1` the dashboard tile has been sending here since it was
+  // written — must sit inside a Suspense boundary. Same wrapper /crafts and /workshops use.
+  return (
+    <Suspense fallback={<div className="panel p-4 text-sm text-ink-500">Loading...</div>}>
+      <DesignWorkshopsPageBody />
+    </Suspense>
+  );
+}
+
+function DesignWorkshopsPageBody() {
   const confirm = useConfirm();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const { adminMode } = useAdminView();
-  const allowCreate = canCreateRecords(user);
+  /**
+   * `can_run_design_workshops`, and NOT `canCreateRecords` as this line used to read.
+   *
+   * The looser predicate was dead in practice — `ROUTE_GUARDS` already refuses this whole path to
+   * anyone outside the set, so nobody who failed the real rule ever reached this render — and a
+   * wrong-but-shadowed predicate is exactly how the rule comes back: it survives a correction made
+   * in the guard, reads as authoritative to whoever finds it first, and nothing fails when it
+   * drifts. Android deleted its own second copy for that reason (MainActivity.kt, above
+   * `canManageDesignerRoster`); this is the web's.
+   */
+  const allowCreate = canRunDesignWorkshops(user);
   const allowDelete = isAdmin(user);
 
   /**
@@ -183,6 +204,40 @@ export default function DesignWorkshopsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * `?new=1` — the dashboard tile's "New workshop" button, finally doing what it says.
+   *
+   * The tile has emitted `/design-workshops?new=1` since it was written and this page never read the
+   * parameter: `formOpen` started false and only the header button ever flipped it, so the one
+   * control on the dashboard that promises to START a workshop landed on the list with the form shut
+   * and left the designer to find the button themselves. Android's new Design workshop card opens
+   * its create dialog directly (`Screen.DesignWorkshops(startCreating = true)`), so without this the
+   * two clients would disagree about what one button does — which is the thing parity exists to stop.
+   *
+   * A ONE-SHOT INTENT, not a render mode. `/processes` derives `?new=1` on every render because its
+   * form REPLACES the list; here the form sits on the list and its header button toggles it shut, so
+   * a parameter re-read each render would put the form back the instant the designer closed it. It
+   * is spent with `router.replace` exactly as `useEditDeepLink` spends `?edit=`, which is also what
+   * keeps Back out of a create the designer already abandoned.
+   *
+   * Stripped even when the account may not create, for the same reason that hook drops an intent
+   * whose `allowed` is false: a parameter aimed at a form this viewer cannot see must not survive a
+   * refresh or a forwarded link. `scroll: false` because there is nothing to scroll to — the form
+   * renders directly under the header the reader is already looking at.
+   */
+  const wantsNew = searchParams.get("new") === "1";
+  // Depended on as a STRING: the URLSearchParams object is a fresh identity on every navigation, and
+  // the effect rebuilds the query from it to keep any parameter it does not consume.
+  const searchString = searchParams.toString();
+  useEffect(() => {
+    if (!wantsNew) return;
+    if (allowCreate) setFormOpen(true);
+    const next = new URLSearchParams(searchString);
+    next.delete("new");
+    const query = next.toString();
+    router.replace(query ? `/design-workshops?${query}` : "/design-workshops", { scroll: false });
+  }, [wantsNew, allowCreate, searchString, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -401,8 +456,8 @@ export default function DesignWorkshopsPage() {
         description="The 22-stage design and prototype workshop record: setup and participants, cluster background, market survey, sketches, prototypes, costing, outcomes and the generated report."
         icon={<DraftingCompass className="h-5 w-5" aria-hidden />}
         actions={
-          // Gated to NOTHING rather than to a disabled button: an ungated "New …" invites every
-          // tier to press a control that lands on a refusal from `assert_can_create_records`.
+          // Gated to NOTHING rather than to a disabled button: an ungated "New …" invites a tier to
+          // press a control that lands on a refusal from `_require_designer`.
           allowCreate ? (
             <button type="button" className="field-button" onClick={() => setFormOpen((open) => !open)}>
               <Plus className="h-4 w-4" aria-hidden />
