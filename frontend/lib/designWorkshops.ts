@@ -902,7 +902,11 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     cost: "cost",
     photo: "photo"
   },
-  "processStep.processRef": { name: "name" },
+  // Widened with the server's, and the two must stay in step: `Process` holds notes and hangs off
+  // a product, so a step row now carries what happens and which documented product's sequence it
+  // came from instead of a bare name. `steps` and `preProcessAvailable` are deliberately absent —
+  // `stage_schema.REFERENCE_HYDRATION` says why beside the decision.
+  "processStep.processRef": { name: "name", notes: "description", productName: "documentedFor" },
   "existingProduct.artisanRef": { name: "artisanName" },
   "existingProduct.productRef": {
     name: "name",
