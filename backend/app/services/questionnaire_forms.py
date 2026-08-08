@@ -81,6 +81,16 @@ from app.services.questionnaire_xlsx import (
     ParsedQuestionnaire,
     derive_section_code,
 )
+# The report annexure's value objects, imported rather than re-declared. ``report_questionnaires``
+# is pure — it reaches ``report_model`` and nothing else, never the database — so this direction of
+# the dependency is the safe one and there is no cycle: the report pipeline imports THIS module.
+# Two shapes for one thing would drift, and the drift would show as the annexure printing a field
+# the loader stopped filling.
+from app.services.report_questionnaires import (
+    QuestionnaireAnswer,
+    QuestionnaireItem,
+    QuestionnaireSitting,
+)
 
 # The label an answer column with no name of its own becomes. See ParsedQuestionnaire.entryLabels.
 UPLOAD_ENTRY_SOURCE = "UPLOAD"
@@ -243,6 +253,144 @@ async def load_form(
             for entry in visible_entries
         ],
     }
+
+
+async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
+    """Every questionnaire attached to one design workshop, as the report annexure reads it.
+
+    FIVE FLAT QUERIES REGARDLESS OF HOW MANY QUESTIONNAIRES ARE ATTACHED, for the reason
+    :func:`load_form` is flat: on this deployment the database is in another AWS region and a nested
+    Prisma ``include`` is its own sequential round trip per level, so a per-questionnaire
+    ``load_form`` loop would cost four hops times the number of forms on a path — report generation —
+    that already measured 6.8 s of pure network before it was made to gather.
+
+    RETIRED QUESTIONS ARE INCLUDED, exactly as :func:`export_payload` includes them and for the same
+    reason: an answer recorded against a question that was later reworded stays attached to the
+    WORDING IT WAS GIVEN UNDER (``QuestionnaireFormQuestion.supersededById``), and dropping the old
+    wording would either lose the answer or, worse, reprint it under the new question — which is the
+    "twelve looms becomes twelve weavers" failure the supersede rule exists to prevent, arriving in a
+    ministry report by a different door.
+
+    DEACTIVATED QUESTIONNAIRES ARE NOT INCLUDED. ``PATCH {isActive: false}`` is what this API has
+    INSTEAD of a delete (see the route module's docstring): it takes the form out of every list and
+    every dropdown while keeping the answers. The report is a list. Printing a questionnaire the
+    designer has retired would make this the one surface where a deleted record comes back, in the
+    document that is hardest to retract.
+
+    NO PERMISSION FILTER HERE, AND THAT IS CORRECT RATHER THAN AN OMISSION — the one thing to check
+    before adding a second caller. The sittings recorded against a questionnaire are readable by its
+    owner, an admin, or anyone who works on the design workshop it is attached to
+    (``_works_on_this_questionnaires_workshop`` in api/routes/questionnaire_forms.py). Generating a
+    report for a design workshop requires passing ``load_workshop_or_404``, which admits the
+    workshop's creator, a ``DesignWorkshopViewer`` grant holder, and an admin — a SUBSET of that set,
+    since the attachment is what puts the questionnaire inside the workshop's own access boundary. So
+    every caller of this function is already entitled to every row it returns, and the server, not a
+    client, is what decides that. A caller reaching this from anywhere other than a design-workshop
+    report must re-establish the same thing rather than assume it.
+    """
+    questionnaires = await db.questionnaire.find_many(
+        where={"designWorkshopId": design_workshop_id, "isActive": True},
+        order={"createdAt": "asc"},
+    )
+    if not questionnaires:
+        return []
+
+    ids = [q.id for q in questionnaires]
+    sections, entries = await gather_reads(
+        db.questionnaireformsection.find_many(
+            where={"questionnaireId": {"in": ids}},
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+        ),
+        db.questionnaireformentry.find_many(
+            where={"questionnaireId": {"in": ids}},
+            order={"createdAt": "asc"},
+            include={"createdBy": True},
+        ),
+    )
+    section_ids = [s.id for s in sections]
+    entry_ids = [e.id for e in entries]
+    questions, answers = await gather_reads(
+        db.questionnaireformquestion.find_many(
+            where={"sectionId": {"in": section_ids}},
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+        ) if section_ids else _none(),
+        db.questionnaireformanswer.find_many(
+            where={"entryId": {"in": entry_ids}},
+        ) if entry_ids else _none(),
+    )
+
+    section_of = {s.id: s for s in sections}
+    # THE ORDER OF THIS LIST IS THE ORDER THE ANNEXURE PRINTS, and it is built once here rather than
+    # sorted per sitting: section position first, then question position, which is the order the
+    # designer wrote the form in and the order the .xlsx download uses. A sitting is then a lookup
+    # against it, so two sittings of the same form cannot come out in two different orders — which,
+    # in a document read side by side with another respondent's answers, is what makes it comparable.
+    ordered: dict[str, list[Any]] = {}
+    for question in questions or []:
+        section = section_of.get(question.sectionId)
+        if section is None:
+            continue
+        ordered.setdefault(section.questionnaireId, []).append((section, question))
+
+    answers_by_entry: dict[str, dict[str, Any]] = {}
+    for answer in answers or []:
+        answers_by_entry.setdefault(answer.entryId, {})[answer.questionId] = answer
+
+    entries_by_questionnaire: dict[str, list[Any]] = {}
+    for entry in entries:
+        entries_by_questionnaire.setdefault(entry.questionnaireId, []).append(entry)
+
+    items: list[QuestionnaireItem] = []
+    for questionnaire in questionnaires:
+        pairs = ordered.get(questionnaire.id, [])
+        sittings: list[QuestionnaireSitting] = []
+        for entry in entries_by_questionnaire.get(questionnaire.id, []):
+            recorded = answers_by_entry.get(entry.id, {})
+            sittings.append(
+                QuestionnaireSitting(
+                    entry_id=entry.id,
+                    title=str(entry.title or ""),
+                    respondent_name=str(entry.respondentName or ""),
+                    source=str(entry.source or ""),
+                    notes=str(entry.notes or ""),
+                    recorded_at=entry.createdAt.isoformat() if entry.createdAt else "",
+                    recorded_by=str(getattr(entry.createdBy, "name", "") or ""),
+                    answers=tuple(
+                        QuestionnaireAnswer(
+                            prompt=str(question.prompt or ""),
+                            answer_text=str(
+                                getattr(recorded.get(question.id), "answerText", "") or ""
+                            ),
+                            notes=str(getattr(recorded.get(question.id), "notes", "") or ""),
+                            section_code=str(section.code or ""),
+                            section_title=str(section.title or ""),
+                            is_required=bool(question.isRequired),
+                            is_retired=not question.isActive,
+                        )
+                        for section, question in pairs
+                    ),
+                )
+            )
+        items.append(
+            QuestionnaireItem(
+                questionnaire_id=questionnaire.id,
+                title=str(questionnaire.title or ""),
+                description=str(questionnaire.description or ""),
+                version=int(questionnaire.version or 1),
+                source_filename=str(questionnaire.sourceFilename or ""),
+                # The questions the form ASKS today. Retired ones are printed where they carry an
+                # answer but are not counted here, because this number is what a reader compares
+                # against the instrument, and the instrument no longer contains them.
+                question_count=sum(1 for _s, q in pairs if q.isActive),
+                sittings=tuple(sittings),
+            )
+        )
+    return items
+
+
+async def _none() -> list[Any]:
+    """An awaitable empty result, so the gather above stays one shape rather than two branches."""
+    return []
 
 
 async def export_payload(questionnaire_id: str) -> dict[str, Any] | None:

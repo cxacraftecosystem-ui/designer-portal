@@ -368,6 +368,21 @@ val UNSUPPORTED_SECTIONS: Map<SpecialSection, String> = mapOf(
             "The recordings are on this phone but their transcripts are not: workshop audio is " +
             "transcribed after it reaches the server. The office's copy of this report will carry " +
             "them.",
+    // PHRASED CONDITIONALLY ("if a questionnaire is attached"), unlike every other entry here, and
+    // that is forced by the data rather than by taste. The transcript entry can be unconditional
+    // because `unsupportedSectionsIn` guards it with the designer's own `includeTranscripts` answer.
+    // There is no equivalent switch for this one — attaching the questionnaire IS the request, and it
+    // is a fact about a server row this device does not hold: `WorkshopRepository`'s "Custom
+    // questionnaires" block falls back to the device for NOTHING, deliberately, because a cached form
+    // cannot know a question was retired an hour ago. So a handset cannot tell an unattached workshop
+    // from an attached one while offline, and an unconditional "the answers are missing from this
+    // file" would be a false alarm on the majority of exports, which is how a designer learns to stop
+    // reading warnings.
+    SpecialSection.ANNEXURE_QUESTIONNAIRES to
+        "If a questionnaire is attached to this workshop, the answers recorded against it are not " +
+            "in this file. This device keeps no copy of them — the questionnaire screens read them " +
+            "over the network — so a report generated here has nothing to print. The office's copy " +
+            "of this report will carry them.",
 )
 
 /**
@@ -379,6 +394,21 @@ val UNSUPPORTED_SECTIONS: Map<SpecialSection, String> = mapOf(
  * "The office's copy of this report also carries …", so it has to be a thing rather than an
  * explanation. Both are keyed off the same enum, so a section that becomes renderable is deleted
  * from both in one edit and neither can be left asserting a gap that has closed.
+ *
+ * ANNEXURE_QUESTIONNAIRES IS DELIBERATELY ABSENT, and this is the one place the two maps are meant to
+ * disagree — do not "fix" it by adding the noun phrase. [UNSUPPORTED_SECTIONS] is advisory, shown to
+ * a designer holding the phone, who knows perfectly well whether they attached a questionnaire; it
+ * can afford to say "if". THIS map's string goes INTO the document, addressed to an officer who
+ * cannot check it, as the flat assertion "The office's copy of this report also carries …". Every
+ * template carries the questionnaire annexure and there is no stage-20 toggle to guard it with, so
+ * naming it here would print that sentence on every field copy of every workshop — including the
+ * majority with no questionnaire attached at all, whose office copy carries nothing of the kind. A
+ * report apologising for the absence of something that does not exist is exactly the defect the
+ * transcript guard in [unsupportedSectionsIn] was added to prevent; here the guard cannot be written,
+ * because the answers have no local copy for this device to count.
+ *
+ * The day the handset holds those answers, this becomes moot: the section is drawn, and it leaves
+ * [UNSUPPORTED_SECTIONS] rather than joining this map.
  */
 private val UNSUPPORTED_SECTION_NAMES: Map<SpecialSection, String> = mapOf(
     SpecialSection.ANNEXURE_TRANSCRIPTS to "the transcripts of the recordings",
