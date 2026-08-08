@@ -1121,7 +1121,16 @@ object WorkshopDraftStore {
         is JsonObject -> value.isNotEmpty()
     }
 
-    private fun displayName(context: Context, uri: Uri): String? {
+    /**
+     * The name the providing app gives this file, or its last path segment.
+     *
+     * `internal` rather than private because the bulk photo intake has to NAME two hundred picked
+     * files on screen BEFORE any of them is copied — the whole point of that surface is that nothing
+     * moves until a designer confirms — and a second `OpenableColumns` query written beside it would
+     * be a second answer to "what is this file called": the intake would list one name and the
+     * imported descriptor would record another for the same photograph.
+     */
+    internal fun displayName(context: Context, uri: Uri): String? {
         runCatching {
             context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
                 val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
