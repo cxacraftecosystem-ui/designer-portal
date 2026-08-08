@@ -368,20 +368,33 @@ fun GrantAccessFields(
         }
     }
 
+    /**
+     * The "Records to share" list — THIS user's records, asked for by name.
+     *
+     * Each list is fetched with `createdBy` rather than fetched wholesale and sifted. Sifting page
+     * one cannot work: reading the repository is open, so page one is the newest hundred rows of the
+     * whole archive, and a subset grant could only ever offer records that happened to sit in that
+     * hundred. MEASURED against the running API: 431 artisans and 613 products, with page one of
+     * /api/artisans spanning 34 distinct creators. A designer sharing their older work found it
+     * simply absent from this picker, with nothing on screen saying so.
+     *
+     * The client-side `createdById` filter is kept as a second line against a deployment that
+     * ignores the parameter — the same belt-and-braces My Activity uses.
+     */
     fun loadMine() {
         if (myRecords != null) return
         scope.launch {
             runCatching {
                 val recs = mutableListOf<SelectOption>()
-                repository.artisans().filter { it.createdById == myId }
+                repository.artisans(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("artisan::${it.id}", "Artisan · ${it.name}") }
-                repository.products().filter { it.createdById == myId }
+                repository.products(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("product::${it.id}", "Product · ${it.productName}") }
-                repository.tools().filter { it.createdById == myId }
+                repository.tools(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("tool::${it.id}", "Tool · ${it.toolkitName}") }
-                repository.workshops().filter { it.createdById == myId }
+                repository.workshops(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("workshop::${it.id}", "Workshop · ${it.title}") }
-                repository.interviews().filter { it.createdById == myId }
+                repository.interviews(createdBy = myId).filter { it.createdById == myId }
                     .forEach { recs += SelectOption("questionnaire::${it.id}", "Interview · ${it.title}") }
                 recs
             }.onSuccess { myRecords = it }

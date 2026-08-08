@@ -1264,7 +1264,22 @@ data class DatasetFileDto(
 data class DatasetManifestDto(
     val files: List<DatasetFileDto> = emptyList(),
     val totalFiles: Int = 0,
-    val totalMedia: Int = 0
+    val totalMedia: Int = 0,
+    /**
+     * True when ANY table hit the server's per-row cap, so this manifest is a PART of the dataset
+     * presented in the same shape as the whole of it.
+     *
+     * The server has always sent this (`backend/app/api/routes/export.py`, set when EXPORT_TAKE or
+     * MEDIA_TAKE is reached and documented on the route) and this DTO used to drop it on the floor,
+     * so the download said "Saved to Downloads — 4,312/4,312 files" over an archive missing
+     * everything past the cap. Both numbers were true and the sentence was not. A partial archive
+     * that presents itself as complete is worse than a failed one, because nobody goes back for the
+     * rest — the web says exactly that beside its own copy of this warning
+     * (frontend/app/(protected)/sharing/page.tsx).
+     *
+     * Defaulted to false so an older server that omits the key still parses.
+     */
+    val truncated: Boolean = false
 )
 
 @Serializable

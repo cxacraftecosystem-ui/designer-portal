@@ -1483,12 +1483,14 @@ class WorkshopRepository(
      * form pickers use — it also counts an artisan who merely sat in an interview taken at the
      * workshop — so this list and the completion matrix agree about who was there.
      */
-    suspend fun artisans(workshopIds: List<String>? = null): List<ArtisanDto> =
-        api.artisans(pageSize = 100, workshopIds = workshopIds.toQueryCsv()).items
+    suspend fun artisans(workshopIds: List<String>? = null, createdBy: String? = null): List<ArtisanDto> =
+        api.artisans(pageSize = 100, workshopIds = workshopIds.toQueryCsv(), createdBy = createdBy).items
 
-    suspend fun crafts(): List<CraftDto> = api.crafts(pageSize = 100).items
+    suspend fun crafts(createdBy: String? = null): List<CraftDto> =
+        api.crafts(pageSize = 100, createdBy = createdBy).items
 
-    suspend fun products(): List<ProductDetailDto> = api.products(pageSize = 100).items
+    suspend fun products(createdBy: String? = null): List<ProductDetailDto> =
+        api.products(pageSize = 100, createdBy = createdBy).items
 
     /**
      * Products the server links to a given artisan. Covers datasets with >100 total products, and —
@@ -1499,7 +1501,8 @@ class WorkshopRepository(
     suspend fun productsForArtisan(artisanId: String, artisanName: String? = null): List<ProductDetailDto> =
         api.products(pageSize = 100, artisanId = artisanId, artisanName = artisanName?.trim()?.ifBlank { null }).items
 
-    suspend fun tools(): List<ToolDetailDto> = api.tools(pageSize = 100).items
+    suspend fun tools(createdBy: String? = null): List<ToolDetailDto> =
+        api.tools(pageSize = 100, createdBy = createdBy).items
 
     /** Artisans a tool is assigned to (many-to-many). */
     suspend fun toolArtisans(toolId: String): List<ArtisanDto> = api.toolArtisans(toolId)
@@ -1510,7 +1513,8 @@ class WorkshopRepository(
 
     suspend fun unassignToolArtisan(toolId: String, artisanId: String) = api.unassignToolArtisan(toolId, artisanId)
 
-    suspend fun workshops(): List<WorkshopDetailDto> = api.workshops(pageSize = 100).items
+    suspend fun workshops(createdBy: String? = null): List<WorkshopDetailDto> =
+        api.workshops(pageSize = 100, createdBy = createdBy).items
 
     /**
      * The workshops this user can SEE — `GET /workshops` is scoped by row visibility — ordered by
@@ -1594,8 +1598,21 @@ class WorkshopRepository(
     suspend fun deleteProcess(id: String) = api.deleteProcess(id)
     suspend fun deleteInterview(id: String) = api.deleteInterview(id)
 
-    /** Result of a full-dataset download: where it was saved and how many files succeeded. */
-    data class DatasetDownloadResult(val displayLocation: String, val saved: Int, val total: Int, val failed: Int)
+    /**
+     * Result of a full-dataset download: where it was saved and how many files succeeded.
+     *
+     * [truncated] is the server's own flag carried through unchanged. It is NOT derivable from
+     * [saved]/[total]: those count the manifest's files, and a capped manifest is internally
+     * consistent — every file it lists is fetched, so the counts agree while the archive is short.
+     * The only place the shortfall is known is the response, so it has to be carried to the UI.
+     */
+    data class DatasetDownloadResult(
+        val displayLocation: String,
+        val saved: Int,
+        val total: Int,
+        val failed: Int,
+        val truncated: Boolean = false
+    )
 
     /**
      * Pull the full dataset manifest, then download every media object straight from S3 and zip the
@@ -1635,7 +1652,13 @@ class WorkshopRepository(
         }
         val location = persistFileToDownloads(context, tmp, zipName, "application/zip")
         tmp.delete()
-        DatasetDownloadResult(displayLocation = location, saved = total - failed, total = total, failed = failed)
+        DatasetDownloadResult(
+            displayLocation = location,
+            saved = total - failed,
+            total = total,
+            failed = failed,
+            truncated = manifest.truncated
+        )
     }
 
     /**
@@ -1839,7 +1862,8 @@ class WorkshopRepository(
     suspend fun mediaForRecord(linkedRecordType: String, linkedRecordId: String): List<MediaFileDto> =
         api.media(pageSize = 100, linkedRecordType = linkedRecordType, linkedRecordId = linkedRecordId).items
 
-    suspend fun processes(): List<ProcessDetailDto> = api.processes(pageSize = 100).items
+    suspend fun processes(createdBy: String? = null): List<ProcessDetailDto> =
+        api.processes(pageSize = 100, createdBy = createdBy).items
 
     suspend fun process(id: String): ProcessDetailDto = api.process(id)
 
@@ -1904,7 +1928,19 @@ class WorkshopRepository(
     suspend fun createQuestionnaireInterview(body: QuestionnaireInterviewCreateRequest): CreatedRecordDto =
         api.createQuestionnaireInterview(body)
 
-    suspend fun interviews(): List<QuestionnaireInterviewDetailDto> = api.interviews(pageSize = 100).items
+    suspend fun interviews(createdBy: String? = null): List<QuestionnaireInterviewDetailDto> =
+        api.interviews(pageSize = 100, createdBy = createdBy).items
+
+    /**
+     * Media this user UPLOADED, newest first — the Media half of My Activity.
+     *
+     * `uploadedBy` rather than `createdBy` because MediaFile owns its rows through `uploadedById`;
+     * the query key follows the column. Asked for by name for the reason spelled out on
+     * [WorkshopRepositoryApi.artisans]: reading media is open, so page one is the newest hundred
+     * rows of the whole archive and a client-side sift silently reports nothing.
+     */
+    suspend fun mediaUploadedBy(userId: String): List<MediaFileDto> =
+        api.media(pageSize = 100, uploadedBy = userId).items
 
     suspend fun interview(id: String): QuestionnaireInterviewDetailDto = api.interview(id)
 
