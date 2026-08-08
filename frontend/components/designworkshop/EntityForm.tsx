@@ -30,7 +30,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, Plus, Trash2 } from "lucide-react";
 
-import { FieldInput, type RefOptionMap, type StageCaptureContext } from "@/components/designworkshop/FieldInput";
+import { FieldInput, type StageCaptureContext } from "@/components/designworkshop/FieldInput";
 import { StageReferenceMultiPicker } from "@/components/designworkshop/StageReferenceField";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { FLASH_MS } from "@/components/hooks/useRevealRow";
@@ -157,7 +157,6 @@ function FieldGrid({
   onChange,
   onPatch,
   workshopId,
-  refOptions,
   errors,
   disabled,
   stageKey,
@@ -181,7 +180,6 @@ function FieldGrid({
    */
   onPatch: (values: Record<string, DwValue>) => void;
   workshopId: string;
-  refOptions?: RefOptionMap;
   errors: FieldErrors;
   disabled?: boolean;
   /** Passed straight down to media fields so a file staged offline knows what it answers. */
@@ -252,7 +250,6 @@ function FieldGrid({
               row={data}
               onPatch={onPatch}
               workshopId={workshopId}
-              refOptions={refOptions}
               disabled={disabled}
               error={errors?.[field.key] ?? null}
               place={{ stageKey, entityKey: entity.key, rowKey }}
@@ -372,7 +369,6 @@ export function EntityForm({
   onChange,
   onPatch,
   workshopId,
-  refOptions,
   errors,
   disabled,
   stageKey,
@@ -385,7 +381,6 @@ export function EntityForm({
   /** Several keys of the singleton in one commit — see the note on FieldGrid's own `onPatch`. */
   onPatch: (values: Record<string, DwValue>) => void;
   workshopId: string;
-  refOptions?: RefOptionMap;
   errors?: FieldErrors;
   disabled?: boolean;
   stageKey?: string;
@@ -408,7 +403,6 @@ export function EntityForm({
         onChange={onChange}
         onPatch={onPatch}
         workshopId={workshopId}
-        refOptions={refOptions}
         errors={errors}
         disabled={disabled}
         stageKey={stageKey}
@@ -428,7 +422,6 @@ export function EntityForm({
           onChange={onChange}
           onPatch={onPatch}
           workshopId={workshopId}
-          refOptions={refOptions}
           errors={errors}
           disabled={disabled}
           stageKey={stageKey}
@@ -464,7 +457,6 @@ export function CollectionTable({
   rows,
   onRowsChange,
   workshopId,
-  refOptions,
   errorsByIndex,
   disabled,
   stageKey,
@@ -475,7 +467,6 @@ export function CollectionTable({
   rows: DwRow[];
   onRowsChange: (rows: DwRow[]) => void;
   workshopId: string;
-  refOptions?: RefOptionMap;
   /** Per-row field errors, indexed the same way `rows` is. */
   errorsByIndex?: Record<number, FieldErrors>;
   disabled?: boolean;
@@ -698,7 +689,6 @@ export function CollectionTable({
                       onPatch={(values) => patchRowMany(index, values)}
                       capture={capture}
                       workshopId={workshopId}
-                      refOptions={refOptions}
                       errors={rowErrors}
                       disabled={disabled}
                       stageKey={stageKey}
@@ -720,7 +710,6 @@ export function CollectionTable({
                         onPatch={(values) => patchRowMany(index, values)}
                         capture={capture}
                         workshopId={workshopId}
-                        refOptions={refOptions}
                         errors={rowErrors}
                         disabled={disabled}
                         stageKey={stageKey}

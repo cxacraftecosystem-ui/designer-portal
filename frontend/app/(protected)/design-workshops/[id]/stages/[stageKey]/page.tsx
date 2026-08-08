@@ -58,7 +58,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, CloudOff, Layers } from "lucide-react";
 
 import { CollectionTable, EntityForm, type FieldErrors } from "@/components/designworkshop/EntityForm";
-import type { RefOptionMap } from "@/components/designworkshop/FieldInput";
 import { ANALYSIS_STAGE, MarketFindingsPanel } from "@/components/designworkshop/MarketFindingsPanel";
 import {
   EMPTY_RECORDING_PLACE,
@@ -68,11 +67,9 @@ import {
 import { PageHeader } from "@/components/PageHeader";
 import { UploadTray } from "@/components/media/UploadTray";
 import { UploadsProvider } from "@/lib/uploads";
-import { ApiError, listResource } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import {
-  getDesignWorkshop,
   getDesignWorkshopStage,
-  rowTitle,
   saveDesignWorkshopStage,
   type DwEntity,
   type DwEntryData,
@@ -101,7 +98,6 @@ import {
   type RegistrySource
 } from "@/lib/designWorkshopStore";
 import { isUnreachable } from "@/lib/offline";
-import type { Artisan, Craft, ProductDocumentation, ToolDocumentation } from "@/lib/types";
 import { readStageFocus } from "@/lib/workshopSearch";
 
 /**
@@ -113,35 +109,6 @@ import { readStageFocus } from "@/lib/workshopSearch";
  * window in which anything is in memory alone.
  */
 const AUTOSAVE_MS = 800;
-
-/**
- * The four `refModel` names that point OUTSIDE this workshop, at records the rest of the repository
- * already owns, mapped to the endpoint that lists them and the label to draw a row with.
- *
- * Everything else a REF can name — DwSketch, DwPrototype, DwParticipant, DwFinalProduct,
- * DwCostSheet — is a row of this same workshop and is resolved from the workshop's own stages, with
- * no extra request at all.
- */
-const EXTERNAL_REFS = {
-  Artisan: {
-    endpoint: "/artisans",
-    label: (row: Artisan) => (row.place ? `${row.name} · ${row.place}` : row.name)
-  },
-  Craft: {
-    endpoint: "/crafts",
-    label: (row: Craft) => (row.place ? `${row.name} · ${row.place}` : row.name)
-  },
-  ProductDocumentation: {
-    endpoint: "/products",
-    label: (row: ProductDocumentation) => `${row.productName} · ${row.craftName}`
-  },
-  ToolDocumentation: {
-    endpoint: "/tools",
-    label: (row: ToolDocumentation) => `${row.toolkitName} · ${row.craftName}`
-  }
-} as const;
-
-type ExternalRefModel = keyof typeof EXTERNAL_REFS;
 
 /**
  * The three pieces of form state that make up a stage, as one comparable value.
@@ -258,7 +225,6 @@ function DesignWorkshopStagePageBody({
   const [registrySource, setRegistrySource] = useState<RegistrySource | null>(null);
   const [singleton, setSingleton] = useState<DwEntryData>({});
   const [collections, setCollections] = useState<Record<string, DwRow[]>>({});
-  const [refOptions, setRefOptions] = useState<RefOptionMap>({});
   const [errors, setErrors] = useState<Record<string, Record<string, string>>>({});
   const [dropped, setDropped] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -272,8 +238,8 @@ function DesignWorkshopStagePageBody({
   const [awaitingServer, setAwaitingServer] = useState(false);
   /**
    * True when the form on screen is blank because this device has never DOWNLOADED the stage, not
-   * because the stage is empty. Held separately from `notice`, which the reference-picker
-   * truncation and every save message overwrite — this one must survive all of them.
+   * because the stage is empty. Held separately from `notice`, which every save message overwrites —
+   * this one must survive all of them.
    */
   const [neverDownloaded, setNeverDownloaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -631,93 +597,20 @@ function DesignWorkshopStagePageBody({
     };
   }, []);
 
-  /**
-   * REF options.
+  /*
+   * THERE IS NO REF-OPTION PREFETCH HERE, AND THAT IS DELIBERATE.
    *
-   * The in-workshop half costs one request (the whole workshop, which also gives the stage titles
-   * for the banner) and resolves every Dw* model at once. The external half is fetched ONLY for the
-   * models this particular stage actually references — three of the four are used by exactly one
-   * field in the whole registry, and loading all of them on every stage would put four list
-   * requests on the wire for twenty stages that reference none of them.
+   * This page used to build a `refOptions` map on every stage open — `GET /design-workshops/{id}`
+   * for the whole workshop plus one 100-row list request per external model the stage mentions, up
+   * to five requests — thread it through `EntityForm`, `CollectionTable` and `FieldInput`, and never
+   * read it: `FieldInput`'s REF branch hands the field to `StageReferenceSelect`, which fetches and
+   * caches its own options. Every byte was discarded before it reached a control, on an offline-
+   * created workshop the first request was a guaranteed 404 for ever, and its truncation notice
+   * ("Only the first 100 of 2,340 artisans…") landed in the same `notice` slot as the offline
+   * warning and replaced it.
+   *
+   * `StageReferenceSelect` owns REF options. Do not reintroduce a second source for them here.
    */
-  useEffect(() => {
-    if (!stage) return;
-    let cancelled = false;
-
-    const wanted = new Set<string>();
-    for (const entity of stage.entities) {
-      for (const field of entity.fields) {
-        if (field.type === "REF" && field.refModel) wanted.add(field.refModel);
-      }
-    }
-    if (!wanted.size) return;
-
-    (async () => {
-      const next: RefOptionMap = {};
-
-      const internal = [...wanted].filter((model) => model.startsWith("Dw"));
-      if (internal.length) {
-        try {
-          const detail = await getDesignWorkshop(id);
-          if (cancelled) return;
-          // Walk every stage of the workshop, not just this one: a stage-12 review references a
-          // stage-11 sketch, and a stage-17 cost sheet references a stage-16 final product.
-          const entitiesByName = new Map<string, DwEntity>();
-          for (const candidate of registry?.stages ?? []) {
-            for (const entity of candidate.entities) entitiesByName.set(entity.name, entity);
-          }
-          for (const model of internal) {
-            const entity = entitiesByName.get(model);
-            if (!entity) continue;
-            const rows: DwRow[] = Object.values(detail.stages ?? {}).flatMap(
-              (bucket) => bucket.collections?.[entity.key] ?? []
-            );
-            next[model] = rows
-              // Only rows that have been SAVED can be referenced — a reference is stored as the
-              // row's database id, and a row that exists only in another tab's unsaved form has
-              // none. Offering it would store an empty string that resolves to nothing.
-              .filter((row) => Boolean(row._entryId))
-              .map((row, index) => ({ value: String(row._entryId), label: rowTitle(entity, row, index) }));
-          }
-        } catch {
-          // A failed lookup leaves the REF fields as plain text boxes (FieldInput degrades on an
-          // empty option list) rather than as an unanswerable empty dropdown. Losing the picker is
-          // an inconvenience; a required closed list with no members blocks the whole save.
-        }
-      }
-
-      for (const model of wanted) {
-        if (!(model in EXTERNAL_REFS)) continue;
-        const config = EXTERNAL_REFS[model as ExternalRefModel];
-        try {
-          const result = await listResource<Record<string, unknown>>(config.endpoint, { pageSize: 100 });
-          if (cancelled) return;
-          next[model] = result.items.map((row) => ({
-            value: String(row.id),
-            // The cast is confined to this line: `listResource` is generic over a row shape the
-            // four configs each know and this loop deliberately does not.
-            label: (config.label as (value: unknown) => string)(row)
-          }));
-          // The cap is the server's own maximum page size, and it is a REAL truncation on a mature
-          // repository — so it is stated rather than hidden, per the house rule that a list which
-          // quietly stops is indistinguishable from a place with no records.
-          if (result.total > result.items.length) {
-            setNotice(
-              `Only the first ${result.items.length} of ${result.total} ${model === "Artisan" ? "artisans" : "records"} are offered in the reference pickers on this stage.`
-            );
-          }
-        } catch {
-          // Same degrade as above.
-        }
-      }
-
-      if (!cancelled) setRefOptions(next);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [id, stage, registry]);
 
   /* ── Edit ────────────────────────────────────────────────────────────── */
 
@@ -1104,7 +997,6 @@ function DesignWorkshopStagePageBody({
                 onChange={patchSingleton}
                 onPatch={patchSingletonMany}
                 workshopId={id}
-                refOptions={refOptions}
                 errors={errors[entity.key]}
                 disabled={saving}
                 stageKey={stageKey}
@@ -1118,7 +1010,6 @@ function DesignWorkshopStagePageBody({
                 rows={collections[entity.key] ?? []}
                 onRowsChange={(rows) => patchCollection(entity.key, rows)}
                 workshopId={id}
-                refOptions={refOptions}
                 errorsByIndex={collectionErrors(entity)}
                 disabled={saving}
                 stageKey={stageKey}

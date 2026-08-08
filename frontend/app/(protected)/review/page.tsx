@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useId, useState } from "react";
 import { Check, ClipboardCheck } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -81,6 +81,20 @@ export default function ReviewPage() {
    */
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  /**
+   * Ids for the decision-note box and the sentence explaining it.
+   *
+   * ONE PAIR FOR THE WHOLE PAGE IS CORRECT because `active` names a single row: at most one note
+   * panel is mounted at a time, so these ids are never duplicated in the document.
+   *
+   * They exist because the label was a SIBLING of the textarea with no `htmlFor` and the textarea had
+   * no `id` — no implicit or explicit association, so the accessible name was empty (WCAG 4.1.2). A
+   * reviewer pressing "Send for revision" was dropped by `autoFocus` into a box announced as "edit
+   * text, blank", with the sentence saying what the comment is for — and that it is mandatory — on
+   * screen but absent from the accessibility tree.
+   */
+  const noteId = useId();
+  const noteHelpId = `${noteId}-help`;
   const viewerIsAdmin = isAdmin(user);
 
   async function load() {
@@ -429,10 +443,15 @@ export default function ReviewPage() {
                       ) : activeAction ? (
                         <tr className="bg-surface-50">
                           <td className="px-4 py-3" colSpan={8}>
-                            <label className="block text-xs font-semibold uppercase tracking-wide text-ink-500">
+                            <label htmlFor={noteId} className="block text-xs font-semibold uppercase tracking-wide text-ink-500">
                               {ACTION_COPY[activeAction].noteLabel}
                             </label>
                             <textarea
+                              id={noteId}
+                              // Only pointed at while the sentence is on screen: an `aria-describedby`
+                              // naming an element that is not rendered reads as silence, which is
+                              // worse than no attribute at all.
+                              aria-describedby={activeAction === "revise" ? noteHelpId : undefined}
                               className="mt-1.5 w-full rounded-md border border-line-200 bg-card p-2 text-sm text-ink-900"
                               rows={3}
                               value={note}
@@ -440,7 +459,7 @@ export default function ReviewPage() {
                               autoFocus
                             />
                             {activeAction === "revise" ? (
-                              <p className="mt-1 text-xs text-ink-500">
+                              <p id={noteHelpId} className="mt-1 text-xs text-ink-500">
                                 Comments are required — the record goes back to the contributor as &quot;Needs revision&quot; and
                                 returns to Pending once they edit it.
                               </p>
