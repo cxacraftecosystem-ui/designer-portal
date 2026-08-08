@@ -52,13 +52,6 @@ export function OutboxBanner() {
   // connection". Only the load may set the baseline, and only a rise above it is an event.
   const announcedCount = useRef<number | null>(null);
 
-  // Read the store once on mount: entries survive a browser restart, so a fresh tab has to look.
-  useEffect(() => {
-    void refreshOutbox().then((rows) => {
-      if (announcedCount.current === null) announcedCount.current = rows.length;
-    });
-  }, []);
-
   useEffect(() => {
     const seen = announcedCount.current;
     if (seen === null) return;
@@ -102,6 +95,44 @@ export function OutboxBanner() {
     },
     [toast]
   );
+
+  /**
+   * Read the store once on mount — entries survive a browser restart, so a fresh tab has to look —
+   * and SEND what is in it if this tab already has a connection.
+   *
+   * THE READ ALONE WAS NOT ENOUGH, and the gap is the ordinary case rather than the exotic one. The
+   * `online` listener below never fires for a tab that was never offline: a researcher who queued a
+   * record in a courtyard closes the laptop, opens it the next morning on the office wifi and loads
+   * the app, and nothing sends until they happen to press a button. `DraftSyncBanner` learned this
+   * for the design-workshop store and says so in the same words — draining on mount is what makes
+   * "it sends itself" true.
+   *
+   * IT IS ALSO WHAT MAKES THE SCHEMA-SKEW POLICY REAL ON THIS QUEUE. `lib/offline.ts` re-attempts a
+   * refusal caused by the client and the server disagreeing about the shape of a request ONCE PER
+   * APP RUN, and writes a sentence onto the entry promising the researcher it "will be sent by
+   * itself … you do not have to do anything". A new app run is a page load; without a drain here
+   * nothing consults that policy on a page load, so the promise was kept by the workshop queue and
+   * broken by this one. MEASURED, not assumed: with an entry refused by an earlier run seeded into
+   * IndexedDB, a reload produced ZERO replay requests before this effect existed and one after.
+   *
+   * The baseline for the "n entries were just queued" toast is still taken from the rows as LOADED,
+   * before this pass can remove any — a drain that empties the queue must not read as a save.
+   */
+  useEffect(() => {
+    void refreshOutbox().then((rows) => {
+      if (announcedCount.current === null) announcedCount.current = rows.length;
+      if (!rows.length) return;
+      // A tab that knows it is offline must not spend a request finding out; the listener below is
+      // what carries it when the signal returns.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      void drain("auto");
+    });
+    // `drain`'s only dependency is `toast`, so it is stable for the life of the provider; listing it
+    // would restart this on a toast-context change and run a second pass. `syncOutbox` shares one
+    // pass between concurrent callers anyway, so the cost of that would be wasted work rather than a
+    // duplicated record — but wasted work on a metered rural connection is still a cost.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // The connection coming back is the whole point of the queue — drain without being asked.
   useEffect(() => {

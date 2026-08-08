@@ -393,8 +393,12 @@ private fun Throwable.refusal(fallback: String): ApiRefusal {
  * Wording deliberately mirrors the web's (`frontend/lib/designWorkshopStore.ts`) — a designer moves
  * between the two apps mid-workshop and must not be told two different stories about one refusal.
  * The last clause is the load-bearing one: it is a promise that this policy is what keeps.
+ *
+ * INTERNAL rather than private because the records outbox (`WorkshopRepository.syncOutbox`) says the
+ * same thing about the same refusal. A second copy of these words is a second chance for one of them
+ * to be corrected and the other left telling a researcher to go and fix an answer that is not wrong.
  */
-private fun skewSentence(what: String, said: String): String =
+internal fun skewSentence(what: String, said: String): String =
     "$what could not be read by the repository: $said Nothing you typed is wrong and nothing has been " +
         "thrown away — this app and the repository are out of step, and no edit will clear it. Your " +
         "work is safe on this device, and it will be sent by itself the next time you open the app " +
