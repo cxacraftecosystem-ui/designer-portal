@@ -7,6 +7,7 @@ import { ArtisanForm } from "@/components/forms/ArtisanForm";
 import { ArtisanQuestionnairePanel } from "@/components/ArtisanQuestionnairePanel";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { apiFetch } from "@/lib/api";
 import type { Artisan } from "@/lib/types";
 
@@ -28,6 +29,9 @@ export default function EditArtisanPage() {
       {record ? (
         <div className="grid gap-6">
           <ArtisanForm initial={record} />
+          {/* The artisan's own card code, drawn live. Same payload the printed roster card carries,
+              so a card cut off a sheet in January and this screen in June are one code. */}
+          <RecordCodeCard recordType="artisan" id={record.id} title={record.name} />
           <ArtisanQuestionnairePanel artisanId={record.id} />
           <FieldProvenance extraMetadata={record.extraMetadata} title="Artisan field contributions" />
         </div>

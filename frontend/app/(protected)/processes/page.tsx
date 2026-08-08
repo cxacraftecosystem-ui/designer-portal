@@ -9,6 +9,7 @@ import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { EMPTY_FUNNEL, FunnelFilters, type FunnelValue, type FunnelWorkshop } from "@/components/FunnelFilters";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
@@ -219,6 +220,10 @@ function ProcessesPageInner() {
           }}
           onCancel={() => setEditing(null)}
         />
+        {/* The process's own code, drawn live. A process is edited INLINE from this list rather than
+            at a /[id]/edit route, so this view IS the record's detail view and this is where its code
+            belongs. */}
+        <RecordCodeCard recordType="process" id={editing.id} title={editing.name} className="mt-6" />
       </>
     );
   }
