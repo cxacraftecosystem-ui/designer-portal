@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Search
@@ -140,16 +141,34 @@ fun StageIndexScreen(
      * feature exists to produce.
      */
     onOpenPhotos: () -> Unit,
+    /**
+     * Open "who can open this workshop" — the viewer roster.
+     *
+     * Offered only to an ADMIN, and only for a workshop the server has (see the row this draws). It
+     * hangs off the index for the same reason the report and the cards do: it is a fact about the
+     * WORKSHOP rather than about any one of its stages, and the moment somebody wants it is the
+     * moment a second designer is standing next to them unable to open the record.
+     */
+    onOpenViewers: () -> Unit,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
+    val viewer = remember(repository) { repository.cachedUser() }
 
     var stages by remember(workshopId) { mutableStateOf<List<DwStageCompleteness>>(emptyList()) }
     var title by remember(workshopId) { mutableStateOf("") }
     var loading by remember(workshopId) { mutableStateOf(true) }
     var expanded by remember(workshopId) { mutableStateOf<String?>(null) }
     var serverNote by remember(workshopId) { mutableStateOf<String?>(null) }
+    /**
+     * Whether this workshop exists on the SERVER, which is a different question from whether the
+     * server could be reached just now. Access is administered against the server's row, so a
+     * workshop that has never left this phone has nothing to administer — and an offline moment must
+     * not be mistaken for that, or the row below would tell an admin to "send it first" about a
+     * workshop that was sent a fortnight ago.
+     */
+    var onServer by remember(workshopId) { mutableStateOf(false) }
     /**
      * `stageKey → (missing label → the box it names)`, for turning the list below into destinations.
      *
@@ -187,6 +206,7 @@ fun StageIndexScreen(
             searchIndex = DwWorkshopSearch.buildIndex(schema, draft)
 
             val remoteId = draft?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
+            onServer = remoteId != null
             val remote = remoteId?.let {
                 runCatching { repository.designWorkshop(it) }.getOrNull()
             }
@@ -266,6 +286,51 @@ fun StageIndexScreen(
             Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
             Text("Import photographs")
+        }
+
+        /*
+         * WHO CAN OPEN THIS WORKSHOP — and, for everyone who may not decide that, the answer in
+         * words instead.
+         *
+         * The gate is `require_admin` on all three routes in `api/routes/design_workshop_viewers.py`
+         * — `deps.is_admin`, so ADMIN and MASTER_ADMIN only. Deliberately NOT the creator and NOT
+         * `can_run_design_workshops`: a designer may not hand out access to their own workshop,
+         * because access that is in its owner's gift freezes the day the owner leaves.
+         *
+         * THE NON-ADMIN ARM IS A SENTENCE AND NOT A DISABLED BUTTON, and that is the decision worth
+         * defending. A greyed control refuses a tap without saying why, which is how somebody
+         * concludes the app is broken; an absent one leaves the second designer's own question —
+         * "how do I get my colleague into this record" — with no answer anywhere on the phone, and
+         * the workshop they cannot open still telling them it does not exist. So the row is always
+         * here: a button for the account that can act, and the name of who to ask for the account
+         * that cannot. Nothing is offered that the API would refuse.
+         */
+        val mayAdminister = mayAdministerViewers(viewer)
+        when {
+            mayAdminister && onServer -> OutlinedButton(
+                onClick = onOpenViewers,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.Group, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Who can open this workshop")
+            }
+
+            mayAdminister -> Text(
+                "Who can open this workshop is decided on the server, and this one has not been " +
+                    "sent there yet. Send it from the workshop list first — until then nobody else " +
+                    "could open it in any case.",
+                color = MaterialTheme.field.muted,
+                fontSize = 12.sp
+            )
+
+            else -> Text(
+                "Only you, the designers an administrator has added to this workshop, and admins " +
+                    "can open it. Deciding who else may is administration — ask an administrator " +
+                    "to add your co-designer.",
+                color = MaterialTheme.field.muted,
+                fontSize = 12.sp
+            )
         }
 
         HorizontalDivider()
