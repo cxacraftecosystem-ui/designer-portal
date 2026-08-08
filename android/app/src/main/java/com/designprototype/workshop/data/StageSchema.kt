@@ -1119,6 +1119,20 @@ data class ExportRecordBody(
     val warnings: String? = null,
 )
 
+/**
+ * An [ExportRecordBody] plus the workshop it belongs to, so the pair survives a spell in the offline
+ * outbox.
+ *
+ * The outbox stores one opaque `payloadJson` per entry and the workshop id is a PATH segment rather
+ * than part of the body, so without this wrapper the id is simply not there when the entry is
+ * replayed days later. See `WorkshopRepository.recordDesignWorkshopExport`.
+ */
+@Serializable
+data class PendingExportRecord(
+    val workshopId: String,
+    val body: ExportRecordBody
+)
+
 // --------------------------------------------------------------------------------------
 // The durable cache
 // --------------------------------------------------------------------------------------

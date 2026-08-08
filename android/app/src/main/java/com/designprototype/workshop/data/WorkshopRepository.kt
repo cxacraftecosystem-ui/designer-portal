@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -76,6 +77,16 @@ private const val MULTIPART_THRESHOLD = 64L * 1024 * 1024
  * query that lists "this workshop's media" would silently return half of them.
  */
 internal const val DESIGN_WORKSHOP_MEDIA_TAG = "designWorkshop"
+
+/**
+ * [PendingEntry.type] for a queued export-log row.
+ *
+ * The one outbox entry that is not a record the researcher typed. It is written down as a constant
+ * because the string is matched in `createFromEntry` and produced in `recordDesignWorkshopExport`,
+ * and a typo between the two would park every offline export in the queue for ever: the replay
+ * would throw "Unknown offline entry type", which `isTransient` calls worth retrying.
+ */
+internal const val OFFLINE_EXPORT_RECORD = "designWorkshopExport"
 
 /** MIME type for the .xlsx report workbook (OOXML spreadsheet). */
 private const val XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -352,8 +363,46 @@ class WorkshopRepository(
         body: StageSaveBody
     ): StageSaveResultDto = api.saveDesignWorkshopStage(id, stageKey, body)
 
-    suspend fun recordDesignWorkshopExport(id: String, body: ExportRecordBody) {
-        api.recordDesignWorkshopExport(id, body)
+    /**
+     * Tell the office that this handset produced a report — and if it cannot be told now, QUEUE IT.
+     *
+     * The export log is what an office matches a delivered field copy against. Every export that
+     * matters most is made in exactly the condition that used to lose this call: at the close of a
+     * workshop, in a village, with no signal, minutes before the file is handed to a visiting
+     * ministry officer. This was a bare pass-through wrapped in `runCatching` at the call site, so
+     * offline the record was dropped on the floor and the officer's copy existed against an empty
+     * log — the one comparison that would show the field copy was genuine.
+     *
+     * THE BYTES ARE STILL NEVER SENT. The queued entry is the ExportRecordBody and nothing else: a
+     * format, a template id, a filename, a size and a checksum. A designer on a metered connection is
+     * not charged thirty megabytes to prove a report was made, and the checksum is what matches the
+     * file later.
+     *
+     * Triage is [isTransient]'s, the same as every other queued write. No signal or a 5xx queues; a
+     * 4xx is the server's final answer about a bookkeeping call and is swallowed, because an export
+     * that HAPPENED is not undone by a record of it that the server refuses — the file is already in
+     * the designer's Downloads folder and the officer is already holding it.
+     */
+    suspend fun recordDesignWorkshopExport(context: Context, id: String, body: ExportRecordBody) {
+        try {
+            api.recordDesignWorkshopExport(id, body)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!isTransient(e)) return
+            OfflineOutbox.enqueue(
+                context,
+                PendingEntry(
+                    id = java.util.UUID.randomUUID().toString(),
+                    type = OFFLINE_EXPORT_RECORD,
+                    payloadJson = offlineJson.encodeToString(PendingExportRecord(workshopId = id, body = body)),
+                    // Read by the outbox banner and by the "could not be uploaded" notice, so it has
+                    // to name the thing a designer would recognise: the file they just handed over.
+                    label = "Export log · ${body.fileName}",
+                    createdAt = Instant.now().toString()
+                )
+            )
+        }
     }
 
     /**
@@ -1000,6 +1049,22 @@ class WorkshopRepository(
      * [assigneeId] and [batchId] are admin-only narrowings — on the default "assigned" view the API
      * hard-pins the list to the caller, so they cannot be used to read somebody else's tasks.
      */
+    /**
+     * Exact per-status totals for the filter chips, mirroring the web's `loadCounts` on /tasks.
+     *
+     * One tiny call per status (`pageSize=1`, derivation off) rather than counting the list on
+     * screen: the list is one page and a count taken from it would be a count of what is displayed,
+     * which is not the question a chip labelled "Done 14" is answering. `withDerived = false` skips
+     * the data-backed rollup the API would otherwise compute for rows nobody is going to read.
+     *
+     * Failures are the CALLER's to swallow — an unlabelled chip is a working filter, and the list
+     * itself is what the designer came for.
+     */
+    suspend fun taskCounts(view: String = "assigned", statuses: List<String>): Map<String, Int> =
+        statuses.associateWith { status ->
+            api.tasks(view = view, status = status, pageSize = 1, withDerived = false).total
+        }
+
     suspend fun tasks(
         view: String = "assigned",
         status: String? = null,
@@ -1525,12 +1590,14 @@ class WorkshopRepository(
      * form pickers use — it also counts an artisan who merely sat in an interview taken at the
      * workshop — so this list and the completion matrix agree about who was there.
      */
-    suspend fun artisans(workshopIds: List<String>? = null): List<ArtisanDto> =
-        api.artisans(pageSize = 100, workshopIds = workshopIds.toQueryCsv()).items
+    suspend fun artisans(workshopIds: List<String>? = null, createdBy: String? = null): List<ArtisanDto> =
+        api.artisans(pageSize = 100, workshopIds = workshopIds.toQueryCsv(), createdBy = createdBy).items
 
-    suspend fun crafts(): List<CraftDto> = api.crafts(pageSize = 100).items
+    suspend fun crafts(createdBy: String? = null): List<CraftDto> =
+        api.crafts(pageSize = 100, createdBy = createdBy).items
 
-    suspend fun products(): List<ProductDetailDto> = api.products(pageSize = 100).items
+    suspend fun products(createdBy: String? = null): List<ProductDetailDto> =
+        api.products(pageSize = 100, createdBy = createdBy).items
 
     /**
      * Products the server links to a given artisan. Covers datasets with >100 total products, and —
@@ -1541,7 +1608,8 @@ class WorkshopRepository(
     suspend fun productsForArtisan(artisanId: String, artisanName: String? = null): List<ProductDetailDto> =
         api.products(pageSize = 100, artisanId = artisanId, artisanName = artisanName?.trim()?.ifBlank { null }).items
 
-    suspend fun tools(): List<ToolDetailDto> = api.tools(pageSize = 100).items
+    suspend fun tools(createdBy: String? = null): List<ToolDetailDto> =
+        api.tools(pageSize = 100, createdBy = createdBy).items
 
     /** Artisans a tool is assigned to (many-to-many). */
     suspend fun toolArtisans(toolId: String): List<ArtisanDto> = api.toolArtisans(toolId)
@@ -1552,7 +1620,8 @@ class WorkshopRepository(
 
     suspend fun unassignToolArtisan(toolId: String, artisanId: String) = api.unassignToolArtisan(toolId, artisanId)
 
-    suspend fun workshops(): List<WorkshopDetailDto> = api.workshops(pageSize = 100).items
+    suspend fun workshops(createdBy: String? = null): List<WorkshopDetailDto> =
+        api.workshops(pageSize = 100, createdBy = createdBy).items
 
     /**
      * The workshops this user can SEE — `GET /workshops` is scoped by row visibility — ordered by
@@ -1636,8 +1705,21 @@ class WorkshopRepository(
     suspend fun deleteProcess(id: String) = api.deleteProcess(id)
     suspend fun deleteInterview(id: String) = api.deleteInterview(id)
 
-    /** Result of a full-dataset download: where it was saved and how many files succeeded. */
-    data class DatasetDownloadResult(val displayLocation: String, val saved: Int, val total: Int, val failed: Int)
+    /**
+     * Result of a full-dataset download: where it was saved and how many files succeeded.
+     *
+     * [truncated] is the server's own flag carried through unchanged. It is NOT derivable from
+     * [saved]/[total]: those count the manifest's files, and a capped manifest is internally
+     * consistent — every file it lists is fetched, so the counts agree while the archive is short.
+     * The only place the shortfall is known is the response, so it has to be carried to the UI.
+     */
+    data class DatasetDownloadResult(
+        val displayLocation: String,
+        val saved: Int,
+        val total: Int,
+        val failed: Int,
+        val truncated: Boolean = false
+    )
 
     /**
      * Pull the full dataset manifest, then download every media object straight from S3 and zip the
@@ -1677,7 +1759,13 @@ class WorkshopRepository(
         }
         val location = persistFileToDownloads(context, tmp, zipName, "application/zip")
         tmp.delete()
-        DatasetDownloadResult(displayLocation = location, saved = total - failed, total = total, failed = failed)
+        DatasetDownloadResult(
+            displayLocation = location,
+            saved = total - failed,
+            total = total,
+            failed = failed,
+            truncated = manifest.truncated
+        )
     }
 
     /**
@@ -1881,7 +1969,8 @@ class WorkshopRepository(
     suspend fun mediaForRecord(linkedRecordType: String, linkedRecordId: String): List<MediaFileDto> =
         api.media(pageSize = 100, linkedRecordType = linkedRecordType, linkedRecordId = linkedRecordId).items
 
-    suspend fun processes(): List<ProcessDetailDto> = api.processes(pageSize = 100).items
+    suspend fun processes(createdBy: String? = null): List<ProcessDetailDto> =
+        api.processes(pageSize = 100, createdBy = createdBy).items
 
     suspend fun process(id: String): ProcessDetailDto = api.process(id)
 
@@ -1946,7 +2035,19 @@ class WorkshopRepository(
     suspend fun createQuestionnaireInterview(body: QuestionnaireInterviewCreateRequest): CreatedRecordDto =
         api.createQuestionnaireInterview(body)
 
-    suspend fun interviews(): List<QuestionnaireInterviewDetailDto> = api.interviews(pageSize = 100).items
+    suspend fun interviews(createdBy: String? = null): List<QuestionnaireInterviewDetailDto> =
+        api.interviews(pageSize = 100, createdBy = createdBy).items
+
+    /**
+     * Media this user UPLOADED, newest first — the Media half of My Activity.
+     *
+     * `uploadedBy` rather than `createdBy` because MediaFile owns its rows through `uploadedById`;
+     * the query key follows the column. Asked for by name for the reason spelled out on
+     * [WorkshopRepositoryApi.artisans]: reading media is open, so page one is the newest hundred
+     * rows of the whole archive and a client-side sift silently reports nothing.
+     */
+    suspend fun mediaUploadedBy(userId: String): List<MediaFileDto> =
+        api.media(pageSize = 100, uploadedBy = userId).items
 
     suspend fun interview(id: String): QuestionnaireInterviewDetailDto = api.interview(id)
 
@@ -2928,6 +3029,16 @@ class WorkshopRepository(
         // Steps come back in submit order, so `stepIndex` on a queued file selects the matching one.
         "process" -> api.createProcess(offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson))
             .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }) }
+        // NOT a record — a bookkeeping row about a report this phone already produced. It carries no
+        // media, so the replay reaches Synced the moment this returns and the entry leaves the queue.
+        // The id is the workshop's rather than a created row's: this route answers with no body, and
+        // `createdId` only has to be non-null so a pass interrupted after the POST does not send it
+        // twice and put two rows in the office's export log for one delivered file.
+        OFFLINE_EXPORT_RECORD -> {
+            val queuedExport = offlineJson.decodeFromString<PendingExportRecord>(entry.payloadJson)
+            api.recordDesignWorkshopExport(queuedExport.workshopId, queuedExport.body)
+            CreatedRecord(queuedExport.workshopId)
+        }
         else -> throw IllegalStateException("Unknown offline entry type: ${entry.type}")
     }
 

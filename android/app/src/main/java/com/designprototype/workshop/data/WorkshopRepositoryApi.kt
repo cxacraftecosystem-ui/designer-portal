@@ -116,13 +116,29 @@ interface WorkshopRepositoryApi {
         // The shared workshop scope, plural. BROADER than the singular `workshopId` filter the form
         // pickers use: it also counts an artisan who merely SAT IN an interview taken at the
         // workshop, so this list and the completion matrix cannot disagree about who was there.
-        @Query("workshopIds") workshopIds: String? = null
+        @Query("workshopIds") workshopIds: String? = null,
+        // WHOSE RECORDS, ASKED FOR BY NAME — and it must be asked for, never sifted for.
+        //
+        // Reading the repository is OPEN (`backend/app/services/records.py` viewable_where returns
+        // {}), so page one of this list is the newest hundred rows of the WHOLE archive. Filtering
+        // those hundred client-side on `createdById` is the defect this parameter exists to prevent:
+        // MEASURED against the running API as designer@example.org, /api/artisans holds total=431
+        // with page one carrying rows from 34 distinct creators and NONE of that designer's own,
+        // while ?createdBy=<them> returns their real total. A designer whose records are older than
+        // the newest hundred is shown an empty My Activity and told they have recorded nothing.
+        //
+        // Every list route below takes this; MediaFile owns its rows through `uploadedById` and so
+        // spells the parameter `uploadedBy`. The query key follows the column on both sides of the
+        // wire. Rationale on the server: backend/app/api/routes/artisans.py.
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<ArtisanDto>
 
     @GET("crafts")
     suspend fun crafts(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 100
+        @Query("pageSize") pageSize: Int = 100,
+        // Server-side ownership filter — see the note on [artisans].
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<CraftDto>
 
     @POST("artisans")
@@ -157,7 +173,9 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
         @Query("artisanId") artisanId: String? = null,
-        @Query("artisanName") artisanName: String? = null
+        @Query("artisanName") artisanName: String? = null,
+        // Server-side ownership filter — see the note on [artisans].
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<ProductDetailDto>
 
     @GET("products/{id}")
@@ -169,7 +187,9 @@ interface WorkshopRepositoryApi {
     @GET("tools")
     suspend fun tools(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 100
+        @Query("pageSize") pageSize: Int = 100,
+        // Server-side ownership filter — see the note on [artisans].
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<ToolDetailDto>
 
     @GET("tools/{id}")
@@ -190,7 +210,9 @@ interface WorkshopRepositoryApi {
     @GET("workshops")
     suspend fun workshops(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 100
+        @Query("pageSize") pageSize: Int = 100,
+        // Server-side ownership filter — see the note on [artisans].
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<WorkshopDetailDto>
 
     @GET("workshops/{id}")
@@ -266,7 +288,10 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 20,
         @Query("linkedRecordType") linkedRecordType: String? = null,
-        @Query("linkedRecordId") linkedRecordId: String? = null
+        @Query("linkedRecordId") linkedRecordId: String? = null,
+        // Server-side ownership filter — see the note on [artisans]. MediaFile owns its rows through
+        // `uploadedById`, so this one route spells the parameter `uploadedBy`.
+        @Query("uploadedBy") uploadedBy: String? = null
     ): PageResponse<MediaFileDto>
 
     // The media processing queue: what became of the transcription job an audio upload enqueued.
@@ -353,7 +378,9 @@ interface WorkshopRepositoryApi {
     suspend fun processes(
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
-        @Query("productId") productId: String? = null
+        @Query("productId") productId: String? = null,
+        // Server-side ownership filter — see the note on [artisans].
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<ProcessDetailDto>
 
     @GET("processes/{id}")
@@ -416,7 +443,9 @@ interface WorkshopRepositoryApi {
     @GET("questionnaire/interviews")
     suspend fun interviews(
         @Query("page") page: Int = 1,
-        @Query("pageSize") pageSize: Int = 100
+        @Query("pageSize") pageSize: Int = 100,
+        // Server-side ownership filter — see the note on [artisans].
+        @Query("createdBy") createdBy: String? = null
     ): PageResponse<QuestionnaireInterviewDetailDto>
 
     @GET("questionnaire/interviews/{id}")
