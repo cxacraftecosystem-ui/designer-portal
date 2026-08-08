@@ -31,13 +31,28 @@ type Release = {
   publishedAt?: string;
 };
 
-/** "1.1.17" -> 11117, the derivation android/app/build.gradle.kts uses. Null when it does not parse. */
+/**
+ * "1.1.19" -> 1001019, the derivation `android/app/build.gradle.kts` actually uses. Null when it
+ * does not parse.
+ *
+ * THE DEFECT THIS REPLACED, because it made the panel refuse every valid release. This function
+ * computed `major * 10000 + minor * 100 + patch`, while BOTH of the other two implementations of the
+ * same scheme use thousand-wide buckets — `android/app/build.gradle.kts:28` and
+ * `backend/app/api/routes/app_release.py:56`, and the backend OVERRIDES whatever the browser sends.
+ * So for a published 1.1.19 the stored code is 1,001,019 while this panel derived 10,120 for the
+ * next version, `tooOld = 10120 <= 1001019` was true, and the publish path refused a perfectly good
+ * build with a message quoting two numbers that plainly disagree.
+ *
+ * The bound moved with the formula: 999, not 99, mirroring `_derive_version_code`. With `> 99` a
+ * legitimate `1.1.100` — which the scheme in the build file explicitly rolls through — parsed as
+ * null and silently skipped the too-old check altogether.
+ */
 function versionCodeFor(versionName: string): number | null {
   const parts = versionName.trim().split(".");
   if (parts.length !== 3) return null;
   const [major, minor, patch] = parts.map((part) => Number(part));
-  if ([major, minor, patch].some((n) => !Number.isInteger(n) || n < 0 || n > 99)) return null;
-  return major * 10000 + minor * 100 + patch;
+  if ([major, minor, patch].some((n) => !Number.isInteger(n) || n < 0 || n > 999)) return null;
+  return major * 1_000_000 + minor * 1_000 + patch;
 }
 
 export function PublishAppUpdatePanel() {
