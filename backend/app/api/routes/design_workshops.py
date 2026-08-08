@@ -1368,9 +1368,15 @@ def _dropped_note(count: int) -> str:
     Names the preview because that is where the full list is actually reachable — ``GET
     /report/preview`` returns ``warnings`` as an uncapped JSON array built from the same load — so
     this is an instruction a designer can act on rather than an apology.
+
+    NO SEMICOLON INSIDE IT, and that is a constraint rather than a preference: ``"; "`` is this
+    header's item separator and ``frontend/lib/designWorkshops.ts`` splits on ``";"`` and prints
+    each piece as its own warning, so a semicolon here would break this one sentence into two
+    half-sentences on the designer's screen — the same "a fragment shown as a whole warning" defect
+    the packing above exists to stop.
     """
     return (
-        f"{count} further warning(s) did not fit in this header; the report preview lists all of "
+        f"{count} further warning(s) did not fit in this header. The report preview lists all of "
         "them."
     )
 

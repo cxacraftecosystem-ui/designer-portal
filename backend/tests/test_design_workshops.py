@@ -551,7 +551,10 @@ def test_a_long_warning_list_drops_whole_warnings_and_says_how_many():
     pieces = header.split("; ")
 
     assert len(header) <= _WARNINGS_HEADER_BUDGET
-    assert pieces[-1].endswith("the report preview lists all of them.")
+    # ONE piece, not two. The note carries no ";" of its own — that character is this header's item
+    # separator and `frontend/lib/designWorkshops.ts` splits on it, so a semicolon inside the note
+    # would show the designer two half-sentences.
+    assert pieces[-1].endswith("The report preview lists all of them.")
     assert int(pieces[-1].split()[0]) == len(items) - (len(pieces) - 1)
     # Not one fragment: every carried piece is a warning exactly as it was written.
     assert all(piece in items for piece in pieces[:-1])
