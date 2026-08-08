@@ -217,6 +217,15 @@ class ReportQuestionnaireAnnexureTest {
                 "Answers recorded" to 22.0f),
             table.columns.map { it.header to it.widthPct },
         )
+        // `numeric` IS PART OF THE SHAPE, not a rendering preference. Both writers right-align a
+        // numeric column and group its digits, so a flag set on one side and not the other gives the
+        // office and the field the same figures in visibly different columns — and this annexure
+        // exists to be read side by side with the office's copy. Pinned because the widths above
+        // would have gone on passing while the three counts drifted left.
+        assertEquals(
+            listOf(false, true, true, true),
+            table.columns.map { it.numeric },
+        )
         assertEquals(
             "Questionnaires attached to this workshop and the sittings recorded against them.",
             table.caption,
