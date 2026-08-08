@@ -288,9 +288,14 @@ touch.
 the ARM pair by unzipping the AAR and adding the `.so` to a 6.09 MB baseline. Measured: **47.02 MB**
 and **24.87 MB**. Two things the AAR arithmetic could not see:
 
-- **`assets/mlkit-google-ocr-models/*.tflite`, 1,272,325 bytes**, which live in the shim AAR rather
-  than in the one that was unzipped, are ABI-independent (they ship once whatever `abiFilters` says),
-  and are **STORED as well** — AGP does not compress `.tflite`. They are pure unshrinkable weight.
+- **`assets/mlkit-google-ocr-models/…`, 1,272,325 bytes.** The estimate added `6.09 + 39.13` — the
+  baseline plus the four `.so` out of `text-recognition-bundled-common`. The other artifact, listed
+  in the same table as "the Latin API shim, 1.32 MB", was then left out of the addition, and it is
+  not a shim: `text-recognition-16.0.1.aar` carries **no native code and 1.3 MB of model assets** —
+  `lstm_model.fb`, `tflite_langid.tflite`, `model.tflite` and the rest of
+  `assets/mlkit-google-ocr-models/`. Confirmed by unzipping both AARs: bundled-common has **zero**
+  `assets/` entries. They are ABI-independent (they ship once whatever `abiFilters` says) and STORED
+  as well, so they are pure unshrinkable weight in every configuration below.
 - the dex and resource growth above, and a baseline that had already moved from 6.09 to 6.33 MB.
 
 The estimate's *shape* was right and its conclusion about R8 was exactly right. It was 1.8 MB
