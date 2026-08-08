@@ -322,17 +322,21 @@ val STAGE_20_SETTINGS: List<SettingSupport> = listOf(
         "ANDed with each section's own setting, so a template that deliberately prints a price " +
             "list without photographs does not acquire them."),
     SettingSupport("photoColumns", SettingReach.APPLIED, "Clamped to 1..4 and used by every photo grid."),
-    SettingSupport("includeMediaAnnexure", SettingReach.NOT_ON_DEVICE,
-        "The photographic annexure is not built on this device. Turning it OFF still removes the " +
-            "section, so the two files agree; turning it ON produces nothing here and a contact " +
-            "sheet at the office. The photographs themselves still print with their own stages."),
+    SettingSupport("includeMediaAnnexure", SettingReach.APPLIED,
+        "The photographic annexure is built here: every photograph in the record, in stage order, " +
+            "three across, from the copies already on this device. An explicit false removes the " +
+            "section; absent leaves the template alone."),
     SettingSupport("includeTranscripts", SettingReach.NOT_ON_DEVICE,
-        "The transcript annexure is not built on this device. This is the one of the three that " +
-            "genuinely could be — the recordings are already transcribed on the handset — and it " +
-            "is the edge-first gap worth closing next."),
-    SettingSupport("includeCompletenessAnnexure", SettingReach.NOT_ON_DEVICE,
-        "The completeness annexure is not built on this device, although the scores it would print " +
-            "are already computed here for the warnings on the report screen."),
+        "The transcript annexure is not built on this device, and the reason is the text and not " +
+            "the drawing: design-workshop audio is transcribed SERVER-SIDE by the media queue onto " +
+            "MediaFile.transcriptText, which no draft on this handset stores and no endpoint this " +
+            "client binds ever asks for. The recordings are here; their transcripts are not. A " +
+            "designer who asks for them is told so on every export."),
+    SettingSupport("includeCompletenessAnnexure", SettingReach.APPLIED,
+        "The completeness annexure is built here, from the same scorer the stage screens use, plus " +
+            "the reference check only a report can make: a REF whose row was deleted counts as " +
+            "unfilled in the annexure so that it agrees with the section that prints that field as " +
+            "blank. An explicit false removes the section; absent leaves the template alone."),
     SettingSupport("numberHeadings", SettingReach.APPLIED,
         "Passed to every heading the builder emits, so the numbering matches the office's copy."),
     SettingSupport("excludedStages", SettingReach.APPLIED,
@@ -358,15 +362,11 @@ val UNSUPPORTED_SECTIONS: Map<SpecialSection, String> = mapOf(
     SpecialSection.CHART to
         "The infographics this template places at the front are not drawn on this device. Their " +
             "numbers are still in the tables.",
-    SpecialSection.ANNEXURE_MEDIA to
-        "The photographic annexure is not built on this device. Every photograph still prints with " +
-            "the stage it belongs to.",
     SpecialSection.ANNEXURE_TRANSCRIPTS to
         "The recordings' transcripts are not appended on this device, although you asked for them. " +
-            "The office's copy of this report will carry them.",
-    SpecialSection.COMPLETENESS to
-        "The data completeness annexure is not built on this device. The stage warnings on this " +
-            "screen list the same gaps.",
+            "The recordings are on this phone but their transcripts are not: workshop audio is " +
+            "transcribed after it reaches the server. The office's copy of this report will carry " +
+            "them.",
 )
 
 /**
