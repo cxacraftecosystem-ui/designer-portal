@@ -338,6 +338,16 @@ export type DwSaveEntry = {
   entryId?: string;
   ordinal?: number;
   data: DwEntryData;
+  /**
+   * "I am sending every key I HAVE, not every key there IS."
+   *
+   * Set only when this browser knows it has NOT read the server's copy of the row
+   * (`serverLoadedAt === null`). The server then keeps the keys that are absent from `data`
+   * instead of deleting them. Omitted — the default — the row's data is replaced wholesale,
+   * which is what a browser that HAS read the row must do, because for it an absent key is a
+   * real deletion.
+   */
+  merge?: boolean;
 };
 
 export type DwSaveBody = {

@@ -142,6 +142,28 @@ class StageEntryIn(APIModel):
     entryId: str | None = Field(default=None, max_length=64)
     ordinal: int | None = Field(default=None, ge=0)
     data: dict[str, Any] = Field(default_factory=dict)
+    merge: bool = Field(
+        default=False,
+        description=(
+            "'I am sending every key I HAVE, not every key there IS.' When true, keys already "
+            "stored under this row and absent from `data` are KEPT instead of deleted. The "
+            "default is false, which is the wholesale replace every client relied on before this "
+            "existed.\n\n"
+            "IT EXISTS BECAUSE A CLIENT CAN HOLD A STAGE IT HAS NEVER READ. Open a stage in a "
+            "village, let the download fail, and the form comes up blank — blank because unread, "
+            "not because empty. Both clients say so on screen, and both promised that what you "
+            "leave blank will not overwrite an answer recorded elsewhere. They could not keep "
+            "that promise: a singleton row's `data` is replaced wholesale, so typing one field "
+            "into an unread stage deleted every other field the office had written, in place, "
+            "with no RecordRevision to recover it — and the promoted columns (craftName, state, "
+            "district, dates) were nulled with it, so the workshop dropped out of every filter "
+            "and the report cover printed blank.\n\n"
+            "Set it when, and only when, the client knows it has not seen the server's copy: "
+            "`serverLoadedAt === null` on the web, `!isAuthoritative(...)` on Android. A client "
+            "that HAS read the row must leave it false, because for that client an absent key is "
+            "a real deletion and must still delete."
+        ),
+    )
 
     @model_validator(mode="after")
     def _bound_payload(self) -> "StageEntryIn":
