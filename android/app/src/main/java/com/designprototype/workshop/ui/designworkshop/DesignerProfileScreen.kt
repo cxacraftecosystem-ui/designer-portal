@@ -49,6 +49,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
+// The app-level unsaved-work guard, which owns the Save / Discard / Keep editing prompt and is wired
+// into the system back gesture, the header arrow and every menu row. Reused rather than reinvented:
+// a second prompt with its own wording is two answers to one question.
+import com.designprototype.workshop.RegisterUnsavedGuard
 import com.designprototype.workshop.data.AddressReferenceDto
 import com.designprototype.workshop.data.DesignerProfileDto
 import com.designprototype.workshop.data.DesignerProfileUpdateBody
@@ -103,11 +107,34 @@ import java.util.UUID
  * a local copy of it would introduce exactly one new failure: two devices holding different
  * biographies and the later sync silently winning. A failure here is reported and the form keeps what
  * was typed, so a retry costs nothing.
+ *
+ * ── LEAVING WITH SOMETHING TYPED ─────────────────────────────────────────────────────────────────
+ *
+ * That paragraph is about PERSISTING a draft across sessions, and it stands. It says nothing about
+ * the back press inside one session, which is a different failure with a different fix: the screen
+ * registers with the app's [RegisterUnsavedGuard], so the system back gesture, the header arrow and
+ * every menu row route through the same Save / Discard / Keep editing prompt the record forms use.
+ * Nothing is written to disk and no second copy of the row exists — the text stays in memory and the
+ * departure is simply questioned.
+ *
+ * It is worth its five lines because of where it runs. A browser Back is a deliberate click on a
+ * small target; a handset's is an edge swipe that fires on a thumb-slip, and this screen holds the
+ * longest free-text box in the app (`minLines = 5`) — the paragraph that prints under "Designer's
+ * profile" in stage 3 of every report. The web guards the same form the same way
+ * (`useLeaveGuard(dirty, …)` in `DesignerProfileForm.tsx`), including the detail that its "Save"
+ * saves and STAYS rather than leaving: a designer who chose Save asked for their words to be kept,
+ * not for the screen to close.
  */
 
-/** Everything the form holds, as text, because that is what the boxes edit. */
+/**
+ * Everything the form holds, as text, because that is what the boxes edit.
+ *
+ * INTERNAL and a `data class`, both load-bearing: the unsaved-work rule is a comparison against the
+ * snapshot the server last confirmed (see [designerProfileHasUnsavedEdits]), so the generated
+ * `equals` IS the rule, and it is reachable from a test.
+ */
 @Immutable
-private data class ProfileForm(
+internal data class ProfileForm(
     val displayName: String = "",
     val localName: String = "",
     val designation: String = "",
@@ -138,7 +165,7 @@ private data class ProfileForm(
     val empanelmentDate: LocalDate? = null,
 )
 
-private fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
+internal fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
     displayName = displayName.orEmpty(),
     localName = localName.orEmpty(),
     designation = designation.orEmpty(),
@@ -165,6 +192,27 @@ private fun DesignerProfileDto.toForm(): ProfileForm = ProfileForm(
         ?.takeIf { it.isNotBlank() }
         ?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
 )
+
+/**
+ * Is there typing (or an uploaded photograph) on this screen that the server does not have?
+ *
+ * A DIFF AGAINST THE LAST CONFIRMED SNAPSHOT, not a flag raised by the controls. The web raises its
+ * flag from `onInput` and then has to remember to raise it BY HAND for every control that fires no
+ * input event — its own state dropdown, its date picker and both media slots each carry a manual
+ * `markDirty`, and that list is exactly the kind that goes stale when a field is added. Here every
+ * box writes into one immutable [ProfileForm], so comparing it with what was loaded cannot miss a
+ * control: a field added next year is covered the day it is added.
+ *
+ * It also gets the retraction right for free. A designer who types a word into the biography and
+ * deletes it again has nothing unsaved, and a prompt at that point teaches them to dismiss the
+ * prompt — which must still mean something ten minutes later when there IS a paragraph in the box.
+ *
+ * [saved] is re-seeded from the SERVER's answer after every save, so any normalisation it applied (a
+ * trimmed website, a lower-cased email) is part of the comparison rather than a permanent phantom
+ * difference that would leave the screen dirty forever and prompt on every single departure.
+ */
+internal fun designerProfileHasUnsavedEdits(typed: ProfileForm, saved: ProfileForm): Boolean =
+    typed != saved
 
 private fun ProfileForm.toBody(): DesignerProfileUpdateBody = DesignerProfileUpdateBody(
     displayName = displayName,
@@ -217,6 +265,12 @@ fun DesignerProfileScreen(
     val editingSomebodyElse = viewer != null && targetUserId != null && targetUserId != viewer.id
 
     var form by remember(targetUserId) { mutableStateOf(ProfileForm()) }
+    /**
+     * The last state of the form the SERVER has confirmed — what was loaded, or what came back from
+     * the most recent save. The unsaved-work rule is the difference between this and [form]; see
+     * [designerProfileHasUnsavedEdits].
+     */
+    var saved by remember(targetUserId) { mutableStateOf(ProfileForm()) }
     var loading by remember(targetUserId) { mutableStateOf(true) }
     var saving by remember(targetUserId) { mutableStateOf(false) }
     var uploading by remember(targetUserId) { mutableStateOf<ProfileMediaSlot?>(null) }
@@ -245,7 +299,13 @@ fun DesignerProfileScreen(
                 // screen: the row is created by the first save. An empty form is the correct
                 // rendering of it, and reporting it as an error would greet every new designer with
                 // a red line on the page they were sent here to fill in.
-                form = stored?.toForm() ?: ProfileForm()
+                //
+                // Both halves are seeded together, always. A load that moved `form` and left `saved`
+                // behind would make a freshly-opened profile announce unsaved changes on the way out
+                // of a screen nobody had typed in.
+                val loaded = stored?.toForm() ?: ProfileForm()
+                form = loaded
+                saved = loaded
             }
             .onFailure { error ->
                 loadFailed = true
@@ -309,11 +369,14 @@ fun DesignerProfileScreen(
         saving = true
         scope.launch {
             runCatching { repository.saveDesignerProfile(targetUserId, form.toBody()) }
-                .onSuccess { saved ->
+                .onSuccess { stored ->
                     // Re-seeded from the SERVER's answer rather than left as typed, so any
                     // normalisation it applied (a trimmed website, a lower-cased email) is what the
-                    // designer is looking at when they walk away.
-                    form = saved.toForm()
+                    // designer is looking at when they walk away — and so the unsaved-work
+                    // comparison is against what was actually stored, not against what was typed.
+                    val confirmed = stored.toForm()
+                    form = confirmed
+                    saved = confirmed
                     onMessage("Designer profile saved.")
                 }
                 .onFailure { error ->
@@ -322,6 +385,20 @@ fun DesignerProfileScreen(
             saving = false
         }
     }
+
+    // ── Leaving with something typed ─────────────────────────────────────────────────────────────
+    //
+    // The app's ONE unsaved-work mechanism, reused whole: the system back gesture, the header arrow
+    // and every menu row already route through it, so registering here is the entire fix and there
+    // is no second dialog and no second wording. `onSave` is the screen's own validated save — the
+    // same one the button runs, refusing in words for an account that may not write, and holding a
+    // years-of-experience outside 0..70 on the form instead of leaving.
+    //
+    // `canEdit` is in the condition rather than left to the diff. Every control on this screen is
+    // already disabled for a read-only viewer, so the diff cannot move; the clause is here so that a
+    // future control that forgets `enabled = canEdit` cannot offer somebody a Save they will only be
+    // refused.
+    RegisterUnsavedGuard(dirty = canEdit && designerProfileHasUnsavedEdits(form, saved)) { saveProfile() }
 
     // ── Media capture ────────────────────────────────────────────────────────────────────────────
     //
