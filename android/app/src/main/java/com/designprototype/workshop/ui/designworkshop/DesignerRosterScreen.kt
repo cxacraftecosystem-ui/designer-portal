@@ -174,10 +174,20 @@ fun DesignerRosterScreen(
     // directory after every Add or Suspend would spend a request on a list that cannot have changed.
     LaunchedEffect(canManage) {
         if (!canManage) return@LaunchedEffect
-        // Best effort, and its failure is silent by design — see the class KDoc. `getOrNull` rather
-        // than `onFailure { onError(...) }`: an admin told "could not load the directory" over a
-        // roster that loaded perfectly well would reasonably conclude the screen is broken.
-        val served = runCatching { repository.designerDirectory() }.getOrNull() ?: return@LaunchedEffect
+        val served = try {
+            repository.designerDirectory()
+        } catch (cancelled: CancellationException) {
+            // RETHROWN, for the same reason the walk above rethrows it. `runCatching` here swallowed
+            // the cancellation Compose raises when this screen leaves composition and turned it into
+            // "the directory is unavailable" — harmless only for as long as nothing runs after this
+            // point. Rethrowing is what keeps it harmless when something does.
+            throw cancelled
+        } catch (offline: Throwable) {
+            // Best effort, and its failure is silent by design — see the class KDoc. Silent rather
+            // than `onError(...)`: an admin told "could not load the directory" over a roster that
+            // loaded perfectly well would reasonably conclude the screen is broken.
+            return@LaunchedEffect
+        }
         accounts = accountsByEmail(served)
         directoryNames = served.associate { it.id to (it.name?.takeIf(String::isNotBlank) ?: it.email) }
         directoryCapped = served.size >= DESIGNER_DIRECTORY_CAP
@@ -263,11 +273,20 @@ fun DesignerRosterScreen(
         // is the end a truncated read loses. The search box is named because it filters what is on
         // this device, so a truncated roster makes "no match" mean two different things.
         if (rosterTruncated) {
+            // NAMES WHICH END IS MISSING, because "the first N" names an order that appears nowhere
+            // on this screen. The server sorts `createdAt desc` and the walk reads from page 1, so a
+            // short read keeps the NEWEST empanelments and loses the OLDEST — and the oldest is
+            // exactly the row this screen gets opened for: the designer standing in front of the
+            // admin saying they cannot sign in, empanelled two seasons ago. An admin told only that
+            // the list is a prefix would reasonably scroll to the bottom of it looking for them.
+            // The rows on screen are then re-sorted by invitation and by name, so "first" would not
+            // even describe what they are reading.
             RosterNotice(
-                "This is the first ${rows.size} of $rosterTotal roster rows — the rest were not " +
-                    "fetched. The search box filters only what is on this screen, so a designer " +
-                    "who is not here may still be on the roster. Open the roster on the web to " +
-                    "reach the whole list."
+                "The ${rows.size} most recently empanelled rows of $rosterTotal are on this " +
+                    "screen; the ${rosterTotal - rows.size} oldest were not fetched. The search " +
+                    "box filters only what is here, so a designer who does not appear may still " +
+                    "be on the roster — an empanelment from an earlier season especially. Open " +
+                    "the roster on the web to reach the whole list."
             )
         }
 
