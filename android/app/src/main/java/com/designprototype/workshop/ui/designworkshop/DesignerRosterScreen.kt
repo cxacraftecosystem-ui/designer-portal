@@ -106,7 +106,7 @@ fun DesignerRosterScreen(
     repository: WorkshopRepository,
     /**
      * Open one designer's own profile, as an administrator, for the twenty values their reports
-     * print. Offered only for rows whose [DesignerRosterDto.userId] the server resolved — a roster
+     * print. Offered only for rows whose email [accountsByEmail] resolved to an account — a roster
      * row is keyed by EMAIL and may name somebody who has never signed in, and there is no profile
      * to open for an account that does not exist yet.
      */
