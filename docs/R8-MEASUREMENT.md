@@ -328,6 +328,27 @@ install-time behaviour on a build nothing here can put on a handset, and this do
 is that untested release-only behaviour is how this repository gets hurt. **The number is measured;
 the choice is not this lane's to make.**
 
+## Both branches of the filter were exercised, on the configuration actually committed
+
+The block in `build.gradle.kts` has an `if`, and an untested `else` is how a build flag ships broken.
+Two more `assembleRelease` runs on the committed tree — no ML Kit, so this is the state that merges
+whether or not the recogniser lane lands the same day:
+
+| `local.properties` | Release APK | ABIs in the built APK |
+|---|---|---|
+| `releaseAllAbis` absent (clean checkout, CI) | **6,599,672** | `arm64-v8a`, `armeabi-v7a` |
+| `releaseAllAbis=true` | **6,636,115** | `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64` |
+
+The widened build is **byte-identical to the pre-change baseline**, which is the cleanest possible
+demonstration that the only thing this change alters is the ABI set. The narrowed one prints nothing
+extra; the widened one prints, on the console, before any packaging happens:
+
+    release: packaging ALL FOUR ABIs (releaseAllAbis=true) — about 22 MB of x86 and x86_64 native
+    libraries no field handset can load. For emulator testing only; do not publish this APK.
+
+Note that today's saving is 36,443 bytes, not the 20,044 of raw `.so` — stored native libraries are
+page-aligned in the APK, so dropping an entry frees a little more than the library itself.
+
 ## Recommendation
 
 1. **Ship (c).** `abiFilters = ["arm64-v8a", "armeabi-v7a"]` on release only — already in
