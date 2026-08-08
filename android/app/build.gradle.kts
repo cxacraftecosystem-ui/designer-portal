@@ -94,6 +94,22 @@ android {
      */
     buildTypes {
         release {
+            /**
+             * SIGNED WITH THE DEBUG KEY SO THE SHRUNK BUILD CAN BE INSTALLED AND EXERCISED.
+             *
+             * An unsigned APK cannot be installed, and a shrunk build that is never run on a
+             * handset is exactly the thing that must not be trusted: R8's failure mode is not a
+             * compile error but a `SerializationException` or a `NoSuchMethodError` at the first
+             * sync, on a build that assembled perfectly. Verifying it requires putting it on a
+             * device, and putting it on a device requires a signature.
+             *
+             * THIS IS NOT A RELEASE SIGNING CONFIG AND MUST NOT BECOME ONE. The debug keystore is
+             * shared by every Android SDK install on earth, so an APK signed with it is not
+             * distributable: anyone can produce an update for it. Before this app is published,
+             * replace this with a real keystore whose credentials come from `local.properties` or
+             * the CI secret store — never from a file in the repository.
+             */
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

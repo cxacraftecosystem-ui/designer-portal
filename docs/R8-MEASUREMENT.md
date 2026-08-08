@@ -62,3 +62,55 @@ build that installed and ran perfectly on a desk. There is no device and no emul
 (`adb` is not installed) — the same hardware gap the handover already records against the offline
 claim itself. The keep rules and the evidence above make that test likely to pass; they do not
 replace it.
+
+---
+
+## Verified on real hardware — 2026-08-08
+
+**Device:** Samsung SM-M325F (Galaxy M32), Android 13, 5.8 GB RAM — a genuine mid-range handset of
+the kind this app is carried into a village on, not an emulator.
+
+**Build under test:** the shrunk release APK, **6.11 MB**, signed with the debug key so it could be
+installed (see the note in `build.gradle.kts` — that signing config is for testing and must never
+become the release one). Pointed at the local API through `adb reverse tcp:8000 tcp:8000`, because
+writing test data into the production CloudFront backend to verify a build flag would be
+indefensible; the first build was killed 13 tasks in when it was noticed defaulting there.
+
+### What passed
+
+| Exercised | Result |
+|---|---|
+| App launch, Compose UI, resource shrinking | Renders fully — type, layout, copy all intact |
+| Retrofit dynamic proxy + request serialization | Login reached the server; a wrong password returned a real **401** |
+| Response deserialization, 8+ endpoint DTOs | artisans, products, tools, processes, crafts, workshops, questionnaire sections and interviews — all **200 OK** and rendered |
+| Bundled 496-field registry parse | 22 stages rendered with per-stage completeness computed |
+| Paged listing + truncation | "Showing 500 of 8411 workshops. Search by title, craft or cluster to reach the rest." |
+| **The offline loop** | With the API tunnel cut: a workshop was created, all 22 stages rendered from the bundled registry, completeness computed, and the banner said honestly "This workshop has not been created on the server yet." |
+| Report screen offline | Template picker and all twelve accent colours, with per-stage missing-field warnings |
+| Stage form offline | Date picker, Hindi dictation control, media capture — the whole field vocabulary |
+
+**Zero `FATAL`, zero `SerializationException`, zero `NoSuchMethodError`, zero `ClassNotFoundError`,
+zero `OutOfMemoryError`** across every step, checked from a cleared logcat each time.
+
+That is the exact failure mode this test existed for. R8's risk was never a build error — it was a
+serializer stripped by the shrinker and a crash at the first sync, on a build that installed
+perfectly. Eight endpoints' worth of DTOs decoded on the device say it did not happen.
+
+### What was NOT confirmed, and is not being claimed
+
+**The .docx export writing a file.** The export buttons render and tapping them crashed nothing, but
+no file appeared in `/sdcard/Download` or the app's external files directory, and a release build is
+not debuggable so `run-as` cannot read app-internal storage. The most likely explanation is benign —
+the test workshop had 0% of its required fields filled, and the screen carries a completeness
+warning — but "probably fine" is not verification. The report WRITERS are covered by JVM unit tests;
+what remains unproven on hardware is the file write at the end of a shrunk build.
+
+**The offline test cut the API tunnel rather than switching the handset to airplane mode**, because
+the device is on wireless adb and disabling its radios would have severed control of it. From the
+app's side an unreachable server is the same event; from the OS's side connectivity still existed,
+so any code branching on a system connectivity check took its online path and then failed, which is
+the harsher of the two cases rather than the softer one.
+
+**Recommendation:** merge. The size win is 66% and every mechanism R8 could plausibly have broken has
+now been exercised on the target hardware. Re-run the export check once a workshop with real content
+exists on a device.
