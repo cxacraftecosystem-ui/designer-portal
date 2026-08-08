@@ -56,6 +56,12 @@ them to be **stored, not deflated**, in the APK. A megabyte of `.so` is a megaby
 `docs/R8-MEASUREMENT.md` measured the release APK at **6,389,483 bytes — 6.09 MB**, and verified it
 on a Galaxy M32. This app ships **no native code at all** today; ML Kit would be the first.
 
+> **Correction, 2026-08-09, measured off the baseline APK rather than assumed:** it does ship native
+> code — `libandroidx.graphics.path.so`, 37,392 bytes across four ABIs. Immaterial to the argument
+> here, but it is what proves the packaging behaviour the argument depends on: every `lib/` entry in
+> the built APK is **STORED**, so this app was already paying x86 tax, at 20,044 bytes, before ML Kit
+> was proposed. See `docs/R8-MEASUREMENT.md`.
+
 | Build | APK | Multiple of today |
 |---|---|---|
 | Today | 6.09 MB | — |
@@ -310,3 +316,41 @@ values it is worth more than the bytes it costs.
   ZXing over 9.44 MB of bundled ML Kit barcode scanning. Text recognition and barcode scanning are
   separate bundled models in separate native libraries; adding one does not make the other free. It
   would share `com.google.mlkit:common` and `vision-common` only, which is the small part.
+
+## What it actually costs, measured — and it is not 7.4×
+
+The table above priced this at **~45.2 MB, 7.4× today's APK**, from unzipping the AAR. That was the
+right shape and it was 1.8 MB optimistic. Measured instead — five real `assembleRelease` runs, sizes
+read off the files, full table and per-group attribution in **`docs/R8-MEASUREMENT.md`**:
+
+| Release APK | Bytes | Size | Multiple of today |
+|---|---|---|---|
+| Today, before ML Kit | 6,636,115 | 6.33 MB | 1.00× |
+| Bundled ML Kit **as this module was configured** — all four ABIs | 49,307,952 | 47.02 MB | **7.43×** |
+| Bundled ML Kit, **as it now ships** — `abiFilters` = the ARM pair | **26,080,576** | **24.87 MB** | **3.93×** |
+
+**22.15 MB of the estimated bill was never a real cost.** `android/app/build.gradle.kts` set no
+`abiFilters` at all, so every build packaged native libraries for all four ABIs — including `x86` and
+`x86_64`, which are **emulator** architectures that no handset this app is carried into a village on
+can run. Half the model was being shipped to devices that cannot exist in the field. That is now
+filtered in the release build, measured at 23,227,376 bytes off the APK, and the debug build keeps
+all four ABIs so the emulator still works for a developer with no phone.
+
+So the honest headline is **6.33 → 24.87 MB, 3.93×**, not 7.4×. That is still the largest single
+increase this application has ever taken and it should be stated plainly rather than softened: the
+update every designer downloads on prepaid data goes from 6 MB to 25 MB, on every release, for ever.
+The recogniser has to be worth that, and the decision above is that an identity read which works in a
+courtyard with no signal is.
+
+**Two more levers exist and are measured but not taken** — dropping `armeabi-v7a` (a further 6.49 MB,
+refused without a roster of what handsets are actually in the field) and `useLegacyPackaging`
+(a further 9.52 MB off every *download*, in exchange for 7.52 MB of permanent on-device storage).
+Both are written up with their numbers in `docs/R8-MEASUREMENT.md` so that neither has to be
+re-derived by the next person who looks at this.
+
+**The "revisit if it ever ships through Play" condition above is now moot for the size reason**, and
+worth correcting rather than leaving: it was checked, and this application cannot use Play delivery
+without replacing its whole update path. `GET /api/app/download` is one redirect to one object,
+`WorkshopRepository.publishAppUpdate` publishes by reading `applicationInfo.sourceDir` — the base
+split alone under a bundle install — and the update prompt the handset shows has no "Later" button.
+The condition should now read: revisit if the *delivery chain* is ever replaced.
