@@ -1443,7 +1443,7 @@ def registry_to_dict() -> dict[str, Any]:
 
 
 def registry_version() -> str:
-    """A short stable digest of every key, type, tier and DERIVATION in the registry.
+    """A short stable digest of every key, type, tier, DERIVATION and HYDRATION in the registry.
 
     Deliberately insensitive to labels and help text: retitling a field must not invalidate
     every cached draft on every phone, but adding, removing or retyping one must.
@@ -1456,6 +1456,17 @@ def registry_version() -> str:
     version string matched the live registry's CHARACTER FOR CHARACTER, so the staleness check
     that exists precisely to catch this reported agreement. A field that silently stops computing
     is indistinguishable, on the phone, from a field the designer forgot to fill in.
+
+    THE HYDRATION MAPPING IS HERE FOR THE SAME REASON, ONE FEATURE LATER. ``field_to_dict`` now
+    publishes :data:`REFERENCE_HYDRATION` as ``refHydration`` so the clients fill a row in by the
+    server's rule instead of by matching key names — matching names is what wrote an artisan's
+    name into a ministry report's product column. That makes the mapping a client contract, and a
+    contract outside the digest is a contract that cannot be re-delivered: correcting a wrong
+    mapping touches no key, type, tier or derivation, so the version would not move, the bundled
+    asset would stay stale with `test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from`
+    reporting agreement (it compares the version, not the content), and a handset that has never
+    reached the network would go on hydrating by the mapping the correction was written to end.
+    Pinned by ``test_the_version_changes_when_a_hydration_mapping_changes``.
     """
 
     _ensure_installed()
@@ -1465,9 +1476,15 @@ def registry_version() -> str:
     for s in STAGES:
         for e in s.entities:
             for f in e.fields:
+                # In DECLARATION order, not sorted: the mapping's order is what decides which
+                # source key wins if two ever named one target, so a reordering is a change.
+                hydration = ",".join(
+                    f"{src}>{dst}"
+                    for src, dst in reference_hydration_for(e.key, f.key).items()
+                )
                 parts.append(f"{s.key}.{e.key}.{f.key}:{f.type.value}:{f.tier.value}:"
                              f"{int(f.required)}:{f.enum}:{int(f.deprecated)}:"
-                             f"{f.derived_kind}:{','.join(f.derived_from)}")
+                             f"{f.derived_kind}:{','.join(f.derived_from)}:{hydration}")
     digest = hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()
     return digest[:16]
 

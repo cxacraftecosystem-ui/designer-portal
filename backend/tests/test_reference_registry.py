@@ -10,6 +10,8 @@ Nothing in this file touches a database. The resolver that reads one is in
 ``test_reference_resolver.py``.
 """
 
+import re
+
 import pytest
 
 # Importing this module is what installs the twenty-two stages into the registry.
@@ -257,6 +259,58 @@ def test_a_prototype_is_not_the_product_it_derives_from():
     """
     assert stage_schema.REFERENCE_HYDRATION["prototype.productRef"] == {"name": "productName"}
     assert stage_schema.REFERENCE_HYDRATION["existingProduct.artisanRef"] == {"name": "artisanName"}
+
+
+def _web_hydration_table() -> dict[str, dict[str, str]] | None:
+    """`DW_REFERENCE_HYDRATION` as `frontend/lib/designWorkshops.ts` declares it, or None.
+
+    Parsed rather than imported because there is no TypeScript here. The shape is a flat object
+    literal of object literals with string values, so a scan is enough and a change that made it
+    anything else would fail the assertion below rather than pass silently — which is the right
+    direction for a guard whose whole job is to notice that the two copies stopped matching.
+    """
+    from pathlib import Path
+
+    web = Path(__file__).resolve().parents[2] / "frontend/lib/designWorkshops.ts"
+    if not web.is_file():
+        return None
+    text = re.sub(r"//[^\n]*", "", web.read_text(encoding="utf-8"))
+    start = text.find("const DW_REFERENCE_HYDRATION")
+    assert start != -1, "the web dropped DW_REFERENCE_HYDRATION without telling this test"
+    body = text[text.index("{", start): text.index("};", start)]
+    out: dict[str, dict[str, str]] = {}
+    for path, inner in re.findall(r'"([\w.]+)"\s*:\s*\{([^{}]*)\}', body):
+        out[path] = dict(re.findall(r'"?([\w]+)"?\s*:\s*"([\w]+)"', inner))
+    return out
+
+
+def test_the_web_carries_the_same_hydration_table():
+    """THE DRIFT THIS FEATURE HAS ALREADY PAID FOR ONCE, guarded on the surface that still copies.
+
+    Android hydrated by matching key names while the server mapped, and the two disagreed
+    permanently on the same pick: choosing the artisan on a stage 6 row wrote her name into the
+    PRODUCT column, and the only-fill-blanks rule then refused to correct it at save. Android now
+    reads the server's `refHydration` off the schema, so it cannot drift again. The web still keeps
+    a hand-maintained copy — deliberately, and it is currently correct — which makes it the one
+    remaining place the same defect can be reintroduced by a widening that updates one file.
+
+    A MISSING web entry costs one retyped box the server fills at save; a WRONG one costs a value
+    nobody can see is wrong. So this asserts equality, not containment.
+    """
+    web = _web_hydration_table()
+    if web is None:
+        pytest.skip("the frontend is not present in this checkout")
+
+    server = stage_schema.REFERENCE_HYDRATION
+    assert set(web) == set(server), (
+        "the web's hydration table names different refs from the server's: only in web "
+        f"{sorted(set(web) - set(server))}, only in server {sorted(set(server) - set(web))}"
+    )
+    for path, mapping in server.items():
+        assert web[path] == mapping, (
+            f"{path} hydrates {mapping} on the server and {web[path]} in the browser, so the same "
+            f"pick fills the row differently depending on which surface the designer used"
+        )
 
 
 # --------------------------------------------------------------------------------------

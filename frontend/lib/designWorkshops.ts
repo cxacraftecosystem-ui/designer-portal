@@ -860,8 +860,15 @@ export function listStageReferences(workshopId: string, query: DwReferenceQuery)
  * and mapping the reference payload's own `data` keys to the entity's field keys.
  *
  * THIS IS A DELIBERATE SECOND COPY OF `REFERENCE_HYDRATION` in
- * `backend/app/services/design_workshops.py`, and the asymmetry between the two copies is the
- * safety property, so it must not be "tidied" into a guess.
+ * `backend/app/services/stage_schema.py` (it was declared beside `hydrate_entries` in
+ * `design_workshops.py` until the registry needed to validate and publish it), and the asymmetry
+ * between the two copies is the safety property, so it must not be "tidied" into a guess.
+ *
+ * IT IS ALSO NO LONGER THE ONLY WAY TO GET IT. The server publishes the mapping on each REF field
+ * as `refHydration`, which is what the Android client reads; this table is kept only because it is
+ * already correct and converting the web is a change with no defect behind it. Whichever way it is
+ * read, the two must not disagree — `test_the_web_carries_the_same_hydration_table` in
+ * `backend/tests/test_reference_registry.py` fails the build if they do.
  *
  * The server hydrates authoritatively inside `save_stage`, from the live record, every time. This
  * table exists only so the boxes fill in AT THE KEYBOARD — a designer who picks an artisan and then

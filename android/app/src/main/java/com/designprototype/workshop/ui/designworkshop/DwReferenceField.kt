@@ -254,14 +254,17 @@ internal fun DwReferenceSelectField(
     /**
      * A newly created id whose row is still waiting to be filled in from the server's copy.
      *
-     * HYDRATION CANNOT BE DONE FROM THE CREATE RESPONSE, and this is why the wait exists. The
-     * hydrated keys are decided by the registry's `fromref(...)` markers and materialise as
-     * [DwReferenceOption.data], keyed by the FIELD KEYS of the entity being filled in — a mapping
-     * that lives on the server. Building that map here from an artisan payload would be a second,
-     * client-side copy of the registry's hydration rules, and the moment it drifted, an inline-created
-     * artisan would fill the row differently from the same artisan picked off the list an hour later.
-     * So the id is stored immediately (the join key is never at risk) and the row is filled in when
-     * the refreshed list arrives carrying the server's own answer.
+     * HYDRATION CANNOT BE DONE FROM THE CREATE RESPONSE, and this is why the wait exists.
+     * [DwReferenceOption.data] is keyed by the REFERENCE MODEL's own vocabulary — an `Artisan`
+     * payload's keys, not the entity's — and [FieldDto.refHydration] is the dictionary onto the
+     * boxes. THIS SENTENCE USED TO SAY `data` WAS ALREADY KEYED BY THE ENTITY'S FIELD KEYS, and
+     * believing it is exactly how the artisan's name reached the product column of stage 6: on
+     * `existingProduct` the reference's `data["name"]` is the ARTISAN's, while the entity's own
+     * `name` means the PRODUCT. Assembling the record's `data` here from a create response would
+     * be a second, client-side copy of the reference models, and the moment it drifted an
+     * inline-created artisan would fill the row differently from the same artisan picked off the
+     * list an hour later. So the id is stored immediately (the join key is never at risk) and the
+     * row is filled in when the refreshed list arrives carrying the server's own answer.
      */
     var pendingHydration by remember(field.key) { mutableStateOf("") }
 
