@@ -305,10 +305,23 @@ class IdentityOcrResult:
 # Turning what a model said into candidates worth offering
 # --------------------------------------------------------------------------------------
 
-# A 12-digit run, however the card groups it. Only ASCII digits and only the separators a card
-# actually prints: ``str.isdigit()`` is Unicode-aware and would accept Devanagari numerals, which
-# would then be stored verbatim and defeat the unique index — see the note in artisan_identity.
-_AADHAAR_RUN = re.compile(r"(?<![0-9])((?:[0-9][ \-]?){11}[0-9])(?![0-9])")
+# A MAXIMAL run of digits joined by at most one space or hyphen at a time — the whole printed
+# number, not a window into it. Only ASCII digits and only the separators a card actually prints:
+# ``str.isdigit()`` is Unicode-aware and would accept Devanagari numerals, which would then be
+# stored verbatim and defeat the unique index — see the note in artisan_identity.
+#
+# THIS USED TO BE ``(?<![0-9])((?:[0-9][ \-]?){11}[0-9])(?![0-9])`` AND THAT WAS A LIVE DEFECT.
+# The lookarounds only look at the immediately adjacent CHARACTER, and a card prints its VID in
+# groups: in "VID : 2345 6789 0124 0831" the twelve digits "2345 6789 0124" are followed by a
+# SPACE, so the lookahead is satisfied and "234567890124" was extracted as an Aadhaar candidate off
+# a card that carries no Aadhaar number in that text at all. Verhoeff kills most such fragments,
+# but not all of them: over 200,000 sampled Verhoeff-valid sixteen-digit numbers, **10.02% have a
+# twelve-digit prefix that also satisfies Verhoeff**. One card in ten would therefore hand the
+# designer the front of its own VID to confirm — and confirming cannot catch it, because the panel
+# prints "2345 6789 0124" and the card really does print those twelve digits in that order.
+# ``test_a_longer_digit_run_is_not_mined_for_twelve_digit_windows`` did guard this and passed,
+# because it used a CONTIGUOUS sixteen-digit run; the printed form is grouped.
+_DIGIT_TOKEN = re.compile(r"[0-9](?:[ \-]?[0-9])*")
 _NON_DIGITS = re.compile(r"[^0-9]")
 
 
@@ -320,12 +333,22 @@ def aadhaar_candidates(text: str) -> tuple[list[str], int]:
     designer cannot submit and cannot correct: twelve ASCII digits, not starting 0 or 1 (UIDAI
     never issues those), and the Verhoeff checksum satisfied. The checksum is the one that matters
     here — the other two catch a bad crop, this one catches a bad READ.
+
+    A fourth rule now precedes them: the digits must be a WHOLE printed number. A token of any
+    length other than twelve is a VID, an enrolment number, a pin code or a date — a different
+    number that happens to share the card — and it is refused before any checksum runs, and counted
+    nowhere. ``rejected`` stays what its name says: readings that WERE twelve digits and failed,
+    i.e. the card was found and misread, which is the only case where "photograph it again in
+    better light" is useful advice.
+
+    The web client's ``lib/identityCardText.ts`` applies exactly this rule to text it recognises in
+    the browser; ``docs/DECISION-identity-card-ocr-on-web.md`` records how the two are kept in step.
     """
     accepted: list[str] = []
     rejected = 0
     seen: set[str] = set()
-    for match in _AADHAAR_RUN.finditer(text or ""):
-        digits = _NON_DIGITS.sub("", match.group(1))
+    for match in _DIGIT_TOKEN.finditer(text or ""):
+        digits = _NON_DIGITS.sub("", match.group(0))
         if len(digits) != AADHAAR_LENGTH or digits in seen:
             continue
         seen.add(digits)
@@ -379,7 +402,11 @@ def result_from_reply(payload: dict[str, Any], provider: str) -> IdentityOcrResu
     generosity safe — a run of twelve digits found in prose that happens to satisfy Verhoeff is
     overwhelmingly likely to be the number on the card.
     """
-    haystack = " ".join(
+    # JOINED WITH A NEWLINE, NOT A SPACE. A space is a separator INSIDE a printed number (a card
+    # groups its digits with them), so joining two fields with one invents an adjacency that was
+    # never on the card: "234567890124" in ``aadhaar`` beside "0831" in ``digits`` would read as one
+    # sixteen-digit token and both would be refused. A newline cannot occur inside a number.
+    haystack = "\n".join(
         str(payload.get(key) or "")
         for key in ("aadhaar", "aadhaarNumber", "aadhaarCandidates", "digits", "text", "notes")
     )
