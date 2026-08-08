@@ -19,19 +19,23 @@
  * taken on a handset, at an angle, in a courtyard, of a laminated card with a hologram across it.
  *
  * So the reader produces a CANDIDATE. It is shown, it is checked against the same Verhoeff checksum
- * the artisan form uses (`aadhaarValidationError`, imported rather than re-implemented, so the two
- * cannot come to different conclusions about the same twelve digits), and it is written only when a
- * person has read it against the card in their hand and pressed Confirm. A candidate that fails the
- * checksum can still be confirmed — the field also holds Pehchan and state artisan-card numbers,
- * which are not Aadhaar and satisfy no such rule — but the warning is loud, because a twelve-digit
- * number that fails Verhoeff is a misread with near-certainty.
+ * the artisan form uses (`aadhaarValidationError`, passed into `identityChoices` rather than
+ * re-implemented, so the two cannot come to different conclusions about the same twelve digits), and
+ * it is written only when a person has read it against the card in their hand and pressed Confirm.
+ *
+ * A CANDIDATE THAT FAILS THE CHECKSUM IS NOW REFUSED RATHER THAN OFFERED WITH A WARNING, which is a
+ * change from how this read. The old warning could not fire: the server applies the same Verhoeff
+ * filter before it answers, so it has never sent a 12-digit run that fails, and a Pehchan code is
+ * not twelve digits. Anything that reaches the refusal is a transport or shape problem — not a card
+ * a designer can improve by photographing it again — and offering it under an amber banner invited
+ * exactly the confirmation the banner was warning against.
  */
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Loader2, ScanLine, X } from "lucide-react";
 
 import { aadhaarValidationError } from "@/components/forms/AadhaarField";
-import { DW_OCR_IDENTITY_PATH, readIdentityCard, serverOffersRoute } from "@/lib/designWorkshops";
+import { DW_OCR_IDENTITY_PATH, identityChoices, readIdentityCard, serverOffersRoute } from "@/lib/designWorkshops";
 import type { MediaFile } from "@/lib/types";
 
 type Candidate = {
@@ -105,18 +109,27 @@ export function IdentityCardReader({
         return;
       }
       const result = await readIdentityCard(source);
-      const digits = (result.number ?? "").replace(/\D/g, "");
-      if (!digits) {
+      // `identityChoices` reads the keys the server ACTUALLY sends and re-applies the checksum here.
+      // What used to stand in this place — `(result.number ?? "")` — named a key the endpoint has
+      // never returned, so this branch reported every successful read as an unreadable card. The
+      // field is `artisanCardNo`, filled from whichever card the artisan produced, so both lists are
+      // offered: "ANY".
+      const [best] = identityChoices(result, "ANY", aadhaarValidationError);
+      if (!best) {
+        const rejected = result.rejectedAadhaarCount ?? 0;
         setProblem(
-          result.message ||
-            "No number could be read from that photograph. Take another with the whole card in frame and no glare across the digits, or type the number in."
+          rejected > 0
+            ? // The COUNT, never the values — a rejected candidate is still somebody's misread
+              // identity number. It also names a different next action from "nothing was found".
+              `${rejected} number(s) were read off that card and every one failed its checksum, so at least one digit was wrong in each. Take another photograph in better light with no glare across the digits, or type the number in.`
+            : "No number could be read from that photograph. Take another with the whole card in frame and no glare across the digits, or type the number in."
         );
         return;
       }
       setCandidate({
-        number: digits,
-        kind: (result.kind ?? "").trim(),
-        confidence: typeof result.confidence === "number" ? result.confidence : null,
+        number: best.value,
+        kind: best.kind,
+        confidence: best.confidence,
         source: media.originalFilename
       });
     } catch (error) {
@@ -128,8 +141,10 @@ export function IdentityCardReader({
     }
   }
 
-  const checksumProblem = candidate ? aadhaarValidationError(candidate.number) : null;
-  const grouped = candidate ? candidate.number.replace(/(\d{4})(?=\d)/g, "$1 ") : "";
+  // Grouped 4-4-4 only for an Aadhaar number, which is how the card prints it. A Pehchan code has no
+  // such grouping and is shown exactly as it will be stored, so what the button says and what the
+  // field gets cannot differ.
+  const grouped = candidate ? (candidate.kind === "AADHAAR" ? candidate.number.replace(/(\d{4})(?=\d)/g, "$1 ") : candidate.number) : "";
 
   return (
     <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
@@ -170,15 +185,13 @@ export function IdentityCardReader({
             {candidate.confidence !== null ? ` · the reader is ${Math.round(candidate.confidence * 100)}% sure` : ""}.
           </p>
 
-          {checksumProblem && candidate.number.length === 12 ? (
-            <p className="flex items-start gap-2 rounded-md border border-amber-500 bg-amber-100 px-2 py-1.5 text-xs leading-5 text-amber-800">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-              <span>
-                {checksumProblem} If this is an Aadhaar number, re-read it off the card before confirming. If it is a
-                Pehchan or state artisan card, this check does not apply to it.
-              </span>
-            </p>
-          ) : null}
+          <p className="flex items-start gap-2 rounded-md border border-amber-500 bg-amber-100 px-2 py-1.5 text-xs leading-5 text-amber-800">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>
+              Read it off the card itself, not off this screen. A misread digit produces a number that belongs to nobody,
+              so nothing downstream can ever detect it.
+            </span>
+          </p>
 
           {currentValue ? (
             <p className="text-xs leading-5 text-amber-800">
