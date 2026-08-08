@@ -802,6 +802,13 @@ function DesignWorkshopStagePageBody({
       const draft = target ? await loadDraft(target) : null;
       const draftStage = draft?.stages[stageKey] ?? emptyStage(stageKey);
       const sinceDirtyAt = draftStage.dirtyAt;
+      // Read once, here, and handed to BOTH the payload's `emptiedEntities` and the acknowledgement
+      // below, so the acknowledgement is judged against what this PUT actually carried. Reading it
+      // a second time after the round trip would hand `markStagePushed` a list that already
+      // contains the row deleted DURING the round trip — it would then read as "the server was
+      // told about this" and be cleared, which is the deletion loss all of this exists to stop.
+      // See {@link unsentAfterPush}.
+      const sinceRemovedFrom = draftStage.removedFrom;
 
       // The strict pass, answered locally as well as remotely. `localStageCompleteness` mirrors
       // `stage_completeness` exactly, so a designer with no signal still gets a real answer to "is
@@ -847,12 +854,12 @@ function DesignWorkshopStagePageBody({
         entries,
         // See decision 2 in the file header. Armed only by a deletion, and read off the DRAFT rather
         // than off React state so a deletion made in an earlier session still sweeps.
-        replaceCollections: draftStage.removedFrom.length > 0,
+        replaceCollections: sinceRemovedFrom.length > 0,
         // The entities emptied on this device. Required, not decorative: the server sweeps only
         // what the payload names, and a collection whose LAST row was deleted contributes no
         // entries, so this is the only place it is named. Read off the draft for the same reason
         // `replaceCollections` is — a deletion made in an earlier session must still sweep.
-        emptiedEntities: draftStage.removedFrom,
+        emptiedEntities: sinceRemovedFrom,
         submit
       });
 
@@ -880,15 +887,21 @@ function DesignWorkshopStagePageBody({
       if (target) {
         const updated = await markStagePushed(target, stageKey, {
           completeness: result.completeness ?? null,
-          sinceDirtyAt
+          sinceDirtyAt,
+          sinceRemovedFrom
         });
         const next = updated?.stages[stageKey];
         if (next) setStageSync({ dirtyAt: next.dirtyAt, lastPushedAt: next.lastPushedAt, failure: next.failure });
-        // The push cleared `removedFrom` in the store, so the banked baseline has to lose it too or
+        // The push settled `removedFrom` in the store, so the banked baseline has to lose it too or
         // the very next render is "different from what is banked" and re-marks a stage that has
         // just landed as unsent. Left stale, the amber "Saved on this device only" chip came back
         // within a second of every successful save and the "Sent to the repository at …" readout —
         // the one thing a designer reads to decide whether they can pack up — was unreachable.
+        //
+        // EMPTIED HERE EVEN WHEN THE STORE KEPT THE FLAG, and that is not a leak: `putDraftStage`
+        // UNIONS `removedFrom` on the way in, so a form that has forgotten a deletion can never
+        // disarm one the draft is still holding. This state and the banked copy only have to agree
+        // with each other.
         if (banked.current) banked.current = { ...banked.current, removedFrom: [] };
       }
       // An updater, not a bare `[]`: React bails out of a re-render for an identical value, and a
