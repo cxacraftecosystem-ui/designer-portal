@@ -510,3 +510,103 @@ def test_no_presentation_silently_drops_a_filled_field(stage_key, entity_key, ro
             f"{entity_key}.{spec.key} ({spec.report_role.value}) was filled in as "
             f"{expected!r} and appears nowhere in the report"
         )
+
+
+# --------------------------------------------------------------------------------------
+# X-Report-Warnings: what the response can carry, and what it must never lose in silence
+# --------------------------------------------------------------------------------------
+
+
+def _header(warnings):
+    """Imported inside the helper: the route module is heavy and only these tests need it."""
+    from app.api.routes.design_workshops import _warnings_header
+
+    return _warnings_header(warnings)
+
+
+def test_short_warning_lists_are_carried_whole():
+    assert _header([]) == ""
+    assert _header(["One thing.", "Another thing."]) == "One thing.; Another thing."
+
+
+def test_a_long_warning_list_drops_whole_warnings_and_says_how_many():
+    """THE DEFECT: ``"; ".join(warnings)[:900]`` cut the list off mid-word and said nothing.
+
+    On DCH_STANDARD — the default template — a workshop raises about a dozen warnings, and the LOAD
+    warnings are appended last, so they were the first to be cut. Those are precisely the ones that
+    say a WHOLE ANNEXURE is missing from the file: the questionnaire annexure's "attached to this
+    workshop but nothing was recorded against it" never reached the designer, who saw a report with
+    no questionnaire annexure and no sentence anywhere explaining why.
+
+    Two properties, and the second is the one that was broken: the header stays inside its budget,
+    and everything in it is a WHOLE warning, followed by a count of the ones that did not fit.
+    """
+    from app.api.routes.design_workshops import _WARNINGS_HEADER_BUDGET
+
+    items = [
+        f"Stage {n} (Some Stage): 3 required field(s) not recorded - {'x' * 60}."
+        for n in range(1, 21)
+    ]
+    header = _header(items)
+    pieces = header.split("; ")
+
+    assert len(header) <= _WARNINGS_HEADER_BUDGET
+    # ONE piece, not two. The note carries no ";" of its own — that character is this header's item
+    # separator and `frontend/lib/designWorkshops.ts` splits on it, so a semicolon inside the note
+    # would show the designer two half-sentences.
+    assert pieces[-1].endswith("The report preview lists all of them.")
+    assert int(pieces[-1].split()[0]) == len(items) - (len(pieces) - 1)
+    # Not one fragment: every carried piece is a warning exactly as it was written.
+    assert all(piece in items for piece in pieces[:-1])
+
+
+def test_a_single_warning_wider_than_the_budget_is_marked_rather_than_passed_off_whole():
+    """A truncated sentence shown as a complete warning is worse than a visibly truncated one.
+
+    ``frontend/lib/designWorkshops.ts`` splits this header on ";" and prints each piece to the
+    designer, so a fragment ending "... 2 required " reads as a finished statement of fact.
+    """
+    from app.api.routes.design_workshops import _WARNINGS_HEADER_BUDGET
+
+    header = _header(["y" * 4000, "A second warning."])
+    assert len(header) <= _WARNINGS_HEADER_BUDGET
+    assert header.split("; ")[0].endswith("...")
+    assert "1 further warning(s)" in header
+
+
+def test_non_ascii_is_replaced_rather_than_raising_inside_starlette():
+    """Every ASGI header value is encoded latin-1; a craft named in Odia must not cost a 500."""
+    header = _header(["Craft ସମ୍ବଲପୁରୀ has no cost sheet."])
+    assert header.isascii()
+    assert "has no cost sheet." in header
+
+
+def test_a_semicolon_inside_a_warning_does_not_split_it_on_the_designers_screen():
+    """PACKING WHOLE WARNINGS IS ONLY HALF OF "never a fragment". This is the other half.
+
+    ``";"`` is this header's separator and ``frontend/lib/designWorkshops.ts`` splits the value on
+    it, so a semicolon inside a warning is indistinguishable from the boundary between two.
+
+    MEASURED AGAINST THE RUNNING SERVER, not imagined: ``questionnaire_warnings`` interpolates the
+    questionnaire's TITLE, which a designer types. A form called "Loom survey; round two" sent
+    ``x-report-warning-count: 2`` with nothing truncated, and the report screen showed THREE
+    warnings, the last of them ``"round two)."`` — the sentence saying a whole annexure is missing
+    from the file, delivered as two halves, one of which means nothing alone.
+
+    The assertion is the FRONTEND's split — ``";"``, not ``"; "`` — because what is being pinned is
+    what the designer reads, not what the header contains.
+    """
+    typed_by_a_designer = (
+        "1 questionnaire(s) attached to this workshop have no recorded answers and were left out "
+        "of the questionnaire annexure (Loom survey; round two)."
+    )
+    header = _header([typed_by_a_designer, "Stage 3 (Workshop Plan): 1 required field(s)."])
+
+    pieces = [piece.strip() for piece in header.split(";") if piece.strip()]
+    assert len(pieces) == 2, (
+        f"two warnings reached the designer as {len(pieces)} pieces, so at least one of them is a "
+        f"half-sentence: {pieces}"
+    )
+    assert pieces[0].endswith("(Loom survey, round two).")
+    # The pause the designer wrote survives as a comma rather than being deleted outright.
+    assert "round two" in pieces[0]
