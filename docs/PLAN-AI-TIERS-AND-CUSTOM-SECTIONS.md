@@ -96,25 +96,127 @@ straight to the generic recogniser.
 
 The tiering is right. Three notes where I would build it differently from the sketch.
 
-### 2.1 Tier 2 is memory-bound before it is quality-bound
+### 2.1 Tier 2 on the fleet handset is unproven and at risk. What to measure, and why the table cannot answer it.
 
-The fleet device is a **4 GB Galaxy M32**, and this session has already watched *this workstation*
-fail a Gradle build at 612 MB free. A 4 GB Android phone gives a foreground app well under 2 GB
-before the low-memory killer takes it, and Compose + CameraX + an ONNX ASR session are already in
-that budget.
+> **Correction, recorded deliberately.** An earlier draft of this section was headed "Tier 2 does not
+> fit the fleet handset — the published sizes settle it." That was wrong, and wrong in a way this
+> document is supposed to catch. **A download size is not a resident set, and an Ollama artifact is
+> not the deployment target.** The table below is a desktop/server distribution listing; the Android
+> path is a mobile runtime (LiteRT / MediaPipe AI Edge) with a quantization prepared for it, and the
+> two are different artifacts with different memory behaviour. The conclusion below is now
+> "unmeasured, here is the measurement", which is what the evidence actually supports.
 
-Therefore:
+The Gemma 4 distribution sizes, as published:
 
-- **Tier 2 never runs concurrently with capture.** It is a queued job on a foreground service, one
-  at a time, ideally while charging. A summarizer that kills the camera mid-workshop is a data-loss
-  bug wearing a feature's clothes.
-- **Gate on measured free memory and a device allowlist, not on a model name.** `ActivityManager
-  .MemoryInfo` at run time, plus a real measurement per handset, the same way the language packs
-  were just measured rather than assumed.
-- **Model IDs and sizes get pinned after measurement, not from a spec sheet.** I could not verify
-  the "Gemma 4 E2B/E4B" naming — my knowledge covers Gemma 3n E2B/E4B — so before this is built,
-  the exact model id, quantization, on-disk size and peak RSS need to be recorded in a measurement
-  doc like the language-pack one. If E4B does not fit the M32, that is a finding, not a failure.
+| tag | size | context |
+|---|---|---|
+| `gemma4:e2b` | **7.2 GB** | 128K |
+| `gemma4:e4b` (latest) | **9.6 GB** | 128K |
+| `gemma4:12b` | 7.6 GB | 256K |
+| `gemma4:26b` | 18 GB | 256K |
+| `gemma4:31b` | 20 GB | 256K |
+| `e2b-mlx` / `e4b-mlx` | 6.5 GB / 8.8 GB | 128K |
+
+**The fleet device is a 4 GB Galaxy M32. The smallest Gemma 4 build is 7.2 GB — nearly twice the
+phone's entire RAM, before Android, Compose, CameraX or an ONNX ASR session get any.** A 4 GB
+handset gives a foreground app well under 2 GB before the low-memory killer takes it. This is not
+a tuning problem or a quantization problem; it is off by a factor of four.
+
+Two further facts from that table are worth reading carefully:
+
+- **`12b` (7.6 GB) is barely larger than `e2b` (7.2 GB), and smaller than `e4b` (9.6 GB).** The "E"
+  names are *effective* parameter counts; the weights that must be resident are not. Sizing a
+  deployment from the letter in the name is how this ends up on a phone that cannot hold it.
+- Even the MLX builds — Apple-silicon, not Android — bottom out at 6.5 GB.
+
+A mobile export (int4, MediaPipe/AI-Edge `.task`) is smaller than an Ollama GGUF, and if Google
+ships one for Gemma 4 the number will be well below 7.2 GB. **It will not be below ~1.5 GB**, which
+is what a 4 GB phone could actually spare, and that estimate is mine, not a measurement.
+
+**And there is a second ceiling that has nothing to do with RAM:** a 7 GB download, or even a 3 GB
+one, on prepaid mobile data in a district town is not a feature. The language-pack screen already
+refuses to invent a download size next to somebody's data bundle; this is the same problem an order
+of magnitude larger.
+
+#### The device decides the tier and the model. DECIDED.
+
+Not one global answer — **the app probes the handset and recommends**, the way the language-pack
+screen already asks the phone what it can do instead of assuming. A 4 GB M32 and a 12 GB flagship
+are different products for this purpose, and pretending otherwise means either shipping nothing or
+shipping a crash.
+
+The safeguard that makes this safe is already in this plan: **§3 requires every layer to record the
+tier and model that produced it.** Without that, device-dependent tiers would silently produce two
+classes of workshop record with no way to tell them apart on the page. With it, a reviewer can see
+that one transcript came from a phone and another from the cloud. **Device-based tiering and
+provenance ship together or not at all.**
+
+##### What to probe, and what not to
+
+| signal | source | why |
+|---|---|---|
+| total RAM | `ActivityManager.MemoryInfo.totalMem` | the coarse device class |
+| available RAM now | `MemoryInfo.availMem` / `/proc/meminfo` `MemAvailable` | what is actually free at the moment of the job |
+| low-RAM flag | `ActivityManager.isLowRamDevice()` | Android's own verdict; an immediate no |
+| free storage | `StatFs` on the app's files dir | a 3 GB model needs somewhere to live |
+| ABI | `Build.SUPPORTED_ABIS` | which runtime build to fetch |
+| charging / thermal | `BatteryManager`, `PowerManager.thermalStatus` | sustained inference on a mid-range phone throttles |
+
+**Do NOT gate on `ActivityManager.getMemoryClass()`.** That is the *Dalvik heap* cap for Java
+objects. A LiteRT or ONNX model allocates natively — outside that cap and outside its accounting —
+so `getMemoryClass()` will happily report 192 MB on a device that can hold a 2 GB model, and report
+nothing useful about the one that cannot. Gating on it would be measuring the wrong thing
+confidently, which is the failure mode this repository keeps finding.
+
+##### Context length is a memory dial, not a model property
+
+The table above lists 128K and 256K context windows. **Nobody runs those on a phone.** KV-cache
+grows with context length and can exceed the weights themselves; a 128K window is a desktop
+affordance. The recommendation must therefore name **model _and_ context cap** together — a 2–4K cap
+is ample for "summarize this transcript passage" and changes the memory arithmetic completely. A
+recommendation that names only the model has not actually said what will be run.
+
+##### The recommendation table is produced by measurement, not by this document
+
+The shape is fixed now; **every cell is filled by measuring a real handset** and recorded in a
+measurement doc, exactly like `docs/DICTATION-LANGUAGE-PACK-MEASUREMENT.md`:
+
+| device class | Tier 1 (ASR) | Tier 2 (SLM) | Tier 3 |
+|---|---|---|---|
+| low-RAM flag set, or < 3 GB | smallest ASR model only | **none** — say so plainly | when online |
+| 4 GB (the M32 fleet) | ASR, 1–2 languages | *to be measured* — expect none, or a ≤1 GB-class SLM at a 2K cap | when online |
+| 6–8 GB | ASR, several languages | small SLM, measured cap | when online |
+| 12 GB+ | ASR, many languages | larger SLM | when online |
+
+Per model, the measurement must record: **mobile artifact size on disk; whether weights are memory-
+mapped and the actual resident set if so; peak RSS at the configured context cap; time-to-first-token
+and tokens/sec on that handset; and whether the app survives being backgrounded with the model
+loaded.** The last one is not a nicety — a designer takes a photograph mid-summary, and if that kills
+the process the summary and possibly the draft go with it.
+
+##### Rules for the recommendation itself
+
+- **Recommend; never auto-download.** The same rule the language packs already follow, for the same
+  reason: a multi-gigabyte fetch on a prepaid bundle in a district town is a bill, not a feature.
+- **Show the real size.** The pack screen refuses to print a size because Android reports none. Our
+  own models have a known size, so this screen can and must state it before the tap.
+- **A device that cannot run a tier says so, in words, once** — not a greyed-out control with no
+  explanation, and not silence. `DwPackState`'s honest-unknown discipline is the model to copy.
+- **Re-probe, do not cache forever.** Free RAM and free storage change; a recommendation made at
+  install time is stale by the first workshop.
+- **If a load fails on a device the table said was fine, that is data.** Record it, fall back a tier,
+  and tell the designer what changed rather than failing the job silently.
+
+#### Rules that survive whichever fork is chosen
+
+- **Tier 2 never runs concurrently with capture.** A queued job on a foreground service, one at a
+  time, ideally while charging. A summarizer that kills the camera mid-workshop is a data-loss bug
+  wearing a feature's clothes.
+- **Gate on measured free memory at run time**, via `ActivityManager.MemoryInfo`, plus a per-handset
+  measurement — the same way the language packs were measured rather than assumed.
+- **Pin model id, quantization, on-disk size and peak RSS in a measurement document** before building
+  on them, like `docs/DICTATION-LANGUAGE-PACK-MEASUREMENT.md`. The table above is a distribution
+  listing, not a measurement of anything running on Android.
 
 **Recommended first Tier 2 verb: none of the generative ones.** Start with *extractive* work —
 tag/category suggestion and metadata extraction — where a wrong answer is a wrong suggestion the
