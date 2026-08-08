@@ -106,12 +106,14 @@ class ReportSettingsLedgerTest {
     }
 
     @Test
-    fun `the three annexure toggles are the only ones this device cannot honour`() {
-        // Pinned as a LIST rather than a count so that honouring one of them — the transcript
-        // annexure is the one that could genuinely run here — is a deliberate edit to this line and
-        // not a number that quietly drifts.
+    fun `the transcript annexure is the only toggle this device cannot honour`() {
+        // Pinned as a LIST rather than a count so that honouring one of them is a deliberate edit to
+        // this line and not a number that quietly drifts. The photographic and completeness
+        // annexures are now built here; the transcript one is not, and the reason is DATA rather
+        // than drawing — workshop audio is transcribed server-side and its text never reaches this
+        // handset. Closing that gap means giving the device the transcripts, not the renderer.
         assertEquals(
-            listOf("includeMediaAnnexure", "includeTranscripts", "includeCompletenessAnnexure"),
+            listOf("includeTranscripts"),
             STAGE_20_SETTINGS.filter { it.reach == SettingReach.NOT_ON_DEVICE }.map { it.key },
         )
         assertEquals(

@@ -457,6 +457,202 @@ class ReportTemplateDocumentTest {
 
     // ── the honest gaps ──────────────────────────────────────────────────────────────────────────
 
+    // ── the annexures ────────────────────────────────────────────────────────────────────────────
+    //
+    // DETAILED_TECHNICAL is the only template that carries the photographic and completeness
+    // annexures, so it is what these build with. That is the point of building through
+    // `buildWorkshopDocument` rather than calling the renderers: it proves the sections are REACHED
+    // from the template a designer can actually pick, which a test of an emittable block does not.
+
+    /**
+     * A workshop with a photograph, a required field left blank, and a cost sheet whose product
+     * reference points at a row that no longer exists.
+     */
+    private fun annexureSchema() = SchemaResponse(
+        version = "test",
+        stages = listOf(
+            StageDto(
+                number = 16, key = "FINAL_PROTOTYPE_DOCUMENTATION", title = "Final products",
+                entities = listOf(
+                    EntityDto(
+                        key = "finalProduct", cardinality = "SINGLETON", title = "Final product",
+                        fields = listOf(
+                            FieldDto(
+                                key = "name", label = "Name", type = "TEXT",
+                                tier = "BASIC", required = true,
+                            ),
+                            FieldDto(
+                                key = "dimensions", label = "Dimensions", type = "TEXT",
+                                tier = "BASIC", required = true,
+                            ),
+                            FieldDto(
+                                key = "photos", label = "Photographs", type = "IMAGE_LIST",
+                                reportRole = "GALLERY", tier = "BASIC",
+                            ),
+                        ),
+                    )
+                ),
+            ),
+            StageDto(
+                number = 17, key = "COSTING_MARKET_LINKAGE", title = "Costing",
+                entities = listOf(
+                    EntityDto(
+                        key = "costSheet", cardinality = "COLLECTION", title = "Cost sheets",
+                        fields = listOf(
+                            FieldDto(
+                                key = "productRef", label = "Product", type = "REF",
+                                tier = "BASIC", required = true,
+                            ),
+                        ),
+                    )
+                ),
+            ),
+            singletonStage(20, "REPORT_GENERATION", "Report generation", text("reportTitle", "Report title")),
+        ),
+    )
+
+    private fun annexureDraft(settings: Map<String, JsonElement>) = WorkshopDraft(
+        workshopId = "local-test",
+        title = "Barpali cluster",
+        stages = mapOf(
+            "FINAL_PROTOTYPE_DOCUMENTATION" to StageDraft(
+                stageId = "FINAL_PROTOTYPE_DOCUMENTATION",
+                values = mapOf(
+                    "name" to JsonPrimitive("Bandha table runner"),
+                    // "dimensions" is deliberately absent: the completeness annexure has to have an
+                    // outstanding field to name, or it is only being tested on the happy row.
+                    "photos" to buildJsonArray {
+                        add(JsonPrimitive("m1")); add(JsonPrimitive("m2"))
+                    },
+                ),
+            ),
+            "COSTING_MARKET_LINKAGE" to StageDraft(
+                stageId = "COSTING_MARKET_LINKAGE",
+                rows = listOf(
+                    DraftRow(
+                        id = "costSheet#1",
+                        // A cuid pointing at a row that was deleted after this one cited it.
+                        values = mapOf("productRef" to JsonPrimitive("cmsik2jg8000eh8xc1lcy661a")),
+                    )
+                ),
+            ),
+            "REPORT_GENERATION" to StageDraft(stageId = "REPORT_GENERATION", values = settings),
+        ),
+    )
+
+    private fun tableOf(document: ReportDocument, header: String): TableBlock? =
+        document.blocks.filterIsInstance<TableBlock>()
+            .firstOrNull { block -> block.columns.any { it.header == header } }
+
+    @Test
+    fun `the photographic annexure is built from the copies already on this device`() {
+        val document = build(
+            annexureSchema(), annexureDraft(emptyMap()),
+            templateId = "DETAILED_TECHNICAL", imageFor = fakeImages,
+        )
+        assertTrue(
+            "the detailed technical template carries 'Annexure — Photographic record' and the " +
+                "handset drew nothing there:\n" + headings(document),
+            headings(document).any { it.contains("Photographic record") },
+        )
+        // Three across, and every photograph in the record — not just the two the stage section
+        // above it already printed.
+        val contactSheet = document.blocks.filterIsInstance<ImageGridBlock>().last()
+        assertEquals(3, contactSheet.columns)
+        assertEquals(2, contactSheet.images.size)
+        assertTrue(
+            "a plate with no line under it is a picture, not evidence",
+            contactSheet.images.all { it.second.isNotBlank() },
+        )
+    }
+
+    @Test
+    fun `turning the photographic annexure off removes it`() {
+        val document = build(
+            annexureSchema(),
+            annexureDraft(mapOf("includeMediaAnnexure" to JsonPrimitive(false))),
+            templateId = "DETAILED_TECHNICAL", imageFor = fakeImages,
+        )
+        assertFalse(
+            "a designer who turned the annexure off got one anyway",
+            headings(document).any { it.contains("Photographic record") },
+        )
+    }
+
+    @Test
+    fun `the completeness annexure prints every stage and what is outstanding`() {
+        val document = build(
+            annexureSchema(), annexureDraft(emptyMap()),
+            templateId = "DETAILED_TECHNICAL", imageFor = fakeImages,
+        )
+        val table = tableOf(document, "Outstanding")
+        assertNotNull(
+            "the detailed technical template carries 'Annexure — Data completeness' and the " +
+                "handset drew no table there:\n" + headings(document),
+            table,
+        )
+        val rows = table!!.rows
+        val printed = rows.joinToString("\n") { row -> row.joinToString(" | ") { runText(it) } }
+        assertEquals(
+            "every registry stage gets a row, including the ones never opened:\n$printed",
+            annexureSchema().stages.size, rows.size,
+        )
+        assertTrue(
+            "the outstanding required field must be named:\n$printed",
+            printed.contains("Dimensions"),
+        )
+    }
+
+    @Test
+    fun `the completeness annexure counts a reference whose row was deleted as unfilled`() {
+        // THE DEFECT THIS EXISTS TO PREVENT, from the server's own record of it: the annexure read
+        // "17. Costing | 1/1 | 100% | Complete" while the same document printed "Product | Not
+        // recorded." for the very field it had counted as filled. The renderer blanks an id whose
+        // row was deleted and a scorer that only checks for a non-empty string does not.
+        val document = build(
+            annexureSchema(), annexureDraft(emptyMap()),
+            templateId = "DETAILED_TECHNICAL", imageFor = fakeImages,
+        )
+        val row = tableOf(document, "Outstanding")!!.rows
+            .single { runText(it.first()).startsWith("17.") }
+        val printed = row.joinToString(" | ") { runText(it) }
+        assertTrue(
+            "a dangling reference was counted as a filled field, so this annexure now contradicts " +
+                "the cost sheet eighteen pages earlier in the same file: $printed",
+            printed.contains("0/1"),
+        )
+        assertTrue("and it must be named as outstanding: $printed", printed.contains("Product"))
+    }
+
+    @Test
+    fun `turning the completeness annexure off removes it`() {
+        val document = build(
+            annexureSchema(),
+            annexureDraft(mapOf("includeCompletenessAnnexure" to JsonPrimitive(false))),
+            templateId = "DETAILED_TECHNICAL", imageFor = fakeImages,
+        )
+        assertTrue(
+            "a designer who turned the completeness annexure off got one anyway",
+            tableOf(document, "Outstanding") == null,
+        )
+    }
+
+    @Test
+    fun `neither annexure is warned about now that both are built`() {
+        // The ledger and the warnings are one claim. A file that carries the photographic record
+        // AND a note saying it does not is worse than either alone.
+        val document = build(
+            annexureSchema(), annexureDraft(emptyMap()),
+            templateId = "DETAILED_TECHNICAL", imageFor = fakeImages,
+        )
+        assertTrue(
+            "the warnings still disown a section this build now draws: ${document.warnings}",
+            document.warnings.none {
+                it.contains("photographic annexure") || it.contains("completeness annexure")
+            },
+        )
+    }
+
     @Test
     fun `every special section is either rendered here or named as unsupported`() {
         // The completeness check the ledger cannot make on its own: a section that is neither
@@ -472,15 +668,44 @@ class ReportTemplateDocumentTest {
         // UNSUPPORTED_SECTIONS, i.e. to warn a designer they are losing a section they are in fact
         // getting. That is the ledger lying in the expensive direction, so each section is given
         // the one value it needs to have something to say.
-        val schema = SchemaResponse(version = "test", stages = emptyList())
+        // COMPLETENESS scores the REGISTRY's stages, and ANNEXURE_MEDIA walks them looking for
+        // photographs, so both report "unbuilt" against an empty schema however well they work.
+        // One stage carrying one required text field and one photograph is the least that lets
+        // either of them have anything to say.
+        val schema = SchemaResponse(
+            version = "test",
+            stages = listOf(
+                StageDto(
+                    number = 1, key = "WORKSHOP_SETUP", title = "Workshop setup",
+                    entities = listOf(
+                        EntityDto(
+                            key = "workshopSetup", cardinality = "SINGLETON", title = "Workshop setup",
+                            fields = listOf(
+                                FieldDto(
+                                    key = "designerName", label = "Designer", type = "TEXT",
+                                    tier = "BASIC", required = true,
+                                ),
+                                FieldDto(
+                                    key = "coverPhoto", label = "Cover photograph", type = "IMAGE",
+                                    tier = "BASIC", reportRole = "GALLERY",
+                                ),
+                            ),
+                        )
+                    ),
+                )
+            ),
+        )
         val draft = WorkshopDraft(
             workshopId = "local-test",
             title = "Barpali cluster",
             stages = mapOf(
-                // COVER's author line and SIGNATURES' first signatory.
+                // COVER's author line, SIGNATURES' first signatory, and ANNEXURE_MEDIA's one plate.
                 "WORKSHOP_SETUP" to StageDraft(
                     stageId = "WORKSHOP_SETUP",
-                    values = mapOf("designerName" to JsonPrimitive("A. Mohanty")),
+                    values = mapOf(
+                        "designerName" to JsonPrimitive("A. Mohanty"),
+                        "coverPhoto" to JsonPrimitive("media-1"),
+                    ),
                 ),
                 // ACKNOWLEDGEMENT prints exactly one field and nothing without it.
                 "INTRODUCTORY_ADMIN_DOCUMENTATION" to StageDraft(
@@ -515,7 +740,9 @@ class ReportTemplateDocumentTest {
             )
             val document = buildWorkshopDocument(
                 schema = schema, draft = draft, workshopId = "x", templateId = "DCH_STANDARD",
-                warnings = emptyList(), accent = "", imageFor = { null }, plan = plan,
+                warnings = emptyList(), accent = "",
+                imageFor = { id -> ImageRef(source = "/tmp/$id.jpg", widthPx = 1600, heightPx = 1200) },
+                plan = plan,
             )
             val drew = document.blocks.isNotEmpty()
             val declared = special in UNSUPPORTED_SECTIONS
