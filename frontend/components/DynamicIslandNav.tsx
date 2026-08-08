@@ -111,14 +111,22 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/workshops", label: "Record workshop", icon: Users, group: "Record", can: canManageWorkshops, gate: "require_workshop_manager" },
   // The 22-stage Design & Prototype Workshop record.
   //
-  // `can_run_design_workshops`, and this line used to say `canCreateRecords` / the create
-  // dependency. That was wrong on both halves. `POST /design-workshops` runs BOTH
-  // `assert_can_create_records` AND `_require_designer`, and the second one binds; the LIST route
-  // runs `_require_designer` on its own (backend/app/api/routes/design_workshops.py:194). So a
-  // RESEARCHER — and a PROFESSOR, who outranks a designer and is still outside the set — saw this
-  // entry, pressed it, and landed on the route guard's "Designer access required" panel, which
+  // `can_run_design_workshops`, and this line used to say `canCreateRecords`. `POST
+  // /design-workshops` runs BOTH `assert_can_create_records` AND `_require_designer`
+  // (backend/app/api/routes/design_workshops.py:391-392) and the second one binds, so a RESEARCHER
+  // — and a PROFESSOR, who outranks a designer and is still outside the set — saw this entry,
+  // pressed it, and landed on the route guard's "Designer access required" panel, which
   // `lib/permissions.ts` has been enforcing on the same path all along. A nav entry that only ever
   // opens a padlock is worse than no entry.
+  //
+  // THE READS ARE OPEN AND THIS ENTRY DOES NOT PRETEND OTHERWISE — see the `gate` below, which is
+  // the honest one. `_require_designer` sits on the writes only (create :392, patch :439, stage
+  // :539); `list_design_workshops` (:304) and `GET /{workshop_id}` (:419) take `get_current_user`
+  // and filter rows through `visible_to_clause`. Hiding the row is therefore the same kind of
+  // narrowing as `/designers/profile` further down, not a mirror of a refusal — and the difference
+  // matters the next time somebody is tempted to move a WRITE control behind a hidden link.
+  // Contrast `/questionnaires` immediately below, where every route really does begin with
+  // `_require_designer`, reads included.
   //
   // LABELLED IN THE PLURAL while the dashboard tile beside it is singular ("Design workshop"), and
   // the difference is deliberate on both clients: the tile names the THING you are about to make,
@@ -131,7 +139,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: DraftingCompass,
     group: "Record",
     can: canRunDesignWorkshops,
-    gate: "can_run_design_workshops (_require_designer)"
+    gate: "get_current_user on the list; _require_designer on every write (narrowed here to can_run_design_workshops)"
   },
   // A questionnaire the designer authored themselves, from the .xlsx pro-forma. DISTINCT FROM "Take
   // interview" above, which is the one shared artisan questionnaire every researcher answers — two

@@ -2648,14 +2648,16 @@ private fun CarryForwardPanel(
  *
  * The label is SINGULAR while the menu row is plural ("Design workshops", FIELD_NAV_ITEMS), and that
  * difference is deliberate on both clients: the card names the THING you are about to make, the menu
- * names the LIST you are about to open. Both strings are the web's own — the tile at
- * frontend/app/(protected)/dashboard/page.tsx:174-181, the entry at components/DynamicIslandNav.tsx.
+ * names the LIST you are about to open. Both strings are the web's own — the `label: "Design
+ * workshop"` tile in `tiles` at frontend/app/(protected)/dashboard/page.tsx, the entry at
+ * components/DynamicIslandNav.tsx. Cited by the strings rather than by line, because both files grew
+ * a dozen comment lines the day this was written and every number in this block went stale at once.
  */
 internal object DesignWorkshopCard {
-    /** `label` at dashboard/page.tsx:175 — singular, see the note above. */
+    /** The web tile's `label` — singular, see the note above. */
     const val LABEL = "Design workshop"
 
-    /** `newLabel` at dashboard/page.tsx:180, not the generic "New" every record card uses. */
+    /** The web tile's `newLabel`, not the generic "New" every record card uses. */
     const val PRIMARY_LABEL = "New workshop"
 
     /**
@@ -2717,8 +2719,9 @@ private fun DashboardScreen(
          *
          * A design workshop is what this application is for; everything below this card — artisans,
          * products, processes, tools, the questionnaire — is the reference data a workshop draws on.
-         * The web dashboard already makes the same call and says so in a comment
-         * (frontend/app/(protected)/dashboard/page.tsx:169-181), and this card copies that tile
+         * The web dashboard already makes the same call and says so in the "FIRST, and deliberately"
+         * comment above its own `tiles` array (frontend/app/(protected)/dashboard/page.tsx), and
+         * this card copies that tile
          * rather than inventing a second idiom: same two words, same filled-primary / outlined-Update
          * anatomy every editable card here already has ([DashboardActionCard]).
          *

@@ -183,11 +183,19 @@ function DashboardView() {
       updateHref: "/design-workshops",
       // `canRunDesignWorkshops` and NOT `creator`, which is what this line used to say. The two
       // differ for a RESEARCHER and a PROFESSOR, and both were being shown a tile whose every
-      // destination is `ROUTE_GUARDS`' "Designer access required" panel (lib/permissions.ts:277-283)
-      // — because the server gates even the LIST route on `_require_designer`
-      // (backend/app/api/routes/design_workshops.py:194), not on `assert_can_create_records`. It is
-      // a SET, {DESIGNER, ADMIN, MASTER_ADMIN}, so a professor outranks a designer and is still
-      // outside it; Android's card reads the same predicate (`DesignWorkshopCard.visibleTo`).
+      // destination is `ROUTE_GUARDS`' "Designer access required" panel (lib/permissions.ts:277-283).
+      // It is a SET, {DESIGNER, ADMIN, MASTER_ADMIN}, so a professor outranks a designer and is
+      // still outside it; Android's card reads the same predicate (`DesignWorkshopCard.visibleTo`).
+      //
+      // WHAT THE SERVER ACTUALLY REFUSES, stated exactly, because getting this wrong in either
+      // direction is how this repository's two shipped security bugs happened. `_require_designer`
+      // is on the WRITES and only on the writes — POST /design-workshops
+      // (backend/app/api/routes/design_workshops.py:392), PATCH (:439), PUT stage (:539), and the
+      // set the server's own test enumerates (tests/test_design_workshop_gate.py:66). The LIST
+      // (`list_design_workshops`, :304) and the reads below it take `get_current_user` alone and
+      // scope rows with `visible_to_clause`. So this tile mirrors ROUTE_GUARDS — a deliberate UI
+      // narrowing over an open read — and NOT a refusal the API would make. Widen the tile and you
+      // have widened nothing but the browser; narrow the API and narrow this line with it.
       visible: canRunDesignWorkshops(user),
       newLabel: "New workshop"
     },
