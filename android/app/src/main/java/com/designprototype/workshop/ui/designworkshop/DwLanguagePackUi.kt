@@ -58,6 +58,7 @@ import com.designprototype.workshop.data.DwPackOffer
 import com.designprototype.workshop.data.DwPackState
 import com.designprototype.workshop.data.DwRecognitionSupport
 import com.designprototype.workshop.data.dwDownloadCostSentence
+import com.designprototype.workshop.data.dwMayAsk
 import com.designprototype.workshop.data.dwPackOffer
 import com.designprototype.workshop.data.dwPackState
 import com.designprototype.workshop.data.dwPackStateLabel
@@ -67,6 +68,7 @@ import com.designprototype.workshop.data.dwPackStates
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -216,6 +218,14 @@ internal class DwLanguagePackController(
 
     private var recognizer: SpeechRecognizer? = null
 
+    /**
+     * The check currently outstanding, kept so a newer one can kill it.
+     *
+     * Not a `State`: nothing in composition reads it, and making it observable would recompose the
+     * whole list every time a check started.
+     */
+    private var checkJob: Job? = null
+
     /** Can this build's platform be asked at all? API 33 added `checkRecognitionSupport`. */
     private val platformCanAnswer: Boolean
         get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -252,7 +262,31 @@ internal class DwLanguagePackController(
      * API 33 that control is the ONLY way to find out.
      */
     fun refresh() {
-        scope.launch { refreshNow() }
+        /*
+         * WHETHER THIS PHONE CAN BE ASKED AT ALL IS SETTLED HERE, SYNCHRONOUSLY — not a frame later
+         * inside the coroutine. `DwDictationButton` reads [checking] the instant a language is
+         * picked, to decide whether to open the offer; a flag that only turned true once the
+         * dispatcher got round to it would leave a gap in which the answer reads UNKNOWN and the
+         * offer is skipped in silence on a phone that would have answered.
+         */
+        if (!platformCanAnswer) {
+            cannotAsk = DW_PACK_CANNOT_ASK_SENTENCE
+            return
+        }
+        /*
+         * ONLY THE NEWEST CHECK MAY WRITE, and killing the older one is what enforces it.
+         *
+         * Two are in flight whenever the language panel is closed and reopened, or Settings left and
+         * returned to, inside PACK_CHECK_TIMEOUT_MS. Left alone, the older one's deadline fires long
+         * after the newer one has landed a perfectly good list and overwrites [cannotAsk] with "this
+         * phone's speech service did not answer" — nineteen correct rows sitting under a sentence
+         * saying we know nothing about any of them, and the spinner for the check still running gone
+         * with it. Cancellation takes effect at the suspension point inside `withTimeoutOrNull`, so
+         * nothing after it runs.
+         */
+        checkJob?.cancel()
+        checking = true
+        checkJob = scope.launch { refreshNow() }
     }
 
     /**
@@ -266,18 +300,18 @@ internal class DwLanguagePackController(
      * state becomes the honest one this whole feature is built on: we asked, and we do not know.
      */
     private suspend fun refreshNow() {
+        // [refresh] — the only caller — has already established that this platform can be asked and
+        // has set `checking`, so every exit from here must put `checking` back. The API-33 gate is
+        // NOT gone: `engine()` returns null below TIRAMISU, which is what keeps the @RequiresApi
+        // `checkSupport` below out of reach on an Android 9 handset. Do not "simplify" that away.
         connection = dwConnection(context)
-        if (!platformCanAnswer) {
-            cannotAsk = DW_PACK_CANNOT_ASK_SENTENCE
-            return
-        }
         val engine = engine()
         if (engine == null) {
+            checking = false
             cannotAsk = "This phone has no speech recogniser installed, so there are no language " +
                 "packs to manage here and no dictation to use them."
             return
         }
-        checking = true
         val answer = withTimeoutOrNull(PACK_CHECK_TIMEOUT_MS) {
             suspendCancellableCoroutine<Result<DwRecognitionSupport>> { continuation ->
                 checkSupport(
@@ -340,6 +374,11 @@ internal class DwLanguagePackController(
 
     /** Drop the binding to the recogniser service. Called when the surface showing packs leaves. */
     fun release() {
+        // The outstanding check dies with the surface that wanted it. Left running against a
+        // recogniser this method is about to destroy, its deadline would fire minutes later and
+        // write a failure sentence over whatever the NEXT check has since found.
+        checkJob?.cancel()
+        checkJob = null
         runCatching { recognizer?.destroy() }
         recognizer = null
         checking = false
@@ -519,8 +558,15 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
          * platform admits the request, which on Android 13 it never does.
          */
         val askable = DW_DICTATION_LANGUAGES.filter { language ->
-            dwPackOffer(states[language.tag] ?: DwPackState.UNKNOWN, controller.connection) == DwPackOffer.DOWNLOAD &&
-                controller.requests[language.tag] == null
+            val note = controller.requests[language.tag]
+            // `dwMayAsk` rather than an inline condition: the rule about not paying twice for one
+            // file — and its exception for a request the service REFUSED, which fetched nothing —
+            // is pinned by DwLanguagePackTest, and the dialog reads the same function.
+            dwMayAsk(
+                offer = dwPackOffer(states[language.tag] ?: DwPackState.UNKNOWN, controller.connection),
+                requested = note != null,
+                refused = note?.failed == true,
+            )
         }
         DW_DICTATION_LANGUAGES.forEach { language ->
             val state = states[language.tag] ?: DwPackState.UNKNOWN
@@ -538,6 +584,12 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
 
         // ---- What it costs, said BEFORE the button ---------------------------------------------
         val downloadable = askable.size
+        // The ticks that will ACTUALLY be sent, which is not the same set as `selected`. A tick
+        // outlives its row's eligibility whenever a "Check again" finds the pack arrived, or a
+        // request for it went out from the offer dialog while this list was on screen. Counting the
+        // raw selection would leave an ENABLED "Download 1 pack" over a tap that sends nothing —
+        // the dead control this file's own comments say is worse than an absent one.
+        val ticked = askable.filter { it.tag in selected }
         val missingButOffline = controller.connection == DwConnection.NONE &&
             DW_DICTATION_LANGUAGES.any { states[it.tag] == DwPackState.DOWNLOADABLE }
         // A list with no button under it must say WHY there is no button, or it reads as a list that
@@ -579,20 +631,20 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
             if (downloadable > 0) {
                 Button(
                     onClick = {
-                        // Over `askable`, not over the whole list: a tick left behind on a row that
-                        // has since been requested (or has since arrived) must not send a second
-                        // request for the same pack.
-                        askable.filter { it.tag in selected }.forEach { controller.ask(it.tag, it.label) }
+                        // Over `ticked`, not over the whole selection: a tick left behind on a row
+                        // that has since been requested (or has since arrived) must not send a
+                        // second request for the same pack.
+                        ticked.forEach { controller.ask(it.tag, it.label) }
                         selected = emptySet()
                     },
-                    enabled = selected.isNotEmpty(),
+                    enabled = ticked.isNotEmpty(),
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        when (selected.size) {
+                        when (ticked.size) {
                             0 -> "Tick a language to download"
                             1 -> "Download 1 pack"
-                            else -> "Download ${selected.size} packs"
+                            else -> "Download ${ticked.size} packs"
                         }
                     )
                 }
@@ -796,7 +848,11 @@ internal fun DwLanguagePackOfferDialog(
     val note = controller.requests[tag]
     // One tap per language per sitting: once the request has gone out, the confirm button becomes
     // "Close" rather than a second "Download" that would ask the service for the same file again.
-    val canDownload = offer == DwPackOffer.DOWNLOAD && note == null
+    // A REFUSED request is the exception, for the same reason the settings list keeps such a row
+    // tickable — nothing was fetched, so nothing would be paid for twice, and the failure note
+    // beside the button tells the designer to try again. Same function as the list, so the two
+    // surfaces cannot disagree about whether one pack may be asked for.
+    val canDownload = dwMayAsk(offer, requested = note != null, refused = note?.failed == true)
     // The answer has not landed yet. Saying "unknown" here would be a claim rather than a wait, and
     // the wait resolves into the real sentence in the same dialog a moment later.
     val stillAsking = controller.checking && controller.support == null
@@ -843,7 +899,10 @@ internal fun DwLanguagePackOfferDialog(
         },
         confirmButton = {
             if (canDownload) {
-                TextButton(onClick = { controller.ask(tag, label) }) { Text("Download $label") }
+                TextButton(onClick = { controller.ask(tag, label) }) {
+                    // Naming it a retry, so the button matches the failure sentence above it.
+                    Text(if (note?.failed == true) "Try $label again" else "Download $label")
+                }
             } else {
                 TextButton(onClick = onDismiss) { Text("Close") }
             }

@@ -180,6 +180,65 @@ class DwLanguagePackTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Asking twice — the rule that stands between a tap and somebody's prepaid bundle
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `a pack already asked for is not offered again, so one file is not fetched twice`() {
+        // Android 13 gives no download callback at all, so the row goes on reading DOWNLOADABLE for
+        // ever. Without this rule a second tick sends a second triggerModelDownload for one model.
+        assertFalse(dwMayAsk(DwPackOffer.DOWNLOAD, requested = true, refused = false))
+    }
+
+    @Test
+    fun `a REFUSED request may be tried again, because it fetched nothing to pay twice for`() {
+        // The refusal leaves a note saying "check the connection and try again". A row that says
+        // that with no control left to do it with is how a designer concludes the feature is broken.
+        assertTrue(dwMayAsk(DwPackOffer.DOWNLOAD, requested = true, refused = true))
+    }
+
+    @Test
+    fun `nothing but a DOWNLOAD offer may ever draw the control, asked for or not`() {
+        DwPackOffer.entries.forEach { offer ->
+            listOf(false, true).forEach { requested ->
+                listOf(false, true).forEach { refused ->
+                    if (dwMayAsk(offer, requested, refused)) {
+                        assertEquals(
+                            "only a DOWNLOAD offer may draw a control that spends data",
+                            DwPackOffer.DOWNLOAD,
+                            offer
+                        )
+                    }
+                }
+            }
+        }
+        // And an offline handset never reaches DOWNLOAD in the first place, so the two rules
+        // compose: no connection, no control, however many times it has been asked for.
+        assertFalse(dwMayAsk(dwPackOffer(DwPackState.DOWNLOADABLE, DwConnection.NONE), false, false))
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // API < 33 — the words said where nothing can be found out
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `the sentence for a phone that cannot be asked claims nothing about any pack`() {
+        // The wrong claim this whole feature exists to avoid. On Android 8 and 9 — a large share of
+        // the field fleet — there is no way to find out, so the copy must say it cannot be asked and
+        // must not slip into telling a designer a pack is present or missing.
+        assertTrue(DW_PACK_CANNOT_ASK_SENTENCE.contains("cannot be asked"))
+        listOf("not installed", "is missing", "is installed", "not downloaded", "no pack")
+            .forEach { claim ->
+                assertFalse(
+                    "the unaskable sentence must claim nothing either way, but says \"$claim\"",
+                    DW_PACK_CANNOT_ASK_SENTENCE.contains(claim, ignoreCase = true)
+                )
+            }
+        // And the state it pairs with is rendered as the word itself, not as an absence.
+        assertEquals("Unknown", dwPackStateLabel(DwPackState.UNKNOWN))
+    }
+
+    // ---------------------------------------------------------------------------------------
     // The M32, end to end
     // ---------------------------------------------------------------------------------------
 
