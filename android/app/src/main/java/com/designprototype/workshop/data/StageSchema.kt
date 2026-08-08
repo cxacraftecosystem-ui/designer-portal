@@ -992,6 +992,19 @@ data class StageEntryBody(
     val entryId: String? = null,
     val ordinal: Int? = null,
     val data: JsonObject = JsonObject(emptyMap()),
+    /**
+     * "I am sending every key I HAVE, not every key there IS."
+     *
+     * Set only when this handset knows it has NOT seen the server's copy of the row — that is,
+     * when [isAuthoritative] is false. The server then keeps the keys absent from [data] rather
+     * than deleting them. Left false, the row's data is replaced WHOLESALE, which is what a
+     * handset that HAS read the row must do, because for it an absent key is a real deletion.
+     *
+     * It exists because the blank form a failed download leaves behind is indistinguishable on the
+     * wire from a stage somebody emptied. `StageScreen` tells the designer that what is already on
+     * the server "will not be replaced by it"; this flag is what makes that true for a singleton.
+     */
+    val merge: Boolean = false,
 )
 
 /**

@@ -82,6 +82,14 @@ def _sketches(client, workshop_id, rows, *, replace=True, emptied=None):
     )
 
 
+def _setup_entry(client, workshop_id):
+    """The WORKSHOP_SETUP singleton as stored, for the merge test below."""
+    payload = client.get(
+        f"/api/design-workshops/{workshop_id}/stages/WORKSHOP_SETUP"
+    ).json()
+    return payload["singleton"]
+
+
 def _rows(client, workshop_id):
     payload = client.get(
         f"/api/design-workshops/{workshop_id}/stages/SKETCH_DEVELOPMENT"
@@ -494,3 +502,55 @@ async def test_a_workshop_note_is_bounded_like_every_field_beside_it(client):
         json={"notes": "y" * (MAX_NOTES_CHARS + 1)},
     )
     assert patched.status_code == 422, "the update body is the same door"
+
+
+async def test_a_never_read_client_merges_its_singleton_instead_of_replacing_it(client, workshop):
+    """A client that never downloaded the stage must not delete the keys it never saw.
+
+    THE FAILURE THIS PINS. A workshop is set up in the office with stage 1 complete. The designer
+    opens that stage in a village, the download fails, and the form comes up blank — blank because
+    unread, not because empty. Both clients say exactly that on screen and both promise that
+    nothing left blank will overwrite an answer recorded elsewhere. They could not keep it: a
+    singleton's `data` is replaced wholesale, so the one field typed in the courtyard deleted
+    everything written in the office, in place, with no RecordRevision to recover it. The promoted
+    columns went with it, so the workshop fell out of every "Ikat in Odisha" filter and the report
+    cover handed to the visiting officer printed blank.
+
+    `merge` is per ENTRY and defaults to false, so every client that has read the stage keeps the
+    replace semantics it relies on — an absent key is a real deletion for them, and the second half
+    of this test is what stops the fix over-reaching into that case.
+    """
+    path = f"/api/design-workshops/{workshop}/stages/WORKSHOP_SETUP"
+    office = {"workshopTitle": "Bandha revival", "craftName": "Ikat", "clusterName": "Barpali"}
+    client.put(path, json={"entries": [{"entityKey": "workshopSetup", "data": office}]})
+
+    # The courtyard: one field, from a client that has never read the stage.
+    merged = client.put(path, json={"entries": [{
+        "entityKey": "workshopSetup",
+        "data": {"venue": "Barpali weavers hall"},
+        "merge": True,
+    }]})
+    assert merged.status_code == 200, merged.text
+
+    stored = _setup_entry(client, workshop)
+    assert stored["venue"] == "Barpali weavers hall", "the value typed in the field must land"
+    assert stored["craftName"] == "Ikat", "a key the client never read must survive"
+    assert stored["clusterName"] == "Barpali"
+    assert stored["workshopTitle"] == "Bandha revival"
+
+    # The promoted columns are read off the MERGED entry, so the header keeps its craft too — this
+    # is the half that decides whether the workshop stays in the filters and on the report cover.
+    header = client.get(f"/api/design-workshops/{workshop}").json()
+    assert header["craftName"] == "Ikat", "the promoted column must not be nulled by a merge"
+
+    # ...AND THE DEFAULT IS STILL A REPLACE. Without this, the fix would silently make every
+    # deletion impossible: a client that HAS read the row means it when it omits a key.
+    replaced = client.put(path, json={"entries": [{
+        "entityKey": "workshopSetup",
+        "data": {"workshopTitle": "Bandha revival", "craftName": "Ikat"},
+    }]})
+    assert replaced.status_code == 200, replaced.text
+    after = _setup_entry(client, workshop)
+    assert "clusterName" not in after or after["clusterName"] in (None, ""), \
+        "an omitted key from a client that has read the row is still a deletion"
+    assert after["craftName"] == "Ikat"

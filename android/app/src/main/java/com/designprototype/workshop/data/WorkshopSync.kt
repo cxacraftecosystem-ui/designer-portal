@@ -979,6 +979,15 @@ internal fun buildStageBody(
         entries += StageEntryBody(
             entityKey = entity.key,
             data = JsonObject(wireData(entity, stored?.values.orEmpty(), mediaById, unresolved)),
+            // A DRAFT THAT HAS NEVER SEEN THE SERVER'S COPY SENDS A MERGE, NOT A REPLACEMENT.
+            //
+            // `authoritative` already decides whether this draft may say "these are now exactly
+            // the rows", and it spent that authority only on `replaceCollections`/`emptiedEntities`
+            // — which the server applies to COLLECTIONS alone. The singleton went up as a plain
+            // replace either way, so a stage whose download had failed came up blank, the designer
+            // typed the one thing they came to record, and the office's seven fields were deleted
+            // by the sync on the drive home. The banner on `StageScreen` promised the opposite.
+            merge = !authoritative,
         )
     }
     spec.collections.forEach { entity ->
@@ -1030,6 +1039,14 @@ internal fun buildStageBody(
  * A stage that satisfies neither is one this device has never seen the server's version of. It still
  * syncs — every value the designer typed is sent — it simply does not also assert that everything it
  * lacks should be destroyed.
+ *
+ * THAT LAST SENTENCE WAS FALSE FOR A SINGLETON UNTIL `StageEntryBody.merge` EXISTED, and it is worth
+ * recording why rather than quietly correcting it. The authority this function grants was spent only
+ * on `replaceCollections` and `emptiedEntities`, and the server applies both to COLLECTIONS; a
+ * singleton's `data` was replaced wholesale on every write, by any client, authoritative or not. So a
+ * draft that had never read the stage did assert exactly that everything it lacked should be
+ * destroyed — silently, in place, with no RecordRevision behind it. The flag is now also driven from
+ * here (see the singleton arm of `buildStage`), which is what finally makes the sentence true.
  */
 internal fun isAuthoritative(stored: StageDraft?, record: StageSyncRecord?): Boolean =
     stored?.serverBaseline == true || !record?.signature.isNullOrBlank()
