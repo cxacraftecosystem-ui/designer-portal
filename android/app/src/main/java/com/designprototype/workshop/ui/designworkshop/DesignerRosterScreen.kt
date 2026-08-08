@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DesignerDirectoryEntryDto
 import com.designprototype.workshop.data.DesignerRosterDto
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopRepository
@@ -55,6 +56,7 @@ import com.designprototype.workshop.ui.FieldPermissions
 // in this feature imports it, or its headings are quietly set in the body face.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -83,6 +85,20 @@ import kotlinx.coroutines.launch
  * a peer should be able to browse. So this screen does not merely hide its buttons from a non-admin:
  * it does not issue the request at all, and every mutation re-derives the permission from the cached
  * account at the moment of the tap rather than trusting the composition that drew the button.
+ *
+ * ── TWO REQUESTS, AND WHY THE SECOND ONE IS NOT OPTIONAL ─────────────────────────────────────────
+ *
+ * A roster row is keyed by EMAIL and carries no account id, while the profile an admin opens from it
+ * is addressed as `/designers/{userId}/profile`. `GET /designers/directory` is the only join between
+ * the two, and it is fetched here for that single purpose — exactly as the web's roster page fetches
+ * it for the same purpose. Without it "Open designer profile" renders for nobody, which is precisely
+ * how the admin editor behind it shipped unreachable.
+ *
+ * The directory read is BEST EFFORT and its failure is silent: it costs the profile action for this
+ * session and nothing else, and emptying a roster an admin can still read and still suspend from,
+ * because a secondary lookup failed, would be the worse trade. Its 500-account ceiling is stated on
+ * screen when it is reached, because a missing action on a row whose account exists is the kind of
+ * silence that reads as "this designer never signed up".
  */
 
 @Composable
@@ -90,7 +106,7 @@ fun DesignerRosterScreen(
     repository: WorkshopRepository,
     /**
      * Open one designer's own profile, as an administrator, for the twenty values their reports
-     * print. Offered only for rows whose [DesignerRosterDto.userId] the server resolved — a roster
+     * print. Offered only for rows whose email [accountsByEmail] resolved to an account — a roster
      * row is keyed by EMAIL and may name somebody who has never signed in, and there is no profile
      * to open for an account that does not exist yet.
      */
@@ -103,6 +119,14 @@ fun DesignerRosterScreen(
     val canManage = remember(viewer) { mayManageDesignerRoster(viewer) }
 
     var rows by remember { mutableStateOf<List<DesignerRosterDto>>(emptyList()) }
+    /** What the SERVER said the roster holds, which is not always what [rows] gathered. */
+    var rosterTotal by remember { mutableIntStateOf(0) }
+    var rosterTruncated by remember { mutableStateOf(false) }
+    /** Lower-cased email -> the id of the account that signed up under it, for "Open designer profile". */
+    var accounts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    /** Account id -> name, so "Empanelled by" can name the admin `addedById` points at. */
+    var directoryNames by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var directoryCapped by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(canManage) }
     var busy by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
@@ -121,21 +145,42 @@ fun DesignerRosterScreen(
             return@LaunchedEffect
         }
         loading = true
-        runCatching { repository.designerRoster() }
-            .onSuccess { served ->
-                // Outstanding invitations first, then everyone else by name. An admin opens this
-                // screen to answer "who have I added who has not turned up", so the rows that answer
-                // it are the rows at the top; sorting by creation date buries them under whoever was
-                // added most recently, which is the one thing they already know.
-                rows = served.sortedWith(
-                    compareBy<DesignerRosterDto> { it.firstSeenAt != null }
-                        .thenBy { (it.fullName ?: it.email).lowercase() }
-                )
-            }
-            .onFailure { error ->
-                onError(error.apiErrorMessage("Could not load the designer roster."))
-            }
+        try {
+            val served = repository.designerRoster()
+            // Outstanding invitations first, then everyone else by name. An admin opens this
+            // screen to answer "who have I added who has not turned up", so the rows that answer
+            // it are the rows at the top; sorting by creation date buries them under whoever was
+            // added most recently, which is the one thing they already know.
+            rows = served.items.sortedWith(
+                compareBy<DesignerRosterDto> { it.firstSeenAt != null }
+                    .thenBy { (it.fullName ?: it.email).lowercase() }
+            )
+            rosterTotal = served.total
+            rosterTruncated = served.truncated
+        } catch (cancelled: CancellationException) {
+            // RETHROWN, never reported. Every roster mutation bumps `reload`, which cancels a walk
+            // still in flight — so a `runCatching` here announced "Could not load the designer
+            // roster." at the exact moment a suspension had just succeeded, over a screen that was
+            // already reloading correctly.
+            throw cancelled
+        } catch (error: Throwable) {
+            onError(error.apiErrorMessage("Could not load the designer roster."))
+        }
         loading = false
+    }
+
+    // The email -> account join. Deliberately NOT keyed on `reload`: a roster mutation cannot create
+    // an account (the account provisions itself at the person's first sign-in), so re-fetching the
+    // directory after every Add or Suspend would spend a request on a list that cannot have changed.
+    LaunchedEffect(canManage) {
+        if (!canManage) return@LaunchedEffect
+        // Best effort, and its failure is silent by design — see the class KDoc. `getOrNull` rather
+        // than `onFailure { onError(...) }`: an admin told "could not load the directory" over a
+        // roster that loaded perfectly well would reasonably conclude the screen is broken.
+        val served = runCatching { repository.designerDirectory() }.getOrNull() ?: return@LaunchedEffect
+        accounts = accountsByEmail(served)
+        directoryNames = served.associate { it.id to (it.name?.takeIf(String::isNotBlank) ?: it.email) }
+        directoryCapped = served.size >= DESIGNER_DIRECTORY_CAP
     }
 
     /**
@@ -200,7 +245,11 @@ fun DesignerRosterScreen(
         val suspended = rows.count { !it.isActive }
         Text(
             listOfNotNull(
-                "${rows.size} on the roster",
+                // Says how many arrived AND how many exist whenever the two differ. "${rows.size} on
+                // the roster" over a partial read is a count of the screen presented as a count of
+                // the institution.
+                if (rosterTruncated) "${rows.size} of $rosterTotal on the roster"
+                else "${rows.size} on the roster",
                 "$outstanding invitation${if (outstanding == 1) "" else "s"} outstanding"
                     .takeIf { outstanding > 0 },
                 "$suspended suspended".takeIf { suspended > 0 },
@@ -208,6 +257,30 @@ fun DesignerRosterScreen(
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
+
+        // A list that quietly stops is indistinguishable from an institution that never empanelled
+        // the person being looked for — and the person being looked for is usually an old row, which
+        // is the end a truncated read loses. The search box is named because it filters what is on
+        // this device, so a truncated roster makes "no match" mean two different things.
+        if (rosterTruncated) {
+            RosterNotice(
+                "This is the first ${rows.size} of $rosterTotal roster rows — the rest were not " +
+                    "fetched. The search box filters only what is on this screen, so a designer " +
+                    "who is not here may still be on the roster. Open the roster on the web to " +
+                    "reach the whole list."
+            )
+        }
+
+        // Web parity, and the same sentence: the account list stops at a cap, so the profile action
+        // can be missing from a row whose account exists. Stated rather than left as a button that
+        // is simply not there on some rows and there on others.
+        if (directoryCapped) {
+            RosterNotice(
+                "The account list this screen reads to match a row to a person stops at " +
+                    "$DESIGNER_DIRECTORY_CAP accounts, so \"Open designer profile\" may be missing " +
+                    "from a row whose account does exist. The roster itself is unaffected."
+            )
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
@@ -264,9 +337,17 @@ fun DesignerRosterScreen(
                 RosterCard(
                     row = row,
                     busy = busy,
+                    // Who empanelled them: the server's own join when a deployment sends one, and
+                    // otherwise the directory this screen already fetched. `addedById` is an ADMIN's
+                    // id, and an admin outranks a designer, so they are in the directory too.
+                    addedByLabel = row.addedByName?.takeIf { it.isNotBlank() }
+                        ?: row.addedById?.let { directoryNames[it] },
                     onEdit = { editing = row },
                     onToggleAccess = { confirming = row },
-                    onOpenProfile = row.userId?.let { id ->
+                    // Resolved by email against the directory, never fabricated from the email
+                    // itself: `/designers/{userId}/profile` takes an account id, and inventing one
+                    // would send the admin to a 404 on a control they were invited to tap.
+                    onOpenProfile = accounts[row.email.lowercase()]?.let { id ->
                         { onOpenProfile(id, row.fullName?.takeIf { n -> n.isNotBlank() } ?: row.email) }
                     }
                 )
@@ -367,6 +448,30 @@ fun DesignerRosterScreen(
 private fun mayManageDesignerRoster(viewer: UserDto?): Boolean =
     viewer != null && FieldPermissions.isAdmin(viewer)
 
+/**
+ * How many accounts `GET /designers/directory` returns before it stops. Server-side `take=500`
+ * (backend/app/api/routes/designers.py), mirrored here so the screen can SAY when it hit the cap.
+ * The web carries the identical constant for the identical reason.
+ */
+internal const val DESIGNER_DIRECTORY_CAP = 500
+
+/**
+ * Lower-cased email -> account id, the join a roster row needs to reach a profile.
+ *
+ * LOWER-CASED ON BOTH SIDES. The roster lower-cases the address on write, `User.email` carries
+ * whatever the identity provider sent, and Google returns the address as the person typed it at
+ * sign-up. Comparing them verbatim drops the profile action from exactly the rows whose owner
+ * capitalised their own name — and there is nothing on screen to suggest why one row has the button
+ * and the next does not.
+ *
+ * A blank id or a blank email is skipped rather than stored: neither can be opened, and a blank key
+ * would collapse every such account into one entry that answers for all of them.
+ */
+internal fun accountsByEmail(directory: List<DesignerDirectoryEntryDto>): Map<String, String> =
+    directory.asSequence()
+        .filter { it.id.isNotBlank() && it.email.isNotBlank() }
+        .associate { it.email.trim().lowercase() to it.id }
+
 /** Case-insensitive match over the two columns an admin actually remembers somebody by. */
 private fun DesignerRosterDto.matches(query: String): Boolean {
     val terms = query.trim().split(' ').filter { it.isNotBlank() }
@@ -384,6 +489,8 @@ private fun DesignerRosterDto.matches(query: String): Boolean {
 private fun RosterCard(
     row: DesignerRosterDto,
     busy: Boolean,
+    /** Who empanelled them, already resolved to a name; null when nothing can name them. */
+    addedByLabel: String?,
     onEdit: () -> Unit,
     onToggleAccess: () -> Unit,
     /** Null when this row has no account behind it yet; the action is then not rendered at all. */
@@ -452,7 +559,7 @@ private fun RosterCard(
             row.notes?.takeIf { it.isNotBlank() }?.let {
                 Text(it, color = MaterialTheme.field.body, fontSize = 12.sp)
             }
-            row.addedByName?.takeIf { it.isNotBlank() }?.let {
+            addedByLabel?.takeIf { it.isNotBlank() }?.let {
                 Text("Empanelled by $it", color = MaterialTheme.field.muted, fontSize = 11.sp)
             }
 
@@ -484,6 +591,26 @@ private fun RosterCard(
             }
         }
     }
+}
+
+/**
+ * A cap or a short read, said out loud.
+ *
+ * The warning container and not the muted body text: this is the one thing on the screen that
+ * changes what an EMPTY result means, and a sentence explaining that has to be findable after the
+ * admin has already scrolled past it once.
+ */
+@Composable
+private fun RosterNotice(text: String) {
+    Text(
+        text,
+        color = MaterialTheme.field.onWarningContainer,
+        fontSize = 12.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.field.warningContainer, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    )
 }
 
 @Composable

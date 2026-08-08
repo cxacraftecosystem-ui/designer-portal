@@ -3411,9 +3411,16 @@ private val LocalUnsavedGuard = staticCompositionLocalOf<UnsavedGuard?> { null }
  * it. [dirty] should be true whenever there is unsaved content (changed fields, or attached/recorded
  * media not yet persisted); [onSave] must perform the SAME validated save the form's Save button does
  * (validation failures keep the user on the form with the offending field highlighted).
+ *
+ * INTERNAL rather than private, because a form that lives in another package still has to be able to
+ * ask. `DesignerProfileScreen` is in `ui.designworkshop` and could not reach this, so the longest
+ * free-text box in the app — the biography that prints under "Designer's profile" in stage 3 of every
+ * report — was the one form in the app where the system back gesture dropped what had been typed
+ * without asking. The rest of the guard stays private to this file: exactly one mechanism, one
+ * dialog, one wording.
  */
 @Composable
-private fun RegisterUnsavedGuard(dirty: Boolean, onSave: () -> Unit) {
+internal fun RegisterUnsavedGuard(dirty: Boolean, onSave: () -> Unit) {
     val guard = LocalUnsavedGuard.current ?: return
     val currentSave by rememberUpdatedState(onSave)
     LaunchedEffect(dirty) { guard.dirty = dirty }
