@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services import rich_text
+from app.services.report_annexures import append_transcript_annexure, transcripts_of
 from app.services.report_model import (
     Align,
     ChartBlock,
@@ -1914,6 +1915,31 @@ class ReportBuilder:
                 self._render_signatures(section)
             elif section.special is SpecialSection.ANNEXURE_MEDIA:
                 self._render_media_annexure(section)
+            elif section.special is SpecialSection.ANNEXURE_TRANSCRIPTS:
+                # WHAT THIS ENDS. Everything else about this annexure has been finished and tested
+                # for months: `workshop_transcripts` enqueues the AUDIO, the media queue writes
+                # `MediaFile.transcriptText`, `attach_report_transcripts` loads the items onto
+                # `data` under the `includeTranscripts` toggle and raises the "still being
+                # transcribed" warnings, and `report_annexures` turns them into blocks. Only this
+                # branch was missing, so `append_transcript_annexure` was a definition with no call
+                # site and EVERY report ever generated dropped the annexure in silence — while the
+                # handset's export screen told the designer, in three separate places
+                # (`ReportSettings.UNSUPPORTED_SECTIONS`, `STAGE_20_SETTINGS` and the cover's
+                # provenance line), that "the office's copy of this report will carry them". It did
+                # not. A designer chased a document that no branch of this codebase produced.
+                #
+                # ONE CALL AND NOTHING ELSE. The heading wording, the index table, the provenance
+                # line and the truncation note stay `report_annexures`', so this branch cannot grow
+                # a second opinion about any of them. With no transcripts attached — the toggle
+                # off, or nothing transcribed yet — it appends nothing at all, not even the page
+                # break, so every existing template still renders byte-for-byte as it did.
+                append_transcript_annexure(
+                    self.doc,
+                    transcripts_of(self.data),
+                    heading=section.heading,
+                    numbered=self.template.number_headings,
+                    page_break_before=section.page_break_before,
+                )
             elif section.special is SpecialSection.COMPLETENESS:
                 self._render_completeness(section)
             elif section.special is SpecialSection.MAP:
