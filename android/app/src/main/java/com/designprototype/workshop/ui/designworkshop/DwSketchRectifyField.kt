@@ -237,11 +237,31 @@ private val CORNER_SEEDS = listOf(
 
 private val CORNER_BADGE = listOf("1", "2", "3", "4")
 
+/**
+ * What each handle is CALLED to a screen reader, and why not one of these four names says "top-left".
+ *
+ * THE NAMES USED TO CLAIM AN ORIENTATION AND NOTHING KEPT THAT CLAIM TRUE. The handles are never
+ * re-ordered: [DwSketchRectify.orderCorners] runs once, inside `build()`, on a throwaway copy, so the
+ * PLATE is always right and the INDICES never move. Meanwhile this panel invites the designer to
+ * "tap the photograph to place the selected handle", and tapping the four corners of a sheet in
+ * reading order — top-left, top-right, BOTTOM-LEFT, bottom-right — is the exact mistake
+ * [DwSketchRectify.orderCorners] documents at length as the natural one. Do that and handle 3 sits on
+ * the bottom-left corner while announcing "Bottom-right corner of the sheet", and handle 4 announces
+ * the reverse. The plate is still correct, so nothing downstream ever contradicts the two false
+ * sentences — and the person they are read to is the one using [DwSketchNudgePad], which this file's
+ * header calls the only route to a corner for somebody who cannot aim a fingertip.
+ *
+ * VERBATIM FROM THE WEB PANEL, whose handles are labelled `Sheet corner ${index + 1}` and make no
+ * positional claim either. That panel keeps the orientation honest a second way — `endDrag` re-runs
+ * `orderCorners` over the live handles on pointer-up — which is not an option here: this panel has an
+ * ACTIVE handle that the corner chips and the nudge arrows both point at, and silently re-labelling
+ * on release would move the nudge pad onto a different corner between one press and the next.
+ */
 private val CORNER_NAME = listOf(
-    "Top-left corner of the sheet",
-    "Top-right corner of the sheet",
-    "Bottom-right corner of the sheet",
-    "Bottom-left corner of the sheet",
+    "Sheet corner 1",
+    "Sheet corner 2",
+    "Sheet corner 3",
+    "Sheet corner 4",
 )
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -626,7 +646,12 @@ private fun DwSketchRectifyOpen(
             }
         }
 
-        DwPanelLabel("Corners — tap the photograph to place the selected handle, or drag one")
+        // "In any order" is said out loud because it is the one thing about this control a designer
+        // cannot find out by trying: placing the four in reading order describes a crossed
+        // quadrilateral, and [DwSketchRectify.orderCorners] silently untwists it when the plate is
+        // made. Somebody who does not know that hesitates over which handle is which — and the
+        // handles cannot answer, because they are never re-ordered. See CORNER_NAME.
+        DwPanelLabel("Corners — tap the photograph to place the selected handle, or drag one. In any order.")
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),

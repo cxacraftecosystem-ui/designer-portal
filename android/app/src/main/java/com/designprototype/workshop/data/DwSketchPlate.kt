@@ -31,9 +31,17 @@ import java.io.FileOutputStream
  * original a second time at full resolution and scale the four marks into it — is a second decode of
  * a 12 MP frame on a 2 GB handset AND a coordinate conversion whose failure mode is a plate cropped
  * to somewhere near the sheet. What it would buy is resolution the plate does not use:
- * [DwSketchRectify.RECTIFY_MAX_EDGE_PX] caps a plate at 1600 px and
- * [DwImageDecode.DISPLAY_EDGE_PX] already delivers 2400, so for any sheet occupying more than about
- * two thirds of the frame the cap binds first and the extra decode changes nothing at all.
+ * [DwSketchRectify.RECTIFY_MAX_EDGE_PX] caps a plate at 1600 px, so wherever that cap binds the
+ * second decode changes nothing at all.
+ *
+ * WHERE IT BINDS IS NOT TWO THIRDS OF THE FRAME, and the arithmetic is written out here because
+ * [DwImageDecode.DISPLAY_EDGE_PX] being 2400 invites that answer (1600 / 2400 = 2/3) and it is wrong.
+ * [DwImageDecode.decodeForDisplay] subsamples by POWERS OF TWO, so 2400 is a ceiling almost no
+ * photograph lands on: the ordinary 4000 px frame comes back at 2000 px, not 2400. Against a 2000 px
+ * working copy the cap binds at FOUR FIFTHS of the long edge. A sheet filling less than that yields a
+ * plate smaller than the same photograph would give a browser — which the panel states on screen, in
+ * the working-copy note at the foot of it, rather than leaving a designer to wonder why two clients
+ * disagree about one sheet.
  *
  * THE ONE HONEST COST is that [DwImageDecode.decodeForDisplay] decodes RGB_565, so each channel is
  * quantised to 5 or 6 bits — about ±4 luma counts of banding. That is harmless HERE and would not be
