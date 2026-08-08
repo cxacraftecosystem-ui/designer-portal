@@ -1,6 +1,6 @@
 # Open findings
 
-**Status: 0 open, 29 closed.** Last re-checked against the tree on 2026-08-08.
+**Status: 1 open, 29 closed.** Last re-checked against the tree on 2026-08-09.
 
 This file used to hold 29 defects. Every one of them was re-read against the working tree on
 2026-08-08: twenty-eight had already been fixed, and the twenty-ninth was closed by the pass that
@@ -19,8 +19,44 @@ here, mark it closed in the same commit that closes it.**
 
 ## Open
 
-**None.** Add one here with the same shape the closed entries use — consequence, evidence read
-verbatim with `file:line`, and the fix — and delete this line when you do.
+### [HIGH] CORRECTNESS — The server's OCR clips a card's 16-digit VID into a 12-digit "Aadhaar number" printed nowhere on the card (backend)
+
+**Where.** `backend/app/services/identity_ocr.py:311`
+
+```python
+_AADHAAR_RUN = re.compile(r"(?<![0-9])((?:[0-9][ \-]?){11}[0-9])(?![0-9])")
+```
+
+**Consequence.** Every Aadhaar card also prints a **sixteen**-digit Virtual ID, grouped 4-4-4-4. The
+trailing lookahead inspects the SPACE after the twelfth digit, not the four digits beyond it, so the
+pattern matches the first twelve digits of the VID and `aadhaar_candidates` offers them as a
+candidate. Roughly one arbitrary twelve-digit string in ten satisfies Verhoeff, so the checksum does
+not reliably stop it. The designer is then shown a well-formed number, confirms it against a card
+that does not contain it, and it becomes the repository's deduplication key for a person who does
+not exist.
+
+**No client can defend against this.** A fabricated number only reaches the handset if it has
+already passed Verhoeff, so re-checking it there catches nothing.
+
+**Evidence, run rather than read** (Python, the module's own regex, verbatim output):
+
+    >>> _AADHAAR_RUN.findall('VID : 2345 6789 0124 5678')
+    ['2345 6789 0124']
+
+and `2345 6789 0124` is Verhoeff-VALID — it is this repository's own test fixture. So that input
+produces a candidate the card does not carry, all the way to the confirm panel.
+
+**The Android client already refuses it**, deliberately and with the case named:
+`IdentityCardText.scanDigitRuns` (`android/…/data/IdentityCardText.kt`) scans **maximal** runs, so a
+sixteen-digit run yields nothing rather than its first twelve digits. Confirmed on the Galaxy M32 on
+2026-08-09 against a card carrying both the number and the VID: exactly one candidate was offered.
+`IdentityCardTextTest.the sixteen-digit VID beside the number yields nothing at all` pins it, and
+breaking the rule turns that test red with the fabricated number in the failure message.
+
+**The fix.** Require the whole run to be twelve digits, as the device does — the lookahead must
+reject a following separator-plus-digit, not only a following digit. Left open rather than applied:
+it is the backend lane's file and `backend/tests` pin the current behaviour, so the change needs its
+test updated in the same commit by somebody who owns both.
 
 ---
 

@@ -59,6 +59,40 @@ android {
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"614092441670-3e5k15srupq9mfpg3aktqfkjvkavu0g3.apps.googleusercontent.com\"")
         buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"614092441670-5rckig6t1al6plbfll8irn9prcmp446t.apps.googleusercontent.com\"")
         buildConfigField("String", "MAPTILER_API_KEY", "\"OJJYFRqCD2HD2k3BbXGF\"")
+
+        /**
+         * NO `ndk { abiFilters }` HERE, AND THAT ABSENCE IS LOAD-BEARING — see `buildTypes.release`.
+         *
+         * THE DEFECT THIS COMMENT PREVENTS, because the merge of two lanes produced it once already:
+         * the recogniser lane wrote the ARM filter into `defaultConfig` and the sizing lane wrote it
+         * into `release` behind a `releaseAllAbis` escape hatch. Both survived a clean automatic
+         * merge — different regions of the file, no textual conflict — and the combination is
+         * silently WRONG in two ways.
+         *
+         *  1. AGP UNIONS the two sets; a build-type `abiFilters` cannot subtract from
+         *     `defaultConfig`'s. So with `releaseAllAbis=true` the release block adds nothing and the
+         *     `defaultConfig` pair still applies: the escape hatch stops widening anything, while
+         *     still printing the lifecycle line that says it did — a flag that lies in the console.
+         *
+         *     MEASURED, on two real `:app:packageRelease` runs differing only in this block, with
+         *     `releaseAllAbis=true` set in both and the ABIs read out of each APK's own central
+         *     directory with `zipfile`:
+         *
+         *         both blocks present   ->  [arm64-v8a, armeabi-v7a]         26,211,648 bytes
+         *         this block removed    ->  [arm64-v8a, armeabi-v7a,
+         *                                    x86, x86_64]                    49,439,024 bytes
+         *
+         *     (That difference, 23,227,376 bytes, is also the filter's own saving, arrived at from
+         *     the other direction than `docs/R8-MEASUREMENT.md` did and agreeing with it exactly.)
+         *
+         *     READ IT OFF THE PACKAGED APK AND NOWHERE EARLIER. `:app:mergeReleaseNativeLibs` and
+         *     `:app:stripReleaseDebugSymbols` both emit all four ABIs whatever this block says —
+         *     `abiFilters` is applied at PACKAGING time. An intermediate directory is not evidence
+         *     here, and checking one is how this measurement was nearly got wrong.
+         *  2. `defaultConfig` also narrows DEBUG, which takes away the x86_64 emulator — the only
+         *     machine a contributor without a handset has, on a project whose CI runs no
+         *     instrumented tests at all.
+         */
     }
 
     buildFeatures {
@@ -134,6 +168,68 @@ android {
                         "For on-device testing only — this APK is not distributable."
                 )
             }
+            /**
+             * SHIP ONLY THE TWO ABIs A FIELD HANDSET ACTUALLY HAS.
+             *
+             * There was no ABI configuration in this file at all, and "no filter" means "package
+             * every ABI every dependency offers" — four of them. That was 20,044 wasted bytes while
+             * the only native code here was `libandroidx.graphics.path.so`. It stops being a rounding
+             * error the moment the bundled ML Kit text recogniser lands, because its model is one
+             * native library published four times over (bytes read out of the AAR, not estimated):
+             *
+             *     arm64-v8a   11,064,544      x86      11,561,048
+             *     armeabi-v7a  6,781,940      x86_64   11,626,128
+             *
+             * x86 AND x86_64 ARE EMULATOR ARCHITECTURES. No handset this application is carried into
+             * a village on runs one — the test device is a Galaxy M32, which is arm64 — so those two
+             * rows are bytes shipped to devices that cannot be the target. Filtering them out is
+             * MEASURED, by two real `assembleRelease` runs differing only in this block, at
+             * **23,227,376 bytes — 22.15 MB — off the release APK** (49,307,952 → 26,080,576). See
+             * `docs/R8-MEASUREMENT.md` for the full table and the breakdown of where the rest went.
+             *
+             * AND R8 CANNOT TOUCH ONE BYTE OF THEM. `minSdk = 26` makes AGP write
+             * `extractNativeLibs="false"` into the merged manifest (read out of the manifest, not
+             * recalled from the documentation), which requires native libraries to be STORED rather
+             * than deflated — every `lib/` entry in the built APK reads STORED, and its size in the
+             * APK equals its size on disk. R8 shrinks Java/Kotlin classes and has no opinion about a
+             * `.so`. Filtering at package time is the only lever that exists.
+             *
+             * NOT AN ABI SPLIT AND NOT AN APP BUNDLE, because this application is side-loaded and
+             * there is no store in the chain to pick a variant per device: `GET /api/app/download` is
+             * one redirect to one object (`backend/app/api/routes/app_release.py`), the handset's own
+             * updater fetches that same single file (`WorkshopRepository.downloadApk`), and the
+             * prompt it answers has no "Later" (`MainActivity`, "required update: cannot be
+             * dismissed"). A split would put whichever APK the publisher happened to hold on that one
+             * URL, and every handset of the other ABI would answer INSTALL_FAILED_NO_MATCHING_ABIS to
+             * a dialog it cannot dismiss. One universal APK that installs everywhere is the
+             * requirement; this makes it as small as that requirement allows.
+             *
+             * `armeabi-v7a` IS KEPT DELIBERATELY, and it is measured at 6,809,547 bytes — 6.49 MB —
+             * of this APK, so it is the largest single saving still on the table. `minSdk = 26` means
+             * this app targets handsets back to 2017, when 32-bit-only devices were still being sold
+             * in this market, and the failure mode of guessing wrong is not a slow app — it is an
+             * install that refuses, on a phone whose update dialog cannot be dismissed, in a village.
+             * There is no device inventory here to say the risk is zero, so it is not assumed to be.
+             * With a roster of what the designers actually carry, this is a one-line change.
+             *
+             * THE EMULATOR, because dropping x86 drops it and this project has no device CI. `debug`
+             * below is left unfiltered on purpose, so day-to-day work on an x86_64 emulator is
+             * untouched. For the one case that needs more — smoke-testing a SHRUNK release build with
+             * no handset in reach, which is exactly what the R8 section of this file says must not be
+             * skipped — a developer opts in through their own gitignored `local.properties`, and the
+             * build says out loud what it did:
+             *
+             *     releaseAllAbis=true
+             */
+            if (localProperties.getProperty("releaseAllAbis", "false").toBoolean()) {
+                logger.lifecycle(
+                    "release: packaging ALL FOUR ABIs (releaseAllAbis=true) — about 22 MB of x86 and " +
+                        "x86_64 native libraries no field handset can load. For emulator testing " +
+                        "only; do not publish this APK."
+                )
+            } else {
+                ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -149,6 +245,13 @@ android {
             // Left unshrunk on purpose. The debug build is what the JVM unit tests and any
             // day-to-day install run against, and shrinking it would make a stack trace during
             // development point at an obfuscated name for no benefit.
+            //
+            // AND DELIBERATELY LEFT WITHOUT `abiFilters`, which is the other half of the release
+            // block's narrowing. There is no device CI on this project, so the emulator is how a
+            // developer with no handset runs anything at all — and a standard AVD is x86_64. The
+            // debug APK is never downloaded over a mobile connection by anybody, so the ABIs it
+            // carries cost nothing that matters. Narrowing both build types would have saved no
+            // field byte and taken the only machine some contributors have.
             isMinifyEnabled = false
         }
     }
@@ -210,6 +313,36 @@ dependencies {
     // In-app video/audio playback
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
+
+    /**
+     * On-device text recognition, so an identity card can be read with NO CONNECTION.
+     *
+     * ── BUNDLED, NOT THE PLAY SERVICES ONE, AND THE DIFFERENCE IS THE WHOLE FEATURE ────────────
+     *
+     * `com.google.mlkit:text-recognition` carries the model inside the APK.
+     * `com.google.android.gms:play-services-mlkit-text-recognition` is a 0.07 MB shim that DOWNLOADS
+     * the model from Play Services on first use — and first use is a designer in a courtyard that has
+     * had no signal for two days, where it fails silently as "the card would not read". Picking the
+     * small one would be picking a reader that is absent exactly where it is needed.
+     *
+     * ── LATIN ONLY. `text-recognition-devanagari` IS DELIBERATELY ABSENT ───────────────────────
+     *
+     * Not on size — on whether its output could ever be used. The extraction consults ASCII `'0'..'9'`
+     * and nothing else, at three independent layers (`IdentityCardText.scanDigitRuns`,
+     * `ArtisanIdentity.aadhaarError`, and the server's `_AADHAAR_RUN`), because a Devanagari
+     * "१२३४५६७८९०१२" stored beside "123456789012" is one artisan recorded as two people in the column
+     * whose only job is deduplication. A Devanagari model would recognise glyphs this pipeline then
+     * throws away — 2,015,832 measured bytes of artifact and a second inference pass on a mid-range
+     * handset, for no change in outcome. `IdentityCardRecognizer.kt` has the full argument and the
+     * condition under which it should be revisited.
+     *
+     * ── THE COST, MEASURED ────────────────────────────────────────────────────────────────────
+     *
+     * Real `assembleRelease` figures in bytes, before and after, are in
+     * `docs/DECISION-identity-card-ocr-on-android.md`. R8 cannot touch any of it: R8 shrinks Java and
+     * Kotlin, and this is a native library.
+     */
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
