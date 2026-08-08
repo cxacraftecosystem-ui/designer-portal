@@ -1,0 +1,652 @@
+{
+  "generatedBy": "frontend/tools/regenerate_derived_field_golden.py",
+  "source": "backend/app/services/stage_schema.py::derive_value",
+  "cases": [
+    {
+      "name": "d01-three-day-workshop",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-08-12",
+        "endDate": "2026-08-14"
+      },
+      "expected": 3
+    },
+    {
+      "name": "d02-single-day-is-one",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-08-12",
+        "endDate": "2026-08-12"
+      },
+      "expected": 1
+    },
+    {
+      "name": "d03-end-before-start",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-08-14",
+        "endDate": "2026-08-12"
+      },
+      "expected": null
+    },
+    {
+      "name": "d04-no-end-date",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-08-12"
+      },
+      "expected": null
+    },
+    {
+      "name": "d05-blank-end-date",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-08-12",
+        "endDate": ""
+      },
+      "expected": null
+    },
+    {
+      "name": "d06-datetime-strings",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-08-12T00:00:00.000Z",
+        "endDate": "2026-08-14T23:59:59Z"
+      },
+      "expected": 3
+    },
+    {
+      "name": "d07-across-a-dst-shift",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-03-28",
+        "endDate": "2026-04-02"
+      },
+      "expected": 6
+    },
+    {
+      "name": "d08-leap-day-spanned",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2028-02-27",
+        "endDate": "2028-03-01"
+      },
+      "expected": 4
+    },
+    {
+      "name": "d09-impossible-day-of-month",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-02-01",
+        "endDate": "2026-02-30"
+      },
+      "expected": null
+    },
+    {
+      "name": "d10-impossible-month",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-01-01",
+        "endDate": "2026-13-01"
+      },
+      "expected": null
+    },
+    {
+      "name": "d11-not-a-date-at-all",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-08-12",
+        "endDate": "next Tuesday"
+      },
+      "expected": null
+    },
+    {
+      "name": "d12-compact-iso-from-a-number",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-08-12",
+        "endDate": 20260814
+      },
+      "expected": 3
+    },
+    {
+      "name": "d13-a-boolean-is-not-a-date",
+      "type": "INT",
+      "derivedKind": "DAYS_BETWEEN",
+      "derivedFrom": [
+        "startDate",
+        "endDate"
+      ],
+      "row": {
+        "startDate": "2026-08-12",
+        "endDate": true
+      },
+      "expected": null
+    },
+    {
+      "name": "p01-quantity-times-rate",
+      "type": "DECIMAL",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "4",
+        "rate": "12.5"
+      },
+      "expected": 50.0
+    },
+    {
+      "name": "p02-money-half-paisa-up",
+      "type": "MONEY",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "1.5",
+        "rate": "4.75"
+      },
+      "expected": "7.12"
+    },
+    {
+      "name": "p03-money-half-paisa-down",
+      "type": "MONEY",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "0.5",
+        "rate": "0.25"
+      },
+      "expected": "0.12"
+    },
+    {
+      "name": "p04-grouped-thousands",
+      "type": "MONEY",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "2",
+        "rate": "1,250.00"
+      },
+      "expected": "2500.00"
+    },
+    {
+      "name": "p05-one-factor-blank",
+      "type": "MONEY",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "",
+        "rate": "12.50"
+      },
+      "expected": null
+    },
+    {
+      "name": "p06-one-factor-missing",
+      "type": "MONEY",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "rate": "12.50"
+      },
+      "expected": null
+    },
+    {
+      "name": "p07-one-factor-unparseable",
+      "type": "MONEY",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "about four",
+        "rate": "12.50"
+      },
+      "expected": null
+    },
+    {
+      "name": "p08-hex-literal",
+      "type": "DECIMAL",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "0x1A",
+        "rate": "2"
+      },
+      "expected": null
+    },
+    {
+      "name": "p09-underscore-separated",
+      "type": "DECIMAL",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "1_000",
+        "rate": "2"
+      },
+      "expected": 2000.0
+    },
+    {
+      "name": "p10-a-one-element-list",
+      "type": "DECIMAL",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": [
+          5
+        ],
+        "rate": "2"
+      },
+      "expected": null
+    },
+    {
+      "name": "p11-a-boolean",
+      "type": "DECIMAL",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": true,
+        "rate": "2"
+      },
+      "expected": null
+    },
+    {
+      "name": "p12-zero-is-a-quantity",
+      "type": "MONEY",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "0",
+        "rate": "12.50"
+      },
+      "expected": "0.00"
+    },
+    {
+      "name": "p13-four-decimal-rounding",
+      "type": "DECIMAL",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "1.00005",
+        "rate": "1"
+      },
+      "expected": 1.0001
+    },
+    {
+      "name": "p14-exponent-notation",
+      "type": "DECIMAL",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "1e3",
+        "rate": "2"
+      },
+      "expected": 2000.0
+    },
+    {
+      "name": "p15-leading-plus-and-spaces",
+      "type": "DECIMAL",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": "  +4 ",
+        "rate": "2"
+      },
+      "expected": 8.0
+    },
+    {
+      "name": "p16-three-factors-persons-days-rate",
+      "type": "MONEY",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "persons",
+        "days",
+        "rate"
+      ],
+      "row": {
+        "persons": "3",
+        "days": "2.5",
+        "rate": "450"
+      },
+      "expected": "3375.00"
+    },
+    {
+      "name": "p17-a-stored-number-not-a-string",
+      "type": "MONEY",
+      "derivedKind": "PRODUCT",
+      "derivedFrom": [
+        "quantity",
+        "rate"
+      ],
+      "row": {
+        "quantity": 3,
+        "rate": 12.5
+      },
+      "expected": "37.50"
+    },
+    {
+      "name": "s01-three-cost-heads",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "1200.50",
+        "labour": "800.25",
+        "packaging": "99.00"
+      },
+      "expected": "2099.75"
+    },
+    {
+      "name": "s02-optional-heads-blank",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "1200.50",
+        "labour": "",
+        "packaging": null
+      },
+      "expected": "1200.50"
+    },
+    {
+      "name": "s03-every-head-blank",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "",
+        "labour": "",
+        "packaging": ""
+      },
+      "expected": null
+    },
+    {
+      "name": "s04-no-heads-at-all",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {},
+      "expected": null
+    },
+    {
+      "name": "s05-one-head-unparseable",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "1200.50",
+        "labour": "n/a",
+        "packaging": "99.00"
+      },
+      "expected": null
+    },
+    {
+      "name": "s06-a-zero-head-counts",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "0",
+        "labour": "",
+        "packaging": ""
+      },
+      "expected": "0.00"
+    },
+    {
+      "name": "s07-money-half-paisa",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "0.005",
+        "labour": "0.12",
+        "packaging": ""
+      },
+      "expected": "0.12"
+    },
+    {
+      "name": "s08-negative-adjustment",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "1200.50",
+        "labour": "-200.50",
+        "packaging": ""
+      },
+      "expected": "1000.00"
+    },
+    {
+      "name": "s09-decimal-type-four-places",
+      "type": "DECIMAL",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "0.00005",
+        "labour": "1",
+        "packaging": ""
+      },
+      "expected": 1.0001
+    },
+    {
+      "name": "s10-mixed-magnitudes",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "1e16",
+        "labour": "1",
+        "packaging": "1"
+      },
+      "expected": "10000000000000000.00"
+    },
+    {
+      "name": "s11-grouped-thousands",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "1,200.50",
+        "labour": "800",
+        "packaging": ""
+      },
+      "expected": "2000.50"
+    },
+    {
+      "name": "s12-a-boolean-head",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [
+        "material",
+        "labour",
+        "packaging"
+      ],
+      "row": {
+        "material": "1200.50",
+        "labour": false,
+        "packaging": ""
+      },
+      "expected": null
+    },
+    {
+      "name": "n01-no-derived-kind",
+      "type": "MONEY",
+      "derivedKind": "",
+      "derivedFrom": [
+        "material"
+      ],
+      "row": {
+        "material": "12"
+      },
+      "expected": null
+    },
+    {
+      "name": "n02-kind-with-no-sources",
+      "type": "MONEY",
+      "derivedKind": "SUM",
+      "derivedFrom": [],
+      "row": {
+        "material": "12"
+      },
+      "expected": null
+    },
+    {
+      "name": "n03-unknown-kind",
+      "type": "MONEY",
+      "derivedKind": "QUOTIENT",
+      "derivedFrom": [
+        "a",
+        "b"
+      ],
+      "row": {
+        "a": "12",
+        "b": "4"
+      },
+      "expected": null
+    }
+  ]
+}

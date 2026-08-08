@@ -240,30 +240,6 @@ export function isTransient(error: unknown): boolean {
 }
 
 /**
- * Did this failure happen because nothing reached the server at all?
- *
- * THE COMPANION QUESTION TO {@link isTransient}, AND NOT THE SAME ONE. `isTransient` answers "is it
- * worth trying again", which is the outbox's question, and every 5xx is a yes to it. It is the
- * WRONG test for anything that says "there is no connection" on screen, because a 5xx means the
- * server was reached and then failed: telling a designer their signal is at fault when the server
- * answered sends them out of the building to look for a better one, and leaves a real bug wearing
- * an offline message. That happened here — a saved page size 500'd because `ReportMeta` has no
- * `__dict__`, and it was reported as an offline problem — which is why `report/page.tsx` split the
- * two by hand. This is that split, named, so the other three call sites can share it.
- *
- * 408 is the one status on the offline side: it is what a proxy answers when the request never
- * completed, so there is nothing the server can be said to have decided.
- *
- * A WRAPPED ERROR IS CLASSIFIED BY WHAT IT WRAPS. The default for an unrecognised error is "the
- * connection is at fault", which is the safe answer for a `TypeError` out of `fetch` and the WRONG
- * one for a rejection that has merely been re-thrown with a friendlier sentence. `uploadMediaBatch`
- * escalates a batch in which nothing landed, and the design-workshop sync hands it ONE file at a
- * time — so "the whole batch failed" is precisely "the server refused this photograph", and
- * flattening the `ApiError` into a message made every refusal look like lost signal, stopped the
- * pass as offline and returned to the same refusal on every future connection. Following `cause`
- * costs nothing for the errors that have none.
- */
-/**
  * Did the server refuse the SHAPE of the request rather than anything a person typed?
  *
  * THE THIRD CLASSIFICATION QUESTION, and it lives here beside the other two for the reason the note
@@ -294,6 +270,30 @@ export function isSchemaRefusal(error: unknown): boolean {
   return detail.some((entry) => (entry as { type?: unknown } | null)?.type === "extra_forbidden");
 }
 
+/**
+ * Did this failure happen because nothing reached the server at all?
+ *
+ * THE COMPANION QUESTION TO {@link isTransient}, AND NOT THE SAME ONE. `isTransient` answers "is it
+ * worth trying again", which is the outbox's question, and every 5xx is a yes to it. It is the
+ * WRONG test for anything that says "there is no connection" on screen, because a 5xx means the
+ * server was reached and then failed: telling a designer their signal is at fault when the server
+ * answered sends them out of the building to look for a better one, and leaves a real bug wearing
+ * an offline message. That happened here — a saved page size 500'd because `ReportMeta` has no
+ * `__dict__`, and it was reported as an offline problem — which is why `report/page.tsx` split the
+ * two by hand. This is that split, named, so the other three call sites can share it.
+ *
+ * 408 is the one status on the offline side: it is what a proxy answers when the request never
+ * completed, so there is nothing the server can be said to have decided.
+ *
+ * A WRAPPED ERROR IS CLASSIFIED BY WHAT IT WRAPS. The default for an unrecognised error is "the
+ * connection is at fault", which is the safe answer for a `TypeError` out of `fetch` and the WRONG
+ * one for a rejection that has merely been re-thrown with a friendlier sentence. `uploadMediaBatch`
+ * escalates a batch in which nothing landed, and the design-workshop sync hands it ONE file at a
+ * time — so "the whole batch failed" is precisely "the server refused this photograph", and
+ * flattening the `ApiError` into a message made every refusal look like lost signal, stopped the
+ * pass as offline and returned to the same refusal on every future connection. Following `cause`
+ * costs nothing for the errors that have none.
+ */
 export function isUnreachable(error: unknown, depth = 0): boolean {
   if (error instanceof ApiError) return error.status === 408;
   // Bounded because `cause` is an ordinary property and nothing stops it pointing at its own error.
