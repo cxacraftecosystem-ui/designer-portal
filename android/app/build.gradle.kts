@@ -127,6 +127,66 @@ android {
                         "For on-device testing only — this APK is not distributable."
                 )
             }
+            /**
+             * SHIP ONLY THE TWO ABIs A FIELD HANDSET ACTUALLY HAS.
+             *
+             * There was no ABI configuration in this file at all, and "no filter" means "package
+             * every ABI every dependency offers" — four of them. That was 20,044 wasted bytes while
+             * the only native code here was `libandroidx.graphics.path.so`. It stops being a rounding
+             * error the moment the bundled ML Kit text recogniser lands, because its model is one
+             * native library published four times over (bytes read out of the AAR, not estimated):
+             *
+             *     arm64-v8a   11,064,544      x86      11,561,048
+             *     armeabi-v7a  6,781,940      x86_64   11,626,128
+             *
+             * x86 AND x86_64 ARE EMULATOR ARCHITECTURES. No handset this application is carried into
+             * a village on runs one — the test device is a Galaxy M32, which is arm64 — so those two
+             * rows are bytes shipped to devices that cannot be the target. Filtering them out is
+             * MEASURED, by two real `assembleRelease` runs differing only in this block, at
+             * **23,227,376 bytes — 22.15 MB — off the release APK** (49,307,952 → 26,080,576). See
+             * `docs/R8-MEASUREMENT.md` for the full table and the breakdown of where the rest went.
+             *
+             * AND R8 CANNOT TOUCH ONE BYTE OF THEM. `minSdk = 26` makes AGP write
+             * `extractNativeLibs="false"` into the merged manifest (read out of the manifest, not
+             * recalled from the documentation), which requires native libraries to be STORED rather
+             * than deflated — every `lib/` entry in the built APK reads STORED, and its size in the
+             * APK equals its size on disk. R8 shrinks Java/Kotlin classes and has no opinion about a
+             * `.so`. Filtering at package time is the only lever that exists.
+             *
+             * NOT AN ABI SPLIT AND NOT AN APP BUNDLE, because this application is side-loaded and
+             * there is no store in the chain to pick a variant per device: `GET /api/app/download` is
+             * one redirect to one object (`backend/app/api/routes/app_release.py`), the handset's own
+             * updater fetches that same single file (`WorkshopRepository.downloadApk`), and the
+             * prompt it answers has no "Later" (`MainActivity`, "required update: cannot be
+             * dismissed"). A split would put whichever APK the publisher happened to hold on that one
+             * URL, and every handset of the other ABI would answer INSTALL_FAILED_NO_MATCHING_ABIS to
+             * a dialog it cannot dismiss. One universal APK that installs everywhere is the
+             * requirement; this makes it as small as that requirement allows.
+             *
+             * `armeabi-v7a` IS KEPT DELIBERATELY, at 6.47 MB. `minSdk = 26` means this app targets
+             * handsets back to 2017, when 32-bit-only devices were still being sold in this market,
+             * and the failure mode of guessing wrong is not a slow app — it is an install that
+             * refuses, on a phone whose update dialog cannot be dismissed, in a village. There is no
+             * device inventory here to say the risk is zero, so it is not assumed to be.
+             *
+             * THE EMULATOR, because dropping x86 drops it and this project has no device CI. `debug`
+             * below is left unfiltered on purpose, so day-to-day work on an x86_64 emulator is
+             * untouched. For the one case that needs more — smoke-testing a SHRUNK release build with
+             * no handset in reach, which is exactly what the R8 section of this file says must not be
+             * skipped — a developer opts in through their own gitignored `local.properties`, and the
+             * build says out loud what it did:
+             *
+             *     releaseAllAbis=true
+             */
+            if (localProperties.getProperty("releaseAllAbis", "false").toBoolean()) {
+                logger.lifecycle(
+                    "release: packaging ALL FOUR ABIs (releaseAllAbis=true) — about 22 MB of x86 and " +
+                        "x86_64 native libraries no field handset can load. For emulator testing " +
+                        "only; do not publish this APK."
+                )
+            } else {
+                ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -142,6 +202,13 @@ android {
             // Left unshrunk on purpose. The debug build is what the JVM unit tests and any
             // day-to-day install run against, and shrinking it would make a stack trace during
             // development point at an obfuscated name for no benefit.
+            //
+            // AND DELIBERATELY LEFT WITHOUT `abiFilters`, which is the other half of the release
+            // block's narrowing. There is no device CI on this project, so the emulator is how a
+            // developer with no handset runs anything at all — and a standard AVD is x86_64. The
+            // debug APK is never downloaded over a mobile connection by anybody, so the ABIs it
+            // carries cost nothing that matters. Narrowing both build types would have saved no
+            // field byte and taken the only machine some contributors have.
             isMinifyEnabled = false
         }
     }
