@@ -204,9 +204,15 @@ export function IdentityCardCapture({
   const useLocal = localUsable && readHere;
 
   // After every hook, never before one: this component's state and the two file inputs must keep
-  // their slots for the life of the mount. The control is worth showing when EITHER reader can
-  // answer — a deployment with no vision provider configured still has a browser.
-  if (!permitted || (offered !== true && !localUsable)) return null;
+  // their slots for the life of the mount.
+  //
+  // BOTH ANSWERS ARE WAITED FOR, not just one. The control is worth showing when EITHER reader can
+  // answer — a deployment with no vision provider configured still has a browser — but the local
+  // probe resolves in milliseconds and the route probe is a round trip, so rendering on the first
+  // answer would show "Read on this computer" and then grow a checkbox under the researcher's
+  // cursor a second later. Same reason `permitted` waits for `/me`.
+  if (!permitted || offered === null || browserReads === null) return null;
+  if (offered !== true && !localUsable) return null;
 
   /** Both readers end here, so a candidate is filtered identically however it was found. */
   function offer(found: DwIdentityChoice[], locally: boolean, rejected: number) {
@@ -215,12 +221,22 @@ export function IdentityCardCapture({
       setChoices(found);
       return;
     }
+    if (rejected > 0) {
+      // The COUNT, never the values — a rejected reading is still somebody's misread identity
+      // number — and it names a different next action from "nothing was found at all".
+      setProblem(
+        `${rejected} number(s) were read off that card and every one failed its checksum, so at least one digit was wrong in each. Take another photograph in better light with no glare across the digits, or type the number in.`
+      );
+      return;
+    }
     setProblem(
-      rejected > 0
-        ? // The COUNT, never the values — a rejected reading is still somebody's misread identity
-          // number — and it names a different next action from "nothing was found at all".
-          `${rejected} number(s) were read off that card and every one failed its checksum, so at least one digit was wrong in each. Take another photograph in better light with no glare across the digits, or type the number in.`
-        : `No ${kind === "AADHAAR" ? "Aadhaar" : "Pehchan"} number could be read from that photograph. Fill the frame with the card, hold it flat and try again — or type the number in.`
+      `No ${kind === "AADHAAR" ? "Aadhaar" : "Pehchan"} number could be read from that photograph. Fill the frame with the card, hold it flat and try again — or type the number in.` +
+        // Naming the other reader only when there IS one, and only when it is the one not just
+        // tried. The photograph is gone by now (see `read`), so this is an instruction to take
+        // another one — which is what "try again" already meant, with one box to untick first.
+        (locally && offered === true
+          ? " The reader on the server handles a worn or angled card better: untick “Read it on this computer” and photograph it again to use it."
+          : "")
     );
   }
 
@@ -242,7 +258,7 @@ export function IdentityCardCapture({
             outcome.reason === "undecodable"
               ? // Not "the card could not be read". The commonest cause is an iPhone HEIC, and
                 // sending somebody back to re-photograph a card that was fine is the worse answer.
-                `This browser could not open that picture. Photographs from an iPhone are often HEIC, which most browsers cannot read — re-save it as JPEG or PNG, or type the number in.`
+                "This browser could not open that picture. Photographs from an iPhone are often HEIC, which most browsers cannot read — re-save it as JPEG or PNG, or type the number in."
               : "This computer could not read that photograph. Type the number in instead."
           );
           return;

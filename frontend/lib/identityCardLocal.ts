@@ -98,7 +98,7 @@ export type LocalReadFailure =
   /** The recogniser ran and threw. Rare, and not something a better photograph fixes. */
   | { reason: "failed"; message: string };
 
-export type LocalReadOutcome = { ok: true; text: string } | { ok: false } & LocalReadFailure;
+export type LocalReadOutcome = { ok: true; text: string } | ({ ok: false } & LocalReadFailure);
 
 /**
  * Recognise the text in a photograph, entirely inside this tab.
