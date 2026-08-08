@@ -34,6 +34,7 @@ pytestmark = [
 ]
 
 STAGE_3 = "WORKSHOP_PLAN_PARTICIPANTS_OPENING"
+STAGE_5 = "TRADITIONAL_PROCESS_BASELINE"
 STAGE_6 = "EXISTING_PRODUCTS_BASELINE"
 
 
@@ -153,9 +154,17 @@ async def world():
             "processUsedIn": "Weaving", "replacementCost": 12000,
             "createdById": user.id, "artisanId": latha.id, "workshopId": workshop.id,
         })
+        # NOTES AND A PARENT PRODUCT, because those are the two columns the process picker now
+        # copies onto a step. A `Process` with neither would let the widened mapping pass while
+        # copying nothing, which is the shape of the defect it was written to end.
         process = await db.process.create(data={
             "name": f"Tie and dye {tag}", "productId": products["Sambalpuri saree"].id,
+            "notes": "Yarn is tied in sections, dyed dark, then untied and washed.",
+            "preProcessAvailable": True,
             "createdById": user.id, "workshopId": workshop.id,
+        })
+        await db.processstep.create(data={
+            "processId": process.id, "name": "Tying", "sortOrder": 0,
         })
     finally:
         await db.disconnect()
@@ -531,6 +540,68 @@ async def test_a_gallery_is_seeded_but_never_replaced(client, linked, world):
     seeded = next(r for r in _read(client, linked, STAGE_6, "existingProduct")
                   if r.get("_clientKey") == "e2")
     assert len(seeded["productPhotos"]) == 1
+
+
+async def test_choosing_a_documented_process_fills_the_step_in(client, linked, world):
+    """THE GAP THIS LANE EXISTS TO CLOSE.
+
+    A process step used to hydrate one field. The stage it sits in is one of the report's
+    substantive narrative sections, and its rows printed "Tie and dye" and nothing else while the
+    `Process` record they pointed at held the notes describing what actually happens and the
+    product the sequence belongs to.
+    """
+    process = world["process"]
+    _save(client, linked, STAGE_5, "processStep",
+          [{"_clientKey": "s1", "stepNumber": 1, "processRef": process.id}])
+    row = _read(client, linked, STAGE_5, "processStep")[0]
+
+    assert row["name"] == process.name
+    assert row["description"] == process.notes
+    assert row["documentedFor"] == world["products"]["Sambalpuri saree"].productName
+    assert row["processRef"] == process.id, "the id stays: it is the join key"
+
+
+async def test_the_documented_process_reaches_the_printed_report(client, linked, world):
+    """HYDRATED IS NOT THE SAME AS PRINTED, and a field that is one but not the other fails
+    silently in a document nobody re-reads.
+
+    So this walks the whole path the ministry copy takes — pick a record, save, read the stage
+    back, render — and looks for the copied words in the blocks the writers turn into a .docx and
+    a .pdf. `description` lands in the process table; `documentedFor` is a KEY_VALUE and lands in
+    the overflow beneath it, which is a different renderer branch and had to be checked as well.
+    """
+    from app.services.report_builder import WorkshopData, build_report
+    from app.services.report_model import ImageRef, ReportMeta, runs_text
+
+    process = world["process"]
+    _save(client, linked, STAGE_5, "processStep",
+          [{"_clientKey": "s1", "stepNumber": 1, "processRef": process.id}])
+    rows = _read(client, linked, STAGE_5, "processStep")
+
+    doc, _warnings = build_report(
+        WorkshopData(
+            workshop_id=linked,
+            title="Barpali cluster",
+            collections={STAGE_5: {"processStep": rows}},
+        ),
+        "DETAILED_TECHNICAL",
+        lambda mid: ImageRef(source=mid, width_px=800, height_px=600, mime_type="image/png"),
+        meta=ReportMeta(title="Workshop", subtitle="Cluster",
+                        generated_at="2026-08-08T00:00:00Z"),
+    )
+
+    printed: list[str] = []
+    for block in doc.blocks:
+        printed.append(runs_text(getattr(block, "runs", ()) or ()))
+        for row in getattr(block, "rows", ()) or ():
+            printed.extend(runs_text(cell) for cell in row)
+        for _label, value in getattr(block, "pairs", ()) or ():
+            printed.append(runs_text(value))
+    text = "\n".join(printed)
+
+    assert process.notes in text, "the documented process's notes never reached the page"
+    assert world["products"]["Sambalpuri saree"].productName in text, \
+        "the report cannot tell this cluster's sequence from another cluster's"
 
 
 async def test_the_craft_picker_reaches_the_promoted_column(client, linked, world):
