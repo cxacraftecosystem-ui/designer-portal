@@ -52,6 +52,36 @@ android {
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"614092441670-3e5k15srupq9mfpg3aktqfkjvkavu0g3.apps.googleusercontent.com\"")
         buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"614092441670-5rckig6t1al6plbfll8irn9prcmp446t.apps.googleusercontent.com\"")
         buildConfigField("String", "MAPTILER_API_KEY", "\"OJJYFRqCD2HD2k3BbXGF\"")
+
+        /**
+         * ARM ONLY, AND IT IS THE SINGLE LARGEST SAVING IN THIS CHANGE.
+         *
+         * This application shipped NO native code at all until the bundled ML Kit text recogniser
+         * arrived to read identity cards without a connection. That recogniser is one native library,
+         * `libmlkit_google_ocr_pipeline.so`, and the AAR carries FOUR copies of it — arm64-v8a,
+         * armeabi-v7a, x86 and x86_64 — because an AAR has to serve every device Android runs on.
+         *
+         * `minSdk = 26` means AGP packages native libraries with `extractNativeLibs="false"`, which
+         * requires them to be STORED rather than deflated in the APK. So a megabyte of `.so` is a
+         * megabyte of download, and the two x86 copies are pure weight: they exist for emulators and
+         * for the handful of x86 Chromebooks, and every phone this application has ever been
+         * installed on is ARM. The measured cost of keeping them is in
+         * `docs/DECISION-identity-card-ocr-on-android.md` — it is larger than the entire APK was
+         * before this lane.
+         *
+         * WHAT THIS BREAKS, said plainly rather than discovered later: the release APK will not
+         * install on an x86_64 emulator. The debug build is unaffected (this filter applies to every
+         * variant, but nothing about `assembleDebug` is measured here and a developer who needs an
+         * emulator can drop the filter locally). CI does not run instrumented tests at all — see
+         * `.github/workflows/android-build.yml:122` and `docs/CI.md:220`, both of which record that
+         * there is no emulator on the runner — so nothing in the pipeline depends on an x86 slice.
+         *
+         * If this app is ever published as an App Bundle, DELETE THIS BLOCK: Play delivers only the
+         * installing device's ABI and the filter stops being a saving and starts being a limitation.
+         */
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
     }
 
     buildFeatures {
@@ -199,6 +229,36 @@ dependencies {
     // In-app video/audio playback
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
+
+    /**
+     * On-device text recognition, so an identity card can be read with NO CONNECTION.
+     *
+     * ── BUNDLED, NOT THE PLAY SERVICES ONE, AND THE DIFFERENCE IS THE WHOLE FEATURE ────────────
+     *
+     * `com.google.mlkit:text-recognition` carries the model inside the APK.
+     * `com.google.android.gms:play-services-mlkit-text-recognition` is a 0.07 MB shim that DOWNLOADS
+     * the model from Play Services on first use — and first use is a designer in a courtyard that has
+     * had no signal for two days, where it fails silently as "the card would not read". Picking the
+     * small one would be picking a reader that is absent exactly where it is needed.
+     *
+     * ── LATIN ONLY. `text-recognition-devanagari` IS DELIBERATELY ABSENT ───────────────────────
+     *
+     * Not on size — on whether its output could ever be used. The extraction consults ASCII `'0'..'9'`
+     * and nothing else, at three independent layers (`IdentityCardText.scanDigitRuns`,
+     * `ArtisanIdentity.aadhaarError`, and the server's `_AADHAAR_RUN`), because a Devanagari
+     * "१२३४५६७८९०१२" stored beside "123456789012" is one artisan recorded as two people in the column
+     * whose only job is deduplication. A Devanagari model would recognise glyphs this pipeline then
+     * throws away — 2,015,832 measured bytes of artifact and a second inference pass on a mid-range
+     * handset, for no change in outcome. `IdentityCardRecognizer.kt` has the full argument and the
+     * condition under which it should be revisited.
+     *
+     * ── THE COST, MEASURED ────────────────────────────────────────────────────────────────────
+     *
+     * Real `assembleRelease` figures in bytes, before and after, are in
+     * `docs/DECISION-identity-card-ocr-on-android.md`. R8 cannot touch any of it: R8 shrinks Java and
+     * Kotlin, and this is a native library.
+     */
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")

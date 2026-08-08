@@ -44,6 +44,9 @@ import com.designprototype.workshop.data.ArtisanIdentity
 import com.designprototype.workshop.data.ConnectivityObserver
 import com.designprototype.workshop.data.DwIdentityCandidateDto
 import com.designprototype.workshop.data.FieldDto
+import com.designprototype.workshop.data.IdentityCardRecognizer
+import com.designprototype.workshop.data.IdentityCardText
+import com.designprototype.workshop.data.MlKitIdentityCardRecognizer
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
@@ -72,31 +75,46 @@ import java.io.File
  *
  * So: candidate, checked twice, confirmed by a person.
  *
- * ── WHERE THE RECOGNITION RUNS, AND WHY IT IS NOT ON THIS DEVICE ──────────────────────────────
+ * ── WHERE THE RECOGNITION RUNS: THIS PHONE FIRST, THE SERVER ONLY IF IT HAS TO ────────────────
  *
- * On the server. There is no on-device model and this file does not pretend otherwise — no bundled
- * recogniser, no queued "we will read it later" that a designer would take for done. That was a
- * measured decision, not an omission: `docs/DECISION-identity-card-ocr-on-android.md` has the
- * artifact sizes. The short version is that ML Kit's bundled Latin recogniser is 10.55 MB of native
- * code per ARM ABI on a 6.09 MB APK that the in-app updater re-downloads whole for every release,
- * and it buys the TYPING, not the CHECKING — the number still has to be read against the card
- * either way, and the same Verhoeff checksum catches a typo and a misread with equal power.
+ * On the device, using the BUNDLED ML Kit Latin recogniser — no model download, no Play Services
+ * dependency at read time, no connection. That is the whole point: this application is carried into
+ * villages that have had no signal for days, and a reader that only works online is a reader that
+ * does not work where the work happens. It costs real bytes and they are measured, not estimated, in
+ * `docs/DECISION-identity-card-ocr-on-android.md`, which also records that an earlier lane measured
+ * the same artifacts and recommended AGAINST them, and that the recommendation was overruled.
  *
- * With no connection the control disables itself and says why BEFORE a photograph is taken, because
- * the alternative is a designer photographing a card and then watching a spinner for a two-minute
- * HTTP timeout, which is indistinguishable from a hung app. The connectivity check is a best-effort
- * look at the active network, so it can be wrong in the optimistic direction — a captive portal, a
- * bar of signal that carries nothing — and the failure path below therefore says the same thing in
- * the past tense.
+ * THE ORDER IS ON-DEVICE, THEN SERVER, AND THE DESIGNER IS TOLD WHICH ANSWERED. The phone is asked
+ * first because it always works. If the phone finds nothing AND there is a connection, the server's
+ * vision model is asked as well — it reads a creased, glared, badly-lit card better than a bundled
+ * 10 MB model does, and giving that up would be trading one failure for another. The panel then says
+ * "read on this phone" or "read by the server" beside every candidate, because those two readers do
+ * NOT have the same accuracy and a person being asked to proofread twelve digits is entitled to know
+ * which one produced them.
  *
- * ── TWO WAYS IN, AND THE SECOND ONE IS THE ONE THAT MATTERS OFFLINE ───────────────────────────
+ * The device also refuses things the server would offer. Only the phone applies the maximal-run rule
+ * in [IdentityCardText] that stops a sixteen-digit VID being clipped into a twelve-digit "Aadhaar
+ * number" — so on-device-first is not merely faster, it is the stricter of the two readers.
  *
- * "Photograph the card" and "Choose a photo". The picker is not a convenience: it is what makes the
- * offline case work at all. A designer in a courtyard with no signal photographs the card with the
- * phone's own camera, types the number by hand for now, and when they are back in signal they can
- * point this control at that photograph and check what they typed — without asking the artisan for
- * the card a second time, which for this class of document is a request that is not always granted
- * twice.
+ * ── WHAT THE PHONE CANNOT DO ──────────────────────────────────────────────────────────────────
+ *
+ * Read a Pehchan number. An Aadhaar number proves itself — twelve digits, never starting 0 or 1, a
+ * Verhoeff check digit — and nothing else on a card passes that by accident. A Pehchan card number
+ * has no checksum and no fixed length, so picking it out of raw recognised text would mean guessing,
+ * with nothing downstream able to catch the guess being wrong. The server does not guess either: it
+ * asks a vision model to LABEL the Pehchan number and only normalises the answer. So a Pehchan-only
+ * field still needs a connection, and says so in the disabled state rather than after a timeout.
+ * [IdentityCardText]'s header has the full argument and the condition for revisiting it.
+ *
+ * ── TWO WAYS IN, AND THE PICKER IS STILL WORTH ITS BUTTON ─────────────────────────────────────
+ *
+ * "Photograph the card" and "Choose a photo". The picker used to be the ONLY thing that made the
+ * offline case survivable — photograph the card with the camera app now, come back and read it in
+ * signal later — and that is no longer its job, because the camera path itself now works with no
+ * connection. It stays for the case that has not gone away: a card already photographed, by this
+ * designer or handed over by someone else, that would otherwise mean asking the artisan to produce
+ * a national identity document a second time. For this class of paper that is a request which is
+ * not always granted twice.
  *
  * The picker is `PickVisualMedia`, the system photo picker, and NOT `GetContent` with a media
  * permission. It hands back exactly the one image the designer chose and grants this app no standing
@@ -187,49 +205,122 @@ internal fun identityKindFor(field: FieldDto): DwIdentityKind {
 }
 
 /**
- * A candidate the handset is willing to show a designer, after its OWN check.
+ * Which reader produced a candidate.
  *
- * The server has already applied the Verhoeff filter (`identity_ocr.aadhaar_candidates`), so in a
- * healthy system this second pass rejects nothing. It exists for the unhealthy one: if it ever
- * rejects something, the two ports of the same rule have drifted, and the moment to find that out is
- * before the number is offered rather than after it is stored. Refusing rather than warning is
- * deliberate — the server's contract is that only checksum-valid numbers are sent, so a candidate
- * that fails here is a transport or shape problem, not a card a designer can do anything about.
+ * Carried all the way to the button, and printed there. The two readers are not equally accurate and
+ * they do not fail in the same way — the bundled model on the phone is small and literal, the vision
+ * model on the server is large and willing to interpret — so "which one said this" is information the
+ * person proofreading the digits needs, not provenance trivia for a log.
  */
-internal data class DwIdentityChoice(val value: String, val kind: DwIdentityKind, val confidence: Double)
+internal enum class DwIdentitySource {
+    /** The bundled ML Kit recogniser, on this handset, with or without a connection. */
+    ON_DEVICE,
+
+    /** `POST /design-workshops/ocr/identity`, asked only when the phone found nothing. */
+    SERVER,
+}
 
 /**
- * The candidates worth offering for [kind], best first, each re-checked on this device.
+ * A candidate the handset is willing to show a designer, after its OWN check.
  *
- * Pure and internal so a JVM test can hold it to the contract without a device — see
- * `DwIdentityOcrWireTest`.
+ * [confidence] is null for an on-device read and that is deliberate. ML Kit does not return a
+ * calibrated per-number confidence for this, and inventing one — "0.9 because it passed the checksum"
+ * — would put a reassuring number next to digits whose entire purpose on that screen is to be
+ * doubted. A missing confidence prints nothing; it does not print a guess.
+ */
+internal data class DwIdentityChoice(
+    val value: String,
+    val kind: DwIdentityKind,
+    val confidence: Double?,
+    val source: DwIdentitySource,
+)
+
+/** One unchecked number a reader proposed, before this file decides whether it may be offered. */
+internal data class DwIdentityProposal(
+    val value: String,
+    val kind: DwIdentityKind,
+    val confidence: Double?,
+)
+
+/**
+ * THE ONE FILTER BOTH READERS PASS THROUGH, and the only route to the confirm panel.
+ *
+ * Two readers now propose numbers and there is exactly one place that decides what a designer may be
+ * shown, on purpose. A second confirm path for the on-device reader is how the two drift: one of them
+ * keeps the Verhoeff refusal and the masking rule, the other quietly stops, and nobody notices
+ * because both screens look right. Everything below — normalisation, the checksum, the deduplication,
+ * the kind gate — applies identically to a number read on the phone and one read on the server.
+ *
+ * A candidate failing the check is REFUSED, never offered with a warning. For a server candidate that
+ * means the two ports of the rule have drifted, which is a transport problem and not a card a
+ * designer can do anything about. For a device candidate it should be unreachable — [IdentityCardText]
+ * has already applied the same rule — and if it ever fires, the same conclusion holds.
+ *
+ * Pure and internal so a JVM test can hold it to the contract without a device: see
+ * `DwIdentityOcrWireTest` and `IdentityCardTextTest`.
+ */
+internal fun identityChoices(
+    proposals: List<DwIdentityProposal>,
+    kind: DwIdentityKind,
+    source: DwIdentitySource,
+): List<DwIdentityChoice> {
+    val out = mutableListOf<DwIdentityChoice>()
+    proposals.forEach { proposal ->
+        val wanted = kind == DwIdentityKind.ANY || kind == proposal.kind
+        if (!wanted) return@forEach
+        val cleaned = when (proposal.kind) {
+            DwIdentityKind.AADHAAR -> ArtisanIdentity.normalizeAadhaar(proposal.value)
+                .takeIf { ArtisanIdentity.isAadhaar(it) }
+            // Normalised to the ONE spelling the server stores, so a read and a typed entry of the
+            // same card cannot become two different strings — there is no checksum here to catch it.
+            DwIdentityKind.PEHCHAN -> ArtisanIdentity.normalizePehchan(proposal.value)
+                .takeIf { ArtisanIdentity.isPehchan(it) }
+            // A proposal cannot itself be "either kind"; ANY is a question a FIELD asks, not an answer
+            // a reader gives. Dropping it is the safe direction — an unlabelled number has no
+            // validator to apply, and applying the wrong one would offer a name as a card number.
+            DwIdentityKind.ANY -> null
+        } ?: return@forEach
+        if (out.none { it.value == cleaned }) {
+            out += DwIdentityChoice(cleaned, proposal.kind, proposal.confidence, source)
+        }
+    }
+    return out
+}
+
+/**
+ * The server's answer, converted to candidates.
+ *
+ * Aadhaar before Pehchan, which is the order a card-number field offers them in: an artisan who has
+ * both cards is deduplicated on the Aadhaar number, so it is the one the registry actually wants.
  */
 internal fun identityChoices(
     aadhaar: List<DwIdentityCandidateDto>,
     pehchan: List<DwIdentityCandidateDto>,
     kind: DwIdentityKind,
-): List<DwIdentityChoice> {
-    val out = mutableListOf<DwIdentityChoice>()
-    if (kind == DwIdentityKind.AADHAAR || kind == DwIdentityKind.ANY) {
-        aadhaar.forEach { candidate ->
-            val digits = ArtisanIdentity.normalizeAadhaar(candidate.value)
-            if (ArtisanIdentity.isAadhaar(digits) && out.none { it.value == digits }) {
-                out += DwIdentityChoice(digits, DwIdentityKind.AADHAAR, candidate.confidence)
-            }
-        }
-    }
-    if (kind == DwIdentityKind.PEHCHAN || kind == DwIdentityKind.ANY) {
-        pehchan.forEach { candidate ->
-            // Normalised to the ONE spelling the server stores, so a read and a typed entry of the
-            // same card cannot become two different strings — there is no checksum here to catch it.
-            val cleaned = ArtisanIdentity.normalizePehchan(candidate.value)
-            if (ArtisanIdentity.isPehchan(cleaned) && out.none { it.value == cleaned }) {
-                out += DwIdentityChoice(cleaned, DwIdentityKind.PEHCHAN, candidate.confidence)
-            }
-        }
-    }
-    return out
-}
+): List<DwIdentityChoice> = identityChoices(
+    proposals = aadhaar.map { DwIdentityProposal(it.value, DwIdentityKind.AADHAAR, it.confidence) } +
+        pehchan.map { DwIdentityProposal(it.value, DwIdentityKind.PEHCHAN, it.confidence) },
+    kind = kind,
+    source = DwIdentitySource.SERVER,
+)
+
+/**
+ * This phone's own answer, converted to candidates.
+ *
+ * Aadhaar only — see [IdentityCardText] for why the device does not attempt a Pehchan number. For a
+ * PEHCHAN field this therefore returns nothing and the flow falls through to the server, which is the
+ * honest outcome rather than a silent one: the control says so before a photograph is taken.
+ */
+internal fun identityChoices(
+    reading: IdentityCardText.IdentityCardReading,
+    kind: DwIdentityKind,
+): List<DwIdentityChoice> = identityChoices(
+    proposals = reading.aadhaar.map {
+        DwIdentityProposal(it, DwIdentityKind.AADHAAR, confidence = null)
+    },
+    kind = kind,
+    source = DwIdentitySource.ON_DEVICE,
+)
 
 /**
  * The scratch directory a photograph TAKEN by this control lives in for the seconds it exists.
@@ -291,6 +382,12 @@ internal fun DwIdentityCardControl(
     enabled: Boolean,
     onUse: (String) -> Unit,
     onError: (String) -> Unit,
+    // A DEFAULT rather than an injected dependency, because there is exactly one recogniser and the
+    // parameter exists so that a future instrumented test can substitute a canned scan. The default
+    // is a direct object reference and not a factory lookup: R8 shrinks the release APK, and the
+    // seventeen megabytes of ML Kit that this application now carries have to be provably REACHED
+    // from a control a designer can press, not merely present in a dependency block.
+    recognizer: IdentityCardRecognizer = MlKitIdentityCardRecognizer,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -299,6 +396,14 @@ internal fun DwIdentityCardControl(
     var working by remember { mutableStateOf(false) }
     var choices by remember { mutableStateOf<List<DwIdentityChoice>>(emptyList()) }
     var unconfirmedByServer by remember { mutableStateOf(false) }
+
+    /**
+     * Whether this phone can read this field's card at all without a connection.
+     *
+     * Aadhaar only. A PEHCHAN field has no on-device path, so for it the control is exactly as
+     * connection-bound as it was before this lane, and must go on saying so.
+     */
+    val readableOnDevice = kind != DwIdentityKind.PEHCHAN
 
     // Mount and unmount both sweep. See sweepIdentityScratch for the failure this closes.
     DisposableEffect(Unit) {
@@ -312,10 +417,48 @@ internal fun DwIdentityCardControl(
         pending = null
     }
 
+    /**
+     * Read the photograph: THIS PHONE FIRST, then the server only if the phone found nothing.
+     *
+     * The precedence is not an optimisation, it is the feature — the phone answers in a courtyard
+     * with no signal, which is where the cards are. The server is asked afterwards because the two
+     * readers fail differently: a bundled 10 MB model gives up on a creased, glared or badly-lit card
+     * that a large vision model still reads, and dropping that fallback would trade one class of
+     * failure for another rather than removing it.
+     *
+     * The result carries WHICH reader answered all the way to the button. Nothing here auto-commits
+     * on either path; both land in the same [choices] list, drawn by the same panel, filtered by the
+     * same [identityChoices].
+     */
     fun send(source: Uri) {
         working = true
         choices = emptyList()
+        unconfirmedByServer = false
         scope.launch {
+            // ── 1. The phone ─────────────────────────────────────────────────────────────────────
+            // A THROW here is not "no number on the card"; it is "the local reader is unavailable"
+            // (an unreadable file, a model that would not load). Those need different next steps, so
+            // failure falls through to the server while an empty-but-successful read is a real answer
+            // that still falls through — the server may read a card this model could not.
+            val localReading = runCatching { IdentityCardText.read(recognizer.scan(context, source)) }
+            val local = localReading.getOrNull()?.let { identityChoices(it, kind) }.orEmpty()
+            if (local.isNotEmpty()) {
+                working = false
+                // The photograph is kept only until the candidate is resolved, so the designer can
+                // look from one to the other while checking the digits.
+                choices = local
+                return@launch
+            }
+
+            // ── 2. The server, only with a connection ────────────────────────────────────────────
+            val localRejected = localReading.getOrNull()?.rejectedAadhaarCount ?: 0
+            if (!ConnectivityObserver.isOnline(context)) {
+                working = false
+                discardPhoto()
+                onError(nothingFoundOffline(kind, readableOnDevice, localRejected))
+                return@launch
+            }
+
             runCatching { repository.designWorkshopIdentityOcr(context, source) }
                 .onSuccess { result ->
                     working = false
@@ -325,20 +468,23 @@ internal fun DwIdentityCardControl(
                         // The rejected COUNT, never the rejected values — a misread is still
                         // somebody's identity number. The two sentences are different next actions:
                         // "found and misread" means better light, "not found" means fill the frame.
+                        // Both readers' counts are added: a designer does not care which of the two
+                        // rejected a misreading, only that the card WAS found and misread.
                         onError(
-                            if (result.rejectedAadhaarCount > 0) {
-                                "${result.rejectedAadhaarCount} number(s) were read off that card and " +
-                                    "every one failed its checksum, so at least one digit was wrong in " +
-                                    "each. Take another photograph in better light with no glare across " +
-                                    "the digits, or type the number in."
-                            } else {
-                                "No number could be read from that photograph. Fill the frame with the " +
-                                    "card, hold it flat and try again — or type the number in."
+                            (localRejected + result.rejectedAadhaarCount).let { rejected ->
+                                if (rejected > 0) {
+                                    "$rejected number(s) were read off that card and every one failed " +
+                                        "its checksum, so at least one digit was wrong in each. Take " +
+                                        "another photograph in better light with no glare across the " +
+                                        "digits, or type the number in."
+                                } else {
+                                    "No number could be read from that photograph, by this phone or by " +
+                                        "the server. Fill the frame with the card, hold it flat and try " +
+                                        "again — or type the number in."
+                                }
                             }
                         )
                     } else {
-                        // The photograph is kept only until the candidate is resolved, so the
-                        // designer can look from one to the other while checking the digits.
                         choices = offered
                         // `requiresConfirmation` is the server stating the contract in the payload.
                         // This client confirms regardless of what it says; a server that said
@@ -352,10 +498,17 @@ internal fun DwIdentityCardControl(
                     discardPhoto()
                     onError(
                         if (!ConnectivityObserver.isOnline(context)) {
-                            "The connection dropped before the card could be read. Nothing was sent. " +
-                                "Type the number in, or try again where there is signal."
+                            // The phone had already tried and found nothing, so this is not "we lost
+                            // the only reader" — say what actually happened rather than implying the
+                            // card is unreadable.
+                            "This phone could not read that card, and the connection dropped before " +
+                                "the server could be asked. Type the number in, or try again where " +
+                                "there is signal."
                         } else {
-                            error.apiErrorMessage("That card could not be read. Type the number in instead.")
+                            error.apiErrorMessage(
+                                "This phone could not read that card and the server could not either. " +
+                                    "Type the number in instead."
+                            )
                         }
                     )
                 }
@@ -392,15 +545,19 @@ internal fun DwIdentityCardControl(
     ) { uri -> if (uri != null) send(uri) }
 
     /**
+     * Refuse only what this phone genuinely cannot do offline, which is now just a Pehchan card.
+     *
      * Checked HERE, at the tap, rather than only at composition: a stage screen stays on a phone for
-     * hours and the connection it had when it opened is not the connection it has now.
+     * hours and the connection it had when it opened is not the connection it has now. The Aadhaar
+     * path no longer consults this at all — that is the point of the lane.
      */
     fun refuseOffline(): Boolean {
-        if (ConnectivityObserver.isOnline(context)) return false
+        if (readableOnDevice || ConnectivityObserver.isOnline(context)) return false
         onError(
-            "Reading a card needs a connection and there is none. Type the number in now — and if you " +
-                "photograph the card with the phone's camera, you can come back here in signal and " +
-                "check what you typed against it."
+            "A Pehchan card number can only be read with a connection: this phone reads Aadhaar " +
+                "numbers, which prove themselves with a checksum, and a Pehchan number has none — so " +
+                "guessing at one would put a number nothing downstream could catch in front of you. " +
+                "Type it in now, or photograph the card and come back here in signal."
         )
         return true
     }
@@ -423,10 +580,14 @@ internal fun DwIdentityCardControl(
     }
 
     val online = ConnectivityObserver.isOnline(context)
+    // Usable with no signal for every field except a Pehchan-only one. This single boolean is what
+    // the lane changed: the buttons used to be dead offline, which is the state a designer in a
+    // courtyard is always in.
+    val usable = enabled && !working && (readableOnDevice || online)
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = ::startCamera, enabled = enabled && !working && online) {
+            OutlinedButton(onClick = ::startCamera, enabled = usable) {
                 if (working) {
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 } else {
@@ -435,22 +596,32 @@ internal fun DwIdentityCardControl(
                 Spacer(Modifier.width(6.dp))
                 Text(if (working) "Reading the card…" else "Photograph the card", fontSize = 13.sp)
             }
-            OutlinedButton(onClick = ::startPick, enabled = enabled && !working && online) {
+            OutlinedButton(onClick = ::startPick, enabled = usable) {
                 Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Choose a photo", fontSize = 13.sp)
             }
         }
         Text(
-            if (online) {
-                "Photograph the card, or pick a photograph of it already on this phone, and the " +
-                    "number is read off it. You confirm it before anything is filled in. The " +
-                    "photograph is not kept."
-            } else {
+            when {
                 // The disabled reason, in the disabled state, where the disabled control is. A greyed
                 // button with the explanation elsewhere is a button people tap repeatedly.
-                "Reading a card needs a connection. With none, type the number in — photograph the " +
-                    "card with the camera app and you can check it here later."
+                !readableOnDevice && !online ->
+                    "Reading a Pehchan card needs a connection — this phone reads Aadhaar numbers " +
+                        "only. Type the number in; photograph the card with the camera app and you " +
+                        "can check it here later."
+                !readableOnDevice ->
+                    "Photograph the card, or pick a photograph of it already on this phone, and the " +
+                        "number is read off it on the server. You confirm it before anything is " +
+                        "filled in. The photograph is not kept."
+                online ->
+                    "Photograph the card, or pick a photograph of it already on this phone. The " +
+                        "number is read on this phone; if it cannot be read here, the server is asked " +
+                        "as well. You confirm it before anything is filled in, and you are told which " +
+                        "one read it. The photograph is not kept."
+                else ->
+                    "This works with no connection — the number is read on this phone. You confirm it " +
+                        "before anything is filled in. The photograph is not kept."
             },
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
@@ -508,10 +679,18 @@ internal fun DwIdentityCardControl(
                     Text(
                         listOfNotNull(
                             if (choice.kind == DwIdentityKind.AADHAAR) "Aadhaar" else "Pehchan card",
+                            // WHICH READER, next to the number, every time. The two do not have the
+                            // same accuracy and they do not fail the same way, and a designer being
+                            // asked to proofread twelve digits is entitled to know whether a bundled
+                            // model on a mid-range handset or a large vision model produced them.
+                            when (choice.source) {
+                                DwIdentitySource.ON_DEVICE -> "read on this phone"
+                                DwIdentitySource.SERVER -> "read by the server"
+                            },
                             // Words, not a percentage. "82%" invites a designer to treat 82 as good
                             // enough and skip the check, which is the one behaviour this panel exists
-                            // to prevent.
-                            if (choice.confidence >= 0.85) "read clearly" else "read with difficulty",
+                            // to prevent. Absent entirely for an on-device read: see DwIdentityChoice.
+                            choice.confidence?.let { if (it >= 0.85) "read clearly" else "read with difficulty" },
                         ).joinToString(" · "),
                         color = MaterialTheme.field.muted,
                         fontSize = 11.sp
@@ -524,6 +703,43 @@ internal fun DwIdentityCardControl(
             }) { Text("None of these — discard", fontSize = 13.sp) }
         }
     }
+}
+
+/**
+ * What to tell a designer when the phone read the photograph, found nothing usable, and there is no
+ * connection to ask the server with.
+ *
+ * Three different sentences because they are three different next actions, and a single "could not
+ * read the card" would send a designer photographing a card again for a problem that is not about the
+ * photograph. Pure and internal so the wording is pinned by a JVM test rather than by a screenshot.
+ *
+ * NO DIGITS IN ANY OF THEM. [rejected] is a count; the numbers behind it were misreadings of
+ * somebody's identity number and they do not leave this device, not into a message and not into a log.
+ */
+internal fun nothingFoundOffline(
+    kind: DwIdentityKind,
+    readableOnDevice: Boolean,
+    rejected: Int,
+): String = when {
+    // Not something a photograph can fix: this phone has no Pehchan reader at all.
+    !readableOnDevice ->
+        "A Pehchan card number can only be read with a connection, and there is none. Type it in now."
+    // The card WAS found and misread — better light, no glare. Distinct from "not found".
+    rejected > 0 ->
+        "$rejected number(s) were read off that card and every one failed its checksum, so at least " +
+            "one digit was wrong in each. There is no connection to check them against the server, " +
+            "so: another photograph in better light with no glare across the digits, or type the " +
+            "number in."
+    // Nothing found at all — fill the frame. Says the server was NOT asked, so a designer who moves
+    // into signal knows there is something left to try rather than concluding the card is unreadable.
+    kind == DwIdentityKind.PEHCHAN || kind == DwIdentityKind.ANY ->
+        "No Aadhaar number could be read from that photograph on this phone, and there is no " +
+            "connection to ask the server. Fill the frame with the card and hold it flat, or type " +
+            "the number in — a Pehchan card can only be read with a connection."
+    else ->
+        "No number could be read from that photograph on this phone, and there is no connection to " +
+            "ask the server. Fill the frame with the card, hold it flat and try again — or type the " +
+            "number in."
 }
 
 /**
