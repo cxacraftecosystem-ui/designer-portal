@@ -1,6 +1,7 @@
 package com.designprototype.workshop.data
 
 import android.content.Context
+import com.designprototype.workshop.report.remapInlineMedia
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -1135,6 +1136,20 @@ internal fun isAuthoritative(stored: StageDraft?, record: StageSyncRecord?): Boo
  * Reads [EntityDto.fields] rather than `liveFields` on purpose. A DEPRECATED media field still holds
  * a photograph the designer attached before the registry moved on, and skipping it would send that
  * field's local UUID untranslated — a reference to nothing, in the one place nobody is looking.
+ *
+ * ── A RICH_TEXT FIELD CARRIES MEDIA TOO, AND NOT IN ITS OWN VALUE ─────────────────────────────
+ *
+ * A photograph placed INSIDE a narrative puts its id in an IMAGE block, several levels down in the
+ * document JSON, under a key whose field type is RICH_TEXT and not IMAGE. Translating only the
+ * media-typed keys sent that document up holding this device's own UUID — a reference the server
+ * cannot resolve, in a field nothing validates. Nothing would have failed: the stage would save, the
+ * status would read clean, and the .docx the ministry is handed would come out of
+ * `to_report_blocks` with the photograph silently dropped, because `resolve_media` answers None for
+ * an id no MediaFile row has. The designer would find out from the officer.
+ *
+ * The server has looked inside these documents since the feature was written
+ * (`design_workshops._media_ids` walks the RICH_TEXT fields through `rich_text.media_ids`); it was
+ * the phone that only ever looked at the top level.
  */
 private fun wireData(
     entity: EntityDto,
@@ -1146,6 +1161,10 @@ private fun wireData(
         .filter { DwFieldType.of(it.type).isMedia }
         .map { it.key }
         .toSet()
+    val richKeys = entity.fields
+        .filter { DwFieldType.of(it.type) == DwFieldType.RICH_TEXT }
+        .map { it.key }
+        .toSet()
     val out = LinkedHashMap<String, JsonElement>()
     values.forEach { (key, value) ->
         // `_entryId`, `_ordinal`, `_clientKey` are the protocol's, not the designer's. The server
@@ -1153,6 +1172,10 @@ private fun wireData(
         // a line in every response for something working exactly as designed — and train whoever
         // reads that list to ignore it, which is the one thing it must not become.
         if (key.startsWith("_")) return@forEach
+        if (key in richKeys) {
+            out[key] = swapInlineMediaRefs(value, mediaById, unresolved)
+            return@forEach
+        }
         if (key !in mediaKeys) {
             out[key] = value
             return@forEach
@@ -1161,6 +1184,43 @@ private fun wireData(
     }
     return out
 }
+
+/**
+ * A narrative's inline photographs translated from this device's ids to the server's.
+ *
+ * ── THE PROSE IS NEVER TRIMMED, WHICH IS WHERE THIS DIFFERS FROM [swapMediaRefs] ──────────────
+ *
+ * An unresolved reference in a media FIELD drops the value: the field holds nothing but that
+ * reference, so there is nothing else to lose, and the stage is held back until the upload lands. A
+ * narrative is not like that. Dropping it would throw away a page of a designer's writing to avoid
+ * sending one id, so the document goes through UNCHANGED and the id is recorded as unresolved —
+ * which holds the whole stage back (see `pushStages`) until the photograph has uploaded and the
+ * translation can be made properly. Nothing is sent wrong and nothing is thrown away; the stage is
+ * simply late, by exactly as long as one upload.
+ *
+ * An id that is not one of this device's descriptors is left alone for the reason [swapMediaRefs]
+ * gives: it is a server id already, from a stage seeded from the server or a workshop being edited
+ * on a second device, and treating it as unresolvable would hold that stage back for ever waiting on
+ * an upload that has already happened.
+ *
+ * Returns the value UNCHANGED — the same instance — when no id moves, so a narrative with no
+ * photograph in it cannot change the payload's signature and re-upload a stage nobody touched.
+ */
+private fun swapInlineMediaRefs(
+    value: JsonElement,
+    mediaById: Map<String, DraftMedia>,
+    unresolved: MutableSet<String>,
+): JsonElement = remapInlineMedia(value) { token ->
+    val descriptor = mediaById[token]
+    when {
+        descriptor == null -> null
+        descriptor.isConfirmedRemote -> descriptor.remoteMediaId
+        else -> {
+            unresolved += token
+            null
+        }
+    }
+} ?: value
 
 /**
  * Translate a media field's value from this device's ids to the server's.

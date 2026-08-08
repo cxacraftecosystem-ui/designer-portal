@@ -2,7 +2,11 @@ package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.report.Align
 import com.designprototype.workshop.report.BlockKind
+import com.designprototype.workshop.report.IMAGE_DEFAULT_WIDTH_PCT
+import com.designprototype.workshop.report.IMAGE_MAX_WIDTH_PCT
+import com.designprototype.workshop.report.IMAGE_MIN_WIDTH_PCT
 import com.designprototype.workshop.report.MAX_BLOCKS
+import com.designprototype.workshop.report.MAX_MEDIA_ID_CHARS
 import com.designprototype.workshop.report.MAX_DOCUMENT_CHARS
 import com.designprototype.workshop.report.MAX_HEADING_LEVEL
 import com.designprototype.workshop.report.MAX_LIST_DEPTH
@@ -491,6 +495,21 @@ fun clearFormatting(doc: RichDoc, range: DocRange): EditResult {
  */
 fun setBlockKind(doc: RichDoc, range: DocRange, kind: String, level: Int = 0): EditResult {
     val parsed = KIND_BY_NAME[kind.uppercase()] ?: return EditResult(doc, clampRange(doc, range))
+    // PROSE CANNOT BE RE-KINDED INTO A STRUCTURAL BLOCK EITHER, and this is the half of the guard
+    // that TypeScript gets from its type system and Kotlin has to state.
+    //
+    // The web's `setBlockKind` takes a `RichBlockKind`, so "make this paragraph a TABLE" is not a
+    // call anybody can write; this one takes a STRING, because the toolbar reports a press as one
+    // (see `RichTextToolbar`), and `KIND_BY_NAME` has resolved "TABLE" and "IMAGE" ever since those
+    // constants were added to stop the phone destroying them. So the token got through, the block
+    // below it re-kinded a bulleted item to TABLE, and the result was a TABLE with no `rows` — which
+    // `toJson` writes as an empty grid and `fromJson` then DROPS on the next read, because a table
+    // with nothing in it is not a table. The designer's sentence was on screen until they reopened
+    // the stage and then simply was not there.
+    //
+    // No control passes either token today, so this closed a hole rather than a bug in the field.
+    // It is stated anyway because the caller is a string and the next caller is not in this file.
+    if (parsed.isStructural) return EditResult(doc, clampRange(doc, range))
     return setBlockKindIn(doc, range, parsed, level)
 }
 
@@ -681,16 +700,88 @@ fun insertDoc(doc: RichDoc, range: DocRange, incoming: RichDoc): EditResult {
 // --------------------------------------------------------------------------------------
 // Inline photographs
 //
-// The block's [RichBlock.media] is the picture and its spans are the CAPTION, which is why this is
-// the only image-specific command here: everything else a designer does to a caption — typing in
-// it, bolding a word of it, moving the caret through it — is the ordinary prose path, because a
-// caption IS prose and `RichBlock.text` returns it.
+// The block's [RichBlock.media] is the picture and its spans are the CAPTION, which is why these
+// three are the only image-specific commands there are: everything else a designer does to a caption
+// — typing in it, bolding a word of it, moving the caret through it — is the ordinary prose path,
+// because a caption IS prose and `RichBlock.text` returns it.
 //
-// THE PHONE CANNOT YET PLACE ONE; it can only ever be handed one. A photograph inside a narrative
-// is inserted on the web (`insertImage` in `frontend/lib/richText.ts`), and the handset opens that
-// same field. So the commands that matter here are the ones that must not DESTROY it — see
-// [deleteBackward] and [splitBlock], and `RichTextInlineImageTest` for what each one used to do.
+// The other half of the feature is the commands that must not DESTROY one, and those are not here
+// because they are not image commands: see the IMAGE rungs of [deleteBackward] and [splitBlock], the
+// `isStructural` guards in [clearFormatting] and [setBlockKind], and the two tests that pin them.
 // --------------------------------------------------------------------------------------
+
+/**
+ * Place a photograph at the caret, and leave the caret in its caption — the port of `insertImage` in
+ * `frontend/lib/richText.ts`.
+ *
+ * AFTER the caret's block rather than splitting it. A photograph dropped into the middle of a
+ * sentence would cut the sentence in two, and nobody who presses "Photograph" means that.
+ *
+ * NO TRAILING PARAGRAPH, which is the one place this differs from how a table would be inserted. A
+ * table needs one because the model's caret cannot address a cell, so no keystroke inside a table can
+ * ever create the block after it. An image block's own text IS its caption and IS addressable, so
+ * Enter in the caption opens a paragraph below (see [splitBlock]) — and inserting a blank one here
+ * instead would leave a stray empty line under every photograph a designer chose not to caption.
+ *
+ * A BLANK ID IS REFUSED RATHER THAN INSERTED. Both parsers drop an IMAGE block with no id, so a
+ * placeholder would vanish at the next reload and the designer would blame the upload for a picture
+ * that was never referenced. The caller finds out here, while it can still say so.
+ */
+fun insertImage(
+    doc: RichDoc,
+    range: DocRange,
+    media: String,
+    caption: String = "",
+    widthPct: Float = IMAGE_DEFAULT_WIDTH_PCT,
+): EditResult {
+    val id = jsTrim(cleanText(media)).take(MAX_MEDIA_ID_CHARS)
+    if (id.isEmpty()) return EditResult(doc, range)
+
+    val blocks = doc.blocks.toMutableList()
+    // An empty document has no block to insert AFTER, and the web's own answer here is a caret
+    // naming block 1 of a one-block document — harmless in a DOM and an IndexOutOfBoundsException
+    // when Compose maps it onto a real text field. One empty paragraph is added so the figure has
+    // somewhere to be second to, which is also what `forEditing` would have produced anyway.
+    if (blocks.isEmpty()) blocks.add(RichBlock())
+    val point = clampPoint(RichDoc(blocks), normaliseRange(doc, range).anchor)
+
+    // A newline in a caption is the one thing the model's parser has to repair: a span holding one
+    // makes a single block print as two paragraphs in the .docx and as one gapped line in the PDF.
+    val text = NEWLINE_RUN.replace(cleanText(caption), " ")
+    blocks.splice(
+        point.block + 1,
+        0,
+        RichBlock(
+            kind = BlockKind.IMAGE,
+            spans = if (text.isEmpty()) emptyList() else listOf(makeSpan(text)),
+            media = id,
+            widthPct = widthPct.coerceIn(IMAGE_MIN_WIDTH_PCT, IMAGE_MAX_WIDTH_PCT),
+        ),
+    )
+    val next = RichDoc(blocks.take(MAX_BLOCKS))
+    return EditResult(next, collapsedAt(clampPoint(next, DocPoint(point.block + 1, text.length))))
+}
+
+/**
+ * Widen or narrow the photograph at [block] by one step, clamped to the model's own bounds — the
+ * port of `setImageWidth`.
+ *
+ * A STEP RATHER THAN A NUMBER, because this is the only size control there is and a box asking a
+ * designer for a percentage of a text column they cannot see is a question nobody can answer. The
+ * clamp is the parser's own: a client that stored 120 would show one width on screen and print
+ * another, because `fromJson` would pull it back to 100 on the next read.
+ */
+fun setImageWidth(doc: RichDoc, block: Int, delta: Float): EditResult {
+    val target = doc.blocks.getOrNull(block)
+    val selection = collapsedAt(clampPoint(doc, DocPoint(block, target?.text?.length ?: 0)))
+    if (target == null || target.kind != BlockKind.IMAGE) return EditResult(doc, selection)
+    // `Math.round` on a Float is floor(x + 0.5), which is what JavaScript's `Math.round` does for
+    // the halves too — the two clients must not disagree about 65.5.
+    val widthPct = Math.round(target.widthPct + delta).toFloat()
+        .coerceIn(IMAGE_MIN_WIDTH_PCT, IMAGE_MAX_WIDTH_PCT)
+    if (widthPct == target.widthPct) return EditResult(doc, selection)
+    return EditResult(replaceBlock(doc, block, target.copy(widthPct = widthPct)), selection)
+}
 
 /**
  * Remove the photograph at [block], its caption with it. The caret lands at the end of the block
@@ -749,8 +840,6 @@ fun splitBlock(doc: RichDoc, range: DocRange): EditResult {
     val block = blocks[point.block]
     val length = blockLength(block)
 
-    // Checked FIRST, matching the web's order: a caption is prose, so it would otherwise reach the
-    // list/quote and heading arms below and be split like any other run of text.
     // Checked FIRST, matching the web's order: a caption is prose, so it would otherwise reach the
     // list/quote and heading arms below and be split like any other run of text.
     if (block.kind == BlockKind.IMAGE) {
@@ -1394,7 +1483,12 @@ fun richTextOpsSelfCheck(): List<String> {
     check("paragraph to list starts at depth 0", setBlockKind(docOf(blockOf("a")), caretAt(0, 0), "BULLET_ITEM").doc.blocks[0].level == 0)
     check("a heading with no level is level 1", setBlockKind(nestedBullet, caretAt(0, 0), "HEADING").doc.blocks[0].level == 1)
     check("a heading level is capped at 4", setBlockKind(nestedBullet, caretAt(0, 0), "HEADING", 9).doc.blocks[0].level == MAX_HEADING_LEVEL)
-    check("an unknown kind changes nothing", setBlockKind(nestedBullet, caretAt(0, 0), "TABLE").doc === nestedBullet)
+    check("an unknown kind changes nothing", setBlockKind(nestedBullet, caretAt(0, 0), "MARQUEE").doc === nestedBullet)
+    // "TABLE" used to BE the unknown token in the check above, and stopped being one the day the
+    // constant was added. It resolved, the block was re-kinded, and the result was a TABLE with no
+    // rows — which `fromJson` drops entirely, taking the designer's line with it.
+    check("prose cannot be re-kinded into a table", setBlockKind(nestedBullet, caretAt(0, 0), "TABLE").doc === nestedBullet)
+    check("prose cannot be re-kinded into a photograph", setBlockKind(nestedBullet, caretAt(0, 0), "IMAGE").doc === nestedBullet)
     check("align applies to the touched block", setAlign(nestedBullet, caretAt(0, 0), "CENTER").doc.blocks[0].align == Align.CENTER)
     check("an unknown align changes nothing", setAlign(nestedBullet, caretAt(0, 0), "MIDDLE").doc === nestedBullet)
     val deepest = docOf(blockOf("a", BlockKind.BULLET_ITEM, level = MAX_LIST_DEPTH))
@@ -1469,6 +1563,21 @@ fun richTextOpsSelfCheck(): List<String> {
     check("replace all reports its count", replaced.count == 3)
     check("replace all works backwards without corrupting offsets", textsOf(replaced.doc) == listOf("silk and silk", "silk"))
     check("replace keeps the marks of what it replaced", replaceAll(docOf(RichBlock(spans = listOf(spanOf("cotton", Mark.BOLD)))), "cotton", "silk").doc.blocks[0].spans.single().marks == setOf(Mark.BOLD))
+
+    // --- inline photographs -----------------------------------------------------------------
+    val prose = docOf(blockOf("before"), blockOf("after"))
+    val placed = insertImage(prose, caretAt(0, 3), "media-42", "a loom")
+    check("a photograph goes AFTER the caret's block, never splitting it", textsOf(placed.doc) == listOf("before", "a loom", "after"))
+    check("the placed block is an IMAGE holding the id", placed.doc.blocks[1].let { it.kind == BlockKind.IMAGE && it.media == "media-42" })
+    check("the caret lands at the end of the new caption", placed.selection == caretAt(1, "a loom".length))
+    check("a blank id is refused rather than inserted", insertImage(prose, caretAt(0, 0), "   ").doc === prose)
+    check("a caption's newline becomes a space", insertImage(prose, caretAt(0, 0), "m", "a\nb").doc.blocks[1].text == "a b")
+    check("the width is clamped on the way in", insertImage(prose, caretAt(0, 0), "m", "", 500f).doc.blocks[1].widthPct == IMAGE_MAX_WIDTH_PCT)
+    check("an empty document still gets a caption to stand in", insertImage(RichDoc(), caretAt(0, 0), "m", "c").selection == caretAt(1, 1))
+    val narrowed = setImageWidth(placed.doc, 1, -10f)
+    check("the width steps down", narrowed.doc.blocks[1].widthPct == IMAGE_DEFAULT_WIDTH_PCT - 10f)
+    check("the width stops at the floor", setImageWidth(narrowed.doc, 1, -900f).doc.blocks[1].widthPct == IMAGE_MIN_WIDTH_PCT)
+    check("the width command ignores prose", setImageWidth(prose, 0, 10f).doc === prose)
 
     // --- degenerate documents, which the web crashes on ------------------------------------
     val nothing = RichDoc()

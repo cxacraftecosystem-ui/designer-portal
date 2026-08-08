@@ -1,5 +1,8 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -16,8 +19,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,6 +36,8 @@ import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -54,8 +63,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.report.Align
 import com.designprototype.workshop.report.BlockKind
+import com.designprototype.workshop.report.IMAGE_MAX_WIDTH_PCT
+import com.designprototype.workshop.report.IMAGE_MIN_WIDTH_PCT
 import com.designprototype.workshop.report.Mark
 import com.designprototype.workshop.report.RichBlock
 import com.designprototype.workshop.report.RichDoc
@@ -65,6 +78,7 @@ import com.designprototype.workshop.report.toJson
 import com.designprototype.workshop.ui.Text
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import java.io.File
 
 /**
  * The rich text editor: bold, italic, underline, strike, headings, quotes, lists, alignment and
@@ -306,6 +320,28 @@ fun RichTextEditor(
      * designer is inside a numbered item the moment the field opens. See [seedAsList].
      */
     listKind: BlockKind? = null,
+    /**
+     * Where a photograph placed inside this narrative gets its bytes copied to, and how a stored id
+     * is resolved back to a file — the stage screen's own media bridge.
+     *
+     * NULL IS ORDINARY AND MEANS "THIS FIELD CANNOT PLACE ONE". Only the stage screen knows which
+     * workshop's directory the bytes belong in (see [DwMediaBridge]), so a field drawn in a preview
+     * has no bridge and therefore no Photograph button. It still RENDERS an IMAGE block that is
+     * already in the document — it simply cannot resolve the picture, so it draws the plate that
+     * says so.
+     */
+    media: DwMediaBridge? = null,
+    /**
+     * The field this editor is drawing, which the import needs so the descriptor it writes records
+     * WHICH field the photograph answers.
+     *
+     * Passed separately from [media] rather than reached for, and both are needed before the button
+     * appears: `DwMediaBridge.attach` takes the field, and a descriptor filed under the wrong key is
+     * a photograph that shows up in the wrong part of the media annexure.
+     */
+    mediaField: FieldDto? = null,
+    onMessage: (String) -> Unit = {},
+    onError: (String) -> Unit = {},
 ) {
     // Read unconditionally, at the top level, because it is a composable call and the button below
     // sits behind an `if`. Reading it inside that branch would make the call site conditional,
@@ -374,6 +410,54 @@ fun RichTextEditor(
         lastWasTyping = false
         fieldValues.clear()
         emit(snapshot.first)
+    }
+
+    // ── PLACING A PHOTOGRAPH INSIDE THE PROSE ────────────────────────────────────────────────
+    //
+    // WHERE THE PICTURE WILL GO IS DECIDED WHEN THE BUTTON IS PRESSED, not when the file comes
+    // back. Opening the system picker takes the focus out of this field entirely, and the callback
+    // runs a whole activity result later; reading the caret then would drop the photograph into
+    // whichever block the designer had wandered to, or into block 0 if focus had been lost. The web
+    // pins the anchor for the same reason (`imageAnchorRef` in `RichTextEditor.tsx`).
+    var imageAnchor by remember { mutableStateOf<DocRange?>(null) }
+
+    // Declared unconditionally, like `dictationAvailable` above: `rememberLauncherForActivityResult`
+    // is a composable call, and putting it behind the `if` that draws the button would make the call
+    // site conditional — which Compose forbids and which crashes the moment the toolbar appears.
+    val pickPhotograph = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        val bridge = media
+        val field = mediaField
+        val anchor = imageAnchor ?: selection
+        imageAnchor = null
+        if (uri == null || bridge == null || field == null) return@rememberLauncherForActivityResult
+        // THE APP'S OWN IMPORT PATH, never a second one. `attach` copies the bytes into the
+        // workshop's media directory under filesDir, hashes them, and registers a descriptor — which
+        // is what makes the id resolvable by the on-device report writer AND uploadable by the sync
+        // engine. A picture referenced by a picker Uri instead would render in this editor and be
+        // missing from the file a ministry receives: the permission grant dies with the task and
+        // nothing would ever have uploaded it.
+        bridge.attach(listOf(uri), field) { newIds ->
+            val id = newIds.firstOrNull() ?: return@attach
+            val item = bridge.resolve(id)
+            // No renderer of this document can draw a video or a PDF inline — `ImageBlock` takes an
+            // `ImageRef` — so a non-image is refused and its import undone rather than left in the
+            // draft as bytes nothing references and no row can delete.
+            if (item == null || !item.mediaType.equals("IMAGE", ignoreCase = true)) {
+                bridge.detach(id)
+                onError(
+                    "Only a photograph can be placed inside a narrative. Video, audio and documents " +
+                        "belong in this stage's own media fields."
+                )
+                return@attach
+            }
+            commit(insertImage(doc, anchor, id), moveFocus = true)
+            onMessage(
+                "Photograph placed. The line under it is its caption — it prints beneath the " +
+                    "picture, and it can be formatted like any other sentence."
+            )
+        }
     }
 
     // ADOPTING AN EXTERNAL VALUE. Only when it is genuinely a different document from the one this
@@ -462,6 +546,20 @@ fun RichTextEditor(
                         restore(snapshot)
                     }
                 },
+                // Offered only when there is somewhere to put the bytes AND a field to file them
+                // under. See the `media` parameter: a preview has neither, and a button that failed
+                // when pressed would be worse than one that is not there.
+                onInsertImage = if (media != null && mediaField != null) {
+                    {
+                        imageAnchor = selection
+                        // "image/*" rather than "*/*": the refusal below is the backstop for a file
+                        // manager that ignores the filter, not the primary control. Asking for
+                        // photographs is what makes the gallery open on photographs.
+                        pickPhotograph.launch("image/*")
+                    }
+                } else {
+                    null
+                },
             )
             // DICTATION, INTO THE MODEL RATHER THAN ONTO THE END OF A STRING.
             //
@@ -523,6 +621,13 @@ fun RichTextEditor(
                     focusRequester = focusRequesters.getOrPut(index) { FocusRequester() },
                     fieldValues = fieldValues,
                     caret = if (selection.focus.block == index) selection.focus.offset else null,
+                    // Resolved HERE rather than inside the row, because the resolver is an index of
+                    // the descriptors THIS DEVICE imported: a picture placed on the web carries a
+                    // server id and answers null, which is a different thing to draw and not an
+                    // error. See [InlinePhotograph].
+                    photograph = if (block.kind == BlockKind.IMAGE) media?.resolve(block.media) else null,
+                    onRemoveImage = { commit(removeImage(doc, index), moveFocus = true) },
+                    onWidthStep = { delta -> commit(setImageWidth(doc, index, delta), moveFocus = false) },
                     onFocused = { focused ->
                         if (focused) {
                             focusedBlock = index
@@ -583,6 +688,10 @@ private fun RichTextBlockRow(
     focusRequester: FocusRequester,
     fieldValues: SnapshotStateMap<Int, TextFieldValue>,
     caret: Int?,
+    /** The resolved picture for an IMAGE block, or null when this device does not hold its bytes. */
+    photograph: DwMediaItem?,
+    onRemoveImage: () -> Unit,
+    onWidthStep: (Float) -> Unit,
     onFocused: (Boolean) -> Unit,
     onSelectionChanged: (TextRange) -> Unit,
     onTextEdit: (TextEdit) -> Unit,
@@ -619,14 +728,21 @@ private fun RichTextBlockRow(
     // holding a line of prose — or, for an uncaptioned picture, as an EMPTY text field
     // indistinguishable from a blank paragraph. A designer had no way to know a photograph was
     // there at all, which is precisely what made Backspace at the start of that line delete one
-    // without anybody noticing (see [deleteBackward]). The keystroke is fixed; this is so the
-    // designer can see what the keystroke is now acting on.
+    // without anybody noticing (see [deleteBackward]).
     //
     // Emitted as a SIBLING of the row below rather than inside a wrapper: this composable is called
     // from the editor's own block `Column`, so two emissions stack in it and pick up its
     // `spacedBy(2.dp)`. A wrapper here would add a second, redundant layout node per block, in the
     // one place that recomposes on every keystroke of a forty-page narrative.
-    if (block.kind == BlockKind.IMAGE) InlinePhotographPlate()
+    if (block.kind == BlockKind.IMAGE) {
+        InlinePhotograph(
+            block = block,
+            item = photograph,
+            enabled = enabled,
+            onRemove = onRemoveImage,
+            onWidthStep = onWidthStep,
+        )
+    }
 
     Row(
         modifier = Modifier
@@ -715,67 +831,166 @@ private fun RichTextBlockRow(
 }
 
 /**
- * The plate drawn above an inline photograph's caption, saying that a picture is there and what
- * this device will do with it.
+ * The figure drawn above an inline photograph's caption: the picture itself where this device holds
+ * it, an honest plate where it does not, and the three things a designer can do to it.
  *
- * ── WHY IT IS A WORDED PLATE AND NOT THE PHOTOGRAPH ───────────────────────────────────────────
+ * ── THE TWO CASES, AND WHY BOTH ARE REAL ──────────────────────────────────────────────────────
  *
- * Because the handset cannot draw it. A photograph inside a narrative is placed in the WEB editor
- * (`insertImage` in `frontend/lib/richText.ts`), so `RichBlock.media` holds a SERVER media id;
- * every resolver on this side — `DwMediaBridge.resolve`, and the report's own `imageFor` — is
- * `draft.media.associateBy { it.id }`, an index of the descriptors this device imported itself. A
- * server id is not in it. So an `AsyncImage` here would have nothing to load in every case that
- * can actually occur today, and a branch that can never be taken is the kind of complete-looking
- * dark code this feature already has too much of.
+ * `RichBlock.media` is resolved through `DwMediaBridge.resolve`, which is
+ * `draft.media.associateBy { it.id }` — an index of the descriptors THIS DEVICE imported. Two
+ * different ids reach it:
  *
- * ── WHY IT SAYS WHAT IT SAYS ──────────────────────────────────────────────────────────────────
+ *  * one this handset placed, through the Photograph button. The bytes are in the workshop's own
+ *    media directory, the resolver finds them, the picture is drawn at the width it will print at,
+ *    and the report exported from this phone contains it. This is the whole point of the feature.
+ *  * one placed in the WEB editor, where `media` is a SERVER MediaFile id. Nothing on this device
+ *    has those bytes, so the resolver answers null. That is not an error and not a missing file — it
+ *    is a picture that lives somewhere else.
  *
- * The second sentence is not a hedge, it is the fact that matters most in the room. `toReportBlocks`
- * drops an IMAGE block whose media the resolver cannot find — deliberately, because a placeholder
- * box in a document handed to a ministry officer is worse than an honest gap — so the report
- * EXPORTED FROM THIS HANDSET does not contain this photograph, while the one generated on the
- * server does. That difference is invisible until the file is open, and the on-device copy is the
- * one handed over at the close of a workshop. A designer who is told here can ask for the server's
- * copy; a designer who is not told finds out in front of the officer.
+ * ── WHY THE PLATE SAYS WHAT IT SAYS ───────────────────────────────────────────────────────────
+ *
+ * `toReportBlocks` drops an IMAGE block whose media the resolver cannot find — deliberately, because
+ * a placeholder box in a document handed to a ministry officer is worse than an honest gap. So the
+ * report EXPORTED FROM THIS HANDSET does not contain a web-placed photograph, while the one
+ * generated on the server does. That difference is invisible until the file is open, and the
+ * on-device copy is the one handed over at the close of a workshop. A designer who is told here can
+ * ask for the server's copy; a designer who is not told finds out in front of the officer.
  *
  * Deliberately NOT a warning tone. Nothing is broken and the designer has done nothing wrong — the
  * picture is safely in the record and prints in the authoritative file. Amber here would train
  * people to ignore amber.
  *
- * ⚠ THE DAY THE HANDSET CAN PLACE A PHOTOGRAPH, BOTH SENTENCES STOP BEING TRUE for a picture
- * captured on this device: it would have a local descriptor, it could be drawn, and it would print
- * in the on-device report. Whoever adds insertion has to come here — resolve [RichBlock.media]
- * through the bridge and draw the bytes when they are present — rather than leaving a caption
- * under a sentence that says the opposite.
+ * ── THE WIDTH IS SHOWN, NOT JUST STORED ───────────────────────────────────────────────────────
+ *
+ * `fillMaxWidth(widthPct / 100)` is the same fraction of the text column that [ImageBlock] prints
+ * at, so the two steppers move something the designer can see rather than a number they have to
+ * imagine. A control whose effect is invisible until the export is a control nobody uses correctly.
  */
 @Composable
-private fun InlinePhotographPlate() {
-    Row(
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 6.dp, bottom = 2.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+private fun InlinePhotograph(
+    block: RichBlock,
+    item: DwMediaItem?,
+    enabled: Boolean,
+    onRemove: () -> Unit,
+    onWidthStep: (Float) -> Unit,
+) {
+    // `isFile` and not `exists()`: a blank relative path resolves to the workshop DIRECTORY, which
+    // exists, and handing a directory to the loader draws an empty box that reads as a corrupt
+    // photograph rather than as an absent one.
+    val onDisk = remember(item?.absolutePath) {
+        item?.absolutePath?.let { File(it).isFile } ?: false
+    }
+    val drawable = onDisk && item != null && item.mediaType.equals("IMAGE", ignoreCase = true)
+    val caption = block.text.trim()
+
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        // The icon is a companion to the words, never the signal itself: it is decorative to a
-        // screen reader (`contentDescription = null`) because the sentence beside it already says
-        // everything the icon is hinting at, and announcing both reads the same fact twice.
-        Icon(
-            Icons.Filled.Image,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp).padding(top = 1.dp),
-        )
-        Column {
-            Text("Photograph — the line below is its caption", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Text(
-                "The picture is not stored on this device, so a report exported here leaves it out. " +
-                    "It is in the report generated on the server.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        if (drawable) {
+            AsyncImage(
+                model = Uri.fromFile(File(item!!.absolutePath)),
+                // The CAPTION is the description when there is one — it is the sentence the designer
+                // wrote about this picture, and it is what prints under it. A generic label would
+                // read the same for all nine photographs in a narrative.
+                contentDescription = caption.ifEmpty { "Photograph placed in this narrative" },
+                // Fit, never Crop. A crop here would show a designer a framing the report does not
+                // print, and the one thing this figure is for is that the screen matches the file.
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth(
+                        block.widthPct.coerceIn(IMAGE_MIN_WIDTH_PCT, IMAGE_MAX_WIDTH_PCT) / 100f
+                    )
+                    .align(Alignment.CenterHorizontally)
+                    .clip(RoundedCornerShape(8.dp)),
             )
+        } else {
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                // The icon is a companion to the words, never the signal itself: it is decorative to
+                // a screen reader (`contentDescription = null`) because the sentence beside it
+                // already says everything the icon is hinting at, and announcing both reads the same
+                // fact twice.
+                Icon(
+                    Icons.Filled.Image,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp).padding(top = 1.dp),
+                )
+                Column {
+                    Text(
+                        "Photograph — the line below is its caption",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        "The picture is not stored on this device, so a report exported here " +
+                            "leaves it out. It is in the report generated on the server.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        // The figure's own controls. "The structural kinds are removed by their OWN controls" is the
+        // rule `BlockKind.isStructural` states, and this is that control: without it the only way to
+        // delete a photograph is Backspace at the very start of its caption, which is a gesture
+        // nobody finds on purpose.
+        if (enabled) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    "${block.widthPct.toInt()}% of the page width",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(4.dp))
+                // A STEP, not a number. See `setImageWidth`: asking a designer for a percentage of a
+                // text column they cannot see is a question nobody can answer, and the steppers are
+                // disabled at the bounds rather than silently doing nothing.
+                IconButton(
+                    onClick = { onWidthStep(-10f) },
+                    enabled = block.widthPct > IMAGE_MIN_WIDTH_PCT,
+                    modifier = Modifier.size(30.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Remove,
+                        contentDescription = "Narrower",
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                IconButton(
+                    onClick = { onWidthStep(10f) },
+                    enabled = block.widthPct < IMAGE_MAX_WIDTH_PCT,
+                    modifier = Modifier.size(30.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = "Wider",
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                IconButton(onClick = onRemove, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        Icons.Filled.Close,
+                        // "Remove photograph", not "Remove": the caption goes with it, and a screen
+                        // reader user pressing this must know it is the figure and not the line of
+                        // text they were just editing.
+                        contentDescription = "Remove photograph",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
         }
     }
 }
