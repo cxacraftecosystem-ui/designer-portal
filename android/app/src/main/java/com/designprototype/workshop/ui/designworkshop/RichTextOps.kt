@@ -464,10 +464,19 @@ fun clearFormatting(doc: RichDoc, range: DocRange): EditResult {
         val from = if (index == start.block) start.offset else 0
         val to = if (index == end.block) end.offset else length
         val middle = sliceSpans(block.spans, from, to).map { it.copy(marks = emptySet()) }
-        blocks[index] = withSpans(
+        val cleared = withSpans(
             block,
             sliceSpans(block.spans, 0, from) + middle + sliceSpans(block.spans, to, length),
-        ).copy(kind = BlockKind.PARAGRAPH, align = Align.LEFT, level = 0)
+        )
+        // A TABLE and an IMAGE KEEP THEIR KIND. "Clear formatting" means "make this look like the
+        // rest of the document", not "delete my grid" — and re-kinding either to PARAGRAPH does
+        // delete it, because `toStored` writes `rows` and `media` only for the kind that owns them.
+        // The marks still come off the caption, which is what the designer actually asked for.
+        blocks[index] = if (block.kind.isStructural) {
+            cleared
+        } else {
+            cleared.copy(kind = BlockKind.PARAGRAPH, align = Align.LEFT, level = 0)
+        }
     }
     return EditResult(RichDoc(blocks), clamped)
 }
@@ -490,6 +499,11 @@ private fun setBlockKindIn(doc: RichDoc, range: DocRange, kind: BlockKind, level
     val blocks = doc.blocks.toMutableList()
     for (index in blocksInRange(doc, clamped)) {
         val block = blocks[index]
+        // The same protection as [clearFormatting]: a selection running from a paragraph THROUGH a
+        // table or a photograph and back must restyle the prose and leave the structural kinds
+        // alone. Their own controls are how they are removed, and a heading button that silently
+        // discarded a grid would be a very expensive misclick.
+        if (block.kind.isStructural) continue
         blocks[index] = block.copy(
             kind = kind,
             level = when {
