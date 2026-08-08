@@ -190,9 +190,11 @@ import com.designprototype.workshop.ui.rememberCarryPrefill
 import com.designprototype.workshop.ui.Coral
 import com.designprototype.workshop.ui.ConsolidatedQuestionnaireScreen
 import com.designprototype.workshop.ui.DataBrowserScreen
+import com.designprototype.workshop.ui.RecordCodeSection
 // The Design & Prototype Workshop capture surface. Four screens, all of them rendered entirely
 // from the field registry — see ui/designworkshop/FieldRenderer.kt for why there is no per-stage
 // form code here or anywhere else.
+import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
 import com.designprototype.workshop.ui.designworkshop.DwLanguagePackOfferCard
@@ -2441,12 +2443,19 @@ private fun searchFocusLabel(recordType: String): String = when (recordType) {
 }
 
 /**
- * The record type a search hit belongs to, as the app's own [EntryMode].
+ * The record type a search hit — or a scanned code — belongs to, as the app's own [EntryMode].
  *
  * [SearchRecordTypes] is the contract the search screen reports against; anything unrecognised falls
  * back to ARTISAN rather than throwing, because a new bucket appearing server-side must not crash a
  * tap. MEDIA is included: it has no edit form (the web opens the object itself), and [EditScreen]
  * shows the file with its transcript instead.
+ *
+ * IT COVERS MORE THAN THE FIVE SEARCH BUCKETS, and deliberately. `RecordCodeLookupPanel` reports
+ * through this same callback using [DwWorkshopRecordType.wire], which is the identical singular
+ * vocabulary and reaches three types `GET /search` has no bucket for — a craft, a process and an
+ * interview. Routing them here rather than in a second mapper beside it is what keeps a scanned code
+ * and a tapped result landing on one screen; a code that fell through to `else` would have opened
+ * somebody's craft as an artisan.
  */
 private fun searchRecordEntryMode(recordType: String): EntryMode = when (recordType) {
     SearchRecordTypes.ARTISAN -> EntryMode.ARTISAN
@@ -2454,6 +2463,9 @@ private fun searchRecordEntryMode(recordType: String): EntryMode = when (recordT
     SearchRecordTypes.PRODUCT -> EntryMode.PRODUCT
     SearchRecordTypes.TOOL -> EntryMode.TOOL
     SearchRecordTypes.MEDIA -> EntryMode.MEDIA
+    DwWorkshopRecordType.CRAFT.wire -> EntryMode.CRAFT
+    DwWorkshopRecordType.PROCESS.wire -> EntryMode.PROCESS
+    DwWorkshopRecordType.QUESTIONNAIRE.wire -> EntryMode.QUESTIONNAIRE
     else -> EntryMode.ARTISAN
 }
 
@@ -5793,6 +5805,10 @@ private fun EditScreen(
                     onDone = onDone,
                     onError = onError
                 )
+                // THE RECORD'S OWN CODE, drawn live from its id and stored nowhere — see
+                // [RecordCodeSection]. It is the same payload the workshop roster card carries, so a
+                // card cut off a printed sheet in January and this screen in June are one code.
+                RecordCodeSection(repository, DwWorkshopRecordType.ARTISAN, recordId, d.name)
                 ArtisanQuestionnairePanel(answers = answers, loading = answersLoading)
             }
         }
@@ -5804,15 +5820,20 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load product") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else ProductForm(
-                repository = repository,
-                crafts = crafts,
-                artisans = artisans,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                ProductForm(
+                    repository = repository,
+                    crafts = crafts,
+                    artisans = artisans,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.PRODUCT, recordId, d.productName)
+            }
         }
         EntryMode.PROCESS -> {
             var detail by remember(recordId) { mutableStateOf<ProcessDetailDto?>(null) }
@@ -5822,13 +5843,18 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load process") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else ProcessForm(
-                repository = repository,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                ProcessForm(
+                    repository = repository,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.PROCESS, recordId, d.name)
+            }
         }
         EntryMode.TOOL -> {
             var detail by remember(recordId) { mutableStateOf<ToolDetailDto?>(null) }
@@ -5838,15 +5864,20 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load tool") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else ToolForm(
-                repository = repository,
-                crafts = crafts,
-                artisans = artisans,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                ToolForm(
+                    repository = repository,
+                    crafts = crafts,
+                    artisans = artisans,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.TOOL, recordId, d.toolkitName)
+            }
         }
         EntryMode.WORKSHOP -> {
             var detail by remember(recordId) { mutableStateOf<WorkshopDetailDto?>(null) }
@@ -5856,14 +5887,19 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load workshop") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else WorkshopForm(
-                repository = repository,
-                artisans = artisans,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                WorkshopForm(
+                    repository = repository,
+                    artisans = artisans,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.WORKSHOP, recordId, d.title)
+            }
         }
         EntryMode.CRAFT -> {
             var detail by remember(recordId) { mutableStateOf<CraftDto?>(null) }
@@ -5873,23 +5909,35 @@ private fun EditScreen(
                     .onFailure { onError(it.message ?: "Unable to load craft") }
             }
             val d = detail
-            if (d == null) LoadingCard(mode) else CraftForm(
-                repository = repository,
-                editing = d,
-                adminView = adminView,
-                onDone = onDone,
-                onError = onError
-            )
+            if (d == null) {
+                LoadingCard(mode)
+            } else {
+                CraftForm(
+                    repository = repository,
+                    editing = d,
+                    adminView = adminView,
+                    onDone = onDone,
+                    onError = onError
+                )
+                RecordCodeSection(repository, DwWorkshopRecordType.CRAFT, recordId, d.name)
+            }
         }
         // A media file has no edit form — the web's search results open the object itself. Search is
         // the only route that lands here, so show the file with its transcript rather than the
         // "cannot be edited" dead end it used to hit.
-        EntryMode.MEDIA -> ViewDataDetail(
-            repository = repository,
-            mode = EntryMode.MEDIA,
-            recordId = recordId,
-            onError = onError
-        )
+        EntryMode.MEDIA -> {
+            ViewDataDetail(
+                repository = repository,
+                mode = EntryMode.MEDIA,
+                recordId = recordId,
+                onError = onError
+            )
+            // A media file has no edit form, but it IS a record somebody created and it has an id, so
+            // it gets a code like everything else. No title is passed: the file's own name is not
+            // loaded on this branch, and inventing one would put a caption on a card that did not come
+            // off the record.
+            RecordCodeSection(repository, DwWorkshopRecordType.MEDIA, recordId)
+        }
         else -> Text("This record type cannot be edited here.", color = Muted)
     }
     if (canDelete && mode != EntryMode.MEDIA && mode != EntryMode.USERS && mode != EntryMode.VIEW_DATA) {
@@ -5933,6 +5981,7 @@ private fun InterviewEditLoader(
             onError = onError,
             onSaved = onDone
         )
+        RecordCodeSection(repository, DwWorkshopRecordType.QUESTIONNAIRE, recordId, d.title)
         if (canDelete) {
             DeleteRecordSection(repository, EntryMode.QUESTIONNAIRE, recordId, onDeleted = onDone, onError = onError)
         }
