@@ -253,3 +253,17 @@ when nothing they can reach is wrong.
 **Note.** Deliberately not fixed in the same pass that found it: the line sits inside the same
 function the web-sync lane was editing concurrently, and two agents in one hunk is how work gets
 lost. It is small and self-contained.
+
+**RESOLVED 2026-08-09, in two halves — and the second half was not in this write-up.** The sentence
+was split on `isSchemaRefusal` (`frontend/lib/offline.ts`) as the Fix above describes. That alone
+left the defect standing, because the RETRY POLICY behind the sentence said the same false thing:
+`noteStageFailure` recorded the refusal `permanent: true`, and a permanent failure is stepped over
+by every future pass — so the app could not recover from a skew even after the skew had closed. That
+is the state it was reported in for the second time: `PUT /design-workshops/{id}/stages/
+CLUSTER_CRAFT_BACKGROUND` with `"merge": true` answered **200** while the banner was still refusing
+to make the request. `blocksRetry` (`frontend/lib/offline.ts`) now re-attempts a schema refusal once
+per app run, at workshop, stage and registry level, in both drains; draft schema v3 re-triages the
+refusals already on disk; and the same policy is mirrored on the handset, which sends the same
+`merge` flag (`android/.../data/WorkshopSync.kt`, `blocksRetry` + `ApiRefusal.schemaSkew`). Pinned by
+`frontend/e2e/schema-skew-retry-unit.spec.ts`, `frontend/e2e/design-workshop-schema-skew.spec.ts` and
+`android/app/src/test/.../DwSchemaSkewRetryTest.kt`.
