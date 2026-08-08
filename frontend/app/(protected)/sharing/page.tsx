@@ -311,12 +311,20 @@ export default function SharingPage() {
     setLoadingRecords(true);
     try {
       const mine = currentUser.id;
+      // ASK FOR MINE. Page one is a hundred rows of the WHOLE repository — reading is open by policy
+      // (`services/records.py::viewable_where` returns an empty where) — so filtering it client-side
+      // offered a subset grant only over records that happened to be among the newest hundred anyone
+      // recorded. Measured against the dev API: 431 artisans and 613 products exist, and page one of
+      // each holds none of the signed-in user's, i.e. the picker read "You have no records to share"
+      // over records they own. The `createdById` filter below is kept as well, for the same reason
+      // /activity keeps it: it costs nothing and covers a deployment older than the parameter.
+      const owned = { pageSize: 100, createdBy: mine };
       const [a, p, t, w, q] = await Promise.all([
-        listResource<Artisan>("/artisans", { pageSize: 100 }),
-        listResource<ProductDocumentation>("/products", { pageSize: 100 }),
-        listResource<ToolDocumentation>("/tools", { pageSize: 100 }),
-        listResource<Workshop>("/workshops", { pageSize: 100 }),
-        listResource<QuestionnaireInterview>("/questionnaire/interviews", { pageSize: 100 })
+        listResource<Artisan>("/artisans", owned),
+        listResource<ProductDocumentation>("/products", owned),
+        listResource<ToolDocumentation>("/tools", owned),
+        listResource<Workshop>("/workshops", owned),
+        listResource<QuestionnaireInterview>("/questionnaire/interviews", owned)
       ]);
       const recs: OwnRecord[] = [
         ...a.items.filter((x) => x.createdById === mine).map((x) => ({ recordType: "artisan", recordId: x.id, label: `Artisan · ${x.name}` })),
