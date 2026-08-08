@@ -7,6 +7,7 @@ import { Search } from "lucide-react";
 
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordCodeScanPanel } from "@/components/RecordCodeScanPanel";
 import { RowActions, rowAction } from "@/components/RowActions";
 import {
   EMPTY_SEARCH_FILTERS,
@@ -253,6 +254,10 @@ export default function SearchPage() {
         description="Search across artisans, workshops, products, tools and media with shared API filters."
         icon={<Search className="h-5 w-5" aria-hidden />}
       />
+      {/* Above the search box on purpose: a scan is a search whose query is exact, so when a designer
+          has the tag in their hand there is nothing to type and nothing to narrow. It reads every
+          record type this app prints a code for and opens the record it names. */}
+      <RecordCodeScanPanel />
       <form onSubmit={submit} className="panel mb-5 grid gap-3 p-4 md:grid-cols-[1fr_220px_auto]">
         <input className="field-input" placeholder="Search repository" value={query} onChange={(event) => setQuery(event.target.value)} />
         <input

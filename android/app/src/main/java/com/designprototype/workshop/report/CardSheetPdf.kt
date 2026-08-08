@@ -79,6 +79,12 @@ private class CardGeometry(val widthMm: Float, val heightMm: Float, val columns:
 private fun geometryFor(recordType: DwWorkshopRecordType): CardGeometry = when (recordType) {
     DwWorkshopRecordType.ARTISAN -> CardGeometry(85f, 54f, 2)
     DwWorkshopRecordType.PROTOTYPE -> CardGeometry(63f, 45f, 3)
+    // Only the two kinds a workshop cuts up are offered as a SHEET. Every other record type carries
+    // its code on its own screen, one at a time, where it is expanded and shared rather than printed
+    // forty to a page. A kind arriving here would be a caller bug, and the honest failure for a
+    // designer mid-export is a smaller card — right symbol, right code — rather than an exception
+    // that loses the whole export.
+    else -> CardGeometry(63f, 45f, 3)
 }
 
 /** Ink. Fixed values, not theme tokens: this is a depiction of paper and does not invert. */
