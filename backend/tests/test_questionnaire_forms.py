@@ -1159,6 +1159,148 @@ async def test_the_report_annexure_prints_a_two_section_form_section_by_section(
 
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
+async def test_a_recorded_answer_is_inside_the_generated_docx_file(client, world):
+    """THE ANSWER, IN THE BYTES OF THE FILE A DESIGNER DOWNLOADS. Not a 200, not a block list.
+
+    The test above stops at ``GET /report/preview``, which returns the document as JSON. That is one
+    hop short of the deliverable, and the gap is not theoretical: a blank-report defect on this
+    project produced a perfectly valid OOXML file — right cover page, openable in Word, nothing in
+    it — and only unzipping it revealed that. Every surface upstream of the writer had said fine.
+
+    So this walks the whole chain a designer's press walks — ``POST /design-workshops/{id}/report``
+    -> ``_report_inputs`` -> ``ANNEXURE_QUESTIONNAIRES`` in the resolved template ->
+    ``attach_report_questionnaires`` -> ``report_items`` -> the builder's one branch ->
+    ``report_docx`` — and then OPENS THE ZIP and reads ``word/document.xml``.
+
+    ON PRESENCE, NOT ON LAYOUT. The assertions are that the respondent's name, the question's
+    wording and the answer's text are somewhere in the document part. Where they sit, which table
+    they are in and how they are styled is the annexure's business and is pinned by the preview test
+    above; pinning it again against XML would make every legitimate typographic change fail here.
+
+    The answer strings are nonsense words on purpose: "12" or "Ramesh" could plausibly appear in a
+    report for some unrelated reason, and an assertion that can pass by accident proves nothing.
+    """
+    workshop = client.post(
+        "/api/design-workshops",
+        json={"title": f"Docx annexure {world['stamp']}"},
+        headers=_headers(world),
+    )
+    assert workshop.status_code == 201, workshop.text
+    workshop_id = workshop.json()["id"]
+
+    created = _upload(
+        client,
+        world,
+        build_questionnaire_workbook(
+            title=f"Docx instrument {world['stamp']}",
+            description=None,
+            questionnaire_id="",
+            version=1,
+            sections=[{
+                "code": "CRAFT",
+                "title": "About the craft",
+                "questions": [{
+                    "id": "",
+                    "prompt": "How many looms do you own?",
+                    "answers": {"Ramesh Meher": "Twelve looms, ZEBRAFISHLOOM"},
+                }],
+            }],
+            entry_labels=["Ramesh Meher"],
+        ),
+    )
+    assert created.status_code == 201, created.text
+    questionnaire_id = created.json()["questionnaire"]["id"]
+
+    attached = client.patch(
+        f"/api/questionnaires/{questionnaire_id}",
+        json={"designWorkshopId": workshop_id},
+        headers=_headers(world),
+    )
+    assert attached.status_code == 200, attached.text
+
+    generated = client.post(
+        f"/api/design-workshops/{workshop_id}/report",
+        json={"formats": ["DOCX"], "record": False},
+        headers=_headers(world),
+    )
+    assert generated.status_code == 200, generated.text
+
+    # A .docx is a zip. `word/document.xml` is the body; a file whose cover page is perfect and
+    # whose body is empty is exactly the shape of the defect this test exists for.
+    with zipfile.ZipFile(BytesIO(generated.content)) as archive:
+        document = archive.read("word/document.xml").decode("utf-8")
+
+    for expected in (
+        "Questionnaire responses",
+        f"Docx instrument {world['stamp']}",
+        "Ramesh Meher",
+        "How many looms do you own?",
+        "ZEBRAFISHLOOM",
+    ):
+        assert expected in document, (
+            f"{expected!r} is not in word/document.xml, so the questionnaire annexure did not "
+            "reach the file the designer downloads"
+        )
+
+
+@pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
+@pytest.mark.anyio
+async def test_the_annexures_own_warning_survives_the_response_header(client, world):
+    """AN ATTACHED QUESTIONNAIRE WITH NO ANSWERS MUST SAY SO, ON THE DEFAULT TEMPLATE.
+
+    THE DEFECT, MEASURED. ``x-report-warnings`` was ``"; ".join(warnings)[:900]``. A DCH_STANDARD
+    workshop — the default — raises about a dozen "required field(s) not recorded" warnings, and the
+    load warnings are appended AFTER them, so on this exact fixture the header carried 8 of 12 and
+    the questionnaire's own warning fell off the end. The designer got a report with no questionnaire
+    annexure and no sentence anywhere saying why: the silent omission this whole feature was written
+    to end, re-created in the transport that reports on it.
+
+    DCH_STANDARD SPECIFICALLY, and that is the point of the fixture rather than an arbitrary choice.
+    The warning survived on PHOTO_CATALOGUE and COMPACT_SUMMARY throughout, so a test written against
+    a short template passes against the broken header.
+    """
+    workshop = client.post(
+        "/api/design-workshops",
+        json={"title": f"Unanswered {world['stamp']}", "templateId": "DCH_STANDARD"},
+        headers=_headers(world),
+    )
+    assert workshop.status_code == 201, workshop.text
+    workshop_id = workshop.json()["id"]
+
+    created = client.post(
+        "/api/questionnaires",
+        json={
+            "title": f"Unanswered instrument {world['stamp']}",
+            "designWorkshopId": workshop_id,
+            "sections": [{
+                "title": "About the craft",
+                "code": "CRAFT",
+                "questions": [{"prompt": "How many looms do you own?", "isRequired": True}],
+            }],
+        },
+        headers=_headers(world),
+    )
+    assert created.status_code == 201, created.text
+
+    generated = client.post(
+        f"/api/design-workshops/{workshop_id}/report",
+        json={"formats": ["DOCX"], "record": False},
+        headers=_headers(world),
+    )
+    assert generated.status_code == 200, generated.text
+    header = generated.headers["x-report-warnings"]
+
+    assert "questionnaire annexure" in header, (
+        "the questionnaire annexure's own warning did not survive the response header, so a "
+        f"designer is told nothing about why the annexure is missing. Header was: {header!r}"
+    )
+    # And the count still describes the whole list rather than the part that fitted.
+    total = int(generated.headers["x-report-warning-count"])
+    assert total >= len([piece for piece in header.split("; ") if piece])
+
+
+@pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
+@pytest.mark.anyio
 async def test_a_colleague_may_answer_a_questionnaire_but_may_not_reword_it(client, world):
     """The split the access model turns on: handing somebody a form to fill in must not hand them
     the ability to reword it halfway through the fieldwork."""
