@@ -920,10 +920,28 @@ export function unsentAfterPush(
   stage: DwDraftStage,
   sent: DwPushedSnapshot
 ): { dirtyAt: number | null; removedFrom: string[] } {
-  // A designer typing — or deleting — while the request is in flight leaves a NEWER `dirtyAt`
-  // behind. `removedFrom` only ever GROWS through `putDraftStage`, which stamps `dirtyAt` in the
-  // same write, so this one comparison answers for both fields.
-  const superseded = stage.dirtyAt !== null && stage.dirtyAt > (sent.dirtyAt ?? 0);
+  const sentDirtyAt = sent.dirtyAt ?? 0;
+  /*
+    THE SECOND TEST IS FOR A CLOCK THAT DID NOT MOVE, and without it this rule still loses the
+    deletion it was written to keep.
+
+    A designer typing — or deleting — while the request is in flight leaves a NEWER `dirtyAt`
+    behind, and that is the ordinary signal: `removedFrom` only ever GROWS through `putDraftStage`,
+    which stamps `dirtyAt` in the same write, so the comparison answers for both fields. But
+    `dirtyAt` is `Date.now()`, and two writes can carry the SAME number — a browser that coarsens
+    the clock against fingerprinting advances it in steps of 100 ms, and the whole race here is
+    measured in milliseconds. A deletion written in the payload's own tick is then not "newer", the
+    flag is cleared by an acknowledgement that never carried it, and the row is back on the
+    designer's screen and in the officer's .docx: the exact failure, one clock tick wide.
+
+    So the growth of `removedFrom` is asked DIRECTLY as well. It is not a timestamp and cannot be
+    coarsened away, and it can only ever ADD a keep — the equality guard means an ordinary push,
+    whose list is what it sent, still settles the stage. It is NOT a subtraction: see above for why
+    subtracting the acknowledged keys resurrects the second deletion out of one collection.
+  */
+  const deletedSince = stage.removedFrom.some((key) => !sent.removedFrom.includes(key));
+  const superseded =
+    stage.dirtyAt !== null && (stage.dirtyAt > sentDirtyAt || (stage.dirtyAt === sentDirtyAt && deletedSince));
   return {
     dirtyAt: superseded ? stage.dirtyAt : null,
     removedFrom: superseded ? stage.removedFrom : []
@@ -1973,15 +1991,24 @@ async function runSync(): Promise<DwSyncResult> {
         and the only way out was for the designer to find that exact field and type into it. The
         substitution is the same one `confirmLocalMedia` makes and is idempotent; it is done only
         when a stranded reference is actually present so an ordinary pass writes nothing.
+
+        THE STAGES ARE ASKED FIRST AND THE MEDIA ONLY IF THEY SAY SO, which is not tidiness: this is
+        the third `draftMedia` call of a single pass over one workshop (`pendingWork` and the upload
+        loop above are the others) and every one of them deserialises the blob of every unconfirmed
+        photograph the draft holds. A draft with no `dwlocal:` reference left anywhere — every draft,
+        nearly always — cannot possibly be stranded, and the scan of `stages` that proves it is
+        memory the pass has already loaded. Paying a fortnight of photographs for that answer, on
+        every pass, on the laptop least able to afford it, is what the index at `MEDIA_BY_DRAFT` was
+        created to avoid.
       */
-      const confirmedRefs = new Map<string, string>();
-      for (const media of await draftMedia(draft.localId)) {
-        if (media.remoteMediaId) confirmedRefs.set(`${LOCAL_MEDIA_PREFIX}${media.id}`, media.remoteMediaId);
-      }
-      if (confirmedRefs.size) {
-        const held = new Set<string>();
-        for (const stage of Object.values(draft.stages)) for (const ref of unresolvedMediaRefs(stage)) held.add(ref);
-        const stranded = [...confirmedRefs].filter(([ref]) => held.has(ref));
+      const held = new Set<string>();
+      for (const stage of Object.values(draft.stages)) for (const ref of unresolvedMediaRefs(stage)) held.add(ref);
+      if (held.size) {
+        const stranded: Array<[string, string]> = [];
+        for (const media of await draftMedia(draft.localId)) {
+          const ref = `${LOCAL_MEDIA_PREFIX}${media.id}`;
+          if (media.remoteMediaId && held.has(ref)) stranded.push([ref, media.remoteMediaId]);
+        }
         if (stranded.length) {
           draft =
             (await mutate(draft.localId, (current) => {

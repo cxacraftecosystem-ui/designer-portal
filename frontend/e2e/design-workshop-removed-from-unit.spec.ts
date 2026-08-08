@@ -68,6 +68,27 @@ test("a SECOND deletion out of a collection the push already named also survives
   expect(after.removedFrom).toEqual(["participant"]);
 });
 
+test("a deletion written in the payload's own millisecond is not lost to a clock that did not move", () => {
+  // THE RESIDUE A TIMESTAMP COMPARISON LEAVES BEHIND. `dirtyAt` is `Date.now()`, and a browser that
+  // coarsens that clock against fingerprinting advances it in steps of 100 ms — so a deletion
+  // written during the round trip can carry the SAME number the payload was built from. It is not
+  // "newer", and a rule that asked only about `dirtyAt` would clear the flag: the row the designer
+  // watched disappear is back, one clock tick having decided it. `removedFrom` growing is not a
+  // timestamp and cannot be coarsened away, so it is asked directly.
+  expect(unsentAfterPush(stageAt(1000, ["participant"]), { dirtyAt: 1000, removedFrom: [] })).toEqual({
+    dirtyAt: 1000,
+    removedFrom: ["participant"]
+  });
+
+  // THE WITNESS THAT THIS DID NOT JUST MAKE EVERY STAGE STICKY. Same tie, nothing deleted since —
+  // the list is what the payload carried — and the stage settles exactly as it did before, which is
+  // what keeps the amber "Saved on this device only" chip off a stage that has landed.
+  expect(unsentAfterPush(stageAt(1000, ["participant"]), { dirtyAt: 1000, removedFrom: ["participant"] })).toEqual({
+    dirtyAt: null,
+    removedFrom: []
+  });
+});
+
 test("typing during the flight keeps the stage unsent, as it always did", () => {
   // The guard that was already there, kept as a witness: newer keystrokes must not be marked as
   // sent, or they are never sent at all.

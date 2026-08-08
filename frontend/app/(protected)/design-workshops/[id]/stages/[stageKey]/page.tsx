@@ -803,9 +803,11 @@ function DesignWorkshopStagePageBody({
       const draftStage = draft?.stages[stageKey] ?? emptyStage(stageKey);
       const sinceDirtyAt = draftStage.dirtyAt;
       // Read once, here, and handed to BOTH the payload's `emptiedEntities` and the acknowledgement
-      // below, so `markStagePushed` clears only the deletions this PUT actually carried. A second
-      // read after the round trip would be a different list and would clear a deletion the server
-      // was never told about. See {@link unsentAfterPush}.
+      // below, so the acknowledgement is judged against what this PUT actually carried. Reading it
+      // a second time after the round trip would hand `markStagePushed` a list that already
+      // contains the row deleted DURING the round trip — it would then read as "the server was
+      // told about this" and be cleared, which is the deletion loss all of this exists to stop.
+      // See {@link unsentAfterPush}.
       const sinceRemovedFrom = draftStage.removedFrom;
 
       // The strict pass, answered locally as well as remotely. `localStageCompleteness` mirrors
