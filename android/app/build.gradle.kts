@@ -65,9 +65,23 @@ android {
          *  1. AGP UNIONS the two sets; a build-type `abiFilters` cannot subtract from
          *     `defaultConfig`'s. So with `releaseAllAbis=true` the release block adds nothing and the
          *     `defaultConfig` pair still applies: the escape hatch stops widening anything, while
-         *     still printing the lifecycle line that says it did. Measured, not reasoned —
-         *     `:app:mergeReleaseNativeLibs` with the two blocks present and `releaseAllAbis=true`
-         *     emitted `arm64-v8a, armeabi-v7a`; with this block removed it emitted all four.
+         *     still printing the lifecycle line that says it did — a flag that lies in the console.
+         *
+         *     MEASURED, on two real `:app:packageRelease` runs differing only in this block, with
+         *     `releaseAllAbis=true` set in both and the ABIs read out of each APK's own central
+         *     directory with `zipfile`:
+         *
+         *         both blocks present   ->  [arm64-v8a, armeabi-v7a]         26,211,648 bytes
+         *         this block removed    ->  [arm64-v8a, armeabi-v7a,
+         *                                    x86, x86_64]                    49,439,024 bytes
+         *
+         *     (That difference, 23,227,376 bytes, is also the filter's own saving, arrived at from
+         *     the other direction than `docs/R8-MEASUREMENT.md` did and agreeing with it exactly.)
+         *
+         *     READ IT OFF THE PACKAGED APK AND NOWHERE EARLIER. `:app:mergeReleaseNativeLibs` and
+         *     `:app:stripReleaseDebugSymbols` both emit all four ABIs whatever this block says —
+         *     `abiFilters` is applied at PACKAGING time. An intermediate directory is not evidence
+         *     here, and checking one is how this measurement was nearly got wrong.
          *  2. `defaultConfig` also narrows DEBUG, which takes away the x86_64 emulator — the only
          *     machine a contributor without a handset has, on a project whose CI runs no
          *     instrumented tests at all.
