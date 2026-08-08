@@ -56,6 +56,14 @@ from app.services.stage_schema import (
     REF_SCOPE_ALL,
     REF_SCOPE_WORKSHOP,
     REF_SCOPES,
+    # THE HYDRATION TABLE MOVED INTO THE REGISTRY and is re-exported here under the name it has
+    # always had, because that is where every reader of this feature — the report builder's own
+    # docstring, the research note, three test modules — has been told to look. It moved so that
+    # `validate_registry` can refuse a mapping whose target field does not exist and
+    # `field_to_dict` can publish the mapping to the clients; the note above its declaration says
+    # why both matter. Nothing about WHEN it is applied changed: `hydrate_entries` below is still
+    # the only thing that writes it, and still writes it only at save time.
+    REFERENCE_HYDRATION,
     Cardinality,
     EntitySpec,
     FieldType,
@@ -351,7 +359,22 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         workshop_where=lambda wid: {"workshopId": wid},
         label=lambda r: str(r.name or ""),
         sublabel=lambda r: _joined(_rel(r, "product", "productName")),
-        data=lambda r, _photo: {"name": r.name},
+        # THREE KEYS, NOT ONE, and the third is what the sublabel above already shows.
+        #
+        # This lambda used to return the name alone, which made the traditional-process stage —
+        # one of the report's substantive narrative sections — the thinnest of the five reference
+        # models by an order of magnitude: eight fields reach a participant row, six a tool row,
+        # six an existing-product row, and one reached a process step. The `Process` table holds
+        # notes and hangs off a product; both are copied. Which of the model's columns land on
+        # which box, and why `steps` and `preProcessAvailable` deliberately land nowhere, is
+        # written out above `REFERENCE_HYDRATION["processStep.processRef"]` in `stage_schema`,
+        # because that is where the pairing is declared and a reason belongs beside the decision
+        # it explains rather than beside the value it reads.
+        data=lambda r, _photo: {
+            "name": r.name,
+            "notes": r.notes,
+            "productName": _rel(r, "product", "productName"),
+        },
     ),
     "Craft": ReferenceModel(
         delegate="craft",
@@ -365,65 +388,6 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         sublabel=lambda r: _joined(r.category, r.place),
         data=lambda r, _photo: {"craftName": r.name, "craftLocalName": r.localName},
     ),
-}
-
-
-# WHICH FIELDS A CHOSEN RECORD WRITES ONTO THE ENTRY, keyed by "entityKey.refFieldKey" and
-# mapping the reference's own data keys to the entity's field keys. The two vocabularies are
-# deliberately not assumed to match: a tool's `usedFor` comes from `processUsedIn`, a product's
-# single photograph seeds a gallery, and a participant's `specialisation` is really the craft
-# they are documented under.
-#
-# THIS IS DENORMALISATION, ON PURPOSE, AND IT IS NOT A CACHE.
-#
-# A workshop report is a historical document. It is generated months after the workshop, often
-# years after, and submitted to an office that keeps it. The artisan record it was built from is
-# live data in a different part of this system: it gets corrected, merged into a duplicate
-# discovered later, or deleted outright when a researcher cleans up a double entry. If the
-# report resolved the name through the id at render time, every one of those perfectly ordinary
-# edits would silently rewrite a submitted document — and a deletion would render it as a blank
-# cell in a participant table, which is worse than useless because the table is the proof of who
-# attended.
-#
-# So the name is COPIED onto the entry at save time and the report prints the copy. The id stays
-# beside it and is never removed: it is the join key, and it is what makes "every workshop this
-# artisan has attended" and "did the products we prototyped in 2026 still sell in 2028"
-# answerable at all. The copy is what the document says; the id is what the research follows.
-# Losing either one loses a different half of the record.
-REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
-    "workshopSetup.craftRef": {
-        "craftName": "craftName",
-        "craftLocalName": "craftLocalName",
-    },
-    "participant.artisanRef": {
-        "name": "name",
-        "localName": "localName",
-        "specialisation": "specialisation",
-        "experienceYears": "experienceYears",
-        "gender": "gender",
-        "phone": "phone",
-        "village": "village",
-        "photo": "photo",
-    },
-    "tool.toolRef": {
-        "name": "name",
-        "localName": "localName",
-        "material": "material",
-        "usedFor": "usedFor",
-        "cost": "cost",
-        "photo": "photo",
-    },
-    "processStep.processRef": {"name": "name"},
-    "existingProduct.artisanRef": {"name": "artisanName"},
-    "existingProduct.productRef": {
-        "name": "name",
-        "category": "category",
-        "material": "material",
-        "price": "price",
-        "use": "use",
-        "photo": "productPhotos",
-    },
-    "prototype.productRef": {"name": "productName"},
 }
 
 

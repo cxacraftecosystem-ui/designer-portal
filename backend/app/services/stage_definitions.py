@@ -429,7 +429,22 @@ STAGE_5 = StageSpec(
             fromref("name", "Step name", T, B, required=True, report_role=COL,
                     column_width_pct=24.0),
             f("localName", "Local name", T, S, report_role=COL, column_width_pct=18.0),
-            f("description", "What happens", LT, S, report_role=COL, column_width_pct=34.0),
+            # WHICH DOCUMENTED PROCESS THIS STEP CAME FROM, copied so the printed report can make
+            # the distinction the designer made at the picker.
+            #
+            # The scope note above says a `Process` is an INSTANCE: "Tie and dye" at Bagru and
+            # "Tie and dye" at Bhuj are two different sequences under one name, and the only thing
+            # separating them on screen is the product name in the picker's sublabel. Until this
+            # box existed the sublabel was where that distinction died — the row stored the id and
+            # printed the bare name, so a reader of the document could not tell which sequence had
+            # been documented, and neither could the designer re-opening the stage a fortnight
+            # later. KEY_VALUE rather than a sixth TABLE_COLUMN because the five declared widths
+            # below already sum to 100, and a sixth would push the renderer onto its proportional
+            # fallback and silently re-lay-out a table that is already in submitted documents.
+            fromref("documentedFor", "Documented for", T, S,
+                    help="The product whose documented process this step was taken from."),
+            fromref("description", "What happens", LT, S, report_role=COL,
+                    column_width_pct=34.0),
             f("timeTaken", "Time taken", DEC, S, unit="hours", min_value=0, report_role=COL,
               column_width_pct=16.0),
             f("performedBy", "Performed by", T, S),
