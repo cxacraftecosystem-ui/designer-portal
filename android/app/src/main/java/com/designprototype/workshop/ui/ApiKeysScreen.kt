@@ -104,11 +104,14 @@ import java.util.Locale
  *    provider call (API *and* the transcription queue) uses it — no restart, no redeploy. The
  *    banner says so out loud rather than leaving the master admin wondering whether to SSH in.
  *
- * The caller gates this screen on master admin, but the API is the real authority: if it answers
- * 403 the screen renders [ApiKeysRestrictedCard] instead of an error, because "you are not allowed"
- * is a state, not a failure. That authority is also what makes the screen safe to open up to plain
- * admins for the ranking's sake — an account that may not read keys still cannot, whatever route
- * brought it here.
+ * The caller gates this screen on ADMIN, and the API is the real authority for the half that is
+ * higher: if `/secrets` answers 403 the screen renders [ApiKeysRestrictedCard] instead of an error,
+ * because "you are not allowed" is a state, not a failure. That authority is what makes the screen
+ * safe to open to plain admins for the ranking's sake — an account that may not read keys still
+ * cannot, whatever route brought it here. This paragraph used to say the caller gated on MASTER
+ * admin, and it did: `AdminHubEntry.API_KEYS` carried `masterOnly = true`, so the require_admin
+ * ranking above sat behind a require_master_admin door and no admin ever saw the screen that was
+ * written for them.
  */
 
 /** How long a revealed value stays on screen before it hides itself again. */
@@ -358,8 +361,11 @@ fun rememberApiKeysState(repository: WorkshopRepository): ApiKeysState {
 }
 
 /**
- * The managed API keys screen. MASTER ADMIN ONLY — the caller gates it, and a 403 from the API
- * renders the restricted state rather than an error.
+ * Providers & API keys. ADMIN and above — the caller gates it there, for the ranking's sake — and
+ * the key list below the ranking is the master admin's, which the API decides: its 403 sets
+ * `restricted` and draws [ApiKeysRestrictedCard], and deliberately never touches `error`, so an
+ * ordinary admin opening this screen is told what they hold rather than shown a failure they cannot
+ * act on.
  *
  * HOSTING: this is an admin-hub tool, so it lays out as a plain [Column] and renders into whatever
  * scrolling parent hosts it — exactly like [TaskAdminScreen] and every other hub tool. It must NOT
