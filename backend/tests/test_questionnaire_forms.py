@@ -1321,6 +1321,73 @@ async def test_an_unanswered_questionnaire_is_never_silently_absent_from_the_rep
 
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
+async def test_a_questionnaire_title_a_designer_typed_cannot_split_its_own_warning(client, world):
+    """THE TITLE IS DESIGNER-TYPED AND IT REACHES A HEADER WHOSE SEPARATOR IS ";".
+
+    ``questionnaire_warnings`` interpolates the questionnaire's title into the sentence that tells a
+    designer their annexure is missing, and ``frontend/lib/designWorkshops.ts`` splits
+    ``x-report-warnings`` on ``";"`` and prints each piece as its own warning. So a form called
+    "Loom survey; round two" — an ordinary thing to call a second round of fieldwork — delivered
+    that one sentence as two, the second of them ``"round two)."``, which says nothing at all on its
+    own. Measured against the running server before this was fixed: count 2, three pieces on screen.
+
+    PHOTO_CATALOGUE rather than the default, deliberately: it raises two warnings, so nothing is
+    near the header's budget and this pins the SEPARATOR question alone rather than re-testing the
+    truncation the test above owns.
+
+    The split asserted here is the frontend's — ``";"``, not ``"; "`` — because what is pinned is
+    what the designer reads.
+    """
+    workshop = client.post(
+        "/api/design-workshops",
+        json={"title": f"Split title {world['stamp']}", "templateId": "PHOTO_CATALOGUE"},
+        headers=_headers(world),
+    )
+    assert workshop.status_code == 201, workshop.text
+    workshop_id = workshop.json()["id"]
+
+    title = f"Loom survey; round two {world['stamp']}"
+    created = client.post(
+        "/api/questionnaires",
+        json={
+            "title": title,
+            "designWorkshopId": workshop_id,
+            "sections": [{
+                "title": "About the craft",
+                "code": "CRAFT",
+                "questions": [{"prompt": "How many looms do you own?", "isRequired": True}],
+            }],
+        },
+        headers=_headers(world),
+    )
+    assert created.status_code == 201, created.text
+
+    generated = client.post(
+        f"/api/design-workshops/{workshop_id}/report",
+        json={"formats": ["DOCX"], "record": False},
+        headers=_headers(world),
+    )
+    assert generated.status_code == 200, generated.text
+    header = generated.headers["x-report-warnings"]
+    count = int(generated.headers["x-report-warning-count"])
+    assert "further warning(s) did not fit" not in header, (
+        "this fixture is meant to fit inside the budget whole; if it stopped fitting, the "
+        "assertion below is no longer measuring the separator"
+    )
+
+    pieces = [piece.strip() for piece in header.split(";") if piece.strip()]
+    assert len(pieces) == count, (
+        f"x-report-warning-count says {count} but the designer's screen shows {len(pieces)} "
+        f"warnings, so a designer-typed semicolon split one sentence into halves: {pieces}"
+    )
+    annexure = [piece for piece in pieces if "questionnaire annexure" in piece]
+    assert len(annexure) == 1 and annexure[0].endswith(")."), (
+        f"the annexure's own warning did not arrive as one finished sentence: {pieces}"
+    )
+
+
+@pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
+@pytest.mark.anyio
 async def test_a_colleague_may_answer_a_questionnaire_but_may_not_reword_it(client, world):
     """The split the access model turns on: handing somebody a form to fill in must not hand them
     the ability to reword it halfway through the fieldwork."""
