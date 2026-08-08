@@ -106,14 +106,15 @@ import java.io.File
  * field still needs a connection, and says so in the disabled state rather than after a timeout.
  * [IdentityCardText]'s header has the full argument and the condition for revisiting it.
  *
- * ── TWO WAYS IN, AND THE SECOND ONE IS THE ONE THAT MATTERS OFFLINE ───────────────────────────
+ * ── TWO WAYS IN, AND THE PICKER IS STILL WORTH ITS BUTTON ─────────────────────────────────────
  *
- * "Photograph the card" and "Choose a photo". The picker is not a convenience: it is what makes the
- * offline case work at all. A designer in a courtyard with no signal photographs the card with the
- * phone's own camera, types the number by hand for now, and when they are back in signal they can
- * point this control at that photograph and check what they typed — without asking the artisan for
- * the card a second time, which for this class of document is a request that is not always granted
- * twice.
+ * "Photograph the card" and "Choose a photo". The picker used to be the ONLY thing that made the
+ * offline case survivable — photograph the card with the camera app now, come back and read it in
+ * signal later — and that is no longer its job, because the camera path itself now works with no
+ * connection. It stays for the case that has not gone away: a card already photographed, by this
+ * designer or handed over by someone else, that would otherwise mean asking the artisan to produce
+ * a national identity document a second time. For this class of paper that is a request which is
+ * not always granted twice.
  *
  * The picker is `PickVisualMedia`, the system photo picker, and NOT `GetContent` with a media
  * permission. It hands back exactly the one image the designer chose and grants this app no standing
