@@ -239,6 +239,26 @@ fun dwPackOffer(state: DwPackState, connection: DwConnection): DwPackOffer = whe
     DwPackState.UNKNOWN -> DwPackOffer.UNKNOWN
 }
 
+/**
+ * Whether a download control may be drawn for a language that has already been asked for once.
+ *
+ * [requested] is whether a `triggerModelDownload` has gone out for this language since the app
+ * started; [refused] whether the speech service rejected that request. Both halves of the rule have
+ * a failure behind them:
+ *
+ *  - A request the platform ACCEPTED must not be sent again. On Android 13 there is no download
+ *    callback of any kind, so the row goes on reading [DwPackState.DOWNLOADABLE] for ever and a
+ *    second tick is a second fetch of one speech model on somebody's prepaid bundle.
+ *  - A request the platform REFUSED fetched nothing, so there is nothing to pay for twice — and the
+ *    note the refusal leaves on the row says to try again. A row that says "try again" with no
+ *    control left to do it with is how a designer concludes the whole feature is broken.
+ *
+ * Pure, and here rather than in the composable, because this is the predicate standing between a
+ * designer's tap and their data allowance and it has to be checkable on a desktop JVM.
+ */
+fun dwMayAsk(offer: DwPackOffer, requested: Boolean, refused: Boolean): Boolean =
+    offer == DwPackOffer.DOWNLOAD && (!requested || refused)
+
 // ---------------------------------------------------------------------------------------------
 // The words. Android owns wording in this repository, and one language's state must read the same
 // on the settings list, in the first-run offer and in the dialog that opens when a language is

@@ -549,10 +549,18 @@ internal fun DwDictationButton(
                         */
                         val packState = dwPackState(chosen, packs.support)
                         packOffer = when {
-                            // The check is still outstanding — a designer who taps a language a
-                            // half-second after opening the list must not silently miss the offer.
-                            // The dialog opens saying it is asking, and resolves in place.
-                            packs.checking -> chosen
+                            // NOTHING HAS LANDED YET and the phone is still being asked — a
+                            // designer who taps a language a half-second after opening the list
+                            // must not silently miss the offer. The dialog opens saying it is
+                            // asking, and resolves in place.
+                            //
+                            // Guarded on `support == null` and not on `checking` alone, because
+                            // every REopening of this panel re-asks the phone: without it, a
+                            // designer picking Hindi during that second check would be handed a
+                            // dialog saying "Hindi is installed" and a Close button to dismiss —
+                            // exactly the panel the paragraph above says must never stand between
+                            // them and the microphone, on every pick after the first.
+                            packs.support == null && packs.checking -> chosen
                             packState == DwPackState.INSTALLED || packState == DwPackState.UNKNOWN -> null
                             else -> chosen
                         }
