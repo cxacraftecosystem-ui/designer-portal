@@ -2516,22 +2516,58 @@ data class DesignerRosterDto(
     /** Set the first time an account with this email signs in. Null = the invitation is outstanding. */
     val firstSeenAt: String? = null,
     /**
-     * The account this row's email resolved to, when one exists AND the server chose to join it.
+     * THERE IS NO `userId` HERE, and a field for one used to be — always null, because
+     * `roster_payload` (backend/app/services/designers.py:107-121) has never sent one and the
+     * `DesignerRoster` table has no user column to send. The roster screen's "Open designer profile"
+     * action was rendered only `row.userId?.let { … }`, so it rendered for nobody and the admin
+     * editor behind it was unreachable in the shipped APK.
      *
-     * NULLABLE, DEFAULTED, AND TREATED AS OPTIONAL EVERYWHERE. The roster is keyed by email and the
-     * table itself has no user column: a row created for somebody who has never signed in has no
-     * account to point at, and a deployment that does not perform the join sends nothing here. It is
-     * the only key `/designers/{userId}/profile` can be reached by, so the roster screen's
-     * "Open profile" action appears exactly when this is present and is simply absent otherwise —
-     * never rendered disabled, and never fabricated from the email, which would produce a 404 on a
-     * path the admin was invited to tap.
+     * The account behind a row is resolved the way the web resolves it — by lower-cased EMAIL
+     * against `GET /designers/directory`; see [DesignerDirectoryEntryDto] and
+     * `accountsByEmail`. Do not put the field back: a nullable column that the only producer never
+     * populates reads at every call site as "sometimes present", and that reading is what hid this.
      */
-    val userId: String? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val addedById: String? = null,
-    /** Who empanelled them, when the server joins it. Null once that admin's account is deleted. */
+    /**
+     * Who empanelled them, when the server joins it — which THIS server does not.
+     *
+     * Kept because it costs nothing and a deployment that starts sending it is then honoured
+     * immediately, but the roster card must not depend on it: `roster_payload` sends [addedById]
+     * alone, so a card that only read this name printed nothing at all. The screen falls back to
+     * looking the id up in the directory it already fetched.
+     */
     val addedByName: String? = null
+)
+
+/**
+ * One account from `GET /designers/directory` — the accounts an admin may hand a workshop to.
+ *
+ * WHY THE ROSTER SCREEN NEEDS IT AT ALL. A roster row is keyed by EMAIL and carries no account id
+ * (see [DesignerRosterDto]), while `/designers/{userId}/profile` can only be reached by an id. This
+ * endpoint is the only join between the two, and the web's roster page does exactly the same thing
+ * with it — `new Map(rows.map((row) => [row.email.toLowerCase(), row.id]))` in
+ * `frontend/app/(protected)/admin/designers/page.tsx`. Both clients therefore resolve a row to a
+ * person the same way, and neither fabricates an id from the email, which would send an admin to a
+ * 404 on a control they were invited to tap.
+ *
+ * `includeSuspended=true` is what the roster screen asks for, and it must: the row an admin is
+ * looking at is very often the SUSPENDED one — the designer who says they cannot sign in — and the
+ * whole reason to open their profile from here is to check the empanelment details before restoring
+ * them. The default (`false`) hides exactly those people.
+ *
+ * Narrow on purpose. The payload carries `role`, `institution`, `rosterId`, `rosterActive`,
+ * `canSignIn`, `firstSeenAt` and `hasProfile` as well; `ignoreUnknownKeys` drops them. The roster
+ * screen already has every one of those facts from the roster row itself, and a second copy of
+ * "is this person suspended" arriving by a different route is two answers to one question.
+ */
+@Serializable
+data class DesignerDirectoryEntryDto(
+    val id: String = "",
+    /** Compared LOWER-CASED. The roster lower-cases on write; `User.email` is not guaranteed to be. */
+    val email: String = "",
+    val name: String? = null
 )
 
 /**
