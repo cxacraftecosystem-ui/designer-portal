@@ -140,6 +140,7 @@ import com.designprototype.workshop.data.CraftCreateRequest
 import com.designprototype.workshop.data.DataAccessGrantDto
 import com.designprototype.workshop.data.DataAccessScopeItemDto
 import com.designprototype.workshop.data.DataAccessTierInfo
+import com.designprototype.workshop.data.DwStageFocus
 import com.designprototype.workshop.data.EntryCommentDto
 import com.designprototype.workshop.data.MyGrantsDto
 import com.designprototype.workshop.data.RecordRevisionDto
@@ -466,7 +467,20 @@ private sealed interface Screen {
      */
     data object DesignWorkshops : Screen
     data class DesignWorkshopStages(val workshopId: String) : Screen
-    data class DesignWorkshopStage(val workshopId: String, val stageKey: String) : Screen
+    /**
+     * One stage, optionally arriving at ONE BOX on it.
+     *
+     * [focus] is what the stage index's "4 required fields still missing" list navigates by. It is
+     * carried in the route rather than reached for because it belongs to this arrival and no other:
+     * `pageScroll` is `key(screen)`-ed, so a new focus is a new screen, a fresh scroll position, and
+     * the stage screen scrolls to the field from the top rather than from wherever the previous
+     * visit was left.
+     */
+    data class DesignWorkshopStage(
+        val workshopId: String,
+        val stageKey: String,
+        val focus: DwStageFocus? = null,
+    ) : Screen
     data class DesignWorkshopReport(val workshopId: String) : Screen
 
     /**
@@ -1946,10 +1960,18 @@ private fun HomeScreen(
              * The Design & Prototype Workshop, four screens deep.
              *
              * They render INSIDE the shared scrolling Column rather than owning the viewport, which
-             * is what gives them the island bar, the back arrow and the unsaved-changes guard for
-             * free — and which is why nothing in this feature may use a LazyColumn: a lazy list
-             * measured inside a parent that scrolls the same way throws at layout, and it would throw
-             * on the one screen a designer opens forty times a day.
+             * is what gives them the island bar and the back arrow for free — and which is why
+             * nothing in this feature may use a LazyColumn: a lazy list measured inside a parent
+             * that scrolls the same way throws at layout, and it would throw on the one screen a
+             * designer opens forty times a day.
+             *
+             * THEY DO NOT USE THE UNSAVED-CHANGES GUARD, and this comment used to say they did —
+             * which is the sentence a maintainer would have trusted while Back silently dropped
+             * whatever had been typed in the last 800ms. The guard is for the record forms, whose
+             * save is a button a person presses; a stage is written continuously and its draft IS
+             * the document, so `StageScreen` persists from its own `onDispose` instead. That makes
+             * an accidental Back lossless rather than merely prompted — and a "Save or discard?"
+             * dialog here would offer to throw away work already on disk.
              */
             is Screen.DesignWorkshops -> WorkshopListScreen(
                 repository = repository,
@@ -1961,7 +1983,10 @@ private fun HomeScreen(
             is Screen.DesignWorkshopStages -> StageIndexScreen(
                 repository = repository,
                 workshopId = s.workshopId,
-                onOpenStage = { key -> message = null; screen = Screen.DesignWorkshopStage(s.workshopId, key) },
+                onOpenStage = { key, focus ->
+                    message = null
+                    screen = Screen.DesignWorkshopStage(s.workshopId, key, focus)
+                },
                 onOpenReport = { message = null; screen = Screen.DesignWorkshopReport(s.workshopId) },
                 onError = { showMessage(it) }
             )
@@ -1970,6 +1995,8 @@ private fun HomeScreen(
                 repository = repository,
                 workshopId = s.workshopId,
                 stageKey = s.stageKey,
+                // Where the stage index sent them, when it sent them to a particular box.
+                focus = s.focus,
                 onMessage = { showMessage(it) },
                 onError = { showMessage(it) },
                 /*

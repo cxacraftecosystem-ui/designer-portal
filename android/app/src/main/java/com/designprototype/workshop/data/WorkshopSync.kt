@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import retrofit2.HttpException
 import java.security.MessageDigest
 import java.time.Instant
 
@@ -76,12 +77,20 @@ import java.time.Instant
  *
  * ── TRIAGE: ONE REFUSED ITEM MUST NOT STRAND THE FORTNIGHT BEHIND IT ─────────────────────────────
  *
- * A dropped connection, a timeout or a 5xx is TRANSIENT: the pass stops where it is, nothing is
- * marked failed, and everything is tried again next time. A 4xx is PERMANENT for that ITEM only:
- * the reason is recorded on the item, shown to the designer, and the pass carries on with the rest.
- * The test lives in [WorkshopRepository.isTransient] and is imported rather than restated — two
- * implementations would be two different ideas of what "offline" means, and whichever was wrong
- * would either strand a queue for ever or replay a rejection until somebody reinstalled the app.
+ * THE QUESTION IS "DID THE SERVER ANSWER", AND IT IS NOT [WorkshopRepository.isTransient]. That one
+ * answers "is it worth trying again", which is the OUTBOX's question and says yes to every 5xx —
+ * right for a queue that only has to decide whether to keep an entry, and wrong for a pass that also
+ * has to tell a designer why nothing moved. A 5xx means the server was reached and then failed, so
+ * reporting it as a lost connection sends somebody with four bars of signal out of the building to
+ * look for a better one while a real refusal wears an offline message. See [isConnectionFailure],
+ * which is that split, and `isUnreachable` in `frontend/lib/offline.ts`, which is the same split on
+ * the web — made there first, for the same defect, on this same endpoint.
+ *
+ * So: NOTHING REACHED THE SERVER (no signal, a socket dropped, a 408 from a proxy that never
+ * completed the request), or the server asked for time (429) or for a new credential (401) — the
+ * pass stops where it is, nothing is marked failed, and everything is tried again next time. THE
+ * SERVER ANSWERED AND REFUSED — whatever the status — the reason is recorded on that ITEM alone,
+ * shown to the designer with the stage named, and the pass carries on with the rest.
  *
  * ── NOTHING LOCAL IS EVER DELETED BY A SYNC ──────────────────────────────────────────────────────
  *
@@ -231,6 +240,70 @@ data class SyncPassResult(
     val skipped: Boolean = false,
 ) {
     val didAnything: Boolean get() = workshopsCreated > 0 || stagesSent > 0 || mediaUploaded > 0
+}
+
+// --------------------------------------------------------------------------------------
+// Triage
+// --------------------------------------------------------------------------------------
+
+/**
+ * Did this failure happen to the CONNECTION, rather than being something the server decided?
+ *
+ * THE COMPANION QUESTION TO [WorkshopRepository.isTransient], AND NOT THE SAME ONE — the port of
+ * `isUnreachable` in `frontend/lib/offline.ts`, which the web added for this exact defect on this
+ * exact endpoint. `isTransient` asks "is it worth trying again" and every 5xx is a yes to it, which
+ * is correct for the record outbox (its only decision is whether to keep the entry) and wrong here,
+ * because this pass also STOPS on a yes and puts "the connection dropped" on the screen.
+ *
+ * What that cost: `save_stage` answers deterministically-bad data with a 500 — a lone surrogate in a
+ * name and a non-finite decimal both reproduce that way — so one stage the repository will never
+ * accept told the designer their signal was gone on a phone showing four bars, skipped every
+ * workshop queued behind it (the pass breaks on the first stop and `syncAll` sorts oldest-first),
+ * and came back to the identical rejection on every future connection, for ever, with nothing on any
+ * screen naming the stage.
+ *
+ * The three statuses that stay on the connection's side of the line, and why:
+ *
+ *  - 401: the credential expired, not the item. Every item would fail this way and re-signing in
+ *    fixes all of them at once — the one 4xx [WorkshopRepository.isTransient] also excuses.
+ *  - 408: a proxy saying the request never completed, so the server decided nothing.
+ *  - 429: the server explicitly asking for time.
+ *
+ * Everything that is not an [HttpException] — no route to host, a socket dropped mid-transfer, a
+ * payload that will not parse — is deferred to [WorkshopRepository.isTransient] rather than
+ * re-decided here, so there is still exactly ONE answer to "is this the network" for the shapes both
+ * files see.
+ */
+private fun WorkshopRepository.isConnectionFailure(error: Throwable): Boolean {
+    val http = error as? HttpException ?: return isTransient(error)
+    return when (http.code()) {
+        401, 408, 429 -> true
+        else -> false
+    }
+}
+
+/**
+ * What to write on an item the server REFUSED, including the one fact the designer cannot infer.
+ *
+ * A bare 500 renders through [apiErrorMessage] as "HTTP 500 Internal Server Error", which reads like
+ * anything at all — including like a bad connection, which is the belief this whole split exists to
+ * end. So an answered 5xx says out loud that waiting for signal will not help. A 4xx already carries
+ * the server's own `detail`, written for the person reading it, and is left alone.
+ *
+ * Call once per failure: [apiErrorMessage] consumes the buffered error body.
+ */
+private fun Throwable.refusalMessage(fallback: String): String {
+    val text = apiErrorMessage(fallback)
+    val code = (this as? HttpException)?.code() ?: return text
+    if (code < 500) return text
+    // Stopped first. [apiErrorMessage] hands back whatever the server wrote, or — for the 500 that
+    // carried no body, which is the shape this branch was written for — Retrofit's own "HTTP 500
+    // Internal Server Error", and neither ends in one. Without this the two ran together as "HTTP
+    // 500 Internal Server Error The server answered, so…", a single unpunctuated clause a designer
+    // skims and abandons before the half that tells them waiting for signal cannot help.
+    val lead = if (text.endsWith('.') || text.endsWith('!') || text.endsWith('?')) text else "$text."
+    return "$lead The server answered, so a better connection will not help — this will keep being " +
+        "refused until whatever caused it is corrected. Use Try again once it has been."
 }
 
 // --------------------------------------------------------------------------------------
@@ -522,7 +595,7 @@ object WorkshopSyncEngine {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (repository.isTransient(e)) {
+                if (repository.isConnectionFailure(e)) {
                     noteSync(context, workshopId) {
                         it.copy(lastError = e.apiErrorMessage("The server could not be reached."))
                     }
@@ -531,7 +604,7 @@ object WorkshopSyncEngine {
                 tally.refused++
                 noteSync(context, workshopId) {
                     it.copy(
-                        createFailure = e.apiErrorMessage("The server refused to create this workshop."),
+                        createFailure = e.refusalMessage("The server refused to create this workshop."),
                         createFailedAt = Instant.now().toString(),
                     )
                 }
@@ -662,7 +735,7 @@ object WorkshopSyncEngine {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (repository.isTransient(e)) {
+                if (repository.isConnectionFailure(e)) {
                     noteSync(context, draft.workshopId) {
                         it.copy(lastError = e.apiErrorMessage("The upload could not be completed."))
                     }
@@ -670,7 +743,7 @@ object WorkshopSyncEngine {
                 }
                 noteMediaFailure(
                     context, draft.workshopId, descriptor.id,
-                    e.apiErrorMessage("the server refused this file.")
+                    e.refusalMessage("the server refused this file.")
                 )
                 tally.refused++
                 return@forEachIndexed
@@ -794,7 +867,12 @@ object WorkshopSyncEngine {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (repository.isTransient(e)) {
+                // The stage the server ANSWERED about is refused on its own, and the other
+                // twenty-one go up. `statusOf` prints this note under "Stage 7 (Prototyping): …",
+                // which is the naming the old behaviour never did: a 5xx stopped the pass, wrote
+                // "the connection dropped" against the whole device, and left the designer with no
+                // way to know which of 22 stages had caused it.
+                if (repository.isConnectionFailure(e)) {
                     noteSync(context, draft.workshopId) {
                         it.copy(lastError = e.apiErrorMessage("The stage could not be sent."))
                     }
@@ -803,7 +881,7 @@ object WorkshopSyncEngine {
                 tally.refused++
                 noteStage(context, draft.workshopId, spec.key) {
                     it.copy(
-                        failure = e.apiErrorMessage("the server refused this stage."),
+                        failure = e.refusalMessage("the server refused this stage."),
                         failedAt = Instant.now().toString(),
                         permanent = true,
                         attempts = it.attempts + 1,
