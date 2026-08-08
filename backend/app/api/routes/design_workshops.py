@@ -799,9 +799,12 @@ async def generate_report(
     # request without first recording a phantom export of a file nobody received.
     headers = {
         "content-disposition": _content_disposition(file_name),
-        # Header values are encoded latin-1 by the ASGI layer; a warning naming a craft in Odia
-        # would otherwise raise inside Starlette and turn a successful report into a 500.
-        "x-report-warnings": "; ".join(warnings).encode("ascii", "replace").decode("ascii")[:900],
+        # `_warnings_header` and NOT `"; ".join(...)[:900]`, which dropped the tail of the list in
+        # silence and cut the last surviving sentence mid-word. The load warnings — "your attached
+        # questionnaire had no answers and is not in this file" — are appended last and were the
+        # first casualties on the default template. See that function.
+        "x-report-warnings": _warnings_header(warnings),
+        # The TRUE total, never what fitted above.
         "x-report-warning-count": str(len(warnings)),
     }
 
@@ -1286,6 +1289,90 @@ def _content_disposition(file_name: str) -> str:
     ).strip("_ ") or "workshop-report"
     quoted = quote(file_name, safe="")
     return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quoted}'
+
+
+#: How much of ``X-Report-Warnings`` a response may spend. A cap is not optional — every warning is
+#: a whole sentence, a fully-referenced DCH_STANDARD workshop raises a dozen of them, and proxies in
+#: front of this API refuse a response whose headers exceed 4-8 KB outright, which would turn a
+#: successful report into a failed download.
+_WARNINGS_HEADER_BUDGET = 900
+
+
+def _warnings_header(warnings: list[str]) -> str:
+    """The warnings as one ``X-Report-Warnings`` value: whole sentences, and never a silent tail.
+
+    THE DEFECT THIS EXISTS FOR, MEASURED RATHER THAN IMAGINED. This header used to be built as
+    ``"; ".join(warnings)[:900]``, and on DCH_STANDARD — the DEFAULT template — a workshop with an
+    attached questionnaire raised twelve warnings of which the header carried eight. The twelfth was
+    ``"1 questionnaire(s) attached to this workshop have no recorded answers and were left out of the
+    questionnaire annexure (…)"``: the one sentence that tells a designer WHY the annexure they were
+    promised is not in the file. It was cut off, and nothing said so — the designer saw a report with
+    no questionnaire annexure and no explanation, which is exactly the complaint that sent this lane
+    looking. The load warnings are appended last (see ``generate_report``), so they are always the
+    first casualties, and they are the ones that describe a WHOLE ANNEXURE missing from the document
+    rather than a field missing from inside it.
+
+    The eighth item was also cut MID-WORD — the header ended ``"Stage 9 (…): 2 required "`` — and
+    ``frontend/lib/designWorkshops.ts`` splits this value on ``";"`` and shows each piece to the
+    designer, so a half-sentence was rendered as a complete warning.
+
+    So: pack WHOLE warnings until the budget, then say how many did not fit. This is the same rule
+    ``report_annexures.MAX_PARAGRAPHS_PER_TRANSCRIPT`` and ``report_questionnaires``' sitting cap
+    already apply inside the document — a visible note explaining where it stopped, never a silent
+    drop — applied to the transport that carries the warnings about it.
+
+    ``x-report-warning-count`` stays the TRUE total and is not reduced to what fitted: a client that
+    compares the two can tell that it is not holding the whole list, and a client that ignores the
+    header entirely still gets the count right.
+
+    Non-ASCII is replaced rather than dropped for the reason :func:`_content_disposition` exists:
+    every ASGI header value is encoded latin-1, so a warning naming a craft in Odia would raise
+    inside Starlette after the handler returned and turn a generated report into a bare 500.
+    """
+    def ascii_only(value: str) -> str:
+        return str(value).encode("ascii", "replace").decode("ascii")
+
+    items = [ascii_only(w) for w in warnings if str(w).strip()]
+    if not items:
+        return ""
+
+    joined = "; ".join(items)
+    if len(joined) <= _WARNINGS_HEADER_BUDGET:
+        return joined
+
+    # The note has to fit inside the same budget, so the room left for real warnings is measured
+    # against the WIDEST note this call could end up printing — one naming every item as dropped.
+    room = _WARNINGS_HEADER_BUDGET - len(_dropped_note(len(items))) - 2
+    kept: list[str] = []
+    used = 0
+    for item in items:
+        cost = len(item) + (2 if kept else 0)
+        if used + cost > room:
+            break
+        kept.append(item)
+        used += cost
+
+    # A single warning longer than the whole budget would otherwise produce a header that says only
+    # that something was dropped and nothing about what. Truncating that one is the lesser loss, and
+    # the ellipsis marks it as truncated rather than passing a fragment off as a sentence.
+    if not kept:
+        kept = [items[0][: max(1, room - 3)].rstrip() + "..."]
+
+    dropped = len(items) - len(kept)
+    return "; ".join(kept + ([_dropped_note(dropped)] if dropped else []))
+
+
+def _dropped_note(count: int) -> str:
+    """What the header says instead of the warnings it could not carry.
+
+    Names the preview because that is where the full list is actually reachable — ``GET
+    /report/preview`` returns ``warnings`` as an uncapped JSON array built from the same load — so
+    this is an instruction a designer can act on rather than an apology.
+    """
+    return (
+        f"{count} further warning(s) did not fit in this header; the report preview lists all of "
+        "them."
+    )
 
 
 def _block_payload(block: Any) -> dict[str, Any]:
