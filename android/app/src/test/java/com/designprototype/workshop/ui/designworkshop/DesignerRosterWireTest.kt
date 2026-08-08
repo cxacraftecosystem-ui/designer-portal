@@ -179,6 +179,25 @@ class DesignerRosterWireTest {
         assertTrue("the rows that did arrive are kept and shown", listing.items.isNotEmpty())
     }
 
+    @Test
+    fun `a truncated walk keeps the newest rows and loses the oldest`() {
+        // WHICH END IS MISSING, pinned — because the screen's warning names it in words and an admin
+        // acts on that sentence. The server orders `createdAt desc` and the walk always reads from
+        // page 1, so what survives a short read is the head of that order: the most recent
+        // empanelments. The rows that fall off the end are the OLDEST, which is precisely the row
+        // this screen is opened for. If either the walk's direction or the server's `order` ever
+        // changes, this fails here rather than leaving a notice pointing at the wrong end of a list.
+        val listing = drive(server(total = 4000))
+
+        assertEquals(500, listing.items.size)
+        assertEquals("the first row the server served is kept", "r-0", listing.items.first().id)
+        assertEquals("the walk stops at its ceiling, not before", "r-499", listing.items.last().id)
+        assertNull(
+            "the tail of the server's order is what is lost, and that tail is the oldest empanelments",
+            listing.items.firstOrNull { it.id == "r-3999" }
+        )
+    }
+
     // ── The email -> account join ────────────────────────────────────────────────────────────────
 
     @Test
