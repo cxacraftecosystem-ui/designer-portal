@@ -195,12 +195,9 @@ import com.designprototype.workshop.ui.RecordCodeSection
 // The Design & Prototype Workshop capture surface. Four screens, all of them rendered entirely
 // from the field registry — see ui/designworkshop/FieldRenderer.kt for why there is no per-stage
 // form code here or anywhere else.
-<<<<<<< HEAD
+import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.ui.designworkshop.DwIdentityCardControl
 import com.designprototype.workshop.ui.designworkshop.DwIdentityKind
-=======
-import com.designprototype.workshop.data.DwWorkshopRecordType
->>>>>>> worktree-wf_37868095-72f-6
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
 import com.designprototype.workshop.ui.designworkshop.DwLanguagePackOfferCard
