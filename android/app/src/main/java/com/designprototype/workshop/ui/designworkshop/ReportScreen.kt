@@ -46,9 +46,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DW_ROW_KEY_SEPARATOR
 import com.designprototype.workshop.data.DwFieldType
+import com.designprototype.workshop.data.DwQuestionnaireCache
+import com.designprototype.workshop.data.DwQuestionnaireStore
 import com.designprototype.workshop.data.DwTier
 import com.designprototype.workshop.data.DwReferenceStore
 import com.designprototype.workshop.data.DwValues
+import com.designprototype.workshop.data.designWorkshopQuestionnaires
+import com.designprototype.workshop.data.dwQuestionnaireCopy
+import com.designprototype.workshop.data.dwQuestionnaireWarnings
 import com.designprototype.workshop.data.EntityDto
 import com.designprototype.workshop.data.ExportRecordBody
 import com.designprototype.workshop.data.FieldDto
@@ -173,6 +178,17 @@ fun ReportScreen(
      */
     var accent by remember(workshopId) { mutableStateOf("") }
 
+    /**
+     * The answers recorded against this workshop's own questionnaires, as this device holds them.
+     *
+     * NULL IS A THIRD ANSWER and not an empty one — see `DwQuestionnaireStore`. Null means this
+     * handset has never read the list for this workshop and cannot tell an unattached workshop from
+     * an attached one; a cache with no items means the server said none is attached. The annexure,
+     * the export warnings and the file's own notes all turn on that distinction, so it is carried
+     * here as a nullable rather than flattened to `emptyList()` on the way in.
+     */
+    var questionnaires by remember(workshopId) { mutableStateOf<DwQuestionnaireCache?>(null) }
+
     LaunchedEffect(workshopId) {
         loading = true
         runCatching {
@@ -207,6 +223,36 @@ fun ReportScreen(
                     "missing (${stage.missing.take(3).joinToString(", ")}" +
                     (if (stage.missing.size > 3) ", …" else "") + ")"
             }
+
+            // ── the questionnaire annexure's answers ─────────────────────────────────────────────
+            //
+            // THE CACHE FIRST, THE NETWORK AS A REFRESH — the discipline `DwReferenceStore` set, and
+            // the reason this screen is worth touching at all: the moment a report is most needed is
+            // the end of a workshop, in a cluster, with no signal. What this phone was shown while it
+            // had signal is what it prints now.
+            //
+            // THE FETCH IS ITS OWN runCatching AND IS BEST-EFFORT. It is the ONLY network call on a
+            // screen whose whole argument is that it needs none, so it must not be able to fail the
+            // load: an offline export that lost the template picker and the completeness figures
+            // because a questionnaire lookup timed out would be a worse screen than the one that
+            // never fetched. A failure leaves whatever is cached exactly where it is.
+            val remoteId = stored?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
+            var held = DwQuestionnaireStore.load(appContext, workshopId)
+            if (remoteId != null) {
+                runCatching { repository.designWorkshopQuestionnaires(remoteId) }
+                    .onSuccess { fetched ->
+                        held = DwQuestionnaireStore.store(
+                            appContext,
+                            // Stored under the id this SCREEN reads back with, which is the local
+                            // workshop id and not necessarily the remote one — a workshop created
+                            // offline keeps its local id here for ever, and filing the answers under
+                            // the server's would hide them from the one device that fetched them.
+                            fetched.copy(workshopId = workshopId),
+                        )
+                    }
+            }
+            questionnaires = held
+            warnings = warnings + dwQuestionnaireWarnings(held)
         }.onFailure { onError(it.message ?: "Unable to prepare the report.") }
         loading = false
     }
@@ -229,6 +275,10 @@ fun ReportScreen(
                     requestedAccent = accent,
                     format = format,
                     generatedAt = Instant.now().toString(),
+                    // The same copy the document is drawn from, so the warning above the buttons and
+                    // the section in the file cannot come from two different answers to "does this
+                    // phone have the answers".
+                    questionnaires = dwQuestionnaireCopy(questionnaires),
                 )
                 exportNotes = plan.warnings
                 val document = withContext(Dispatchers.Default) {
@@ -242,6 +292,7 @@ fun ReportScreen(
                         accent = accent,
                         format = format,
                         plan = plan,
+                        questionnaires = questionnaires,
                     )
                 }
                 val loader = deviceImageLoader()
@@ -621,6 +672,7 @@ private fun buildWorkshopDocument(
     accent: String,
     format: String = "DOCX",
     plan: ReportPlan? = null,
+    questionnaires: DwQuestionnaireCache? = null,
 ): ReportDocument {
     val mediaById = draft?.media.orEmpty().associateBy { it.id }
     return buildWorkshopDocument(
@@ -632,6 +684,7 @@ private fun buildWorkshopDocument(
         templateId = templateId,
         warnings = warnings,
         accent = accent,
+        questionnaires = questionnaires,
         imageFor = { mediaId ->
             val descriptor = mediaById[mediaId]
             val file = descriptor?.let { WorkshopDraftStore.mediaFile(context, workshopId, it) }
@@ -697,6 +750,15 @@ internal fun buildWorkshopDocument(
      * which stage-20 keys mattered and the designer approved one document and submitted another.
      */
     plan: ReportPlan? = null,
+    /**
+     * This workshop's questionnaire answers, as this device holds them — see `DwQuestionnaireStore`.
+     *
+     * NULL AND EMPTY ARE DIFFERENT and both are legitimate. Null is "this handset has never read the
+     * list", which is what every caller that does not consult the store means, and which prints no
+     * annexure at all. A cache with no items is "the server says none is attached", which prints no
+     * annexure either — but for a reason the file and the export screen are allowed to state.
+     */
+    questionnaires: DwQuestionnaireCache? = null,
 ): ReportDocument {
     val resolved = plan ?: reportPlanFor(
         schema = schema,
@@ -732,6 +794,7 @@ internal fun buildWorkshopDocument(
         if (special != null) {
             renderSpecialSection(
                 builder, special, section, resolved, schema, draft, imageFor, refs, figures,
+                questionnaires,
             )
         } else {
             stages[section.stageKey]?.let { stage ->
@@ -887,15 +950,16 @@ private fun renderStageSection(
 /**
  * The sections that are not one of the 22 stages.
  *
- * NINE OF THE TEN ARE BUILT HERE — the cover, the contents, the metric row, the acknowledgement, the
- * photographic record, the completeness table, the sign-off, the locator map and the infographics.
- * The tenth, the transcript annexure, is SKIPPED IN SILENCE HERE AND NAMED IN THE WARNINGS, which
- * [reportPlanFor] assembled from this same template. That split is deliberate: a warning belongs to
- * the act of generating and not to the document, so the officer who opens the .docx next month does
- * not find a note about what a handset could not draw on the day, while the designer standing beside
- * them on the day is told plainly. The document itself carries one provenance line on its cover
- * ([fieldCopyNote]) naming what the office's copy additionally has — which is a statement of fact
- * about the file, and belongs in it.
+ * TEN OF THE ELEVEN ARE BUILT HERE — the cover, the contents, the metric row, the acknowledgement,
+ * the photographic record, the completeness table, the sign-off, the locator map, the infographics
+ * and, since this device gained a copy of the answers, the questionnaire annexure. The eleventh, the
+ * transcript annexure, is SKIPPED IN SILENCE HERE AND NAMED IN THE WARNINGS, which [reportPlanFor]
+ * assembled from this same template. That split is deliberate: a warning belongs to the act of
+ * generating and not to the document, so the officer who opens the .docx next month does not find a
+ * note about what a handset could not draw on the day, while the designer standing beside them on the
+ * day is told plainly. The document itself carries one provenance line on its cover ([fieldCopyNote])
+ * naming what the office's copy additionally has — which is a statement of fact about the file, and
+ * belongs in it.
  */
 private fun renderSpecialSection(
     builder: DocumentBuilder,
@@ -907,6 +971,7 @@ private fun renderSpecialSection(
     imageFor: (String) -> ImageRef?,
     refs: DwRefLabels,
     figures: DwFigures,
+    questionnaires: DwQuestionnaireCache?,
 ) {
     when (special) {
         SpecialSection.COVER -> renderCover(builder, section, plan, schema, draft, imageFor, refs)
@@ -942,16 +1007,19 @@ private fun renderSpecialSection(
         // nowhere reads as a corrupt file.
         SpecialSection.ANNEXURE_TRANSCRIPTS -> Unit
 
-        // The second, for the same KIND of reason and a sharper version of it: the answers recorded
-        // against a questionnaire live in `QuestionnaireFormAnswer` on the server, and
-        // `WorkshopRepository`'s "Custom questionnaires" block falls back to the device for NOTHING —
-        // deliberately, because a cached form cannot know that a question was retired an hour ago and
-        // an answer given under superseded wording is fabricated evidence. So there is nothing here
-        // to draw, and there is not supposed to be. The designer is told at the export screen (see
-        // `UNSUPPORTED_SECTIONS`); the cover note stays silent about it because this device cannot
-        // tell an unattached workshop from an attached one offline, and a report apologising for the
-        // absence of a questionnaire nobody attached is a false alarm on most exports.
-        SpecialSection.ANNEXURE_QUESTIONNAIRES -> Unit
+        // DRAWN NOW, from the copy of the answers this device keeps — `DwQuestionnaireStore`. It used
+        // to sit beside the transcripts as the second section this handset could not build, and the
+        // reason given was correct: the answers live in `QuestionnaireFormAnswer` on the server and
+        // nothing under `data/` held one. That is what changed, and only that. The rule the old
+        // comment leaned on — `WorkshopRepository`'s "Custom questionnaires" block falls back to the
+        // device for NOTHING — is about ANSWERING offline, where a cached form cannot know a question
+        // was retired an hour ago and a queued batch would be either lost or re-attached to wording
+        // that replaced it. That rule stands untouched; this is a read-only copy for printing, which
+        // no save path can reach.
+        //
+        // With no copy on the device it still draws nothing and still warns, exactly as before.
+        SpecialSection.ANNEXURE_QUESTIONNAIRES ->
+            renderQuestionnaireAnnexure(builder, section, plan, questionnaires)
     }
 }
 
