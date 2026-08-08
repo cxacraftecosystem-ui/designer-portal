@@ -36,9 +36,9 @@ import Link from "next/link";
 import { Printer, QrCode } from "lucide-react";
 
 import { PageHeader } from "@/components/PageHeader";
+import { ResolvedRecordRow } from "@/components/RecordCodeScanPanel";
 import { WorkshopCodeScanner, type ScanResolution } from "@/components/designworkshop/WorkshopCodeScanner";
 import { WorkshopCodeSheet, type WorkshopCodeCard } from "@/components/designworkshop/WorkshopCodeSheet";
-import { ApiError, apiFetch } from "@/lib/api";
 import {
   getDesignWorkshop,
   inputValue,
@@ -59,7 +59,7 @@ import {
   type DwDraft
 } from "@/lib/designWorkshopStore";
 import { isUnreachable } from "@/lib/offline";
-import type { Artisan } from "@/lib/types";
+import { lookUpWorkshopCode, workshopCodeOpenHref, type WorkshopCodeHit } from "@/lib/workshopCodeLookup";
 import {
   unresolvedWorkshopCodeMessage,
   workshopCodeIdForRow,
@@ -122,6 +122,8 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   const [kind, setKind] = useState<WorkshopRecordType>("prototype");
+  /** The last scanned code that resolved to a record with a page of its own, and where that page is. */
+  const [opened, setOpened] = useState<{ ref: WorkshopCodeRef; hit: WorkshopCodeHit } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -217,14 +219,25 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
   /**
    * What a scanned code points at.
    *
-   * The local draft answers first and answers offline, which is the case that matters. Only an
-   * artisan card that is NOT on this workshop's roster reaches the network, and its refusals are
-   * deliberately flattened into one sentence: `GET /artisans/{id}` answers 404 both for a record
+   * THE LOCAL DRAFT ANSWERS FIRST AND ANSWERS OFFLINE, which is the case that matters: a prototype
+   * made this morning in a courtyard is in this browser and nowhere else. Only a code the draft
+   * cannot account for reaches the network.
+   *
+   * IT ANSWERS FOR EVERY RECORD TYPE, not only the two this page PRINTS. A designer standing at this
+   * screen with a scanner open will scan whatever is in front of them — the tool on the bench, the
+   * product on the table — and "this is a workshop code, but it points at a kind of record this
+   * version of the app does not open" would be a lie told by a build that opens it perfectly well.
+   * Everything that is not a roster artisan or a prototype goes to `lib/workshopCodeLookup`, whose
+   * refusals are deliberately flattened into one sentence: the API answers 404 both for a record
    * that does not exist and for one this designer may not see, and telling the two apart here would
-   * hand back exactly the fact the API withholds.
+   * hand back exactly the fact it withholds.
    */
   const resolve = useCallback(
     async (ref: WorkshopCodeRef): Promise<ScanResolution> => {
+      // Cleared before the work, so the previous scan's "Open" is never sitting under this one's
+      // answer one press away from opening the wrong record.
+      setOpened(null);
+
       if (ref.recordType === "prototype") {
         const index = prototypeRows.findIndex((row) => workshopCodeMatchesRow(ref, row));
         if (index < 0 || !prototypeEntity) return { ok: false, message: unresolvedWorkshopCodeMessage("prototype") };
@@ -237,38 +250,35 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
         };
       }
 
-      const refKey = rosterEntity ? artisanRefKey(rosterEntity.entity) : null;
-      if (refKey) {
-        const index = rosterRows.findIndex((row) => inputValue(row[refKey]) === ref.id);
-        if (index >= 0 && rosterEntity) {
-          return {
-            ok: true,
-            label: rowTitle(rosterEntity.entity, rosterRows[index], index),
-            detail: `On this workshop's roster · ${rosterEntity.stage.title}`
-          };
+      if (ref.recordType === "artisan") {
+        const refKey = rosterEntity ? artisanRefKey(rosterEntity.entity) : null;
+        if (refKey) {
+          const index = rosterRows.findIndex((row) => inputValue(row[refKey]) === ref.id);
+          if (index >= 0 && rosterEntity) {
+            const label = rowTitle(rosterEntity.entity, rosterRows[index], index);
+            const detail = `On this workshop's roster · ${rosterEntity.stage.title}`;
+            // Answered off the draft with no request, and STILL openable: the href comes from the
+            // same table the repository lookup uses, so a roster answer and a network answer send
+            // the designer to one place. See `workshopCodeOpenHref`.
+            setOpened({ ref, hit: { label, detail, href: workshopCodeOpenHref(ref) } });
+            return { ok: true, label, detail };
+          }
         }
       }
 
-      try {
-        const artisan = await apiFetch<Artisan>(`/artisans/${ref.id}`);
-        return {
-          ok: true,
-          label: artisan.name,
-          // Said out loud, because it changes what the designer should do next: this person is
-          // documented but is not in this workshop, so enrolling them is the missing step.
-          detail: `${artisan.place || "In the repository"} · not on this workshop's roster`
-        };
-      } catch (err) {
-        if (isUnreachable(err)) {
-          return {
-            ok: false,
-            message:
-              "That card is not on this workshop's roster on this device, and there is no connection to check the repository. Try again when there is signal — the card itself is fine."
-          };
-        }
-        if (err instanceof ApiError) return { ok: false, message: unresolvedWorkshopCodeMessage("artisan") };
-        throw err;
-      }
+      const answer = await lookUpWorkshopCode(ref);
+      if (!answer.ok) return { ok: false, message: answer.message };
+      setOpened({ ref, hit: answer.hit });
+      return {
+        ok: true,
+        label: answer.hit.label,
+        detail:
+          ref.recordType === "artisan"
+            ? // Said out loud, because it changes what the designer should do next: this person is
+              // documented but is not in this workshop, so enrolling them is the missing step.
+              `${answer.hit.detail || "In the repository"} · not on this workshop's roster`
+            : answer.hit.detail
+      };
     },
     [prototypeEntity, prototypeRows, rosterEntity, rosterRows]
   );
@@ -323,8 +333,16 @@ export default function WorkshopCodesPage({ params }: { params: Promise<{ id: st
 
       <WorkshopCodeScanner
         resolve={resolve}
-        description="A tag or card printed by this app. Nothing about the person is inside the code — it holds a reference and a check, and nothing else."
+        description="A tag or card printed by this app, for any kind of record — a prototype or an artisan from this workshop, or a craft, product, process, tool or interview from the repository. Nothing about the record is inside the code: it holds a reference and a check, and nothing else."
       />
+      {/* Only for a record that HAS a page. A prototype is a row inside this workshop's draft and has
+          no route of its own, so a prototype scan reports and stops there — which is correct: the
+          designer is already standing in the workshop the row belongs to. */}
+      {opened ? (
+        <div className="mt-3">
+          <ResolvedRecordRow recordType={opened.ref.recordType} hit={opened.hit} />
+        </div>
+      ) : null}
 
       <div className="mt-5">
         {registry === null || draft === null ? (
