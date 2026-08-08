@@ -169,6 +169,28 @@ enum class BlockKind {
     IMAGE;
 
     val isListItem: Boolean get() = this == BULLET_ITEM || this == ORDERED_ITEM
+
+    /**
+     * A kind whose CONTENT IS NOT ITS SPANS, and which therefore cannot be re-kinded without
+     * destroying it — the port of `isStructuralKind` in `frontend/lib/richText.ts`.
+     *
+     * [TABLE] keeps its grid in [RichBlock.rows] and [IMAGE] keeps its picture in
+     * [RichBlock.media], and `toStored` writes each of those fields ONLY for the kind that owns it.
+     * So the moment either becomes a PARAGRAPH the next save omits the field, and the grid or the
+     * photograph is gone from the record on every surface, permanently.
+     *
+     * The two enum constants above already say that a build which does not KNOW these kinds
+     * destroys them. This is the other half of the same rule: a build that knows them can still
+     * destroy one by re-kinding it, and the gesture that does it is not a destructive-looking gesture
+     * at all — "Clear formatting", or the Paragraph button, pressed over a selection that happens to
+     * run through a table on its way to a sentence three blocks away. A designer stripping a stray
+     * bold run out of a caption would have found the photograph gone and the caption floating under
+     * nothing.
+     *
+     * The structural kinds are removed by their OWN controls (delete the table, remove the picture),
+     * which is where a designer expects to lose one.
+     */
+    val isStructural: Boolean get() = this == TABLE || this == IMAGE
 }
 
 /** A run of text carrying zero or more marks. */
