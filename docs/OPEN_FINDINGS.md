@@ -1,255 +1,160 @@
-### [CRITICAL] BUG — [group-a] A stage saved from a client that never downloaded it REPLACES the server's singleton row wholesale, deleting every field that client never read — on web and on Android, behind a banner promising the opposite (cross-surface, LARGE, CERTAIN)
-
-**Consequence.** A workshop is set up in the office with stage 1 complete — craft, cluster, state, district, dates, implementing agency, four rich-text narratives. The designer opens that stage in a courtyard, the download fails, the form comes up blank behind an amber banner that says in so many words that nothing left blank will overwrite an answer recorded elsewhere, and she types the one thing she came to record. On the drive back the signal returns and the singleton row is replaced by `{artisanHouseholds: 412}`. Everything written in the office is gone, in place, with no RecordRevision to recover it, and craftName/state/district are additionally nulled on the workshop header — so the record vanishes from every "Ikat in Odisha" filter and the report cover handed to the visiting ministry officer prints blank. Nothing on any screen ever says it happened, and on Android reopening the stage does not repa
-
-**Evidence.** MERGED from the web and Android CRITICALs — one defect, one server hop, one missing wire primitive. I re-read every hop today.
-SERVER (the shared hop): `backend/app/services/design_workshops.py:907-911` matches the incoming singleton to the existing live row; `:960-963` writes `{"data": _json(item.data), "ordinal": item.ordinal, "deletedAt": None}` — the row's whole data object is replaced. `:917-934` consults `previous` ONLY inside `if entry_errors:`, i.e. only to restore keys the VALIDATOR rejected — there is no general merge, and its own comment is about typos, not about absent keys. `backend/app/services/stage_schema.py:947-993` builds `cleaned` from the keys present in the entry, so a k
-
-**Fix.** Add the primitive both clients are missing, once, on the wire: a per-entry `merge` flag on `StageSaveIn` (`backend/app/schemas/design_workshops.py:153-203`) that `save_stage` honours by writing `{**previous, **clean}` for entities the client admits it has not read — placed alongside the existing `previous` handling at `design_workshops.py:917-934`. Drive it from `serverLoadedAt === null` on web (`designWorkshopStore.ts:1686`) and from `!isAuthoritative(...)` on Android (`WorkshopSync.kt:978-983`). If the merge flag is judged too large, the alternative on both clients is to hold the whole entry back the way `unresolvedMediaRefs` already holds a stage back (`designWorkshopStore.ts:1880-1897`, 
-
-### [HIGH] BUG — [group-a] A row deleted while a background sync PUT is in flight loses its deletion flag, so the row comes back on the next read and prints in the officer's report (web, SMALL, LIKELY)
-
-**Consequence.** A designer deletes a mis-entered participant row from stage 5 in the moment the banner's automatic pass is PUTting that same stage. The autosave records the deletion; the push result then wipes `removedFrom` while correctly keeping `dirtyAt`. The next pass sends `replaceCollections: false` and `emptiedEntities: []`, so the sweep never reaches the server and the row stays alive in the repository. The next clean read puts the row back on her screen and into the .docx handed to the officer. She deleted it, watched it disappear, and it is back — with no message anywhere.
-
-**Evidence.** VERIFIED VERBATIM TODAY. `frontend/lib/designWorkshopStore.ts:2032-2033` — `dirtyAt: target.dirtyAt !== null && target.dirtyAt > (stage.dirtyAt ?? 0) ? target.dirtyAt : null,` immediately followed by `removedFrom: [],` with NO condition at all. The same asymmetry is at `:884-885` in `markStagePushed`, whose docstring at `:864-867` explains exactly why `dirtyAt` needs the comparison. The sweep is armed only from that list: `:1978` `replaceCollections: stage.removedFrom.length > 0` and `:1982` `emptiedEntities: stage.removedFrom`, whose own comment says "WITHOUT THIS, DELETING THE LAST ROW OF A COLLECTION NEVER REACHES THE SERVER". The field's stated contract at `:222-229` is "it is cleared on
-
-**Fix.** Compute the surviving `removedFrom` the same way `dirtyAt` is computed, inside the same transform: `removedFrom: target.removedFrom.filter((k) => !sentRemovedFrom.includes(k))`, where `sentRemovedFrom` is the `stage.removedFrom` snapshot the PUT was built from at `:1982`. Apply the identical change in `markStagePushed` (`:884-885`), whose `sinceDirtyAt` parameter exists for exactly this reason.
-
-### [HIGH] SECURITY — [group-b] SECURITY — report generation and the transcript annexure fetch ANY MediaFile by client-supplied id, bypassing the entitlement that deliberately withholds other people's files (backend, MEDIUM, CERTAIN)
-
-**Consequence.** A designer lists `GET /api/media?mediaType=IMAGE`, which hands them the id of every photograph in the repository while deliberately stripping the URL so they cannot fetch it. They paste one of those ids into an IMAGE field of their own workshop, press Generate report, and the .docx in their Downloads folder contains another researcher's photograph — an artisan's portrait, or the photograph of an Aadhaar card a colleague uploaded. With an AUDIO id the same trick prints another researcher's FULL interview transcript into their annexure, and `GET /design-workshops/{id}/transcripts` (`routes/design_workshops.py:574-603`) shows its filename, duration, speaker count and opening line before they even generate. Nothing in the media table, the review queue or the export log records that the file was taken.
-
-**Evidence.** VERIFIED END TO END; I re-read the two unfiltered reads myself today. `backend/app/services/design_workshops.py:1421` is `rows = await db.mediafile.find_many(where={"id": {"in": sorted(ids)}})` inside `media_resolver` — no owner filter, no workshop filter; `:1390-1398` then calls `get_object_bytes(key)` and embeds the bytes. `backend/app/services/workshop_transcripts.py:256` is the identical unfiltered `find_many` on ids taken from AUDIO fields. The ids are ENUMERABLE: `backend/app/services/records.py:516-533` `viewable_where` returns `{}` and says so in its docstring ("past it there is no per-row narrowing"), so `list_media` (`backend/app/api/routes/media.py:348-391`) returns every media RO
-
-**Fix.** Resolve media for a report through the same entitlement the read path uses: AND both `find_many` calls (`services/design_workshops.py:1421` and `services/workshop_transcripts.py:256`, plus `enqueue_stage_transcriptions`) with `await owned_or_granted_where(user, owner_field="uploadedById")` or `await media_url_owners(user)`, and report the excluded ids as render WARNINGS rather than dropping them silently. Belt-and-braces: validate media-typed field values in `validate_entry`/`save_stage` so a foreign id never reaches storage. NOTE FOR WHOEVER PICKS THIS UP: both helpers currently take no `user` argument, so `current_user` must be threaded through the call sites at `routes/design_workshops.py
-
-### [HIGH] ENHANCEMENT — [group-c] The infographic renderer ships in the APK, both writers dispatch it, and no chart block is ever constructed — the officer's copy of the DEFAULT template has no figures at all (android, MEDIUM, CERTAIN)
-
-**Consequence.** The officer handed the phone's copy of a DCH_STANDARD report gets no figures at all: not the two-figure "Outcomes in figures" spread the template places at the front, and not the cost-by-head bar, the price-band histogram or the adoption line the office's copy prints beside their own stages. Cost-by-head is the one that matters most — it is the sheet a sanctioned amount is read off, and the officer reading it in the courtyard sees six rows of a table where the office sees the picture. Meanwhile the designer is told on screen that these infographics "are not drawn on this device" about a renderer that is in the APK they are holding.
-
-**Evidence.** VERIFIED MYSELF TODAY, both halves. `android/…/ui/designworkshop/ReportScreen.kt:891-895` reads verbatim `SpecialSection.MAP, SpecialSection.CHART, SpecialSection.ANNEXURE_MEDIA, SpecialSection.ANNEXURE_TRANSCRIPTS, SpecialSection.COMPLETENESS -> Unit`, under a comment claiming the honest gap is better than half a section. `android/…/report/ReportChart.kt:278 internal fun renderChartPng(block, theme, widthPx)` is complete and shipped, and both writers dispatch `is ChartBlock` (`report/PdfWriter.kt:1105`, `report/DocxWriter.kt:1076`). The only `ChartBlock(` construction sites in the main tree are `backend/tools/kotlin_figure_harness/Harness.kt:219-282` and `android/app/src/test/…/ChartLabelSi
-
-**Fix.** (a) Port the five `_chart_*` builders and `_price_bands` (`backend/app/services/report_builder.py:1530-1655`, `:642`) to Kotlin over `draft.stages[key].rowsFor(entity)`, reusing the row/override resolution already at `ReportScreen.kt:1000-1021`, and keep `_figure`'s draw-once `_drawn` set (`report_builder.py:1671-1691`) or the cost figure prints twice. (b) Replace `SpecialSection.CHART -> Unit` at `ReportScreen.kt:892` with a `renderCharts` matching `_render_charts` (`report_builder.py:1701-1720`) INCLUDING its "emit nothing at all, not even the heading, when no figure has data" rule. (c) In the STAGE section renderer, honour `TemplateSection.includeFigures` (`ReportTemplates.kt:95`) exactly
-
-### [HIGH] PERFORMANCE — [group-d] The .docx writer holds every photograph's full original bytes on the heap at once; the sibling PDF writer in the same package documents that as fatal on the same handset (android, MEDIUM, LIKELY)
-
-**Consequence.** At the close of the workshop the designer taps "Export .docx" — the copy the visiting ministry officer is meant to be handed. On a photo-heavy workshop the writer accumulates every original JPEG on the Java heap before a byte reaches the zip; on the Android 8/9 handsets this fleet targets that is enough to be killed. The designer watches the spinner and is told "The report could not be generated." The .pdf of the same workshop succeeds, because PdfWriter deliberately refuses to retain the bytes — so the failure reads as arbitrary, with an officer waiting.
-
-**Evidence.** VERIFIED MYSELF TODAY at the corrected path `android/app/src/main/java/com/designprototype/workshop/report/`. `DocxWriter.kt:406-416` — `private class MediaPart(val name, val data: ByteArray, val mime, val rid, val probedWidth, val probedHeight)` and `private val media = ArrayList<MediaPart>()`. `DocxWriter.kt:489` takes `figures[image.source] ?: loadImage(image)` and `:513-515` stores those bytes verbatim; there is no subsampling, no re-encode, no cap on `media.size`. `DocxWriter.kt:1309-1313` is the ONLY write-out (`for (part in media) { zip.putNextEntry(...); zip.write(part.data); ... }`), inside `writeTo` AFTER `emitBlocks()` — so every part is resident simultaneously. The KDoc at `DocxW
-
-**Fix.** Stop retaining the bytes: keep only `(name, mime, probedWidth, probedHeight, rid, source)` in `media` and re-ask `loadImage` inside the `writeTo` loop at `DocxWriter.kt:1309-1313`, streaming each part into its entry and dropping it — the exact trade `PdfWriter.kt:532-534` already made and explains. (Deflating during `emitBlocks` into an up-front `ZipOutputStream` also works but reorders the package.) Correct the KDoc at `DocxWriter.kt:1286-1289` in the same change: parts do NOT have to be in memory to be deflated.
-
-### [HIGH] PERFORMANCE — [group-e] The report input load is up to ten sequential round trips where the dependency graph allows four — the one route family never converted to `gather_reads` (backend, MEDIUM, LIKELY)
-
-**Consequence.** On the production topology this repository documents (database in another AWS region, ~756ms per round trip against queries that execute in well under a millisecond), a designer pressing Preview on a fully-referenced workshop waits roughly 6.8s of pure network — about 7.5s with the transcript annexure on — before the renderer starts, then pays it again on Generate. Restructured into three waves the same work is four round trips, about 3s. The dashboard in the same app was converted and went from 10.1s to 1.6s; this route was not.
-
-**Evidence.** VERIFIED, count re-derived. `backend/app/api/routes/design_workshops.py:1105-1119` awaits five loads strictly in sequence. Per-load counts: `entry_rows` = 1 (`services/design_workshops.py:128-132`); `attach_report_references` (`:1307-1318`) delegates to `load_report_references` (`:1260-1286`), whose `for model, ids in wanted.items():` loop issues a `find_many` then `await _reference_photos(...)` per model over the three models in `REFERENCE_MODELS` (`:274-335`) = up to 6; `attach_district_anchors` = 1; `media_resolver` = 1; `attach_report_transcripts` (`:1449-1469`) = 1, but 0 in the DEFAULT case because it returns early at `:1462` when `wants_transcripts` is false (`workshop_transcripts.py:
-
-**Fix.** Three waves with `gather_reads`: wave 1 `entry_rows`; wave 2 `attach_report_references` + `attach_district_anchors` + `attach_report_transcripts`; wave 3 `media_resolver`. Inside `load_report_references`, gather the per-model pairs instead of looping — the three models are independent, and the existing per-model `try/except` at `services/design_workshops.py:1287-1293` sits around each pair, so gathering does not weaken the documented "one unjoinable model must not lose the report" guarantee.
-
-### [HIGH] ACCESSIBILITY — [group-g] The two hand-rolled modal overlays — `CollabDialog` on six list pages and "Assign researchers" — have no dialog role, no focus trap, no Escape, and discard work on a stray backdrop click (web, SMALL, CERTAIN)
-
-**Consequence.** A reviewer presses "Discuss" on a row of the artisan list. Focus stays on the row button behind the dimmer, so a screen reader keeps reading the table underneath and nothing announces that a dialog opened; a keyboard user must Tab through every remaining row to reach Close; Escape does nothing; the page keeps scrolling under the overlay; and a stray click on the dim area throws away a half-typed comment with no prompt. In the Assign researchers dialog the same stray click costs an admin eleven ticks they scrolled a list to make, silently, with the original assignment shown untouched when they reopen it.
-
-**Evidence.** MERGED — the same defect in two files, and both fixes edit `frontend/app/(protected)/workshops/page.tsx`. (1) `frontend/components/CollabDialog.tsx` read end to end (37 lines): `:24` is `<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>` wrapping a `.panel` at `:25` whose only guard is `onClick={(e) => e.stopPropagation()}`. No `role="dialog"`, no `aria-modal`, no `aria-labelledby` (the `<h2>` at `:27` has no id), no portal, no keydown listener, no focus move-in, no focus restore, no scroll lock. Six mount sites confirmed: `artisans/page.tsx:267`, `crafts/page.tsx:427`, `processes/page.tsx:329`, `products/page.tsx:224`, `tools/page.tsx:23
-
-**Fix.** Rebuild `CollabDialog` on `FieldDialog`: `<FieldDialog open={Boolean(recordId)} onClose={onClose} title="Comments & edit history" className="max-w-lg" dismissOnBackdrop={false}>{<CollabPanel .../>}</FieldDialog>` — `dismissOnBackdrop={false}` matters specifically because `CollabPanel.tsx:74` holds an unsent comment. Render the Assign researchers overlay through `FieldDialog` too, with `title="Assign researchers"`, the explanatory paragraph as `description`, `dismissOnBackdrop={false}` (a multi-select in progress is unsafe to dismiss on a stray click), and Cancel/Save in `footer`. That also removes the last `fixed inset-0 z-50 bg-black/40` living in a page file.
-
-### [MEDIUM] BUG — [group-a] "Save and sync this stage now" starts an 800 ms timer instead of saving, and leaving the screen inside that window discards the write — the unsaved-changes guard the routing comment promises is never registered (android, SMALL, CERTAIN)
-
-**Consequence.** A designer types the last words of a field and immediately presses Back, or taps "Save and sync this stage now" and leaves — the button exists precisely so they can stop trusting a debounce they cannot see. `goBack()` runs unguarded with no prompt, StageScreen leaves composition, the coroutine in `delay(800)` is cancelled, and neither the local write nor the sync it promised happens. Whatever was typed in that window is gone from a document that exists nowhere else, and the screen says nothing.
-
-**Evidence.** VERIFIED, dead end confirmed by exhaustive search. `ui/designworkshop/StageScreen.kt:275-289` is the ONLY write path: `LaunchedEffect(revision) { … delay(SAVE_DEBOUNCE_MS) … persistLocally(…) }`. A repository-wide grep for `persistLocally` returns exactly two hits in `android/app/src` — the definition at `StageScreen.kt:1074` and that one call at `:284`. There is no `DisposableEffect` in `StageScreen.kt` (the only two in the package are `DwDictation.kt:354` and `DwMediaCapture.kt:350`) and no lifecycle observer for the stage. `StageScreen.kt:585-589` — the "Save and sync this stage now" button is `onClick = { revision++ }`, re-entering the same 800 ms debounce (`SAVE_DEBOUNCE_MS = 800L`, `:1
-
-**Fix.** Make the button call `persistLocally` directly rather than restarting the debounce. Add a `DisposableEffect` whose `onDispose` persists the current snapshot on `AppScope.io` so a dispose racing the debounce still lands on disk. Register the stage with the app guard the way the record forms do — `RegisterUnsavedGuard(dirty = saveState == SaveState.PENDING || saveState == SaveState.SAVING) { revision++ }`, which needs exposing to the `designworkshop` package. Fix the comment at `MainActivity.kt:1945-1953` either way.
-
-### [MEDIUM] BUG — [group-a] A stage the server answers with 5xx is reported to the designer as "the connection dropped" on a phone with signal, and blocks every workshop queued behind it — the web deliberately does the opposite on this exact endpoint (cross-surface, SMALL, LIKELY)
-
-**Consequence.** Whenever the server answers a stage PUT with 5xx, the designer is told the connection dropped on a phone showing four bars, and every workshop queued behind that one is skipped for the pass. For a transient outage that is a misleading message that self-corrects. For anything the server refuses deterministically it is permanent: the pass returns to the same rejection every time, the message never names the stage or the reason, and the designer waits for better signal that cannot help.
-
-**Evidence.** VERIFIED. `android/…/data/WorkshopRepository.kt:2681-2697` — `is HttpException -> when (val code = error.code()) { 401 -> true; 408, 429 -> true; else -> code >= 500 }`, so every ANSWERED 5xx is treated as transient. `data/WorkshopSync.kt:797-802` — a transient stage failure writes `lastError` and returns false; `:582` propagates it out of `syncOneWorkshop`; `:403-407` makes `syncAll` set `stoppedOffline` and `break`, and since `:392` sorts oldest-first every workshop queued behind it is skipped. The user-facing string is `ui/designworkshop/WorkshopListScreen.kt:329-331`: "The connection dropped before anything could be sent. Nothing has been lost." — asserted about a server that answered. T
-
-**Fix.** In `pushStages` (`WorkshopSync.kt:792-813`) and the create arm of `syncOneWorkshop`, split the answered-5xx case out of `isTransient`: on an `HttpException` with code >= 500 that is not 408/429/409, record a per-stage failure with the stage NAMED and continue, exactly as `noteStageFailure` does at `designWorkshopStore.ts:2004-2016`. Keep IOException and 401/408/429/409 transient. If the divergence is intentional, correct `WorkshopSync.kt:80-84`, which currently tells the next maintainer the two clients share one judgement.
-
-### [MEDIUM] BUG — [group-a] `putDraftStage` resolves confirmed media refs OUTSIDE the transaction its comment claims it is inside, stranding a stage on a `dwlocal:` reference nothing will resolve (web, SMALL, LIKELY)
-
-**Consequence.** The designer's stage sits behind the amber sentence "1 attached file is still on this device, so this stage has not been sent yet. It sends itself as soon as they upload — nothing has been thrown away" — a promise that will not come true, because the file already uploaded and nothing will rewrite the reference. The photo tile is blank (the blob was correctly released). She packs up believing the stage is queued; it is stuck, and only re-opening that one stage and typing into it unsticks it.
-
-**Evidence.** VERIFIED, AND THE COMMENT IS THE OPPOSITE OF THE CODE. `frontend/lib/designWorkshopStore.ts:809-810` claims "Resolving at the write, inside the same transaction that reads the media rows, is the only place that cannot race the page." But `:811` `const confirmed = await confirmedMediaMap(id)` runs TWO separate read transactions — `loadDraft` at `:1002` and `draftMedia` at `:1004` (its own `transact([STORE_MEDIA], "readonly", …)` at `:1023-1026`) — and both have completed before `mutate` (`:681-700`) opens its readwrite transaction at `:822`. The dangerous window is a transaction on [drafts, media] created AFTER `draftMedia`'s readonly txn and BEFORE `mutate`'s readwrite txn, and IndexedDB ord
-
-**Fix.** Move the media read inside the write: extend `mutate` (or write a bespoke `transact([STORE_DRAFTS, STORE_MEDIA], "readwrite", …)`) so the `dwlocal:` → server-id map is read from `STORE_MEDIA` with `req()` in the SAME transaction that puts the draft — which is what the comment at `:809-810` already claims happens. Independently, give the sync pass a repair branch that rewrites a stage's `dwlocal:` ref when the media row already carries a `remoteMediaId`, so a draft already stranded in the field recovers without the designer re-opening that exact field.
-
-### [MEDIUM] BUG — [group-e] The one-photo-per-record lookup caps its read at 4xN rows GLOBALLY, so a heavily photographed artisan eats other artisans' portraits out of the roster (backend, SMALL, LIKELY)
-
-**Consequence.** A designer saves the roster stage naming forty participants picked from the artisan register. The server reads at most 160 image rows for all forty; if a handful of long-documented artisans carry twenty or thirty images each, they consume the budget and the artisans whose photographs were taken most recently hydrate with `photo` empty. The report handed to the visiting officer prints a roster with faces missing for people whose portraits are sitting in the media table one join away, and re-saving the stage never fixes it because the same rows win the budget every time. Nothing warns anybody — the report renders cleanly, which is why this survives.
-
-**Evidence.** VERIFIED, and the consequence path is different from — and stronger than — the one originally claimed. `backend/app/services/design_workshops.py:566-580`: `find_many(where={"mediaType": "IMAGE", spec.media_field: {"in": ids}}, order={"createdAt": "asc"}, take=len(ids) * 4)` followed by `for row in rows: if parent not in out: out[parent] = row.id`. The `take` is ONE budget across all `ids` and `createdAt asc` means the globally oldest rows fill it, so parents whose images are all newer than the cutoff get nothing. THREE call sites, not two: `:515` (reference picker), `:1286` (report path via `load_report_references`), and `:691` inside `hydrate_entries` (`:647`). The report's roster portrait 
-
-**Fix.** Ask per parent rather than with a global budget: either one `query_raw` using `DISTINCT ON (artisanId) … ORDER BY artisanId, createdAt ASC`, or chunk `ids` so each chunk's budget covers a bounded number of parents. If a global cap must stay, order by `(parent, createdAt)` so the budget spreads across parents instead of concentrating on the oldest rows. Fix it in `_reference_photos` itself and all three call sites are covered.
-
-### [MEDIUM] ENHANCEMENT — [group-c] The completeness annexure is a 28-line table over scores the report screen has already computed — the archival template carries it on the office copy and not on the phone's (android, SMALL, CERTAIN)
-
-**Consequence.** A designer who chose "Detailed technical report" — the archival copy, the one an office asks for when it wants the record rather than the narrative — hands the officer a file whose "Annexure — Data completeness" simply is not there, while the copy the office downloads for the same workshop has it. The officer cannot see which of the 22 stages are short and by how much, so a record that is 60% filled reads the same as one that is complete. The designer can see those gaps on their own screen and they die with the screen.
-
-**Evidence.** VERIFIED, with one correction that narrows it. `ui/designworkshop/ReportScreen.kt:895` is `SpecialSection.COMPLETENESS -> Unit`; `ReportScreen.kt:179` is `val scores = computeWorkshopCompleteness(registry, stored)`, called on load before any button is pressed, and `:203-207` turns it into the on-screen warnings. `report/ReportSettings.kt:333-335` carries the ledger line verbatim ("not built on this device, although the scores it would print are already computed here"). The server renderer is `backend/app/services/report_builder.py:1873-1901` — four columns ("Stage" 40.0, "Required fields" 15.0 numeric, "Complete" 12.0 numeric, "Outstanding" 33.0), an `if not rows: return` guard, heading defa
-
-**Fix.** Replace `SpecialSection.COMPLETENESS -> Unit` at `ReportScreen.kt:895` with a walk over `computeWorkshopCompleteness(schema, draft)` emitting the same TableBlock shape as `report_builder.py:1893-1900`, honouring `section.heading` and `plan.template.numberHeadings` and keeping the "return if no rows" guard. Remove the COMPLETENESS entry from `UNSUPPORTED_SECTIONS` (`report/ReportSettings.kt:367-369`) and re-mark `includeCompletenessAnnexure` APPLIED (`:333`). The toggle's OFF path already works (`ReportTemplates.kt:563`), so only the ON path is being added. Cheapest of the three report-content items: no atlas, no new data path, no network.
-
-### [MEDIUM] ENHANCEMENT — [group-c] The map block is never constructed, so the workshop's own location never appears on the field copy — but do NOT build the venue pin from the GPS field (android, MEDIUM, LIKELY)
-
-**Consequence.** The workshop's own location never appears on the copy the officer reads, and a report a District Industries Centre receives about a cluster does not show where the cluster is. The office's copy of the same record does. The server's own docstring (`report_builder.py:1331-1341`) settles the judgement this gap is usually defended with: the gate is a state or a district and nothing else, and the block is emitted with an EMPTY point tuple rather than skipped, because "a figure that vanished whenever the village names were unfamiliar would read to a designer as a broken renderer".
-
-**Evidence.** CORE VERIFIED; TWO SUPPORTING CLAIMS REFUTED, and the refutations change the fix. Verified: `ui/designworkshop/ReportScreen.kt:891` is `SpecialSection.MAP -> Unit`; `report/ReportMap.kt:619 internal fun renderMapPng(...)` is complete; `report/PdfWriter.kt:1104` and `report/DocxWriter.kt:1039` both dispatch `is MapBlock`; `report/ReportExport.kt:74` and `:91` both call `installReportBoundaryAssets`; the only `MapBlock(` sites in the main tree outside the model (`report/ReportModel.kt:660`) are `backend/tools/kotlin_figure_harness/Harness.kt:290-300`. Android already has `canonicalState` (`ReportMap.kt:466`) and a `tintStates` path (`:558-569`, `:667`), so the tinted-region half needs no new r
-
-**Fix.** Build only the half that can be IDENTICAL to the server's, which is the half the server says carries the figure anyway. Construct a `MapBlock` with `highlight = setOf(canonicalState(state) ?: state)` from stage 1's `state` (`ReportMap.kt:466` already has the strict resolver) and `points = emptyList()` — the exact empty case `report_builder.py:1341` says is drawn deliberately — and use the server's own wording: "No address in the record could be resolved to a position; the map shows the region only" (`report_builder.py:1386-1389`). Do NOT port the place atlas and do NOT substitute `venueLocation` for the server's geocode; a pin the office cannot reproduce is worse than no pin, and is exactly 
-
-### [MEDIUM] ENHANCEMENT — [group-i] Android lists what is missing as inert text; the web turns the same list into links straight to the box — and the module arguing this is a courtyard question was built for the surface that is never in one (android, MEDIUM, CERTAIN)
-
-**Consequence.** On the handset the designer reads "Stage 11 …: 4 required field(s) still missing (Warp count, Reed count, …)", taps into stage 11, and then scrolls a form of several hundred fields by eye hunting for each named box, once per gap, in the last hour of a workshop. On a laptop the same four gaps are four links that scroll straight to the input.
-
-**Evidence.** VERIFIED, with one overstatement corrected. `ui/designworkshop/StageIndexScreen.kt:262-264` is `stage.missing.forEach { label -> Text("· $label", …) }` inside a plain Column, and the only clickable target in that card is the row itself at `:192` (`.clickable(onClick = onOpen)`), which opens the stage; `ui/designworkshop/ReportScreen.kt:203-207` renders the same labels equally inertly. On the web: `frontend/lib/submissionReadiness.ts:1-32` is the docstring including "nobody chases a submission from a desk with a connection, they chase it in a courtyard on the last afternoon of the workshop" at `:25-26`, and `:5-10` states `DwStageCompleteness.missing` is the ONLY source of blocking items so a
-
-**Fix.** Add a field anchor to the design-workshop stage form mirroring `FIELD_ANCHOR_ATTRIBUTE` — a `BringIntoViewRequester` keyed on entity+field (plus row key for collections) in `ui/designworkshop/FieldRenderer.kt`, driven from a nav argument the way `readStageFocus` (`workshopSearch.ts:969`) consumes the query parameter. Make each label at `StageIndexScreen.kt:263` clickable, resolving label→field with a second registry walk shaped like `stageAddresses` (`submissionReadiness.ts:175`), degrading to "open the stage" when a label does not resolve — the same asymmetry `submissionReadiness.ts:14-20` spells out. Do NOT write a second scorer: keep `DwStageCompleteness.missing` as the only source of blo
-
-### [MEDIUM] SECURITY — [group-b] SECURITY — `MediaFile.url` is taken verbatim from the upload payload, so any signed-in account can plant a URL the API 307-redirects to and the portal renders in an `<img>`/`<iframe>` (cross-surface, SMALL, CERTAIN)
-
-**Consequence.** A volunteer uploads a one-byte file and sets `url` to `https://attacker.example/portal-login`. A professor working through the data browser clicks Download on that row and their browser is redirected off-site from the portal's own domain — a phishing hop that begins on a URL they trust. On the media screen the same row loads an `<img>`/`<iframe>` from the attacker's host, handing them the viewer's IP and a hit each time the lightbox opens, and rendering attacker-chosen content inside the portal's chrome.
-
-**Evidence.** VERIFIED. `backend/app/schemas/media.py:105` declares `url: str | None = None` on `MediaCompleteRequest` with no validator. `backend/app/api/routes/media.py:291` stores it unchanged — `data["url"] = data.get("url") or public_url_for_key(data["objectKey"])`, the CALLER's value winning over the derived one — and `clean_data` (`backend/app/services/records.py:327-341`) only drops Nones and title-cases names, so nothing sanitises it. The route is `Depends(get_current_user)` (`media.py:262-266`), reachable by every tier. `backend/app/api/routes/data_browser.py:3001` hands the string to the browser: `return RedirectResponse(media.url, status_code=307)`. The gate was checked rather than assumed: `d
-
-**Fix.** DO NOT drop `url` from `MediaCompleteRequest`. `APIModel` sets `extra="forbid"` (`backend/app/schemas/common.py:12-13`) and both clients send the key today — `frontend/lib/media.ts:1275` sends `url: staged.publicUrl` and the Android upload path carries `publicUrl` (`android/…/data/WorkshopRepository.kt:2076,2157`) — so removing the field would 422 every upload from every installed build, including phones that cannot be updated in the field. Instead keep the field and IGNORE it: `data["url"] = public_url_for_key(data["objectKey"])` unconditionally at `media.py:291`. The object key is already forced under `media/<user_id>/` by `_assert_owns_object` (`media.py:286`), so the derived URL is the o
-
-### [MEDIUM] BUG — [group-f] Data-access grants rebuild their scope with delete-then-N-inserts outside any transaction, so a colleague's export downloads successfully and contains nothing (backend, SMALL, LIKELY)
-
-**Consequence.** An owner edits a twenty-record subset grant on their Sharing page. Between the `delete_many` and the last `create` — twenty sequential round trips to a cross-region database — a colleague pressing Download receives a zip that silently omits the records whose scope rows have not been re-inserted, presented as complete. If the process dies inside that loop the grant stays GRANTED at the tier the owner set while covering zero records: the owner's screen says the colleague has access, the colleague's export downloads successfully and contains nothing, and neither of them is told why.
-
-**Evidence.** VERIFIED, line numbers corrected from the original. `_upsert_grant` is `backend/app/api/routes/data_access.py:88-131`: `db.dataaccessgrant.update(...)` at `:126`, `db.dataaccessscopeitem.delete_many(where={"grantId": grant.id})` at `:127`, then one `db.dataaccessscopeitem.create(...)` per item in a loop at `:128-130`, with no `db.tx()` anywhere in the function. Four routes reach it: `request_access` (`:160`), `grant_access` (`:185`), `decide_request` (`:222`), `update_grant` (`:244`) — and `update_grant`/`decide_request` pass `scope_items=grant.scopeItems` when the payload omits them (`:227`, `:249`), so a bare tier change or a reinstate ALSO tears down and rebuilds every scope row. Readers 
-
-**Fix.** Wrap the update/delete/create sequence in `async with db.tx() as tx:` exactly as `save_stage` does (`services/design_workshops.py:1025`), and replace the per-item loop with a single `create_many`. Better still, diff old against new (as `replace_viewers` does in `backend/app/services/design_workshop_viewers.py`) so an unchanged scope — the common case for `update_grant`, which re-sends the existing items on a tier-only change — writes nothing at all.
-
-### [MEDIUM] PERFORMANCE — [group-b] Every stage save issues one extra query per newly-attached audio clip to ask whether a job already exists (backend, SMALL, CERTAIN)
-
-**Consequence.** A designer saving stage 13 with eighteen prototypes, each carrying the artisan's spoken explanation, waits on 54 serial database round trips where 37 would do — about 13.6 seconds of avoidable wait at the 756ms round trip this repository measured (`backend/app/services/concurrency.py:1-14`), watching a spinner on a metered village connection. It is paid once per clip normally, but a clip whose provider run ended FAILED or UNAVAILABLE stays a candidate for ever and is re-queried on every subsequent save of that stage.
-
-**Evidence.** VERIFIED, with the secondary claim REFUTED and the sizing corrected. Confirmed: `backend/app/services/workshop_transcripts.py:159` is `for row in candidates:` and `:164-170` is a per-clip `db.mediaprocessingjob.find_first(where={"mediaFileId": row.id, "jobType": TRANSCRIPTION, "status": {"in": ["QUEUED", "PROCESSING"]}})`. The batching one step up is at `:143` (one `find_many` with `id: {in: …}`). Called from the stage-save path at `backend/app/services/design_workshops.py:1060`, inside `save_stage_data` at `backend/app/api/routes/design_workshops.py:504`. `@@index([mediaFileId])` confirmed at `backend/prisma/schema.prisma:849`, so the cost is round trips, not scans. Realistic: `audioNarrati
-
-**Fix.** Replace the loop with one `find_many(where={"mediaFileId": {"in": [r.id for r in candidates]}, "jobType": TRANSCRIPTION, "status": {"in": ["QUEUED", "PROCESSING"]}})` before the loop, build the set of already-queued media ids from it, and create only for the rest. The per-clip `try/except` at `workshop_transcripts.py:160/177` that keeps one bad clip from losing the others stays around the create. While there, fix the comment at `:51-54`: it justifies excluding RATE_LIMITED from the settled set, but nothing ever writes RATE_LIMITED to that column.
-
-### [MEDIUM] PERFORMANCE — [group-e] Report preview and report generate scan the whole Location table uncapped, on all six templates, and four of them draw no map (backend, SMALL, CERTAIN)
-
-**Consequence.** A designer generating a DIC, implementing-agency, compact or photo-catalogue report — four of the six formats, none of which contains a map — pays a full unindexed read of every pinned Location row in the repository, folded across all 795 districts (`design_workshops.py:1776-1781`, on the event loop) and thrown away by a document that never asks for a map. The cost tracks the size of the archive, not the size of their workshop, and unlike `/map` there is no cap to degrade into: the map endpoint answers a 20,000-pin repository with a coarser map, the report path answers it by materialising 20,000 Prisma models on the single-worker box that `export.py:22-25` describes as one unbounded `find_many` away from an OOM.
-
-**Evidence.** VERIFIED, with two corrections that lower the urgency but keep the defect. Confirmed verbatim: `backend/app/services/design_workshops.py:1769-1772` is `db.location.find_many(where={"subjectLatitude": {"not": None}, "district": {"not": None}}, order={"id": "asc"})` with NO `take`. Confirmed called unconditionally at `backend/app/api/routes/design_workshops.py:1117` inside `_report_inputs` (`:1096-1120`), which serves `preview_report` (`:704-716`) and `generate_report` (`:743-763`). Confirmed the only Location index is `@@index([state])` at `backend/prisma/schema.prisma:465`, and the schema comment at `:459-464` explicitly refuses an index on `district`. Confirmed the result reaches only `_geo
-
-**Fix.** Skip `attach_district_anchors` when the resolved template carries no `SpecialSection.MAP`. NOTE FOR THE IMPLEMENTER: the template is resolved AFTER `_report_inputs` in both callers (`routes/design_workshops.py:725`, `:768`) and `resolve_template_id` needs `data.singleton("REPORT_GENERATION")`, so the guard must sit between `assemble_workshop_data` (`:1106`) and the anchor load (`:1117`) — a small reorder, not a new query. Independently, add `take=_MAX_ANCHOR_ROWS` at `services/design_workshops.py:1769` so the report degrades the way `/map` already does. The anchor set is repository-global and identical for every workshop and every request, so a short-TTL cache retires the query for both path
-
-### [MEDIUM] PERFORMANCE — [group-f] A fresh boto3 S3 client is constructed for every single object, including once per row of an uncapped export streaming on the event loop (backend, SMALL, LIKELY)
-
-**Consequence.** Each client builds its own `URLLib3Session` pool, so no S3 connection is ever reused: every photograph embedded in a report pays a fresh TCP+TLS handshake instead of riding a keep-alive socket. A designer generating a photo-heavy catalogue waits through dozens of handshakes a single shared client would not need. Separately, an admin running `GET /api/datasets/media.ndjson?presign=true` makes the single-worker web process construct one boto3 client per media row on the event loop — for a table `export.py:26-27` says "legitimately runs into five figures" — and every other request in the app, including a designer's stage save from the field, queues behind it for the duration.
-
-**Evidence.** VERIFIED. `backend/app/services/s3.py:68` defines `_client()` and `:87` calls `boto3.client(...)` with no module-level singleton and no memoisation — zero `lru_cache` in the file and no comment justifying per-call construction, so there is no deliberate guard being overridden. Nine call sites, all reconstructing: `s3.py:152, 179, 200, 211, 226, 236, 245, 255`. `get_object_bytes` (`:243-249`) is called once per image by `MediaIndex.prefetch` (`services/design_workshops.py:1390-1398`). `presign_get_url` (`s3.py:179`) is called once per row by `_presign_media_row` (`backend/app/api/routes/datasets.py:328-338`), looped in `_encode_rows` (`:354-358`), which runs synchronously inside the async gen
-
-**Fix.** Memoise `_client()` with `@lru_cache(maxsize=1)` (or a module-level lazy singleton) keyed on the settings that shape it — endpoint, region, credentials — invalidated alongside the `get_settings` cache. boto3 clients are safe to share for `get_object`, `generate_presigned_url` and the multipart calls used here. Separately, wrap the `_encode_rows` call in `stream_dataset_ndjson` (`datasets.py:686-689`) in `asyncio.to_thread`, since per-row signing is CPU work in an unbounded stream even with a shared client.
-
-### [MEDIUM] PERFORMANCE — [group-h] `refOptions` — up to five requests per stage, one of them the entire workshop — is built, threaded through three components, and never read; its notice overwrites the offline warning (web, SMALL, CERTAIN)
-
-**Consequence.** Opening any stage that declares a REF field on a village connection issues a `GET /design-workshops/{id}` returning all 22 stages, every entry and the completeness map, plus up to four 100-row list requests — every byte discarded before it reaches a control, and on an offline-created workshop one of them is a guaranteed 404 forever. Worse for the designer: on a repository with more than 100 artisans the page prints "Only the first 100 of 2,340 artisans are offered in the reference pickers on this stage" into the SAME slot that carries "There is no connection, so this stage is showing what is saved on this device" — so the sentence telling her she is looking at a local copy is replaced by a sentence about pickers that behave differently from what it claims.
-
-**Evidence.** VERIFIED END TO END. Built at `frontend/app/(protected)/design-workshops/[id]/stages/[stageKey]/page.tsx:643-720`: `getDesignWorkshop(id)` at `:661` plus one `listResource(config.endpoint, { pageSize: 100 })` at `:693` per external model, of which there are four (`EXTERNAL_REFS`, `:125-142`). Passed at `:1094` and `:1108`. Grepping the identifier across `frontend/` returns: `page.tsx:261/1094/1108`, `components/designworkshop/EntityForm.tsx:160/184/255/375/388/411/431/467/478/701/723` (prop plumbing only), and `components/designworkshop/FieldInput.tsx:152` (the prop TYPE) and `:246` (the destructure). That is every occurrence — FieldInput never READS it. The REF branch at `FieldInput.tsx:615
-
-**Fix.** Delete the effect at `page.tsx:643-720`, the `refOptions` state at `:261`, the two props at `:1094`/`:1108`, and the `refOptions` prop from `EntityForm`/`CollectionTable`/`FieldInput` — `StageReferenceSelect` already owns this. Delete the stale comments at `FieldInput.tsx:147-152` and `page.tsx:683-685` with it, and delete `EXTERNAL_REFS` (`page.tsx:125-144`) if nothing else uses it. SEQUENCING: this edits the same file group-a rewrites the banner copy in (`page.tsx:1013-1022`) — land after group-a.
-
-### [MEDIUM] ACCESSIBILITY — [group-g] The dialog system's own header guarantees it honours both reduced-motion switches; it reads only the OS one, and AppShell reads neither (web, SMALL, CERTAIN)
-
-**Consequence.** A designer with vestibular sensitivity turns on Settings → Reduce motion. Every confirm, every "Unsaved changes" prompt, every offline notice and every delete confirmation still flies in on a spring with a scale and a 10px rise, and every route change still fades and rises 6px on the one surface they cannot avoid — while every other framer surface in the app branches on `reduce`. The next maintainer reads the FieldDialog header, sees the guarantee written down, and stops looking.
-
-**Evidence.** MERGED — one defect, two call sites, one hook swap. (1) `frontend/components/dialogs/FieldDialog.tsx:24-25` reads verbatim: "**Reduced motion is respected** — `useReducedMotion` covers both the OS setting and the app's own Settings toggle". The import at `:29` is framer's `useReducedMotion` and the call at `:201` is `const reduce = useReducedMotion() ?? false;` — framer's hook subscribes to the media query and NOTHING else, stated at `frontend/components/guide/useAppReducedMotion.ts:14-16`. The app toggle stamps an attribute (`frontend/lib/preferences.ts:106`, `setFlag(root, "data-reduced-motion", …)`) and `frontend/app/globals.css:163-172` zeroes only CSS `animation-duration`/`transition-du
-
-**Fix.** Swap the import and call at `FieldDialog.tsx:29` and `:201` to `useAppReducedMotion()` from `@/components/guide/useAppReducedMotion` — safe everywhere, `ThemeProvider` wraps all children at `frontend/app/layout.tsx:54`. Read the same hook in `AppShell` and collapse both props: `initial={reduce ? {opacity:1,y:0} : {opacity:0,y:6}}` and `transition={reduce ? {duration:0} : {duration:0.22, ease:"easeOut"}}` (branching `initial` is safe here, unlike on the public hero, because ThemeProvider has settled by the time a protected route mounts). Whatever else happens, the comment at `FieldDialog.tsx:24-25` must stop asserting behaviour the code lacks.
-
-### [MEDIUM] ACCESSIBILITY — [group-g] The review decision-note textarea has no accessible name — its `<label>` is a sibling with no `htmlFor` and the textarea has no `id` (web, SMALL, CERTAIN)
-
-**Consequence.** A reviewer using a screen reader clicks "Send for revision". `autoFocus` drops them into a box announced only as "edit text, blank" — the sentence telling them what the comment is for, and that it is mandatory, is on screen but absent from the accessibility tree, as is the "Comments are required…" note below it.
-
-**Evidence.** VERIFIED. `frontend/app/(protected)/review/page.tsx:432-434` renders `<label className="block text-xs font-semibold uppercase tracking-wide text-ink-500">{ACTION_COPY[activeAction].noteLabel}</label>`; `:435-441` renders a `<textarea rows={3} autoFocus>` with no `id`, no `aria-label`, no `aria-labelledby`. Both are direct children of the same `<td>` — the label is a SIBLING, not an ancestor, so no implicit or explicit association exists and the accessible name is empty (WCAG 4.1.2). The copy it fails to convey is at `:54`: `revise: { noteLabel: "What must the contributor change? (required)" … }`. The explanatory paragraph at `:443-446` is likewise unassociated. The correct `htmlFor`/`id` pai
-
-**Fix.** `const noteId = useId()`, put `id={noteId}` on the textarea and `htmlFor={noteId}` on the label, matching `feedback/page.tsx:296-301`. Give the paragraph at `:443-446` an id and point `aria-describedby` at it.
-
-### [MEDIUM] ENHANCEMENT — [group-c] The field copy never says it is the abridged one, and when the designer is offline the office's export log does not say so either (android, SMALL, LIKELY)
-
-**Consequence.** The officer reads the phone's PDF as THE report. It has the same cover, the same running foot and a self-consistent contents page, and is missing the figures, the map and up to three annexures with nothing anywhere in it saying which of the two copies is in their hands. If the two are ever compared — and `ReportScreen.kt:255-273` exists precisely so an office can match a delivered file against its export log — the difference looks like the designer altered the document, and offline the log the office would check is empty because the bookkeeping call never reached it.
-
-**Evidence.** VERIFIED, AND STRENGTHENED BY A FACT THE ORIGINAL MISSED — but note it reverses an explicit design decision. Confirmed verbatim: `report/ReportModel.kt:1050` `/** Completeness-check output, surfaced in the UI not the file. */`; `ui/designworkshop/ReportPlan.kt:40` `/** Advisory, dismissible, shown beside the file — never written into it. */`; `ui/designworkshop/ReportScreen.kt:231` puts `exportNotes = plan.warnings` into composition state keyed on workshopId at `:163`, drawn beside the saved-file card at `:391-393`; `report/ReportSettings.kt:375-378` is the "SILENCE IS THE FAILURE MODE" paragraph. Because every unbuilt branch is `-> Unit` (`ReportScreen.kt:891-895`) no heading is emitted, so
-
-**Fix.** Write one provenance line INTO the document — under the cover or in the running foot, kept out of the TOC: "Field copy generated on a handset on <date>. The office copy of this report also carries: <sections>." Drive the list from the same `UNSUPPORTED_SECTIONS` reasons already resolved into `ReportPlan.warnings` (`ReportPlan.kt:40`) so the sentence shortens by itself as the items above land and disappears when nothing is outstanding. Separately and independently worth doing: give `recordDesignWorkshopExport` an outbox entry rather than a `runCatching` that silently drops it (`data/WorkshopRepository.kt:313-315`).
-
-### [LOW] PERFORMANCE — [group-d] The PDF export reads every photograph's whole file three times, and the KDoc that would make a reader notice says the probe costs "a few kilobytes" (android, SMALL, CERTAIN)
-
-**Consequence.** Every photograph in the report is pulled off flash three times and given a fresh multi-megabyte array each time, on the export a designer runs at the close of the workshop with an officer waiting. It is seconds rather than minutes and the export still succeeds — which is why it has survived: the comment saying the probe is cheap is what stops the next reader noticing that the loader behind it is not.
-
-**Evidence.** VERIFIED, count re-derived from the code. `report/PdfWriter.kt:528-534` claims "`inJustDecodeBounds` reads the header only, so this costs a few kilobytes per photo instead of the whole bitmap" — true of the DECODE, false of the FETCH: `:547-561` `intrinsicSize` calls `bytesFor(ref)` at `:550`, `bytesFor` is `figures[ref.source] ?: loadImage(ref)` at `:545`, and `loadImage` on this surface is `File(ref.source).readBytes()` (`ui/designworkshop/ReportScreen.kt:581-583`) — the entire 4-6 MB file into a fresh array, every call. THE COUNT: the measuring loop at `:1330-1342` runs up to three iterations but `sizeCache` survives them, so measuring costs ONE read per image; `:1344-1349` then does `siz
-
-**Fix.** Do not clear `sizeCache` wholesale at `PdfWriter.kt:1349` — clear only the keys mapped to null, which is all the stated reason ("a photo that failed to load gets one more chance") actually needs. Have `decodeFitted` reuse the bytes and the `BitmapFactory.Options` bounds `intrinsicSize` already obtained for the same source. If the whole-file loader contract is to stay, correct the KDoc at `PdfWriter.kt:525-536` to say what the probe actually costs. Pairs naturally with the DocxWriter memory fix — same group, same two files.
-
-### [LOW] BUG — [group-c] The export-retention subsystem is fully implemented and has no call site — no report is ever kept beside the draft, and `DraftExport.sourceUpdatedAt` can never fire (android, MEDIUM, CERTAIN)
-
-**Consequence.** Small and mostly forward-looking: there is no in-app record that a report was generated (`recordDesignWorkshopExport` at `ReportScreen.kt:257-272` is a server call, so offline nothing is logged anywhere), no way to re-open or re-send yesterday's report from the app, and the "this PDF is older than your edits" warning the store was built around cannot fire because no `DraftExport` is ever constructed. A designer who wants the report they made two days ago either hunts for it by timestamp in Downloads or regenerates it — which on a photo-heavy workshop is the multi-minute export the .docx writer may not survive.
-
-**Evidence.** VERIFIED by exhaustive search over `android/app/src`: `registerExport` appears once (`data/WorkshopDraftStore.kt:1107`, its own definition), `exportsDir` twice (`:456` definition, `:1101` a KDoc mention), `exportFile` once (`:466`). `DraftExport` (`:197-215`) is constructed in exactly ONE place — inside `registerExport` at `:1113` — which nothing calls, so `draft.exports` is always empty and `exportCount` (`:388`, computed at `:758` and `:770`) is always 0 and is read by no UI. `report/ReportExport.kt:111-138` writes into `context.cacheDir`, hands the temp to `repository.persistFileToDownloads`, and deletes it in a `finally`; nothing is written under `filesDir/workshops/<id>/exports/`. The K
-
-**Fix.** Either DELETE the dead subsystem (`DraftExport`, `exports`, `exportsDir`, `exportFile`, `registerExport`, `exportCount`) so the store stops promising something it does not do, or WIRE it: have `ReportExport.publish` render into `WorkshopDraftStore.exportsDir(context, workshopId)`, publish the copy to Downloads from there, call `registerExport`, and surface `sourceUpdatedAt` beside the saved-file card on ReportScreen. Wiring it needs the workshop id threaded into `ReportExport`, which today receives only the built `ReportDocument`. Kept in group-c because it edits `report/ReportExport.kt` and `ui/designworkshop/ReportScreen.kt`, which that group owns.
-
-### [LOW] BUG — [group-e] The design-workshop module docstring states a permission rule the module does not implement — it names a gate that appears nowhere in the file (backend, SMALL, CERTAIN)
-
-**Consequence.** This is the header comment anyone auditing design-workshop permissions reads first, and two of its three clauses are false. A reviewer asking "can a Professor edit another designer's workshop?" reads "yes, require_workshop_manager gates it" and stops — the same class of stale comment this repository has already been bitten by twice. The next person adding a write route here reaches for a gate the file does not import.
-
-**Evidence.** VERIFIED verbatim. `backend/app/api/routes/design_workshops.py:22-26` reads "A contributor may create and edit their own workshops; ``require_workshop_manager`` gates editing someone else's; deletion is gated by ``assert_can_delete``." `require_workshop_manager` is ABSENT from the import list (`:49-56`), and a repo-wide grep finds it only at `backend/app/core/deps.py:532` and `backend/app/api/routes/workshops.py:29,253,597` — a different router for a different model. The real rules, read rather than inferred: create requires BOTH `assert_can_create_records` AND `_require_designer` (`:371-372`, with an in-line comment explaining the designer gate is deliberate), so a RESEARCHER — the "contrib
-
-**Fix.** Rewrite `:22-26` to describe what the code does: creation requires `assert_can_create_records` AND `can_run_design_workshops` (a SET — Designer/Admin/Master Admin — not a rank threshold, so Professor is excluded); editing someone else's requires an admin-issued `DesignWorkshopViewer` grant or admin rank, enforced by `load_workshop_or_404`; deletion stays `assert_can_delete`; report generation stays open to anyone who can read. Free to do while group-e is already in this file.
-
-### [LOW] PERFORMANCE — [group-f] The analytics module's performance rationale contradicts an index that shipped in a migration dated today (backend, SMALL, CERTAIN)
-
-**Consequence.** An engineer auditing write costs on the stage-save path reads `analytics.py`, learns from a confident, measured-looking paragraph that the `entityKey` index was considered and deliberately rejected as a bad trade, and drops it — re-imposing a whole-archive sequential scan on the one endpoint the schema comment says was "built to grow". The two rationales are mutually exclusive and only one matches the database that is actually running.
-
-**Evidence.** VERIFIED verbatim, both halves, plus the migration. `backend/app/api/routes/analytics.py:84-88` reads: "The middle query is a sequential scan (`EXPLAIN ANALYZE`: 12.1 ms, 6,139 rows discarded) and that is the right trade. `DwStageEntry` is indexed on `(designWorkshopId, entityKey)`, whose leading column this query deliberately does not constrain, and an index on `entityKey` alone would be a write cost on every stage save a designer makes in the field, to speed up a read three admins make a month." The query it describes is at `:100-114`. `backend/prisma/schema.prisma:1629` declares exactly that index — `@@index([entityKey])` — under an OPPOSING rationale with its own measurements at `:1618-1
-
-**Fix.** Rewrite the paragraph at `analytics.py:84-88` to say that `@@index([entityKey])` exists, citing `schema.prisma:1618-1629` and migration `20260808140000_dw_stage_entry_entity_key_index` — or delete the paragraph and point at the schema as the single source of truth. The 12.1 ms / 6,139-rows-discarded measurement was taken WITHOUT the index and should go with it.
-
-### [LOW] ENHANCEMENT — [group-c] Correct the report-settings ledger: it nominates the transcript annexure as the next edge-first gap on the false premise that the handset has transcripts (android, SMALL, CERTAIN)
-
-**Consequence.** The next person to pick up the roadmap this ledger writes takes the item it explicitly ranks FIRST and discovers, after starting, that a transcript exists only once the audio has been uploaded and the server's media queue has run inside its off-peak window — the connection the designer does not have, in the place the annexure is meant to help. The three items ranked above cost the same or less and their inputs are already in filesDir.
-
-**Evidence.** VERIFIED IN FULL. `report/ReportSettings.kt:329-332` reads verbatim: "This is the one of the three that genuinely could be — the recordings are already transcribed on the handset — and it is the edge-first gap worth closing next." That sentence is false. `DraftMedia` (`data/WorkshopDraftStore.kt:101-168`) carries relativePath, mime, mediaType, size, capturedAt, stageId, fieldKey, caption, width/height, rotationDegrees, mirrored, exifDateTime, latitude, longitude and sha256 — and no transcript field of any kind. A grep for "transcript" over `android/…/data/` returns hits only in `ApiModels.kt` (where `transcriptStatus`/`transcriptText`/`transcriptError` are fields of `MediaFileDto`, an API RE
-
-**Fix.** Correct `report/ReportSettings.kt:329-332` so it no longer claims the recordings are transcribed on the handset, and re-point "the edge-first gap worth closing next" at `includeCompletenessAnnexure` on the line below (`:333-335`), whose scores this same file records as being computed on the device. Note in the same edit that the widest on-device win is not a SETTING at all and so has no entry in this ledger: the CHART and MAP sections in `UNSUPPORTED_SECTIONS` (`:355-360`), which the DEFAULT template carries (`report/ReportTemplates.kt:284`) whereas the completeness annexure appears in the archival template only (`:386-389`). Do this as part of group-c so the ledger and the code land togethe
+# Open findings
+
+**Status: 0 open, 29 closed.** Last re-checked against the tree on 2026-08-08.
+
+This file used to hold 29 defects. Every one of them was re-read against the working tree on
+2026-08-08: twenty-eight had already been fixed, and the twenty-ninth was closed by the pass that
+produced this rewrite. **Nothing in this register is outstanding.** The tables below are kept so the
+next reader can re-check the closures rather than take this file's word for them, and so a defect
+class that has already cost this repository once is not re-litigated from scratch.
+
+**Read this before adding to it.** This register was cited from running source
+(`frontend/lib/designWorkshopStore.ts` pointed a maintainer here for a residue that had been closed
+the same day), so it is not inert documentation — somebody follows the pointer. A findings document
+that has drifted from the code is worse than no findings document, because it sends the next reader
+hunting for bugs that are gone and teaches them that the register is noise. **If you close something
+here, mark it closed in the same commit that closes it.**
 
 ---
 
-### [MEDIUM] [BUG] A stage refused for a SCHEMA mismatch is blamed on the designer's answers (web, SMALL, CERTAIN)
+## Open
 
-**Consequence.** A designer sees: *"The repository refused stage 'CLUSTER_CRAFT_BACKGROUND':
-merge: Extra inputs are not permitted … it will keep being refused until the answer that caused it
-is corrected — this is not a connection problem. Open the stage, then use Try again."*
+**None.** Add one here with the same shape the closed entries use — consequence, evidence read
+verbatim with `file:line`, and the fix — and delete this line when you do.
 
-No answer they typed has anything to do with it, so the instruction is impossible to act on: they
-will open the stage, read every field, find nothing wrong, press Try again, and get the same
-sentence. This was observed for real on 2026-08-08 while the client was newer than the API and sent
-the then-unknown `merge` key.
+---
 
-**Evidence.** `frontend/lib/designWorkshopStore.ts:2034-2040` builds ONE sentence for every 422/4xx
-the server answers with, and it asserts a cause: "the answer that caused it". That is right for a
-field-level validation refusal and wrong for a SCHEMA refusal, where the client is speaking a
-dialect the server does not know. `APIModel` is `extra="forbid"`
-(`backend/app/schemas/common.py:13`), so any key a newer client adds produces exactly this shape.
-The two cases are distinguishable: pydantic's body names the offending `loc`, and an extra-input
-refusal names a key that is not a registry field at all.
+## Closed on 2026-08-08 — the last surviving item
 
-**Fix.** Split the sentence on whether the refusal names a FIELD THE DESIGNER CAN OPEN. Where it
-does, keep today's wording. Where it does not — an unknown/extra input — say that this copy of the
-app and the repository are out of step, that no edit to the stage will clear it, and that the work
-is safe on the device until one of the two is updated. Do NOT tell somebody to correct an answer
-when nothing they can reach is wrong.
+### [MEDIUM] ENHANCEMENT — The field copy never says it is the abridged one, and when the designer is offline the office's export log does not say so either (android)
 
-**Note.** Deliberately not fixed in the same pass that found it: the line sits inside the same
-function the web-sync lane was editing concurrently, and two agents in one hunk is how work gets
-lost. It is small and self-contained.
+**Both halves are now closed.**
+
+- *The provenance line* was closed earlier: it is built at
+  `android/…/report/ReportSettings.kt` (`fieldCopyNote`), reaches the cover from
+  `ui/designworkshop/ReportScreen.kt`, and is covered by
+  `android/app/src/test/…/ReportSettingsLedgerTest.kt`. Commit `5886fd9`.
+- *The export log* was the last open item in this file and is closed by the commit that carries this
+  rewrite. `WorkshopRepository.recordDesignWorkshopExport` was a bare pass-through to the API wrapped
+  in a `runCatching` at the call site, so an export made with no signal — which is the ordinary case,
+  because the exports that matter most are made in a village at the close of a workshop, minutes
+  before the file is handed to a visiting ministry officer — was recorded nowhere, and the officer's
+  copy existed against an empty log. It now enqueues on the offline outbox (`PendingEntry` of type
+  `designWorkshopExport`, replayed by `createFromEntry`) using the same `isTransient` triage as every
+  other queued write. It still records the fact and never the bytes: a designer on a metered field
+  connection is not charged thirty megabytes to prove a report was made, and the checksum is what
+  matches the file later.
+
+---
+
+## Closed earlier — the twenty-eight
+
+Grouped as the original register grouped them. Each line names the evidence that closes it, so a
+reader can re-check in one grep rather than taking this file's word for it.
+
+### group-a — the stage save path
+
+| Finding | Closed by |
+|---|---|
+| [CRITICAL] A stage saved from a client that never downloaded it REPLACES the singleton row, deleting fields that client never read | `6119378` — `merge` is a per-entry flag on `StageSaveIn` (`backend/app/schemas/design_workshops.py`) honoured at `services/design_workshops.py` (`if entry.merge and previous:`), driven from `serverLoadedAt === null` on web and `!isAuthoritative(...)` on Android |
+| [HIGH] A row deleted while a background sync PUT is in flight loses its deletion flag | `50f1ab9` — `removedFrom` is now computed the same way `dirtyAt` is, in both `markStagePushed` and the push transform |
+| [MEDIUM] "Save and sync this stage now" starts an 800 ms timer instead of saving | `175ef63` — the button calls `persistLocally` directly and a dispose-time write lands the snapshot |
+| [MEDIUM] A stage the server answers with 5xx is reported as "the connection dropped" | `175ef63` — an answered 5xx is a per-stage failure with the stage named, and no longer sets `stoppedOffline` |
+| [MEDIUM] `putDraftStage` resolves confirmed media refs OUTSIDE the transaction its comment claims | `50f1ab9` — the `dwlocal:` → server-id map is read in the same readwrite transaction that puts the draft |
+| [MEDIUM] A stage refused for a SCHEMA mismatch is blamed on the designer's answers | `9f7486f` — `isSchemaRefusal` (`frontend/lib/offline.ts`, matching pydantic's `extra_forbidden`) splits the sentence; an extra-input refusal now says the app and the repository are out of step and that no edit will clear it |
+
+### group-b — entitlement and media
+
+| Finding | Closed by |
+|---|---|
+| [HIGH] SECURITY — report generation and the transcript annexure fetch ANY MediaFile by client-supplied id | `0d4da23` — both `mediafile.find_many` calls are AND-composed with `owned_or_granted_where(viewer, owner_field="uploadedById")`, threaded through as a keyword with no default so a call site cannot silently skip it |
+| [MEDIUM] SECURITY — `MediaFile.url` is taken verbatim from the upload payload | `92e4ae0` / `0d4da23` lane — the field is kept (removing it would 422 every installed build) and ignored: the stored URL is always derived from the object key |
+| [MEDIUM] PERFORMANCE — one extra query per newly-attached audio clip on every stage save | `0d4da23` lane — one `mediaprocessingjob.find_many` over the candidate ids replaces the per-clip `find_first` (`backend/app/services/workshop_transcripts.py`) |
+
+### group-c — what the phone's report contains
+
+| Finding | Closed by |
+|---|---|
+| [HIGH] The infographic renderer ships in the APK and no chart block is ever constructed | `5886fd9` — `SpecialSection.CHART -> renderCharts(...)` in `ReportScreen.kt` |
+| [MEDIUM] The completeness annexure is a 28-line table over scores already computed | `5886fd9` — `SpecialSection.COMPLETENESS` is built |
+| [MEDIUM] The map block is never constructed | `5886fd9` — `SpecialSection.MAP -> renderMap(...)`, region-only, matching the server's empty-point case |
+| [MEDIUM] The field copy never says it is the abridged one | `5886fd9` (provenance line) + this rewrite's commit (export log) — see above |
+| [LOW] The export-retention subsystem is fully implemented and has no call site | Removed rather than wired, with the reasoning written into `report/ReportExport.kt`: retaining a second full copy of every report inside `filesDir` on a space-constrained handset, with no retention rule, is not what the capability was worth |
+| [LOW] Correct the report-settings ledger — it nominates the transcript annexure on a false premise | `ccc3acd` — the ledger no longer claims the handset holds transcripts, and the questionnaire annexure is carried in the catalogue and declared unbuildable on the phone |
+
+### group-d — export cost on the handset
+
+| Finding | Closed by |
+|---|---|
+| [HIGH] The .docx writer holds every photograph's full original bytes on the heap at once | `5886fd9` — `MediaPart` holds an `ImageRef`, not a `ByteArray`; bytes are re-asked for and streamed into the zip entry |
+| [LOW] The PDF export reads every photograph's whole file three times | `5886fd9` — same lane; the size cache is no longer cleared wholesale |
+
+### group-e — report inputs and the backend read path
+
+| Finding | Closed by |
+|---|---|
+| [HIGH] The report input load is up to ten sequential round trips | `0d4da23` — `_report_inputs` uses `gather_reads` (`backend/app/api/routes/design_workshops.py`) |
+| [MEDIUM] The one-photo-per-record lookup caps its read at 4xN rows GLOBALLY | `0d4da23` lane — `_reference_photos` asks per parent instead of spending one global budget oldest-first |
+| [MEDIUM] Report preview and generate scan the whole Location table uncapped on all six templates | `0d4da23` lane — the anchor load is skipped for a template carrying no map, and capped when it runs |
+| [LOW] The design-workshop module docstring states a permission rule the module does not implement | Rewritten in place — `backend/app/api/routes/design_workshops.py` now describes the four clauses it enforces, including that `can_run_design_workshops` is a SET and a Professor is outside it |
+
+### group-f — grants, storage and the analytics rationale
+
+| Finding | Closed by |
+|---|---|
+| [MEDIUM] Data-access grants rebuild their scope with delete-then-N-inserts outside any transaction | `0d4da23` — `_upsert_grant` runs inside `async with db.tx()` with a single `create_many` |
+| [MEDIUM] PERFORMANCE — a fresh boto3 S3 client is constructed for every single object | `0d4da23` lane — `_client()` is `@lru_cache`d in `backend/app/services/s3.py` |
+| [LOW] The analytics module's performance rationale contradicts an index that shipped in a migration | Rewritten in place — `backend/app/api/routes/analytics.py` now says the index exists and points at `schema.prisma` as the single source of truth |
+
+### group-g — web accessibility
+
+| Finding | Closed by |
+|---|---|
+| [HIGH] The two hand-rolled modal overlays have no dialog role, focus trap, Escape, or backdrop guard | `a8c0900` — `CollabDialog` is built on `FieldDialog`; the Assign researchers overlay went the same way |
+| [MEDIUM] The dialog system's header guarantees both reduced-motion switches; it read only the OS one | `a8c0900` — `FieldDialog` and `AppShell` both use `useAppReducedMotion()` |
+| [MEDIUM] The review decision-note textarea has no accessible name | `a8c0900` — `useId()` pairs `htmlFor`/`id`, with the explanatory paragraph wired to `aria-describedby` |
+
+### group-h / group-i — dead weight and navigability
+
+| Finding | Closed by |
+|---|---|
+| [MEDIUM] `refOptions` — up to five requests per stage, built, threaded through three components, never read | `a8c0900` — deleted, with a note in `FieldInput.tsx` telling the next reader not to add it back |
+| [MEDIUM] Android lists what is missing as inert text; the web turns the same list into links | `175ef63` — the missing-field list is navigable on the handset |
+
+---
+
+## What this pass added
+
+The 2026-08-08 re-check also turned up nine defects that were **not** in this register. All nine are
+fixed; they are recorded here so the next reader knows the sweep happened rather than re-finding
+them.
+
+- **My Activity under-reported on Android, and the sharing screen's record picker with it.** Both
+  fetched page one of every list and sifted it client-side on `createdById`. Reading the repository
+  is open, so page one is the newest hundred rows of the whole archive. MEASURED against the running
+  API as `designer@example.org`: `/api/artisans` total=431 with page one spanning 34 distinct
+  creators and none of that designer's own; `/api/media` total=854 across 18 uploaders, likewise
+  none. That designer owns two records and both screens showed zero, with My Activity saying "You
+  haven't recorded anything yet." Fixed by passing `createdBy` (`uploadedBy` for media) — every
+  endpoint already accepted it, so there was no server work.
+- **My Activity's record types disagreed between the clients.** Android had Processes and no Media;
+  the web had Media and no Processes, while both ship a "Document process" and an "Upload media"
+  menu entry. Android gained Media, the web gained Processes.
+- **Android's dataset download handed over a truncated archive with no warning.** The server has
+  always sent `truncated`; `DatasetManifestDto` dropped it. It is not derivable from the counts — a
+  capped manifest is internally consistent, so "4,312/4,312 files" is true of an archive missing
+  everything past the cap.
+- **Tasks said "Nothing is assigned to you right now." when the request had failed**, on a handset
+  that usually has no signal, with the offline banner underneath saying the opposite. The screen now
+  distinguishes "loaded and empty" from "could not load", and says so when a list on screen is the
+  one last fetched.
+- **Tasks had no CANCELLED chip and no counts**, while the API, the DTO and `taskStatusLabel` all
+  knew about CANCELLED — so a cancelled task assigned to you could be seen under "All" and never
+  filtered for.
+- **`designWorkshopStore.ts` cited this file** for a residue closed the same day, and quoted a
+  refusal banner the code no longer produces.
+
+**Not a divergence, checked and left alone:** Android's "Assigned by me" view has no web equivalent
+and is gated on `isAdmin && adminChrome`, which correctly mirrors `backend/app/api/routes/tasks.py`
+(`view=created` raises 403 unless the caller is an admin) and `frontend/lib/permissions.ts`
+(`canAssignTasks = hasRank(user, "ADMIN")`). No permission was invented on either client.
