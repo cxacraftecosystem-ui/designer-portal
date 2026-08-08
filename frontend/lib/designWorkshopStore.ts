@@ -1868,10 +1868,11 @@ export function buildStageEntries(
           "the client is newer than the server" is an ordinary state here and not a mistake.
 
           Sending it only when it is TRUE shrinks the blast radius of that skew from EVERY stage save
-          to just the never-downloaded ones. It does not eliminate it, and the residue is written
-          down in `docs/OPEN_FINDINGS.md`: against an old server those saves are refused, and the
-          refusal banner says the stage "will keep being refused until the answer that caused it is
-          corrected", which is false — no answer the designer typed has anything to do with it.
+          to just the never-downloaded ones. It does not eliminate it, and what is left is handled
+          rather than merely noted: against an old server those saves are refused, `isSchemaRefusal`
+          recognises the refusal, the banner says the two are out of step instead of blaming an
+          answer nobody got wrong, and `blocksRetry` re-attempts the stage on the next app run so it
+          goes up by itself once either side has been updated.
         */
         entries.push(
           neverRead

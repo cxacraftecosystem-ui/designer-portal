@@ -113,17 +113,59 @@ private val errorBodyJson = Json { ignoreUnknownKeys = true; isLenient = true }
  *
  * Retrofit buffers the error body, but reading it CONSUMES the buffer — call this once per failure.
  */
-fun Throwable.apiErrorMessage(fallback: String): String {
+fun Throwable.apiErrorMessage(fallback: String): String = apiRefusal(fallback).message
+
+/**
+ * A refusal the server ANSWERED with, read from the error body ONCE and split into the two facts a
+ * caller needs: what to put on screen, and whether anybody can do anything about it.
+ *
+ * THE TWO HAVE TO COME OUT OF ONE READ. Retrofit buffers the error body and `string()` consumes the
+ * buffer, so a second pass over it hands back an empty string — which is why [apiErrorMessage] has
+ * always carried "call this once per failure". Asking the same exception "what did it say" and "was
+ * it a schema refusal" as two calls would silently answer the second one no, for every failure,
+ * which is the sort of bug that only shows up as a stage that never syncs.
+ */
+data class ApiRefusal(
+    /** The sentence the API meant a person to read, or the best available fallback. */
+    val message: String,
+    /**
+     * Did the server refuse the SHAPE of the request rather than anything a person entered?
+     *
+     * `APIModel` is `extra="forbid"` (`backend/app/schemas/common.py`), so a client that sends a key
+     * the server does not know gets a 422 whose body names it with pydantic's own discriminator:
+     *
+     *     {"detail":[{"type":"extra_forbidden","loc":["body","entries",0,"merge"], …}]}
+     *
+     * `type` is matched, never the prose: the message is written for people and may be reworded or
+     * translated, while the discriminator is part of pydantic's contract. The port of
+     * `isSchemaRefusal` in `frontend/lib/offline.ts`, matched key for key.
+     *
+     * IT IS NOT HYPOTHETICAL. On 2026-08-08 a client sent the then-new `merge` flag to an API that
+     * predated it and every stage save came back "merge: Extra inputs are not permitted". A handset
+     * updates when it next sees wifi and the API updates when somebody deploys it, so a client
+     * running ahead of the server is an ordinary state here rather than a mistake — and the one
+     * refusal whose fix is an update rather than an edit.
+     */
+    val schemaSkew: Boolean,
+)
+
+/** See [ApiRefusal]. Call once per failure — it consumes the buffered error body. */
+fun Throwable.apiRefusal(fallback: String): ApiRefusal {
     val plain = message?.takeIf { it.isNotBlank() } ?: fallback
     // Not an HTTP failure at all (no connection, timeout, serialization): the platform message is all
     // there is, and it is more informative than anything this function could invent.
-    val http = this as? HttpException ?: return plain
+    val http = this as? HttpException ?: return ApiRefusal(plain, schemaSkew = false)
     val raw = runCatching { http.response()?.errorBody()?.string() }.getOrNull()
-    if (raw.isNullOrBlank()) return plain
+    if (raw.isNullOrBlank()) return ApiRefusal(plain, schemaSkew = false)
     val detail = (runCatching { errorBodyJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject)
         ?.get("detail")
-        ?: return plain
-    return detailMessage(detail) ?: plain
+        ?: return ApiRefusal(plain, schemaSkew = false)
+    // Only a 422 qualifies: a 500 carrying the same words is a server fault, not a dialect mismatch,
+    // and no update to either side is going to change it.
+    val skew = http.code() == 422 && (detail as? JsonArray)?.any { entry ->
+        ((entry as? JsonObject)?.get("type") as? JsonPrimitive)?.contentOrNull == "extra_forbidden"
+    } == true
+    return ApiRefusal(detailMessage(detail) ?: plain, schemaSkew = skew)
 }
 
 /** Pull the human-readable text out of whichever `detail` shape FastAPI returned. */
