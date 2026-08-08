@@ -141,6 +141,9 @@ not a feature, it is a defect with a camera icon.
 
 ## The regression being accepted
 
+> **No longer accepted — this is the regression the overrule reverses.** Read on for what the
+> original lane shipped instead; the paragraph below describes the state before 2026-08-09.
+
 **On a handset with no signal, the number is typed.** That is the whole of it, and it is what the
 app did yesterday. The stage form and the artisan form both say so, in the disabled control, before
 a photograph is taken rather than after a two-minute timeout.
@@ -162,6 +165,10 @@ What was added instead, at zero bytes:
   after a process death mid-flow.
 
 ## The condition under which this should be revisited
+
+> **Overtaken, and the condition itself was wrong.** It was not waited for — see "Overruled" below —
+> and when it was checked it turned out Play delivery is unavailable here without replacing the whole
+> side-load update path, so it was never a condition this application could have met.
 
 If this application is ever distributed as an **App Bundle through Play** rather than as a
 side-loaded APK, Play delivers only the installing device's ABI and the bundled model costs
