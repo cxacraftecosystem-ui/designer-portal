@@ -34,8 +34,8 @@ verbatim with `file:line`, and the fix — and delete this line when you do.
   `android/…/report/ReportSettings.kt` (`fieldCopyNote`), reaches the cover from
   `ui/designworkshop/ReportScreen.kt`, and is covered by
   `android/app/src/test/…/ReportSettingsLedgerTest.kt`. Commit `5886fd9`.
-- *The export log* was the last open item in this file and is closed by the commit that carries this
-  rewrite. `WorkshopRepository.recordDesignWorkshopExport` was a bare pass-through to the API wrapped
+- *The export log* was the last open item in this file and is closed by `cfec845`.
+  `WorkshopRepository.recordDesignWorkshopExport` was a bare pass-through to the API wrapped
   in a `runCatching` at the call site, so an export made with no signal — which is the ordinary case,
   because the exports that matter most are made in a village at the close of a workshop, minutes
   before the file is handed to a visiting ministry officer — was recorded nowhere, and the officer's
