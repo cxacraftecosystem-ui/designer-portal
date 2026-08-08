@@ -53,6 +53,8 @@
 
 ---
 
+## The original recommendation, as written on 2026-08-08
+
 **Original decision (superseded):** do **not** add an on-device text recogniser to the Android app.
 Neither ML Kit Text Recognition variant is acceptable here, and there is no third option that is. The
 handset gets the *attachment* half — photograph the card or pick a photograph of it, on the artisan
@@ -99,6 +101,12 @@ them to be **stored, not deflated**, in the APK. A megabyte of `.so` is a megaby
 
 `docs/R8-MEASUREMENT.md` measured the release APK at **6,389,483 bytes — 6.09 MB**, and verified it
 on a Galaxy M32. This app ships **no native code at all** today; ML Kit would be the first.
+
+> **Correction, 2026-08-09, measured off the baseline APK rather than assumed:** it does ship native
+> code — `libandroidx.graphics.path.so`, 37,392 bytes across four ABIs. Immaterial to the argument
+> here, but it is what proves the packaging behaviour the argument depends on: every `lib/` entry in
+> the built APK is **STORED**, so this app was already paying x86 tax, at 20,044 bytes, before ML Kit
+> was proposed. See `docs/R8-MEASUREMENT.md`.
 
 | Build | APK | Multiple of today |
 |---|---|---|
@@ -445,7 +453,8 @@ not a feature, it is a defect with a camera icon.
 > **⟲ NO LONGER TRUE FOR AN AADHAAR NUMBER.** This was the cost the original decision accepted, and
 > removing it is the entire purpose of the reversal. Offline, an Aadhaar or card-number field now
 > reads on the phone. It remains true for a **Pehchan-only** field, for the reason given above:
-> a Pehchan number has no checksum, so there is nothing to recognise it by.
+> a Pehchan number has no checksum, so there is nothing to recognise it by. The paragraph below
+> describes the state before 2026-08-09.
 
 **On a handset with no signal, the number is typed.** That is the whole of it, and it is what the
 app did yesterday. The stage form and the artisan form both say so, in the disabled control, before
@@ -469,10 +478,15 @@ What was added instead, at zero bytes:
 
 ## The condition under which this should be revisited
 
-> **⟲ This condition still stands, and it is now a saving to collect rather than a threshold to
-> cross.** The recogniser is in; the App Bundle would take the APK from 26,195,264 bytes to
-> ≈19,406,072 by dropping the `armeabi-v7a` copy, and `abiFilters` could then be deleted. The
-> blocker is the in-app updater, which downloads *the* APK — see "The next lever, not pulled".
+> **⟲ Overtaken, and the condition was never one this application could meet.** It was not waited
+> for — see "Overruled" — and when the delivery chain was actually read rather than assumed, an App
+> Bundle turned out to *break* the publisher: `publishAppUpdate` reads
+> `applicationInfo.sourceDir`, which under a bundle install is the base split alone. So Play
+> delivery is not a threshold this app crosses; it is a different update path.
+>
+> The saving the condition was reaching for is still real and still collectable: arm64-only takes
+> the measured APK from 26,080,576 bytes to 19,271,029. The blocker is the in-app updater, which
+> downloads *the* APK — see "The next lever, not pulled".
 
 If this application is ever distributed as an **App Bundle through Play** rather than as a
 side-loaded APK, Play delivers only the installing device's ABI and the bundled model costs
@@ -565,3 +579,103 @@ Fixed by mirroring the server's set, never re-deriving it:
 
 The stage form was never exposed: the whole design-workshop destination is already behind
 `canRunDesignWorkshops` in `AppNavigation.kt` and `ROUTE_GUARDS`.
+
+---
+
+# Overruled — 2026-08-09. The bundled recogniser ships.
+
+The user read the case above and decided the other way: **bundled ML Kit goes in, so the read happens
+on the device and needs no connection.** This section says why the same facts read differently to
+somebody who values an offline read above APK bytes, and what the decision costs when it is measured
+rather than estimated.
+
+Nothing above has been altered. The arithmetic in it is correct and it is still the bill.
+
+## What the "no" got wrong was not the arithmetic — it was where the comparison was standing
+
+The refusal turns on one sentence: the recogniser "buys **typing, not checking**", about ten seconds
+per artisan, and a misread digit and a mistyped digit die on the same Verhoeff check.
+
+That is true **on a desk with a connection**, where the server reader is standing right there and the
+only thing an on-device reader adds is speed. It is not true in the courtyard, and the courtyard is
+the only place this control is ever used. With no signal, `POST /design-workshops/ocr/identity` is
+not a slower reader — it is **no reader**. The disabled control and the honest sentence the app puts
+under it are an accurate description of nothing happening at all.
+
+So the trade was never "ten seconds against 17 MB". It is "the capability existing at the moment it
+is wanted, against 17 MB", and the document above priced the first term at its value in the one place
+the feature is not needed. That is the whole of the disagreement, and once it is named the "no" does
+not survive it. Every other line of the analysis above — the model is unshrinkable, R8 cannot touch
+it, the update cost is borne on every release — remains true and is now the thing to minimise rather
+than the thing to refuse.
+
+## And there is a second gain the size argument never weighed: the card image stops leaving the phone
+
+Today a read means uploading a photograph of somebody's Aadhaar card to a third-party vision model —
+`"provider": "gemini"` in the payload printed above. This document already treats that as serious
+enough to gate the control on it: *"a researcher photographs somebody's Aadhaar card and the image is
+uploaded to a third-party vision model before anything refuses it — the photograph is taken and
+transmitted, and only then declined."*
+
+An on-device read removes that transmission entirely for every read it serves. The most sensitive
+identifier in the country stops being sent to a third party to be read, and the app stops needing a
+network round trip, a provider quota and a provider cooldown to do it. That gain is not measured in
+megabytes and does not appear anywhere in the table above, and on this application's own stated
+values it is worth more than the bytes it costs.
+
+## What is NOT claimed by the overrule
+
+- **Accuracy on real cards is still unmeasured**, exactly as the section above says. There is no
+  device, no corpus of card photographs and no way to produce a number here. Bundled ML Kit is
+  Google's own recogniser rather than a home-made one, which is a reason to expect it to work, not
+  evidence that it does.
+- **The candidate is still a candidate.** The rule the original lane exists to enforce is unchanged:
+  an OCR result is confirmed by a human against the card in their hand, and `ArtisanIdentity`'s
+  Verhoeff check still refuses anything that fails it. Moving the reader on-device changes where the
+  reading happens, not who is responsible for it.
+- **The server reader is not removed.** It is the path for the web client, which has no bundled
+  model, and it is what the `Gemini` provider is still for.
+- **The Aadhaar QR code is still no help.** Nothing about the overrule changes the UIDAI Secure QR
+  specification: it carries a reference id, not the twelve digits.
+- **The barcode decision does not fall with it.** `docs/DECISION-qr-scanning-on-android.md` chose
+  ZXing over 9.44 MB of bundled ML Kit barcode scanning. Text recognition and barcode scanning are
+  separate bundled models in separate native libraries; adding one does not make the other free. It
+  would share `com.google.mlkit:common` and `vision-common` only, which is the small part.
+
+## What it actually costs, measured — and it is not 7.4×
+
+The table above priced this at **~45.2 MB, 7.4× today's APK**, from unzipping the AAR. That was the
+right shape and it was 1.8 MB optimistic. Measured instead — five real `assembleRelease` runs, sizes
+read off the files, full table and per-group attribution in **`docs/R8-MEASUREMENT.md`**:
+
+| Release APK | Bytes | Size | Multiple of today |
+|---|---|---|---|
+| Today, before ML Kit | 6,636,115 | 6.33 MB | 1.00× |
+| Bundled ML Kit **as this module was configured** — all four ABIs | 49,307,952 | 47.02 MB | **7.43×** |
+| Bundled ML Kit, **as it now ships** — `abiFilters` = the ARM pair | **26,080,576** | **24.87 MB** | **3.93×** |
+
+**22.15 MB of the estimated bill was never a real cost.** `android/app/build.gradle.kts` set no
+`abiFilters` at all, so every build packaged native libraries for all four ABIs — including `x86` and
+`x86_64`, which are **emulator** architectures that no handset this app is carried into a village on
+can run. Half the model was being shipped to devices that cannot exist in the field. That is now
+filtered in the release build, measured at 23,227,376 bytes off the APK, and the debug build keeps
+all four ABIs so the emulator still works for a developer with no phone.
+
+So the honest headline is **6.33 → 24.87 MB, 3.93×**, not 7.4×. That is still the largest single
+increase this application has ever taken and it should be stated plainly rather than softened: the
+update every designer downloads on prepaid data goes from 6 MB to 25 MB, on every release, for ever.
+The recogniser has to be worth that, and the decision above is that an identity read which works in a
+courtyard with no signal is.
+
+**Two more levers exist and are measured but not taken** — dropping `armeabi-v7a` (a further 6.49 MB,
+refused without a roster of what handsets are actually in the field) and `useLegacyPackaging`
+(a further 9.52 MB off every *download*, in exchange for 7.52 MB of permanent on-device storage).
+Both are written up with their numbers in `docs/R8-MEASUREMENT.md` so that neither has to be
+re-derived by the next person who looks at this.
+
+**The "revisit if it ever ships through Play" condition above is now moot for the size reason**, and
+worth correcting rather than leaving: it was checked, and this application cannot use Play delivery
+without replacing its whole update path. `GET /api/app/download` is one redirect to one object,
+`WorkshopRepository.publishAppUpdate` publishes by reading `applicationInfo.sourceDir` — the base
+split alone under a bundle install — and the update prompt the handset shows has no "Later" button.
+The condition should now read: revisit if the *delivery chain* is ever replaced.
