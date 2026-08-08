@@ -13,6 +13,7 @@ docs/SECURITY.md):
 """
 
 import logging
+from functools import lru_cache
 from pathlib import PurePath
 from typing import Any
 from urllib.parse import urlsplit
@@ -65,6 +66,43 @@ def _sse_params() -> dict[str, str]:
     return {"ServerSideEncryption": algorithm} if algorithm else {}
 
 
+@lru_cache(maxsize=4)
+def _build_client(
+    region: str | None,
+    endpoint: str | None,
+    access_key: str | None,
+    secret_key: str | None,
+    addressing_style: str | None,
+):
+    """The boto3 client itself, memoised on everything that shapes it.
+
+    ONE CLIENT, NOT ONE PER OBJECT. Each ``boto3.client`` builds its own ``URLLib3Session``
+    connection pool, so constructing one per call meant no S3 connection was ever reused: every
+    photograph embedded in a report paid a fresh TCP+TLS handshake instead of riding a keep-alive
+    socket, and ``GET /api/datasets/media.ndjson?presign=true`` built one client per row of a table
+    that legitimately runs into five figures. Botocore clients are safe to share across threads for
+    the calls this module makes (``get_object``, ``generate_presigned_url``, the multipart trio) —
+    what is not thread-safe is a boto3 *resource*, which this module never creates.
+
+    Keyed on the settings rather than cached bare, so a process that reconfigures storage — a test
+    pointing at a different endpoint, a rotated credential — gets a client that matches. ``maxsize``
+    is small on purpose: a handful of distinct configurations is a real deployment, a hundred is a
+    leak.
+    """
+    return boto3.client(
+        "s3",
+        region_name=region,
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        # SigV4 so presigned PUTs validate in every region.
+        config=Config(
+            signature_version="s3v4",
+            s3={} if addressing_style is None else {"addressing_style": addressing_style},
+        ),
+    )
+
+
 def _client():
     settings = get_settings()
     # For a real AWS bucket outside us-east-1, presign against the *regional* endpoint. The global
@@ -75,23 +113,24 @@ def _client():
     endpoint = settings.aws_s3_endpoint
     # Virtual-hosted addressing only for real AWS (regional endpoint). A custom endpoint such as
     # MinIO needs path-style, so leave its addressing on boto3's default ("auto").
-    s3_config: dict = {}
+    addressing_style: str | None = None
     if not endpoint and settings.aws_region:
         # Dual-stack regional endpoint (s3.dualstack.<region>) so presigned PUT URLs resolve a
         # native IPv6 (AAAA) address. IPv4-only mobile data is increasingly IPv6-only (Jio/Airtel);
         # the plain s3.<region> host has no AAAA, so uploads from such phones fail to connect.
         # Dual-stack serves IPv4 too, so Wi-Fi is unaffected, and SigV4 signs the dual-stack host.
         endpoint = f"https://s3.dualstack.{settings.aws_region}.amazonaws.com"
-        s3_config = {"addressing_style": "virtual"}
+        addressing_style = "virtual"
+    # Outside the memoised builder deliberately: the warning is once-per-process either way (see
+    # `_insecure_endpoint_warned`), and a plaintext endpoint should still be evaluated on every
+    # call rather than only on the one that happened to miss the cache.
     _warn_if_insecure_endpoint(endpoint)
-    return boto3.client(
-        "s3",
-        region_name=settings.aws_region,
-        endpoint_url=endpoint,
-        aws_access_key_id=settings.aws_access_key_id,
-        aws_secret_access_key=settings.aws_secret_access_key,
-        # SigV4 so presigned PUTs validate in every region.
-        config=Config(signature_version="s3v4", s3=s3_config),
+    return _build_client(
+        settings.aws_region,
+        endpoint,
+        settings.aws_access_key_id,
+        settings.aws_secret_access_key,
+        addressing_style,
     )
 
 

@@ -98,9 +98,28 @@ async def _upsert_grant(
     requested_by: str | None,
     decided_by: str | None,
 ) -> Any:
-    """Create or replace the single (owner, grantee) grant row, rebuilding its subset items."""
+    """Create or replace the single (owner, grantee) grant row, reconciling its subset items.
+
+    ATOMIC, AND ONLY THE DIFFERENCE IS WRITTEN. This used to be an ``update``, then a
+    ``delete_many`` of every scope row, then one ``create`` per item — outside any transaction, on a
+    database in another AWS region. Between the delete and the last insert a colleague pressing
+    Download received a zip that silently omitted the records whose scope rows had not been
+    re-inserted yet, presented as complete; and a process that died inside the loop left the grant
+    GRANTED at the tier the owner had just set while covering NO records at all — the owner's screen
+    saying the colleague has access, the colleague's export downloading successfully and containing
+    nothing, and neither of them told why.
+
+    Two fixes, and the second is what makes the common case free. The writes are wrapped in
+    ``db.tx()`` so a reader sees the old scope or the new one and never a half-built one (the same
+    tool ``design_workshops.save_stage`` uses for the same reason). And the scope is DIFFED rather
+    than rebuilt, because ``update_grant`` and ``decide_request`` re-send the grant's existing items
+    whenever the payload omits them (``:227``, ``:249``) — so a bare tier change, a revoke or a
+    reinstate used to tear down and re-insert every row of an unchanged subset. Now it writes
+    nothing, which is also what stops ``grantedAt`` moving on rows nobody edited.
+    """
     existing = await db.dataaccessgrant.find_unique(
-        where={"ownerId_granteeId": {"ownerId": owner_id, "granteeId": grantee_id}}
+        where={"ownerId_granteeId": {"ownerId": owner_id, "granteeId": grantee_id}},
+        include={"scopeItems": True},
     )
     data: dict[str, Any] = {
         "tier": tier,
@@ -118,16 +137,55 @@ async def _upsert_grant(
         from datetime import UTC, datetime
 
         data["decidedAt"] = datetime.now(UTC)
-    if existing is None:
-        grant = await db.dataaccessgrant.create(
-            data={**data, "ownerId": owner_id, "granteeId": grantee_id}
-        )
-    else:
-        grant = await db.dataaccessgrant.update(where={"id": existing.id}, data=data)
-        await db.dataaccessscopeitem.delete_many(where={"grantId": grant.id})
+    # An ``allData`` grant names no records, so its scope is empty whatever was sent — otherwise
+    # narrowing a subset grant to "all data" would leave the old rows behind to reappear the day
+    # somebody widened the read.
+    wanted: set[tuple[str, str]] = set()
     if not all_data:
-        for item in _scope_create(scope_items):
-            await db.dataaccessscopeitem.create(data={**item, "grantId": grant.id})
+        wanted = {(item["recordType"], item["recordId"]) for item in _scope_create(scope_items)}
+    held = {
+        (str(row.recordType), str(row.recordId))
+        for row in (getattr(existing, "scopeItems", None) or [])
+    }
+    remove = sorted(held - wanted)
+    add = sorted(wanted - held)
+
+    if existing is not None and not remove and not add:
+        # The grant row alone — a tier change, a revoke, a reinstate. No scope write at all, so no
+        # window in which the subset is short, and nothing to make atomic.
+        grant = await db.dataaccessgrant.update(where={"id": existing.id}, data=data)
+        return await db.dataaccessgrant.find_unique(where={"id": grant.id}, include=GRANT_INCLUDE)
+
+    async with db.tx() as tx:
+        if existing is None:
+            grant = await tx.dataaccessgrant.create(
+                data={**data, "ownerId": owner_id, "granteeId": grantee_id}
+            )
+        else:
+            grant = await tx.dataaccessgrant.update(where={"id": existing.id}, data=data)
+        if remove:
+            await tx.dataaccessscopeitem.delete_many(
+                where={
+                    "grantId": grant.id,
+                    "OR": [
+                        {"recordType": record_type, "recordId": record_id}
+                        for record_type, record_id in remove
+                    ],
+                }
+            )
+        if add:
+            # One statement, not one round trip per record: a twenty-record subset was twenty
+            # sequential hops on a cross-region link, which is the window this whole change closes.
+            await tx.dataaccessscopeitem.create_many(
+                data=[
+                    {"grantId": grant.id, "recordType": record_type, "recordId": record_id}
+                    for record_type, record_id in add
+                ],
+                # `@@unique([grantId, recordType, recordId])`: two owners saving the same Sharing
+                # screen at once must not turn "already in the scope" — the intended outcome of
+                # this call — into a 500 on a duplicate key.
+                skip_duplicates=True,
+            )
     return await db.dataaccessgrant.find_unique(where={"id": grant.id}, include=GRANT_INCLUDE)
 
 
