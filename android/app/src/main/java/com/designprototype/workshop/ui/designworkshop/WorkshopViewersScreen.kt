@@ -226,8 +226,18 @@ fun WorkshopViewersScreen(
                     loading = false
                     return@LaunchedEffect
                 }
+                // ANY OTHER FAILURE STOPS THE LOAD, and this early return is load-bearing rather
+                // than tidy. `dwViewerChoices` marks every granted account the eligible list does
+                // not contain as "has access, no longer eligible" — which is the truth when the
+                // server OFFERED a list without them, and a lie when no list arrived at all. Left
+                // to fall through, a 500 or a dropped socket here drew the picker over an empty
+                // eligible list and told an administrator that every designer on the workshop had
+                // been suspended from the roster, with a "Try again" nowhere in sight and nobody
+                // available to add. Better to render the failure that actually happened.
                 eligible = emptyList()
                 loadError = error.viewerFailure(DwViewerAttempt.READ)
+                loading = false
+                return@LaunchedEffect
             }
 
         runCatching { repository.designWorkshopViewers(remoteId) }
