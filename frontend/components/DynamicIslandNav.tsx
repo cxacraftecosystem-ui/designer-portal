@@ -109,36 +109,37 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/media", label: "Upload media", icon: ImageIcon, group: "Record", can: everyone, gate: "get_current_user" },
   { href: "/crafts", label: "Add craft", icon: Brush, group: "Record", can: canManageCrafts, gate: "require_craft_manager" },
   { href: "/workshops", label: "Record workshop", icon: Users, group: "Record", can: canManageWorkshops, gate: "require_workshop_manager" },
-  // The 22-stage Design & Prototype Workshop record. Gated on record creation to mirror
-  // `assert_can_create_records`, which is what `POST /design-workshops` calls — the two tiers below
-  // Researcher have nothing to open here, and an ungated entry would land them on a refusal.
+  // The 22-stage Design & Prototype Workshop record.
   //
-  // LABELLED IN THE PLURAL, deliberately, and this is the one place in the menu where the wording
-  // is not lifted from Android: the Android app has no equivalent entry to copy (its 22-stage work
-  // lives in the draft store, reached from the dashboard), and its own name for itself — the
-  // literal string "Design Workshop" in MainActivity — is the APPLICATION's title. A singular entry
-  // here would read as "go to the app you are already in" rather than "the list of workshop
-  // records". When Android grows this screen, both labels move together.
+  // `can_run_design_workshops`, and this line used to say `canCreateRecords`. `POST
+  // /design-workshops` runs BOTH `assert_can_create_records` AND `_require_designer`
+  // (backend/app/api/routes/design_workshops.py:391-392) and the second one binds, so a RESEARCHER
+  // — and a PROFESSOR, who outranks a designer and is still outside the set — saw this entry,
+  // pressed it, and landed on the route guard's "Designer access required" panel, which
+  // `lib/permissions.ts` has been enforcing on the same path all along. A nav entry that only ever
+  // opens a padlock is worse than no entry.
+  //
+  // THE READS ARE OPEN AND THIS ENTRY DOES NOT PRETEND OTHERWISE — see the `gate` below, which is
+  // the honest one. `_require_designer` sits on the writes only (create :392, patch :439, stage
+  // :539); `list_design_workshops` (:304) and `GET /{workshop_id}` (:419) take `get_current_user`
+  // and filter rows through `visible_to_clause`. Hiding the row is therefore the same kind of
+  // narrowing as `/designers/profile` further down, not a mirror of a refusal — and the difference
+  // matters the next time somebody is tempted to move a WRITE control behind a hidden link.
+  // Contrast `/questionnaires` immediately below, where every route really does begin with
+  // `_require_designer`, reads included.
+  //
+  // LABELLED IN THE PLURAL while the dashboard tile beside it is singular ("Design workshop"), and
+  // the difference is deliberate on both clients: the tile names the THING you are about to make,
+  // the menu names the LIST you are about to open. Android's dashboard card copies the tile
+  // (`DesignWorkshopCard.LABEL`) and its own menu row copies this one; a Kotlin test asserts the
+  // two differ so neither can be "tidied" into the other.
   {
     href: "/design-workshops",
     label: "Design workshops",
     icon: DraftingCompass,
     group: "Record",
-    // A SET, NOT A RANK THRESHOLD, and the difference is two real roles. `canCreateRecords` is
-    // "Researcher and above", while `DESIGN_WORKSHOP_ROLES` is {Designer, Admin, Master Admin} — a
-    // Professor outranks a Designer and is deliberately outside it. Gating on rank therefore showed
-    // this entry to exactly the two roles that cannot create a workshop.
-    //
-    // MEASURED AGAINST THE RUNNING API, not inferred: POST /api/design-workshops answers 201 for
-    // designer and 403 for professor and researcher, while GET answers 200 for all three. So the
-    // LIST is open to any signed-in account and it is the create action behind this entry that
-    // always refuses them — the server was never at risk, but an entry that leads somewhere its
-    // primary action is refused is how an interface teaches people to distrust the ones that work.
-    //
-    // Android has had this right since the entry was added (`AppNavigation.kt`, gate
-    // `can_run_design_workshops`); the web was the surface that was behind.
     can: canRunDesignWorkshops,
-    gate: "can_run_design_workshops"
+    gate: "get_current_user on the list; _require_designer on every write (narrowed here to can_run_design_workshops)"
   },
   // A questionnaire the designer authored themselves, from the .xlsx pro-forma. DISTINCT FROM "Take
   // interview" above, which is the one shared artisan questionnaire every researcher answers — two
