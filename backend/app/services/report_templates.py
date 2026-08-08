@@ -51,10 +51,11 @@ class SpecialSection(str, Enum):
     SUMMARY_METRICS = "SUMMARY_METRICS"
     SIGNATURES = "SIGNATURES"
     ANNEXURE_MEDIA = "ANNEXURE_MEDIA"
-    # Every recording the workshop collected, transcribed, printed in full at the back. Built by
-    # app/services/report_annexures.py rather than by the builder, and rendered only when the
-    # designer asked for it through the stage-20 `includeTranscripts` toggle — a template carrying
-    # this section prints nothing at all when no transcripts were attached to the workshop data.
+    # Every recording the workshop collected, transcribed, printed in full at the back. The blocks
+    # are built by app/services/report_annexures.py rather than by the builder, which reaches them
+    # from one branch of `ReportBuilder.build`; rendered only when the designer asked for it through
+    # the stage-20 `includeTranscripts` toggle — a template carrying this section prints nothing at
+    # all when no transcripts were attached to the workshop data.
     ANNEXURE_TRANSCRIPTS = "ANNEXURE_TRANSCRIPTS"
     COMPLETENESS = "COMPLETENESS"
     # A map of India with the workshop's venue and its artisans' home districts pinned on it.
