@@ -839,3 +839,165 @@ Three traps worth carrying forward, all of which cost time here:
 - **The case table's odd spellings are load-bearing in a way that bites editors, not just ports.** An
   anchor on what looks like `"evidence": ""` matches nothing, because it holds two U+0085 NEXT LINE
   characters. That case exists precisely because Python strips them and a JVM `trim()` does not.
+
+---
+
+# The parallel-agent session of 2026-08-08 (afternoon)
+
+The repository is now under **git** and pushed to
+`github.com/cxacraftecosystem-ui/designer-portal`. That is not bookkeeping — it changed what is
+possible. Android Gradle takes a PROJECT-WIDE lock, so before git there was no way to run more than
+one Android agent: they could write in parallel but only one could ever verify. With worktrees, five
+lanes each got their own checkout, their own lock and their own build. All five landed and all five
+merged with zero conflicts.
+
+**Secrets were verified absent before the first push, not assumed.** Every real credential file
+(`infra/terraform/fieldrepo-deploy.pem`, `.env`, `backend/.env`, `backend/.env.supabase.bak`,
+`frontend/.env.local`) is gitignored and returns 404 on the remote. The `JWT_SECRET` in
+`.env.docker.example` and `docker-compose.yml` is left in place deliberately: the file documents it
+as a public local-only placeholder, `verify_jwt_configuration` refuses to boot on a weak secret, and
+it appears in no live config. Rotate it if you disagree — it is a judgement call, not an oversight.
+
+## Two worktree traps that will bite the next agent too
+
+Both cost a wasted build, and both have the same cause: **a gitignored file does not exist in a
+worktree**.
+
+- `android/local.properties` holds `sdk.dir`. Without it every Gradle task dies with "SDK location
+  not found" before compiling a line. All five lanes were heading for this.
+- `backend/.env` holds `JWT_SECRET`, the AWS keys and `MASTER_ADMIN_EMAIL`. Without it pytest dies
+  in COLLECTION with a pydantic ValidationError, which reads like a code fault and is not one.
+
+Seed both into any new worktree before running anything. `frontend/node_modules` is the third —
+a directory junction to the main tree's copy is enough.
+
+## The two data-loss defects, which were the whole value of the day
+
+Both were found by asking one question the test suites cannot ask: *does a prose-level gesture
+destroy structured content it was never aimed at?*
+
+### 1. "Clear formatting" deleted an inline photograph or a table (fixed, `7e343e2`)
+
+`clearFormatting` ended every block it touched with `.copy(kind = PARAGRAPH, …)` unconditionally,
+and `setBlockKindIn` did the same. `toJson` writes `media` ONLY for an IMAGE block and `rows` ONLY
+for a TABLE block — so the moment either was re-kinded the next save omitted the field and the
+picture or the whole grid was gone from the record, on every surface, permanently.
+
+The gesture was not a destructive-looking one: stripping a stray bold run out of a caption, or
+pressing Paragraph over a selection that ran through a table on its way to a sentence three blocks
+away. `frontend/lib/richText.ts` has guarded this since it was written (`isStructuralKind`, applied
+in both commands); Android had no equivalent and `grep -rn 'isStructuralKind' android/app/src`
+returned nothing.
+
+`BlockKind.isStructural` is the port. **The tests assert through `toJson`, not against the in-memory
+block** — a block keeps its `rows`/`media` whatever its kind, so a test reading `doc.blocks[i].media`
+would have passed against the bug. Four of the five fail with the guard disabled; the fifth is the
+control proving prose is STILL re-kinded, which is what separates a real guard from a lazy "skip the
+block entirely" fix that would leave a heading a heading.
+
+### 2. A never-downloaded client deleted every answer it had not read (fixed, `6119378`)
+
+The more expensive of the two, and the one the app actively promised would not happen.
+
+`save_stage` replaces a singleton row's `data` WHOLESALE. A client that has never downloaded a stage
+holds a blank form, and a blank form is indistinguishable on the wire from a stage somebody emptied.
+So: a workshop is set up in the office with stage 1 complete, the designer opens that stage in a
+courtyard, the download fails, the form comes up blank, they type the one thing they came to record,
+and on the drive home the sync replaces the office's work with that one field.
+
+The blast radius went past the stage. `_coerce_promoted` nulls every promoted column whose entity
+was touched and is now blank, and craftName, clusterName, state, district, venue and the dates are
+all promoted off `workshopSetup` — so the workshop also fell out of every "Ikat in Odisha" filter
+and the report cover handed to the visiting officer printed blank. No `RecordRevision` is written
+for stage entries, so none of it was recoverable.
+
+**Both clients displayed the opposite promise**, and the Kotlin said so in a KDoc as well:
+
+| where | the promise |
+|---|---|
+| web banner | "nothing you leave blank will overwrite an answer recorded elsewhere" |
+| Android banner | "anything already on the server for this stage is NOT shown below and will not be replaced by it" |
+| `WorkshopSync` KDoc | a draft that has never seen the server "does not also assert that everything it lacks should be destroyed" |
+
+The last one was false for a singleton and was the sentence a maintainer would have trusted. The
+authority `isAuthoritative` grants was being spent only on `replaceCollections`/`emptiedEntities`,
+which the server applies to COLLECTIONS alone.
+
+The fix is ONE WIRE PRIMITIVE rather than two client workarounds: a per-entry `merge` flag on
+`StageEntryIn`. Keys absent from `data` are kept instead of deleted; `clean` still wins every key it
+holds, so it fills gaps and never overrides. It is applied BEFORE `pending`, so the merged dict is
+what reaches the row, the promoted columns and the `stored` block echoed back — three readers that
+must not disagree about what was just written.
+
+**It defaults to false.** A client that has read the row means it when it omits a key, and the second
+half of the new test is what stops the fix over-reaching into that case. Web drives it from
+`serverLoadedAt === null`, Android from `!isAuthoritative(...)`.
+
+Disable the merge branch and the test fails with `KeyError: 'craftName'`, which is the office's work
+gone.
+
+## What the parallel lanes produced
+
+| lane | result |
+|---|---|
+| `DwWorkshopCodes.kt` | 408-line port + 18 tests. Goldens generated by TRANSPILING the real TS and running it — not by trusting the Kotlin |
+| `DwSubmissionReadiness.kt` | port + 10 tests, checked against `submission-readiness-unit.spec.ts` |
+| `DwPhotoMeasure.kt` | port + 42 tests |
+| `DwQrEncode.kt` | port + 11 tests. Verified against the TS under `node --experimental-strip-types`: 80/80 mask matrices, 80/80 penalties, 3/3 SVG paths character-for-character |
+| report lane | media + completeness annexures, REACHED (every hop walked from the export button) |
+
+**Four of the five are dark code and said so.** Nothing calls them yet; wiring was explicitly out of
+scope. The adversarial reviewer confirmed it per worktree rather than taking their word.
+
+## Where agents were RIGHT and my instructions were WRONG
+
+Recorded because the instinct to defer to the brief is the failure mode here.
+
+1. **The Android writers can already draw charts and maps.** I briefed a design agent that they
+   could not. `PdfWriter.kt:1290-1291` and `DocxWriter.kt:1252-1253` already dispatch both, the
+   rasterisers are ~2,300 lines, and the India boundary data is a **91 KB offline APK asset**, not a
+   fetch. The real gap is that nothing ever CONSTRUCTS a `ChartBlock` or `MapBlock` — this repo's
+   signature defect, for the fourth time today. That makes it ~350 lines of arithmetic, not an
+   engine.
+2. **`DwPy.round` was the wrong instruction for `photoMeasure`.** I told the lane to use it. The
+   agent checked, found there is no `photo_measure` under `backend/` at all — so the TypeScript is
+   the authority, not Python — and confirmed on the running TS that the web proposes 201 mm where
+   `DwPy.round` gives 200. Obeying me would have SHIPPED the divergence. If a Python module is ever
+   written, the web must change in the same commit or the three clients cannot agree.
+3. **Artisan home-district pins should stay SERVER-ONLY.** The device's cached artisan record carries
+   `village` and no district or state, and the server's district anchors are a running average over
+   live `Location` rows, not a shippable table. Porting it would fold twenty Bargarh artisans onto
+   Bhubaneswar — the exact defect the server fixed last month — into the copy least likely to be
+   checked against anything.
+
+## The verifier that caught its own fixer
+
+Worth keeping as an argument for adversarial verification over a second opinion. The backend hygiene
+agent reported "1585 passed, 141 errors", explaining the errors as an unavoidable absence of local
+Postgres — "nothing listening on 5432". The verifier re-ran it and got **1726 passed, 2 skipped, in
+2m55s**. The stack listens on **55442**; the fixer had checked the wrong port and its own quoted
+error message named the right one. Its pass was fine; its verification was not, and it happened to
+leave exactly the DB-backed code it had touched unexercised.
+
+## Still open, ranked, with 28 findings recorded
+
+A read-only six-lens sweep produced 31 findings; 28 survived adversarial refutation. The full list
+with file:line evidence is in the session scratchpad. The ones that matter most:
+
+- **SECURITY (HIGH)** — report generation and the transcript annexure fetch ANY `MediaFile` by
+  client-supplied id, bypassing the entitlement check.
+- **SECURITY (MEDIUM)** — `MediaFile.url` is taken verbatim from the upload payload, so a signed-in
+  account can plant a URL the API then 307-redirects to.
+- **BUG (HIGH, web)** — a row deleted while a background sync PUT is in flight loses its
+  `removedFrom` flag, so the row returns on the next read and prints in the officer's report.
+  `designWorkshopStore.ts:2032-2033` clears it unconditionally where the sibling `dirtyAt` on the
+  very next line is guarded by a timestamp comparison.
+- **BUG (MEDIUM, android)** — "Save and sync this stage now" starts an 800 ms timer instead of
+  saving; leaving the screen inside that window discards the write.
+- **PERFORMANCE (HIGH, backend)** — the report input load is up to ten sequential round trips where
+  the dependency graph allows four.
+- **PERFORMANCE (HIGH, android)** — the .docx writer holds every photograph's full original bytes on
+  the heap at once, while its sibling PDF writer in the same package documents why that must not be
+  done.
+- **A11Y (HIGH, web)** — `CollabDialog` on six list pages and "Assign researchers" have no dialog
+  role, no focus trap and no Escape handling.
