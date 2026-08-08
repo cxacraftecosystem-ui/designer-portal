@@ -2673,10 +2673,19 @@ class WorkshopRepository(
      * permanent failure transient and one bad record blocks the queue for ever; call a transient one
      * permanent and a day's work is parked for a human because a tunnel took the signal away.
      *
-     * INTERNAL rather than private because [WorkshopSyncEngine] has to make the identical judgement
-     * about a design workshop, and a second implementation of it would be a second idea of what
+     * INTERNAL rather than private because the design-workshop pass reads it too, for every failure
+     * shape that is not an HTTP status — no route to host, a socket dropped mid-transfer, a payload
+     * that will not parse — and a second implementation of THAT would be a second idea of what
      * "offline" means. The one that was wrong would either strand a fortnight of fieldwork for ever
      * or replay a rejection until somebody reinstalled the app.
+     *
+     * IT IS NOT THE WHOLE TEST FOR THAT PASS, and the difference is deliberate rather than drift.
+     * This function answers "is it worth trying again", which is all a queue needs. The sync pass
+     * also STOPS on a yes and puts "the connection dropped" on screen, so it has to ask the narrower
+     * question "did the server answer": an answered 5xx is a refusal to record against one stage,
+     * not a reason to report lost signal on a phone with four bars and skip every workshop behind
+     * it. See `isConnectionFailure` in `data/WorkshopSync.kt`, and `isUnreachable` in
+     * `frontend/lib/offline.ts` for the same pair on the web.
      */
     internal fun isTransient(error: Throwable): Boolean = when (error) {
         is HttpException -> when (val code = error.code()) {

@@ -323,11 +323,33 @@ fun WorkshopListScreen(
                             "No connection. Everything is saved on this device and will upload by itself."
                         )
                         result.didAnything -> onMessage(
-                            "Sent ${result.stagesSent} stage(s) and ${result.mediaUploaded} file(s)." +
-                                if (result.stoppedOffline) " The connection dropped — the rest is still here." else ""
+                            buildString {
+                                append("Sent ${result.stagesSent} stage(s) and ${result.mediaUploaded} file(s).")
+                                if (result.stoppedOffline) {
+                                    append(" The connection dropped — the rest is still here.")
+                                }
+                                // A pass that sends nineteen stages and is refused the twentieth is
+                                // not a clean pass, and reporting only the nineteen is how a designer
+                                // packs up believing all twenty went. `buildString` rather than a
+                                // chain of `+ if (…) … else ""`: Kotlin binds the second `if` inside
+                                // the first one's else-branch, so the two clauses would have been
+                                // mutually exclusive.
+                                if (result.refused > 0) {
+                                    append(" ${result.refused} item(s) were refused — open the workshop below to see why.")
+                                }
+                            }
                         )
                         result.stoppedOffline -> onMessage(
                             "The connection dropped before anything could be sent. Nothing has been lost."
+                        )
+                        // BEFORE the "already on the server" line, which this case is not. A pass
+                        // that sent nothing and was refused something used to land there and tell a
+                        // designer their fortnight was safe. It reads as the good outcome, and it is
+                        // the one the answered-5xx triage makes reachable: the item is recorded on
+                        // the row it belongs to and this sentence is what points at it.
+                        result.refused > 0 -> onMessage(
+                            "${result.refused} item(s) were refused by the server and are still on this " +
+                                "device. Open the workshop below to see which, and why."
                         )
                         else -> onMessage("Everything on this device is already on the server.")
                     }

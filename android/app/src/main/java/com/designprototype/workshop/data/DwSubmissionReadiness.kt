@@ -84,6 +84,30 @@ data class DwReadinessItem(
     val href: String,
 )
 
+/**
+ * Where a readiness item points, in the terms THIS client can actually navigate by.
+ *
+ * [DwReadinessItem.href] stays exactly what it is — the web's URL, character for character, which is
+ * what a designer pastes to a colleague and what `readStageFocus` reads back in a browser. It is
+ * INERT on this client and must stay so: `AndroidManifest.xml` declares MAIN/LAUNCHER and no
+ * `<intent-filter>` for that path, so there is nothing here to hand a URL to, and parsing our own
+ * query string back into its parts would be a second spelling of an address we are already holding.
+ * The screen navigates by [entityKey] / [fieldKey] / [rowKey]; the href is for people.
+ */
+data class DwStageFocus(
+    val stageKey: String,
+    val entityKey: String,
+    /**
+     * The box to scroll to — [DwReadinessAddress.anchorFieldKey], never a caption's own key.
+     *
+     * A caption input is drawn inside the media field it describes and has no wrapper of its own, so
+     * focusing its key would scroll to nothing at all.
+     */
+    val fieldKey: String,
+    /** The collection row that holds it — its `_clientKey`. Null for a singleton. */
+    val rowKey: String? = null,
+)
+
 /** A report-blocking condition that is not a missing field. */
 data class DwReadinessCheck(
     val id: String,
@@ -189,6 +213,39 @@ object DwSubmissionReadiness {
     }
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
+
+    /**
+     * The same destination as [DwReadinessItem.href], for the client that has no address bar.
+     *
+     * Null when the address walk could not place the label — and null means "open the stage with
+     * nothing focused", which is the degradation [assess] already builds into `href` and NOT a reason
+     * to drop the item. An obstacle a designer cannot tap is an obstacle they hunt for by eye through
+     * several hundred fields, which is the whole thing this module exists to stop; landing on the
+     * right form with the box unhighlighted is a far smaller failure.
+     */
+    fun focusOf(item: DwReadinessItem): DwStageFocus? {
+        val address = item.address ?: return null
+        return DwStageFocus(
+            stageKey = item.stageKey,
+            entityKey = address.entityKey,
+            fieldKey = address.anchorFieldKey,
+            rowKey = address.rowKey,
+        )
+    }
+
+    /**
+     * Every blocking label of every stage, addressed — `stageKey → (label → where it lives)`.
+     *
+     * Keyed by the label because the label is what the SCREEN already holds:
+     * [DwStageCompleteness.missing] is the single source of blocking items (see the header), the
+     * stage index prints those strings, and this map only decides where each one goes. A label it
+     * has no entry for keeps its row and opens the stage; it is never dropped and never invented.
+     */
+    fun addressBook(readiness: DwWorkshopReadiness): Map<String, Map<String, DwStageFocus>> =
+        readiness.blocking
+            .mapNotNull { item -> focusOf(item)?.let { item.stageKey to (item.label to it) } }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, entries) -> entries.toMap() }
 
     /* ----------------------------------------------------------------------------------
      * Addresses

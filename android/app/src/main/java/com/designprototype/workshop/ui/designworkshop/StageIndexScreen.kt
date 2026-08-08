@@ -38,6 +38,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DwStageCompleteness
+import com.designprototype.workshop.data.DwStageFocus
+import com.designprototype.workshop.data.DwSubmissionReadiness
 import com.designprototype.workshop.data.StageCompletenessDto
 import com.designprototype.workshop.data.WorkshopDraftStore
 import com.designprototype.workshop.data.WorkshopRepository
@@ -69,12 +71,25 @@ import com.designprototype.workshop.ui.field
  * what the report needs. Listing the unanswered STANDARD and ADVANCED fields too would produce a list
  * of two hundred items per stage, which is a list nobody reads — and the tiers exist precisely so a
  * workshop held without facilities can still be complete.
+ *
+ * ── AND EACH ONE IS A DESTINATION ────────────────────────────────────────────────────────────────
+ *
+ * Every entry in that list is tappable and lands on the box itself. It was inert text, and inert is
+ * expensive in exactly the place this screen is read: the designer taps into stage 11, and then
+ * scrolls a form of several hundred fields by eye hunting for "Warp count", once per gap, in the
+ * last hour of a workshop. The web has had these as links throughout.
+ *
+ * The addresses come from [DwSubmissionReadiness], which walks the registry a second time to work
+ * out WHERE each label lives and decides nothing about completeness — so a label it cannot place
+ * still shows and still opens the stage, and this screen still prints exactly the labels the scorer
+ * produced. See that module's header for why the asymmetry is the whole design.
  */
 @Composable
 fun StageIndexScreen(
     repository: WorkshopRepository,
     workshopId: String,
-    onOpenStage: (stageKey: String) -> Unit,
+    /** [DwStageFocus] is null for "just open it" — the row itself, and any label with no address. */
+    onOpenStage: (stageKey: String, focus: DwStageFocus?) -> Unit,
     onOpenReport: () -> Unit,
     onError: (String) -> Unit,
 ) {
@@ -86,6 +101,16 @@ fun StageIndexScreen(
     var loading by remember(workshopId) { mutableStateOf(true) }
     var expanded by remember(workshopId) { mutableStateOf<String?>(null) }
     var serverNote by remember(workshopId) { mutableStateOf<String?>(null) }
+    /**
+     * `stageKey → (missing label → the box it names)`, for turning the list below into destinations.
+     *
+     * Held apart from `stages` rather than folded into [DwStageCompleteness] because the two answer
+     * different questions and only one of them is allowed to decide what is outstanding. This map is
+     * a lookup; a label absent from it costs the row its precision and nothing else.
+     */
+    var addresses by remember(workshopId) {
+        mutableStateOf<Map<String, Map<String, DwStageFocus>>>(emptyMap())
+    }
 
     LaunchedEffect(workshopId) {
         loading = true
@@ -93,6 +118,12 @@ fun StageIndexScreen(
             val schema = repository.designWorkshopSchema(appContext)
             val draft = WorkshopDraftStore.load(appContext, workshopId)
             val local = computeWorkshopCompleteness(schema, draft)
+            // Computed from the same registry and the same draft, with no network in it — which is
+            // the point: the question "where is the field I am missing" is asked in a courtyard on
+            // the last afternoon, not from a desk with a connection.
+            addresses = DwSubmissionReadiness.addressBook(
+                DwSubmissionReadiness.assess(schema, draft, workshopId)
+            )
 
             val remoteId = draft?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
             val remote = remoteId?.let {
@@ -165,8 +196,10 @@ fun StageIndexScreen(
             StageIndexRow(
                 stage = stage,
                 expanded = expanded == stage.stageKey,
+                addresses = addresses[stage.stageKey].orEmpty(),
                 onToggle = { expanded = if (expanded == stage.stageKey) null else stage.stageKey },
-                onOpen = { onOpenStage(stage.stageKey) }
+                onOpen = { onOpenStage(stage.stageKey, null) },
+                onOpenField = { focus -> onOpenStage(stage.stageKey, focus) }
             )
         }
         Spacer(Modifier.padding(bottom = 8.dp))
@@ -177,8 +210,11 @@ fun StageIndexScreen(
 private fun StageIndexRow(
     stage: DwStageCompleteness,
     expanded: Boolean,
+    /** Where each of [DwStageCompleteness.missing] lives, by label. Missing entries open the stage. */
+    addresses: Map<String, DwStageFocus>,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
+    onOpenField: (DwStageFocus?) -> Unit,
 ) {
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
@@ -260,7 +296,43 @@ private fun StageIndexRow(
                 if (expanded) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         stage.missing.forEach { label ->
-                            Text("· $label", color = MaterialTheme.field.body, fontSize = 12.sp)
+                            // EVERY ENTRY IS A DESTINATION, including the ones with no address: a
+                            // label the registry walk could not place still opens its stage, which
+                            // is the same degradation `DwSubmissionReadiness` builds into `href`.
+                            // A row that does nothing when tapped is worse than a row that does
+                            // less than the row beside it.
+                            val focus = addresses[label]
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(
+                                        // Read out instead of the bare "double tap to activate":
+                                        // twelve rows that all announce the same verb are twelve
+                                        // rows a screen-reader user has to open to tell apart.
+                                        onClickLabel = if (focus != null) {
+                                            "Open this field in stage ${stage.number}"
+                                        } else {
+                                            "Open stage ${stage.number}"
+                                        },
+                                        onClick = { onOpenField(focus) }
+                                    )
+                                    .padding(vertical = 6.dp)
+                            ) {
+                                Text(
+                                    "· $label",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
                         }
                     }
                 }
