@@ -69,6 +69,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Timeline
 import com.designprototype.workshop.ui.FieldIslandNav
+import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.NavGroup
 import com.designprototype.workshop.ui.visibleNavItems
 import com.designprototype.workshop.ui.IslandEntry
@@ -256,6 +257,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.DesignServices
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Inventory2
@@ -467,7 +469,18 @@ private sealed interface Screen {
      * `remoteId` themselves; routing must never assume the two are the same, or a workshop created in
      * a courtyard opens onto a 404.
      */
-    data object DesignWorkshops : Screen
+    /**
+     * The list of design workshops.
+     *
+     * [startCreating] arrives with the "New design workshop" dialog already open, and the ONLY caller
+     * that passes true is the dashboard's Design workshop card — one tap from the screen the app
+     * opens on, against hamburger → Design workshops → New. Carried in the route for the same reason
+     * [DesignWorkshopStage.focus] is: it belongs to this arrival and to no other, so every other way
+     * in builds it false and cannot re-open the dialog. That matters in both directions — the menu
+     * row must not create a workshop each time it is tapped (see [NavDestination.DESIGN_WORKSHOPS]),
+     * and backing out of a workshop must not reopen the form the designer just used.
+     */
+    data class DesignWorkshops(val startCreating: Boolean = false) : Screen
     data class DesignWorkshopStages(val workshopId: String) : Screen
     /**
      * One stage, optionally arriving at ONE BOX on it.
@@ -1256,7 +1269,7 @@ private fun HomeScreen(
             // Lands on the LIST, never straight into a new workshop. Twenty-two stages is a
             // fortnight's work; a menu entry that silently created one every time it was tapped
             // would leave a trail of empty records nobody can tell apart.
-            NavDestination.DESIGN_WORKSHOPS -> screen = Screen.DesignWorkshops
+            NavDestination.DESIGN_WORKSHOPS -> screen = Screen.DesignWorkshops()
             // The LIST, for the same reason as the row above: a menu entry that created a
             // questionnaire every time it was tapped would leave a trail of untitled forms.
             NavDestination.CUSTOM_QUESTIONNAIRES -> screen = Screen.Questionnaires
@@ -1332,7 +1345,9 @@ private fun HomeScreen(
             // the back gesture all walk the same path: a stage returns to its own workshop's index,
             // never to the list, which is what a designer moving between stages 13 and 14 needs.
             is Screen.DesignWorkshops -> Screen.Dashboard
-            is Screen.DesignWorkshopStages -> Screen.DesignWorkshops
+            // `()` and not the arrival the designer came in on: coming back out of a workshop must
+            // land on the list, never on the create dialog the dashboard card opened on the way in.
+            is Screen.DesignWorkshopStages -> Screen.DesignWorkshops()
             is Screen.DesignWorkshopStage -> Screen.DesignWorkshopStages(s.workshopId)
             is Screen.DesignWorkshopReport -> Screen.DesignWorkshopStages(s.workshopId)
             is Screen.DesignWorkshopCodes -> Screen.DesignWorkshopStages(s.workshopId)
@@ -1676,6 +1691,16 @@ private fun HomeScreen(
                     actions = dashboardModes.filter { canCreate(it) && it.onDashboard },
                     roleLabel = roleLabel(user.role),
                     canCreateRecords = user.canCreateRecords(),
+                    // NOT routed through `canCreate(mode)` above: that table is a rank ladder and
+                    // this rule is a set, so a professor would have passed it. See [DesignWorkshopCard].
+                    showDesignWorkshop = DesignWorkshopCard.visibleTo(user),
+                    // The dialog opens over the list, so a mis-tap is one Cancel away from the list
+                    // rather than an empty workshop nobody can tell from the real one.
+                    onNewDesignWorkshop = {
+                        message = null
+                        screen = Screen.DesignWorkshops(startCreating = true)
+                    },
+                    onOpenDesignWorkshops = { message = null; screen = Screen.DesignWorkshops() },
                     // `adminSurface(isAdmin(user))` on the web dashboard: the role decides, the
                     // toggle can only take the tile away again.
                     showAdminHub = isAdmin && adminChrome,
@@ -2003,6 +2028,8 @@ private fun HomeScreen(
              */
             is Screen.DesignWorkshops -> WorkshopListScreen(
                 repository = repository,
+                // The dashboard card's "New workshop", carried through as the arrival it is.
+                startCreating = s.startCreating,
                 onOpen = { id -> message = null; screen = Screen.DesignWorkshopStages(id) },
                 onMessage = { showMessage(it) },
                 onError = { showMessage(it) }
@@ -2602,6 +2629,46 @@ private fun CarryForwardPanel(
     }
 }
 
+/**
+ * The dashboard's Design workshop card: its two words, and the one predicate that decides whether it
+ * is drawn at all.
+ *
+ * WHY IT IS NOT AN [EntryMode]. Every other card on this grid is generated from that enum, and that
+ * shape cannot carry this one for two independent reasons, either of which alone would be fatal:
+ *
+ *  * ROUTING. `screenFor` sends every mode to [Screen.Create], the single form slot. A design
+ *    workshop is 22 stages behind [Screen.DesignWorkshops], not a form.
+ *  * PERMISSION. The grid is filtered by `canCreate(mode)`, which is a RANK TABLE — "this tier and
+ *    above". `can_run_design_workshops` is a SET, `{DESIGNER, ADMIN, MASTER_ADMIN}`, so a PROFESSOR
+ *    outranks a designer and is still outside it. Adding a mode here would therefore have offered
+ *    the card to an account the API refuses, which on this feature is the worst shape a permission
+ *    mistake takes: the draft store is local, so Start works, 22 stages accept a fortnight of
+ *    capture and photographs, and every sync attempt is refused for ever with the work stranded on
+ *    the handset. See [FieldPermissions.canRunDesignWorkshops] and ui/AppNavigation.kt:449.
+ *
+ * The label is SINGULAR while the menu row is plural ("Design workshops", FIELD_NAV_ITEMS), and that
+ * difference is deliberate on both clients: the card names the THING you are about to make, the menu
+ * names the LIST you are about to open. Both strings are the web's own — the `label: "Design
+ * workshop"` tile in `tiles` at frontend/app/(protected)/dashboard/page.tsx, the entry at
+ * components/DynamicIslandNav.tsx. Cited by the strings rather than by line, because both files grew
+ * a dozen comment lines the day this was written and every number in this block went stale at once.
+ */
+internal object DesignWorkshopCard {
+    /** The web tile's `label` — singular, see the note above. */
+    const val LABEL = "Design workshop"
+
+    /** The web tile's `newLabel`, not the generic "New" every record card uses. */
+    const val PRIMARY_LABEL = "New workshop"
+
+    /**
+     * Whether this account is offered the card, mirroring `can_run_design_workshops` in
+     * `backend/app/core/deps.py`. Named rather than inlined so the dashboard and the menu can be
+     * asserted to read the SAME predicate — the nav entry already gates on it, and a card that
+     * disagreed with the row beside it would be the same trap arriving by the other door.
+     */
+    fun visibleTo(user: UserDto): Boolean = FieldPermissions.canRunDesignWorkshops(user)
+}
+
 @Composable
 private fun DashboardScreen(
     stats: DashboardStats?,
@@ -2612,6 +2679,12 @@ private fun DashboardScreen(
     roleLabel: String,
     /** require_record_creator: Researcher and above. False = the four record cards are gone. */
     canCreateRecords: Boolean,
+    /** [DesignWorkshopCard.visibleTo] — the SET, never [actions] and never a rank floor. */
+    showDesignWorkshop: Boolean = false,
+    /** Opens the list with the create dialog already up. */
+    onNewDesignWorkshop: () -> Unit = {},
+    /** Opens the list itself — the card's "Update", and the way back into a workshop already begun. */
+    onOpenDesignWorkshops: () -> Unit = {},
     showAdminHub: Boolean = false,
     onOpenAdminHub: () -> Unit = {},
     onWalkthrough: () -> Unit = {},
@@ -2641,6 +2714,45 @@ private fun DashboardScreen(
     // the grid with `columns - 1` spacers after it, which is exactly why it never lined up with the
     // cards above: a second Row measures independently of the first. It is a tile like any other.
     val tiles = buildList {
+        /*
+         * FIRST IN THE GRID, and that placement is the whole argument for adding a card at all.
+         *
+         * A design workshop is what this application is for; everything below this card — artisans,
+         * products, processes, tools, the questionnaire — is the reference data a workshop draws on.
+         * The web dashboard already makes the same call and says so in the "FIRST, and deliberately"
+         * comment above its own `tiles` array (frontend/app/(protected)/dashboard/page.tsx), and
+         * this card copies that tile
+         * rather than inventing a second idiom: same two words, same filled-primary / outlined-Update
+         * anatomy every editable card here already has ([DashboardActionCard]).
+         *
+         * IT COSTS A ROW, on a 360dp M32 where the grid is two columns — "At a glance" and Recent
+         * submissions move one row down for every designer. Going first is what pays for that: the
+         * control a designer reaches for most gets the top-left cell, and the tier that does not run
+         * workshops never sees the card at all. What it replaces is hamburger → past ten menu rows →
+         * Design workshops → New.
+         *
+         * BOTH BUTTONS, and Update is the one that earns its place. A workshop runs for a fortnight,
+         * so "carry on with the one I am in" is the common case and "start another" is the rare one;
+         * a card that could only create would manufacture duplicates on the screen where the
+         * designer's real intent is almost always the workshop already open. Update lands on the
+         * list, whose first row IS the most recently touched workshop and which carries what a
+         * "Continue" shortcut would have to hide — the completeness ring, "On this device only" /
+         * "Not synced" / "Sending…", and the "Showing N of M workshops" warning. That is why there is
+         * no third button: jumping past that list jumps past the one screen that tells a designer
+         * whether their fortnight has left the handset, and neither client has such a control.
+         */
+        if (showDesignWorkshop) {
+            add(
+                DashboardTile(
+                    label = DesignWorkshopCard.LABEL,
+                    icon = Icons.Filled.DesignServices,
+                    primaryIcon = Icons.Filled.Add,
+                    primaryLabel = DesignWorkshopCard.PRIMARY_LABEL,
+                    onPrimary = onNewDesignWorkshop,
+                    onUpdate = onOpenDesignWorkshops
+                )
+            )
+        }
         actions.forEach { entry ->
             add(
                 DashboardTile(
@@ -2719,6 +2831,18 @@ private fun DashboardScreen(
         // read as one comparison rather than as two unrelated grids. Drawn only when the API sent it.
         MyContributionCard(mine = stats?.mine, onOpenMyActivity = onOpenMyActivity)
         RecentSubmissionsCard(stats = stats, onOpenRecord = onOpenRecord)
+        /*
+         * A DELIBERATE PLATFORM DIFFERENCE, written down rather than paraphrased across. The web
+         * dashboard has no artisan-only block and is not getting one: `Recent submissions` sits
+         * immediately above on a 1280px page carrying the recorder's name, the status badge and a
+         * link straight into /artisans/{id}/edit, so an artisan list there would be largely the same
+         * rows a second time — and a dashboard that prints one record twice under two headings is how
+         * a reader stops trusting either. The phone earns its version because its own Recent
+         * submissions card is compressed to fit 360dp, and because on Android every save returns
+         * HERE (see the `goDashboard()` calls on each form's `onDone`), so this block is genuinely
+         * the next thing under the researcher's thumb. If the web ever wants it, the honest form is a
+         * filter on the existing table, not a second table.
+         */
         if (recentArtisans.isNotEmpty()) {
             Text("Recent artisans", display = true, fontSize = 20.sp, color = MaterialTheme.colorScheme.onBackground)
             recentArtisans.take(6).forEach { artisan ->
