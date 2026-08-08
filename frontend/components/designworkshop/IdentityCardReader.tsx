@@ -29,13 +29,28 @@
  * not twelve digits. Anything that reaches the refusal is a transport or shape problem — not a card
  * a designer can improve by photographing it again — and offering it under an amber banner invited
  * exactly the confirmation the banner was warning against.
+ *
+ * WHERE THE BROWSER HAS A RECOGNISER OF ITS OWN, THE PHOTOGRAPH NEED NOT LEAVE THE TAB. That is a
+ * different thing to consent to from sending a national identity document to a third-party vision
+ * model, so it is a visible choice made before the read rather than a silent fallback after one —
+ * the same control, and the same default, as the artisan form's `IdentityCardCapture`. Unlike that
+ * form, this one already holds the `File` (it came from the media field on this visit), so a
+ * designer whose local read found nothing simply unticks and presses the button again.
+ *
+ * The local reader offers AADHAAR numbers only. `artisanCardNo` takes whichever card the artisan
+ * produced, so a Pehchan card has to go to the server: there is no checksum on a PM Vishwakarma ID
+ * and no way to tell one out of recognised text from the artisan's own name.
+ * `docs/DECISION-identity-card-ocr-on-web.md` carries the measurements behind all of this, including
+ * why no recogniser is bundled to make the local route universal.
  */
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, Loader2, ScanLine, X } from "lucide-react";
+import { AlertTriangle, Check, Loader2, MonitorCheck, ScanLine, X } from "lucide-react";
 
 import { aadhaarValidationError } from "@/components/forms/AadhaarField";
 import { DW_OCR_IDENTITY_PATH, identityChoices, readIdentityCard, serverOffersRoute } from "@/lib/designWorkshops";
+import { browserCanReadCards, readCardTextInBrowser } from "@/lib/identityCardLocal";
+import { identityCandidatesFromText } from "@/lib/identityCardText";
 import type { MediaFile } from "@/lib/types";
 
 type Candidate = {
@@ -44,6 +59,8 @@ type Candidate = {
   confidence: number | null;
   /** The name of the photograph it came from, so a designer with three cards attached knows which. */
   source: string;
+  /** True when it was recognised in this tab and the photograph was never sent. Stated, not implied. */
+  local: boolean;
 };
 
 export function IdentityCardReader({
@@ -67,6 +84,14 @@ export function IdentityCardReader({
   const [reading, setReading] = useState(false);
   const [candidate, setCandidate] = useState<Candidate | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  /** Whether THIS BROWSER can recognise text itself. Null while the one probe is in flight. */
+  const [browserReads, setBrowserReads] = useState<boolean | null>(null);
+  /**
+   * Ticked = read it here, send nothing. Defaults ON wherever the choice exists: the default is
+   * what a designer gets without deciding, and "the photograph does not leave this computer" is the
+   * safer thing to do by accident.
+   */
+  const [readHere, setReadHere] = useState(true);
 
   /**
    * Whether this deployment can read a card at all, probed once per tab.
@@ -89,8 +114,29 @@ export function IdentityCardReader({
     };
   }, []);
 
+  /** Whether this BROWSER can recognise text itself. Local, free, and cached for the tab. */
+  useEffect(() => {
+    let cancelled = false;
+    browserCanReadCards()
+      .then((available) => {
+        if (!cancelled) setBrowserReads(available);
+      })
+      .catch(() => {
+        if (!cancelled) setBrowserReads(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const readable = files.filter((file) => file.mediaType === "IMAGE");
-  if (offered !== true || !readable.length) return null;
+  const useLocal = browserReads === true && readHere;
+  // BOTH ANSWERS ARE WAITED FOR. Either reader is a reason to be here — a deployment with no vision
+  // provider configured still has whatever the browser brought — but the local probe resolves in
+  // milliseconds and the route probe is a round trip, so rendering on the first answer would grow a
+  // checkbox under the designer's cursor a second after the panel appeared.
+  if (offered === null || browserReads === null) return null;
+  if ((offered !== true && browserReads !== true) || !readable.length) return null;
 
   async function read(media: MediaFile) {
     setReading(true);
@@ -108,6 +154,46 @@ export function IdentityCardReader({
         );
         return;
       }
+      if (useLocal) {
+        const outcome = await readCardTextInBrowser(source);
+        if (!outcome.ok) {
+          setProblem(
+            outcome.reason === "undecodable"
+              ? // Not "the card could not be read". The commonest cause is an iPhone HEIC, and
+                // sending somebody back to re-photograph a card that was fine is the worse answer.
+                "This browser could not open that picture. Photographs from an iPhone are often HEIC, which most browsers cannot read — re-save it as JPEG or PNG, or type the number in."
+              : "This computer could not read that photograph. Type the number in instead."
+          );
+          return;
+        }
+        // Same rule as the server applies to its own recogniser's text, pinned against the server's
+        // verbatim output by `e2e/identity-card-web-unit.spec.ts`.
+        const found = identityCandidatesFromText(outcome.text, aadhaarValidationError);
+        const [first] = found.aadhaar;
+        if (!first) {
+          setProblem(
+            found.rejectedCount > 0
+              ? `${found.rejectedCount} number(s) were read off that card and every one failed its checksum, so at least one digit was wrong in each. Take another photograph in better light with no glare across the digits, or type the number in.`
+              : // Naming the second route matters here and not on the artisan form: this reader
+                // still holds the file, so unticking and pressing again costs nothing.
+                offered === true
+                ? "No Aadhaar number could be read on this computer. Untick “Read it on this computer” and press again to send the photograph to the reader on the server, which reads a worn card better and can also read a Pehchan card — or type the number in."
+                : "No Aadhaar number could be read on this computer. Take another photograph with the whole card in frame and no glare across the digits, or type the number in."
+          );
+          return;
+        }
+        setCandidate({
+          number: first,
+          kind: "AADHAAR",
+          // The browser's recogniser returns no confidence, and inventing one would be worse than
+          // saying nothing: the panel would print a word a designer could lean on.
+          confidence: null,
+          source: media.originalFilename,
+          local: true
+        });
+        return;
+      }
+
       const result = await readIdentityCard(source);
       // `identityChoices` reads the keys the server ACTUALLY sends and re-applies the checksum here.
       // What used to stand in this place — `(result.number ?? "")` — named a key the endpoint has
@@ -130,7 +216,8 @@ export function IdentityCardReader({
         number: best.value,
         kind: best.kind,
         confidence: best.confidence,
-        source: media.originalFilename
+        source: media.originalFilename,
+        local: false
       });
     } catch (error) {
       setProblem(
@@ -157,6 +244,39 @@ export function IdentityCardReader({
         {targetLabel} until you confirm it — a single wrong digit in an identity number does not clash with anybody, so it
         creates a duplicate artisan that nothing downstream can detect.
       </p>
+
+      {/*
+        THE CHOICE IS SHOWN ONLY WHERE THERE IS ONE — see the file header. Where only one reader
+        exists there is nothing to decide, and a checkbox with one reachable state teaches a designer
+        to stop reading checkboxes.
+      */}
+      {browserReads === true && offered === true ? (
+        <label className="flex items-start gap-2 text-xs leading-5 text-ink-700">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-purple-700"
+            checked={readHere}
+            disabled={disabled || reading}
+            onChange={(event) => setReadHere(event.currentTarget.checked)}
+            data-testid="identity-reader-read-here"
+          />
+          <span>
+            Read it on this computer — the photograph is not sent anywhere, and this works with no connection. Unticked,
+            the photograph is sent to the reader on the server, which reads a worn or angled card better and is the only
+            one that can read a Pehchan card.
+          </span>
+        </label>
+      ) : null}
+
+      {browserReads === true && offered !== true ? (
+        <p className="flex items-start gap-2 text-xs leading-5 text-ink-500">
+          <MonitorCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>
+            Read on this computer. The photograph is not sent anywhere, and this works with no connection — but only an
+            Aadhaar number can be read this way.
+          </span>
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         {readable.map((media) => (
@@ -191,7 +311,10 @@ export function IdentityCardReader({
             {candidate.confidence !== null
               ? ` · ${candidate.confidence >= 0.85 ? "read clearly" : "read with difficulty"}`
               : ""}
-            .
+            {/* WHERE it was read, stated rather than remembered — and the local route has no
+                confidence to print, so without this line it would be the one with LESS said about
+                it. "The photograph was not sent anywhere" is the part worth saying. */}
+            {candidate.local ? " · read on this computer; the photograph was not sent anywhere" : ""}.
           </p>
 
           <p className="flex items-start gap-2 rounded-md border border-amber-500 bg-amber-100 px-2 py-1.5 text-xs leading-5 text-amber-800">
