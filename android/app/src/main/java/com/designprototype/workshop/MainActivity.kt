@@ -437,7 +437,18 @@ private sealed interface Screen {
     data object MyActivity : Screen
     data object ToolAssign : Screen
     data object Feedback : Screen
-    data object Settings : Screen
+    /*
+     * There is deliberately NO `Screen.Settings` here, and there was one until it was traced.
+     *
+     * Nothing ever assigned it — `navigate` sends NavDestination.SETTINGS to [Appearance] and
+     * SETTINGS_HUB to [AdminHub] — so the master admin's global configuration was reachable only as
+     * `AdminHubEntry.SETTINGS`, which is where it still is. What the dead object bought was four
+     * `when` arms (a back target, a header title, a null nav highlight, a render branch) that a
+     * maintainer had to read and reconcile against the two live "Settings" screens before working
+     * out that the third one could not be opened. R8 would never have removed it either: every one
+     * of those arms is a reference. A route with no door is not dead code the compiler can see, it
+     * is a third answer to "where do settings live" that only a person can delete.
+     */
     /** This account's Appearance + Accessibility — /settings on the web. Open to every user. */
     data object Appearance : Screen
     /**
@@ -1321,7 +1332,6 @@ private fun HomeScreen(
             is Screen.MyActivity -> Screen.Dashboard
             is Screen.ToolAssign -> Screen.Dashboard
             is Screen.Feedback -> Screen.Dashboard
-            is Screen.Settings -> Screen.Dashboard
             is Screen.Appearance -> Screen.Dashboard
             is Screen.DataBrowser -> Screen.Dashboard
             // One level at a time: from a tool back to the tool list, and only then out. This is
@@ -1371,7 +1381,6 @@ private fun HomeScreen(
         is Screen.MyActivity -> "My Activity"
         is Screen.ToolAssign -> "Assign tools to artisans"
         is Screen.Feedback -> "App feedback"
-        is Screen.Settings -> "Settings"
         is Screen.Appearance -> "Appearance & accessibility"
         is Screen.DataBrowser -> "Data Browser"
         // Null on all six: each of these screens draws its own heading, carrying the workshop's own
@@ -1436,8 +1445,6 @@ private fun HomeScreen(
         // Lighting it while an admin edits somebody else's would say "you are on your own profile"
         // on the one screen where getting that wrong means editing the wrong person's report cover.
         is Screen.DesignerProfile -> if (s.userId == null) NavDestination.DESIGNER_PROFILE else null
-        // The legacy app-settings screen, which no menu reaches.
-        is Screen.Settings -> null
         is Screen.Browse, is Screen.Edit -> null
         is Screen.Create -> when (s.mode) {
             EntryMode.ARTISAN -> NavDestination.RECORD_ARTISAN
@@ -1950,12 +1957,6 @@ private fun HomeScreen(
                 onError = { showMessage(it) }
             )
 
-            is Screen.Settings -> SettingsScreen(
-                repository = repository,
-                onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
-            )
-
             // The whole hub is admin chrome (/admin heads the web's ADMIN_CHROME_ROUTES). The role
             // check comes first and the toggle only subtracts from it.
             is Screen.AdminHub -> when {
@@ -2417,12 +2418,23 @@ private fun DataBrowserEntryCard(onOpen: () -> Unit) {
     }
 }
 
-/** Right-side navigation drawer mirroring the web slide-out menu. */
 // ===========================================================================
 // Settings — master-admin global configuration (transcription mode + off-peak
 // processing window). More options will live here over time.
 // ===========================================================================
 
+/**
+ * `GET/PUT /settings` — the master admin's global configuration, the phone's
+ * `AppSettingsPanel` (frontend/components/settings/AppSettingsPanel.tsx).
+ *
+ * ONE DOOR, AND IT IS NAMED: [AdminHubEntry.SETTINGS] in the admin hub, which is `masterOnly`
+ * because both routes are `require_master_admin`. The stale `/** Right-side navigation drawer …*/`
+ * line that used to sit here belonged to a composable that moved to AppNavigation.kt long ago, and
+ * it was the KDoc a reader saw on this screen.
+ *
+ * The provider RANKING is deliberately not here. It is `require_admin`, so it lives on
+ * [ApiKeysScreen] next to the engines it ranks, exactly as the web splits it.
+ */
 @Composable
 private fun SettingsScreen(
     repository: WorkshopRepository,
@@ -8943,8 +8955,14 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
 // Sentinel id for the "Check completion" entry in the questionnaire dropdown (not a real record id).
 private const val COMPLETION_OPTION_ID = "__completion__"
 
-/** Entries of the admin "Settings" hub, each opening an existing admin composable/screen. */
-private enum class AdminHubEntry(
+/**
+ * Entries of the admin "Settings" hub, each opening an existing admin composable/screen.
+ *
+ * `internal` rather than file-private so [adminHubEntriesFor] can be walked role by role in
+ * `AdminHubEntryTest`. Which tools an account is offered is a permission mirror, and a permission
+ * mirror that is only ever checked by reading it is how [API_KEYS] stayed unreachable.
+ */
+internal enum class AdminHubEntry(
     val label: String,
     val description: String,
     val icon: ImageVector,
@@ -8965,16 +8983,43 @@ private enum class AdminHubEntry(
     ),
     WORKSHOPS("Workshop assignments", "Choose who may submit entries for each workshop.", Icons.Filled.Groups),
     ACCESS_REQUESTS("Workshop access requests", "Approve or deny requests to work in a workshop.", Icons.Filled.LockOpen),
-    // Every /secrets route is require_master_admin, not require_admin: handing out live provider
-    // credentials (reveal returns plaintext) is a different class of power from managing people.
+    /*
+     * ADMIN, not master admin — and this entry was master-only until it was measured against
+     * `backend/app/api/routes/settings.py`.
+     *
+     * TWO RESOURCES AT TWO HEIGHTS SIT BEHIND ONE TILE. `GET/PUT /settings/transcription-providers`
+     * and `POST /settings/transcription-providers/{provider}/test` are `require_admin`: which engine
+     * transcribes a Hindi interview first is an editorial call about accuracy, and the backend says
+     * so in as many words. Every `/secrets` route stays `require_master_admin`, because reveal
+     * returns plaintext. [ApiKeysScreen] is already built for exactly that split — it draws
+     * [ProviderOrderPanel] unconditionally and lets the key list DISCOVER its 403, replacing itself
+     * with the "Master admin only" card — so the only thing that made the ranking unreachable for
+     * the admins who asked for it was this flag. It is the same defect the web already fixed and
+     * wrote down: `/settings/api-keys` and the `/admin` tile are both `isAdmin(user)` there.
+     *
+     * The description names both roles for the same reason the web's does. An entry offered to an
+     * admin whose blurb promises powers they do not hold is a tile that lies before it opens.
+     */
     API_KEYS(
         "API keys",
-        "Rotate, test and reveal the provider keys the repository runs on.",
-        Icons.Filled.VpnKey,
-        masterOnly = true
+        "Rank the transcription providers, and — for the master admin — rotate, test and reveal keys.",
+        Icons.Filled.VpnKey
     ),
+    // GET/PUT /settings (transcription mode + the off-peak window) IS require_master_admin, so this
+    // one stays. It is the narrow half of the same file the ranking above was carved out of.
     SETTINGS("Settings", "Transcription output and off-peak processing.", Icons.Filled.Tune, masterOnly = true)
 }
+
+/**
+ * Which hub tools this account may open — the phone's mirror of the `visible` predicates on the
+ * web's `/admin` tiles and `/settings` ADMIN_LINKS.
+ *
+ * Hoisted out of [AdminHubScreen] so it can be walked role by role in a unit test. The hub itself is
+ * already behind `isAdmin && adminChrome` at the call site, so this only ever SUBTRACTS from an
+ * admin's list; it can never hand a tool to somebody the API would refuse.
+ */
+internal fun adminHubEntriesFor(isMasterAdmin: Boolean, canReview: Boolean): List<AdminHubEntry> =
+    AdminHubEntry.entries.filter { (!it.masterOnly || isMasterAdmin) && (!it.reviewGated || canReview) }
 
 /**
  * Admin "Settings" hub, opened from the dashboard card. Lists the administrative tools and opens each
@@ -9003,7 +9048,7 @@ private fun AdminHubScreen(
     var directory by remember { mutableStateOf<List<UserDto>>(emptyList()) }
     LaunchedEffect(Unit) { runCatching { repository.userDirectory() }.onSuccess { directory = it } }
 
-    val entries = AdminHubEntry.entries.filter { (!it.masterOnly || isMasterAdmin) && (!it.reviewGated || canReview) }
+    val entries = adminHubEntriesFor(isMasterAdmin = isMasterAdmin, canReview = canReview)
     val current = section
 
     if (current == null) {
