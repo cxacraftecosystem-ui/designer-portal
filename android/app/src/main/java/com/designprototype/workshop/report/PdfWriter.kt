@@ -670,6 +670,16 @@ class PdfWriter(
                 // Freed immediately, not left to the GC: a sixty-photo annexure holds one bitmap at a
                 // time this way and the whole report's worth otherwise.
                 bitmap.recycle()
+            } else {
+                // A PHOTOGRAPH THAT PROBED AND THEN WOULD NOT DECODE IS REPORTED HERE, and it has to
+                // be reported here now that [sizeCache] survives the measure->draw boundary. It used
+                // to be cleared wholesale, so the drawing pass re-probed every image and [intrinsicSize]
+                // recorded the drop itself; keeping the successful probes is what took a printed photo
+                // from three whole-file reads to two, and it also took away the only place this
+                // failure was noticed. Without this the picture is a blank space and
+                // "N photograph(s) could not be embedded" — the one sentence that tells the designer
+                // a picture is gone — says nothing at all.
+                droppedImages.add(ref.source)
             }
         }
         y -= h
