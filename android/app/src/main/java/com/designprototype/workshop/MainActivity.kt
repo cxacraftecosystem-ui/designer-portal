@@ -315,6 +315,7 @@ import com.designprototype.workshop.data.WorkshopMappingPlanDto
 import com.designprototype.workshop.data.WorkshopSubmissionCheckDto
 import com.designprototype.workshop.data.titleCasePreview
 import androidx.compose.runtime.DisposableEffect
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
@@ -5881,9 +5882,11 @@ private fun EditScreen(
                 onError = onError
             )
         }
-        // A media file has no edit form — the web's search results open the object itself. Search is
-        // the only route that lands here, so show the file with its transcript rather than the
-        // "cannot be edited" dead end it used to hit.
+        // A media file has no edit form — the web's search results open the object itself, so show
+        // the file with its transcript rather than the "cannot be edited" dead end it used to hit.
+        // TWO routes land here now: Search, and My Activity's Media rows (loadMyActivity). Whichever
+        // sent it, `canDelete` below deliberately excludes MEDIA, so neither offers a Delete the
+        // media routes cannot honour.
         EntryMode.MEDIA -> ViewDataDetail(
             repository = repository,
             mode = EntryMode.MEDIA,
@@ -7975,9 +7978,23 @@ private suspend fun loadMyActivity(repository: WorkshopRepository, userId: Strin
     // Each list is attempted independently: one type failing must not cost the designer the seven
     // that answered, which is why this is not a single try around the lot. `suspend` on the local
     // function is what lets the repository calls stay inside it.
+    //
+    // CANCELLATION IS RETHROWN, NOT COUNTED. `runCatching` catches Throwable, and a coroutine
+    // cancelled because the designer left this screen arrives as one. Swallowing it here would do
+    // two wrong things at once: bump [failed] so a screen nobody is looking at reasons about a
+    // "failure" that never happened, and — worse on a village uplink — let the remaining seven
+    // requests fire anyway, since the loop would keep walking after the scope was already dead.
+    // Same rule as ui/ConsolidatedQuestionnaireScreen.kt:276.
     suspend fun <T> attempt(block: suspend () -> List<T>): List<T> {
         total++
-        return runCatching { block() }.getOrElse { failed++; emptyList() }
+        return try {
+            block()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            failed++
+            emptyList()
+        }
     }
     attempt { repository.artisans(createdBy = userId) }.filter { mine(it.createdById) }
         .forEach { items.add(ActivityItem(EntryMode.ARTISAN, it.id, it.name, "Artisan · ${it.place}", it.createdAt)) }
@@ -8026,6 +8043,12 @@ private fun MyActivityScreen(
         runCatching { loadMyActivity(repository, userId) }
             .onSuccess { loaded = it }
             .onFailure {
+                // LEAVING THE SCREEN IS NOT A FAILURE. `runCatching` catches Throwable, so walking
+                // away mid-load lands here as a CancellationException; reporting it would raise
+                // "Couldn't load your activity" as a snackbar on whatever screen the designer moved
+                // ON to, about a request they themselves abandoned. Rethrow instead, which is also
+                // what stops the dead composable writing state (ConsolidatedQuestionnaireScreen.kt:276).
+                if (it is kotlinx.coroutines.CancellationException) throw it
                 onError(it.message ?: "Couldn't load your activity")
                 // Not `emptyList()`: a throw out of the gatherer is a total failure, and recording it
                 // as "nothing to show" is the very lie the failure count exists to prevent.
@@ -13459,12 +13482,49 @@ private fun MyTasksScreen(
      * be said in words rather than dressed up as an answer.
      */
     var loadFailed by remember { mutableStateOf(false) }
+    /**
+     * WHICH QUERY THE ROWS ON SCREEN ACTUALLY ANSWER — `view to statusFilter`, or null before the
+     * first one lands.
+     *
+     * [loadFailed] alone cannot tell the difference between "these are your tasks, a bit old" and
+     * "these are your OPEN tasks and you are now looking at the Cancelled chip". `refresh` leaves the
+     * previous rows in place on failure, so tapping a chip with no signal leaves the old list under a
+     * new heading: the chip asserts one thing and the rows are another, which is the same species of
+     * lie as "Nothing is assigned to you right now."
+     */
+    var shownQuery by remember { mutableStateOf<Pair<String, String>?>(null) }
+    /**
+     * WHICH PASS IS ALLOWED TO WRITE THE STATE ABOVE.
+     *
+     * `refresh` launches into `rememberCoroutineScope`, NOT into the LaunchedEffect, so nothing
+     * cancels the pass in flight: tapping two chips, or a chip and then Refresh, leaves two requests
+     * racing. Without this guard the slow one wins by finishing last, and the case that matters is
+     * the failing one — a 30-second connect timeout from the first tap resolves AFTER the second
+     * tap's success and flips `loadFailed` back to true, leaving "the server could not be reached"
+     * printed over a list the server had just successfully returned. On this fleet's uplink that
+     * ordering is ordinary, not exotic. Only the newest pass writes anything.
+     */
+    val loadSeq = remember { AtomicInteger(0) }
 
     fun refresh() {
+        // Captured HERE rather than read inside the coroutine: `refresh` is also the Refresh button's
+        // onClick, and reading the Compose state after the suspension point would label the answer
+        // with whichever chip happens to be selected when it lands instead of the one that asked.
+        val forView = view
+        val forStatus = statusFilter
+        val seq = loadSeq.incrementAndGet()
         scope.launch {
             loading = true
-            runCatching { repository.tasks(view = view, status = statusFilter.ifBlank { null }) }
-                .onSuccess { tasks = it; loadFailed = false }
+            val outcome = runCatching { repository.tasks(view = forView, status = forStatus.ifBlank { null }) }
+            // Leaving the screen cancels the scope and arrives here as a Throwable like any other.
+            // Reported, it would raise "Unable to load your tasks" over the screen the designer moved
+            // on to (ui/ConsolidatedQuestionnaireScreen.kt:276).
+            outcome.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+            // A SUPERSEDED PASS WRITES NOTHING — not the rows, not the failure flag, and not
+            // `loading`, which the pass that replaced this one already owns.
+            if (seq != loadSeq.get()) return@launch
+            outcome
+                .onSuccess { tasks = it; loadFailed = false; shownQuery = forView to forStatus }
                 .onFailure {
                     loadFailed = true
                     onError(it.apiErrorMessage("Unable to load your tasks"))
@@ -13550,13 +13610,22 @@ private fun MyTasksScreen(
         // previously loaded rows in place, and a stale list a designer can still read between
         // sessions beats a blank screen — as long as it is labelled stale.
         if (loadFailed && !loading) {
+            // Three different facts, not two. The rows that survived a failure answer the query that
+            // last SUCCEEDED, which after a chip tap with no signal is not the query the chips above
+            // are now showing as selected — so that case has to name itself rather than be filed
+            // under "may be out of date".
+            val staleForAnotherFilter = tasks.isNotEmpty() && shownQuery != null && shownQuery != (view to statusFilter)
             Text(
-                if (tasks.isEmpty()) {
-                    "Your tasks couldn't be loaded — the server could not be reached. Tasks are read " +
-                        "and updated online only, so try again when there is a connection."
-                } else {
-                    "The server could not be reached, so this is the last list that loaded. It may be " +
-                        "out of date, and status changes will not send until there is a connection."
+                when {
+                    tasks.isEmpty() ->
+                        "Your tasks couldn't be loaded — the server could not be reached. Tasks are read " +
+                            "and updated online only, so try again when there is a connection."
+                    staleForAnotherFilter ->
+                        "The server could not be reached, so the filter you just chose was never sent. " +
+                            "The tasks below are the last list that loaded, under the previous filter."
+                    else ->
+                        "The server could not be reached, so this is the last list that loaded. It may be " +
+                            "out of date, and status changes will not send until there is a connection."
                 },
                 color = Coral,
                 fontSize = 12.sp
