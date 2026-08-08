@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 
 import { aadhaarValidationError } from "@/components/forms/AadhaarField";
 import { identityChoices, normalizePehchan, type DwIdentityOcrResult } from "@/lib/designWorkshops";
+import { canCreateRecords, canRunDesignWorkshops } from "@/lib/permissions";
+import type { User } from "@/lib/types";
 
 /**
  * The browser's reading of `POST /design-workshops/ocr/identity`, against the payload the server
@@ -89,6 +91,37 @@ test("the same number read twice is offered once, and a code too short to be a c
   // The same 4–32 bound `pehchan_error` applies on the server.
   expect(identityChoices({ pehchanCandidates: [{ value: "AB" }] }, "PEHCHAN", aadhaarValidationError)).toEqual([]);
   expect(normalizePehchan("pm vw/123 45")).toBe("PMVW12345");
+});
+
+test("the form's guard and the reader's guard are different rules, and they do not nest", () => {
+  /*
+    WHY THIS LIVES IN THIS FILE. `IdentityCardCapture` renders under the Aadhaar and Pehchan boxes on
+    the artisan form. That form is reached through `canCreateRecords` — a RANK THRESHOLD at
+    Researcher and above. The endpoint the control posts to is `_require_designer`, i.e.
+    `can_run_design_workshops`: the SET {Designer, Admin, Master Admin}. A PROFESSOR satisfies the
+    first and not the second while OUTRANKING a designer.
+
+    So the control cannot inherit the page's guard, and `serverOffersRoute` cannot stand in for one:
+    it probes with a GET against a POST-only route, which answers 405 from the router before any
+    dependency runs — measured, with no token at all. Without its own check the button appears for a
+    professor, who photographs somebody's Aadhaar card and has it uploaded to a third-party vision
+    model before the 403 comes back.
+
+    `backend/tests/test_design_workshop_gate.py` asserts the 403 for RESEARCHER and PROFESSOR by
+    name on the other side of the wire; this is the assertion that the browser agrees.
+  */
+  const as = (role: string) => ({ role } as unknown as User);
+
+  for (const role of ["RESEARCHER", "PROFESSOR"]) {
+    expect(canCreateRecords(as(role)), `${role} may open the artisan form`).toBe(true);
+    expect(canRunDesignWorkshops(as(role)), `${role} must NOT be offered the card reader`).toBe(false);
+  }
+  for (const role of ["DESIGNER", "ADMIN", "MASTER_ADMIN"]) {
+    expect(canRunDesignWorkshops(as(role)), `${role} is in the set the endpoint admits`).toBe(true);
+  }
+  // Signed out, or `/me` still in flight: no reader. The control must fail closed rather than flash
+  // for everybody and then vanish.
+  expect(canRunDesignWorkshops(null)).toBe(false);
 });
 
 test("an empty answer is an ordinary result, not a crash", () => {

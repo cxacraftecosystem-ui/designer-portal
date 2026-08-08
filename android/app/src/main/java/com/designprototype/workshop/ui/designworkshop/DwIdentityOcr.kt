@@ -267,6 +267,20 @@ private fun sweepIdentityScratch(context: Context) {
  * nullable and returned early, which put the launchers below a conditional return — a composable
  * whose remembered slots appear and disappear between frames, and therefore a crash waiting for the
  * first field where the condition ever changes. The gate belongs at the call site.
+ *
+ * ── THE CALLER MUST ALSO GATE ON `FieldPermissions.canRunDesignWorkshops` ─────────────────────
+ *
+ * `POST /design-workshops/ocr/identity` starts with `_require_designer` — the SET
+ * {DESIGNER, ADMIN, MASTER_ADMIN}, not a rank threshold. The stage form gets that for free (the
+ * whole design-workshop destination is behind the same predicate in `AppNavigation`), but the
+ * ARTISAN FORM does not: it is reached through `canCreateRecords`, RESEARCHER and above, so a
+ * researcher — and a PROFESSOR, who outranks a designer and is still outside the set — can stand in
+ * front of this control. `MainActivity.ArtisanForm` therefore computes `canReadIdentityCards` and
+ * wraps both call sites in it.
+ *
+ * It is not a cosmetic guard. The refusal arrives as a 403 AFTER the request, so an ungated button
+ * means a photograph of somebody's Aadhaar card is taken and uploaded to a third-party vision model
+ * before anything says no. Hiding the control is the only point at which that is preventable here.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

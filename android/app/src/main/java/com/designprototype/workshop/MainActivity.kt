@@ -6001,6 +6001,32 @@ private fun ArtisanForm(
     val scope = rememberCoroutineScope()
     val media = rememberMediaCaptureState()
     val isEdit = editing != null
+    /**
+     * Whether to offer the identity-card reader at all — the DESIGNER SET, which is not the rule
+     * that opened this screen.
+     *
+     * TWO DIFFERENT PERMISSIONS, AND THEY DO NOT NEST. This form is reached through
+     * `UserDto.canCreateRecords()`, a rank threshold at RESEARCHER and above. The endpoint the
+     * reader posts to, `POST /design-workshops/ocr/identity`, begins with `_require_designer` —
+     * `can_run_design_workshops`, the SET {DESIGNER, ADMIN, MASTER_ADMIN}. A PROFESSOR passes the
+     * first and fails the second while OUTRANKING a designer, which is the intended rule and not an
+     * oversight (see `FieldPermissions.canRunDesignWorkshops` and `deps.can_run_design_workshops`).
+     * `backend/tests/test_design_workshop_gate.py` asserts the 403 for RESEARCHER and PROFESSOR by
+     * name; it was run rather than assumed.
+     *
+     * Without this the button appears for a researcher, who photographs somebody's Aadhaar card and
+     * has it uploaded to a third-party vision model BEFORE the 403 arrives — the photograph is taken
+     * and sent, and only then refused. Hiding the control is the only point at which that is
+     * preventable on this side.
+     *
+     * `remember`ed with no key on purpose: a role cannot change while this screen is mounted (it
+     * takes a fresh sign-in, which rebuilds the tree), so the boolean is stable and the control
+     * cannot appear and disappear between frames — the hazard `DwIdentityCardControl`'s own header
+     * warns about. Fails CLOSED: no cached user, no reader.
+     */
+    val canReadIdentityCards = remember {
+        repository.cachedUser()?.let { FieldPermissions.canRunDesignWorkshops(it) } == true
+    }
     var name by remember(editing) { mutableStateOf(editing?.name ?: prefill?.artisanName ?: "") }
     var localName by remember(editing) { mutableStateOf(editing?.localName ?: "") }
     var gender by remember(editing) { mutableStateOf(editing?.gender?.takeIf { it.isNotBlank() } ?: "Male") }
@@ -6339,15 +6365,20 @@ private fun ArtisanForm(
          * the value it carries has been through the same Verhoeff check the box below it applies —
          * see DwIdentityCardControl for why an auto-filled deduplication key is worse than an empty
          * box. The photograph is not kept, on this device or on the server.
+         *
+         * OFFERED TO THE DESIGNER SET ONLY — see [canReadIdentityCards] above, which is a different
+         * rule from the one that opened this screen.
          */
-        DwIdentityCardControl(
-            targetLabel = "the Aadhaar number",
-            kind = DwIdentityKind.AADHAAR,
-            repository = repository,
-            enabled = !saving,
-            onUse = { digits -> aadhaar = digits; aadhaarError = null },
-            onError = onError,
-        )
+        if (canReadIdentityCards) {
+            DwIdentityCardControl(
+                targetLabel = "the Aadhaar number",
+                kind = DwIdentityKind.AADHAAR,
+                repository = repository,
+                enabled = !saving,
+                onUse = { digits -> aadhaar = digits; aadhaarError = null },
+                onError = onError,
+            )
+        }
         DropdownField(
             label = "Artisan Pehchan Card available",
             options = listOf("yes" to "Yes", "no" to "No"),
@@ -6382,10 +6413,11 @@ private fun ArtisanForm(
                 .fillMaxWidth()
                 .focusRequester(pehchanFocus)
         )
-        // Only when the artisan holds a card. Offering to photograph a document the record has just
-        // said does not exist is an invitation to photograph SOMETHING — and for this class of data
-        // the wrong photograph being taken at all is the incident, not the wrong value being stored.
-        if (pehchanAvailable) {
+        // Only when the artisan holds a card, and only for the designer set. Offering to photograph
+        // a document the record has just said does not exist is an invitation to photograph
+        // SOMETHING — and for this class of data the wrong photograph being taken at all is the
+        // incident, not the wrong value being stored.
+        if (canReadIdentityCards && pehchanAvailable) {
             DwIdentityCardControl(
                 targetLabel = "the Pehchan card number",
                 kind = DwIdentityKind.PEHCHAN,

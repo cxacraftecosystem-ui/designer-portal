@@ -189,3 +189,53 @@ So on both surfaces, every successful read was reported to the designer as a fai
 visible symptom was a card that "would not scan". Both clients now decode the shape the server
 actually sends, and a unit test on each side pins that shape against the exact JSON above so it
 cannot drift again.
+
+---
+
+## The reader was then offered to accounts the endpoint refuses (found in verification, fixed)
+
+Moving the control onto the **artisan form** moved it out from behind the permission that had been
+covering it, and the two rules do not nest:
+
+| | Rule | Shape | Admits |
+|---|---|---|---|
+| Artisan form (`/artisans/new`, Android `EntryMode.ARTISAN`) | `require_record_creator` / `canCreateRecords` | rank threshold | Researcher **and above** |
+| `POST /design-workshops/ocr/identity` | `_require_designer` / `can_run_design_workshops` | **a SET** | Designer, Admin, Master Admin |
+
+A **PROFESSOR** satisfies the first and fails the second while *outranking* a designer — the one
+non-monotonic predicate in `backend/app/core/deps.py`, and it is deliberate. Measured rather than
+reasoned about: `backend/tests/test_design_workshop_gate.py` was run here and asserts the 403 for
+`RESEARCHER` and `PROFESSOR` by name (9 passed).
+
+Neither client caught it on its own. The web probes with `serverOffersRoute`, which issues a **GET**
+against this **POST-only** route and reads anything other than 404 as "present" — and a GET answers
+**405 from the router before any dependency runs**, measured against the running API with no token
+at all:
+
+```
+curl -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/api/design-workshops/ocr/identity  -> 401
+curl -o /dev/null -w "%{http_code}"      http://localhost:8000/api/design-workshops/ocr/identity  -> 405
+```
+
+So the probe says "yes" to every signed-in account alive, and Android has no probe at all.
+
+**Why it is not merely a button that errors.** The 403 arrives *after* the request. An ungated
+control means a researcher photographs somebody's Aadhaar card and the image is uploaded to a
+third-party vision model before anything refuses it — the photograph is taken and transmitted, and
+only then declined. Hiding the control is the only point at which that is preventable client-side.
+
+Fixed by mirroring the server's set, never re-deriving it:
+
+- Android — `MainActivity.ArtisanForm` computes `canReadIdentityCards` from
+  `FieldPermissions.canRunDesignWorkshops(repository.cachedUser())` and wraps both call sites.
+  `remember`ed with no key, because a role cannot change while the screen is mounted, so the control
+  cannot appear and disappear between frames. Fails closed on no cached user.
+- Web — `IdentityCardCapture` reads `useAuth()` and `canRunDesignWorkshops(user)`, and renders
+  nothing otherwise. The check sits with every other hook and folds into the existing early return,
+  and the route probe is skipped entirely for an account that could not use the answer.
+- Pinned by `frontend/e2e/identity-ocr-unit.spec.ts`, which asserts that the same Professor passes
+  `canCreateRecords` and fails `canRunDesignWorkshops` — the two rules not nesting is the whole
+  reason the control needs a guard of its own.
+
+The stage form was never exposed: the whole design-workshop destination is already behind
+`canRunDesignWorkshops` in `AppNavigation.kt` and `ROUTE_GUARDS`.
