@@ -298,7 +298,18 @@ private fun WorkshopSearchPanel(
     index: DwWorkshopSearchIndex,
     onOpenHit: (DwWorkshopSearchHit) -> Unit,
 ) {
-    var query by remember { mutableStateOf("") }
+    /*
+     * KEYED ON THE INDEX, exactly as every other piece of state on this screen is keyed on the
+     * workshop id, and for the same failure. This composable is one `when` branch of [MainActivity]'s
+     * navigation, so opening a second workshop re-enters the SAME call site: an unkeyed `remember`
+     * would keep the word typed against the previous workshop sitting in the box while the results
+     * beneath it were rebuilt from a different draft — a query the designer never typed here,
+     * answered honestly, which reads as the search having found the wrong workshop's answers.
+     * [DwWorkshopSearch.buildIndex] and `emptyIndex()` both mint a fresh instance, so this resets on
+     * a new workshop and — because the panel is not drawn until `loading` is false — never clears
+     * mid-word within one.
+     */
+    var query by remember(index) { mutableStateOf("") }
     /*
      * Answered synchronously on the keystroke, with no debounce.
      *

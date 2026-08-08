@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 /**
  * [DwWorkshopSearch] on its own — no Compose, no server, no filesDir.
@@ -213,6 +214,20 @@ class DwWorkshopSearchTest {
     private fun marked(hit: DwWorkshopSearchHit): String =
         hit.snippet.segments.joinToString("") { if (it.match) "[${it.text}]" else it.text }
 
+    /**
+     * The one hit for [query] against a workshop whose only written answer is [value].
+     *
+     * A draft of its own rather than the shared fixture, for the reason the fixture is hand-built at
+     * all: the cases below put characters into a value precisely to see where the highlight lands,
+     * and folding them into the shared draft would change what every other assertion here matches.
+     */
+    private fun onlyHitOver(value: String, query: String): DwWorkshopSearchHit {
+        val one = draftWith(stage("SETUP", singleton = mapOf("craftName" to text(value))))
+        val hits = DwWorkshopSearch.search(DwWorkshopSearch.buildIndex(registry, one), query).hits
+        assertEquals("\"$query\" matched exactly one field of \"$value\"", 1, hits.size)
+        return hits[0]
+    }
+
     /* ── Unicode ──────────────────────────────────────────────────────────────────────────────── */
 
     @Test
@@ -287,6 +302,61 @@ class DwWorkshopSearchTest {
         val hits = hitsFor("sambalpuri")
         assertEquals(listOf("Craft", "Craft name"), hits.map { it.fieldLabel }.sorted())
         assertTrue(marked(hits[0]), marked(hits[0]).contains("[Sāmbalpurī]"))
+    }
+
+    /**
+     * The fold is Locale.ROOT's, not the handset's — the second JVM trap, and the quietest.
+     *
+     * Kotlin's `lowercase()` is `toLowerCase(Locale.ROOT)` by construction; the deprecated
+     * `toLowerCase()` that a warning-fixer reaches for is the DEFAULT locale's. In Turkish, ASCII 'I'
+     * lowercases to a dotless 'ı', so on a handset set to Turkish every English word in the workshop
+     * would be indexed as a string the same designer's browser never produces — and nothing on either
+     * screen would say why the two boxes disagree about one draft. The index here was built while the
+     * default locale was still whatever the machine's is, so this asserts the two halves meet across
+     * a locale change as well as within one.
+     */
+    @Test
+    fun `the fold follows Locale ROOT and not the handset's locale`() {
+        val previous = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"))
+            assertEquals("indigo", DwWorkshopSearch.foldForSearch("INDIGO"))
+            assertEquals("Background", only("INDIGO").fieldLabel)
+        } finally {
+            Locale.setDefault(previous)
+        }
+    }
+
+    @Test
+    fun `a character that folds to two units still highlights the one character it came from`() {
+        // ﬁ (U+FB01) is ONE code point whose NFKD is two, so the folded string is LONGER than the text
+        // it came from. The offset map is indexed by UTF-16 unit for exactly this: kept per code point
+        // it would run one short from here on, and the highlight would be drawn over the wrong
+        // characters — a designer shown a fragment of a word they did not type, on the row whose whole
+        // job is to explain why it is in the list.
+        val hit = onlyHitOver("Sāmbalpurī ﬁlature reeling", "filature")
+        assertEquals("Sāmbalpurī [ﬁlature] reeling", marked(hit))
+    }
+
+    @Test
+    fun `an astral character does not slide the highlight off the word after it`() {
+        // 🧵 is ONE code point and TWO UTF-16 units, and it is the other direction of the same map:
+        // pushing one offset for it rather than two shifts everything after it left by one, so this
+        // reads "l[oom]" instead of "[loom]" — wrong from the first emoji in the workshop onwards.
+        val hit = onlyHitOver("Bandha 🧵 ତନ୍ତ loom", "loom")
+        assertEquals("Bandha 🧵 ତନ୍ତ [loom]", marked(hit))
+    }
+
+    @Test
+    fun `a snippet collapses the whitespace JavaScript calls whitespace, not the six Java does`() {
+        // Java's regex `\s` is `[ \t\n\x0B\f\r]` without [java.util.regex.Pattern.UNICODE_CHARACTER_CLASS],
+        // so a no-break space and a LINE SEPARATOR both survive it. Both arrive in real values —
+        // pasted out of a spreadsheet — and a result row that kept them draws a line break in the
+        // middle of what is supposed to be one quoted line, which is the thing collapsing exists for.
+        val hit = onlyHitOver("Bandha\u00A0indigo\u2028dyed", "indigo")
+        assertEquals("Bandha [indigo] dyed", marked(hit))
+        assertFalse(hit.snippet.clippedStart)
+        assertFalse(hit.snippet.clippedEnd)
     }
 
     /* ── What is indexed, and how ─────────────────────────────────────────────────────────────── */
