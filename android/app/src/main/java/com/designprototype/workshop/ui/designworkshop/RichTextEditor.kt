@@ -10,10 +10,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -609,6 +613,21 @@ private fun RichTextBlockRow(
     }
     val fieldValue = fieldValues[index] ?: TextFieldValue(annotated, TextRange(caret ?: 0))
 
+    // AN INLINE PHOTOGRAPH HAS TO ANNOUNCE ITSELF, because nothing else in this row can.
+    //
+    // An IMAGE block's spans are its CAPTION, so without this the block draws as a text field
+    // holding a line of prose — or, for an uncaptioned picture, as an EMPTY text field
+    // indistinguishable from a blank paragraph. A designer had no way to know a photograph was
+    // there at all, which is precisely what made Backspace at the start of that line delete one
+    // without anybody noticing (see [deleteBackward]). The keystroke is fixed; this is so the
+    // designer can see what the keystroke is now acting on.
+    //
+    // Emitted as a SIBLING of the row below rather than inside a wrapper: this composable is called
+    // from the editor's own block `Column`, so two emissions stack in it and pick up its
+    // `spacedBy(2.dp)`. A wrapper here would add a second, redundant layout node per block, in the
+    // one place that recomposes on every keystroke of a forty-page narrative.
+    if (block.kind == BlockKind.IMAGE) InlinePhotographPlate()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -692,5 +711,71 @@ private fun RichTextBlockRow(
                     }
                 },
         )
+    }
+}
+
+/**
+ * The plate drawn above an inline photograph's caption, saying that a picture is there and what
+ * this device will do with it.
+ *
+ * ── WHY IT IS A WORDED PLATE AND NOT THE PHOTOGRAPH ───────────────────────────────────────────
+ *
+ * Because the handset cannot draw it. A photograph inside a narrative is placed in the WEB editor
+ * (`insertImage` in `frontend/lib/richText.ts`), so `RichBlock.media` holds a SERVER media id;
+ * every resolver on this side — `DwMediaBridge.resolve`, and the report's own `imageFor` — is
+ * `draft.media.associateBy { it.id }`, an index of the descriptors this device imported itself. A
+ * server id is not in it. So an `AsyncImage` here would have nothing to load in every case that
+ * can actually occur today, and a branch that can never be taken is the kind of complete-looking
+ * dark code this feature already has too much of.
+ *
+ * ── WHY IT SAYS WHAT IT SAYS ──────────────────────────────────────────────────────────────────
+ *
+ * The second sentence is not a hedge, it is the fact that matters most in the room. `toReportBlocks`
+ * drops an IMAGE block whose media the resolver cannot find — deliberately, because a placeholder
+ * box in a document handed to a ministry officer is worse than an honest gap — so the report
+ * EXPORTED FROM THIS HANDSET does not contain this photograph, while the one generated on the
+ * server does. That difference is invisible until the file is open, and the on-device copy is the
+ * one handed over at the close of a workshop. A designer who is told here can ask for the server's
+ * copy; a designer who is not told finds out in front of the officer.
+ *
+ * Deliberately NOT a warning tone. Nothing is broken and the designer has done nothing wrong — the
+ * picture is safely in the record and prints in the authoritative file. Amber here would train
+ * people to ignore amber.
+ *
+ * ⚠ THE DAY THE HANDSET CAN PLACE A PHOTOGRAPH, BOTH SENTENCES STOP BEING TRUE for a picture
+ * captured on this device: it would have a local descriptor, it could be drawn, and it would print
+ * in the on-device report. Whoever adds insertion has to come here — resolve [RichBlock.media]
+ * through the bridge and draw the bytes when they are present — rather than leaving a caption
+ * under a sentence that says the opposite.
+ */
+@Composable
+private fun InlinePhotographPlate() {
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp, bottom = 2.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        // The icon is a companion to the words, never the signal itself: it is decorative to a
+        // screen reader (`contentDescription = null`) because the sentence beside it already says
+        // everything the icon is hinting at, and announcing both reads the same fact twice.
+        Icon(
+            Icons.Filled.Image,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp).padding(top = 1.dp),
+        )
+        Column {
+            Text("Photograph — the line below is its caption", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(
+                "The picture is not stored on this device, so a report exported here leaves it out. " +
+                    "It is in the report generated on the server.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

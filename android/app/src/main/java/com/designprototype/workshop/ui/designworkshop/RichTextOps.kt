@@ -678,10 +678,51 @@ fun insertDoc(doc: RichDoc, range: DocRange, incoming: RichDoc): EditResult {
     return EditResult(next, collapsedAt(clampPoint(next, caret)))
 }
 
+// --------------------------------------------------------------------------------------
+// Inline photographs
+//
+// The block's [RichBlock.media] is the picture and its spans are the CAPTION, which is why this is
+// the only image-specific command here: everything else a designer does to a caption — typing in
+// it, bolding a word of it, moving the caret through it — is the ordinary prose path, because a
+// caption IS prose and `RichBlock.text` returns it.
+//
+// THE PHONE CANNOT YET PLACE ONE; it can only ever be handed one. A photograph inside a narrative
+// is inserted on the web (`insertImage` in `frontend/lib/richText.ts`), and the handset opens that
+// same field. So the commands that matter here are the ones that must not DESTROY it — see
+// [deleteBackward] and [splitBlock], and `RichTextInlineImageTest` for what each one used to do.
+// --------------------------------------------------------------------------------------
+
+/**
+ * Remove the photograph at [block], its caption with it. The caret lands at the end of the block
+ * before — the port of `removeImage` in `frontend/lib/richText.ts`.
+ *
+ * BOTH HALVES GO, AND THAT IS THE POINT. The alternative — dropping the picture and leaving the
+ * caption — is what the demotion ladder in [deleteBackward] used to do, and it reads to a designer
+ * as a photograph that failed to load rather than one they deleted: a line of italic text sitting
+ * under nothing, in a document that has already been approved.
+ *
+ * A document with nothing left in it becomes one empty paragraph, never zero blocks: a field with
+ * no block has nowhere to put a caret, and the next keystroke would index past the end.
+ */
+fun removeImage(doc: RichDoc, block: Int): EditResult {
+    val target = doc.blocks.getOrNull(block)
+    // CLAMPED even on the no-op path, unlike the web's, which returns the raw index. The DOM
+    // tolerates a caret naming a block that is not there; Compose maps a model point to a
+    // `TextRange` inside a real field, and an off-the-end point is an IndexOutOfBoundsException on
+    // the composition thread — which does not look like a bad caret, it looks like the app closing.
+    if (target == null || target.kind != BlockKind.IMAGE) {
+        return EditResult(doc, collapsedAt(clampPoint(doc, DocPoint(block, 0))))
+    }
+    val remaining = doc.blocks.filterIndexed { index, _ -> index != block }
+    val next = RichDoc(remaining.ifEmpty { listOf(RichBlock()) })
+    val landing = (block - 1).coerceIn(0, next.blocks.size - 1)
+    return EditResult(next, collapsedAt(DocPoint(landing, blockLength(next.blocks[landing]))))
+}
+
 /**
  * Enter.
  *
- * Three special cases, each of which is a thing every designer expects and no editing surface agrees
+ * Four special cases, each of which is a thing every designer expects and no editing surface agrees
  * about on its own:
  *
  * - **Enter in an EMPTY list item or quote leaves it** rather than adding another empty one. Without
@@ -692,6 +733,13 @@ fun insertDoc(doc: RichDoc, range: DocRange, incoming: RichDoc): EditResult {
  *   real one, which is the opposite of what somebody making room above a title is asking for.
  * - **Enter anywhere else in a heading starts a PARAGRAPH.** Nobody writes two consecutive headings
  *   by pressing Enter; they write a heading and then the text underneath it.
+ * - **Enter in a CAPTION opens a paragraph UNDER the figure** rather than splitting it. The generic
+ *   split would build the continuation block with `RichBlock(kind = IMAGE, …)` and no `media`, so
+ *   the tail of the caption became an IMAGE block carrying an empty id — which `fromJson` and the
+ *   server's `from_json` both DROP on the next read. A designer who pressed Enter halfway through a
+ *   caption watched the second half of it survive until they reopened the stage. Splitting it the
+ *   other obvious way, by copying `media` across, is worse: it prints the same photograph twice
+ *   from one press of Enter, and there is no reading of "Enter in a caption" that means either.
  */
 fun splitBlock(doc: RichDoc, range: DocRange): EditResult {
     val afterDelete = deleteRange(doc, range)
@@ -700,6 +748,16 @@ fun splitBlock(doc: RichDoc, range: DocRange): EditResult {
     if (blocks.isEmpty()) blocks.add(RichBlock())
     val block = blocks[point.block]
     val length = blockLength(block)
+
+    // Checked FIRST, matching the web's order: a caption is prose, so it would otherwise reach the
+    // list/quote and heading arms below and be split like any other run of text.
+    // Checked FIRST, matching the web's order: a caption is prose, so it would otherwise reach the
+    // list/quote and heading arms below and be split like any other run of text.
+    if (block.kind == BlockKind.IMAGE) {
+        blocks.splice(point.block + 1, 0, RichBlock())
+        val next = RichDoc(blocks.take(MAX_BLOCKS))
+        return EditResult(next, collapsedAt(clampPoint(next, DocPoint(point.block + 1, 0))))
+    }
 
     if (length == 0 && (block.kind.isListItem || block.kind == BlockKind.QUOTE)) {
         blocks[point.block] = block.copy(kind = BlockKind.PARAGRAPH, level = 0)
@@ -765,16 +823,39 @@ private fun stepForward(text: String, offset: Int): Int {
  * own formatting back one rung at a time first, and the order of the four rungs is the whole point:
  *
  * 1. **Outdent a nested list item.** Depth 2 becomes depth 1 and nothing else changes.
- * 2. **Demote any non-paragraph to a level-0 paragraph.** A top-level bullet, a heading and a quote
- *    all become plain paragraphs, keeping their text and their alignment.
- * 3. **Do nothing at block 0.** There is nothing above the first block to merge into, and a command
+ * 2. **Remove the whole figure, at the start of a CAPTION.** See below — this rung must come before
+ *    the demotion, because the demotion is what destroys a photograph.
+ * 3. **Do nothing at the start of a TABLE.**
+ * 4. **Demote any other non-paragraph to a level-0 paragraph.** A top-level bullet, a heading and a
+ *    quote all become plain paragraphs, keeping their text and their alignment.
+ * 5. **Do nothing at block 0.** There is nothing above the first block to merge into, and a command
  *    that quietly deleted the block instead would lose the designer's first sentence.
- * 4. **Merge into the previous block**, which KEEPS its own kind, alignment and level — so
- *    backspacing a paragraph into the heading above it puts the text into the heading.
+ * 6. **Merge into the previous block**, which KEEPS its own kind, alignment and level — so
+ *    backspacing a paragraph into the heading above it puts the text into the heading. Unless that
+ *    block is a TABLE, which is the one thing prose cannot be merged into.
  *
  * That ladder is what makes Backspace the universal "undo the structure I just made" key: a designer
  * who presses Enter at the end of a bulleted list and gets another bullet backs out of it with one
  * keystroke, instead of eating the last word of the previous item.
+ *
+ * ── THE TWO RUNGS THAT ARE ABOUT NOT DESTROYING SOMETHING ─────────────────────────────────────
+ *
+ * Rungs 2 and 3 are not symmetry with the web for its own sake; each closes a way of losing a
+ * designer's work that this ladder USED to have, and neither loss was visible on screen.
+ *
+ * A photograph placed in a narrative on the web arrives on the handset as an IMAGE block, and the
+ * editor draws it as a figure whose caption is an ordinary text field. Backspace at the start of
+ * that caption fell to the demotion rung: the block became a PARAGRAPH, and [toJson] writes `media`
+ * ONLY for an IMAGE block — so the very next save omitted it and the photograph was gone from the
+ * record on every surface, permanently, while the caption stayed behind looking like a stray line.
+ * Removing the whole figure is what the designer meant, it is what the web does, and it is one undo.
+ *
+ * Rung 3 and the TABLE clause on rung 6 are the same defect from the two sides of a grid. Nothing
+ * reads a TABLE block's `spans`, so prose merged into one disappears from the screen AND from the
+ * file to a single press of Backspace; demoting the table to a paragraph loses `rows` the same way
+ * `media` was lost. A table's caret cannot reach model offset 0 today — the phone has no table
+ * editor — so rung 3 is unreachable, and it is written down anyway because the rung after it is the
+ * one that would take the whole grid the day that changes.
  */
 fun deleteBackward(doc: RichDoc, range: DocRange): EditResult {
     if (!range.isCollapsed()) return deleteRange(doc, range)
@@ -787,6 +868,8 @@ fun deleteBackward(doc: RichDoc, range: DocRange): EditResult {
     }
 
     if (block.kind.isListItem && block.level > 0) return shiftIndent(doc, collapsedAt(point), -1)
+    if (block.kind == BlockKind.IMAGE) return removeImage(doc, point.block)
+    if (block.kind == BlockKind.TABLE) return EditResult(doc, collapsedAt(point))
     if (block.kind != BlockKind.PARAGRAPH) {
         return EditResult(
             replaceBlock(doc, point.block, block.copy(kind = BlockKind.PARAGRAPH, level = 0)),
@@ -796,6 +879,9 @@ fun deleteBackward(doc: RichDoc, range: DocRange): EditResult {
     if (point.block == 0) return EditResult(doc, collapsedAt(point))
 
     val previous = doc.blocks[point.block - 1]
+    // An IMAGE is safe to join into and a TABLE is not: an image block's spans ARE its caption, so
+    // the text stays visible and stays in the file, while a table's spans are read by nothing.
+    if (previous.kind == BlockKind.TABLE) return EditResult(doc, collapsedAt(point))
     val joinAt = blockLength(previous)
     val blocks = doc.blocks.toMutableList()
     blocks.splice(point.block - 1, 2, withSpans(previous, previous.spans + block.spans))
@@ -808,6 +894,13 @@ fun deleteBackward(doc: RichDoc, range: DocRange): EditResult {
  * Deliberately NOT the mirror image of [deleteBackward]: there is no formatting ladder here. Delete
  * at the end of a heading pulls the following paragraph up INTO the heading and the heading survives
  * — the caret has not moved, so the block the designer is standing in is the one that wins.
+ *
+ * THE ONE THING IT REFUSES is a merge in which either side is structural, and all four combinations
+ * are refused rather than the obvious two. Pulling a TABLE up into a paragraph keeps the paragraph
+ * and silently drops the grid; pulling a paragraph up into a caption keeps the caption and drops the
+ * photograph, because the merge writes its result into the block the caret is in and [toJson]
+ * carries `media` and `rows` only for the kind that owns them. Neither is what Delete at the end of
+ * a line means to anybody, and the loss shows up only when the report is generated.
  */
 fun deleteForward(doc: RichDoc, range: DocRange): EditResult {
     if (!range.isCollapsed()) return deleteRange(doc, range)
@@ -820,6 +913,7 @@ fun deleteForward(doc: RichDoc, range: DocRange): EditResult {
     }
     if (point.block >= doc.blocks.size - 1) return EditResult(doc, collapsedAt(point))
     val next = doc.blocks[point.block + 1]
+    if (block.kind.isStructural || next.kind.isStructural) return EditResult(doc, collapsedAt(point))
     val blocks = doc.blocks.toMutableList()
     blocks.splice(point.block, 2, withSpans(block, block.spans + next.spans))
     return EditResult(RichDoc(blocks), collapsedAt(point))
