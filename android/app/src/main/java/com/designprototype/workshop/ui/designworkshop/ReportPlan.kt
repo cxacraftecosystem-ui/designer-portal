@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.DwQuestionnaireCopy
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.WorkshopDraft
@@ -79,6 +80,16 @@ internal fun reportPlanFor(
     generatedAt: String,
     /** See [ReportPlan.serverCopyUnread]. Defaulted false so no existing caller has to change. */
     serverCopyUnread: Boolean = false,
+    /**
+     * What this device holds about this workshop's questionnaires.
+     *
+     * It reaches the plan for one reason: the questionnaire annexure's warning is the only one whose
+     * truth depends on something outside the registry and the stage-20 entry, and the plan is where
+     * this screen's two answers — what it TELLS the designer and what it WRITES — are kept from
+     * coming apart. Defaulted, so every existing caller and every test keeps the conservative
+     * "we have not looked" answer rather than silently claiming an annexure it cannot draw.
+     */
+    questionnaires: DwQuestionnaireCopy = DwQuestionnaireCopy.UNKNOWN,
 ): ReportPlan {
     val settings = draft?.stages?.get("REPORT_GENERATION")?.values.orEmpty()
     val templateId = resolveTemplateId(requestedTemplateId, settings, draft?.templateId.orEmpty())
@@ -114,7 +125,7 @@ internal fun reportPlanFor(
     }
 
     val warnings = ArrayList<String>()
-    warnings += reportWarnings(templateId, template, settings, format)
+    warnings += reportWarnings(templateId, template, settings, format, questionnaires)
     unknownStageWarning(schema)?.let { warnings += it }
 
     return ReportPlan(

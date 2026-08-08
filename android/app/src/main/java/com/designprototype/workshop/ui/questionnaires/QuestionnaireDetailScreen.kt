@@ -30,6 +30,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,6 +38,7 @@ import com.designprototype.workshop.data.CustomEntryDto
 import com.designprototype.workshop.data.CustomQuestionDto
 import com.designprototype.workshop.data.CustomQuestionnaireDto
 import com.designprototype.workshop.data.CustomSectionDto
+import com.designprototype.workshop.data.DwQuestionnaireStore
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.SearchableSelectField
@@ -79,6 +81,8 @@ fun QuestionnaireDetailScreen(
     onError: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    // The application context, so the cache write below cannot outlive an Activity it holds.
+    val appContext = LocalContext.current.applicationContext
 
     var form by remember(questionnaireId) { mutableStateOf<CustomQuestionnaireDto?>(null) }
     var loading by remember(questionnaireId) { mutableStateOf(true) }
@@ -99,7 +103,25 @@ fun QuestionnaireDetailScreen(
         loading = true
         loadError = null
         runCatching { repository.customQuestionnaire(questionnaireId, includeRetired = true) }
-            .onSuccess { form = it }
+            .onSuccess {
+                form = it
+                // THE ANSWERS ARE IN HAND HERE, SO THE DEVICE WRITES THEM DOWN. This screen is where
+                // a designer reads a questionnaire's sittings, which means the one thing the report
+                // annexure needs has just crossed the network and been paid for. Kept, the export
+                // three days later in a courtyard with no signal carries the fieldwork instead of a
+                // note apologising for it; not kept, that export is the defect this cache exists to
+                // end and there is no second chance to fetch it.
+                //
+                // THIS READ AND NOT THE ANSWER SCREEN'S. `includeRetired = true` is what makes the
+                // copy match the office's: `report_items` applies no retirement filter, so a cache
+                // fed from the answer screen's `includeRetired = false` read would silently drop
+                // every answer given under a wording that has since been reworded. See
+                // [dwQuestionnaireItemOf], which states the requirement it cannot check.
+                //
+                // Best-effort and silent: a full disk must not turn reading a questionnaire into an
+                // error message about a cache the designer never asked for.
+                runCatching { DwQuestionnaireStore.mergeQuestionnaire(appContext, it) }
+            }
             .onFailure { error ->
                 if (error !is CancellationException) {
                     loadError = error.apiErrorMessage("This questionnaire could not be opened.")
