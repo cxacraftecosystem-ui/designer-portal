@@ -172,12 +172,44 @@ fun ReportScreen(
      * decision the next sync silently applies to everything.
      */
     var accent by remember(workshopId) { mutableStateOf("") }
+    /**
+     * The warning that this file cannot hold more than this device does — see [ReportSource].
+     *
+     * Above the export buttons rather than beside the saved file, because it is knowable before the
+     * button is pressed and it is the one thing a designer must read BEFORE the document is in an
+     * officer's hand.
+     */
+    var deviceOnlyNote by remember(workshopId) { mutableStateOf<String?>(null) }
+    /** Which copy the next export will be built from, said in all three states. */
+    var builtFromLine by remember(workshopId) { mutableStateOf("") }
 
     LaunchedEffect(workshopId) {
         loading = true
         runCatching {
             val registry = repository.designWorkshopSchema(appContext)
-            val stored = WorkshopDraftStore.load(appContext, workshopId)
+            val local = WorkshopDraftStore.load(appContext, workshopId)
+            // THE STAGES ARE FETCHED BEFORE ANYTHING IS BUILT. This screen used to read local
+            // storage and stop, so the document could only ever contain the stages this handset had
+            // itself opened — a workshop with 22 stages on the server exported as ten paragraphs,
+            // with a correct ministry cover page on the front of it. Same call, same failure
+            // handling and same three-state note as [WorkshopCodesScreen]; the merge that keeps
+            // this device's unsynced work is in [reportSourceFor].
+            val remoteId = local?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
+            val remote = remoteId?.let { runCatching { repository.designWorkshopStages(it) }.getOrNull() }
+            val source = reportSourceFor(
+                schema = registry,
+                workshopId = workshopId,
+                local = local,
+                remoteId = remoteId,
+                remote = remote,
+            )
+            val stored = source.draft
+            deviceOnlyNote = source.deviceOnlyNote
+            builtFromLine = source.builtFromLine
+            // Scored from the MERGED draft, so the percentage and the warnings describe the document
+            // that is about to be written. Scoring the local draft while exporting the merged one is
+            // how a screen comes to say "18% of the required fields are filled in" over a report
+            // that is in fact complete — and, before this, the other way round.
             val scores = computeWorkshopCompleteness(registry, stored)
             schema = registry
             draft = stored
@@ -312,6 +344,13 @@ fun ReportScreen(
             return@Column
         }
 
+        // WHICH COPY THIS FILE WILL BE BUILT FROM, said before the buttons and not after the file.
+        // The report is the document handed to a visiting officer at the close of the workshop, and
+        // "this holds only what the phone has" is a thing the designer can act on beforehand —
+        // wait for signal, or say it out loud when handing it over — and can do nothing about once
+        // the .docx is in somebody else's hands.
+        deviceOnlyNote?.let { DwWorkshopNotice(it) }
+
         SearchableSelectField(
             label = "Template",
             options = templateOptions(templates),
@@ -327,6 +366,13 @@ fun ReportScreen(
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
+
+        // The same fact in its unalarming form: even when the server answered, the designer is told
+        // how much of this document came from where. A count is what makes "the workshop has 22
+        // stages and this file has three" visible on the screen instead of in the printed copy.
+        if (builtFromLine.isNotEmpty()) {
+            Text(builtFromLine, color = MaterialTheme.field.muted, fontSize = 12.sp, lineHeight = 17.sp)
+        }
 
         if (warnings.isEmpty()) {
             Text(
