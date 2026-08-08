@@ -104,11 +104,14 @@ import java.util.Locale
  *    provider call (API *and* the transcription queue) uses it — no restart, no redeploy. The
  *    banner says so out loud rather than leaving the master admin wondering whether to SSH in.
  *
- * The caller gates this screen on master admin, but the API is the real authority: if it answers
- * 403 the screen renders [ApiKeysRestrictedCard] instead of an error, because "you are not allowed"
- * is a state, not a failure. That authority is also what makes the screen safe to open up to plain
- * admins for the ranking's sake — an account that may not read keys still cannot, whatever route
- * brought it here.
+ * The caller gates this screen on ADMIN, and the API is the real authority for the half that is
+ * higher: if `/secrets` answers 403 the screen renders [ApiKeysRestrictedCard] instead of an error,
+ * because "you are not allowed" is a state, not a failure. That authority is what makes the screen
+ * safe to open to plain admins for the ranking's sake — an account that may not read keys still
+ * cannot, whatever route brought it here. This paragraph used to say the caller gated on MASTER
+ * admin, and it did: `AdminHubEntry.API_KEYS` carried `masterOnly = true`, so the require_admin
+ * ranking above sat behind a require_master_admin door and no admin ever saw the screen that was
+ * written for them.
  */
 
 /** How long a revealed value stays on screen before it hides itself again. */
