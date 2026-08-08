@@ -2,6 +2,8 @@ package com.designprototype.workshop.data
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import kotlin.math.max
 
 /**
@@ -104,7 +106,156 @@ import kotlin.math.max
  * photograph with no findings, which is the same thing as a photograph with nothing wrong with it as
  * far as everything downstream is concerned.
  */
+/**
+ * A photograph decoded small enough to hold in memory while somebody marks it up, and the size of the
+ * frame it was decoded from.
+ *
+ * [sourceWidth]/[sourceHeight] are the ORIGINAL frame's dimensions AS DISPLAYED — the EXIF rotation is
+ * already applied to both the bitmap and these numbers, so the two can never disagree. They are here
+ * only so a surface can tell the designer what it is showing them a reduced copy of; nothing may
+ * measure in them, because the pixels that would justify that precision are not on the screen. See
+ * [DwImageDecode.decodeForDisplay].
+ */
+class DwDisplayImage(
+    val bitmap: Bitmap,
+    val sourceWidth: Int,
+    val sourceHeight: Int,
+)
+
 object DwImageDecode {
+
+    /**
+     * The long edge a photograph is decoded down to before it is put on screen to be marked up.
+     *
+     * A 4000x3000 frame at ARGB_8888 is 48 MB and this app runs on 2 GB handsets, so the full frame is
+     * never decoded. 2400 chosen rather than something smaller because this is the working copy a
+     * designer AIMS AT: a mark placed on a 600 px preview of a 4000 px photograph cannot be better than
+     * ±7 source pixels however careful the person is, and [DwPhotoMeasure]'s error bar would then be
+     * quoting a precision the screen never offered. At 2400 the common 4000 px frame subsamples by 2
+     * to 2000 px, which is ~6 MB at RGB_565 — see [decodeForDisplay] for why 565 is honest here and
+     * would not be in [measure].
+     */
+    const val DISPLAY_EDGE_PX = 2400
+
+    /**
+     * Decode [path] small enough to draw and mark up, with the EXIF rotation applied, or null.
+     *
+     * ── WHY THIS APPLIES EXIF ORIENTATION WHEN [measure] DELIBERATELY DOES NOT ────────────────
+     *
+     * The file header's refusal to rotate is about MEASURING: a blur score and a hash are invariant
+     * under quarter turns, and rotating there would make the dimensions in a warning disagree with the
+     * dimensions in the draft. Neither argument survives here. This bitmap is put on a screen and a
+     * person puts their finger on it, so a portrait photograph drawn side-on is not a cosmetic
+     * difference — every coordinate the designer marks would be in a frame that does not match what
+     * they can see, and the "length" they measured would be of something they never pointed at. So the
+     * two paths differ on purpose and neither should be "fixed" to match the other.
+     *
+     * A measurement taken in the rotated frame is the same measurement: rotation and mirroring are
+     * isometries, so every pixel distance is unchanged, and a homography onto a known rectangle
+     * absorbs them entirely.
+     *
+     * ── RGB_565, WHICH WOULD BE WRONG IN [measure] AND IS RIGHT HERE ──────────────────────────
+     *
+     * [measure] pins ARGB_8888 because quantising the channels changes the luma plane and therefore
+     * the blur score — the verdict would depend on the handset. Nothing downstream of this function
+     * reads a pixel VALUE at all: `DwPhotoMeasure` is plane geometry over where a person pointed, and
+     * these bytes exist only to be looked at. Halving the memory of the one large allocation this
+     * feature makes is worth the banding on a photograph nobody is grading.
+     *
+     * ── THE BITMAP IS NOT RECYCLED BY ITS CALLER, AND MUST NOT BE ─────────────────────────────
+     *
+     * Compose holds it through an `ImageBitmap` for as long as the frame is on screen, and recycling
+     * one that is still being drawn throws "Canvas: trying to use a recycled bitmap" — a crash in a
+     * courtyard, in the middle of a stage the designer has not saved. Dropping the reference is enough:
+     * one 6 MB bitmap becomes garbage the moment the panel closes or moves to another photograph.
+     */
+    fun decodeForDisplay(path: String, maxEdgePx: Int = DISPLAY_EDGE_PX): DwDisplayImage? =
+        runCatching { decodeForDisplayOrNull(path, maxEdgePx) }.getOrNull()
+
+    private fun decodeForDisplayOrNull(path: String, maxEdgePx: Int): DwDisplayImage? {
+        if (maxEdgePx < 1) return null
+
+        // Header only — no pixels allocated. These are the dimensions as STORED; the rotation below
+        // decides whether the displayed frame swaps them.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        val width = bounds.outWidth
+        val height = bounds.outHeight
+        if (width < 1 || height < 1) return null
+
+        val longEdge = max(width, height)
+        // The smallest power-of-two subsample that brings the long edge AT OR UNDER the ceiling —
+        // the opposite direction from [measure], which must stay at or above its working edge so the
+        // box average that follows is a downscale. Here there is no later resample: whatever this
+        // decodes is what goes on the screen, so overshooting the ceiling would be the 48 MB
+        // allocation this function exists to avoid.
+        var sample = 1
+        while (longEdge / sample > maxEdgePx) sample *= 2
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
+        val decoded = BitmapFactory.decodeFile(path, options) ?: return null
+
+        val (rotation, mirrored) = exifTransform(path)
+        val oriented = orient(decoded, rotation, mirrored)
+        val swapped = rotation == 90 || rotation == 270
+        return DwDisplayImage(
+            bitmap = oriented,
+            sourceWidth = if (swapped) height else width,
+            sourceHeight = if (swapped) width else height,
+        )
+    }
+
+    /**
+     * The EXIF orientation as (degrees clockwise, mirrored), matching
+     * [WorkshopDraftStore.withImageMetadata] tag for tag.
+     *
+     * The PLATFORM `android.media.ExifInterface`, and the same eight-case mapping, deliberately: two
+     * readings of the same tag that disagree would put the draft's recorded `rotationDegrees` and the
+     * frame a designer marked into different orientations, and only one of them can be right.
+     */
+    private fun exifTransform(path: String): Pair<Int, Boolean> {
+        val exif = runCatching { ExifInterface(path) }.getOrNull() ?: return 0 to false
+        val orientation = runCatching {
+            exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+        val rotation = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_TRANSPOSE -> 90
+            ExifInterface.ORIENTATION_ROTATE_180, ExifInterface.ORIENTATION_FLIP_VERTICAL -> 180
+            ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSVERSE -> 270
+            else -> 0
+        }
+        val mirrored = orientation == ExifInterface.ORIENTATION_FLIP_HORIZONTAL ||
+            orientation == ExifInterface.ORIENTATION_FLIP_VERTICAL ||
+            orientation == ExifInterface.ORIENTATION_TRANSPOSE ||
+            orientation == ExifInterface.ORIENTATION_TRANSVERSE
+        return rotation to mirrored
+    }
+
+    /**
+     * [source] turned the way the camera held it, or [source] itself when there is nothing to do.
+     *
+     * A FAILED ROTATION RETURNS THE UNROTATED FRAME rather than null. `createBitmap` allocates a
+     * second copy — briefly both exist — and on a handset already at the edge that is where an
+     * OutOfMemoryError lands. A sideways photograph a designer can still measure something on beats no
+     * photograph at all, and the panel above draws whatever it is given.
+     */
+    private fun orient(source: Bitmap, rotation: Int, mirrored: Boolean): Bitmap {
+        if (rotation == 0 && !mirrored) return source
+        val matrix = Matrix()
+        if (rotation != 0) matrix.postRotate(rotation.toFloat())
+        // Mirrored AFTER the rotation, because the EXIF transposes are a flip of the ROTATED frame.
+        if (mirrored) matrix.postScale(-1f, 1f)
+        val rotated = runCatching {
+            Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+        }.getOrNull() ?: return source
+        // Safe: createBitmap copied the pixels, so nothing holds the original any more. Skipped when
+        // the platform handed back the same instance for a no-op matrix.
+        if (rotated !== source) source.recycle()
+        return rotated
+    }
 
     /**
      * Measure the image at [path], or null if this device cannot.
