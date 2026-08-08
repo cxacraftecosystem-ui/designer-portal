@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.DwReferenceList
 import com.designprototype.workshop.data.DwReferenceOption
 import com.designprototype.workshop.data.DwValues
@@ -37,8 +38,11 @@ import com.designprototype.workshop.ui.SelectOption
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -196,8 +200,12 @@ internal fun DwReferenceSelectField(
     label: String,
     /** The whole row this field sits in, so hydration can tell an empty box from a typed answer. */
     rowValues: Map<String, JsonElement>,
-    /** The field keys this entity actually declares. Anything else in `data` is not ours to write. */
-    writableKeys: Set<String>,
+    /**
+     * The fields this entity actually declares, by key. Anything the registry's mapping names that
+     * is not in here is not ours to write, and the TYPE is needed as well as the key: a value bound
+     * for an IMAGE_LIST has to arrive as a list.
+     */
+    writableFields: Map<String, FieldDto>,
     onChange: (JsonElement?) -> Unit,
     onHydrate: (Map<String, JsonElement?>) -> Unit,
 ) {
@@ -292,8 +300,9 @@ internal fun DwReferenceSelectField(
         val awaited = pendingHydration
         if (awaited.isBlank()) return@LaunchedEffect
         val option = list?.items?.firstOrNull { it.id == awaited } ?: return@LaunchedEffect
-        val patch = hydrationPatch(option, lastHydration, rowValues, writableKeys)
-        lastHydration = option.data.filterKeys { it in writableKeys }
+        val incoming = hydratedValues(option, field.refHydration, writableFields)
+        val patch = hydrationPatch(incoming, lastHydration, rowValues, writableFields)
+        lastHydration = incoming
         pendingHydration = ""
         if (patch.isNotEmpty()) onHydrate(patch)
     }
@@ -411,8 +420,9 @@ internal fun DwReferenceSelectField(
                 // from the record made a moment ago would land on the row AFTER the designer changed
                 // their mind and chose somebody else — one artisan's village under another's name.
                 pendingHydration = ""
-                val patch = hydrationPatch(option, lastHydration, rowValues, writableKeys)
-                lastHydration = option.data.filterKeys { it in writableKeys }
+                val incoming = hydratedValues(option, field.refHydration, writableFields)
+                val patch = hydrationPatch(incoming, lastHydration, rowValues, writableFields)
+                lastHydration = incoming
                 if (patch.isNotEmpty()) onHydrate(patch)
             }
         )
@@ -680,6 +690,40 @@ private fun buildReferenceOptions(items: List<DwReferenceOption>, selectedId: St
 private fun orphanLabel(id: String): String = "Linked record ${id.take(8)}"
 
 /**
+ * The chosen record's values, resolved onto the BOXES they belong in.
+ *
+ * The record's `data` speaks the reference model's vocabulary and the row speaks the entity's, and
+ * [FieldDto.refHydration] — served by the registry, never guessed here — is the dictionary between
+ * them. An empty dictionary yields nothing, which is the fail-closed answer the server's own note
+ * asks for: a box left blank costs one retype and is filled at save anyway; a box filled from the
+ * wrong key costs a wrong value nobody can see is wrong.
+ *
+ * A value bound for a MULTI field is wrapped in a list on the way, exactly as `hydrate_entries`
+ * does server-side. The documented product's single photograph seeds a GALLERY, and writing the
+ * bare string into an IMAGE_LIST would leave a media field holding something no renderer can read.
+ */
+internal fun hydratedValues(
+    option: DwReferenceOption,
+    mapping: Map<String, String>,
+    writable: Map<String, FieldDto>,
+): Map<String, JsonElement> {
+    val out = LinkedHashMap<String, JsonElement>()
+    mapping.forEach { (sourceKey, targetKey) ->
+        if (targetKey.startsWith("_")) return@forEach
+        val target = writable[targetKey] ?: return@forEach
+        if (target.deprecated) return@forEach
+        val raw = option.data[sourceKey] ?: return@forEach
+        if (!DwValues.isFilled(raw)) return@forEach
+        out[targetKey] = if (DwFieldType.of(target.type).isMulti && raw !is JsonArray) {
+            buildJsonArray { add(raw) }
+        } else {
+            raw
+        }
+    }
+    return out
+}
+
+/**
  * Which of the chosen record's values may be written into the row.
  *
  * THREE RULES, and each one prevents a specific way of destroying an answer:
@@ -692,24 +736,28 @@ private fun orphanLabel(id: String): String = "Linked record ${id.take(8)}"
  *    have that correction silently reverted by a re-pick, and a reference record is not more
  *    authoritative than the person standing in front of the artisan.
  *
- * The row's own current values are not consulted here — the caller applies the patch through the
- * same batch write the renderer uses — so this stays a pure function of the option and what we last
- * wrote, which is the part that is testable.
+ * A LIST TARGET IS ONLY EVER SEEDED, NEVER REPLACED, which is the one place the rules differ from
+ * the three above and is `hydrate_entries`' rule restated: the documented product's photograph is a
+ * starting point for a gallery, and a re-pick that swapped it for another catalogue shot would
+ * destroy the only copy of the photographs the designer took in the room.
+ *
+ * The incoming values arrive already resolved by [hydratedValues], so this stays a pure function of
+ * the record and what we last wrote, which is the part that is testable.
  */
 internal fun hydrationPatch(
-    option: DwReferenceOption,
+    incoming: Map<String, JsonElement>,
     lastHydration: Map<String, JsonElement>,
     current: Map<String, JsonElement>,
-    writable: Set<String>,
+    writable: Map<String, FieldDto>,
 ): Map<String, JsonElement?> {
     val patch = LinkedHashMap<String, JsonElement?>()
-    val incoming = option.data.filterKeys { !it.startsWith("_") && it in writable }
 
     incoming.forEach { (key, next) ->
         val existing = current[key]
-        val mayWrite = !DwValues.isFilled(existing) || existing == lastHydration[key]
+        val multi = writable[key]?.let { DwFieldType.of(it.type).isMulti } ?: false
+        val mayWrite = !DwValues.isFilled(existing) || (!multi && existing == lastHydration[key])
         if (!mayWrite) return@forEach
-        patch[key] = next.takeIf { DwValues.isFilled(it) }
+        patch[key] = next
     }
 
     // Whatever the PREVIOUS record filled in and this one has nothing to say about is cleared, but
