@@ -104,14 +104,24 @@ private const val MAX_SPANS_PER_CELL = 64
  *
  * Named constants rather than the literals that used to sit in [fromJson] and [toJson], because the
  * editor now PLACES a photograph as well as reading one, and three surfaces have to agree about the
- * same three numbers: `IMAGE_DEFAULT_WIDTH_PCT` is the value [toJson] omits, so a phone defaulting to
+ * same four numbers: `IMAGE_DEFAULT_WIDTH_PCT` is the value [toJson] omits, so a phone defaulting to
  * 70 against a browser defaulting to 65 would write a different document for the same picture. They
- * are the `IMAGE_*_WIDTH_PCT` exports of `frontend/lib/richText.ts` and the same bounds
- * `rich_text.py` clamps to.
+ * are the `IMAGE_*_PCT` exports of `frontend/lib/richText.ts` and the same bounds `rich_text.py`
+ * clamps to.
+ *
+ * ALL FOUR, AND THE STEP IS THE ONE THAT LOOKS OPTIONAL AND IS NOT. The web exports these in a
+ * single block for a reason: `widthPct` is not a display preference, it is STORED in the document
+ * and printed by five renderers. A phone stepping by 10 against a browser stepping by 15 gives the
+ * same photograph, widened once by two people, 80% on one surface and 85% on the other — a real
+ * difference in the .docx, written by a control whose label ("Wider") promises the two are the same
+ * gesture. Nothing fails, no test that does not name the number notices, and the two copies of the
+ * report simply lay the figure out differently. See `RichTextEditor.tsx`'s `image-narrower` /
+ * `image-wider`, which pass exactly this constant.
  */
 const val IMAGE_DEFAULT_WIDTH_PCT = 70f
 const val IMAGE_MIN_WIDTH_PCT = 10f
 const val IMAGE_MAX_WIDTH_PCT = 100f
+const val IMAGE_WIDTH_STEP_PCT = 15f
 
 /** The stored media id is truncated to this on the way in, on all three surfaces. */
 const val MAX_MEDIA_ID_CHARS = 64
@@ -719,22 +729,16 @@ fun isEmptyDocument(raw: JsonElement?): Boolean {
 // The media ids buried in a document
 //
 // A photograph placed inside a narrative does not put its id in the FIELD's value; it puts it in a
-// block, several levels down in the document JSON. Everything that walks a record looking for
-// photographs — the report resolver, the sync translator — therefore has to be told to look here,
-// and the server already is (`rich_text.media_ids`, called from `design_workshops._media_ids`).
+// block, several levels down in the document JSON. Anything that walks a record looking for
+// photographs therefore has to be told to look here, and the server already is
+// (`rich_text.media_ids`, called from `design_workshops._media_ids`).
+//
+// THE PHONE NEEDS ONLY THE REWRITE, WHICH IS WHY ONLY THE REWRITE IS HERE. A read-only twin of
+// `rich_text.media_ids` was written alongside it and had no caller: the sync layer needs to SWAP the
+// ids, not list them, and the report resolver is handed one id at a time by `toReportBlocks`. R8
+// deletes an unreachable function from the release build, so a port kept "for parity" is a port that
+// is not in the product while reading as though it were. Add it back the day something asks.
 // --------------------------------------------------------------------------------------
-
-/**
- * Every media id an IMAGE block in this document holds — the port of `rich_text.media_ids`.
- *
- * Reads through [fromJson] rather than scanning the raw tree, so a block the parser would DROP (an
- * IMAGE with a blank id) contributes nothing here either. A caller that saw an id the reader will
- * never ask for would hold a stage back waiting to upload a picture no surface is going to print.
- */
-fun mediaIds(raw: JsonElement?): Set<String> =
-    fromJson(raw).blocks.filter { it.kind == BlockKind.IMAGE && it.media.isNotEmpty() }
-        .map { it.media }
-        .toSet()
 
 /**
  * The same stored document with every inline media id passed through [translate] — the phone's own

@@ -142,11 +142,13 @@ class RichTextStructuralGuardTest {
 
     @Test
     fun `prose cannot be re-kinded INTO a structural block either`() {
-        // THE SAME GUARD FROM THE OTHER SIDE, and the half that TypeScript gets for free. The web's
-        // `setBlockKind` takes a `RichBlockKind`, so "make this paragraph a TABLE" is not a call
-        // anybody can write. This port takes a STRING — the toolbar reports a press as one — and
-        // `KIND_BY_NAME` has resolved "TABLE" and "IMAGE" ever since those constants were added to
-        // stop the phone destroying them. So the token got through and re-kinded the block.
+        // THE SAME GUARD FROM THE OTHER SIDE: the sibling test protects the SOURCE block, this one
+        // protects the TARGET kind. It is a deliberate divergence from the web and not parity —
+        // `RichBlockKind` (richText.ts:84) includes "TABLE" and "IMAGE", so `setBlockKind(doc,
+        // range, "TABLE")` type-checks in the browser too and the web has the same hole. Both are
+        // saved from it only by the fact that no control passes either token; this port takes a
+        // STRING (the toolbar reports a press as one) and `KIND_BY_NAME` has resolved both ever
+        // since the constants were added to stop the phone destroying a photograph.
         //
         // A TABLE with no `rows` and an IMAGE with no `media` are both blocks that `toJson` writes
         // and `fromJson` then DROPS — "a table with nothing in it is not a table". The designer's

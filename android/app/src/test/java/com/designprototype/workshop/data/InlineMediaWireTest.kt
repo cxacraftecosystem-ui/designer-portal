@@ -4,7 +4,6 @@ import com.designprototype.workshop.report.BlockKind
 import com.designprototype.workshop.report.RichBlock
 import com.designprototype.workshop.report.RichDoc
 import com.designprototype.workshop.report.RichSpan
-import com.designprototype.workshop.report.mediaIds
 import com.designprototype.workshop.report.remapInlineMedia
 import com.designprototype.workshop.report.toJson
 import kotlinx.serialization.json.JsonArray
@@ -223,16 +222,6 @@ class InlineMediaWireTest {
     }
 
     // ── The document walkers the sync layer is built on ─────────────────────────────────────────
-
-    @Test
-    fun `mediaIds finds the photographs a designer placed in prose`() {
-        // The port of `rich_text.media_ids`, which is what makes the SERVER load these pictures for
-        // its own report. Asserted here so the two walkers cannot drift apart.
-        assertEquals(setOf(localId), mediaIds(narrative(localId)))
-        assertEquals(emptySet<String>(), mediaIds(toJson(RichDoc(listOf(RichBlock(spans = listOf(RichSpan("x"))))))))
-        assertEquals("a plain string has no blocks in it", emptySet<String>(), mediaIds(JsonPrimitive("legacy prose")))
-        assertEquals("and neither has nothing", emptySet<String>(), mediaIds(null))
-    }
 
     @Test
     fun `remapInlineMedia leaves everything it was not asked to change`() {

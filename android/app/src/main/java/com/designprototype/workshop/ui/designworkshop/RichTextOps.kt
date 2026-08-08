@@ -5,6 +5,7 @@ import com.designprototype.workshop.report.BlockKind
 import com.designprototype.workshop.report.IMAGE_DEFAULT_WIDTH_PCT
 import com.designprototype.workshop.report.IMAGE_MAX_WIDTH_PCT
 import com.designprototype.workshop.report.IMAGE_MIN_WIDTH_PCT
+import com.designprototype.workshop.report.IMAGE_WIDTH_STEP_PCT
 import com.designprototype.workshop.report.MAX_BLOCKS
 import com.designprototype.workshop.report.MAX_MEDIA_ID_CHARS
 import com.designprototype.workshop.report.MAX_DOCUMENT_CHARS
@@ -495,20 +496,25 @@ fun clearFormatting(doc: RichDoc, range: DocRange): EditResult {
  */
 fun setBlockKind(doc: RichDoc, range: DocRange, kind: String, level: Int = 0): EditResult {
     val parsed = KIND_BY_NAME[kind.uppercase()] ?: return EditResult(doc, clampRange(doc, range))
-    // PROSE CANNOT BE RE-KINDED INTO A STRUCTURAL BLOCK EITHER, and this is the half of the guard
-    // that TypeScript gets from its type system and Kotlin has to state.
+    // PROSE CANNOT BE RE-KINDED INTO A STRUCTURAL BLOCK EITHER — the guard below the loop protects
+    // the SOURCE block, this one protects the TARGET kind.
     //
-    // The web's `setBlockKind` takes a `RichBlockKind`, so "make this paragraph a TABLE" is not a
-    // call anybody can write; this one takes a STRING, because the toolbar reports a press as one
-    // (see `RichTextToolbar`), and `KIND_BY_NAME` has resolved "TABLE" and "IMAGE" ever since those
-    // constants were added to stop the phone destroying them. So the token got through, the block
-    // below it re-kinded a bulleted item to TABLE, and the result was a TABLE with no `rows` — which
-    // `toJson` writes as an empty grid and `fromJson` then DROPS on the next read, because a table
-    // with nothing in it is not a table. The designer's sentence was on screen until they reopened
-    // the stage and then simply was not there.
+    // A DELIBERATE DIVERGENCE FROM THE WEB, and it is written down as one because the rule in this
+    // repo is that the TypeScript wins. `RichBlockKind` (richText.ts:84) is the seven-member union
+    // INCLUDING "TABLE" and "IMAGE", so `setBlockKind(doc, range, "TABLE")` type-checks there too:
+    // the web has the identical hole and is saved from it only by the same thing that saves this
+    // port — no control passes either token. What the two clients would do if one ever did is
+    // re-kind a bulleted item to TABLE and produce a TABLE with no `rows`, which `toJson` writes as
+    // an empty grid and `fromJson` then DROPS on the next read, because a table with nothing in it
+    // is not a table. The designer's sentence is on screen until they reopen the stage and then
+    // simply is not there.
     //
-    // No control passes either token today, so this closed a hole rather than a bug in the field.
-    // It is stated anyway because the caller is a string and the next caller is not in this file.
+    // Closing it here rather than upstream is safe precisely BECAUSE no caller passes those tokens:
+    // the refusal is observable to nothing that exists. It is worth stating because this signature
+    // takes a STRING — the toolbar reports a press as one, see `RichTextToolbar` — and `KIND_BY_NAME`
+    // has resolved both tokens since the constants were added to stop the phone destroying a
+    // photograph. Whoever finds this divergence should fix `setBlockKind` in the TypeScript rather
+    // than delete the guard here.
     if (parsed.isStructural) return EditResult(doc, clampRange(doc, range))
     return setBlockKindIn(doc, range, parsed, level)
 }
@@ -1574,8 +1580,10 @@ fun richTextOpsSelfCheck(): List<String> {
     check("a caption's newline becomes a space", insertImage(prose, caretAt(0, 0), "m", "a\nb").doc.blocks[1].text == "a b")
     check("the width is clamped on the way in", insertImage(prose, caretAt(0, 0), "m", "", 500f).doc.blocks[1].widthPct == IMAGE_MAX_WIDTH_PCT)
     check("an empty document still gets a caption to stand in", insertImage(RichDoc(), caretAt(0, 0), "m", "c").selection == caretAt(1, 1))
-    val narrowed = setImageWidth(placed.doc, 1, -10f)
-    check("the width steps down", narrowed.doc.blocks[1].widthPct == IMAGE_DEFAULT_WIDTH_PCT - 10f)
+    // Stepped by the constant the toolbar actually passes, not by a round number written here: a
+    // check that says "-10 moves it by 10" passes whatever the two clients' buttons do.
+    val narrowed = setImageWidth(placed.doc, 1, -IMAGE_WIDTH_STEP_PCT)
+    check("the width steps down by the web's step", narrowed.doc.blocks[1].widthPct == IMAGE_DEFAULT_WIDTH_PCT - IMAGE_WIDTH_STEP_PCT)
     check("the width stops at the floor", setImageWidth(narrowed.doc, 1, -900f).doc.blocks[1].widthPct == IMAGE_MIN_WIDTH_PCT)
     check("the width command ignores prose", setImageWidth(prose, 0, 10f).doc === prose)
 
