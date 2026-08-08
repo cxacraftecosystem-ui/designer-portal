@@ -1694,7 +1694,26 @@ export function buildStageEntries(
       const neverRead = (stage?.serverLoadedAt ?? null) === null;
       const answered = Object.values(values).some((value) => isFilled(value));
       if (!neverRead || answered) {
-        entries.push({ entityKey: entity.key, data: values, merge: neverRead });
+        /*
+          `merge` IS OMITTED WHEN FALSE, AND THAT IS A COMPATIBILITY RULE RATHER THAN A TIDINESS ONE.
+
+          `APIModel` is `extra="forbid"`, so a server that predates this field answers 422 —
+          "merge: Extra inputs are not permitted" — for every entry that carries it. The clients and
+          the server are deployed on different days by different people; an Android handset in a
+          village updates when it next sees wifi and the API updates when somebody deploys it, so
+          "the client is newer than the server" is an ordinary state here and not a mistake.
+
+          Sending it only when it is TRUE shrinks the blast radius of that skew from EVERY stage save
+          to just the never-downloaded ones. It does not eliminate it, and the residue is written
+          down in `docs/OPEN_FINDINGS.md`: against an old server those saves are refused, and the
+          refusal banner says the stage "will keep being refused until the answer that caused it is
+          corrected", which is false — no answer the designer typed has anything to do with it.
+        */
+        entries.push(
+          neverRead
+            ? { entityKey: entity.key, data: values, merge: true }
+            : { entityKey: entity.key, data: values }
+        );
         rowKeys.push(null);
       }
       continue;
