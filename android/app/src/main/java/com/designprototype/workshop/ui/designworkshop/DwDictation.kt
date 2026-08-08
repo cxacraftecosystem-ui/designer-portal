@@ -87,6 +87,21 @@ import com.designprototype.workshop.ui.field
  * fails with a network error and an on-device one exists, the attempt is retried against it once,
  * silently, so the designer never has to know which engine answered.
  *
+ * ── THE FALLBACK RUNS BOTH WAYS, AND THE SECOND DIRECTION WAS MISSING ─────────────────────────
+ *
+ * Preferring the offline engine has a cost that was not handled: it reports
+ * ERROR_LANGUAGE_UNAVAILABLE (13) for any language whose pack the owner has not downloaded, and
+ * Hindi — the default here, and the language most of these workshops are run in — is not installed
+ * by default on a great many handsets. Observed on a Galaxy M32 running Android 13: every tap of the
+ * microphone produced "Dictation stopped unexpectedly (code 13). Type the answer in, or try again."
+ *
+ * That sentence was the generic arm, and its advice could not work: no number of further taps
+ * downloads a language pack. So the offline engine's language failure now falls back to the NETWORK
+ * engine exactly as the network engine's failure falls back to the offline one — same one-shot
+ * `retried` guard, so the two cannot bounce a request between them — and only when both are
+ * exhausted does the designer get a sentence, which then names the fix instead of suggesting a
+ * retry.
+ *
  * When neither is available the failure is reported as a SENTENCE naming the cause and the way
  * round it ("…dictation on this phone needs a connection; your keyboard's own microphone may have an
  * offline language pack"), because a designer who thinks the feature is broken stops using it
@@ -204,7 +219,11 @@ internal fun DwDictationButton(
      * from API 31, but with no way to ask whether a language pack is installed the call succeeds and
      * then fails at `startListening` with an error the designer cannot act on.
      */
-    fun buildRecognizer(onDevice: Boolean, onNetworkFailure: () -> Unit): SpeechRecognizer? {
+    fun buildRecognizer(
+        onDevice: Boolean,
+        onNetworkFailure: () -> Unit,
+        onLanguageUnavailable: () -> Unit,
+    ): SpeechRecognizer? {
         val created = runCatching {
             if (onDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
@@ -269,6 +288,32 @@ internal fun DwDictationButton(
                         "The phone's speech service is busy. Wait a moment and tap the microphone again."
                     SpeechRecognizer.ERROR_AUDIO ->
                         "The microphone could not be read. Something else on the phone may be using it."
+                    /*
+                      THE LANGUAGE THE DESIGNER CHOSE IS NOT ON THIS PHONE, and until this branch
+                      existed that fell to the `else` below and told them to "try again" — advice that
+                      cannot ever work, because nothing about tapping the microphone a second time
+                      downloads a language pack. Observed on a Galaxy M32 running Android 13 with the
+                      field set to Hindi: `code 13`, on every attempt, for ever.
+
+                      12 is ERROR_LANGUAGE_NOT_SUPPORTED and 13 is ERROR_LANGUAGE_UNAVAILABLE, both
+                      added in API 33. They are written as literals because this module is built
+                      against minSdk 26 and the named constants would put an API-level guard around a
+                      value that is only ever compared, never called.
+
+                      UNAVAILABLE (13) IS THE RECOVERABLE ONE and it is handled by retrying rather
+                      than by explaining: the OFFLINE engine reports it for a pack that is not
+                      downloaded, while the NETWORK engine can usually serve the same language. So
+                      this hands over to `onLanguageUnavailable`, which mirrors the existing
+                      network -> offline fallback in the opposite direction. Only when that is
+                      exhausted does the designer get a sentence, and then it names the fix.
+                    */
+                    13 -> {
+                        onLanguageUnavailable()
+                        return
+                    }
+                    12 ->
+                        "This phone's speech recogniser does not support the language chosen above. " +
+                            "Pick another language, or type the answer in."
                     else ->
                         "Dictation stopped unexpectedly (code $error). Type the answer in, or try again."
                 }
@@ -299,27 +344,57 @@ internal fun DwDictationButton(
 
     fun listen(onDevice: Boolean) {
         release()
-        val built = buildRecognizer(onDevice) {
-            // The network engine could not reach its server. If the phone has an offline engine, go
-            // straight to it — once — rather than telling a designer in a courtyard that dictation
-            // does not work when in fact it does.
-            if (!retried && !onDevice && onDeviceAvailable()) {
-                retried = true
-                listen(onDevice = true)
-            } else {
-                release()
-                currentError(
-                    if (onDevice) {
-                        "The offline recogniser could not handle this language. Download the language " +
-                            "pack in the phone's speech settings, or type the answer in."
-                    } else {
-                        "Dictation on this phone needs a connection and there is none. Your keyboard's " +
-                            "own microphone may have an offline language pack; otherwise type the " +
-                            "answer in and dictate the rest later."
-                    }
-                )
-            }
-        }
+        val built = buildRecognizer(
+            onDevice,
+            onLanguageUnavailable = {
+                /*
+                  THE MIRROR OF THE NETWORK FALLBACK BELOW, and it is the half that was missing.
+
+                  The offline engine says a language is unavailable when its pack is not downloaded;
+                  the network engine usually serves that same language without one. So a designer who
+                  has a connection gets their dictation instead of an error, and the retry is capped
+                  by the SAME `retried` flag, so offline and language failures cannot bounce a request
+                  between the two engines.
+
+                  Where there is no network engine to fall back to — already on it, or the one retry
+                  spent — the sentence names the actual fix rather than suggesting another tap. It is
+                  the message that already existed for this case and, until the `13` branch above was
+                  written, could not be reached by it.
+                */
+                if (!retried && onDevice) {
+                    retried = true
+                    listen(onDevice = false)
+                } else {
+                    release()
+                    currentError(
+                        "The language chosen above is not installed on this phone. Download it in the " +
+                            "phone's speech or keyboard settings, choose another language, or type the " +
+                            "answer in."
+                    )
+                }
+            },
+            onNetworkFailure = {
+                // The network engine could not reach its server. If the phone has an offline engine,
+                // go straight to it — once — rather than telling a designer in a courtyard that
+                // dictation does not work when in fact it does.
+                if (!retried && !onDevice && onDeviceAvailable()) {
+                    retried = true
+                    listen(onDevice = true)
+                } else {
+                    release()
+                    currentError(
+                        if (onDevice) {
+                            "The offline recogniser could not handle this language. Download the " +
+                                "language pack in the phone's speech settings, or type the answer in."
+                        } else {
+                            "Dictation on this phone needs a connection and there is none. Your " +
+                                "keyboard's own microphone may have an offline language pack; " +
+                                "otherwise type the answer in and dictate the rest later."
+                        }
+                    )
+                }
+            },
+        )
         if (built == null) {
             currentError("This phone would not start its speech recogniser.")
             return
