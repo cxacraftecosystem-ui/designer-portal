@@ -2806,6 +2806,18 @@ private fun DashboardScreen(
         // read as one comparison rather than as two unrelated grids. Drawn only when the API sent it.
         MyContributionCard(mine = stats?.mine, onOpenMyActivity = onOpenMyActivity)
         RecentSubmissionsCard(stats = stats, onOpenRecord = onOpenRecord)
+        /*
+         * A DELIBERATE PLATFORM DIFFERENCE, written down rather than paraphrased across. The web
+         * dashboard has no artisan-only block and is not getting one: `Recent submissions` sits
+         * immediately above on a 1280px page carrying the recorder's name, the status badge and a
+         * link straight into /artisans/{id}/edit, so an artisan list there would be largely the same
+         * rows a second time — and a dashboard that prints one record twice under two headings is how
+         * a reader stops trusting either. The phone earns its version because its own Recent
+         * submissions card is compressed to fit 360dp, and because on Android every save returns
+         * HERE (see the `goDashboard()` calls on each form's `onDone`), so this block is genuinely
+         * the next thing under the researcher's thumb. If the web ever wants it, the honest form is a
+         * filter on the existing table, not a second table.
+         */
         if (recentArtisans.isNotEmpty()) {
             Text("Recent artisans", display = true, fontSize = 20.sp, color = MaterialTheme.colorScheme.onBackground)
             recentArtisans.take(6).forEach { artisan ->
