@@ -64,13 +64,14 @@ import java.util.zip.ZipInputStream
  * completely and still produce a short document, so it could not tell the two cases apart; the
  * claim being made is about the twenty-two stages a designer exports tonight.
  *
- * TWO FIGURES ARE ABSENT HERE AND THAT IS THE JVM, NOT THE CODE. The locator map rasterises from
+ * ONE FIGURE IS ABSENT HERE AND THAT IS THE JVM, NOT THE CODE. The locator map rasterises from
  * boundary geometry installed by `installReportBoundaryAssets`, which needs a `Context`; with no
  * source installed `BoundaryAssets.indiaRings()` is empty, `renderMapPng` returns null and
  * `DocxWriter.emitMap` records `map:india` as a dropped image instead of drawing it — the same
  * documented path a missing asset takes on a handset. Nothing below counts on the map, so the
  * populated document is measured one figure SHORT of what the phone writes, which makes the
- * assertions conservative rather than optimistic.
+ * assertions conservative rather than optimistic. The infographics are NOT affected: a native
+ * `c:chart` needs no bitmap, so they are in the package and the last test below insists on it.
  */
 class DocxContentTest {
 
