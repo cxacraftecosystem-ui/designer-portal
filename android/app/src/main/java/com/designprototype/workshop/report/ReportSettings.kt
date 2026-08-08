@@ -290,6 +290,13 @@ data class SettingSupport(val key: String, val reach: SettingReach, val note: St
  * carries and the report ignores, which a designer discovers — if ever — by comparing their file
  * with the office's. The test fails the build when the registry gains a key nobody decided about,
  * so the decision cannot be skipped by forgetting.
+ *
+ * WHAT THIS LEDGER CANNOT SEE, recorded here because it was the largest on-device gap and it has no
+ * row: the locator MAP and the front-page INFOGRAPHICS are not stage-20 switches at all. They are
+ * template sections — DCH_STANDARD, the default, carries both — so no entry below could ever have
+ * named them and a reader working down this list would have concluded the file was complete. They
+ * are built now; the map's artisan pins are the one part that is not, for a reason that is about the
+ * DATA on this handset and not the drawing (see `renderMap`).
  */
 val STAGE_20_SETTINGS: List<SettingSupport> = listOf(
     SettingSupport("templateId", SettingReach.APPLIED,
@@ -356,18 +363,94 @@ val STAGE_20_SETTINGS: List<SettingSupport> = listOf(
  * was cannot be quietly forgotten.
  */
 val UNSUPPORTED_SECTIONS: Map<SpecialSection, String> = mapOf(
-    SpecialSection.MAP to
-        "The map of the workshop's location and its artisans' home districts is not drawn on this " +
-            "device; that section is absent from this file and present in the office's copy.",
-    SpecialSection.CHART to
-        "The infographics this template places at the front are not drawn on this device. Their " +
-            "numbers are still in the tables.",
     SpecialSection.ANNEXURE_TRANSCRIPTS to
         "The recordings' transcripts are not appended on this device, although you asked for them. " +
             "The recordings are on this phone but their transcripts are not: workshop audio is " +
             "transcribed after it reaches the server. The office's copy of this report will carry " +
             "them.",
 )
+
+/**
+ * The same sections, as the NOUN PHRASE the file's own provenance line uses.
+ *
+ * Two wordings for one fact, and they are not redundant. [UNSUPPORTED_SECTIONS] is addressed to the
+ * designer standing at the export screen, in the second person, about a thing they just did. This
+ * one is addressed to whoever opens the document in an office next month and completes the sentence
+ * "The office's copy of this report also carries …", so it has to be a thing rather than an
+ * explanation. Both are keyed off the same enum, so a section that becomes renderable is deleted
+ * from both in one edit and neither can be left asserting a gap that has closed.
+ */
+private val UNSUPPORTED_SECTION_NAMES: Map<SpecialSection, String> = mapOf(
+    SpecialSection.ANNEXURE_TRANSCRIPTS to "the transcripts of the recordings",
+)
+
+/**
+ * Which of [template]'s special sections this build does not draw, in the template's own order.
+ *
+ * ONE WALK, TWO READERS — [reportWarnings] and [fieldCopyNote]. They were written separately at
+ * first and immediately disagreed about the transcript annexure, which every template carries and
+ * which prints nothing at all unless the designer asked for it: the warning was correctly silent and
+ * the note in the file was not, so a report nobody had asked transcripts for carried a line
+ * apologising for their absence.
+ *
+ * Driven by the sections the RESOLVED template actually carries, not by the stage-20 toggles: those
+ * switches only ever REMOVE a section, so a toggle turned on for a template that does not carry that
+ * annexure changes nothing on the server either and must not be reported here.
+ */
+internal fun unsupportedSectionsIn(
+    template: ReportTemplate,
+    settings: Map<String, JsonElement>?,
+): List<SpecialSection> {
+    val found = ArrayList<SpecialSection>()
+    for (section in template.sections) {
+        val special = section.special ?: continue
+        if (special !in UNSUPPORTED_SECTIONS) continue
+        if (special == SpecialSection.ANNEXURE_TRANSCRIPTS && !wantsTranscripts(null, settings)) continue
+        if (special !in found) found += special
+    }
+    return found
+}
+
+/**
+ * The cover's provenance line: where and when this file was made, and what the office's copy has
+ * that it does not.
+ *
+ * WHAT THIS ENDS. The officer handed the phone's PDF read it as THE report. Same cover, same running
+ * foot, a self-consistent contents page — and nothing anywhere in it said which of the two copies of
+ * that workshop was in their hands. `ReportScreen` exists partly so an office can match a delivered
+ * file against its export log, and if the two copies are ever compared, a section present in one and
+ * absent from the other with neither file admitting it looks like the designer altered the document.
+ * Offline it is worse: the export-log call is best-effort, so the log the office would check is
+ * empty.
+ *
+ * IT REPLACES the server's "Generated on <date>" in the same cover slot rather than being added
+ * beside it, and carries the same date. One provenance line where the office's copy has one; the
+ * whole of the divergence between the two lines is the fact that makes this one worth printing.
+ *
+ * IT IS NOT A WARNING AND MUST NOT READ AS ONE. `ReportPlan.warnings` are advisory, dismissible and
+ * shown beside the file — they belong to the act of generating and are gone by the time the document
+ * is read. This is a statement of fact about the file, addressed to its reader, and it shortens by
+ * itself as the sections above land: when [unsupportedSectionsIn] is empty it says only where and
+ * when the file was made.
+ *
+ * A COVER FOOTER LINE, not a heading, so it never enters the table of contents and never renumbers
+ * anything.
+ */
+fun fieldCopyNote(
+    template: ReportTemplate,
+    settings: Map<String, JsonElement>?,
+    generatedOn: String,
+): String {
+    val stamp = if (generatedOn.isBlank()) "" else " on $generatedOn"
+    val made = "Generated on a handset in the field$stamp."
+    val missing = unsupportedSectionsIn(template, settings).mapNotNull { UNSUPPORTED_SECTION_NAMES[it] }
+    if (missing.isEmpty()) return made
+    val listed = when (missing.size) {
+        1 -> missing[0]
+        else -> missing.dropLast(1).joinToString(", ") + " and " + missing.last()
+    }
+    return "$made The office's copy of this report also carries $listed."
+}
 
 /**
  * What to tell the designer about the file they are about to hand over.
@@ -401,15 +484,11 @@ fun reportWarnings(
             "the only one here that can. The Word document does use ${fonts.second}."
     }
 
-    // Driven by the sections the RESOLVED template actually carries, not by the toggles: the
-    // stage-20 switches only ever REMOVE a section, so a toggle turned on for a template that does
-    // not carry that annexure changes nothing on the server either and must not warn here.
-    for (section in template.sections) {
-        val special = section.special ?: continue
+    // [unsupportedSectionsIn] carries the "which sections" judgement, including the reason the
+    // transcript annexure is conditional: every template carries it and it prints nothing unless the
+    // designer asked for it, so warning unconditionally would put a false alarm on every export.
+    for (special in unsupportedSectionsIn(template, settings)) {
         val reason = UNSUPPORTED_SECTIONS[special] ?: continue
-        // The transcript annexure is carried by every template and prints nothing at all unless the
-        // designer asked for it, so warning unconditionally would put a false alarm on every export.
-        if (special == SpecialSection.ANNEXURE_TRANSCRIPTS && !wantsTranscripts(null, settings)) continue
         if (said.none { it == reason }) said += reason
     }
     return said

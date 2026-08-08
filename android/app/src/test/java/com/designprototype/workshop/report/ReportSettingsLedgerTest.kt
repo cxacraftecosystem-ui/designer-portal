@@ -148,12 +148,49 @@ class ReportSettingsLedgerTest {
                 "looks different: $said",
             said.any { it.contains("DCH_2019_LEGACY") },
         )
-        // And an id this build DOES know produces no substitution warning. (It still warns about
-        // the map and the figures, which this device does not draw — those are a different claim.)
+        // And an id this build DOES know produces no substitution warning. The map and the
+        // infographics used to warn here as well; both are drawn on this device now, so the only
+        // section left that can warn is the transcript annexure, and only when it was asked for.
         assertTrue(
             reportWarnings("DCH_STANDARD", reportTemplate("DCH_STANDARD"), null, "DOCX")
                 .none { it.contains("not available in this version") }
         )
+    }
+
+    @Test
+    fun `the map and the infographics are no longer disowned`() {
+        // Both are drawn on this device now. A file that carries the front-page figures AND a note
+        // saying it does not is worse than either alone — the same claim the annexures had to make
+        // when they landed.
+        val said = reportWarnings("DCH_STANDARD", reportTemplate("DCH_STANDARD"), null, "DOCX")
+        assertEquals(
+            "the warnings still disown a section this build draws: $said",
+            emptyList<String>(),
+            said.filter { it.contains("map") || it.contains("infographics") },
+        )
+    }
+
+    @Test
+    fun `the file's own provenance line names only what is genuinely missing`() {
+        val template = reportTemplate("DCH_STANDARD")
+        val asked = fieldCopyNote(
+            template,
+            mapOf("includeTranscripts" to kotlinx.serialization.json.JsonPrimitive(true)),
+            "04 March 2026",
+        )
+        assertTrue("the line must date the file: $asked", asked.contains("04 March 2026"))
+        assertTrue(
+            "a designer who asked for transcripts gets a file that says the office's copy has " +
+                "them: $asked",
+            asked.contains("also carries the transcripts of the recordings"),
+        )
+        // Unasked, the transcript annexure prints nothing on either surface, so there is no
+        // difference between the two copies to declare.
+        val unasked = fieldCopyNote(template, emptyMap(), "04 March 2026")
+        assertTrue("nothing is outstanding here: $unasked", !unasked.contains("also carries"))
+        assertTrue("and it still says which copy this is: $unasked", unasked.contains("handset"))
+        // With no timestamp it still names the surface rather than printing a dangling "on ".
+        assertEquals("Generated on a handset in the field.", fieldCopyNote(template, emptyMap(), ""))
     }
 
     @Test
