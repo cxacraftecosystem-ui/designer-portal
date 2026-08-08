@@ -102,6 +102,10 @@ class MediaCompleteRequest(APIModel):
     sizeBytes: int = Field(gt=0)
     objectKey: str = Field(min_length=1)
     bucket: str | None = None
+    #: ACCEPTED AND IGNORED. The stored URL is always derived from ``objectKey`` by the route (see
+    #: ``api/routes/media.complete_media_upload``); a caller-supplied one was a stored redirect
+    #: target. The field survives only because ``APIModel`` forbids extra keys and every installed
+    #: client sends it, so removing it would 422 uploads from phones that cannot be updated.
     url: str | None = None
     caption: str | None = None
     checksum: str | None = None

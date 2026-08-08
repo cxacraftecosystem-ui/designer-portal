@@ -81,11 +81,12 @@ async def _load() -> tuple[list[WorkshopRows], int, bool]:
     half minutes on the production link. The analysis itself is 0.6 ms; every millisecond here is
     the database.
 
-    The middle query is a sequential scan (`EXPLAIN ANALYZE`: 12.1 ms, 6,139 rows discarded) and
-    that is the right trade. `DwStageEntry` is indexed on `(designWorkshopId, entityKey)`, whose
-    leading column this query deliberately does not constrain, and an index on `entityKey` alone
-    would be a write cost on every stage save a designer makes in the field, to speed up a read
-    three admins make a month.
+    The middle query is served by `@@index([entityKey])`, which exists precisely for it — see the
+    rationale and the before/after measurements on the index itself in `prisma/schema.prisma`
+    (migration `20260808140000_dw_stage_entry_entity_key_index`). It is the one index on
+    `DwStageEntry` that does NOT lead with `designWorkshopId`, and it is here because this is the
+    one read in the design-workshop family whose cost grows with the ARCHIVE rather than with the
+    answer. The schema is the single source of truth for that trade; do not re-argue it here.
 
     DELETED WORKSHOPS ARE EXCLUDED AT THE WORKSHOP LEVEL, WHICH THE ENTRY FILTER CANNOT DO.
     `delete_design_workshop` is a soft delete that sets `DesignWorkshop.deletedAt` and touches

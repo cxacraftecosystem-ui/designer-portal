@@ -51,6 +51,7 @@ several thousand Aadhaar numbers, so it must not be the one place in the codebas
 unmasked as a side effect of being convenient.
 """
 
+import asyncio
 import csv
 import io
 import json
@@ -684,9 +685,18 @@ async def stream_dataset_ndjson(
 
     async def body() -> AsyncIterator[bytes]:
         async for rows in _stream_rows(dataset, where):
+            # OFF THE EVENT LOOP. Encoding is JSON serialisation and, when `presign` is on, one
+            # SigV4 signature per row — pure CPU, over a table `_stream_rows`'s own note says
+            # legitimately runs into five figures, on a single-worker web process. Run inline it
+            # queued every other request in the app behind an admin's export, including a
+            # designer's stage save from the field. `to_thread` per CHUNK, not per row, so the
+            # hand-off is paid once a page rather than once a record.
+            encoded = await asyncio.to_thread(
+                _encode_rows, rows, unmasked_viewer=viewer, presign=sign
+            )
             chunk = "".join(
                 json.dumps(payload, ensure_ascii=False, default=str) + "\n"
-                for payload in _encode_rows(rows, unmasked_viewer=viewer, presign=sign)
+                for payload in encoded
             )
             yield chunk.encode("utf-8")
 

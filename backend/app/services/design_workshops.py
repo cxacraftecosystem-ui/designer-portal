@@ -41,6 +41,7 @@ from app.core.db import db
 from app.core.deps import is_admin
 from app.services import rich_text
 from app.services.address import DISTRICTS_BY_STATE
+from app.services.concurrency import gather_reads
 from app.services.design_workshop_viewers import has_viewer_grant
 from app.services.designers import prefill_from_profile
 from app.services.report_annexures import annexure_warnings, attach_transcripts
@@ -68,6 +69,7 @@ from app.services.stage_schema import (
     validate_entry,
 )
 from app.services.workshop_transcripts import (
+    audio_references,
     enqueue_stage_transcriptions,
     load_transcript_items,
     wants_transcripts,
@@ -563,21 +565,48 @@ async def _artisan_id_behind(workshop_id: str, candidate: str) -> str | None:
     return str(linked) if linked else None
 
 
+#: The parent foreign keys :func:`_reference_photos` is allowed to group by.
+#:
+#: It interpolates the column name into SQL, so the name must come from here and not from the
+#: caller. Every value is also a ``media_field`` in :data:`REFERENCE_MODELS`; the guard below is
+#: what makes adding a model there fail loudly rather than interpolate an unreviewed name.
+_PHOTO_PARENT_COLUMNS = frozenset({"artisanId", "craftId", "productId", "toolId"})
+
+
 async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, str]:
-    """One photograph per record, in one query rather than one per row."""
+    """One photograph per record, in one query rather than one per row.
+
+    ONE PER PARENT, NOT ONE BUDGET SHARED BETWEEN THEM. This used to be a plain ``find_many`` with
+    ``order={"createdAt": "asc"}, take=len(ids) * 4`` — a single ceiling across every id — so a
+    roster of forty artisans read at most 160 image rows for all forty, and a handful of
+    long-documented artisans carrying twenty or thirty pictures each consumed the lot. The artisans
+    whose photographs were taken most recently then hydrated with ``photo`` empty, the report
+    printed a roster with faces missing for people whose portraits sat one join away, and re-saving
+    the stage never fixed it because the same rows won the budget every time. Nothing warned
+    anybody, which is why it survived: the document renders cleanly either way.
+
+    ``DISTINCT ON`` is what Postgres offers for exactly this shape and it is one round trip, which
+    matters because all three callers — the reference picker, ``hydrate_entries`` on the save path,
+    and the report's ``load_report_references`` — are on a link measured at 756ms a hop. The
+    ``createdAt, id`` tiebreak keeps the answer STABLE: two records photographed in the same second
+    would otherwise swap portraits between two renders of the same report.
+    """
     if not spec.media_field or not ids:
         return {}
-    rows = await db.mediafile.find_many(
-        where={"mediaType": "IMAGE", spec.media_field: {"in": ids}},
-        order={"createdAt": "asc"},
-        take=len(ids) * 4,
+    column = spec.media_field
+    if column not in _PHOTO_PARENT_COLUMNS:
+        # Never reached from REFERENCE_MODELS as it stands. It is here so that a model added with a
+        # new media_field fails loudly on the first call instead of interpolating an unreviewed
+        # name into the statement below.
+        raise ValueError(f"Unsupported reference photo column: {column}")
+    rows = await db.query_raw(
+        f'SELECT DISTINCT ON (m."{column}") m."{column}" AS parent, m."id" AS id '
+        f'FROM "MediaFile" m '
+        f'WHERE m."mediaType" = \'IMAGE\'::"MediaType" AND m."{column}" = ANY($1::text[]) '
+        f'ORDER BY m."{column}", m."createdAt" ASC, m."id" ASC',
+        ids,
     )
-    out: dict[str, str] = {}
-    for row in rows:
-        parent = getattr(row, spec.media_field, None)
-        if parent and parent not in out:
-            out[str(parent)] = row.id
-    return out
+    return {str(row["parent"]): str(row["id"]) for row in rows if row.get("parent")}
 
 
 async def _in_record_options(record: Any, entity: EntitySpec, search: str | None,
@@ -1078,7 +1107,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # says "that file is the artisan's spoken explanation for stage 5". It is idempotent (a clip
     # that has a transcript, or a job already queued, is skipped) and it never raises, so a queue
     # that is unavailable cannot fail a designer's stage save. See services/workshop_transcripts.py.
-    queued = await enqueue_stage_transcriptions(rows, user.id)
+    queued = await enqueue_stage_transcriptions(rows, user.id, viewer=user)
     return {
         "stageKey": spec.key,
         "saved": len(creates) + len(updates),
@@ -1278,6 +1307,29 @@ def _reference_place(row: Any) -> tuple[str, str, str]:
     return (village or str(getattr(row, "place", "") or ""), district, state)
 
 
+async def _load_one_reference_model(
+    spec: ReferenceModel, ids: set[str], model: str
+) -> tuple[list[Any], dict[str, str]]:
+    """One reference model's rows and their photographs, or ``([], {})`` if it could not be read.
+
+    Split out of :func:`load_report_references` so the three models can be gathered. The failure
+    boundary is deliberately HERE, around one model's pair of reads, exactly where the loop it
+    replaced put it.
+    """
+    try:
+        rows = await getattr(db, spec.delegate).find_many(
+            where={"id": {"in": sorted(ids)}}, include=spec.include or None
+        )
+        return rows, await _reference_photos(spec, [r.id for r in rows])
+    except Exception:
+        # Blind, and it has to be: Prisma raises a different class for a delegate whose table
+        # has been renamed, a connection that dropped mid-report and a record whose include
+        # no longer matches the schema, and the answer to all three is the same. One
+        # unjoinable model must not lose a report that is the end of two weeks of fieldwork.
+        logger.exception("Could not load %s references for a workshop report", model)
+        return [], {}
+
+
 async def load_report_references(entries: list[Any]) -> dict[str, ReferencedRecord]:
     """Everything the report needs about the records its REF fields point AT, in one query each.
 
@@ -1291,27 +1343,27 @@ async def load_report_references(entries: list[Any]) -> dict[str, ReferencedReco
     * WHERE AN ARTISAN LIVES. No roster field holds a district — the participant row records a
       village as free text — so the map of who came from where cannot be drawn from the entries.
 
-    One ``find_many`` per model, not one per row: a roster of forty artisans is one query. Failure
+    One ``find_many`` per model, not one per row: a roster of forty artisans is one query. The
+    three models are then GATHERED rather than walked in sequence — see the comment below. Failure
     of any single model is swallowed to a log line rather than raised, because a report is the end
     of two weeks of fieldwork and losing it entirely over a picture that could not be joined is
     the wrong trade — the map loses pins, the caption says how many, and the document still prints.
     """
     wanted = reference_ids(entries)
     out: dict[str, ReferencedRecord] = {}
-    for model, ids in wanted.items():
+    # THE THREE MODELS ARE GATHERED, NOT LOOPED. Each is two dependent reads (the rows, then one
+    # photograph per row) and nothing in one model's pair informs another's, so sequentially this
+    # was up to six round trips at ~756ms each on the cross-region link this deployment runs
+    # (`services/concurrency`) for work the graph allows in two. The `try/except` stays INSIDE the
+    # per-model coroutine, which is what keeps the documented guarantee intact: one unjoinable
+    # model still loses only its own references, never the report.
+    models = sorted(wanted)
+    results = await gather_reads(
+        *(_load_one_reference_model(REFERENCE_MODELS[model], wanted[model], model)
+          for model in models)
+    )
+    for model, (rows, photos) in zip(models, results, strict=True):
         spec = REFERENCE_MODELS[model]
-        try:
-            rows = await getattr(db, spec.delegate).find_many(
-                where={"id": {"in": sorted(ids)}}, include=spec.include or None
-            )
-            photos = await _reference_photos(spec, [r.id for r in rows])
-        except Exception:
-            # Blind, and it has to be: Prisma raises a different class for a delegate whose table
-            # has been renamed, a connection that dropped mid-report and a record whose include
-            # no longer matches the schema, and the answer to all three is the same. One
-            # unjoinable model must not lose a report that is the end of two weeks of fieldwork.
-            logger.exception("Could not load %s references for a workshop report", model)
-            continue
         for row in rows:
             place, district, state = _reference_place(row)
             out[str(row.id)] = ReferencedRecord(
@@ -1386,12 +1438,24 @@ class MediaIndex:
 
     The object keys are held rather than the bytes until :meth:`prefetch` is called, so a
     template that excludes photographs never pays to download forty of them.
+
+    ``withheld`` is every media id the record NAMED that the lookup did not hand back — either the
+    row is gone or the caller is not entitled to that uploader's files. The renderer cannot tell
+    the difference and neither can this class; what matters is that the caller turns the count into
+    a warning instead of printing a report that is quietly short of photographs.
     """
 
-    def __init__(self, refs: dict[str, ImageRef], keys: dict[str, str]) -> None:
+    def __init__(
+        self,
+        refs: dict[str, ImageRef],
+        keys: dict[str, str],
+        *,
+        withheld: tuple[str, ...] = (),
+    ) -> None:
         self._refs = refs
         self._keys = keys
         self._blobs: dict[str, bytes | None] = {}
+        self.withheld = withheld
 
     def ref(self, media_id: str) -> ImageRef | None:
         return self._refs.get(media_id)
@@ -1425,8 +1489,10 @@ class MediaIndex:
                 self._blobs[image.source] = None
 
 
-async def media_resolver(entries: list[Any], *, extra_ids: Iterable[str] = ()) -> MediaIndex:
-    """One query for every image in the record.
+async def media_resolver(
+    entries: list[Any], *, viewer: Any, extra_ids: Iterable[str] = ()
+) -> MediaIndex:
+    """One query for every image in the record the caller is entitled to be handed.
 
     ``extra_ids`` are photographs that belong to a record the report REFERENCES rather than to a
     field of the record itself — an artisan's portrait behind a roster row, the catalogue picture
@@ -1434,12 +1500,31 @@ async def media_resolver(entries: list[Any], *, extra_ids: Iterable[str] = ()) -
     fields because they are not IN the entries at all; :func:`attach_report_references` is what
     discovers them, and passing them here is what stops the builder placing an image the resolver
     has never heard of and the renderer therefore drops without a word.
+
+    ``viewer`` IS REQUIRED, AND THAT IS THE FIX FOR A REAL LEAK. The ids come from stage data,
+    which is whatever a client wrote there: ``GET /api/media`` hands every signed-in account the id
+    of every photograph in the repository while deliberately stripping the URL, so pasting a
+    stranger's id into an IMAGE field and pressing "Generate report" used to put their photograph —
+    an artisan's portrait, a photographed Aadhaar card — into the .docx that came back. Embedding
+    the bytes in a document the caller downloads IS taking the file, so the predicate is the one
+    every other download surface uses (``export.py``, ``data_browser.py``):
+    ``owned_or_granted_where(user, owner_field="uploadedById")``. It is a keyword with NO default
+    so that a future call site cannot resolve media by forgetting to ask who is asking.
+
+    The filter is AND-composed under the id list rather than merged into it, because it is an
+    ``OR`` of its own and a flat merge would let it overwrite the ids.
     """
+    from app.services.records import owned_or_granted_where
+
     ids = _media_ids(entries) | {str(i) for i in extra_ids if i}
     if not ids:
         return MediaIndex({}, {})
 
-    rows = await db.mediafile.find_many(where={"id": {"in": sorted(ids)}})
+    where: dict[str, Any] = {"id": {"in": sorted(ids)}}
+    entitled = await owned_or_granted_where(viewer, owner_field="uploadedById")
+    if entitled:
+        where = {"AND": [where, entitled]}
+    rows = await db.mediafile.find_many(where=where)
     refs: dict[str, ImageRef] = {}
     keys: dict[str, str] = {}
     for row in rows:
@@ -1457,7 +1542,10 @@ async def media_resolver(entries: list[Any], *, extra_ids: Iterable[str] = ()) -
             mime_type=row.mimeType or "image/jpeg",
         )
         keys[row.id] = row.objectKey
-    return MediaIndex(refs, keys)
+    # Asked for and not returned: deleted, or another uploader's file this caller may not take.
+    # One query cannot tell those apart and a second one would cost a cross-region round trip on
+    # the path `_report_inputs` exists to keep short, so the caller's warning names neither.
+    return MediaIndex(refs, keys, withheld=tuple(sorted(ids - {row.id for row in rows})))
 
 
 def _int_or_zero(value: Any) -> int:
@@ -1468,7 +1556,7 @@ def _int_or_zero(value: Any) -> int:
 
 
 async def attach_report_transcripts(
-    data: WorkshopData, entries: list[Any], *, requested: bool | None = None
+    data: WorkshopData, entries: list[Any], *, viewer: Any, requested: bool | None = None
 ) -> list[str]:
     """Load the workshop's transcripts onto ``data`` when this report is meant to carry them.
 
@@ -1480,14 +1568,26 @@ async def attach_report_transcripts(
     wins if it said anything, the saved stage-20 settings otherwise, and OFF when neither spoke.
     Nothing is loaded at all in the off case, so a deployment that never turns this on does not pay
     a query for it.
+
+    ``viewer`` gates which recordings may be read at all — see :func:`media_resolver` for why an
+    AUDIO id on a stage is not proof the caller may have the file. A clip that is refused is
+    reported as a warning rather than dropped, because an annexure two recordings short looks
+    exactly like two recordings that were never made.
     """
     if not wants_transcripts(requested, data.singleton("REPORT_GENERATION")):
         return []
-    items = await load_transcript_items(entries)
+    items = await load_transcript_items(entries, viewer=viewer)
+    warnings: list[str] = []
+    refused = len(audio_references(entries)) - len(items)
+    if refused > 0:
+        warnings.append(
+            f"{refused} recording(s) attached to this workshop could not be included in the "
+            "transcript annexure: they were uploaded by another account, or the file is gone."
+        )
     if not items:
-        return []
+        return warnings
     attach_transcripts(data, items)
-    return annexure_warnings(items)
+    return warnings + annexure_warnings(items)
 
 
 def resolve_template_id(requested: Any, settings: Mapping[str, Any] | None, record: Any) -> str:
@@ -1782,14 +1882,29 @@ async def attach_district_anchors(data: WorkshopData) -> int:
     Flattened to a plain dict here rather than passed as the object, because ``report_builder`` is
     ALSO the on-device builder: it may not query and may not import something that can. Returns
     the number of districts placed, which the caller can log.
+
+    CAPPED, THE WAY ``/map`` IS. There is no index that can serve this predicate — the schema
+    refuses one on ``district`` on purpose (``prisma/schema.prisma``) — so the read is a scan whose
+    cost is the size of the archive rather than the size of the workshop. ``/map`` answers a
+    20,000-pin repository with a coarser map; before this cap the report path answered it by
+    materialising 20,000 Prisma models on the single-worker box, which ``api/routes/export.py``
+    describes as one unbounded ``find_many`` away from an OOM. Degrading is the right failure: an
+    anchor is a district's AVERAGE position, so the districts that lose rows off the end of the cap
+    keep the atlas seed or a slightly coarser learned point, and none of them loses its pin.
+
+    The caller is expected to skip this load entirely when the template draws no map — four of the
+    six do not. See ``_report_inputs``.
     """
-    from app.services.geography import DistrictAnchors, district_key
+    from app.services.geography import MAX_ANCHOR_ROWS, DistrictAnchors, district_key
 
     anchors = DistrictAnchors()
     anchors.seed_from_atlas()
     rows = await db.location.find_many(
         where={"subjectLatitude": {"not": None}, "district": {"not": None}},
+        # A STABLE ORDER, because the read is capped: without one, two reports generated a minute
+        # apart could learn from two different slices and place the same district differently.
         order={"id": "asc"},
+        take=MAX_ANCHOR_ROWS,
     )
     anchors.learn(rows or [])
 
