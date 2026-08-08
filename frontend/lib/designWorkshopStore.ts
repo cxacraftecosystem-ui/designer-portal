@@ -112,7 +112,7 @@ import { uploadMediaBatch } from "@/lib/media";
 // wrong one either strands a queue for ever or replays a rejection until somebody clears storage.
 // `isUnreachable`, NOT `isTransient`: the latter answers "is it worth retrying" and says yes to
 // every 5xx, which is how a stage the server had permanently refused was reported as a lost signal.
-import { isUnreachable } from "@/lib/offline";
+import { isSchemaRefusal, isUnreachable } from "@/lib/offline";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Constants
@@ -2165,13 +2165,35 @@ async function runSync(): Promise<DwSyncResult> {
           */
           const answered = error instanceof ApiError;
           if (!answered || error.status === 408 || error.status === 429 || error.status === 409) throw error;
+          /*
+            A SCHEMA REFUSAL IS NOT THE DESIGNER'S FAULT, AND MUST NOT BE REPORTED AS ONE.
+
+            One sentence used to cover every refusal the server answered with, and it asserted a
+            cause — "the answer that caused it". That is right for a field the validator rejected
+            and wrong for a payload the server could not parse at all, where the client is speaking
+            a dialect the server does not know. `APIModel` is `extra="forbid"`, so any key a newer
+            client adds produces exactly this shape: it happened for real on 2026-08-08, when a
+            client sent the then-unknown `merge` and every stage came back
+            "merge: Extra inputs are not permitted".
+
+            The old sentence then sent the designer to do something impossible — open the stage,
+            read every field, find nothing wrong, press Try again, get the same sentence — for ever.
+            Telling somebody to correct an answer when nothing they can reach is wrong is how an app
+            teaches people that its warnings are noise.
+          */
+          const schemaRefusal = isSchemaRefusal(error);
           await noteStageFailure(
             draft.localId,
             stageKey,
             failure(
-              `The repository refused stage “${stageKey}”: ${error.message} It is still on this device and nothing has been ` +
-                "thrown away, but it will keep being refused until the answer that caused it is corrected — this is not a " +
-                "connection problem. Open the stage, then use Try again.",
+              schemaRefusal
+                ? `The repository could not read what this copy of the app sent for stage “${stageKey}”: ${error.message} ` +
+                  "Nothing you typed is wrong and nothing has been thrown away — this app and the repository are out of " +
+                  "step, and no edit to the stage will clear it. Your work is safe on this device until one of the two is " +
+                  "updated. Tell whoever runs the repository if it keeps happening."
+                : `The repository refused stage “${stageKey}”: ${error.message} It is still on this device and nothing has been ` +
+                  "thrown away, but it will keep being refused until the answer that caused it is corrected — this is not a " +
+                  "connection problem. Open the stage, then use Try again.",
               true,
               (stage.failure?.attempts ?? 0) + 1
             )

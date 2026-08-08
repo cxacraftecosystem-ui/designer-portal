@@ -263,6 +263,37 @@ export function isTransient(error: unknown): boolean {
  * pass as offline and returned to the same refusal on every future connection. Following `cause`
  * costs nothing for the errors that have none.
  */
+/**
+ * Did the server refuse the SHAPE of the request rather than anything a person typed?
+ *
+ * THE THIRD CLASSIFICATION QUESTION, and it lives here beside the other two for the reason the note
+ * above {@link isUnreachable} gives: one rule, imported, never restated. {@link isTransient} asks
+ * "is it worth trying again", {@link isUnreachable} asks "did the server answer at all", and this
+ * asks "can the person reading the message do anything about it".
+ *
+ * `APIModel` is `extra="forbid"`, so a client that sends a key the server does not know gets a 422
+ * whose body names it exactly:
+ *
+ *     {"detail":[{"type":"extra_forbidden","loc":["body","entries",0,"merge"], …}]}
+ *
+ * `type` is matched rather than the message, because the message is prose that may be reworded and
+ * translated while the discriminator is part of pydantic's contract.
+ *
+ * IT IS NOT A HYPOTHETICAL. On 2026-08-08 a client sent the then-new `merge` flag to an API that
+ * predated it, and every stage save came back refused with "merge: Extra inputs are not permitted"
+ * — under a banner telling the designer to correct the answer that caused it. There was no such
+ * answer. The clients and the server are deployed on different days by different people: a handset
+ * updates when it next sees wifi, the API when somebody deploys it, so a client running ahead of
+ * the server is an ordinary state here rather than a mistake, and it deserves a sentence that says
+ * so.
+ */
+export function isSchemaRefusal(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 422) return false;
+  const detail = (error.payload as { detail?: unknown } | null | undefined)?.detail;
+  if (!Array.isArray(detail)) return false;
+  return detail.some((entry) => (entry as { type?: unknown } | null)?.type === "extra_forbidden");
+}
+
 export function isUnreachable(error: unknown, depth = 0): boolean {
   if (error instanceof ApiError) return error.status === 408;
   // Bounded because `cause` is an ordinary property and nothing stops it pointing at its own error.
