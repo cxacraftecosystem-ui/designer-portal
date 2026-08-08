@@ -124,6 +124,40 @@ test("a factor the server would read as infinite is refused rather than printed"
   expect(deriveValue(amount, { quantity: "nan", rate: "2" })).toBeNull();
 });
 
+test("every control that can hold a derived field actually draws the computed value", () => {
+  /*
+   * A DEFINITION IS NOT A USE, and this module was half-unused for exactly that reason.
+   *
+   * `FieldInput` draws numbers in TWO controls, not one: `INT | DECIMAL | PERCENT` share a
+   * `type="number"` input, and MONEY has its own `type="text"` one — because a money value is a
+   * STRING on the wire and a number input normalises "1250.10" to "1250.1" the moment it is focused.
+   * The derived placeholder was written into the first and not the second. FOUR of the registry's
+   * five derived fields are MONEY (`prototypeCostLine.amount`, `costMaterialLine.amount`,
+   * `costLabourLine.amount`, `costSheet.totalCost`), so `deriveValue` was reached for `durationDays`
+   * alone, and a designer reading "Derived as persons × days × rate" under a cost line watched the
+   * box stay empty however carefully they filled the row. The handset had it right all along —
+   * `FieldRenderer` passes `rowValues` to MONEY along with the other three.
+   *
+   * A SOURCE CHECK RATHER THAN A RENDER, deliberately. Mounting `FieldInput` needs a DOM and a React
+   * renderer, which is the difference between this file running in two seconds with no server and
+   * being a browser spec nobody runs while they are working. The claim being pinned is structural —
+   * "this branch consults the module" — and that is a claim the source can answer. The same shape as
+   * the backend's own guard against a sixth write route forgetting its gate.
+   */
+  const source = readFileSync(join(__dirname, "..", "components", "designworkshop", "FieldInput.tsx"), "utf8");
+  const branchAfter = (marker: string) => {
+    const start = source.indexOf(marker);
+    expect(start, `${marker} not found — has FieldInput been restructured?`).toBeGreaterThan(-1);
+    const end = source.indexOf('case "', start + marker.length);
+    return source.slice(start, end === -1 ? undefined : end);
+  };
+  // `case "PERCENT":` and not `case "INT":` — INT and DECIMAL fall THROUGH to it, so PERCENT is the
+  // label the shared body actually hangs off. Anchoring on INT would slice at `case "DECIMAL":` and
+  // find an empty branch, which is a test that fails for a reason unrelated to what it is asking.
+  expect(branchAfter('case "PERCENT":')).toContain("derivedPlaceholder(field, value, row)");
+  expect(branchAfter('case "MONEY":')).toContain("derivedPlaceholder(field, value, row)");
+});
+
 test("isDerived answers for the field, not for the row", () => {
   // `FieldInput` asks this before it asks for a value: a field that computes itself shows the
   // computed figure as a placeholder while the box is empty, and an ordinary one must not.
