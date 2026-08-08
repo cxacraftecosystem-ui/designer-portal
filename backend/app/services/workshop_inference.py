@@ -53,9 +53,10 @@ workshop is the authority on its own workshop.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Iterable
+from typing import Any
 
 from app.core.db import db
 from app.services.concurrency import gather_reads
@@ -385,10 +386,10 @@ async def run_ladder() -> LadderRun:
         "craftId": set(),
     }
     for row in media:
-        for column in media_parent_ids:
+        for column, seen in media_parent_ids.items():
             value = getattr(row, column, None)
             if value:
-                media_parent_ids[column].add(value)
+                seen.add(value)
     # A process names its parent product, which is where its workshop comes from when it has one.
     process_product_ids = {row.productId for row in processes if getattr(row, "productId", None)}
     # THE ONE PARENT TYPE WITH A WORKSHOP AND NO COLUMN ON MediaFile. A clip attached to a Process

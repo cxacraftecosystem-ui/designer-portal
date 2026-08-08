@@ -66,9 +66,10 @@ assert the two lists agree exactly, so neither can drift alone.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from app.services.address import (
     INDIAN_STATES_AND_UNION_TERRITORIES,

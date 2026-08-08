@@ -241,7 +241,7 @@ def test_the_adopted_set_matches_the_registry_enum():
     from app.services.stage_schema import ENUMS
 
     tokens = set(ENUMS["ADOPTION_STATUS"])
-    assert ADOPTED_STATUSES <= tokens
+    assert tokens >= ADOPTED_STATUSES
     assert tokens - ADOPTED_STATUSES == {"TRIAL", "NOT_ADOPTED", "UNKNOWN"}, (
         "ADOPTION_STATUS has gained a token that workshop_analytics does not classify, so it is "
         "silently falling out of every adoption rate"

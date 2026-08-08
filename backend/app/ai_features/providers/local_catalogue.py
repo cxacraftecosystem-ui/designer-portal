@@ -26,9 +26,9 @@ the provider most likely to be running on the 1 GiB box.
 
 import csv
 import json
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Iterator, Sequence
 from typing import Any
 
 from app.ai_features.errors import ProviderNotConfigured
@@ -68,7 +68,7 @@ class LocalCatalogueProvider(MarketResearchProvider):
         brief: ResearchBrief,
         deadline: Deadline,
     ) -> tuple[RawListing, ...]:
-        from app.ai_features.market_research import content_words  # noqa: PLC0415 - avoids a cycle
+        from app.ai_features.market_research import content_words  # avoids a cycle
 
         capability = Capability.MARKET_RESEARCH
         path = self._path(capability)

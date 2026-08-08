@@ -1142,8 +1142,7 @@ def _build_only(data: Any, template_id: str, resolver: Any, record: Any) -> tupl
 
     from app.services.design_workshops import report_meta
     from app.services.report_builder import build_report
-    from app.services.report_templates import apply_report_settings
-    from app.services.report_templates import template as get_template
+    from app.services.report_templates import apply_report_settings, template as get_template
     from app.services.report_theme import resolve_accent, resolve_font, theme_from_accent
 
     settings = data.singleton("REPORT_GENERATION")

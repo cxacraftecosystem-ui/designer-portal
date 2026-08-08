@@ -802,8 +802,8 @@ class PdfRenderer:
                 lab = self._wrap(runs_of(label, bold=True), label_w - 3 * MM,
                                  self.base_size - 0.6)
                 val = self._wrap(runs_of(value), self.text_w - label_w - 3 * MM, self.base_size)
-                info_h += max(sum(l.height for l in lab),
-                              sum(l.height for l in val)) + 1.8 * MM
+                info_h += max(sum(ln.height for ln in lab),
+                              sum(ln.height for ln in val)) + 1.8 * MM
             info_h += 2.4 * MM
 
         gaps = (18 + 8 + 14 + 3 + 8 + 6) * MM

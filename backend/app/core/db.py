@@ -3,9 +3,8 @@ import logging
 from contextlib import suppress
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from prisma import Prisma
-
 from app.core.config import get_settings
+from prisma import Prisma
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +83,7 @@ async def connect_db() -> None:
         try:
             await db.connect()
             return
-        except Exception as exc:  # noqa: BLE001 - any connect failure should back off, not crash-loop
+        except Exception as exc:  # any connect failure should back off, not crash-loop
             if attempt == attempts:
                 raise
             logger.warning(

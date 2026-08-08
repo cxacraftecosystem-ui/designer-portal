@@ -6,10 +6,9 @@ free-text query, and that every active filter narrows rather than widens.
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from fastapi import HTTPException
 
 from app.services.record_filters import (
@@ -113,7 +112,7 @@ def test_place_reaches_the_buckets_that_have_the_column_and_no_others():
 
 
 def test_filters_compose_rather_than_replace_one_another():
-    when = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    when = datetime(2026, 7, 1, tzinfo=UTC)
     wheres = asyncio.run(build_record_wheres(
         ADMIN, q="cane", craft_id="c1", place="Bareilly", date_from=when
     ))
@@ -124,7 +123,7 @@ def test_filters_compose_rather_than_replace_one_another():
 
 
 def test_the_workshop_date_range_falls_back_to_the_legacy_column():
-    when = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    when = datetime(2026, 7, 1, tzinfo=UTC)
     wheres = asyncio.run(build_record_wheres(ADMIN, date_from=when))
     clause = wheres["workshops"]["AND"][-1]
     assert clause == {"OR": [{"startDate": {"gte": when}}, {"startDate": None, "date": {"gte": when}}]}
@@ -133,7 +132,7 @@ def test_the_workshop_date_range_falls_back_to_the_legacy_column():
 def test_artisans_are_inside_the_date_range_too():
     # Artisans were the one bucket the range never reached, which read as the filter being broken
     # rather than as artisans being exempt.
-    when = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    when = datetime(2026, 7, 1, tzinfo=UTC)
     wheres = asyncio.run(build_record_wheres(ADMIN, date_from=when))
     assert wheres["artisans"]["createdAt"] == {"gte": when}
 

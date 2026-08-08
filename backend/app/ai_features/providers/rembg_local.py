@@ -91,7 +91,7 @@ class RembgLocalProvider(BackgroundRemovalProvider, ForegroundSeparationProvider
         )
 
     def _run_rembg(self, image: ImagePayload, capability: Capability, *, only_mask: bool) -> bytes:
-        from rembg import remove  # noqa: PLC0415 - deliberate: rembg is an optional dependency
+        from rembg import remove  # deliberate: rembg is an optional dependency
 
         session = self._session(capability)
         try:
@@ -142,7 +142,7 @@ class RembgLocalProvider(BackgroundRemovalProvider, ForegroundSeparationProvider
                 os.environ.setdefault("U2NET_HOME", self.settings.local_model_dir)
 
             try:
-                from rembg import new_session  # noqa: PLC0415 - deliberate: optional dependency
+                from rembg import new_session  # deliberate: optional dependency
             except ImportError as exc:
                 raise DependencyMissing(
                     f"rembg is not installed: {exc}",

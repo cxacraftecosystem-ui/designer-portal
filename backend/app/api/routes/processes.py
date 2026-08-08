@@ -92,7 +92,7 @@ async def _sync_steps(process_id: str, steps: list[ProcessStepInput]) -> None:
     to_create: list[dict[str, Any]] = []
     to_update: list[tuple[str, dict[str, Any]]] = []
     for index, step in enumerate(steps):
-        order = step.sortOrder if step.sortOrder else index + 1
+        order = step.sortOrder or index + 1
         notes = (step.notes or "").strip() or None
         current = by_id.get(step.id) if step.id else None
         if current is not None:

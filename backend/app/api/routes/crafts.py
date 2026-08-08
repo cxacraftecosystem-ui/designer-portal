@@ -9,8 +9,8 @@ from app.core.deps import (
     get_current_user,
     require_craft_manager,
 )
-from app.services.access import guard_record_edit
 from app.schemas.records import CraftCreate, CraftUpdate
+from app.services.access import guard_record_edit
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import (
     Relation,
@@ -21,10 +21,10 @@ from app.services.records import (
     hydrate_relations,
     include_of,
     merge_field_provenance,
+    public_encode,
     require_record,
     resubmit_status,
 )
-from app.services.records import public_encode
 from app.services.workshop_access import (
     enforce_workshop_submission,
     link_workshop_craft,

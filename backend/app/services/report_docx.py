@@ -383,7 +383,7 @@ class DocxWriter:
         """
         cached = self._rid_by_source.get(image.source)
         if cached is not None:
-            for name, data, mime, rid in self._media:
+            for _name, data, _mime, rid in self._media:
                 if rid == cached:
                     probed = probe_image_size(data)
                     w, h = self._display_size(image, probed)

@@ -86,7 +86,7 @@ def _jpeg(width: int, height: int) -> bytes:
     """A JPEG header far enough along to carry a real SOF0 frame size."""
     return (
         b"\xff\xd8"
-        + b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00" + b"\x01\x01\x00" + b"\x00\x01"
+         b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00" + b"\x01\x01\x00" + b"\x00\x01"
         + b"\x00\x01" + b"\x00\x00"
         + b"\xff\xc0" + struct.pack(">H", 17) + b"\x08"
         + struct.pack(">HH", height, width) + b"\x03" + b"\x01\x11\x00\x02\x11\x01\x03\x11\x01"

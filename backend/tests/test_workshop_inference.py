@@ -130,7 +130,8 @@ def test_an_end_before_the_start_is_read_as_a_single_day_not_reversed():
 
 def test_a_naive_stamp_does_not_raise_when_compared_with_an_aware_window():
     """One legacy row with a naive stamp must not take the whole admin report down."""
-    [window] = build_windows([FakeWorkshop("w1", startDate=datetime(2026, 6, 17), endDate=None)])
+    # The missing tzinfo below is the whole point of the test: it IS the legacy row.
+    [window] = build_windows([FakeWorkshop("w1", startDate=datetime(2026, 6, 17), endDate=None)])  # noqa: DTZ001
     assert window.contains(at(17, 6))
 
 

@@ -53,6 +53,9 @@ class DwParentGroupTest {
 
     // ── The registry, cut to the two shapes that declare a parent ────────────────────────────────
 
+    /** Matches the app's own decoder: the registry carries keys the DTOs here do not model. */
+    private val registryJson = Json { ignoreUnknownKeys = true }
+
     private fun text(key: String, label: String, role: String = "TABLE_COLUMN") =
         FieldDto(key = key, label = label, type = "TEXT", reportRole = role)
 
@@ -737,7 +740,7 @@ class DwParentGroupTest {
                 File(dir, "android/app/src/main/assets/design-workshop-schema.json"),
             )) {
                 if (candidate.isFile) {
-                    return Json { ignoreUnknownKeys = true }
+                    return registryJson
                         .decodeFromString(SchemaResponse.serializer(), candidate.readText())
                 }
             }

@@ -30,12 +30,12 @@ from app.ai_features import (
     ProviderNotConfigured,
     UnknownProvider,
     UnsupportedImageType,
+    registry,
 )
-from app.ai_features import registry
 from app.ai_features.imaging import load_source, sniff
 from app.ai_features.probe import capability_status, format_probe, probe
 from app.ai_features.runtime import Deadline, reset_warn_once_cache, warn_once
-from app.ai_features.settings import AiFeatureSettings, ENV_VARS, build_settings
+from app.ai_features.settings import ENV_VARS, AiFeatureSettings, build_settings
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -94,7 +94,7 @@ def _jpeg(width: int = 20, height: int = 10) -> bytes:
     """Enough of a JPEG for the header sniffer: SOI, a padded APP0, then an SOF0 frame."""
     return (
         b"\xff\xd8"
-        + b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00" + b"\x00" * 9
+         b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00" + b"\x00" * 9
         + b"\xff\xc0" + struct.pack(">H", 11) + b"\x08" + struct.pack(">HH", height, width) + b"\x01"
         + b"\xff\xd9"
     )
@@ -138,6 +138,7 @@ def test_importing_the_package_does_not_pull_in_a_heavy_dependency() -> None:
         cwd=BACKEND_ROOT,
         capture_output=True,
         text=True,
+        check=False,
         timeout=120,
     )
     assert completed.returncode == 0, completed.stderr
@@ -196,7 +197,7 @@ def test_every_variable_the_code_reads_is_documented() -> None:
 
 
 def test_settings_survive_every_variable_being_set_at_once() -> None:
-    settings = build_settings({name: "1" for name in ENV_VARS})
+    settings = build_settings(dict.fromkeys(ENV_VARS, "1"))
     # "1" is nonsense for most of them, so the point is that it produces notes rather than raising.
     assert settings.enabled is True
     assert settings.notes

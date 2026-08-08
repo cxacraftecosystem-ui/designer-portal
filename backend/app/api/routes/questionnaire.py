@@ -710,7 +710,7 @@ async def _derived_completed_sections(
         # An interview carries its own ``workshopId`` foreign key, so it takes the ordinary branch of
         # the shared clause builder rather than the workshop-table one.
         clause = workshop_clause(ids, include_unassigned)
-        interview_where.setdefault("AND", []).append(clause if clause else {"id": {"in": []}})
+        interview_where.setdefault("AND", []).append(clause or {"id": {"in": []}})
     questions, sections, interviews = await gather_reads(
         db.questionnairequestion.find_many(),
         db.questionnairesection.find_many(),

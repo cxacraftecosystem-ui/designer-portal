@@ -18,8 +18,8 @@ import asyncio
 import sys
 from collections import defaultdict
 
-from app.core.db import connect_db, db, disconnect_db
 from app.api.routes.questionnaire import artisan_set_key
+from app.core.db import connect_db, db, disconnect_db
 
 
 async def media_count(interview_id: str) -> int:
@@ -57,7 +57,7 @@ async def main() -> None:
             # Pick canonical = most media, tie-break earliest createdAt then id.
             counts = {i: await media_count(i) for i in ids}
             iv_by_id = {iv.id: iv for iv in interviews}
-            canonical = sorted(ids, key=lambda i: (-counts[i], iv_by_id[i].createdAt, i))[0]
+            canonical = min(ids, key=lambda i: (-counts[i], iv_by_id[i].createdAt, i))
             survivors[key] = canonical
             dups = [i for i in ids if i != canonical]
             print(f"  consolidate set {key[:40]}…: keep {canonical} (media={counts[canonical]}), "

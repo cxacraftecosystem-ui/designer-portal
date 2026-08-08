@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -303,7 +303,7 @@ async def test_transcription_provider(
         remember_key_verdict(
             key_name,
             passing=passing,
-            checked_at=described.get("lastCheckedAt") or datetime.now(timezone.utc),
+            checked_at=described.get("lastCheckedAt") or datetime.now(UTC),
             error=described.get("lastError"),
         )
     # WARNING, not INFO: under uvicorn an app logger has no handler and INFO is dropped entirely.

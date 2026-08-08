@@ -25,10 +25,11 @@ import base64
 import hashlib
 import hmac
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from app.scale.flags import keyset_enabled, log_once, settings
 

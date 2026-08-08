@@ -703,7 +703,7 @@ async def delete_staged_object(objectKey: str, current_user: Any = Depends(get_c
 @router.get("/{media_id}")
 async def get_media(media_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     media = await db.mediafile.find_unique(where={"id": media_id}, include=INCLUDE)
-    media = await require_record(db.mediafile, media_id) if not media else media
+    media = media or await require_record(db.mediafile, media_id)
     return await _public(media, current_user)
 
 

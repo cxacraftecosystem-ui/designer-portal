@@ -33,8 +33,9 @@ before they ever reach a cell.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from app.services.artisan_identity import mask_aadhaar
 
@@ -214,7 +215,7 @@ CRAFT = RecordSpec(
         _f("Category", lambda c: c.category),
         _f("Place", lambda c: c.place),
         _f("Description", lambda c: c.description),
-        _f("Workshops", lambda c: _workshop_titles(c)),
+        _f("Workshops", _workshop_titles),
     ),
 )
 
@@ -226,7 +227,7 @@ ARTISAN = RecordSpec(
     title=lambda a: (getattr(a, "name", None) or "").strip() or "Artisan",
     fields=(
         _f("Local name", lambda a: a.localName),
-        _f("Workshop", lambda a: _workshop_titles(a)),
+        _f("Workshop", _workshop_titles),
         _f("Craft", lambda a: _rel(a, "craft", "name")),
         # The village named in the artisan's stated address, falling back to the free-text `place`
         # box the researchers used instead while there was no column. That box holds compound

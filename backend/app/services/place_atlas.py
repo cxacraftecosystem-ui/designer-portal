@@ -42,8 +42,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
-from app.services.address import _LOOKUP as _STATE_LOOKUP
-from app.services.address import _fold
+from app.services.address import _LOOKUP as _STATE_LOOKUP, _fold
 
 
 class Precision(str, Enum):

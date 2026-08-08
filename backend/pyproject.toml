@@ -76,6 +76,124 @@ exclude = ["prisma*"]
 line-length = 100
 target-version = "py311"
 
+# The rule set is pinned HERE, by name, deliberately. With no [tool.ruff.lint] section ruff falls
+# back to its own implicit default, and that default has changed between ruff releases — so this
+# project's lint gate quietly moved every time someone upgraded the (unpinned) `ruff>=0.4.0` dev
+# dependency, and a file that was clean in one release was dirty in the next without a line of it
+# changing. Everything the gate enforces is now listed in `select`; everything it deliberately
+# does NOT enforce is listed in `ignore` WITH THE REASON, so that a finding which is really a
+# house idiom is settled once here instead of being re-argued every quarter.
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes — undefined names, unused imports and variables
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "I",      # isort — one import order, enforced mechanically rather than by review
+    "UP",     # pyupgrade — requires-python is >=3.11, so write 3.11
+    "B",      # flake8-bugbear — mutable defaults, loop-variable capture, silent truncation
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "RET",    # flake8-return
+    "DTZ",    # flake8-datetimez — this backend stores aware stamps only
+    "ISC",    # flake8-implicit-str-concat
+    "BLE",    # flake8-blind-except — the ~45 `# noqa: BLE001` comments in this tree are the
+              #   point of the rule: every catch-all here is a decision with a written reason
+              #   next to it, and a new one has to earn the same sentence
+    "PIE",    # flake8-pie
+    "FURB",   # refurb
+    "PYI",    # flake8-pyi
+    "RUF",    # ruff's own rules, including RUF100 (a noqa that no longer suppresses anything)
+    "PLC",    # pylint conventions
+    "PLE",    # pylint errors
+    "PLW",    # pylint warnings
+]
+
+# Deliberately NOT selected, so nobody has to rediscover why:
+#   PLR — the "refactor" family is threshold-based opinion (668 PLR2004 magic-value hits alone,
+#         plus too-many-arguments on every FastAPI route signature). Nothing it reports here is a
+#         defect; enabling it would mean 848 suppressions.
+#   TRY — 121 of its 134 hits are TRY003 (message text in the `raise`), which is exactly how this
+#         codebase writes HTTPException and ValueError on purpose.
+#   S   — bandit needs its own pass with its own per-file rules (S101 alone fires on every
+#         `assert` in tests/, ~3,100 hits) and its findings here are all false positives today.
+#   D, N, ANN, COM, EM, ARG, PTH, ERA, T20 — style/doc families this project has never followed.
+
+ignore = [
+    # ---------------------------------------------------------------------------------------
+    # Framework idiom, not a defect.
+    # ---------------------------------------------------------------------------------------
+    # B008 fires on EVERY route in this backend (246 hits) because FastAPI's dependency injection
+    # *is* a function call in a default argument:
+    #     async def list_records(db = Depends(get_db), file: UploadFile = File(...)): ...
+    # That is the framework's own documented signature style, and FastAPI re-resolves each of
+    # those defaults per request rather than reusing one object — so the shared-mutable-default
+    # hazard B008 exists to catch cannot happen here. Ignored globally and permanently: the
+    # alternative is 246 `# noqa: B008` comments that say the same thing 246 times.
+    "B008",
+
+    # ---------------------------------------------------------------------------------------
+    # House idioms, each visible all over the tree.
+    # ---------------------------------------------------------------------------------------
+    # PLC0415 (236 hits): imports inside functions are load-bearing here, for three reasons that
+    # are documented at the call sites — optional dependencies that must not be imported unless
+    # their feature flag is on (Pillow, rembg, vtracer, redis), import cycles between
+    # app.ai_features and app.services, and keeping heavy modules off the boot path of a 1 GiB
+    # box. See the [project.optional-dependencies] comments above for the sizes involved.
+    "PLC0415",
+
+    # PLW0603 (25 hits): the process-wide singletons — the cache backend, the read-replica
+    # client, the user-cache epoch — are intentionally module-level and are installed through
+    # `global` from their one initialiser. That IS the pattern; the rule cannot tell it from an
+    # accident.
+    "PLW0603",
+
+    # RUF001/002/003 (101 hits): this codebase is written with real typography — en dashes in
+    # numeric ranges, em dashes in prose, ₹ in user-facing strings. Every hit is intentional, and
+    # "did you mean HYPHEN-MINUS?" is wrong every time.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+
+    # ISC002/ISC004 (9 hits): long prose strings are split across lines inside tuples and lists
+    # deliberately, to stay inside line-length. Wrapping each one in a second layer of
+    # parentheses buys nothing. (ISC001 and ISC003 stay on — those catch real mistakes.)
+    "ISC002",
+    "ISC004",
+
+    # SIM105 (7 hits): each `try/except/pass` in this tree carries a written reason for
+    # swallowing the failure, usually alongside a `# noqa: BLE001`. `contextlib.suppress` would
+    # be shorter and would delete that sentence.
+    "SIM105",
+
+    # ---------------------------------------------------------------------------------------
+    # Rules whose only real fix is a behaviour change. Left off rather than silenced per-site.
+    # ---------------------------------------------------------------------------------------
+    # UP042 (16 hits): `class Kind(str, Enum)` is NOT interchangeable with `StrEnum`. Under the
+    # str-mixin, `str(Kind.VENUE)` is "Kind.VENUE"; under StrEnum it is "VENUE". These enums are
+    # serialised into API responses, report documents and Android-parity fixtures, so switching
+    # would change bytes on the wire. Needs a migration, not a lint fix.
+    "UP042",
+
+    # B905 (21 hits): `zip(a, b)` truncates to the shorter side. `strict=True` turns that into a
+    # ValueError — a real behaviour change that has to be decided per call site — and
+    # `strict=False` is just this comment, repeated 21 times, saying nothing.
+    "B905",
+
+    # ---------------------------------------------------------------------------------------
+    # E501 (1,356 hits): `line-length = 100` above is the target for new code, not a gate. The
+    # existing tree carries long explanatory comments, long URLs and long literal payloads, and
+    # reflowing 1,356 lines would bury every real change in a diff of rewrapped text.
+    "E501",
+]
+
+[tool.ruff.lint.isort]
+# This tree already writes an aliased member inside the block it belongs to:
+#     from app.services.record_fields import (MEDIA_COLOR, cell as _cell, info_panel, ...)
+# isort's default (combine-as-imports = false) pulls every aliased member out into a statement of
+# its own, which turns that one block into EIGHT `from app.services.record_fields import (...)`
+# statements in app/api/routes/data_browser.py alone. Same imports, unreadable diff.
+combine-as-imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

@@ -14,7 +14,8 @@ because two vendors have already chosen two different shapes for it.
 """
 
 import json
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from app.ai_features.errors import (
     ProviderFailed,
@@ -85,7 +86,7 @@ def post_image(
     credit_remediation: str,
 ) -> tuple[bytes, Mapping[str, str]]:
     """POST a multipart image and return ``(body, response headers)``, or raise a typed error."""
-    import requests  # noqa: PLC0415 - a core dependency, but the no-imports-at-module-scope rule
+    import requests  # a core dependency, but the no-imports-at-module-scope rule
     # in this package has no exceptions; one rule with no carve-outs is the one that survives.
 
     remaining = deadline.remaining()
@@ -193,7 +194,7 @@ def request_json(
     of a size the caller can predict from the number of results it asked for, unlike a cutout whose
     size depends on what the vendor decided to send back.
     """
-    import requests  # noqa: PLC0415 - the no-imports-at-module-scope rule has no exceptions
+    import requests  # the no-imports-at-module-scope rule has no exceptions
 
     remaining = deadline.remaining()
     timeout = (min(_CONNECT_TIMEOUT_CEILING, max(1.0, remaining)), max(1.0, remaining))

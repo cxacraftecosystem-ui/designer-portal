@@ -21,10 +21,10 @@ they expect instead of silent nothing.
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Mapping
 
 from app.ai_features.types import Capability
 

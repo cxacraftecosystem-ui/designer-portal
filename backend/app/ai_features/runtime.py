@@ -15,8 +15,8 @@ are genuinely interruptible, because there the budget becomes a socket timeout.
 
 import logging
 import time
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from app.ai_features.errors import ProviderTimeout

@@ -5,12 +5,12 @@ from typing import Any, NamedTuple
 
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from prisma import Json
 
 from app.core.db import db
 from app.services.artisan_identity import mask_aadhaar
 from app.services.concurrency import gather_reads
 from app.services.text_format import title_case_fields
+from prisma import Json
 
 # Keys that must never leave the API, no matter how deeply nested inside an embedded relation
 # (e.g. a media file's ``uploadedBy`` user, or a record's ``createdBy``).
@@ -114,14 +114,17 @@ def _redact_sensitive(
                     value[key] = mask_identity_number(value[key])
         # The marker is READ before the keys are dropped, which matters because ``objectKey`` is both
         # the marker and one of the keys.
-        if media_urls is not None and _MEDIA_MARKER in value:
-            # Dropped rather than blanked. A key present and null reads as "this file has no URL",
-            # which is a real state (an upload that never completed) and must stay distinguishable
-            # from "you may not have it". An absent key is the honest third answer, and a client that
-            # renders a play button only when a URL is present degrades correctly on its own.
-            if value.get("uploadedById") not in media_urls:
-                for key in _MEDIA_URL_KEYS:
-                    value.pop(key, None)
+        # Dropped rather than blanked. A key present and null reads as "this file has no URL",
+        # which is a real state (an upload that never completed) and must stay distinguishable
+        # from "you may not have it". An absent key is the honest third answer, and a client that
+        # renders a play button only when a URL is present degrades correctly on its own.
+        if (
+            media_urls is not None
+            and _MEDIA_MARKER in value
+            and value.get("uploadedById") not in media_urls
+        ):
+            for key in _MEDIA_URL_KEYS:
+                value.pop(key, None)
         for nested in value.values():
             _redact_sensitive(nested, viewer_id, unmasked, media_urls)
     elif isinstance(value, list):
@@ -557,7 +560,7 @@ async def owned_or_granted_where(user: Any, owner_field: str = "createdById") ->
     uid = get_value(user, "id")
     # ``createdById`` -> ``createdBy``, ``uploadedById`` -> ``uploadedBy``: the owner COLUMN and the
     # owner RELATION are named that way on every model this filter is applied to.
-    owner_relation = owner_field[:-2] if owner_field.endswith("Id") else owner_field
+    owner_relation = owner_field.removesuffix("Id")
     return {
         "OR": [
             {owner_field: uid},

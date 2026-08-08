@@ -267,7 +267,7 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             "(Handicrafts): cover, contents, every stage in the reader's order, photographs, "
             "cost sheets and sign-off."
         ),
-        sections=_standard_sections(figures=True) + (TRANSCRIPT_ANNEXURE,),
+        sections=(*_standard_sections(figures=True), TRANSCRIPT_ANNEXURE),
         organisation="Office of the Development Commissioner (Handicrafts)",
         theme=DCH_THEME,
     ),
@@ -279,7 +279,7 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             "the section names a DIC submission expects and the administrative annexure "
             "brought forward."
         ),
-        sections=_standard_sections() + (TRANSCRIPT_ANNEXURE,),
+        sections=(*_standard_sections(), TRANSCRIPT_ANNEXURE),
         organisation="District Industries Centre",
         theme=DIC_THEME,
     ),
@@ -354,7 +354,8 @@ TEMPLATES: tuple[ReportTemplate, ...] = (
             "specifications, iteration histories, quality assessments and the full media "
             "annexure. The archival copy."
         ),
-        sections=_standard_sections(photo_columns=2, figures=True) + (
+        sections=(
+            *_standard_sections(photo_columns=2, figures=True),
             TemplateSection(special=SpecialSection.ANNEXURE_MEDIA, page_break_before=True,
                             heading="Annexure — Photographic record"),
             TRANSCRIPT_ANNEXURE,

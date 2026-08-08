@@ -9,9 +9,9 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from prisma import Json
 
 from app.core.db import db
+from prisma import Json
 
 # Strictly increasing privilege. A tier includes every action of the tiers below it.
 TIER_ORDER = {"DOWNLOAD": 1, "COMMENT": 2, "EDIT": 3}
@@ -125,7 +125,12 @@ async def guard_record_edit(record: Any, user: Any, data: dict[str, Any], record
     enforced here, raising 403 on a locked field). Always records a revision of the fields that
     change. Pass the cleaned `data` before provenance is merged.
     """
-    from app.core.deps import assert_can_contribute_fields, get_value, is_admin, may_edit_lower_ranked_record
+    from app.core.deps import (
+        assert_can_contribute_fields,
+        get_value,
+        is_admin,
+        may_edit_lower_ranked_record,
+    )
 
     owner_id = get_value(record, "createdById")
     uid = get_value(user, "id")
@@ -134,9 +139,10 @@ async def guard_record_edit(record: Any, user: Any, data: dict[str, Any], record
         # "A professor may edit the data of anyone ranked below them" — checked before the grant
         # lookup because it costs nothing for the ranks it does not apply to, so nobody below
         # Professor pays an extra query for a clause that can only ever answer no for them.
-        if await may_edit_lower_ranked_record(user, owner_id):
-            privileged = True
-        elif await effective_tier_for_record(user, owner_id, record_type, get_value(record, "id")) == "EDIT":
+        if await may_edit_lower_ranked_record(user, owner_id) or (
+            await effective_tier_for_record(user, owner_id, record_type, get_value(record, "id"))
+            == "EDIT"
+        ):
             privileged = True
         else:
             assert_can_contribute_fields(record, user, data)

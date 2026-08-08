@@ -15,7 +15,8 @@ sequential version, so the bound is insurance rather than a throttle on the comm
 """
 
 import asyncio
-from typing import Any, Coroutine, TypeVar
+from collections.abc import Coroutine
+from typing import Any, TypeVar
 
 from app.core.config import get_settings
 

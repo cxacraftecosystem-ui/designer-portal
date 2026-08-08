@@ -74,6 +74,9 @@ class DwAnalysisParityTest {
 
     private val json = Json { prettyPrint = false }
 
+    /** Separate from [json]: the bundled registry carries keys the DTOs here do not model. */
+    private val schemaJson = Json { ignoreUnknownKeys = true }
+
     private fun resource(name: String): JsonElement {
         val stream = javaClass.getResourceAsStream("/$name")
             ?: error("$name is missing from the test resources; the parity table is the test.")
@@ -202,7 +205,7 @@ class DwAnalysisParityTest {
         // The unit test's working directory is the module, but do not fail the parity suite over a
         // path: an absent asset is a build-layout question, not a defect in the port.
         if (!asset.exists()) return
-        val schema = Json { ignoreUnknownKeys = true }
+        val schema = schemaJson
             .decodeFromString(SchemaResponse.serializer(), asset.readText(Charsets.UTF_8))
         val declared = schema.stages
             .firstOrNull { it.key == "COSTING_MARKET_LINKAGE" }

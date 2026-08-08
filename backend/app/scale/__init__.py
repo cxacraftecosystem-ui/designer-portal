@@ -61,7 +61,7 @@ from app.scale.replica import (
     replica_status,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022 - grouped by role, with the headings below; alphabetical would lose them
     # flags — ask these before doing anything, and to report configuration
     "cache_enabled",
     "cache_backend_name",

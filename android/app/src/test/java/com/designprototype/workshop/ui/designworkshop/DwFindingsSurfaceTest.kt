@@ -38,14 +38,16 @@ import java.io.File
  */
 class DwFindingsSurfaceTest {
 
+    /** Matches the app's own decoder: the registry carries keys the DTOs here do not model. */
+    private val json = Json { ignoreUnknownKeys = true }
+
     private val schema: SchemaResponse by lazy {
         val asset = File("src/main/assets/design-workshop-schema.json")
         assertTrue(
             "the bundled registry is missing — it is what the handset renders from on first launch",
             asset.exists()
         )
-        Json { ignoreUnknownKeys = true }
-            .decodeFromString(SchemaResponse.serializer(), asset.readText(Charsets.UTF_8))
+        json.decodeFromString(SchemaResponse.serializer(), asset.readText(Charsets.UTF_8))
     }
 
     private fun stage(key: String) =

@@ -66,11 +66,6 @@ export function recordedTimezoneFromForm(form: FormData) {
   return textValue(form, "recordedTimezone") || "Asia/Kolkata";
 }
 
-export function parseJsonMetadata(raw: FormDataEntryValue | null) {
-  if (typeof raw !== "string" || !raw.trim()) return undefined;
-  return JSON.parse(raw);
-}
-
 /**
  * Dirty-state tracker for record forms. Call `markDirty` on any user change (the forms wire it to
  * the form's onInput plus every themed-dropdown onChange and media picker); while dirty the browser

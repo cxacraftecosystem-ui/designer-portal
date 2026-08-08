@@ -14,6 +14,7 @@ import importlib.machinery
 import struct
 import sys
 import zlib
+from typing import Self
 
 import pytest
 
@@ -56,7 +57,7 @@ class _StubResponse:
         self.headers = headers
         self._body = body
 
-    def __enter__(self) -> "_StubResponse":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_: object) -> bool:

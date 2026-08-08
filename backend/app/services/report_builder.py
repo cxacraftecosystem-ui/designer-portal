@@ -82,8 +82,6 @@ from app.services.report_templates import (
     ReportTemplate,
     SpecialSection,
     TemplateSection,
-)
-from app.services.report_templates import (
     template as get_template,
 )
 from app.services.stage_schema import (
@@ -208,7 +206,7 @@ def _group_indian(digits: str) -> str:
         head = head[:-2]
     if head:
         parts.insert(0, head)
-    return ",".join(parts + [tail])
+    return ",".join([*parts, tail])
 
 
 #: A generated record id, as opposed to something a person typed into a reference field.

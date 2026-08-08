@@ -57,7 +57,7 @@ def test_every_parent_is_a_district_of_the_same_state():
             assert parent in DISTRICTS_BY_STATE[state], (
                 f"{state}|{district}: parent {parent!r} is not a district of {state}"
             )
-        assert parent not in (district,), "a district cannot be its own parent"
+        assert parent != district, "a district cannot be its own parent"
 
 
 def test_no_district_is_its_own_parent():

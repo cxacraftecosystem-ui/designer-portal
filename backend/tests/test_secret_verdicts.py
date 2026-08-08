@@ -12,7 +12,7 @@ not let a rotated key inherit the pass its predecessor earned.
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -71,7 +71,7 @@ def _managed_row(key: str, **overrides) -> SimpleNamespace:
         lastError=None,
         updatedById=None,
         updatedBy=None,
-        updatedAt=datetime(2026, 7, 26, tzinfo=timezone.utc),
+        updatedAt=datetime(2026, 7, 26, tzinfo=UTC),
     )
     for field, value in overrides.items():
         setattr(row, field, value)
@@ -309,7 +309,7 @@ def test_a_persisted_verdict_leaves_the_engine_rankable_after_a_restart(monkeypa
     from app.api.routes import settings as settings_route
 
     s = stack()
-    checked_at = datetime.now(timezone.utc) - timedelta(days=3)  # tested before the last deploy
+    checked_at = datetime.now(UTC) - timedelta(days=3)  # tested before the last deploy
     s.verdicts.rows[ELEVENLABS] = SimpleNamespace(
         key=ELEVENLABS,
         status="OK",
@@ -340,7 +340,7 @@ def test_a_rotated_key_refreezes_the_engine_it_used_to_thaw(monkeypatch, stack) 
     s.verdicts.rows[ELEVENLABS] = SimpleNamespace(
         key=ELEVENLABS,
         status="OK",
-        checkedAt=datetime.now(timezone.utc),
+        checkedAt=datetime.now(UTC),
         error=None,
         fingerprint=managed_secrets.fingerprint(ANOTHER_KEY),  # the key that has since been replaced
     )

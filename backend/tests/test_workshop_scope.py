@@ -7,6 +7,7 @@ consolidated questionnaire all depend on agreeing about.
 """
 
 import asyncio
+from datetime import UTC
 
 from app.services.record_filters import (
     RECORD_TYPES,
@@ -122,11 +123,11 @@ def test_the_scope_composes_with_the_workshop_date_range():
     # The workshops bucket is the only one that already writes an AND of its own (its startDate
     # fallback), so it is the one where an assignment rather than an append would silently drop a
     # filter. Both clauses have to survive.
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     wheres = asyncio.run(
         build_record_wheres(
-            USER, date_from=datetime(2026, 7, 1, tzinfo=timezone.utc), workshop_ids=["w1"]
+            USER, date_from=datetime(2026, 7, 1, tzinfo=UTC), workshop_ids=["w1"]
         )
     )
     clauses = wheres["workshops"]["AND"]
@@ -136,7 +137,7 @@ def test_the_scope_composes_with_the_workshop_date_range():
 
 
 def test_the_scope_composes_with_every_other_filter_at_once():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     wheres = asyncio.run(
         build_record_wheres(
@@ -144,14 +145,14 @@ def test_the_scope_composes_with_every_other_filter_at_once():
             q="cane",
             craft_id="c1",
             place="Bareilly",
-            date_from=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            date_from=datetime(2026, 7, 1, tzinfo=UTC),
             workshop_ids=["w1", UNASSIGNED_WORKSHOP],
         )
     )
     tools = wheres["tools"]
     assert tools["craftId"] == "c1"
     assert tools["place"] == {"contains": "Bareilly", "mode": "insensitive"}
-    assert tools["createdAt"] == {"gte": datetime(2026, 7, 1, tzinfo=timezone.utc)}
+    assert tools["createdAt"] == {"gte": datetime(2026, 7, 1, tzinfo=UTC)}
     assert "OR" in tools
     assert tools["AND"] == [
         {"OR": [{"workshopId": {"in": ["w1"]}}, {"workshopId": None}]}

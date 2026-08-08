@@ -16,6 +16,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Self
 
 import pytest
 
@@ -150,7 +151,7 @@ class _StubResponse:
         self.headers = headers
         self._body = body
 
-    def __enter__(self) -> "_StubResponse":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_: object) -> bool:
@@ -355,6 +356,7 @@ def test_importing_the_package_loads_no_provider_and_no_service_module() -> None
         cwd=BACKEND_ROOT,
         capture_output=True,
         text=True,
+        check=False,
         timeout=120,
     )
     assert completed.returncode == 0, completed.stderr

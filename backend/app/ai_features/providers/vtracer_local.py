@@ -32,7 +32,7 @@ class VtracerLocalProvider(VectorisationProvider):
         capability = Capability.VECTORISATION
         deadline.check("tracing", capability=capability, provider=self.provider_id)
 
-        import vtracer  # noqa: PLC0415 - deliberate: vtracer is an optional dependency
+        import vtracer  # deliberate: vtracer is an optional dependency
 
         settings = self.settings
         with tempfile.TemporaryDirectory(prefix="ai_vectorise_") as workspace:

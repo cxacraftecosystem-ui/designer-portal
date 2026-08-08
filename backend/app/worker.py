@@ -78,7 +78,7 @@ async def _run() -> None:
                     worker_id="queue-service",
                     settings=settings,
                 )
-            except Exception:  # noqa: BLE001 - one bad iteration must never kill the worker
+            except Exception:  # one bad iteration must never kill the worker
                 logger.exception("Media queue iteration failed; backing off")
             # Sleep for the interval but wake immediately on shutdown.
             with suppress(asyncio.TimeoutError):
