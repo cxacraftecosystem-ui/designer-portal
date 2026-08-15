@@ -178,21 +178,49 @@ def test_the_all_pill_still_issues_the_failed_count_probe(client, env):
     `MediaJobsPanel.load` fires both inside one `Promise.all`, so a 422 on the probe blanked the
     panel even on "All". Both halves are asserted together because either one failing produced the
     identical dead screen.
+
+    ── IT ASSERTS ITS OWN ROWS, NOT A PROPERTY OF THE WHOLE TABLE, AND IT HAD TO LEARN THAT ────────
+
+    This test read ``{item["status"] …} == set(PANEL_FILTERS)`` and ``total == 1``. Both are claims
+    about **every job in the database**, and both passed when this file ran alone and failed in the
+    full suite — ``QUEUED`` was missing from the set. Nothing was wrong with the endpoint. A
+    ``QUEUED`` job is, by definition, work the queue is entitled to pick up: any other module that
+    reaches ``drain_media_jobs`` (or a worker that happens to be enabled) will lock this fixture's
+    ``QUEUED`` row and move it to ``PROCESSING``/``COMPLETED``/``FAILED``, and the ``FAILED`` count
+    goes to two on the way past.
+
+    So the fixture's own five job ids are what is asserted: the unfiltered page must return ALL of
+    them, which is exactly what "the All pill filters nothing" means, and it stays true however the
+    queue has since transitioned any of them. Asserting the *contents* of a shared table is a test
+    asserting that no other test exists.
     """
     listing = client.get("/api/media/jobs?pageSize=100")
     assert listing.status_code == 200, listing.text
-    assert {item["status"] for item in listing.json()["items"]} == set(PANEL_FILTERS)
+    returned = {item["id"] for item in listing.json()["items"]}
+    missing = {status: job for status, job in env["own"].items() if job not in returned}
+    assert not missing, f"the unfiltered page dropped this fixture's own jobs: {missing}"
 
-    probe = client.get("/api/media/jobs?statusFilter=FAILED&pageSize=1")
+    probe = client.get("/api/media/jobs?statusFilter=FAILED&pageSize=100")
     assert probe.status_code == 200, probe.text
-    assert probe.json()["total"] == 1
+    # The headline count the panel prints. Asserted as "at least our own", not "exactly one", for
+    # the reason above — and the id check is what stops that looseness from making it vacuous.
+    assert probe.json()["total"] >= 1
+    assert env["own"]["FAILED"] in {item["id"] for item in probe.json()["items"]}
 
 
-def test_the_failure_reason_travels_with_a_failed_job(client):
-    """The column the panel renders on its own line. A 422 meant it never reached any screen."""
+def test_the_failure_reason_travels_with_a_failed_job(client, env):
+    """The column the panel renders on its own line. A 422 meant it never reached any screen.
+
+    ``items[0]`` used to be the subject, which is the same shared-table assumption the test above
+    was corrected for: a queue drain in any other module can FAIL this fixture's ``QUEUED`` job, and
+    that row — with a different error, or none — then sorts ahead of ours. The fixture's own FAILED
+    job is picked out by id instead, so the assertion is about the row whose reason this test set.
+    """
     response = client.get("/api/media/jobs?statusFilter=FAILED&pageSize=100")
     assert response.status_code == 200, response.text
-    assert response.json()["items"][0]["error"] == "provider said no (FAILED)"
+    ours = [item for item in response.json()["items"] if item["id"] == env["own"]["FAILED"]]
+    assert ours, "the fixture's own FAILED job is not in a FAILED-filtered page"
+    assert ours[0]["error"] == "provider said no (FAILED)"
 
 
 # --------------------------------------------------------------------------------------

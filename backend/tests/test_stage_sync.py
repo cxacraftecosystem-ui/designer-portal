@@ -13,6 +13,7 @@ Run the local stack first:
 
 import os
 import uuid
+from typing import Any
 
 import pytest
 
@@ -612,6 +613,25 @@ async def test_a_never_read_client_merges_its_singleton_instead_of_replacing_it(
 # Every failure in this block is a row of somebody's fieldwork disappearing or being overwritten
 # under an HTTP 200. They sit together because two of the three share one cause: `save_stage`'s
 # three-way matcher carried a guard on two of its arms and not on the third.
+#
+# ── THE ROW ID GOES IN `entryId`, AT THE TOP LEVEL OF THE ENTRY, NEVER IN `data["_entryId"]` ──
+#
+# The two tests below were first written putting the id inside `data`, which is where the READ
+# puts it (`_stages_payload` injects `_entryId` into every serialised row) — so it looks like the
+# obvious shape and it is the wrong one. `StageEntryIn` declares `entryId` as a field of its own,
+# `save_stage` matches on `entry.entryId`, and both shipped clients LIFT the key out of the row
+# before sending: `frontend/lib/designWorkshopStore.ts:3057` (`entryId: row._entryId`) and
+# `android/…/WorkshopSync.kt:1952` (`entryId = row.values["_entryId"]`).
+#
+# Left inside `data` the id is simply one more underscore-prefixed protocol key: `save_stage`
+# excludes those from `droppedKeys` deliberately, so it is not reported either, and the entry
+# falls through to the `_clientKey` arm as though no id had been sent at all. Both tests then
+# assert against a code path that never ran — they were RED against a fix that was correct, which
+# is the worst of the three possible outcomes because it reads as a defect in the server.
+#
+# Do not "simplify" these payloads back to the shape the GET returns. A test that sends the id
+# where nothing reads it pins nothing, and this block is the last guard between a bulk import and
+# one row of a designer's answers being written into another entity's row.
 # --------------------------------------------------------------------------------------
 
 
@@ -636,9 +656,11 @@ async def test_an_entry_id_belonging_to_another_collection_is_refused_not_obeyed
     before = client.get(path).json()["collections"]
     material_id = before["rawMaterial"][0]["_entryId"]
 
+    # `entryId` at the TOP LEVEL of the entry — the shape both clients send. See the block comment
+    # above for why putting it in `data` exercises nothing at all.
     crossed = client.put(path, json={"entries": [
-        {"entityKey": "tool", "ordinal": 0,
-         "data": {"_clientKey": "t1", "name": "Warping drum", "_entryId": material_id}},
+        {"entityKey": "tool", "ordinal": 0, "entryId": material_id,
+         "data": {"_clientKey": "t1", "name": "Warping drum"}},
     ]})
     assert crossed.status_code == 200, crossed.text
     assert any("belongs to rawMaterial" in k for k in crossed.json()["droppedKeys"]), \
@@ -668,11 +690,12 @@ async def test_two_entries_sharing_one_entry_id_do_not_silently_overwrite_each_o
     ]})
     tool_id = client.get(path).json()["collections"]["tool"][0]["_entryId"]
 
+    # Both entries name the SAME row id, in the field the matcher actually reads.
     duplicated = client.put(path, json={"entries": [
-        {"entityKey": "tool", "ordinal": 0,
-         "data": {"_clientKey": "t1", "name": "Pit loom", "_entryId": tool_id}},
-        {"entityKey": "tool", "ordinal": 1,
-         "data": {"_clientKey": "t2", "name": "Warping drum", "_entryId": tool_id}},
+        {"entityKey": "tool", "ordinal": 0, "entryId": tool_id,
+         "data": {"_clientKey": "t1", "name": "Pit loom"}},
+        {"entityKey": "tool", "ordinal": 1, "entryId": tool_id,
+         "data": {"_clientKey": "t2", "name": "Warping drum"}},
     ]})
     assert duplicated.status_code == 200, duplicated.text
     assert any("duplicate in payload" in k for k in duplicated.json()["droppedKeys"])
@@ -876,34 +899,96 @@ async def test_the_create_forms_craft_is_backed_by_a_stage_entry(client):
 # --------------------------------------------------------------------------------------
 
 
+class _AsDesigner:
+    """The module's ONE ``TestClient``, wearing a different account's token.
+
+    A test in this file reads "as the designer" without a second client existing anywhere — see
+    :func:`designer_client` for the 500 that a second ``TestClient`` caused and why no amount of
+    avoiding its lifespan would have helped. The same idiom, for the same reason, is
+    ``tests/test_media_processing_jobs.py:134``.
+
+    The header is merged per call rather than set on the client, so the admin's own requests through
+    the same object are untouched — which matters here, because these tests interleave the two
+    accounts deliberately (the designer creates and edits; the ADMIN does the soft delete).
+    """
+
+    def __init__(self, client: Any, token: str) -> None:
+        self._client = client
+        self._headers = {"Authorization": f"Bearer {token}"}
+
+    def _send(self, method: str, url: str, **kwargs: Any) -> Any:
+        headers = {**self._headers, **(kwargs.pop("headers", None) or {})}
+        return getattr(self._client, method)(url, headers=headers, **kwargs)
+
+    def get(self, url: str, **kwargs: Any) -> Any:
+        return self._send("get", url, **kwargs)
+
+    def post(self, url: str, **kwargs: Any) -> Any:
+        return self._send("post", url, **kwargs)
+
+    def put(self, url: str, **kwargs: Any) -> Any:
+        return self._send("put", url, **kwargs)
+
+    def patch(self, url: str, **kwargs: Any) -> Any:
+        return self._send("patch", url, **kwargs)
+
+    def delete(self, url: str, **kwargs: Any) -> Any:
+        return self._send("delete", url, **kwargs)
+
+
 @pytest.fixture(scope="module")
-async def designer_client(client):
+def designer_client(client):
     """A second signed-in client, a DESIGNER rather than an admin.
 
     The rest of this module runs as an ADMIN, which is exactly why the defect below survived: the
     409 was reachable for an admin and for nobody else, and an admin is not who owns unsent stages.
 
-    IT DEPENDS ON ``client`` AND OPENS NO SECOND LIFESPAN, and both halves of that are deliberate.
-    ``db`` is a module-level singleton: a fixture of its own that ran ``db.connect()`` /
-    ``db.disconnect()`` around its setup would disconnect the connection the app is already using
-    the moment the second one finished, and every later test in the file would fail somewhere
-    inside Prisma with nothing pointing back here. Taking ``client`` guarantees the app has
-    started and the connection is live, so the user row can simply be created on it, and a bare
-    ``TestClient(app)`` — no ``with`` — issues requests against that same running app without
-    running startup or shutdown a second time.
+    **IT IS NOT A SECOND ``TestClient``, AND THAT IS THE WHOLE OF IT.** This fixture was written as
+    ``second = TestClient(app)`` on the reasoning — spelled out at length, and wrong — that a bare
+    ``TestClient`` with no ``with`` "issues requests against that same running app without running
+    startup a second time". It does avoid the second lifespan. What it does NOT avoid is a second
+    event loop: ``TestClient`` opens its own anyio portal **per request** whether or not a lifespan
+    ran, so the first ``designer_client.post`` reached Prisma's HTTP session from a loop that was not
+    the one ``db.connect()`` bound it to, and the route died in ``asyncio.locks.Event._get_loop``
+    with *"is bound to a different event loop"*. The app answered **500 on ``POST
+    /api/design-workshops``** and the two tests below failed on their own first line, reading like a
+    defect in workshop creation rather than a fixture that had smuggled in a second loop.
+
+    So there is exactly one ``TestClient`` in this module, and a request "as the designer" is that
+    same client with a different ``Authorization`` header — the ``_As`` idiom
+    ``tests/test_media_processing_jobs.py:134`` already uses for the same reason. One client, one
+    portal, one loop, one Prisma connection.
+
+    A second lifespan would have been worse still: it would ``db.disconnect()`` the connection the
+    app is still using the moment it closed, and every later test in the file would fail somewhere
+    inside Prisma with nothing pointing back here. Neither trap is available now.
+
+    **THE DESIGNER IS CREATED OVER HTTP, AND THIS FIXTURE IS SYNCHRONOUS FOR THAT REASON.** It was
+    written as ``async def`` calling ``await db.user.create(...)`` directly, and it could not work:
+    ``client`` hands the app to ``TestClient``, which runs the lifespan — and therefore
+    ``db.connect()`` — inside its OWN portal event loop, while an async fixture body runs in the
+    anyio loop this module's ``anyio_backend`` provides. Prisma's HTTP session is bound to the loop
+    that opened it, so the ``create`` died in ``asyncio.locks.Event._get_loop`` with "is bound to a
+    different event loop" and took BOTH tests below down as setup ERRORs — a fixture failure, which
+    reads nothing like the 404/409 regression they exist to pin.
+
+    ``client``'s own user creation escapes this only because it happens BEFORE ``TestClient(app)``
+    exists, around an explicit ``db.connect()``/``db.disconnect()`` pair in its own loop. There is
+    no second such window here, so this goes through ``POST /api/users`` instead: the request runs
+    in the portal loop that owns the connection, needs no ``await``, and touches ``db`` not at all.
+    Do not convert this back to ``async def`` — the direct row write is what broke it.
     """
-    from fastapi.testclient import TestClient
-
-    from app.main import app
-
     email = f"sync-designer-{uuid.uuid4().hex[:8]}@example.org"
-    user = await db.user.create(data={
+    created = client.post("/api/users", json={
         "email": email, "name": "Sync Designer", "role": "DESIGNER",
-        "passwordHash": hash_password("unused"),
+        # Never used: the token below is minted directly, as it is for the admin above. The field
+        # is required by ``UserCreate`` and bounded at 8 characters, so it is spelled to say so.
+        "password": "unused-password",
     })
-    second = TestClient(app)
-    second.headers.update({"Authorization": f"Bearer {create_access_token(subject=user.id)}"})
-    return second
+    assert created.status_code == 201, created.text
+    return _AsDesigner(
+        client, create_access_token(subject=created.json()["id"])
+    )
 
 
 async def test_a_designer_editing_a_deleted_workshop_is_told_it_is_deleted(
