@@ -42,8 +42,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.report.BlockKind
+import com.designprototype.workshop.data.DwCustomFieldDto
 import com.designprototype.workshop.data.DwDerived
 import com.designprototype.workshop.data.DwFieldType
+import com.designprototype.workshop.data.customFieldToFieldDto
+import com.designprototype.workshop.data.dwCustomFieldDrawable
+import com.designprototype.workshop.data.dwCustomUnsupportedNote
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.WorkshopRepository
@@ -517,6 +521,98 @@ fun FieldRenderer(
             )
         }
     }
+}
+
+// --------------------------------------------------------------------------------------
+// The designer's own questions
+// --------------------------------------------------------------------------------------
+
+/**
+ * ONE custom question, drawn by the renderer above where that is safe and read-only where it is not.
+ *
+ * ── THE DEGRADE IS THE POINT OF THIS FUNCTION, AND IT HAS TO HAPPEN HERE RATHER THAN INSIDE ───────
+ *
+ * [FieldRenderer]'s `when` has no `else`, so the type set is closed and the compiler forces an arm
+ * for every constant — which is exactly what makes adding a constant safe. But the token never
+ * reaches that `when` as itself: [DwFieldType.of] degrades ANY unrecognised token to
+ * [DwFieldType.TEXT], deliberately, because for the 496-field registry the alternative is one new
+ * server type blanking all 22 stages on every handset that has not updated. For a designer's own
+ * question that same forgiveness is the whole of the failure: an unknown type is drawn as an ordinary
+ * editable box with no note, no disabled state and no caption, so the designer TYPES AN ANSWER INTO
+ * IT — a silent wrong answer, which is worse than the web's silent blank because the web at least
+ * collected nothing.
+ *
+ * So the refusal happens one door up, before the renderer is called, and it asks two questions that
+ * fail for different reasons ([dwCustomFieldDrawable]): is this one of the twelve types a custom
+ * answer can safely ROUND TRIP as, and does this build know the token at all
+ * ([DwFieldType.known] — the strict resolver, which exists for this one caller and must not replace
+ * [DwFieldType.of]).
+ *
+ * ── WHAT THE READ-ONLY ARM PROMISES, AND WHO KEEPS THE PROMISE ────────────────────────────────────
+ *
+ * The sentence says the recorded answer is kept and unchanged. That is kept by two things and by
+ * neither of them being this composable: no `onChange` is wired, and `buildStageBody` sends the WHOLE
+ * `custom` bucket rather than the fields the screen happened to draw — so the stored value goes back
+ * up under its own key, which the SERVER's definition does carry (what this build lacks is a control
+ * for its type, not the question) and which `validate_custom_entry` therefore coerces and stores
+ * rather than dropping.
+ *
+ * SAID PRECISELY, BECAUSE THE OBVIOUS VERSION OF IT IS WRONG: `plan_custom_write` carries a RETIRED
+ * key forward from `previous` and does NOT do the same for an unrecognised one. Executed —
+ * `plan_custom_write([loomsWorking], sent={'other': 1}, previous={'loomsWorking': 12}, merge=False)`
+ * returns `data={}, dropped=('other',)` — an unknown key is dropped and reported, and a replace
+ * writes the row without it. That is why this promise rests on the key being one the server knows.
+ * The value is shown rather than hidden because a designer standing in a cluster needs to be able to
+ * read out what was recorded.
+ */
+@Composable
+fun DwCustomFieldRow(
+    field: DwCustomFieldDto,
+    value: JsonElement?,
+    onChange: (JsonElement?) -> Unit,
+    modifier: Modifier = Modifier,
+    error: String? = null,
+    services: DwFieldServices? = null,
+    /** Every drawable live field of this section, by key — see [FieldRenderer]'s `siblings`. */
+    siblings: Map<String, FieldDto> = emptyMap(),
+    /** The whole custom bucket for this stage, so a derived or cascading control could read it. */
+    rowValues: Map<String, JsonElement> = emptyMap(),
+) {
+    val spec = remember(field) { customFieldToFieldDto(field) }
+    if (!dwCustomFieldDrawable(field.type)) {
+        Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            ScalarInput(
+                field = spec,
+                value = value,
+                // Deliberately inert. The box cannot be typed into (`enabled = false`), and this is
+                // the second lock rather than the first: a future edit that re-enabled the control
+                // would otherwise start writing values under a shape nothing downstream can read.
+                onChange = {},
+                enabled = false,
+                error = null,
+                // The help line is REPLACED rather than appended to. The designer's own help text
+                // tells them how to answer a question they cannot answer here, and printing both
+                // makes the honest sentence the second thing they read.
+                helpOverride = dwCustomUnsupportedNote(field.type),
+            )
+        }
+        return
+    }
+    FieldRenderer(
+        field = spec,
+        value = value,
+        onChange = onChange,
+        modifier = modifier,
+        error = error,
+        // NO MEDIA BRIDGE, and it cannot be needed: v1 declares no media type, so no arm that could
+        // use one is reachable. Handing a bridge in anyway would be an invitation for v1.1 to add a
+        // media type and have it appear to work while syncing a `dwlocal:` reference to nothing.
+        media = null,
+        resetKey = field.key,
+        services = services,
+        siblings = siblings,
+        rowValues = rowValues,
+    )
 }
 
 // --------------------------------------------------------------------------------------

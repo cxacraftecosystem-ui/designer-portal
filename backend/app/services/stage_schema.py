@@ -39,7 +39,7 @@ import time in debug) enforces all three:
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -1252,12 +1252,33 @@ def stage_completeness(
     collections: dict[str, list[dict[str, Any]]],
     *,
     ref_resolves: Callable[[Any], bool] | None = None,
+    custom_fields: Sequence[Any] = (),
+    custom_values: dict[str, Any] | None = None,
 ) -> StageCompleteness:
-    """Score one stage against its declaration.
+    """Score one stage against its declaration, and against the designer's own questions.
 
     A COLLECTION entity contributes its required fields once per existing row, and contributes
     nothing when it is empty *unless* the entity itself sits behind a required singleton field —
     an empty sketch list is a legitimate state on day one of a workshop, not an error.
+
+    ``custom_fields`` AND ``custom_values`` ARE THE DESIGNER-DEFINED FIELDS OF THIS STAGE, AND
+    THIS IS THE ONE PLACE THEY ARE SCORED. Every other reader — the readiness screen, the stage
+    index, the submission gate's echo, the report's completeness annexure and its per-stage export
+    warnings — reads this function rather than counting for itself, which is what stops two
+    arithmetics appearing inside one document. (Plan §4: a custom required field counts toward the
+    percentage, for the workshop that defines it.)
+
+    THEY ARRIVE AS PLAIN DATA AND ARE TYPED ``Any`` ON PURPOSE. The concrete class is
+    ``services/custom_sections.CustomFieldSpec``, and that module reads the database — which this
+    one must never do, because it is the module the Kotlin and TypeScript ports mirror line for
+    line and the module whose digest a bundled 119 KB asset is checked against. What is read here
+    is four attributes and nothing else: ``key``, ``label``, ``required`` and ``retired``.
+
+    ``custom_values`` is the ``_custom`` row's ``data`` for this stage — flat, keyed by custom field
+    key. **It is scored KEY BY KEY and the container is never tested as a whole**, which is not a
+    style preference: :func:`_is_filled` returns ``bool(value)`` for a dict, so a container holding
+    twenty blank answers reads as filled and a stage would report itself complete on the strength of
+    the container existing.
 
     ``ref_resolves`` ANSWERS "does this id still point at something?", and without it a required
     REF counts as filled whenever it holds a non-empty string. That is what made one submitted
@@ -1298,6 +1319,38 @@ def stage_completeness(
             else:
                 optional_total += 1
                 optional_filled += int(filled)
+
+    # THE DESIGNER'S OWN QUESTIONS, SCORED BETWEEN THE STAGE'S SINGLETON AND ITS COLLECTIONS.
+    #
+    # Between, and not after, so that `missing` reads in the order a designer meets the questions on
+    # the form: the stage's own fields, then the block they added to it, then the repeating rows.
+    # THE ORDER IS NOT COSMETIC: the phone's report screen prints `missing.take(3)` per stage and the
+    # completeness annexure prints the same three in its Outstanding column, so whatever this list
+    # puts first is what a designer and a ministry officer actually read.
+    #
+    # FILED UNDER THE BARE LABEL, like a singleton field and unlike a collection field — which files
+    # `f"{entity.title}: {label}"`. That is what makes a duplicate label a definition-time refusal
+    # rather than a document that disagrees with itself: two required fields filing the same string
+    # collapse into one row through `dict.fromkeys` below while `required_total` still counts two.
+    # See `custom_sections.validate_definition`, which refuses exactly the pair that could collapse.
+    #
+    # A RETIRED FIELD IS SKIPPED, exactly as `if f.deprecated: continue` skips a superseded registry
+    # field three lines up and for the same reason: it is no longer asked, so counting it would make
+    # a stage permanently incomplete because of a question the designer corrected.
+    values = custom_values or {}
+    for cf in custom_fields:
+        if getattr(cf, "retired", False):
+            continue
+        filled = _is_filled(values.get(getattr(cf, "key", "")))
+        if getattr(cf, "required", False):
+            required_total += 1
+            if filled:
+                required_filled += 1
+            else:
+                missing.append(str(getattr(cf, "label", "") or getattr(cf, "key", "")))
+        else:
+            optional_total += 1
+            optional_filled += int(filled)
 
     counts: dict[str, int] = {}
     for entity in spec.collections:
@@ -1428,9 +1481,36 @@ def stage_to_dict(s: StageSpec) -> dict[str, Any]:
 def registry_to_dict() -> dict[str, Any]:
     """The whole registry, as the clients fetch it from ``GET /design-workshops/schema``.
 
-    Clients cache this by ``version``; a changed version is what tells an Android draft store
-    to run its migration. The version is derived from the content rather than hand-maintained,
-    because a hand-maintained one is a version that stops changing.
+    The version is derived from the content rather than hand-maintained, because a
+    hand-maintained one is a version that stops changing.
+
+    WHAT A CHANGED VERSION ACTUALLY DOES, PER CLIENT — measured on 2026-08-13 rather than
+    assumed, because the sentence that used to stand here ("a changed version is what tells an
+    Android draft store to run its migration") is FALSE, and it is false about the exact
+    mechanism a reviewer auditing this digest would come here to check:
+
+      * THE BROWSER keys its IndexedDB registry store by this string and stores the draft's own
+        ``registryVersion`` beside it, so ``stageSpecFor`` can render a stage through the registry
+        it was captured against (``frontend/lib/designWorkshopStore.ts``). This is the one client
+        that genuinely uses the version as an identity.
+      * THE SERVER stamps it onto the workshop row on every stage save, which is what
+        ``reportDiff``'s ``schemaVersionChanged`` compares between two report runs.
+      * ANDROID DOES NOT MIGRATE ON IT AND HAS NO DRAFT-LEVEL RECORD OF IT. Its draft store's
+        ladder is a separate integer, ``WORKSHOP_DRAFT_SCHEMA_VERSION`` (currently 2, stored as
+        ``schemaVersion`` in ``draft.json``), which moves only when the ON-DISK DRAFT FORMAT
+        changes — never when this digest does. ``StageSchemaStore.store`` computes a "the version
+        moved" boolean and its only caller discards it; ``StageSchemaStore.cachedVersion`` has no
+        callers at all. A moved digest therefore rewrites the phone's cache file and does nothing
+        else: verified on an SM-M325F by pointing its cached registry at a bogus digest and
+        re-fetching, after which the draft was byte-for-byte identical (sha256 unchanged), no
+        migration ran, nothing was re-keyed, nothing was quarantined and nothing was said.
+
+    That is SAFE rather than lossy, and for reasons that are load-bearing rather than lucky:
+    draft values are ``JsonElement`` maps that carry keys this build has never heard of through a
+    round trip untouched, ``requiredKeys`` is recomputed from the live registry on every persist
+    rather than trusted from disk, and the drift a designer actually needs to hear about is the
+    server's own ``droppedKeys`` at save time. Do not add an Android migration keyed to this
+    string without first giving a draft somewhere to record which digest it was written against.
     """
 
     _ensure_installed()

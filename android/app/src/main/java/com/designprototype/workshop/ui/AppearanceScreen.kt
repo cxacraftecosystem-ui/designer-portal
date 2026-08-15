@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.RecordVoiceOver
@@ -33,7 +34,6 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
@@ -50,13 +50,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import com.designprototype.workshop.data.DW_TIER1_CATALOGUE
+import com.designprototype.workshop.data.dwAsrInstalledModelIds
+import com.designprototype.workshop.data.dwPackStates
+import com.designprototype.workshop.data.dwSpeechSummaryLine
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.PreferencesDto
-import com.designprototype.workshop.ui.designworkshop.DwLanguagePackSettings
+import com.designprototype.workshop.ui.designworkshop.DW_DICTATION_LANGUAGES
+import com.designprototype.workshop.ui.designworkshop.DwAsrModelRun
+import com.designprototype.workshop.ui.designworkshop.rememberDwLanguagePacks
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -349,6 +358,11 @@ fun AppearanceScreen(
     current: AppPreferences,
     onChanged: (AppPreferences) -> Unit,
     onBack: () -> Unit,
+    /**
+     * Open the phone's own speech and AI settings. See the row at the bottom of this screen for why
+     * four cards became one navigation.
+     */
+    onOpenSpeechAndAi: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -369,6 +383,29 @@ fun AppearanceScreen(
             runCatching { repository.savePreferences(current.toBody()) }
         }
     }
+
+    /*
+     * THE ROW'S SUMMARY, AND THE TWO THINGS IT IS CAREFUL NOT TO COST.
+     *
+     * `active = true` binds a `SpeechRecognizer` — one IPC handshake, on a screen a designer
+     * navigated to deliberately — which is what lets the row answer "can this phone dictate in a
+     * courtyard" before it is tapped. It does NOT take a device probe and it does NOT hash 365 MB:
+     * the model's state comes from [DwAsrModelRun], the process-wide reading the dictation ladder
+     * already keeps warm, so this screen pays for none of it.
+     */
+    val packs = rememberDwLanguagePacks(active = true)
+    val modelStatus = DwAsrModelRun.status()
+    val speechSummary = dwSpeechSummaryLine(
+        packStates = dwPackStates(DW_DICTATION_LANGUAGES.map { it.tag }, packs.support),
+        modelState = modelStatus.state,
+        modelServedTags = dwAsrInstalledModelIds(modelStatus)
+            .flatMap { id -> DW_TIER1_CATALOGUE.filter { it.modelId == id } }
+            .flatMap { plan -> DW_DICTATION_LANGUAGES.map { it.tag }.filter { plan.servesLanguage(it) } }
+            .toSet(),
+        // `cannotAsk` is non-null exactly on the handsets the platform will not answer for, which is
+        // the distinction between "no packs" and "we were not able to ask".
+        canAsk = packs.cannotAsk == null,
+    )
 
     /** Apply locally, then PUT the whole object. Last write wins: an in-flight save is cancelled. */
     fun apply(next: AppPreferences) {
@@ -462,27 +499,29 @@ fun AppearanceScreen(
         }
 
         /*
-         * ---- Offline dictation languages -------------------------------------------------------
+         * ---- ONE ROW INTO SPEECH & AI -----------------------------------------------------------
          *
-         * THE PERMANENT HOME OF THE LANGUAGE-PACK LIST. `NavDestination.SETTINGS` routes here, so
-         * this screen is what "Settings" means to a designer on Android, and a first-run offer that
-         * could only ever be seen once would be an offer that is lost the moment it is dismissed.
-         * Everything the card at first run showed is here, for good.
+         * FOUR CARDS STOOD HERE. Measured on the handset's own view hierarchy: "Offline dictation
+         * languages" 170 words, "Offline speech engine" 176, "Offline speech model" 188 or more,
+         * and "AI on this phone" 156 plus a nineteen-row coverage list of 1,207 — roughly 2,300
+         * words below two cards about a colour scheme.
          *
-         * LAST, AND SAYING WHOSE SETTING IT IS. The two cards above belong to the ACCOUNT and follow
-         * the designer to any handset they sign in on; a speech pack is bytes on this phone and
-         * follows nobody. Sitting it below them with that stated in its own copy is what stops a
-         * designer downloading Odia here and expecting to find it on the office tablet.
+         * They are one row now, and the row carries a SHORT TRUE STATE SUMMARY rather than a chevron
+         * and a hope: a designer wants to know whether this phone can dictate in a courtyard, and
+         * `dwSpeechSummaryLine` answers it in a clause before they tap. The cards themselves live on
+         * [SpeechAndAiScreen], which is where the numbers and the controls are.
          *
-         * The screen heading stays "Appearance & accessibility" verbatim: it is mirrored by the
-         * web's /settings page, which has no dictation of any kind, and renaming it here to cover a
-         * phone-only card would put the two clients' menus out of step for a card the web cannot
-         * have.
+         * WHY A SUB-SCREEN RATHER THAN JUST SHORTER CARDS. Because these two cards belong to the
+         * ACCOUNT and follow a designer to any handset they sign in on, and everything below the row
+         * belongs to THIS PHONE and follows nobody. That distinction used to be made by a paragraph
+         * inside the pack card; a screen boundary makes it without a word.
          */
-        PreferenceCard {
-            PreferenceCardHeading(Icons.Filled.RecordVoiceOver, "Offline dictation languages")
-            DwLanguagePackSettings()
-        }
+        SettingsRow(
+            icon = Icons.Filled.RecordVoiceOver,
+            title = "Speech & AI",
+            summary = speechSummary,
+            onClick = onOpenSpeechAndAi,
+        )
     }
 }
 
@@ -490,9 +529,66 @@ fun AppearanceScreen(
 // Pieces. Local copies on purpose: the app's card/back-pill helpers are private to MainActivity.kt.
 // ---------------------------------------------------------------------------------------------
 
-/** The app's standard record card, restated here (MainActivity's `RecordCard` is file-private). */
+/**
+ * A settings row that leads somewhere, with **a true state summary under its title**.
+ *
+ * The summary is the whole point of the shape. A row reading "Speech & AI ›" makes a designer open a
+ * screen to discover whether they needed to; a row reading "2 of 19 languages work offline · speech
+ * model installed" has already answered the question most of them had.
+ */
 @Composable
-private fun PreferenceCard(content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsRow(
+    icon: ImageVector,
+    title: String,
+    summary: String,
+    onClick: () -> Unit,
+) {
+    PreferenceCard {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.medium)
+                .clickable(onClick = onClick)
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(MaterialTheme.field.brandTile),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.field.onBrandTile,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.muted)
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.field.muted,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+/**
+ * The app's standard record card, restated here (MainActivity's `RecordCard` is file-private).
+ *
+ * `internal` rather than private since 2026-08-12: `SpeechAndAiScreen` draws the same two cards and a
+ * second copy of a card shape is how two screens in one settings menu come to look like two apps.
+ */
+@Composable
+internal fun PreferenceCard(content: @Composable ColumnScope.() -> Unit) {
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = MaterialTheme.shapes.large,
@@ -508,7 +604,7 @@ private fun PreferenceCard(content: @Composable ColumnScope.() -> Unit) {
 
 /** The web's card heading: a brand-tile icon chip beside a display-face title. */
 @Composable
-private fun PreferenceCardHeading(icon: ImageVector, title: String) {
+internal fun PreferenceCardHeading(icon: ImageVector, title: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(
             modifier = Modifier
@@ -527,6 +623,13 @@ private fun PreferenceCardHeading(icon: ImageVector, title: String) {
         Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
     }
 }
+
+/*
+ * `DwDeviceTierSettings` LIVED HERE AND HAS MOVED to `SpeechAndAiScreen.kt`, shortened, as
+ * `DwDeviceTierBody`. This file is about the two settings that belong to the ACCOUNT and follow a
+ * designer to any handset; everything it used to carry below those two belongs to THIS PHONE. The
+ * screen boundary now makes that distinction, which a paragraph inside a card used to have to.
+ */
 
 /** One theme choice: a bordered row that tints and outlines in the action colour when selected. */
 @Composable

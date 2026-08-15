@@ -11,15 +11,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,9 +37,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DwEligibleViewerDto
+import com.designprototype.workshop.data.DwEligibleViewers
 import com.designprototype.workshop.data.DwViewerAttempt
 import com.designprototype.workshop.data.DwViewerChoice
 import com.designprototype.workshop.data.DwViewerDto
@@ -48,6 +55,8 @@ import com.designprototype.workshop.data.dwPersonLabel
 import com.designprototype.workshop.data.dwViewerAdministrationMissing
 import com.designprototype.workshop.data.dwViewerChoices
 import com.designprototype.workshop.data.dwViewerFailureMessage
+import com.designprototype.workshop.data.dwViewerOfferNotice
+import com.designprototype.workshop.data.dwViewerSearchTerm
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.SearchableMultiSelectField
@@ -56,8 +65,20 @@ import com.designprototype.workshop.ui.SelectOption
 // in this feature imports it, or its headings are quietly set in the body face.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+
+/**
+ * How long the search box waits before it asks the server.
+ *
+ * The same 350ms the workshop list uses, because it is the same interaction and an admin should not
+ * meet two typing rhythms in one app. It paces a request that cannot be answered locally: the term
+ * goes into the server's `WHERE`, so every keystroke without this is one more ILIKE scan of the user
+ * table, and the first five answers to "Nabakalebara" are replies nobody will ever look at.
+ */
+private const val SEARCH_DEBOUNCE_MS = 350L
 
 /**
  * Putting a second designer on one design & prototype workshop, from the handset.
@@ -162,12 +183,38 @@ fun WorkshopViewersScreen(
     var onServer by remember(workshopId) { mutableStateOf(true) }
     var featureMissing by remember(workshopId) { mutableStateOf(false) }
 
-    var eligible by remember(workshopId) { mutableStateOf<List<DwEligibleViewerDto>>(emptyList()) }
+    /**
+     * The eligible accounts as the server last answered, and the question that answer belongs to.
+     *
+     * NOT "the eligible accounts". It is at most 2000 of them (`ELIGIBLE_VIEWER_LIMIT`, and this
+     * repository has 2543 eligible accounts), narrowed to whatever [query] was last sent as `search`.
+     * Everything that reads it has to know which of those it is holding, which is why the term and
+     * the truncation flag travel inside it — see [DwEligibleViewers].
+     */
+    var offer by remember(workshopId) { mutableStateOf(DwEligibleViewers()) }
+    /**
+     * Every eligible account this screen has been shown since it opened, first-seen order.
+     *
+     * **THE ANTI-REVOCATION STORE.** A search replaces [offer], and a tick whose account is no longer
+     * in [offer] would vanish from the options — and the PUT replaces the whole set, so an option that
+     * is not rendered is a row the next Save deletes. An admin who found one colleague under
+     * "Nabakalebara", ticked them, then typed a second surname would save the second and silently
+     * drop the first. This is where the first one is kept, and `dwViewerChoices(retained = …)` is
+     * where it is put back.
+     */
+    var seenEligible by remember(workshopId) {
+        mutableStateOf<Map<String, DwEligibleViewerDto>>(emptyMap())
+    }
     var rows by remember(workshopId) { mutableStateOf<List<DwViewerDto>?>(null) }
     var selection by remember(workshopId) { mutableStateOf(DwViewerSelection()) }
 
+    /** What the admin has typed. [dwViewerSearchTerm] turns it into what the server is asked. */
+    var query by remember(workshopId) { mutableStateOf("") }
+    var searching by remember(workshopId) { mutableStateOf(false) }
+
     var loadError by remember(workshopId) { mutableStateOf<String?>(null) }
     var saveError by remember(workshopId) { mutableStateOf<String?>(null) }
+    var searchError by remember(workshopId) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(workshopId, reload, canAdminister) {
         // NOT REQUESTED AT ALL for a non-admin, matching `DesignerRosterScreen`. Issuing the calls
@@ -210,9 +257,19 @@ fun WorkshopViewersScreen(
             return@LaunchedEffect
         }
 
-        runCatching { repository.eligibleDesignWorkshopViewers() }
-            .onSuccess { served ->
-                eligible = served
+        // WITH WHATEVER IS IN THE SEARCH BOX, not unconditionally unsearched. This effect is also the
+        // "Try again" path, and re-running it as an empty search would answer a different question
+        // from the one still typed in the field — a list of everybody under the term that found one
+        // person. Read non-reactively on purpose: keying this effect on `query` would make every
+        // keystroke re-fetch the workshop detail and the viewer rows too.
+        val term = dwViewerSearchTerm(query)
+        runCatching { repository.eligibleDesignWorkshopViewers(term) }
+            .onSuccess { answered ->
+                offer = answered
+                // Replaced, not merged: this is a fresh load of the screen, and every tick is about
+                // to be re-adopted from the server's own rows below.
+                seenEligible = answered.users.associateBy { it.id }
+                searchError = null
                 featureMissing = false
             }
             .onFailure { error ->
@@ -222,19 +279,21 @@ fun WorkshopViewersScreen(
                 val status = (error as? HttpException)?.code()
                 if (dwViewerAdministrationMissing(status)) {
                     featureMissing = true
-                    eligible = emptyList()
+                    offer = DwEligibleViewers()
                     loading = false
                     return@LaunchedEffect
                 }
                 // ANY OTHER FAILURE STOPS THE LOAD, and this early return is load-bearing rather
-                // than tidy. `dwViewerChoices` marks every granted account the eligible list does
-                // not contain as "has access, no longer eligible" — which is the truth when the
+                // than tidy. `dwViewerChoices` marks every granted account a COMPLETE eligible list
+                // does not contain as "has access, no longer eligible" — which is the truth when the
                 // server OFFERED a list without them, and a lie when no list arrived at all. Left
                 // to fall through, a 500 or a dropped socket here drew the picker over an empty
                 // eligible list and told an administrator that every designer on the workshop had
                 // been suspended from the roster, with a "Try again" nowhere in sight and nobody
-                // available to add. Better to render the failure that actually happened.
-                eligible = emptyList()
+                // available to add. Better to render the failure that actually happened. (The
+                // default `DwEligibleViewers()` says `complete`, so this early return is what keeps
+                // that from being read as "the eligible set is empty and we know it".)
+                offer = DwEligibleViewers()
                 loadError = error.viewerFailure(DwViewerAttempt.READ)
                 loading = false
                 return@LaunchedEffect
@@ -250,6 +309,54 @@ fun WorkshopViewersScreen(
                 if (loadError == null) loadError = error.viewerFailure(DwViewerAttempt.READ)
             }
         loading = false
+    }
+
+    /**
+     * Ask the SERVER again whenever the typed term changes — the only way past the 2000-account cap.
+     *
+     * **THE TERM GOES INTO THE SERVER'S `WHERE`, and filtering [offer] here instead would be the
+     * defect wearing a search box.** The list this screen holds is the first 2000 eligible accounts
+     * by name; the colleague an admin cannot find is the one who sorts past that. Searching what
+     * arrived would search only the part of the alphabet that fitted and answer "no such person"
+     * about somebody who is perfectly eligible.
+     *
+     * Keyed on the raw text, so each keystroke cancels the run before it. Only the eligible list is
+     * re-fetched: the workshop detail and the viewer rows do not depend on the term, and re-reading
+     * the rows would re-adopt the baseline and throw away unsaved ticks.
+     */
+    LaunchedEffect(query) {
+        val term = dwViewerSearchTerm(query)
+        // Nothing loaded yet (the field is not even drawn), or this is already the answer on screen —
+        // clearing "abc " back to "abc" is the same question and must not cost a request.
+        if (rows == null || term == offer.search) return@LaunchedEffect
+        // Not for the clear, which is a deliberate act and not typing — the same split the workshop
+        // list makes. Waiting 350ms to un-narrow a list the admin has just emptied the box for reads
+        // as a stuck screen.
+        if (term != null) delay(SEARCH_DEBOUNCE_MS)
+        searching = true
+        val answered = runCatching { repository.eligibleDesignWorkshopViewers(term) }
+        searching = false
+        answered
+            .onSuccess { served ->
+                offer = served
+                // MERGED, never replaced. This is the store that stops a search from silently
+                // revoking a tick made under the previous term; see `seenEligible`.
+                seenEligible = seenEligible + served.users.associateBy { it.id }
+                searchError = null
+            }
+            .onFailure { error ->
+                // A CANCELLED SEARCH IS NOT A FAILED ONE. This effect is keyed on the search box, so
+                // every keystroke cancels the request in flight and `runCatching` catches that like
+                // anything else. Reported, it would flash "This phone could not reach the repository"
+                // over a connection that is fine, mid-word. The house pattern is to guard the
+                // HANDLING rather than rethrow (see `WorkshopListScreen`); the run that replaced this
+                // one sets both fields a moment later.
+                if (error is CancellationException) return@onFailure
+                // SAID, not swallowed. The alternative is the previous term's list sitting under the
+                // new term with nothing to say it is stale — a picker answering a question nobody
+                // asked, on the screen where the answer decides who can open a fortnight of work.
+                searchError = error.viewerFailure(DwViewerAttempt.READ)
+            }
     }
 
     /**
@@ -395,8 +502,23 @@ fun WorkshopViewersScreen(
         // — three readings of a nullable is how one of them ends up comparing a String to a null and
         // quietly offering the creator for removal.
         val creator = creatorId.orEmpty()
-        val choices = remember(eligible, served, creator) {
-            dwViewerChoices(eligible, served, creator)
+        // Ticked, and not in the answer now on screen — because the answer is a search result. Handed
+        // back to the picker so a second search cannot delete the first one's grant on the next Save.
+        // Drawn from `seenEligible` only: a granted-but-ineligible account was never in an eligible
+        // answer, so it is not here and falls through to the marked group below, where it belongs.
+        val retained = remember(seenEligible, offer, selection.selected) {
+            val answered = offer.users.mapTo(HashSet()) { it.id }
+            seenEligible.values.filter { it.id !in answered && it.id in selection.selected }
+        }
+        val choices = remember(offer, retained, served, creator) {
+            dwViewerChoices(
+                eligible = offer.users,
+                viewers = served,
+                creatorId = creator,
+                // The one claim a searched or cut list cannot support; see `DwEligibleViewers`.
+                eligibleListComplete = offer.complete,
+                retained = retained,
+            )
         }
 
         // ── The creator, OUTSIDE the picker ──────────────────────────────────────────────────────
@@ -405,7 +527,74 @@ fun WorkshopViewersScreen(
         // disabled — the obvious first draft — would invite an admin to try to untick the one person
         // whose access is not on offer, and a control that refuses a tap without saying why is how
         // somebody concludes the screen is broken.
-        CreatorCard(creatorId = creator, rows = served, eligible = eligible)
+        //
+        // NAMED FROM EVERY ANSWER SEEN, not from the current one: a search that does not match the
+        // creator must not blank out the card that says who always has access.
+        CreatorCard(creatorId = creator, rows = served, eligible = seenEligible.values.toList())
+
+        // ── Reaching past the server's ceiling ───────────────────────────────────────────────────
+        //
+        // The endpoint answers at most 2000 accounts ordered by name and this repository has 2543
+        // eligible ones, so on the sheet's local filter alone an admin could only ever find a
+        // colleague who sorts inside the first 2000 — and would be told nothing about the rest. This
+        // field sends `search` to the server, which applies it inside the same query as the
+        // eligibility rule. The sheet's own box still narrows what came back; this is what decides
+        // what comes back.
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            label = { Text("Search by name or email") },
+            singleLine = true,
+            enabled = !saving,
+            leadingIcon = {
+                Icon(
+                    Icons.Filled.Search,
+                    contentDescription = null,
+                    tint = MaterialTheme.field.muted,
+                    modifier = Modifier.size(18.dp)
+                )
+            },
+            trailingIcon = {
+                when {
+                    searching -> CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                    query.isNotEmpty() -> IconButton(onClick = { query = "" }) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Clear search",
+                            tint = MaterialTheme.field.muted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            modifier = Modifier.fillMaxWidth()
+        )
+        // ONE SENTENCE, AND ONLY WHEN THERE IS SOMETHING TO SAY. Silence is the correct output when
+        // the list is whole: a standing note about pagination on every visit is the padding this
+        // screen has been asked twice not to have. The four states are different facts — people are
+        // hidden and searching reaches them; people are hidden from this search and it needs
+        // narrowing; people are hidden from EVERY search because the roster read was cut, so
+        // narrowing cannot help; the search matched nobody, which is NOT the same as nobody being
+        // eligible. Chosen by [dwViewerOfferNotice] rather than here, because it is a decision with
+        // four outcomes and one of them no live database can produce — see its own note.
+        if (searchError == null) {
+            dwViewerOfferNotice(offer)?.let {
+                Text(
+                    it,
+                    // The WORD carries it; the colour only separates "somebody is hidden from you"
+                    // from "nobody matched", and neither is an error.
+                    color = if (offer.truncated) MaterialTheme.field.warning else MaterialTheme.field.muted,
+                    fontSize = 12.sp
+                )
+            }
+        }
+        // A search that never answered must not leave the previous term's list looking like this
+        // term's answer.
+        searchError?.let { Notice(it, warning = false) }
 
         // ── The picker ───────────────────────────────────────────────────────────────────────────
         SearchableMultiSelectField(
@@ -413,8 +602,15 @@ fun WorkshopViewersScreen(
             options = choices.map { it.asOption() },
             selected = selection.selected,
             placeholder = "Select one or more designers",
-            emptyMessage = "No designers are eligible. An account has to be able to run a design " +
-                "workshop, and be on the ACTIVE designer roster, before it can be let into one.",
+            // TWO MESSAGES, because they are two different facts and the whole defect this screen was
+            // fixed for is those two looking identical. "Nobody is eligible" is a statement about the
+            // roster; "nothing matched" is a statement about the term just typed.
+            emptyMessage = if (offer.search != null) {
+                "No eligible account matches that search."
+            } else {
+                "No designers are eligible. An account has to be able to run a design " +
+                    "workshop, and be on the ACTIVE designer roster, before it can be let into one."
+            },
             enabled = !saving,
             onSelectedChange = { picked -> selection = selection.withSelection(picked) }
         )

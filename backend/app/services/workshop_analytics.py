@@ -803,7 +803,7 @@ _NOT_COMPUTED: tuple[dict[str, str], ...] = (
     {
         "question": "Total revenue and units sold across every follow-up visit",
         "reason": (
-            "Stage 22 does not say whether `revenue`, `unitsSold` and `ordersReceived` are "
+            "Stage 22 does not say whether “Revenue”, “Units sold” and “Orders received” are "
             "cumulative to date or incremental since the last visit, and the two readings differ by "
             "a factor of three on a workshop visited at 3, 6 and 12 months. Only the standing "
             "figure — the most recent visit — is reported."
@@ -811,11 +811,22 @@ _NOT_COMPUTED: tuple[dict[str, str], ...] = (
     },
     {
         "question": "Adoption against the sketches that were shortlisted",
+        # These `reason` strings are rendered verbatim on the admin analytics page, so they are
+        # client-facing prose under the same rule as `StageSpec.notes`: they may describe what the
+        # registry does and does not record, never who said what about the specification. This one
+        # used to cite "the reviewer's own note proposes deleting it" — the stage's optionality is
+        # the fact the refusal rests on, and it is a structured flag anyone can check.
+        #
+        # AND IT MAY NOT NAME THAT FLAG IN CODE, which is the second correction this string needed.
+        # It read "is declared `optional_stage=True`" — an administrator saw a Python attribute and
+        # two backticks, because `analytics/page.tsx` renders `entry.reason` as JSX text and nothing
+        # parses markup. Naming the pill the same reader can see on the stage keeps the refusal
+        # checkable without printing the source. The sibling refusal above already did this with
+        # “Expected deliverables”; these two had drifted from it.
         "reason": (
-            "Stage 12 (sketch review and shortlisting) is declared `optional_stage=True` and the "
-            "reviewer's own note proposes deleting it. A funnel whose first step is a stage "
-            "workshops are told they may skip would report a collapse in workshops that simply "
-            "did not fill it in."
+            "Stage 12 (sketch review and shortlisting) is marked “Optional stage”, so "
+            "workshops are told they may leave it empty. A funnel whose first step is an optional "
+            "stage would report a collapse in workshops that simply did not fill it in."
         ),
     },
 )

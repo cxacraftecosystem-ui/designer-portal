@@ -25,8 +25,15 @@ def role_value(user: Any) -> str:
     return str(getattr(role, "value", role))
 
 
-# The six-tier role ladder, strictly ordered. Higher rank inherits every power of the ranks below
+# The seven-tier role ladder, strictly ordered. Higher rank inherits every power of the ranks below
 # it; grantable capability booleans can additionally lift a specific power for a lower tier.
+#
+# SEVEN, AND THIS COMMENT SAID SIX FOR AS LONG AS DESIGNER HAS EXISTED. The tier is right there four
+# lines down, with its own explanation of why 35. Miscounting it here is not a typo with no
+# consequence: this is the file every permission question in the repository is answered from, and the
+# same off-by-one had already propagated into README.md's role table (six rows, no DESIGNER row, in a
+# product whose primary user is a designer) and into docs/PERMISSIONS.md, which records having been
+# corrected for exactly this once already. Nothing mechanical counts these.
 ROLE_RANK: dict[str, int] = {
     "CROWDSOURCE_VOLUNTEER": 10,
     "FIELD_CONTRIBUTOR": 20,

@@ -64,9 +64,28 @@ import java.util.concurrent.atomic.AtomicReference
  * [SchemaResponse.version] is a content digest of every key, type, tier and required flag — the
  * server derives it in `registry_version()` and deliberately makes it insensitive to labels and help
  * text, so retitling a field does not invalidate every draft on every phone while retyping one does.
- * It is exposed through [StageSchemaStore.cachedVersion] so a draft written against an older registry
- * can be recognised as such rather than being silently rendered through a form that no longer matches
- * the keys it holds.
+ *
+ * NOTHING ON THIS PHONE COMPARES IT TO ANYTHING, AND THAT IS THE HONEST DESCRIPTION. This comment
+ * used to claim the version "is exposed through [StageSchemaStore.cachedVersion] so a draft written
+ * against an older registry can be recognised as such rather than being silently rendered through a
+ * form that no longer matches the keys it holds". It is not, and it cannot be: [cachedVersion] has no
+ * callers, [StageSchemaStore.store]'s "the version moved" return value is discarded by its only
+ * caller ([WorkshopRepository.designWorkshopSchema]), and a [WorkshopDraft] has no field naming the
+ * registry it was written against — so there is nothing to recognise a draft AS. The browser is the
+ * client that does this properly: its draft carries `registryVersion` and its IndexedDB registry
+ * store is keyed by it, so a stage can be drawn through the registry it was captured with.
+ *
+ * MEASURED, NOT REASONED (SM-M325F, 2026-08-13). With a real draft on disk, the cached registry's
+ * digest was replaced with a bogus one and the workshop list re-opened to force a fetch. The cache
+ * file was rewritten to the server's digest and the draft was byte-for-byte identical afterwards
+ * (sha256 unchanged): no migration, no refusal, no silent re-keying, no data loss, and no banner.
+ *
+ * That outcome is safe because of three things that are NOT this version string, and they are what
+ * to protect if this ever gets touched: [StageDraft.values] is a `JsonElement` map, so a key this
+ * build no longer knows survives a round trip instead of being dropped; [StageDraft.requiredKeys] is
+ * recomputed from the live registry on every persist rather than trusted from disk, so a newly
+ * required field cannot leave a stage reading 100%; and the drift a designer must actually hear
+ * about is the server's `droppedKeys` at save time, which [WorkshopSync] already surfaces.
  *
  * ── KEEPING THE BUNDLED ASSET HONEST ─────────────────────────────────────────────────────────────
  *
@@ -300,6 +319,25 @@ enum class DwFieldType {
     companion object {
         fun of(raw: String): DwFieldType =
             entries.firstOrNull { it.name == raw } ?: TEXT
+
+        /**
+         * The type, or NULL for a token this build has no arm for. **Only the custom-section renderer
+         * may ask, and [of] must not be changed to behave like this.**
+         *
+         * The degrade-to-[TEXT] above is load-bearing for the REGISTRY and its KDoc says why: one new
+         * type on the server would otherwise blank all 22 stages on every handset that had not
+         * updated. That trade is right when the alternative is losing 495 working fields, and wrong
+         * for a designer's own question, where it is the whole of the failure — an unknown token
+         * reaches the `when` as TEXT and is drawn as an ordinary editable box with no note, no
+         * disabled state and no caption. The designer types an answer into it, the value is stored
+         * under a shape nothing downstream can read, and nobody is told. That is a silent WRONG
+         * answer, which is worse than the web's blank.
+         *
+         * So the registry keeps its forgiving door and the custom path gets a strict one, and the
+         * strict one is only ever asked about a handful of fields on one stage. See
+         * [dwCustomFieldDrawable], which is the only caller.
+         */
+        fun known(raw: String): DwFieldType? = entries.firstOrNull { it.name == raw }
     }
 }
 
@@ -800,6 +838,20 @@ fun computeStageCompleteness(
     stage: StageDto,
     singleton: Map<String, JsonElement>,
     collections: Map<String, List<Map<String, JsonElement>>>,
+    /**
+     * The designer's own questions for this stage, retired ones included —
+     * [customFieldsForStage] resolves them off [DwCustomSectionStore]'s cache.
+     *
+     * Mirrors `stage_completeness(..., custom_fields=, custom_values=)` argument for argument, and
+     * the web's `scoreStageData` in the same order, because a required custom question counted on one
+     * surface and not on another is a stage that reads 100% on the form and 422s on submit.
+     *
+     * DEFAULTED EMPTY, WHICH IS THE HONEST DEFAULT AND NOT A CONVENIENCE. A caller with no definition
+     * to hand scores the stage exactly as it did before this feature existed — it cannot invent a
+     * higher total and it cannot invent a lower one.
+     */
+    customFields: List<DwCustomFieldDto> = emptyList(),
+    customValues: Map<String, JsonElement> = emptyMap(),
 ): DwStageCompleteness {
     var requiredTotal = 0
     var requiredFilled = 0
@@ -812,6 +864,43 @@ fun computeStageCompleteness(
         if (field.required) {
             requiredTotal++
             if (filled) requiredFilled++ else missing.add(field.label)
+        } else {
+            optionalTotal++
+            if (filled) optionalFilled++
+        }
+    }
+
+    /*
+      THE DESIGNER'S OWN QUESTIONS, SCORED BETWEEN THE STAGE'S SINGLETON AND ITS COLLECTIONS.
+
+      BETWEEN, AND NOT AFTER, AND THE ORDER IS NOT COSMETIC. `missing` is printed in order and
+      truncated — the report screen prints `missing.take(3)` per stage and the completeness annexure
+      prints the same three in its Outstanding column — so whatever this list puts first is what a
+      designer and a ministry officer actually read. Between the stage's own fields and its repeating
+      rows is the order the questions appear on the form, and it is `stage_completeness`' order to the
+      line (`services/stage_schema.py:1323-1352`).
+
+      FILED UNDER THE BARE LABEL, like a singleton field and unlike a collection field, which files
+      `"${entity.title}: ${field.label}"` below. That is what makes a duplicate label a
+      definition-time refusal rather than a document disagreeing with itself: two required questions
+      filing the same string collapse into one row through the de-duplication at the end while
+      `requiredTotal` still counts two. `custom_sections.validate_definition` refuses exactly that
+      pair, and this is the arithmetic it is protecting.
+
+      A RETIRED FIELD IS SKIPPED, exactly as `liveFields` skips a deprecated registry field and for
+      its reason: it is no longer asked, so counting it would make a stage permanently incomplete
+      because of a question the designer corrected.
+
+      KEY BY KEY, AND THE CONTAINER IS NEVER TESTED AS A WHOLE. `DwValues.isFilled` answers true for
+      any JsonObject with keys, so a bucket holding twenty blank answers is truthy — a stage would
+      report itself complete on the strength of the bucket existing.
+    */
+    customFields.forEach { field ->
+        if (field.retired) return@forEach
+        val filled = DwValues.isFilled(customValues[field.key])
+        if (field.required) {
+            requiredTotal++
+            if (filled) requiredFilled++ else missing.add(field.label.ifBlank { field.key })
         } else {
             optionalTotal++
             if (filled) optionalFilled++
@@ -861,6 +950,21 @@ fun computeStageCompleteness(
 fun computeWorkshopCompleteness(
     schema: SchemaResponse,
     draft: WorkshopDraft?,
+    /**
+     * This workshop's custom definition as this device holds it, or null when it holds none.
+     *
+     * THE SIGNATURE GAINS ONE ARGUMENT AND THAT IS WHAT TEACHES EVERY READER AT ONCE. The stage
+     * index, the submission-readiness assembly and the report all fan out through this function, so
+     * threading the per-stage field lists through each of them instead would mean three call sites
+     * each deciding for themselves whether to pass a definition — and the one that forgot would be a
+     * second arithmetic on the same screen.
+     *
+     * NULL SCORES EXACTLY AS THIS FUNCTION DID BEFORE THE FEATURE EXISTED. That is the honest answer
+     * for a device that has never read the definition: it must not invent a required total it cannot
+     * see, and it must not invent a lower one either — which is why [StageIndexScreen] refuses the
+     * SERVER's score rather than adopting a number computed under a definition this device lacks.
+     */
+    definition: DwCustomCache? = null,
 ): List<DwStageCompleteness> = schema.stages.sortedBy { it.number }.map { stage ->
     val stored = draft?.stages?.get(stage.key)
     computeStageCompleteness(
@@ -869,6 +973,8 @@ fun computeWorkshopCompleteness(
         collections = stage.collections.associate { entity ->
             entity.key to stored?.rowsFor(entity.key).orEmpty().map { it.values }
         },
+        customFields = customFieldsForStage(definition, stage.key),
+        customValues = stored?.custom.orEmpty(),
     )
 }
 
@@ -923,6 +1029,25 @@ data class DesignWorkshopDto(
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val deletedAt: String? = null,
+    /*
+      WHETHER THIS WORKSHOP'S RECORDINGS MAY LEAVE THE DEVICE — plan §6 answer 3, three keys added to
+      `workshop_summary` by `dictation_consent.consent_keys`.
+
+      Read by the phone so a workshop whose consent was recorded on the web, or on a colleague's
+      handset, gates and un-gates dictation here too. The token is always one of the three enum values
+      and never null on a server that has the column; a build talking to a server that predates it
+      simply sees the default, which is the same fail-closed answer as never having been asked. The
+      reading is [dwTier3ConsentOf]'s, so an unrecognised token gates rather than reaching the ladder
+      as a state no sentence exists for.
+
+      `dictationConsentByName` is deliberately absent: the server resolves that one in the
+      single-record read alone, because looking a display name up per row would put a query per
+      workshop into a paged list to print something the list does not show.
+    */
+    val dictationConsent: String = DW_CONSENT_NOT_RECORDED,
+    /** When the ARTISAN answered, which on this fleet can be a fortnight before the server heard it. */
+    val dictationConsentAt: String? = null,
+    val dictationConsentById: String? = null,
 )
 
 @Serializable
@@ -963,7 +1088,31 @@ data class StageCompletenessDto(
 data class StageBucketDto(
     val singleton: JsonObject = JsonObject(emptyMap()),
     val collections: Map<String, List<JsonObject>> = emptyMap(),
+    /**
+     * The designer's own answers for this stage — the `_custom` row's whole `data`, flat, keyed by
+     * their own field keys. `_stages_payload`'s third sibling key.
+     *
+     * A THIRD KEY BESIDE THE OTHER TWO AND NOT NESTED INSIDE `singleton`. Eight of the twenty-two
+     * stages declare no singleton entity at all (sketch development, prototype iteration, costing …),
+     * which is exactly the third a designer is most likely to extend, so a container hung off the
+     * singleton row could not serve them. And the answers are a row of their own on the server
+     * precisely so that a client which has never heard of them cannot delete them by omission.
+     *
+     * Defaulted empty like everything else here, so a payload from a server predating the feature
+     * reads as "no custom answers", which is the truth for it.
+     */
+    val custom: JsonObject = JsonObject(emptyMap()),
     val completeness: StageCompletenessDto? = null,
+    /**
+     * The digest of the custom definition the score beside it was computed under — `GET /stages/{key}`.
+     *
+     * Carried BESIDE the score, and the pairing is the point rather than a convenience; the route's
+     * own comment says so. See [StageIndexScreen]'s adoption rule: a handset holding an older
+     * definition, or none, would otherwise show the server's higher `requiredTotal` for untouched
+     * stages and its own lower one for touched stages — two arithmetics in one list, with nothing on
+     * screen to say why.
+     */
+    val customSchemaVersion: String = "",
 )
 
 @Serializable
@@ -995,8 +1144,41 @@ data class DesignWorkshopDetailDto(
      */
     val createdById: String? = null,
     val schemaVersion: String = "",
+    /**
+     * The digest of the custom definition every score in [completeness] was computed under.
+     *
+     * NEVER FOLDED INTO [schemaVersion], which is `registry_version()` and is what
+     * [StageSchemaStore] compares the BUNDLED 119 KB asset against. A designer's own question must
+     * not move that digest or every handset in the fleet would treat its bundled schema as stale the
+     * moment anyone anywhere added a field — plan §4, constraint 2, and the reason custom definitions
+     * are a separately versioned resource at all.
+     */
+    val customSchemaVersion: String = "",
     val stages: Map<String, StageBucketDto> = emptyMap(),
     val completeness: Map<String, StageCompletenessDto> = emptyMap(),
+    /*
+      WHETHER THIS WORKSHOP'S RECORDINGS MAY LEAVE THE DEVICE — the same three keys as
+      [DesignWorkshopDto], because this payload is `workshop_summary` with the stages folded in, plus
+      the one key only the single-record read resolves.
+
+      Decoded HERE as well as on the list row because this is the payload the workshop's own screen
+      reads, and that screen is where the answer is recorded. A consent given on the web, or on a
+      colleague's handset, reaches this phone through these keys and nowhere else.
+    */
+    val dictationConsent: String = DW_CONSENT_NOT_RECORDED,
+    val dictationConsentAt: String? = null,
+    val dictationConsentById: String? = null,
+    /**
+     * Whoever recorded the current answer, by name.
+     *
+     * Resolved by the SINGLE-RECORD read alone — the list deliberately carries only the id, because a
+     * display-name lookup per row would put a query per workshop into a paged endpoint to print
+     * something the list does not show. Null is a real state and not an absence of information: the
+     * pointer is `SetNull`, so a workshop can legitimately carry an answer with no name against it once
+     * that account has been removed, and the honest rendering of that is to say nothing rather than to
+     * put somebody else's name against it.
+     */
+    val dictationConsentByName: String? = null,
 )
 
 @Serializable
@@ -1004,6 +1186,8 @@ data class StageListDto(
     val stages: Map<String, StageBucketDto> = emptyMap(),
     val completeness: Map<String, StageCompletenessDto> = emptyMap(),
     val schemaVersion: String = "",
+    /** See [DesignWorkshopDetailDto.customSchemaVersion]. Never folded into [schemaVersion]. */
+    val customSchemaVersion: String = "",
 )
 
 @Serializable
@@ -1067,12 +1251,42 @@ data class StageSaveBody(
      * is deleted on the server too. The web form sends false because it edits one row at a time and
      * must not delete a row another editor added.
      *
-     * NOT UNCONDITIONALLY TRUE ANY MORE, and the default here is false for the same reason the
-     * server's sweep is scoped: it is a claim of authority, and the phone is only entitled to make it
-     * over a stage it has actually seen the server's copy of. See [StageDraft.serverBaseline] for the
-     * fortnight of process steps, tools and raw materials that the unconditional version deleted.
+     * NOT UNCONDITIONALLY TRUE ANY MORE: it is a claim of authority, and the phone is only entitled
+     * to make it over a stage it has actually seen the server's copy of. See [StageDraft.stageSeen]
+     * for the fortnight of process steps, tools and raw materials that the unconditional version
+     * deleted.
+     *
+     * ── IT HAS NO DEFAULT, AND THAT IS THE WHOLE OF THE GATE. DO NOT GIVE IT ONE. ─────────────────
+     *
+     * It was `= false`, and a default is a value kotlinx OMITS: `ApiClient.retrofit`'s `Json { … }`
+     * never sets `encodeDefaults`, so it stands at kotlinx's default of false — which is exactly what
+     * [StageEntryBody.merge] one class up RELIES on to stay compatible with an API that predates it.
+     * For that field the omission is the intended meaning. For this one it is the opposite of it:
+     * `StageSaveIn.replaceCollections` on the server is `Field(default=True)`, so a body that leaves
+     * the key out is read as **"these are now exactly the rows"** — the strongest claim the protocol
+     * has, made silently by every save that disclaimed it.
+     *
+     * MEASURED, with this handset's own builder against the running API and Postgres. A draft with
+     * `stageSeen = false` holding one `tool` row, built by [buildStageBody], serialised exactly as
+     * `ApiClient` serialises it:
+     *
+     *   {"entries":[{"entityKey":"tool","ordinal":0,
+     *                "data":{"name":"Pit loom (corrected)","_clientKey":"phone-tool-1"},
+     *                "merge":true}]}
+     *   -> HTTP 200 {"saved":1,"created":0,"updated":1,"removed":3,"errors":{}}
+     *
+     * Three rows this phone had never downloaded, soft-deleted by a payload that asked for no sweep
+     * at all, on a stage the app had correctly judged it had no authority over. `merge: true` is no
+     * defence: it preserves keys INSIDE a row the server matched and says nothing about a row the
+     * payload never named. Without a default the property is always encoded, the wire carries
+     * `"replaceCollections":false`, and the same walk answers `removed:0`.
+     *
+     * Every `false` on this field is therefore load-bearing on the wire, which is why
+     * `StageSweepReachesTheWireTest` asserts on the SERIALISED JSON and not on this object: 1107
+     * passing unit tests read `body.replaceCollections` off the Kotlin value, where the gate has been
+     * correct all along.
      */
-    val replaceCollections: Boolean = false,
+    val replaceCollections: Boolean,
     /**
      * Collections the client now holds ZERO rows of, having deleted them: "delete what you still
      * have." Read by the server only when [replaceCollections] is true, and ignored for singletons,
@@ -1102,8 +1316,22 @@ data class StageSaveResultDto(
      * and a designer whose new field silently vanished on every sync deserves to be told once.
      */
     val droppedKeys: List<String> = emptyList(),
+    /**
+     * CUSTOM field keys the server's definition does not carry, and therefore did not store.
+     *
+     * **ITS OWN FIELD AND ITS OWN SENTENCE, NEVER MERGED INTO [droppedKeys]** — plan §4, and the one
+     * place this DTO could destroy something. `droppedKeys` is the only client/server REGISTRY-drift
+     * signal this repository has, and both clients render it as "this phone is running a newer field
+     * registry than the server". A custom key the definition no longer carries is a different fact
+     * with a different remedy (the designer edited their own sections on the web), and folding the
+     * two together would fire the registry-drift banner on every save of every workshop that has a
+     * custom section — which is how the one signal that matters comes to be ignored.
+     */
+    val droppedCustomKeys: List<String> = emptyList(),
     val completeness: StageCompletenessDto? = null,
     val schemaVersion: String = "",
+    /** The digest the score in [completeness] was computed under. See [DesignWorkshopDetailDto]. */
+    val customSchemaVersion: String = "",
 )
 
 /** Records a report the PHONE generated offline. The bytes are never uploaded — only the fact. */

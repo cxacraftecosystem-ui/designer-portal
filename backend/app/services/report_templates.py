@@ -24,7 +24,7 @@ in these choices and in ``max_tier``. That is the whole point of the indirection
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
@@ -65,6 +65,37 @@ class SpecialSection(str, Enum):
     # saying they want it, and the section prints nothing at all when no questionnaire is attached or
     # none of them has an answer — see that module's docstring for the argument in full.
     ANNEXURE_QUESTIONNAIRES = "ANNEXURE_QUESTIONNAIRES"
+    # Every ACCEPTED AI layer, printed at the back and named as a machine's work. The blocks are
+    # built by app/services/report_ai_layers.py, which the builder reaches from one branch of
+    # `ReportBuilder.build`.
+    #
+    # UNLIKE EVERY OTHER MEMBER OF THIS ENUM, NO TEMPLATE CARRIES THIS SECTION. It is spliced in by
+    # `apply_report_settings` only when a report is explicitly asked for it, and the reason is not
+    # taste: `android/app/src/test/resources/report_templates_pin.json` is a 485 KB by-value diff of
+    # this module against its Kotlin port, regenerated only by running a script INSIDE the API
+    # container. Adding a section to `TEMPLATES` moves that file, and a checkout that cannot reach
+    # Docker cannot move it — so the section would have to ship with a red test, or with the pin
+    # hand-edited, which that test's own docstring names as the one thing that must never happen.
+    # Splicing keeps every existing pinned case byte-identical, because none of them asks.
+    #
+    # It is also the honest default. An annexure of machine text is not something that should happen
+    # TO a report: plan §3 rule 4 exists so a reader can tell model prose from an author's, and a
+    # section that appeared without being asked for would put that decision nowhere.
+    ANNEXURE_AI_LAYERS = "ANNEXURE_AI_LAYERS"
+    # ONE block of questions a DESIGNER added to THIS workshop, printed where it was asked. The
+    # blocks are built by app/services/report_custom_sections.py, which the builder reaches from one
+    # branch of `ReportBuilder.build`; which section is meant is named by `TemplateSection.custom_key`.
+    #
+    # LIKE ANNEXURE_AI_LAYERS AND UNLIKE EVERY OTHER MEMBER, NO TEMPLATE CARRIES THIS SECTION, and
+    # for the same two reasons. The first is mechanical: a custom section belongs to one workshop, so
+    # it could not be in a template shared by all of them. The second is the one that decides how it
+    # is added — `android/app/src/test/resources/report_templates_pin.json` is a 485 KB by-value diff
+    # of this module against its Kotlin port, regenerated only by running a script INSIDE the API
+    # container, and a checkout that cannot reach Docker cannot move it. Adding a section to
+    # `TEMPLATES` would mean shipping with a red test or hand-editing the pin, which that test's own
+    # docstring names as the one thing that must never happen. `apply_report_settings` splices these
+    # in per report, so every pinned case stays byte-identical: not one of them carries a definition.
+    CUSTOM_SECTION = "CUSTOM_SECTION"
     COMPLETENESS = "COMPLETENESS"
     # A map of India with the workshop's venue and its artisans' home districts pinned on it.
     # Prints nothing at all until stage 1 names a state or a district, because a map of the whole
@@ -105,10 +136,30 @@ class TemplateSection:
     # the builder — the builder imports THIS one — and a test pins every name against the catalogue
     # so a typo fails the suite instead of silently printing no figure.
     figures: tuple[str, ...] = ()
+    # For a CUSTOM_SECTION: WHICH designer-defined section this prints, by its
+    # ``DwCustomSection.key``. Empty on every other kind of section and on every section of every
+    # template in `TEMPLATES` — these are spliced in per report by `apply_report_settings`, never
+    # declared, so the 485 KB Kotlin pin is unmoved by this field existing.
+    #
+    # A PLAIN STRING AND NOT THE SECTION ITSELF, deliberately: this module must not import
+    # `custom_sections`, which reads the database, and a template that carried loaded rows would be
+    # a template whose identity changed with the data. The builder looks the key up on the workshop
+    # data it was handed, exactly as it looks a stage key up in the registry.
+    custom_key: str = ""
 
     def __post_init__(self) -> None:
         if bool(self.stage_key) == bool(self.special):
             raise ValueError("a TemplateSection needs exactly one of stage_key or special")
+        # A CUSTOM_SECTION THAT NAMES NO SECTION PRINTS NOTHING AND SAYS NOTHING ABOUT WHY, which is
+        # the silent-omission failure this whole pipeline keeps having to fix — a section that
+        # matches no branch renders nothing at all. Refused where the template is built instead, in
+        # both directions, so `custom_key` cannot drift onto a stage section either and be quietly
+        # ignored there for ever.
+        if (self.special is SpecialSection.CUSTOM_SECTION) != bool(self.custom_key):
+            raise ValueError(
+                "a CUSTOM_SECTION names exactly one custom_key, and only a CUSTOM_SECTION may "
+                "carry one"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,6 +527,8 @@ def apply_report_settings(
     settings: Mapping[str, Any] | None,
     *,
     include_photographs: bool | None = None,
+    include_ai_layers: bool | None = None,
+    custom_sections: Sequence[Any] = (),
 ) -> ReportTemplate:
     """Return the template the designer's stage-20 answers actually ask for.
 
@@ -497,8 +550,28 @@ def apply_report_settings(
     shared ``TEMPLATES`` tuple. Mutating it would leak one designer's choices into every other
     designer's report for the lifetime of the process, which is exactly the kind of bug that only
     reproduces under load.
+
+    ``custom_sections`` IS THIS WORKSHOP'S OWN DEFINITION, and **this function is the single arbiter
+    of where a designer's block prints**, exactly as it is already the single arbiter of which
+    sections survive — it was made one because three call sites used to decide for themselves and
+    disagreed. The builder is deliberately not given a second opinion about ordering; it prints the
+    sections it is handed, in the order it is handed them.
+
+    It is a ``Sequence[Any]`` for the reason ``TemplateSection.custom_key`` is a plain string: this
+    module must not import ``custom_sections``, which reads the database. Four attributes are read
+    and no others — ``key``, ``title``, ``stage_key`` and ``sort_order``.
+
+    **A WORKSHOP WITH NO CUSTOM SECTIONS GETS A BYTE-IDENTICAL TEMPLATE, INCLUDING THE IDENTITY
+    RETURN BELOW.** That is not a nicety: `report_templates_pin.json` is 485 KB of by-value Kotlin
+    comparison covering 38 calls of this function, none of which passes a definition, and it can
+    only be regenerated inside the API container.
     """
-    if not settings and include_photographs is None:
+    if (
+        not settings
+        and include_photographs is None
+        and not include_ai_layers
+        and not custom_sections
+    ):
         return template_
 
     sections = list(template_.sections)
@@ -516,6 +589,101 @@ def apply_report_settings(
         drop = {str(k).strip() for k in excluded if str(k).strip()}
         if drop:
             sections = [s for s in sections if not (s.stage_key and s.stage_key in drop)]
+
+    # ── the designer's own sections, spliced where they were asked ────────────────────────────
+    #
+    # AFTER THE EXCLUSION FILTERING ABOVE AND NOT BEFORE, which is the whole reason this block sits
+    # here rather than three lines up. A section attached to a stage the designer excluded would
+    # otherwise be inserted after a stage section that is then removed from under it, leaving the
+    # designer's questions stranded in the middle of somebody else's narrative with no heading above
+    # them to say what stage they belong to.
+    #
+    # TWO PLACEMENTS, AND THE SECOND IS NOT A FALLBACK SO MUCH AS THE OTHER HALF OF THE RULE
+    # (plan §4: "a custom section names the stage section it belongs after, and its own annexure if
+    # it belongs nowhere"):
+    #
+    #   * the template prints that stage  ->  immediately after that stage's section, where a reader
+    #     meets the designer's extra questions in the context they were asked in;
+    #   * it does not (excluded, or a template that never carried the stage — PHOTO_CATALOGUE prints
+    #     three of the twenty-two)  ->  appended at the back as its own annexure, BEFORE the
+    #     completeness section, because completeness is a statement ABOUT the document and belongs
+    #     after everything the document contains.
+    #
+    # Never interleaved with the annexures and never before a stage section it does not belong to.
+    # In `sort_order` then `key`, so the running order is the designer's own and is stable across
+    # two reports of one workshop rather than following whatever order the rows came back in.
+    if custom_sections:
+        ordered = sorted(
+            custom_sections,
+            key=lambda s: (int(getattr(s, "sort_order", 0) or 0), str(getattr(s, "key", ""))),
+        )
+        for definition in ordered:
+            key = str(getattr(definition, "key", "") or "")
+            if not key:
+                continue
+            block = TemplateSection(
+                special=SpecialSection.CUSTOM_SECTION,
+                custom_key=key,
+                heading=str(getattr(definition, "title", "") or ""),
+            )
+            stage_key = str(getattr(definition, "stage_key", "") or "")
+            anchor = next(
+                (i for i, s in enumerate(sections) if s.stage_key and s.stage_key == stage_key),
+                None,
+            )
+            if anchor is not None:
+                # AFTER THE BLOCKS ALREADY PLACED FOR THIS STAGE, not immediately after the stage
+                # section. Inserting at `anchor + 1` every time REVERSED the designer's own running
+                # order for the second and every later section asked at one stage — two sections on
+                # stage 13 came out as 2, 1 — which is precisely what the ordering above exists to
+                # decide, and it would have been read as the sort order not working at all. A
+                # CUSTOM_SECTION can only ever sit directly after the stage it belongs to, so
+                # walking past them cannot walk past anybody else's.
+                at = anchor + 1
+                while (
+                    at < len(sections)
+                    and sections[at].special is SpecialSection.CUSTOM_SECTION
+                ):
+                    at += 1
+                sections.insert(at, block)
+                continue
+            at = next(
+                (i for i, s in enumerate(sections) if s.special is SpecialSection.COMPLETENESS),
+                len(sections),
+            )
+            sections.insert(at, replace(block, page_break_before=True))
+
+    # ── the machine-text annexure, spliced only when it was asked for ─────────────────────────
+    #
+    # ADDED HERE RATHER THAN DECLARED IN `TEMPLATES`, for the reason recorded on
+    # `SpecialSection.ANNEXURE_AI_LAYERS`: every template in that tuple is pinned by value against
+    # the Kotlin port in a 485 KB fixture that can only be regenerated inside the API container.
+    # Splicing leaves all six templates and every one of the pinned `apply_report_settings` cases
+    # byte-identical, because not one of them passes this argument.
+    #
+    # ONLY AN EXPLICIT TRUE ADDS IT. `None` is "nobody asked" and `False` is "asked for it to be
+    # left out", and both mean the same thing here — there is no template default to preserve, so
+    # unlike the toggles above there is no tri-state to honour. That is why the early return uses
+    # `not include_ai_layers` rather than `is None`.
+    #
+    # PLACED BEFORE THE COMPLETENESS SECTION when the template has one, because completeness is a
+    # statement ABOUT the document and belongs after everything the document contains. Appended at
+    # the end otherwise. Never before a stage section: an annexure that interrupted the narrative
+    # would be read as part of it, which is precisely what naming the text is meant to prevent.
+    if include_ai_layers:
+        annexure = TemplateSection(
+            special=SpecialSection.ANNEXURE_AI_LAYERS,
+            page_break_before=True,
+            # It renders nothing at all when no accepted layer is attached — see
+            # `append_ai_layer_annexure` — so a designer who asks for it and has accepted nothing
+            # gets the report they would have got anyway, plus a warning beside the download
+            # telling them why. `omit_if_empty` is about STAGE data and does not reach this arm.
+        )
+        at = next(
+            (i for i, s in enumerate(sections) if s.special is SpecialSection.COMPLETENESS),
+            len(sections),
+        )
+        sections.insert(at, annexure)
 
     # ── how the surviving sections print ──────────────────────────────────────────────────────
     photos = include_photographs

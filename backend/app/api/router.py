@@ -4,6 +4,7 @@ from app.api.routes import (
     analytics,
     app_release,
     artisans,
+    asr_models,
     auth,
     crafts,
     dashboard,
@@ -78,6 +79,11 @@ api_router.include_router(data_browser.router)
 # is the credential it accepts (see app/api/routes/datasets.py and deps.require_dataset_admin).
 api_router.include_router(datasets.router)
 api_router.include_router(app_release.router)
+# Next to app_release because it is the same kind of thing: this deployment handing its own client a
+# large immutable binary it cannot get anywhere else. The difference is that the APK is redirected to
+# object storage while these bytes are served from the API itself, which
+# app/services/asr_artifacts.py argues at length.
+api_router.include_router(asr_models.router)
 api_router.include_router(feedback.router)
 api_router.include_router(preferences.router)
 api_router.include_router(settings.router)

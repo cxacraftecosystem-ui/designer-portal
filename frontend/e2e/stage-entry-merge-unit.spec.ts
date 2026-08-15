@@ -153,39 +153,163 @@ test("no entry ever carries merge:false", () => {
   ];
   for (const stage of stages) {
     for (const entry of buildStageEntries(STAGE, stage).entries) {
-      // Present-and-true or absent. Never present-and-false, and never present on a collection row.
+      // Present-and-true or absent. Never present-and-false — on ANY entry, of any cardinality.
       expect(entry.merge === undefined || entry.merge === true).toBe(true);
     }
   }
 });
 
+test("on a stage this browser never read, no entry LACKS merge either", () => {
+  /*
+    THE COMPLEMENT OF THE TEST ABOVE, AND THE HOLE IT LEFT OPEN FOR AN ENTIRE ARM.
+
+    "No entry ever carries merge:false" is satisfied just as well by an entry carrying NOTHING, so
+    it was true, green, and blind to the defect: the collection loop sent no flag at all, and the
+    one assertion that swept every entry at once nodded it through. A one-sided invariant only
+    catches the mistake it was written for — and the mistake that actually happened was the other
+    one.
+
+    Stated over the whole payload rather than per-arm on purpose. The next entry kind added to
+    `buildStageEntries` (a fourth arm, after singleton, collection and `_custom`) gets this
+    assertion for free, and gets it in the direction that loses a designer's answers if it is
+    forgotten — which is precisely how the collection arm came to be missing it.
+  */
+  const stages: DwDraftStage[] = [
+    neverRead(singleton({ artisanHouseholds: 412 })),
+    neverRead({ collections: { tool: [{ name: "Pit loom" }] } }),
+    neverRead({ collections: { tool: [{ name: "Pit loom", _entryId: "cm3k", _clientKey: "k1" }] } }),
+    // Every arm at once — singleton, two collection rows and `_custom` — which is also the shape
+    // that proves the flag is not being set by one arm and read off another.
+    neverRead({
+      ...singleton({ artisanHouseholds: 412 }),
+      collections: { tool: [{ name: "Pit loom" }, { name: "Charkha", _entryId: "cm9z" }] },
+      custom: { dyesrc: "Madder root, local" }
+    })
+  ];
+
+  for (const stage of stages) {
+    const { entries } = buildStageEntries(STAGE, stage);
+    // Guard the guard: a stage that sent nothing would satisfy the loop below vacuously, and three
+    // of these four cases exist only to put entries in it.
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
+      expect(entry.merge, `${entry.entityKey} was sent without merge from a never-read stage`).toBe(true);
+    }
+  }
+});
+
 /* ────────────────────────────────────────────────────────────────────────────
- * Collections are untouched by any of it
+ * Collections obey the SAME rule, and this file used to assert that they did not
+ *
+ * WHAT WAS HERE BEFORE, because a corrected test is only as good as the reason it was wrong.
+ * A test named "a collection row is never a merge, whether the stage was read or not" pinned the
+ * never-read row as carrying NO flag, and justified it: "`merge` is a SINGLETON primitive. A
+ * collection row is matched by `_entryId` or `_clientKey` and swept by `replaceCollections`, so
+ * 'keep the keys I did not send' has no meaning for one — and a flag applied there would be a
+ * client asserting a rule the server does not have."
+ *
+ * Every clause of that is about the wrong thing. Addressing (`_entryId`/`_clientKey`) decides WHICH
+ * row is written; the sweep (`replaceCollections`/`emptiedEntities`) decides WHICH rows are
+ * soft-deleted. Neither has any bearing on what happens to the keys INSIDE the row that was
+ * matched — and `save_stage` writes that row's `data` wholesale. The server's `if entry.merge and
+ * previous:` is not gated on cardinality and `previous` is filled for any row it matched, by
+ * client key included; `StageEntryIn.merge` documents itself as keys "already stored under this
+ * ROW". So the rule the client was said to be inventing is the rule the server already had, and
+ * this test was holding the data-loss open with a `toEqual` that read as rigour.
+ *
+ * MEASURED, against the running API and Postgres, before the flag was added: the office wrote six
+ * fields into one `tool` row; a never-read browser holding only `name` in that row sent
+ * `{"name":"Pit loom","_clientKey":…}`; the server answered `HTTP 200 saved=1 updated=1 removed=0
+ * errors={}` and the row became `{"name": "Pit loom"}` — five fields gone in place, 0
+ * `RecordRevision` rows to recover them. That is the same walk, and the same silence, that the
+ * singleton arm above was fixed for.
  * ──────────────────────────────────────────────────────────────────────────── */
 
-test("a collection row is never a merge, whether the stage was read or not", () => {
-  // `merge` is a SINGLETON primitive. A collection row is matched by `_entryId` or `_clientKey`
-  // and swept by `replaceCollections`, so "keep the keys I did not send" has no meaning for one —
-  // and a flag applied there would be a client asserting a rule the server does not have.
-  const rows = { tool: [{ name: "Pit loom", _entryId: "cm3k", _ordinal: 4, _clientKey: "k1" }] };
+const ROW = { name: "Pit loom", _entryId: "cm3k", _ordinal: 4, _clientKey: "k1" };
 
-  for (const stage of [neverRead({ collections: rows }), alreadyRead({ collections: rows })]) {
-    const { entries, rowKeys } = buildStageEntries(STAGE, stage);
-    const tools = entries.filter((entry) => entry.entityKey === "tool");
-    expect(tools).toEqual([
-      {
-        entityKey: "tool",
-        entryId: "cm3k",
-        // Derived from the ARRAY ORDER at send time, never from the stored `_ordinal` — a row that
-        // carried its old ordinal after a reorder sorts straight back to where it came from.
-        ordinal: 0,
-        // `_clientKey` stays IN `data` (the server reads it from there and matches on it, so
-        // stripping it duplicates the row on a retry); `_entryId` and `_ordinal` are lifted out.
-        data: { name: "Pit loom", _clientKey: "k1" }
-      }
-    ]);
-    // The position in the array is what `save_stage` keys its per-field errors by, so the two
-    // halves have to be built together or the form decodes one error map against another ordering.
-    expect(rowKeys[entries.indexOf(tools[0])]).toEqual({ entityKey: "tool", rowIndex: 0 });
+/** What every assertion below shares: the row's shape, with the flag left to the caller. */
+const SENT_ROW = {
+  entityKey: "tool",
+  entryId: "cm3k",
+  // Derived from the ARRAY ORDER at send time, never from the stored `_ordinal` — a row that
+  // carried its old ordinal after a reorder sorts straight back to where it came from.
+  ordinal: 0,
+  // `_clientKey` stays IN `data` (the server reads it from there and matches on it, so
+  // stripping it duplicates the row on a retry); `_entryId` and `_ordinal` are lifted out.
+  data: { name: "Pit loom", _clientKey: "k1" }
+};
+
+test("a collection row on a stage this browser never read is sent as a MERGE", () => {
+  const { entries, rowKeys } = buildStageEntries(STAGE, neverRead({ collections: { tool: [ROW] } }));
+  const tools = entries.filter((entry) => entry.entityKey === "tool");
+
+  // `toEqual` on the whole entry: the flag is half of it, and `data` still carrying every key this
+  // browser holds is the other half.
+  expect(tools).toEqual([{ ...SENT_ROW, merge: true }]);
+  // The position in the array is what `save_stage` keys its per-field errors by, so the two
+  // halves have to be built together or the form decodes one error map against another ordering.
+  expect(rowKeys[entries.indexOf(tools[0])]).toEqual({ entityKey: "tool", rowIndex: 0 });
+});
+
+test("a collection row on a stage this browser HAS read carries no flag, so a cleared field is cleared", () => {
+  // The half that stops the fix over-reaching, and it is not symmetry for its own sake: a browser
+  // that has seen the server's copy MEANS it when it omits a key. Measured on the wire — a read
+  // browser sending `{name, localName}` over a six-field row deleted `toolType`, `usedFor`,
+  // `material` and `source`, which is a designer clearing four boxes and must keep working.
+  const { entries } = buildStageEntries(STAGE, alreadyRead({ collections: { tool: [ROW] } }));
+  expect(entries.filter((entry) => entry.entityKey === "tool")).toEqual([SENT_ROW]);
+});
+
+test("a collection row makes the stage report that it merged, so the push is not acknowledged as a read", () => {
+  // `merged` is what stops the NEXT save from deleting what this one preserved: a merge push leaves
+  // the server holding a superset of this browser's copy, so `markStagePushed` must not stamp
+  // `serverLoadedAt`. Before the collection arm carried the flag, a stage whose only content was
+  // collection rows reported `merged: false` and the push WAS acknowledged as a read — so the
+  // second save came through as a wholesale replace even once the first had been made safe.
+  const { merged } = buildStageEntries(STAGE, neverRead({ collections: { tool: [ROW] } }));
+  expect(merged).toBe(true);
+});
+
+/*
+  ── THE MERGE FLAG THE ACKNOWLEDGEMENT HAS TO SEE ────────────────────────────────────────────────
+
+  `buildStageEntries` returns `merged` so that `markStagePushed` can refuse to stamp `serverLoadedAt`
+  after a merge push. Everything about WHY is written up on `markStagePushed`'s `mergedEntries`; what
+  matters here is that the flag is derived from the entries actually built rather than tracked beside
+  the loops, because there are THREE places that set `merge: true` (the singleton arm, the collection
+  loop and the `_custom` arm) and a flag set at one and forgotten at another would be wrong in the
+  direction that loses a designer's answers. Deriving it is what made the collection arm's fix complete
+  the moment the flag was added, rather than needing a second edit here that could have been missed.
+
+  These assertions fail against the code as it stood before that change: `merged` did not exist, so
+  the destructure yields `undefined` and every `toBe(true)` below fails.
+*/
+
+test("a never-read stage reports that it merged, so the push is not acknowledged as a read", () => {
+  const { merged } = buildStageEntries(STAGE, neverRead(singleton({ code: "W-1" })));
+  expect(merged).toBe(true);
+});
+
+test("a stage this browser has read reports no merge", () => {
+  const { merged } = buildStageEntries(STAGE, alreadyRead(singleton({ code: "W-1" })));
+  expect(merged).toBe(false);
+});
+
+test("the flag is read off the entries, so it agrees with them whichever arm set the flag", () => {
+  for (const stage of [
+    neverRead(singleton({ code: "W-1" })),
+    alreadyRead(singleton({ code: "W-1" }))
+  ]) {
+    const { entries, merged } = buildStageEntries(STAGE, stage);
+    // The property the derivation guarantees: `merged` is true exactly when some entry says so.
+    expect(merged).toBe(entries.some((entry) => entry.merge === true));
   }
+});
+
+test("a stage with nothing to send cannot report a merge it did not make", () => {
+  // No entries at all — the never-read empty-singleton rule. There is nothing to acknowledge, and in
+  // particular nothing that would justify stamping the stage as read.
+  const { entries, merged } = buildStageEntries(STAGE, neverRead({}));
+  expect(entries).toEqual([]);
+  expect(merged).toBe(false);
 });

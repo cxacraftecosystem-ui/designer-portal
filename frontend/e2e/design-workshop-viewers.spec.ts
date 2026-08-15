@@ -12,18 +12,19 @@ import { signIn as signInAs } from "./support/session";
  * fortnight's fieldwork with them. `DesignWorkshopViewersPanel` is the admin's way to name the
  * other readers; these tests are what stop it regressing into something that LOOKS like it works.
  *
- * **THE THREE VIEWER ENDPOINTS ARE STUBBED, AND ON PURPOSE.** They are being built in parallel with
- * this screen and are not on the API this dev server talks to yet — `/design-workshops/eligible-
- * viewers` currently answers 404 "Record not found", because FastAPI matches it against
- * `/design-workshops/{id}`. A spec pointed at that would be testing yesterday's contract, exactly
- * as `e2e/fixtures/location.ts` says of the address reference it serves from a file. So the stub IS
- * the wire contract, spelled out in {@link VIEWERS_BY_WORKSHOP} and {@link handleViewers}, and when
- * the routes land the shapes here are what they must match. Everything else — the page, the route
- * guard, the components, the keyboard — is real.
- *
- * The list endpoints are stubbed too, for a different reason: the assertions are about exact counts
- * ("2 of the 4 design workshops are Design & Prototype"), which cannot be exact against whatever
- * happens to be in the database on the day.
+ * **THE THREE VIEWER ENDPOINTS ARE STUBBED, AND THE REASON HAS CHANGED — READ THIS BEFORE COPYING
+ * THE PATTERN.** They used to be stubbed because they did not exist yet: `/design-workshops/eligible-
+ * viewers` answered 404 "Record not found" on this dev server, because FastAPI matched it against
+ * `/design-workshops/{id}`. THEY ARE LIVE NOW, and `design-workshop-viewers-search.spec.ts` exercises
+ * them for real. They stay stubbed HERE for the same reason the list endpoints are, which is the only
+ * reason that still holds: every assertion below is an exact count or an exact PUT body — "4 options,
+ * not 5", "2 of the 4 design workshops are Design & Prototype", "Padma holds a row and is no longer
+ * eligible" — and none of those can be exact against whatever the database happens to hold on the day,
+ * nor can a suspended-roster viewer be conjured through the API without leaving one behind. So the
+ * stub is the wire contract, spelled out in {@link VIEWERS_BY_WORKSHOP} and {@link viewerRow}, and it
+ * must be kept in step with the real shape — see the `truncated` note on the route below for what
+ * happened the last time the wire grew a field. Everything else — the page, the route guard, the
+ * components, the keyboard — is real.
  *
  * WHAT EACH TEST IS ACTUALLY DEFENDING.
  *
@@ -35,11 +36,19 @@ import { signIn as signInAs } from "./support/session";
  * - **The type dropdown narrows the selector, and says what it left out.** A design workshop with
  *   no linked `Workshop` row carries no type at all, and there are always some — a filter that
  *   dropped them silently would show an empty selector over a full repository.
- * - **The whole control works with no mouse.** Tab reaches it, arrows move it, Space and Enter
- *   toggle, Escape dismisses and gives focus back, the focus ring is really drawn, and the live
- *   region says where the workshop now stands.
+ * - **The whole control works with no mouse.** Tab reaches it — through the people search box, which
+ *   is a stop on that route and not decoration — arrows move it, Space and Enter toggle, Escape
+ *   dismisses and gives focus back, the focus ring is really drawn, and the live region says where the
+ *   workshop now stands.
  * - **A designer typing the URL never reaches it.** Tested by NAVIGATION, not by looking for a
  *   missing link: a UI guard over an open page has shipped twice in this repository.
+ *
+ * **THE PEOPLE SEARCH ITSELF IS TESTED NEXT DOOR, AGAINST THE LIVE API.**
+ * `design-workshop-viewers-search.spec.ts` covers the 2000-account ceiling, the sentence that admits a
+ * truncated list and the search that reaches past it. It cannot be done here: this file stubs the
+ * eligible list, and a stubbed list is a list somebody chose the length of — the defect only exists
+ * because a real table grew past a number. The stub below therefore states `truncated: false` — the
+ * whole eligible set, nothing hidden — which is the case in which the panel must say nothing at all.
  */
 
 const PASSWORD = process.env.E2E_PASSWORD ?? "";
@@ -204,8 +213,17 @@ async function stubViewers(page: Page) {
     }
   }, adminToken);
 
-  await page.route(/\/api\/design-workshops\/eligible-viewers$/, (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ users: ELIGIBLE }) })
+  // `truncated` is part of this shape and is stated rather than left out: the endpoint always sends it,
+  // and `false` is the answer this fixture means — six accounts, all of them offered, nothing hidden,
+  // so the panel must render no truncation notice. The regex now tolerates the `?search=` the panel
+  // sends once an admin types, and the answer deliberately ignores the term: what the search DOES is
+  // asserted next door against the live API, and this file must not become a second, fake copy of it.
+  await page.route(/\/api\/design-workshops\/eligible-viewers(\?|$)/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ users: ELIGIBLE, truncated: false })
+    })
   );
 
   await page.route(/\/api\/design-workshops\/[^/?]+\/viewers$/, async (route) => {
@@ -492,6 +510,21 @@ test.describe("design workshop visibility", () => {
     await page.keyboard.press("Enter");
     await expect(popover(page)).toHaveCount(0);
     await expect(panel.getByText(/^Always has access$/)).toBeVisible();
+
+    /*
+      TWO TABS, NOT ONE, AND THE STOP IN BETWEEN IS THE POINT.
+
+      The people search box sits between the workshop picker and the roster. It is the server's search
+      — `eligible-viewers` answers at most 2000 accounts ordered by name and that cut is reached on a
+      real repository, so the picker cannot reach a late-sorting colleague on its own and the box that
+      can is a stop on the keyboard route rather than a mouse-only convenience. It carries
+      `role="searchbox"` and no `aria-label` (`components/SearchInput.tsx`: the placeholder is its
+      accessible name), which is why this hop is asserted on the role.
+    */
+    await page.keyboard.press("Tab");
+    await expect
+      .poll(async () => page.evaluate(() => document.activeElement?.getAttribute("role")))
+      .toBe("searchbox");
 
     await page.keyboard.press("Tab");
     await expect

@@ -37,6 +37,7 @@ import {
   adoptServerDetail,
   ensureDraft,
   isLocalWorkshopId,
+  loadCustomDefinition,
   loadDraft,
   loadRegistry,
   type DwDraft
@@ -144,7 +145,28 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
         if (cancelled) return;
         const merged = await adoptServerDetail(detail, loadedRegistry);
         if (cancelled) return;
-        setDraft(merged ?? local);
+        /*
+          THE WORKSHOP'S OWN QUESTIONS, READ FOR THE SAME REASON THE FIELD REGISTRY IS.
+
+          This page's blocking set is `DwStageCompleteness.missing` and nothing else, and the designer's
+          required custom questions are in it — `localCompleteness` counts them off `draft.customDefinition`.
+          So a definition this browser has not read is a screen that says "nothing is outstanding" about a
+          stage the submit gate will refuse, which is the one thing the header of `lib/submissionReadiness.ts`
+          says this page must never do.
+
+          Not awaited and not fatal: it refreshes a list already on screen, and its own failure resolves to
+          "unknown" rather than to an empty definition. The draft is re-read afterwards because the
+          definition is written to the same record.
+        */
+        const target = merged ?? local;
+        if (target) {
+          void loadCustomDefinition(target).then(async (held) => {
+            if (cancelled || !held.definition) return;
+            const refreshed = await loadDraft(target.localId);
+            if (!cancelled && refreshed) setDraft(refreshed);
+          });
+        }
+        setDraft(target);
         setError(null);
       } catch (err) {
         if (cancelled) return;

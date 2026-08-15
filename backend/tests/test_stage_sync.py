@@ -381,6 +381,56 @@ async def test_a_rejected_value_does_not_destroy_the_one_already_stored(client, 
     assert row["name"] == "Saree updated", "every other field on the entry must still save"
 
 
+async def test_the_response_counts_refused_answers_and_not_the_rows_they_sat_in(client, workshop):
+    """ONE number for "how many answers were refused", so two surfaces cannot each derive their own.
+
+    ``errors`` is ``{scope: {field: message}}`` and carried no total, so both clients computed one and
+    they computed different things off the same body: the web read ``Object.keys(errors).length`` —
+    the number of SCOPES — while Android built one refusal per (scope, field) pair and counted FIELDS.
+    Both then printed their number in the same sentence, with the same word: "The server refused N of
+    your answers". A designer who saved this exact entry was told "1 answer" on a laptop and
+    "3 answers" on the phone, and neither surface was lying about what it had counted.
+
+    THIS ENTRY IS THE DIVERGENCE, WHICH IS WHY THE ASSERTIONS NAME BOTH READINGS. One row of one
+    collection with three unreadable numbers in it: scopes = 1, fields = 3. A test that refused a
+    single field would pass for either reading and prove nothing at all — which is how this survived.
+
+    Fields is the right reading: an answer is what somebody typed into one box, a scope is a row of
+    the form, and the remedy the sentence offers ("open the stage to see which fields are marked") is
+    per-field too. ``refusedAnswers`` is now the server's own count of it.
+    """
+    path = f"/api/design-workshops/{workshop}/stages/EXISTING_PRODUCTS_BASELINE"
+    response = client.put(path, json={"entries": [{"entityKey": "existingProduct", "data": {
+        "_clientKey": "p-divergent",
+        "name": "Saree",
+        # Three boxes a designer fat-fingered, all in the one row.
+        "price": "65OO",
+        "lengthCm": "one hundred",
+        "monthlyCapacity": "a dozen",
+    }}]})
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    errors = body["errors"]
+    assert len(errors) == 1, f"expected one scope, got {sorted(errors)}"
+    scope = next(iter(errors))
+    assert set(errors[scope]) == {"price", "lengthCm", "monthlyCapacity"}
+
+    # The two readings, spelled out, and the server siding with the one a designer means.
+    assert len(errors) == 1, "the scope count — what the web used to print"
+    assert sum(len(fields) for fields in errors.values()) == 3
+    assert body["refusedAnswers"] == 3
+
+    # And it is 0 rather than absent on a save that refused nothing, so a client can render it
+    # unconditionally instead of guessing what a missing key meant.
+    clean = client.put(path, json={"entries": [{"entityKey": "existingProduct", "data": {
+        "_clientKey": "p-clean", "name": "Stole", "price": "1200.00",
+    }}]})
+    assert clean.status_code == 200, clean.text
+    assert clean.json()["errors"] == {}
+    assert clean.json()["refusedAnswers"] == 0
+
+
 async def test_a_stage_save_never_demotes_a_status_the_designer_set(client, workshop):
     """Correcting a typo in a submitted report must not un-submit it."""
     path = f"/api/design-workshops/{workshop}/stages/EXISTING_PRODUCTS_BASELINE"

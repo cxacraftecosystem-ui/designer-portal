@@ -1,8 +1,17 @@
 # What the handset will actually admit to downloading
 
-Measured 2026-08-09 on the fleet's own phone by `android/app/src/androidTest/.../DwLanguagePackProbeTest`.
+Measured on the fleet's own phone by `android/app/src/androidTest/.../DwLanguagePackProbeTest`.
 Raw logcat, not inference. The complaint that started it: **the language-pack list offers a download
 for Hindi and English and for none of the other seventeen.**
+
+**TWO READINGS, FOUR DAYS APART, AND THE SECOND ONE IS THE PHONE AS IT IS NOW.** Everything from
+*The device* to *The consequence worth acting on* is the **2026-08-09** reading, kept unchanged
+because it is what `DwPackState.NO_OFFLINE_PACK` was derived from and it is the only reading in which
+any of our nineteen is downloadable at all. The **2026-08-13** re-measurement is at the foot of this
+file, under *Re-measured 2026-08-13*. Read that one for the current state of the handset; read this
+one for why the code is shaped as it is.
+
+Both are fixtures in `DwLanguagePackTest`: `galaxyM32BeforeTheDownloads` and `galaxyM32Today`.
 
 ## The device
 
@@ -84,7 +93,13 @@ the correction is to the sentence, not to the button.
 `DwLanguagePackTest` had a fixture named `galaxyM32` asserting this phone could fetch on-device packs
 for **Odia, Bengali, Tamil, Telugu, Marathi and Gujarati**. It offers none of them. The fixture was
 invented, and it made the suite agree with a device that does not exist — which is why the tests
-passed while the screen misreported seventeen languages. It now holds the thirty entries above.
+passed while the screen misreported seventeen languages.
+
+It was replaced with the thirty entries above, and **since 2026-08-13 it is two fixtures rather than
+one**, because the handset moved: `galaxyM32BeforeTheDownloads` holds this reading, and
+`galaxyM32Today` holds the one below. Neither is derived from the other and neither is derived from
+the code — the lesson of this whole section is that a fixture nobody measured is a fixture that
+agrees with a phone that does not exist.
 
 ## The consequence worth acting on
 
@@ -92,3 +107,93 @@ Offline dictation in the languages these workshops are actually run in **is not 
 Google's packs**. Odia is the language of the state this project works in, and it is not in the
 catalogue and shows no sign of arriving. Any offline ASR in the other seventeen has to come from a
 model this app ships or fetches itself.
+
+---
+
+# Re-measured 2026-08-13
+
+Same handset, same probe, driven this time **without `connectedDebugAndroidTest`** — that task makes
+AGP uninstall the app afterwards, which clears app data and signs the designer out. The
+already-installed test APK was driven directly instead:
+
+```
+adb shell am instrument -w \
+  -e class com.designprototype.workshop.DwLanguagePackProbeTest \
+  com.designprototype.workshop.test/androidx.test.runner.AndroidJUnitRunner
+adb logcat -d -s DWPACKPROBE
+```
+
+`OK (1 test)`, 5.014 s. Verified afterwards: app still installed, session intact.
+
+## What changed: the two packs were downloaded
+
+```
+device sdk=33 model=SM-M325F locale=en_GB
+onDeviceRecognitionAvailable=true
+recognitionAvailable=true
+
+installed = [hi-IN, en-IN, en-GB]
+pending   = []
+supported = [en-US, de-DE, es-ES, fr-FR, it-IT, en-AU, en-IE, en-SG, ja-JP, de-AT, de-BE, de-CH,
+             en-CA, es-US, fr-BE, fr-CA, fr-CH, id-ID, it-CH, ko-KR, pt-BR, th-TH,
+             cmn-Hans-CN, cmn-Hant-TW, pl-PL, ru-RU, tr-TR, vi-VN]
+online    = []
+```
+
+`hi-IN` and `en-IN` have **moved from `supported` to `installed`** — that is what a completed
+`triggerModelDownload` looks like through this API, and it is the only confirmation Android 13 ever
+gives (there is no download callback on that platform at all). The supported list is down from thirty
+entries to **twenty-eight, and now contains no Indian language whatsoever.**
+
+| | 2026-08-09 | 2026-08-13 |
+|---|---|---|
+| installed, ours | — | **`hi-IN`, `en-IN`** |
+| downloadable, ours | `hi-IN`, `en-IN` | **none** |
+| `NO_OFFLINE_PACK`, ours | 17 | **17** |
+| `supported` size | 30 | **28** |
+
+## What did not change
+
+Both theories are still false, re-checked on this run:
+
+* `EXTRA_LANGUAGE` pinned, one call per language — the **byte-identical** device-wide list, nineteen
+  times over. The answer is an inventory, not a query.
+* The GENERAL engine answered **`ERROR 14` (`ERROR_CANNOT_CHECK_SUPPORT`) to all thirty-eight calls**
+  and cannot be asked at all.
+
+And the seventeen are still unreachable through packs **on any device**, because there is nothing to
+download: Google's on-device catalogue on this handset carries no Bengali, Marathi, Telugu, Tamil,
+Gujarati, Kannada, Malayalam, Punjabi, Odia, Assamese, Urdu, Sanskrit, Konkani, Nepali, Manipuri,
+Kashmiri or Sindhi.
+
+## The probe was printing a rule the app had retired
+
+Worth recording as a defect in the instrument rather than in the app. `DwLanguagePackProbeTest`
+carries its own copy of `dwPackState` — deliberately, so that it measures behaviour rather than
+importing the thing it is checking — and that copy **had never been given the `NO_OFFLINE_PACK`
+branch this document's own *The fix* section added.** So this run printed:
+
+```
+   bn-IN    UNSUPPORTED
+   or-IN    UNSUPPORTED
+   ...
+```
+
+for seventeen languages where the app itself shows **`No offline pack`**. The probe was reproducing
+the exact defect the fix removed, on the same page as the evidence for it — and it would have been
+cited as proof the defect was still live. Fixed 2026-08-13; the copied rule now ends
+`online.isEmpty() -> "NO_OFFLINE_PACK"` before falling through to `UNSUPPORTED`, matching
+`dwPackState`.
+
+## What the screen does with this reading
+
+`dwPackRowWorthShowing` admits INSTALLED, DOWNLOADING and DOWNLOADABLE and nothing else, so on this
+reading the "Offline dictation" card draws:
+
+| | rows | controls |
+|---|---|---|
+| before the row filter | 19 | 2 tickable, 17 inert with a paragraph each (1,207 words) |
+| today | **2** — `Hindi`, `English (India)`, both *Works offline* | **no download control at all** — both INSTALLED ⇒ `dwPackOffer` = INSTALLED ⇒ `dwMayAsk` false for all nineteen. Only *Check again*. |
+
+Both of those numbers are now pinned by tests against `galaxyM32Today`
+(`DwLanguagePackTest`), which had **no coverage of the row filter at all** before this date.

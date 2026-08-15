@@ -8,8 +8,13 @@ fieldwork, and a required Standard-tier field makes a stage permanently unsubmit
 the village the app exists for.
 """
 
+import dataclasses
+import json
+import pathlib
+import re
 from contextlib import contextmanager
 from dataclasses import replace
+from enum import Enum
 
 import pytest
 
@@ -61,6 +66,25 @@ def _swapped_field(original: FieldSpec, substitute: FieldSpec):
         yield
     finally:
         object.__setattr__(holder, "fields", before)
+
+
+@contextmanager
+def _swapped_attrs(spec, **attrs):
+    """Temporarily change attributes ON THE LIVE SPEC, and always put them back.
+
+    Deliberately not ``dataclasses.replace``: that builds a NEW object, and the registry the code
+    under test reads is the module-level ``STAGES`` tuple, which would still hold the old one. The
+    specs are frozen, so the assignment goes through ``object.__setattr__`` — the same escape
+    hatch, and the same mandatory ``finally``, as :func:`_swapped_field` above.
+    """
+    before = {name: getattr(spec, name) for name in attrs}
+    for name, value in attrs.items():
+        object.__setattr__(spec, name, value)
+    try:
+        yield
+    finally:
+        for name, value in before.items():
+            object.__setattr__(spec, name, value)
 
 
 def test_registry_is_sound():
@@ -274,6 +298,398 @@ def test_stage_one_drives_the_report_cover():
     cover = [f for f in setup.fields if f.report_role is ReportRole.COVER_FIELD]
     assert len(cover) >= 8
     assert {"craftName", "clusterName", "designerName"} <= {f.key for f in cover}
+
+
+# --------------------------------------------------------------------------------------
+# What is allowed to reach a designer's screen
+# --------------------------------------------------------------------------------------
+
+#: Words that only ever appear in a sentence ABOUT THE SPECIFICATION rather than about the work.
+#:
+#: Deliberately a rule and not a list of the seventeen strings that were actually wrong. A test
+#: pinning "may be Deepika app for now" would have gone green the moment somebody wrote a new note
+#: quoting a different colleague, which is the failure it exists to prevent — and it would have
+#: read, to the next person, as though shipping that sentence were intended.
+#:
+#: The additions below the first group came from re-sweeping every channel by hand after the notes
+#: were rewritten, and each one closes a way the SAME sentence could come back past this list.
+#: "we may consider" caught the stage-12 note verbatim but not "we may add this later"; the phase
+#: numbers stopped at 4 because the source document did, so "phase 5" would have walked through;
+#: "TBD" and "TODO" are what build-time commentary looks like once somebody stops writing prose.
+#: Terms that could plausibly appear in legitimate designer guidance were considered and REJECTED:
+#: bare "later" occurs in fourteen help strings ("if that record is later changed or removed"),
+#: and "optional fields" is a sentence a real instruction might need. A term that fires on honest
+#: guidance gets the whole rule deleted by whoever it blocks.
+_BUILD_TIME_COMMENTARY = (
+    "reviewer",
+    "annotator",
+    "source document",
+    "specification says",
+    "phase 2",
+    "phase 3",
+    "phase 4",
+    "plug in",
+    "plug-in",
+    "for now",
+    "later to be discussed",
+    "we may consider",
+    "deferred to",
+    "at the request of",
+    # --- added by the re-sweep; all four channels measured clean under them ---
+    "phase 1",
+    "phase 5",
+    "we may",
+    "we might",
+    "later we can",
+    "to be discussed",
+    "tbd",
+    "todo",
+    "fixme",
+    "out of scope",
+    "post-mvp",
+    "stakeholder",
+    "product owner",
+)
+
+
+#: The shipped prose files, resolved from this file rather than from the working directory — these
+#: tests are run from ``backend/`` by the documented command and from the repo root by editors.
+DATA_DIR = pathlib.Path(stage_schema.__file__).resolve().parent.parent / "data"
+
+
+def _walk_json(node, path):
+    """Every string leaf in a JSON-shaped document, with the path it was found at.
+
+    One walker shared by the registry sweep and the shipped-data sweep, so a blind spot cannot be
+    fixed in one and left in the other.
+    """
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from _walk_json(value, f"{path}.{key}" if path else str(key))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _walk_json(value, f"{path}[{index}]")
+    elif isinstance(node, str):
+        yield path, node
+
+
+def _client_facing_registry_strings():
+    """EVERY string ``registry_to_dict`` publishes, whatever key it arrives under.
+
+    Taken from the SERIALISED form, not from the specs, because the question this answers is
+    "what crosses the wire" and the two differ on purpose — ``FieldSpec.phase_note`` holds the
+    reviewer's marginal comments verbatim and ``field_to_dict`` deliberately does not emit it.
+
+    IT WALKS THE WHOLE DOCUMENT RATHER THAN A LIST OF KEYS, and that is the difference between the
+    docstring above being true and being a comforting sentence. The first version of this helper
+    read a hand-written set — ``title``, ``purpose``, ``notes``, ``label``, ``help``, option and
+    enum labels — and claimed in its own docstring that it would fail "the day somebody adds
+    ``phase_note`` to the serialiser". It would not have. Measured, by making ``field_to_dict``
+    emit ``phaseNote``: the added key was not in the hand-written set, so it was never yielded and
+    ``test_no_client_facing_registry_string_carries_build_time_commentary`` stayed GREEN with the
+    reviewer's margin notes crossing the wire on every field that has one. Only
+    ``test_the_reviewers_marginal_comments_are_kept_in_the_code_and_never_serialised`` caught it,
+    and only because it asserts on the literal key name ``phaseNote`` — so the same leak under any
+    other name (``note``, ``provenance``, ``rationale``) would have passed BOTH tests.
+
+    A full walk has no such blind spot: a new client-facing string is covered the moment a
+    serialiser starts emitting it, which is the only version of this rule that survives somebody
+    adding a field to the wire without reading this file.
+
+    Machine identifiers (``key``, ``type``, ``tier``, ``reportRole``, the ``version`` digest, enum
+    tokens) are walked too rather than skipped. They are not exempt by category — a token is a
+    string a client can render — and excluding them would rebuild exactly the hand-written set this
+    docstring is about. Measured on the tree this landed on: 4,128 strings, zero matches.
+    """
+    yield from _walk_json(registry_to_dict(), "")
+
+
+def test_no_client_facing_registry_string_carries_build_time_commentary():
+    """Nothing a designer reads on a stage screen may be about how this app was planned.
+
+    THE DEFECT THIS REPLACES, because a rule with no incident behind it gets relaxed by the next
+    person who finds it inconvenient. Seventeen of the twenty-two stages' ``notes`` quoted the
+    reviewer of the source requirements document at whoever opened the stage — 3,971 characters
+    of it, on the web page and in the bundled handset asset both. "noted the Advanced
+    image-processing tier as 'may be Deepika app for now'". "referred the Advanced measurement
+    tier to 'Kumarjit da and team'". "we may consider deleting this entire section for now". The
+    owner of this repository found it by using the app in the way it is meant to be used.
+
+    None of it was actionable in a workshop: it is internal phasing, colleagues' names, what to
+    defer and what might be deleted, and several entries named people with no connection at all
+    to the person reading the screen. ``StageSpec.notes`` is now what a designer needs in order to
+    do the stage, in the app's own voice, or it is absent.
+
+    THE PROVENANCE WAS NOT DESTROYED, which matters as much as the removal — every remark that
+    explained why a stage is SHAPED as it is survives as a comment on the spec in
+    ``stage_definitions.py``, and ``FieldSpec.phase_note`` still carries the marginal comments
+    verbatim. This test is what stops them travelling back the other way.
+
+    Scoped to the whole serialised registry rather than to ``notes``, because ``notes`` was not
+    the only channel fed by that document: one field's ``help`` ended "Moved here from the cluster
+    background at the reviewer's request", which no test would have caught while this one only
+    looked at stages.
+    """
+    offenders = [
+        (where, text, term)
+        for where, text in _client_facing_registry_strings()
+        if text
+        for term in _BUILD_TIME_COMMENTARY
+        if term in text.casefold()
+    ]
+    assert not offenders, "build-time commentary is reaching a designer's screen:\n" + "\n".join(
+        f"  {where}: …{term}… in {text!r}" for where, text, term in offenders
+    )
+
+
+def _report_template_strings():
+    """Every string the report templates carry, walked as OBJECTS rather than parsed as source.
+
+    Dataclass-walked for the same reason ``_client_facing_registry_strings`` walks the serialised
+    document: a hand-written list of attribute names stops covering the thing it is about the first
+    time somebody adds a field.
+    """
+    from app.services import report_templates
+
+    def walk(obj, path, seen):
+        if isinstance(obj, str):
+            yield path, obj
+            return
+        if isinstance(obj, (int, float, bool, type(None), Enum, bytes)) or id(obj) in seen:
+            return
+        seen.add(id(obj))
+        if dataclasses.is_dataclass(obj):
+            for f in dataclasses.fields(obj):
+                yield from walk(getattr(obj, f.name), f"{path}.{f.name}", seen)
+        elif isinstance(obj, dict):
+            for key, value in obj.items():
+                yield from walk(value, f"{path}[{key!r}]", seen)
+        elif isinstance(obj, (list, tuple, set, frozenset)):
+            for index, value in enumerate(obj):
+                yield from walk(value, f"{path}[{index}]", seen)
+
+    yield from walk(report_templates.TEMPLATES, "TEMPLATES", set())
+
+
+def test_no_prose_outside_the_registry_carries_build_time_commentary_either():
+    """The same rule, on the three shipped-prose channels that had no test at all.
+
+    WHY THIS EXISTS SEPARATELY FROM THE REGISTRY TEST. When the stage notes were rewritten, the
+    registry got a rule and the admin analytics page got a rule, and the sweep that followed found
+    the registry was not the only channel fed by the source document — one field's ``help`` had
+    also been contaminated. That prompted checking every OTHER body of shipped prose by hand:
+    the report templates, the questionnaire bank and the craft vocabulary. All three were clean,
+    and all three were clean by luck rather than by anything that would notice if they stopped
+    being. A channel whose cleanliness rests on somebody re-sweeping it by hand is a channel that
+    gets contaminated the next time nobody does.
+
+    The report templates are the most consequential of the three and the least watched: their
+    section titles and static headings are printed into a .docx that goes to a ministry office,
+    where "Phase 2 work" would be read by somebody with no idea what phase 2 was, in a document
+    that outlives the app.
+
+    Measured when written: 628 template strings, 332 questionnaire strings, 71 vocabulary lines,
+    zero matches in any of them.
+    """
+    channels: list[tuple[str, list[tuple[str, str]]]] = [
+        ("report templates", list(_report_template_strings())),
+        (
+            "questionnaire bank",
+            list(
+                _walk_json(
+                    json.loads(
+                        (DATA_DIR / "questionnaire_questions.json").read_text(encoding="utf-8")
+                    ),
+                    "questionnaire_questions.json",
+                )
+            ),
+        ),
+        (
+            "craft vocabulary",
+            [
+                (f"craft_vocabulary.txt:{number}", line.strip())
+                for number, line in enumerate(
+                    (DATA_DIR / "craft_vocabulary.txt").read_text(encoding="utf-8").splitlines(), 1
+                )
+                if line.strip()
+            ],
+        ),
+    ]
+
+    # Each channel is asserted non-empty individually: a renamed data file or a TEMPLATES tuple that
+    # stopped being walkable would otherwise turn this test green by giving it nothing to check,
+    # which is the failure mode every rule test of this shape dies of.
+    for label, items in channels:
+        assert items, f"{label} yielded no strings — this test has gone vacuous, not clean"
+
+    offenders = [
+        (label, where, term, text)
+        for label, items in channels
+        for where, text in items
+        for term in _BUILD_TIME_COMMENTARY
+        if term in text.casefold()
+    ]
+    assert not offenders, (
+        "build-time commentary is reaching a designer or a ministry office:\n"
+        + "\n".join(
+            f"  [{label}] {where}: …{term}… in {text!r}" for label, where, term, text in offenders
+        )
+    )
+
+
+def test_no_registry_prose_shows_a_designer_the_source_it_was_written_from():
+    """A DIFFERENT RULE FROM THE COMMENTARY ONE ABOVE, and the notes cleanup proved both are needed.
+
+    THE LEAK THIS WOULD HAVE CAUGHT. Stage 21's note shipped, to the web page and to every handset,
+    reading "…so those flags are real fields with an ``autoDetected`` marker rather than a deferred
+    feature". Two RST backticks and a field key, rendered verbatim: the web page interpolates
+    ``stage.notes`` into a ``<p>`` and Android hands it to ``Text()``, and neither parses markup.
+    ``_BUILD_TIME_COMMENTARY`` does not contain a term that matches it — measured against the
+    registry as it was actually being served, that note was one of only three carrying notes that
+    the commentary rule did NOT flag. It was rewritten as part of the same cleanup, by hand, and
+    nothing was left behind to notice it coming back.
+
+    The same shape had also survived on the admin analytics page, where two refusals read "is
+    declared ``optional_stage=True``" and named "``revenue``, ``unitsSold`` and ``ordersReceived``"
+    — see ``test_the_refusals_and_cautions_never_quote_whoever_asked_for_the_feature``, which now
+    carries this rule for that channel. Two channels independently acquiring the same defect is the
+    argument for a rule rather than two more hand corrections.
+
+    PROSE IS DEFINED AS "CONTAINS A SPACE", which is a rule and not a list of keys. Every machine
+    identifier the walk yields — ``key``, ``type``, ``tier``, an enum token, the ``version`` digest
+    — is a single word, so it is excluded by construction and stays excluded when somebody adds a
+    new one. Every label, help string, title, purpose and note has a space. The alternative, naming
+    the prose-bearing keys, is the hand-written set that let ``phaseNote`` through (see
+    ``_client_facing_registry_strings``).
+
+    A field key belongs in a note when the reader can SEE it: stage 21's replacement says tick
+    “Detected automatically”, which is the label on the checkbox, not the key behind it.
+
+    Measured when written: 4,128 strings, 799 of them prose, zero offenders.
+    """
+    prose = [(where, text) for where, text in _client_facing_registry_strings() if " " in text]
+    assert len(prose) > 400, (
+        f"only {len(prose)} prose strings were found — the walk or the space heuristic has broken "
+        "and this test has gone vacuous, not clean"
+    )
+
+    #: A lowercase snake_case run is checked as well as the backticks, so dropping the ticks is not
+    #: a way to satisfy this: "the optional_stage flag" is the same defect without the markup.
+    identifier = re.compile(r"(?<![A-Za-z0-9`])[a-z]{3,}_[a-z_]{3,}(?![A-Za-z0-9])")
+    offenders = [
+        (where, text)
+        for where, text in prose
+        if "`" in text or identifier.search(text)
+    ]
+    assert not offenders, (
+        "registry prose is showing a designer the source it was written from — name the label on "
+        "screen instead:\n" + "\n".join(f"  {where}: {text!r}" for where, text in offenders)
+    )
+
+
+def test_a_stage_note_is_either_absent_or_has_something_in_it():
+    """A note is ``""`` or it is real prose. One space in between and the two clients DISAGREE.
+
+    THE ASYMMETRY THIS CLOSES, which is live in the tree and reachable by a one-character slip.
+    The two clients guard the note differently:
+
+    * web — ``{stage?.notes ? <p class="… border … bg-surface-50">{stage.notes}</p> : null}``
+      in ``design-workshops/[id]/stages/[stageKey]/page.tsx``. The test is JS truthiness, so
+      ``" "`` is TRUTHY and paints the bordered, tinted box with nothing in it.
+    * Android — ``if (stage.notes.isNotBlank())`` in ``StageScreen.kt``, which renders nothing.
+
+    So ``notes=" "`` gives a designer on the web an empty grey box under the progress bar and an
+    Android designer nothing at all, from one registry. That is the "empty box where a note used to
+    be" shape, and eleven of the twenty-two stages had their notes emptied in the cleanup — an
+    author writing ``notes=" "`` instead of deleting the argument is exactly how it would arrive.
+
+    FIXED HERE RATHER THAN IN THE CLIENTS ON PURPOSE. Trimming in one client leaves the two still
+    disagreeing about a value the registry should never have sent; trimming in both is two edits to
+    two hot files to handle input that is always wrong. Refusing it at the source makes the case
+    unreachable for every client, including the next one. The web's truthiness test remains the
+    looser of the two, and that is worth knowing if this rule is ever relaxed.
+
+    ONE ASSERTION, BECAUSE A SECOND ONE HERE CANNOT FIRE. The obvious pairing is "stripped" AND
+    "empty or non-blank", and the second half is dead code: every blank-but-non-empty string —
+    ``" "``, ``"\\t"``, ``"\\xa0"``, ``"\\u3000"`` — is already unequal to its own ``strip()``, so the
+    trimming assertion has taken it first. The only string that is blank AND equal to its own strip
+    is ``""``, the permitted case. Checking trimming therefore checks both, and an assertion that
+    can never fail is worse than no assertion: it reads as coverage.
+    """
+    for stage in STAGES:
+        assert stage.notes == stage.notes.strip(), (
+            f"{stage.key}.notes is whitespace-padded or whitespace-only. The web renders it verbatim "
+            'in a bordered, tinted box — " " is truthy there, so it paints an EMPTY box — while '
+            'Android\'s isNotBlank() renders nothing. Use notes="" to mean "no note".'
+        )
+
+
+def test_the_reviewers_marginal_comments_are_kept_in_the_code_and_never_serialised():
+    """The other half of the rule, and the one that makes the removal safe to have done.
+
+    ``phase_note`` is the record of what the source document deferred and why. It is REAL — a
+    fifth of the fields carry one — and it must stay real, because "we deleted the notes" and "we
+    deleted the reasoning" are two different changes and only the first was wanted. It must also
+    never be published: it is a code comment that happens to be attached to a field.
+
+    Both halves are asserted together so that neither can be satisfied by breaking the other.
+    Deleting ``phase_note`` outright would pass an emit check trivially; publishing it would pass
+    a "still populated" check trivially.
+    """
+    populated = [
+        f
+        for stage in STAGES
+        for entity in stage.entities
+        for f in entity.fields
+        if f.phase_note
+    ]
+    assert len(populated) >= 15, (
+        "the source document's marginal comments have been thinned out of the code — they are the "
+        "record of what was deferred and why, and losing them is the defect the notes cleanup was "
+        "explicitly not allowed to trade for"
+    )
+
+    registry = registry_to_dict()
+    for stage in registry["stages"]:
+        for entity in stage["entities"]:
+            for field in entity["fields"]:
+                assert "phaseNote" not in field, (
+                    f"{stage['key']}.{entity['key']}.{field['key']} publishes phase_note — that is "
+                    "the reviewer's margin note on a designer's screen, which is exactly the defect "
+                    "the stage notes were cleaned up to end"
+                )
+
+
+def test_prose_edits_do_not_move_the_registry_version():
+    """Rewriting a note must NOT invalidate a single cached draft, and this pins why.
+
+    It is the counterpart to ``test_the_version_changes_when_a_derivation_changes``. That one
+    exists because a silent behaviour change slipped through a digest that was too narrow; this
+    one exists because the obvious response — widen the digest until it covers everything — would
+    fire the "drafts written against the previous registry" warning on every phone in the field
+    for a typo correction, and a warning that cries wolf is a warning nobody reads.
+
+    THE CONSEQUENCE OF THIS BEING TRUE, which is not obvious and is worth stating where somebody
+    changing the digest will read it: an unchanged version means the clients' CACHES have to be
+    content-aware on their own. ``StageSchemaStore.store`` rewrites its file on every fetch for
+    this reason, and ``cacheRegistry`` in ``frontend/lib/designWorkshopStore.ts`` compares content
+    before skipping a write — it used to skip on an equal version, which would have kept the
+    reviewer quotes in IndexedDB indefinitely after they were removed from the server.
+    """
+    baseline = registry_version()
+    stage = next(s for s in STAGES if s.notes)
+    field = stage.entities[0].fields[0]
+
+    with _swapped_attrs(stage, notes="Something else entirely."):
+        assert registry_version() == baseline, "a stage note moved the digest"
+    with _swapped_attrs(stage, purpose="A different purpose."):
+        assert registry_version() == baseline, "a stage purpose moved the digest"
+    with _swapped_attrs(field, help="Different help.", label="Different label."):
+        assert registry_version() == baseline, "a field label or help text moved the digest"
+
+    # And the registry really is back the way it was — a leaked mutation here would surface as an
+    # unrelated failure in whichever test happened to run next.
+    assert registry_version() == baseline
 
 
 # --------------------------------------------------------------------------------------

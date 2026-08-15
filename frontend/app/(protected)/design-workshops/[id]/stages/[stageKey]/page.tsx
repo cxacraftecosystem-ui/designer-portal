@@ -52,11 +52,12 @@
  *    banner in the protected layout says it again from anywhere in the app.
  */
 
-import { Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, CloudOff, Layers } from "lucide-react";
 
+import { CustomSectionsForm } from "@/components/designworkshop/CustomSections";
 import { CollectionTable, EntityForm, type FieldErrors } from "@/components/designworkshop/EntityForm";
 import { ANALYSIS_STAGE, MarketFindingsPanel } from "@/components/designworkshop/MarketFindingsPanel";
 import {
@@ -80,11 +81,22 @@ import {
   type DwValue
 } from "@/lib/designWorkshops";
 import {
+  CUSTOM_ENTITY_KEY,
+  customFieldsForStage,
+  sectionsForStage,
+  type DwCustomSection
+} from "@/lib/customSections";
+import {
   adoptServerStage,
   buildStageEntries,
+  customFieldsFor,
   emptyStage,
   ensureDraft,
+  placeStageErrors,
+  stageSweep,
+  strandedRefusals,
   isLocalWorkshopId,
+  loadCustomDefinition,
   loadDraft,
   loadRegistry,
   localStageCompleteness,
@@ -93,6 +105,7 @@ import {
   scoreStageData,
   splitSingletons,
   stageDataOf,
+  type CustomDefinitionSource,
   type DwDraft,
   type DwDraftStage,
   type RegistrySource
@@ -121,6 +134,15 @@ type StageSnapshot = {
   singleton: DwEntryData;
   collections: Record<string, DwRow[]>;
   removedFrom: string[];
+  /**
+   * The designer's own answers, compared like the rest.
+   *
+   * IT HAS TO BE IN HERE OR THE AUTOSAVE NEVER FIRES FOR THEM. The effect writes only when the
+   * snapshot differs from what is banked, so a custom answer left out of the comparison would be
+   * typed, would change no compared value, and would never reach IndexedDB — a designer would answer
+   * a custom question, reload the stage, and find it blank with the form having reported nothing.
+   */
+  custom: DwEntryData;
 };
 
 /**
@@ -169,6 +191,7 @@ function sameSnapshot(a: StageSnapshot, b: StageSnapshot): boolean {
   return (
     sameStoredValue(a.singleton, b.singleton) &&
     sameStoredValue(a.collections, b.collections) &&
+    sameStoredValue(a.custom, b.custom) &&
     sameStoredValue([...a.removedFrom].sort(), [...b.removedFrom].sort())
   );
 }
@@ -226,7 +249,57 @@ function DesignWorkshopStagePageBody({
   const [singleton, setSingleton] = useState<DwEntryData>({});
   const [collections, setCollections] = useState<Record<string, DwRow[]>>({});
   const [errors, setErrors] = useState<Record<string, Record<string, string>>>({});
+  /**
+   * REFUSALS THIS PAGE COULD NOT ATTACH TO A BOX, KEPT RATHER THAN DROPPED.
+   *
+   * `save_stage` keys its per-field errors by an entry's INDEX IN THE ARRAY THAT WAS SENT, and this page
+   * re-keys them onto the row on screen through `rowKeys`. That re-keying can fail: an index past the end
+   * of what we sent, or an index whose entry names a different entity than the scope key does. It used to
+   * fail SILENTLY — the decode fell back to the server's own key, which has the same `entity[n]` shape as
+   * a placed one, `collectionErrors` matched it as if it were a row, and `CollectionTable` never looked up
+   * a row that far along. The refusal then existed on the server and nowhere else: the field was not
+   * saved, and nothing on screen said so.
+   *
+   * A STRING PER FIELD, `scope.field: message`, which is `DwStageRefusalReport.unplaced` on the handset
+   * verbatim — the two surfaces describe the same event in the same words, and the count below sums the
+   * same things. Naming the wrong row was never an option: a message on a box that is fine sends a
+   * designer to correct an answer nobody objected to.
+   */
+  const [unplaced, setUnplaced] = useState<string[]>([]);
   const [dropped, setDropped] = useState<string[]>([]);
+  /**
+   * The designer's own answers for this stage, as they stand on screen.
+   *
+   * A SEPARATE PIECE OF STATE FROM `singleton`, never a few extra keys inside it. `splitSingletons`
+   * copies across only the keys the registry declares, so a custom answer folded into that map would be
+   * dropped on the floor before the write — and if it were not, `save_stage` would post it inside a core
+   * entry, drop it there instead, and return it in `droppedKeys`, firing "this build is running ahead of
+   * the server's field list" on every save of every workshop that has a custom section.
+   */
+  const [custom, setCustom] = useState<DwEntryData>({});
+  /** The definition's sections for this stage, and how this browser came to hold them. */
+  const [customSections, setCustomSections] = useState<DwCustomSection[]>([]);
+  const [customSource, setCustomSource] = useState<CustomDefinitionSource>("unknown");
+  /**
+   * The digest of the definition this browser answered under, and the one the server last used.
+   *
+   * TWO STRINGS, COMPARED, RATHER THAN ONE FLAG. The comparison is only meaningful after a save has
+   * told us what the server used, so `serverCustomVersion` starts null and a null never reads as stale —
+   * a browser that has not saved yet has no evidence of drift and must not claim any.
+   */
+  const [heldCustomVersion, setHeldCustomVersion] = useState("");
+  const [serverCustomVersion, setServerCustomVersion] = useState<string | null>(null);
+  /**
+   * Custom keys the server's definition did not carry, with a sentence of their own.
+   *
+   * **ITS OWN STATE, NEVER MERGED INTO `dropped`.** That banner says "this build is running ahead of the
+   * server's field list", which is the only registry-drift signal this repository has and is the WRONG
+   * diagnosis here: the definition was edited, not the app, and the remedy is a reload rather than a bug
+   * report. Merging them would fire the registry banner on every save of every workshop with a custom
+   * section and train the people who read it to ignore it — which is precisely what the note above the
+   * server's own `droppedKeys` computation says must never happen.
+   */
+  const [droppedCustom, setDroppedCustom] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -325,9 +398,25 @@ function DesignWorkshopStagePageBody({
    * is what "this is what has actually landed" needs to read. It simply no longer drives a bar that
    * is describing what is on screen right now.
    */
+  /**
+   * The stage's designer-defined questions, flat, in the order they are asked.
+   *
+   * Derived from the same `customSections` the form renders, so the bar counts exactly the questions on
+   * screen. RETIRED FIELDS ARE IN THIS LIST and the scorer skips them itself — the list has to carry
+   * them because it is also what the SAVE path validates against, where a retired field's stored answer
+   * must round-trip rather than be dropped as an unknown key.
+   */
+  const customFields = useMemo(
+    () => customFieldsForStage({ customSchemaVersion: heldCustomVersion, sections: customSections, fetchedAt: "" }, stageKey),
+    [customSections, heldCustomVersion, stageKey]
+  );
+
   const completeness: DwStageCompleteness | null = useMemo(
-    () => (stage ? scoreStageData(stage, singleton, collections) : null),
-    [stage, singleton, collections]
+    // The designer's own required questions are counted here for the same reason the registry's are: this
+    // is the number a designer reads in a courtyard to decide whether they can pack up, and a bar that
+    // ignored half the form would say a stage was finished that Save will refuse.
+    () => (stage ? scoreStageData(stage, singleton, collections, customFields, custom) : null),
+    [stage, singleton, collections, customFields, custom]
   );
 
   /* ── Load ────────────────────────────────────────────────────────────── */
@@ -352,15 +441,21 @@ function DesignWorkshopStagePageBody({
     const seed = (draftStage: DwDraftStage | undefined) => {
       const data = stageDataOf(draftStage);
       const removed = draftStage?.removedFrom ?? [];
+      // `?? {}` AND NOT A BARE READ. A stage record written by a build before custom sections existed
+      // has no such key at all, and no migration rung was spent on adding one (an addition is handled
+      // by unknown-key tolerance; a rung is owed only to a field that moves, is renamed or changes
+      // meaning). So the default belongs at every read, and this is one of them.
+      const held = draftStage?.custom ?? {};
       setSingleton(data.singleton);
       setCollections(data.collections);
-      // No completeness to seed: the bar is derived from the two setters above, so it is already
+      setCustom(held);
+      // No completeness to seed: the bar is derived from the setters above, so it is already
       // right for this stage the moment the boxes are.
       setRemovedFrom(removed);
       // The baseline the autosave compares against, written in the same breath as the setters it
       // describes. Until this is set, no autosave can run at all — which is what makes seeding
       // unable to mark a stage edited. See {@link banked}.
-      banked.current = { singleton: data.singleton, collections: data.collections, removedFrom: removed };
+      banked.current = { singleton: data.singleton, collections: data.collections, custom: held, removedFrom: removed };
       setStageSync({
         dirtyAt: draftStage?.dirtyAt ?? null,
         lastPushedAt: draftStage?.lastPushedAt ?? null,
@@ -391,6 +486,34 @@ function DesignWorkshopStagePageBody({
           return;
         }
         draftIdRef.current = draft.localId;
+
+        /*
+          THE DEFINITION IS READ BEFORE THE FORM IS DRAWN, AND ITS FAILURE IS NOT THE STAGE'S FAILURE.
+
+          Whatever this device already holds goes on screen first — the sections live on the draft record
+          itself, so a tab that has been in a courtyard since it opened still draws the custom questions.
+          The network read that follows refreshes them and says which of the two a designer is looking at.
+
+          NOT AWAITED IN FRONT OF THE STAGE READ. `loadCustomDefinition` swallows its own failure into a
+          source of "unknown", so the only thing a slow or dead definition request can cost is the custom
+          block; the rest of the form is drawn from the stage read below either way. Awaiting it first
+          would put a second round trip in front of every stage open on the fleet, including the twenty-two
+          stages of every workshop that has no custom questions at all — which is nearly all of them.
+        */
+        setHeldCustomVersion(draft.customSchemaVersion ?? "");
+        setCustomSections(sectionsForStage(draft.customDefinition ?? null, stageKey));
+        setCustomSource(draft.customDefinition ? "cache" : "unknown");
+        void loadCustomDefinition(draft).then((held) => {
+          if (cancelled) return;
+          setCustomSource(held.source);
+          if (!held.definition) return;
+          setCustomSections(sectionsForStage(held.definition, stageKey));
+          setHeldCustomVersion(held.definition.customSchemaVersion);
+          // A fresh read of the definition is evidence about the server, so a stale marking recorded by
+          // an earlier save no longer stands: the two digests are the same document again.
+          setServerCustomVersion(null);
+        });
+
         const localStage = draft.stages[stageKey];
         const spec = loaded.registry.stages.find((candidate) => candidate.key === stageKey);
         const canReconcile = Boolean(draft.remoteId && spec);
@@ -424,6 +547,19 @@ function DesignWorkshopStagePageBody({
 
         const stageData = await getDesignWorkshopStage(draft.remoteId, stageKey);
         if (cancelled) return;
+        /*
+          THE SERVER'S DIGEST, READ STRAIGHT OFF THE PAYLOAD AND NEVER STORED AS THOUGH IT DESCRIBED THIS
+          BROWSER'S COPY. The route carries it beside the score for exactly this comparison, and its own
+          comment says why: without it a client holding an older definition shows the server's higher
+          `requiredTotal` for a stage it has never touched and its own lower one for a stage it has — two
+          arithmetics in one screen with nothing to say why.
+
+          It is set here as well as after a save so drift is noticed on ARRIVAL rather than only once the
+          designer has typed and pressed Save. In the ordinary case the definition read above answers
+          moments later and clears it, because the two are then the same document; what this catches is the
+          case where the definition endpoint alone failed and the sections on screen came off disk.
+        */
+        setServerCustomVersion(stageData.customSchemaVersion ?? null);
         const merged = await adoptServerStage(draft.localId, spec, stageData);
         if (cancelled) return;
         const mergedStage = merged?.stages[stageKey];
@@ -521,7 +657,7 @@ function DesignWorkshopStagePageBody({
     if (!baseline) return;
     const target = draftIdRef.current;
     if (!target) return;
-    const snapshot: StageSnapshot = { singleton, collections, removedFrom };
+    const snapshot: StageSnapshot = { singleton, collections, custom, removedFrom };
     if (sameSnapshot(snapshot, baseline)) {
       // Back to exactly what is already banked: the seeding pass, a no-op `setState` after a push,
       // or a designer who typed and undid it inside the debounce. Two things have to be undone
@@ -535,7 +671,10 @@ function DesignWorkshopStagePageBody({
       return;
     }
 
-    const payload = { singletons: splitSingletons(stage, singleton), collections, removedFrom };
+    // `custom` travels ALONGSIDE `splitSingletons`' result and never through it: that function copies
+    // across only the keys the registry declares and drops everything else, so a custom answer handed to
+    // it would be silently gone before the write.
+    const payload = { singletons: splitSingletons(stage, singleton), collections, custom, removedFrom };
     setLocalPending(true);
     /*
       ONE WRITE PER EDIT, WHOEVER ASKS FOR IT.
@@ -565,7 +704,7 @@ function DesignWorkshopStagePageBody({
     flushRef.current = write;
     const timer = window.setTimeout(() => void write(), AUTOSAVE_MS);
     return () => window.clearTimeout(timer);
-  }, [singleton, collections, removedFrom, stage, stageKey]);
+  }, [singleton, collections, custom, removedFrom, stage, stageKey]);
 
   /** Run the pending write now. Awaited before every navigation and before every push. */
   const flushLocal = useCallback(async () => {
@@ -629,6 +768,24 @@ function DesignWorkshopStagePageBody({
   const patchSingletonMany = useCallback((values: Record<string, DwValue>) => {
     if (!Object.keys(values).length) return;
     setSingleton((current) => ({ ...current, ...values }));
+  }, []);
+
+  /**
+   * One custom answer, into the stage's own `_custom` bucket.
+   *
+   * DELIBERATELY THE SAME SHAPE AS `patchSingleton` AND A SEPARATE FUNCTION FROM IT. One flat bucket
+   * serves every custom section of the stage, because that is the shape of the row it is stored in and
+   * because field keys are unique across the whole workshop — the server enforces that so two sections
+   * on one stage cannot write into one key of one container. Writing into `singleton` instead would put
+   * the answer where `splitSingletons` drops it.
+   */
+  const patchCustom = useCallback((key: string, value: DwValue) => {
+    setCustom((current) => ({ ...current, [key]: value }));
+  }, []);
+
+  const patchCustomMany = useCallback((values: Record<string, DwValue>) => {
+    if (!Object.keys(values).length) return;
+    setCustom((current) => ({ ...current, ...values }));
   }, []);
 
   /**
@@ -712,7 +869,13 @@ function DesignWorkshopStagePageBody({
       // what the sentences below claim things about. The memo describes the boxes on screen. They
       // agree in every ordinary case, and when they do not — a keystroke that lost the race with
       // `flushLocal` — the honest thing for a message about what was SAVED is the saved copy.
-      const localScore = localStageCompleteness(stage, draftStage);
+      //
+      // THE CUSTOM QUESTIONS ARE RESOLVED FROM THE DRAFT AND NOT FROM `customFields` ABOVE, and the
+      // difference is the same one this figure exists for: the memo describes what is on screen, the
+      // draft describes what is about to be sent. They agree in every ordinary case; when they do not —
+      // a definition refreshed between the flush and this line — the honest thing for a sentence about
+      // what was SAVED is the saved copy's own question list.
+      const localScore = localStageCompleteness(stage, draftStage, customFieldsFor(draft, stageKey));
 
       const remoteId = draft?.remoteId ?? (isLocalWorkshopId(id) ? null : id);
       const offline = typeof navigator !== "undefined" && navigator.onLine === false;
@@ -730,7 +893,7 @@ function DesignWorkshopStagePageBody({
         return;
       }
 
-      const { entries, rowKeys } = buildStageEntries(stage, draftStage);
+      const { entries, rowKeys, merged } = buildStageEntries(stage, draftStage);
       if (!entries.length) {
         // `buildStageEntries` omits an empty singleton for a stage this device has never read from
         // the repository, so an empty entry list means there is genuinely nothing here to send —
@@ -743,37 +906,82 @@ function DesignWorkshopStagePageBody({
         );
         return;
       }
+      /*
+        See decision 2 in the file header. Armed by a deletion — read off the DRAFT rather than off
+        React state, so a deletion made in an earlier session still sweeps — AND by this browser
+        having read the stage it is about to tell the server the exact contents of.
+
+        THE SECOND HALF IS NEW AND IT WAS COSTING WHOLE ROWS. `replaceCollections:
+        sinceRemovedFrom.length > 0` was the entire test, and the sweep it arms is scoped server-side
+        by every entity the payload NAMES — so one row deleted on a stage this browser had never
+        downloaded soft-deleted every row the office had written in that collection, and in every
+        other collection the payload happened to mention. Measured on the running API: `removed=5`
+        under a 200, for a single deletion. {@link stageSweep} carries the argument and the numbers,
+        and is shared with the sync pass so the two payloads cannot disagree.
+      */
+      const sweep = stageSweep(stage, draftStage);
       const result = await saveDesignWorkshopStage(remoteId, stageKey, {
         entries,
-        // See decision 2 in the file header. Armed only by a deletion, and read off the DRAFT rather
-        // than off React state so a deletion made in an earlier session still sweeps.
-        replaceCollections: sinceRemovedFrom.length > 0,
+        replaceCollections: sweep.replaceCollections,
         // The entities emptied on this device. Required, not decorative: the server sweeps only
         // what the payload names, and a collection whose LAST row was deleted contributes no
-        // entries, so this is the only place it is named. Read off the draft for the same reason
-        // `replaceCollections` is — a deletion made in an earlier session must still sweep.
-        emptiedEntities: sinceRemovedFrom,
+        // entries, so this is the only place it is named.
+        emptiedEntities: sweep.emptiedEntities,
         submit
       });
 
-      // Re-key the errors from "the array I sent" to "the entity and row on screen", so a message
-      // lands on the box that produced it rather than in a banner nobody can act on.
-      const decoded: Record<string, Record<string, string>> = {};
-      for (const [key, fields] of Object.entries(result.errors ?? {})) {
-        const match = /^(.+)\[(\d+)\]$/.exec(key);
-        if (!match) {
-          decoded[key] = fields;
-          continue;
-        }
-        const entryIndex = Number(match[2]);
-        const origin = rowKeys[entryIndex];
-        decoded[origin ? `${origin.entityKey}[${origin.rowIndex}]` : key] = fields;
-      }
-      setErrors(decoded);
-      setDropped(result.droppedKeys ?? []);
+      /*
+        RE-ADDRESSED FROM "THE ARRAY I SENT" TO "THE BOXES ON SCREEN", so a message lands on the box that
+        produced it rather than in a banner nobody can act on — AND WHAT CANNOT BE RE-ADDRESSED IS
+        RETURNED RATHER THAN DROPPED.
 
-      if (Object.keys(decoded).length) {
-        setError("Some answers were not accepted. The fields that need attention are marked below; everything else was saved.");
+        This was ten lines here, ending `decoded[origin ? \`${origin.entityKey}[${origin.rowIndex}]\` :
+        key] = fields`. That `: key` fallback was the whole defect: it filed the refusal under the
+        SERVER's key, which has exactly the same `entity[n]` shape as a re-addressed one, so nothing
+        downstream could tell a placed refusal from an unplaceable one. `collectionErrors` then matched it
+        as a row index and handed `CollectionTable` an index it never renders — a refusal the server had
+        acted on that no part of this page mentioned.
+
+        It now lives in the store beside `buildStageEntries`, which is the function that DEFINES the
+        indices being decoded. Two halves of one contract, in one place, and testable without a browser.
+      */
+      const { decoded, unplaced: unplacedLines } = placeStageErrors(result.errors, rowKeys);
+      setErrors(decoded);
+      setUnplaced(unplacedLines);
+      setDropped(result.droppedKeys ?? []);
+      /*
+        TWO LISTS, TWO SENTENCES, AND THEY ARE NEVER MERGED. `droppedKeys` means "this build sent a
+        registry field the server has never heard of", which is a client/server version skew and the only
+        drift signal this repository has. `droppedCustomKeys` means "the definition this browser holds
+        names a question the server's copy does not", which is a definition that has been edited since
+        this browser read it — a different fact, with a different remedy (reload, not report), and one
+        that would otherwise fire the registry banner on every save of every workshop that has a custom
+        section.
+
+        THE DIGEST IS RECORDED WHETHER OR NOT ANYTHING WAS DROPPED, because the two are independent: a
+        designer can add a question without invalidating any answer this browser holds, in which case
+        nothing is dropped and the copy on screen is still short of a question that is being asked.
+      */
+      setDroppedCustom(result.droppedCustomKeys ?? []);
+      setServerCustomVersion(result.customSchemaVersion ?? null);
+
+      /*
+        THE GATE COUNTS THE UNPLACEABLE REFUSALS TOO, OR AN ENTIRELY UNPLACEABLE SET READS AS A CLEAN SAVE.
+
+        `decoded` holds only what could be attached to a box. When every refusal in a response is
+        unplaceable, `decoded` is EMPTY — so this gate fell through, no error was shown, and the save went
+        on to `markStagePushed`, which stamps the stage as pushed and clears the unsent marks. A stage the
+        server had partly refused was recorded as landed, and the refusal was reported nowhere at all.
+        `refused` is the count of both kinds for the same reason the sentence names both.
+      */
+      const marked = Object.keys(decoded).length;
+      if (marked || unplacedLines.length) {
+        setError(
+          marked
+            ? "Some answers were not accepted. The fields that need attention are marked below; everything else was saved."
+            : "Some answers were not accepted, and this page could not tell which boxes they belong to. They are listed " +
+              "below exactly as the repository reported them; everything else was saved."
+        );
         return;
       }
 
@@ -781,7 +989,17 @@ function DesignWorkshopStagePageBody({
         const updated = await markStagePushed(target, stageKey, {
           completeness: result.completeness ?? null,
           sinceDirtyAt,
-          sinceRemovedFrom
+          // WHAT THE PAYLOAD CARRIED, NOT WHAT THE DRAFT WAS HOLDING. `sweep.emptiedEntities` is
+          // empty on a stage this browser has never read, and handing `sinceRemovedFrom` here instead
+          // would acknowledge a deletion that was never sent: `unsentAfterPush` would clear it, the
+          // rows would stay alive in the repository, and nothing anywhere would still know a designer
+          // had deleted them. See {@link stageSweep}.
+          sinceRemovedFrom: sweep.emptiedEntities,
+          // WHAT STOPS THE VERY NEXT SAVE FROM DELETING WHAT THIS ONE JUST PRESERVED. A merge push
+          // leaves the server holding the union of its row and this browser's bucket, so this browser
+          // still has not read the server's copy and must go on merging until it does. See
+          // `markStagePushed`'s `mergedEntries`.
+          mergedEntries: merged
         });
         const next = updated?.stages[stageKey];
         if (next) setStageSync({ dirtyAt: next.dirtyAt, lastPushedAt: next.lastPushedAt, failure: next.failure });
@@ -800,10 +1018,28 @@ function DesignWorkshopStagePageBody({
       // An updater, not a bare `[]`: React bails out of a re-render for an identical value, and a
       // fresh empty array is never identical. See the note on the autosave effect.
       setRemovedFrom((keys) => (keys.length ? [] : keys));
+      /*
+        A DELETION THIS SAVE WAS NOT ENTITLED TO STATE, SAID OUT LOUD — see {@link stageSweep}.
+
+        Without this sentence the page reports "Stage saved" over a row deletion that did not happen
+        anywhere but here: the row is gone from this screen, it is still in the repository, and it
+        still prints in the .docx a ministry is handed. It is the same fact Android puts on its
+        workshop list as `unsentDeletions`, in the same words and with the same remedy — and the
+        remedy names a SCREEN rather than a connection, because what is missing is a READ and no
+        number of sync passes performs one.
+      */
+      const held = sweep.withheld.length
+        ? ` You deleted ${sweep.withheld.length === 1 ? "a row" : "rows"} from ${sweep.withheld.join(", ")} on this ` +
+          "device, and that deletion has NOT been sent: this browser has never read this stage from the repository, so " +
+          "it cannot yet tell a row you deleted from one it has never seen. The deletion is remembered here and goes up " +
+          "on the first save after this stage has been read — open it again with a connection. Everything you typed has " +
+          "been saved."
+        : "";
       setNotice(
-        submit
+        (submit
           ? "Stage saved and every required field is filled in."
-          : `Stage saved — ${result.created} added, ${result.updated} updated${result.removed ? `, ${result.removed} removed` : ""}.`
+          : `Stage saved — ${result.created} added, ${result.updated} updated${result.removed ? `, ${result.removed} removed` : ""}.`) +
+          held
       );
     } catch (err) {
       // A request that never reached a server is NOT a failed save: the stage is already on this
@@ -850,15 +1086,47 @@ function DesignWorkshopStagePageBody({
   const previous = position > 0 ? stages[position - 1] : null;
   const next = position >= 0 && position < stages.length - 1 ? stages[position + 1] : null;
 
-  /** The per-row errors for one collection, indexed the way `CollectionTable` wants them. */
+  /**
+   * The per-row errors for one collection, indexed the way `CollectionTable` wants them.
+   *
+   * BOUNDED BY THE ROWS THAT ARE ACTUALLY ON SCREEN, which the unbounded version was not. It matched
+   * `^entity\[(\d+)\]$` and wrote every index it found, including indices past the end of the table —
+   * and `CollectionTable` looks its errors up BY ROW, so an entry under an index it never renders is
+   * simply never read. Nothing was wrong with the arithmetic; the message just went nowhere.
+   *
+   * The index can outlive the row it named even when the decode placed it correctly: `errors` is state
+   * that survives until the next save, and the rows underneath it are edited freely in between. Delete
+   * the row a refusal was drawn on and the message vanishes silently; delete a row ABOVE it and every
+   * index below shifts, so the surviving message would be drawn against a different row's boxes. Both
+   * are answered the same way — anything that cannot be placed against the CURRENT rows is handed to
+   * {@link stranded} and said out loud instead.
+   */
   function collectionErrors(entity: DwEntity): Record<number, FieldErrors> {
+    const rowCount = (collections[entity.key] ?? []).length;
     const out: Record<number, FieldErrors> = {};
     for (const [key, fields] of Object.entries(errors)) {
       const match = new RegExp(`^${entity.key}\\[(\\d+)\\]$`).exec(key);
-      if (match) out[Number(match[1])] = fields;
+      if (match && Number(match[1]) < rowCount) out[Number(match[1])] = fields;
     }
     return out;
   }
+
+  /**
+   * Refusals that no box on this screen will draw, as `scope.field: message` lines.
+   *
+   * THE SECOND HALF OF THE SAME HONESTY. `unplaced` catches what the decode could not re-key at save
+   * time; this catches what has become undrawable SINCE — a row deleted under a marked error, a scope
+   * naming an entity this stage does not declare, a bare key that is neither the singleton nor
+   * `_custom`. Derived from the current rows rather than recorded at save time, because that is the
+   * only thing that can answer "is there a box for this right now".
+   *
+   * Every refusal in `errors` is therefore either marked on a box or listed in the banner, and the two
+   * are decided by the same predicate — so a change to one cannot open a gap in the other.
+   */
+  const stranded = useMemo(
+    () => strandedRefusals(errors, stage?.entities ?? [], collections),
+    [errors, collections, stage]
+  );
 
   /**
    * What this stage's state actually is, in a sentence, with a static counterpart to every colour.
@@ -882,6 +1150,62 @@ function DesignWorkshopStagePageBody({
       point: recordingPlace.point
     }),
     [recordingPlace.location, recordingPlace.recordedAt, recordingPlace.recordedTimezone, recordingPlace.point]
+  );
+
+  /**
+   * Where the custom block is drawn, expressed as two anchors so no registry entity is reordered.
+   *
+   * `customAfterKey` is the LAST singleton, which is where the scorer stops counting the stage's own
+   * fields; `customBeforeKey` is the first entity of a stage that declares no singleton at all. Exactly
+   * one of the two is non-null on a stage that declares anything, and both are null on a stage that
+   * declares nothing — which the render handles with a third position.
+   */
+  const customAfterKey = useMemo(() => {
+    const singletons = (stage?.entities ?? []).filter((entity) => entity.cardinality === "SINGLETON");
+    return singletons.length ? singletons[singletons.length - 1].key : null;
+  }, [stage]);
+  const customBeforeKey = useMemo(
+    () => (customAfterKey === null ? (stage?.entities[0]?.key ?? null) : null),
+    [customAfterKey, stage]
+  );
+
+  /**
+   * Is the definition on screen not the one the server is validating against?
+   *
+   * A COMPARISON OF TWO DIGESTS AND NOT A FLAG SET BY A DROP. They are independent facts: a designer can
+   * ADD a question, which invalidates nothing this browser holds and drops no key, and the copy on screen
+   * is still short of a question the stage is now being asked. `serverCustomVersion` is null until a save
+   * has told us what the server used, and a null must never read as stale — a browser with no evidence of
+   * drift may not claim any.
+   */
+  const customStale = serverCustomVersion !== null && serverCustomVersion !== heldCustomVersion;
+
+  /**
+   * The custom block, built once and placed by the two anchors above.
+   *
+   * One element rather than the component repeated at three call sites: three copies would be three
+   * chances for one of them to drift out of step with the others, and the props include the two pieces of
+   * state — the source and the staleness — whose whole job is to be said consistently.
+   */
+  const customBlock = (
+    <CustomSectionsForm
+      sections={customSections}
+      values={custom}
+      onChange={patchCustom}
+      onPatch={patchCustomMany}
+      workshopId={id}
+      stageKey={stageKey}
+      // The server files every custom coercion failure under the one reserved key, keyed by the
+      // designer's own field key — see `save_stage`, which uses `CUSTOM_ENTITY_KEY` for exactly this.
+      errors={errors[CUSTOM_ENTITY_KEY]}
+      disabled={saving}
+      source={customSource}
+      stale={customStale}
+      // The readiness screen builds its links against the same synthetic entity key the adapter renders
+      // under, so a designer sent here for a missing custom answer lands on the box itself rather than on
+      // the top of the stage.
+      focus={focus}
+    />
   );
 
   const unsent = (stageSync?.dirtyAt ?? null) !== null || localPending;
@@ -932,6 +1256,38 @@ function DesignWorkshopStagePageBody({
       {heldBack ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">{heldBack}</div>
       ) : null}
+      {unplaced.length || stranded.length ? (
+        /*
+          RED, NOT AMBER, AND IT IS NOT THE SAME BANNER AS `dropped` BELOW.
+
+          `dropped` is a version skew — the server did not RECOGNISE a field — and its remedy is to report
+          the build. This is the repository REFUSING an answer it understood perfectly well, which is the
+          designer's to correct; drawing it in the drift colour would file a refusal under "someone else's
+          problem". It is red for the same reason `error` and `refused` are.
+
+          IT PRINTS WHAT THE SERVER SAID, VERBATIM, because that is the only thing left that can act as the
+          address. The message is the sole remaining clue about which answer was refused once the row is
+          gone, and paraphrasing it would take that away too.
+        */
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <p>
+            The repository refused {unplaced.length + stranded.length} answer
+            {unplaced.length + stranded.length === 1 ? "" : "s"} that this page cannot mark against a box on screen — the
+            row it named is no longer here, or it was reported against a position this page did not send. Everything else
+            was saved. {unplaced.length + stranded.length === 1 ? "It is" : "They are"} listed here exactly as the
+            repository reported {unplaced.length + stranded.length === 1 ? "it" : "them"}:
+          </p>
+          <ul className="mt-1 list-disc pl-5">
+            {[...unplaced, ...stranded].map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <p className="mt-1">
+            Save this stage again to have the repository check it once more. If the same answers come back refused, report
+            this stage.
+          </p>
+        </div>
+      ) : null}
       {dropped.length ? (
         // amber-100 / amber-800 are the palette's tinted-card pair; amber-50 and amber-200 come
         // from stock Tailwind and do not pair correctly with them.
@@ -940,6 +1296,33 @@ function DesignWorkshopStagePageBody({
           {dropped.length === 1 ? " it was" : " they were"} not stored: {dropped.join(", ")}. This build is running ahead of
           the server&apos;s field list — report it before relying on those answers.
         </div>
+      ) : null}
+      {droppedCustom.length ? (
+        // A SEPARATE BANNER FROM THE ONE ABOVE, AND IT SAYS A DIFFERENT THING. That one is about the app
+        // being ahead of the server and asks for a report; this one is about the DEFINITION having been
+        // edited since this browser read it, and the way out is a reload. Folding the two lists together
+        // would fire the registry-drift sentence on every save of every workshop that has a custom
+        // section, and the people who read that banner would learn to ignore the one message that matters.
+        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
+          The definition this browser holds for this workshop names {droppedCustom.length} question
+          {droppedCustom.length === 1 ? "" : "s"} the server&apos;s copy does not, so
+          {droppedCustom.length === 1 ? " it was" : " they were"} not stored: {droppedCustom.join(", ")}. This
+          workshop&apos;s own questions have been edited since this browser last read them — reload this stage
+          with a connection to pick up the current set.
+        </div>
+      ) : null}
+
+      {/* SAID HERE AND NOT ONLY ON THE STAGE LIST, because this page is reachable without passing
+          through it: the previous/next controls at the foot of this form walk straight from stage 11
+          to stage 12 to stage 13, and a stage URL is a link a designer can be sent. `PageHeader`
+          takes a plain string title, so the pill goes above the note rather than beside the heading;
+          the handset says the same thing as "Stage 12 of 22 · optional" in its own header. Until this
+          existed, the ONLY place the web admitted stage 12 was optional was the stage-list pill. */}
+      {stage?.optionalStage ? (
+        <p className="mb-4 flex flex-wrap items-center gap-2 text-sm leading-6 text-ink-muted">
+          <span className="rounded-full bg-field-200 px-2 py-0.5 text-xs font-medium text-ink-700">Optional stage</span>
+          A workshop that leaves this stage empty still counts as complete.
+        </p>
       ) : null}
 
       {stage?.notes ? (
@@ -988,36 +1371,61 @@ function DesignWorkshopStagePageBody({
             <MarketFindingsPanel workshopId={id} collections={collections} />
           ) : null}
 
-          {stage.entities.map((entity) =>
-            entity.cardinality === "SINGLETON" ? (
-              <EntityForm
-                key={entity.key}
-                entity={entity}
-                data={singleton}
-                onChange={patchSingleton}
-                onPatch={patchSingletonMany}
-                workshopId={id}
-                errors={errors[entity.key]}
-                disabled={saving}
-                stageKey={stageKey}
-                capture={capture}
-                focus={focus}
-              />
-            ) : (
-              <CollectionTable
-                key={entity.key}
-                entity={entity}
-                rows={collections[entity.key] ?? []}
-                onRowsChange={(rows) => patchCollection(entity.key, rows)}
-                workshopId={id}
-                errorsByIndex={collectionErrors(entity)}
-                disabled={saving}
-                stageKey={stageKey}
-                capture={capture}
-                focus={focus}
-              />
-            )
-          )}
+          {stage.entities.map((entity) => (
+            <Fragment key={entity.key}>
+              {entity.key === customBeforeKey ? customBlock : null}
+              {entity.cardinality === "SINGLETON" ? (
+                <EntityForm
+                  entity={entity}
+                  data={singleton}
+                  onChange={patchSingleton}
+                  onPatch={patchSingletonMany}
+                  workshopId={id}
+                  errors={errors[entity.key]}
+                  disabled={saving}
+                  stageKey={stageKey}
+                  capture={capture}
+                  focus={focus}
+                />
+              ) : (
+                <CollectionTable
+                  entity={entity}
+                  rows={collections[entity.key] ?? []}
+                  onRowsChange={(rows) => patchCollection(entity.key, rows)}
+                  workshopId={id}
+                  errorsByIndex={collectionErrors(entity)}
+                  disabled={saving}
+                  stageKey={stageKey}
+                  capture={capture}
+                  focus={focus}
+                />
+              )}
+              {/*
+                THE DESIGNER'S OWN QUESTIONS GO BETWEEN THE STAGE'S OWN FIELDS AND ITS REPEATING ROWS,
+                which is where the scorer counts them — and the order is not cosmetic. `missing` is printed
+                in the order it is built: in full under the progress bar here, and truncated to three in the
+                report's Outstanding column and on the phone's report screen. A list whose order does not
+                match the form sends a designer looking for the second thing when the screen showed the
+                first.
+
+                ANCHORED TO AN ENTITY RATHER THAN INSERTED BY SPLITTING THE MAP IN TWO, so that every
+                registry entity keeps its declared position exactly as it had it. Splitting the list into
+                singletons-then-collections would have reordered any stage that happens to declare a
+                collection before its singleton, which is a change to twenty-two existing forms in service
+                of a block most of them do not have.
+
+                EIGHT OF THE TWENTY-TWO STAGES DECLARE NO SINGLETON AT ALL — existing products, both sketch
+                stages, all three prototype stages, final documentation and costing — and those are exactly
+                the stages a designer is most likely to extend, so it is the ordinary case rather than a
+                fallback. There the block is drawn BEFORE the first entity instead of after a singleton
+                there is none of, which is the same position relative to the tables.
+              */}
+              {entity.key === customAfterKey ? customBlock : null}
+            </Fragment>
+          ))}
+          {/* A stage that declares nothing at all still has to be able to ask a designer's own
+              questions — there is no entity to hang the block off, so it stands alone. */}
+          {customAfterKey === null && customBeforeKey === null ? customBlock : null}
 
           <section className="panel grid gap-3 p-4">
             {completeness ? (

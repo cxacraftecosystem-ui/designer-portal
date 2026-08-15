@@ -1,6 +1,19 @@
 from datetime import datetime
 
+from pydantic import Field
+
 from app.schemas.common import APIModel
+
+#: What a master admin may type into the daily dictation cap. Bounded so a slipped keystroke cannot
+#: become a ceiling nobody would ever reach — 10,000 dictations is nearly twenty times the 510 field
+#: specs the registry holds today (counted from ``stages()``; the "496" repeated elsewhere in this
+#: repository is stale), so anything above it is a typo rather than a policy. It is a BOUND ON THE
+#: TYPING and
+#: not a recommendation: what the right number is remains unmeasured, in that word, and the column
+#: ships NULL. 0 is deliberately in range — it means "send nothing to the transcription service today"
+#: — while a negative is refused here, which is what lets ``dictation_cap.configured_cap`` treat one as
+#: a hand-edited row rather than as a setting anybody chose.
+MAX_DICTATION_DAILY_CAP = 10_000
 
 
 class AppSettingDto(APIModel):
@@ -10,6 +23,15 @@ class AppSettingDto(APIModel):
     batchWindowEnd: str
     batchTimezone: str
     sttProviderOrder: list[str]
+    #: How many server dictations ONE DESIGNER may spend per India-time day. **Null is UNCAPPED and 0
+    #: refuses every one**; both are real settings and neither is a "not set" sentinel. See
+    #: ``services/dictation_cap.py`` for the boundary the day is measured against.
+    dwDictationDailyCap: int | None = None
+    #: How many AI-VERB runs — proofread, expand, translate, caption, subtitle — ONE DESIGNER may
+    #: spend per India-time day, across all five together. **Null is UNCAPPED and 0 refuses every
+    #: run**, exactly as its sibling above. A SECOND ceiling and not a second use of the first: see
+    #: ``services/ai_verb_cap.py`` for why the dictation cap may not be made to cover these.
+    dwAiVerbDailyCap: int | None = None
 
 
 class AppSettingUpdate(APIModel):
@@ -19,6 +41,23 @@ class AppSettingUpdate(APIModel):
     batchWindowEnd: str | None = None
     batchTimezone: str | None = None
     sttProviderOrder: list[str] | None = None
+    #: **THE ONE FIELD ON THIS BODY WHERE AN EXPLICIT NULL MEANS SOMETHING.** Every other field here is
+    #: read through ``model_dump(exclude_none=True)``, where absent and null are the same instruction —
+    #: "leave it alone" — which is correct for a mode or a time that always has a value. It is wrong
+    #: here: null is the setting that means uncapped, so a master admin who capped at 40 in the morning
+    #: could never go back to uncapped in the afternoon. The route therefore reads
+    #: ``model_fields_set`` for this field alone, and says so where it does it.
+    dwDictationDailyCap: int | None = Field(default=None, ge=0, le=MAX_DICTATION_DAILY_CAP)
+    #: The AI-verb ceiling, read through ``model_fields_set`` the same way and for the same reason —
+    #: an explicit null is the instruction "uncapped", and under ``exclude_none`` a master admin who
+    #: capped in the morning could never lift it again.
+    #:
+    #: BOUNDED BY THE SAME NUMBER, and the bound is on the TYPING rather than a recommendation: what
+    #: the right number is remains unmeasured, in that word, and the column ships NULL. 0 is
+    #: deliberately in range — "run none of these today" — while a negative is refused here, which is
+    #: what lets ``ai_verb_cap.configured_cap`` treat one as a hand-edited row rather than a setting
+    #: anybody chose.
+    dwAiVerbDailyCap: int | None = Field(default=None, ge=0, le=MAX_DICTATION_DAILY_CAP)
 
 
 class TranscriptionProviderDto(APIModel):

@@ -25,7 +25,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { DraftingCompass, FileClock, FileText, Images, ListChecks, QrCode } from "lucide-react";
+import { DraftingCompass, FileClock, FileText, Images, Layers, ListChecks, ListPlus, QrCode } from "lucide-react";
 
 import { WorkshopSearchPanel } from "@/components/designworkshop/WorkshopSearchPanel";
 import { PageHeader } from "@/components/PageHeader";
@@ -42,6 +42,7 @@ import {
   adoptServerDetail,
   ensureDraft,
   isLocalWorkshopId,
+  loadCustomDefinition,
   loadDraft,
   loadRegistry,
   localCompleteness,
@@ -216,7 +217,33 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         setServerSchemaVersion(detail.schemaVersion);
         const merged = await adoptServerDetail(detail, loadedRegistry);
         if (cancelled) return;
-        setDraft(merged ?? local);
+        /*
+          THE WORKSHOP'S OWN QUESTIONS ARE READ HERE TOO, AND WITHOUT THIS THE INDEX WOULD DISAGREE WITH
+          THE STAGE FORM ABOUT ITS OWN ARITHMETIC.
+
+          `localCompleteness` scores the designer's required custom questions off `draft.customDefinition`
+          — that is what taught every reader of it at once, including the readiness screen. But the copy on
+          the draft is only written where a definition is actually fetched, and until now that was the
+          stage form alone: a designer who opened this index before opening any stage would have seen
+          twenty-two bars counting the registry's fields only, then watched one of them drop when they came
+          back from a stage. Two arithmetics in one workshop, minutes apart, with nothing on screen to say
+          why — which is exactly the failure the server carries `customSchemaVersion` beside its scores to
+          prevent.
+
+          Not awaited: it refreshes numbers already on screen and its failure is swallowed into a source of
+          "unknown", so it cannot delay or fail the index. The draft is re-read afterwards because the
+          definition is written to the same record — reading it from `merged` would show the bars scored
+          against a definition that had just been superseded on disk.
+        */
+        const target = merged ?? local;
+        if (target) {
+          void loadCustomDefinition(target).then(async (held) => {
+            if (cancelled || !held.definition) return;
+            const refreshed = await loadDraft(target.localId);
+            if (!cancelled && refreshed) setDraft(refreshed);
+          });
+        }
+        setDraft(target);
         setError(null);
       } catch (err) {
         if (cancelled) return;
@@ -301,6 +328,26 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
             <Link href={`/design-workshops/${id}/photos`} className="field-button-secondary">
               <Images className="h-4 w-4" aria-hidden />
               Import photographs
+            </Link>
+            {/* Belongs to the WORKSHOP for the same reason the photo intake does: a layer's chain
+                starts at a recording or a photograph hanging off an audio or image field in any of
+                the 22 stages, and one recording's transcript, its cleaned rewrite and a summary of
+                that are one chain wherever the clip was captured. It is deliberately NOT on the
+                report screen — see that page's header for the argument, the short form of which is
+                that everything on the report screen is a per-file choice that writes nothing, and an
+                acceptance puts a person's name on model output for good. */}
+            <Link href={`/design-workshops/${id}/ai-layers`} className="field-button-secondary">
+              <Layers className="h-4 w-4" aria-hidden />
+              AI layers
+            </Link>
+            {/* Belongs to the WORKSHOP because a definition IS one: the server replaces the whole set in
+                one write so that "one definition, one digest" stays atomic, and a section on stage 11 and
+                another on stage 17 are one instrument sharing one digest. It is also the only place the
+                answer state for every stage is in the same tab, which is what lets the editor say whether
+                an edit will retire a question or delete it BEFORE the button is pressed. */}
+            <Link href={`/design-workshops/${id}/custom-sections`} className="field-button-secondary">
+              <ListPlus className="h-4 w-4" aria-hidden />
+              This workshop&apos;s own questions
             </Link>
             {/* The question this whole index is read to answer, answered directly. The list below
                 shows 22 progress bars; what a designer chasing a submission actually wants is the

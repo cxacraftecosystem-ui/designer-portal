@@ -33,6 +33,29 @@ The reviewer's marginal comments are preserved verbatim on the fields they apply
 ``phase_note``. They are the record of what was deferred and why, and they are the reason
 several Standard-tier items here are optional rather than required.
 
+``phase_note`` IS NOT SERIALISED, AND ``notes`` MUST NOT CARRY THE SAME MATERIAL. ``phase_note``
+is deliberately absent from :func:`~app.services.stage_schema.field_to_dict`, so it never leaves
+this repository: it is a code comment that happens to be attached to the field it is about.
+``StageSpec.notes`` is the opposite. :func:`~app.services.stage_schema.stage_to_dict` publishes
+it, the web stage page prints it under the stage header and the handset's ``StageScreen`` prints
+it under the sync line, so every character of it is read by a designer in the field — including
+from the bundled asset, on a phone that has never had a signal.
+
+It did not used to be written that way, and the owner of this repository found out by using the
+app: seventeen of the twenty-two stages quoted the source document's reviewer at each other —
+which tier was "Phase 2 work", what was referred to "Kumarjit plug in", what "we may consider
+deleting", whose app might do the image processing "for now". 3,971 characters of margin notes
+from a planning meeting, shipped as on-screen guidance. None of it was actionable in a workshop,
+and several entries named people with no connection to the person reading the screen.
+
+THE RULE NOW: ``notes`` says what a designer needs in order to DO this stage, in the app's own
+voice, or it is absent. Never who asked for what, which phase something was deferred to, whose
+plug-in might do it later, what might be deleted, or any sentence whose subject is the
+specification rather than the work. Where such a remark explained why a stage is SHAPED as it
+is, it is kept as a ``#`` comment on the spec below rather than deleted — the provenance is
+worth keeping; it is simply not app content. Pinned by
+``test_no_client_facing_registry_string_carries_build_time_commentary``.
+
 Adding a field: append it, never renumber. Removing one: set ``deprecated=True`` and name its
 successor in ``replaced_by``. A key is what two weeks of a designer's fieldwork is stored
 under — see the rules in :mod:`app.services.stage_schema`.
@@ -218,7 +241,8 @@ STAGE_2 = StageSpec(
         "The prose that opens the report: why the workshop was held, who supported it, what it "
         "set out to deliver. Written once and reused across the agency's reports."
     ),
-    notes="Reviewer marked the Advanced tier of this stage as “Phase 2 work”.",
+    # Source document: the Advanced tier of this stage was marked “Phase 2 work”. That is a
+    # build-scheduling decision — it shaped nothing here, so there is no stage note to carry it.
     entities=(
         single("introduction", "DwIntroduction", "Introduction", (
             f("acknowledgement", "Acknowledgement", RICH, B, required=True, report_role=NARR,
@@ -251,7 +275,8 @@ STAGE_3 = StageSpec(
         "The day-by-day plan, the artisans who took part, the designer's own profile, and the "
         "record of the opening session."
     ),
-    notes="The reviewer marked the Standard tier of this stage “Important for us”.",
+    # Source document: the Standard tier here was marked “Important for us” — an emphasis on the
+    # priority of building it, which changed no field and tells a designer nothing.
     entities=(
         single("workshopPlan", "DwWorkshopPlan", "Plan & opening", (
             f("designerProfile", "Designer’s profile", RICH, B, required=True, report_role=NARR),
@@ -331,11 +356,13 @@ STAGE_4 = StageSpec(
         "The setting: where the cluster is, how the craft is practised there, what it has "
         "traditionally made, and what the community's dependence on it looks like."
     ),
+    # The split this note describes was asked for on the source document: traditional and
+    # contemporary DESIGNS belong to the design brief, not to the cluster background. Stage 10
+    # carries the matching sentence, so a designer meets the boundary from either side.
     notes=(
-        "The reviewer noted that traditional and contemporary DESIGNS belong to the next "
-        "section, not here, and that several Standard-tier items should be optional. Both are "
-        "reflected: this stage carries motifs, forms and colours as craft vocabulary, while "
-        "design direction sits in stage 10."
+        "Motifs, forms and colours are recorded here as the cluster's existing craft vocabulary. "
+        "Design direction — the traditional and contemporary designs this work will follow — "
+        "belongs to the design brief at stage 10, not here."
     ),
     entities=(
         single("clusterBackground", "DwClusterBackground", "Cluster & craft background", (
@@ -386,9 +413,12 @@ STAGE_5 = StageSpec(
         "the tools, the materials and where they come from, and the problems the artisans "
         "already name."
     ),
+    # Out of order is a real capture rule, not a convenience: the source document expected stages
+    # 5 and 6 to “come later when they actually go to the field after market and consumer survey”.
+    # Stage 6 says the same thing, because a designer who reaches either one first needs to know.
     notes=(
-        "The reviewer noted that stages 5 and 6 “may come later when they actually go to the "
-        "field after market and consumer survey”, so this stage is completable out of order."
+        "This stage can be completed out of order — recording the traditional process after the "
+        "market and consumer survey, alongside stage 6, is a normal way to run a workshop."
     ),
     entities=(
         single("traditionalProcess", "DwTraditionalProcess", "Process overview", (
@@ -544,10 +574,21 @@ STAGE_6 = StageSpec(
         "What the cluster already makes and sells, recorded before any new design work, so the "
         "workshop's effect can be measured against it."
     ),
+    # The 360-degree capture and automated quality assessment in the Advanced tier were referred
+    # to a later plug-in on the source document. What is declared here is the DATA such a feature
+    # would consume — `turntablePhotos`, and the named `viewFront`/`viewBack`/`viewDetail` slots —
+    # so the schema is ready for it without claiming it. Those three are also the ONLY named view
+    # slots anywhere in the registry, which is why `DwImageQuality.findMissingViews` reports on
+    # this entity and no other.
+    #
+    # The note says "once you have started the set" rather than "when one is empty" because that
+    # is what the handset actually does: `findMissingViews` stays silent when none of the three is
+    # filled — a designer who wanted no multi-view record is not nagged three times — and speaks
+    # only once at least one, but not all, are present.
     notes=(
-        "Completable out of order, with stage 5. The Advanced tier's 360-degree capture and "
-        "automated quality assessment were marked by the reviewer as a later plug-in; the "
-        "multi-view photograph slots that such a feature would consume are captured here."
+        "This stage can be completed out of order, with stage 5. Front, back and detail are "
+        "separate photograph slots; once you have started the set, the app points out which of "
+        "them is still missing."
     ),
     entities=(
         many("existingProduct", "DwExistingProduct", "Existing products", (
@@ -622,7 +663,9 @@ STAGE_7 = StageSpec(
         "What the survey is meant to find out, who will be asked, where, and with which "
         "questions."
     ),
-    notes="The reviewer suggested the Advanced tier here be “a simple upload tool and phase 2 work”.",
+    # Source document: the Advanced tier here was to be “a simple upload tool and phase 2 work”.
+    # The upload slot exists (`questionnaireFile`, with the remark kept on its `phase_note`); the
+    # phasing is not a designer's business.
     entities=(
         single("surveyPlan", "DwSurveyPlan", "Survey plan", (
             f("objectives", "Survey objectives", RICH, B, required=True, report_role=BULLETS,
@@ -686,11 +729,12 @@ STAGE_8 = StageSpec(
         "What the survey actually found: responses from each group, photographs of the market, "
         "prices seen, and the competing products on the shelf."
     ),
-    notes=(
-        "The reviewer asked for “a basic structure with text and image fields at the "
-        "beginning. Later we can refine.” — which is what this stage is. Voice transcription "
-        "and competitor image matching were deferred to “Phase 3 and only 1 or 2 features”."
-    ),
+    # WHY THIS STAGE IS AS PLAIN AS IT IS. The source document asked for “a basic structure with
+    # text and image fields at the beginning. Later we can refine.”, and deferred voice
+    # transcription and competitor image matching to “Phase 3 and only 1 or 2 features”. That is
+    # the reason the Advanced tier below is thin: it holds the data such a feature would produce
+    # (a transcript, a competitor photo) without claiming the feature. A designer does not need to
+    # know any of that to fill the stage in, so nothing here is a stage note.
     entities=(
         single("surveySummary", "DwSurveySummary", "Survey summary", (
             f("notes", "Field notes", RICH, B, required=True, report_role=NARR),
@@ -754,10 +798,9 @@ STAGE_9 = StageSpec(
         "What the survey means: the SWOT, the price bands the market will bear, and the design "
         "opportunities that follow from the evidence."
     ),
-    notes=(
-        "The reviewer marked most Standard-tier items optional and deferred the AI-assisted "
-        "Advanced tier to “Phase 3 and some of them by the AI team”."
-    ),
+    # Source document: most Standard-tier items here were marked optional — which is why almost
+    # nothing below is `required=True` — and the AI-assisted Advanced tier was deferred to
+    # “Phase 3 and some of them by the AI team”.
     entities=(
         single("marketAnalysis", "DwMarketAnalysis", "Analysis", (
             f("surveyFindings", "Survey findings", RICH, B, required=True, report_role=NARR),
@@ -817,11 +860,13 @@ STAGE_10 = StageSpec(
         "The designer's own statement of what will be made and why: the concept, the market it "
         "is for, and the material, colour and motif direction it will follow."
     ),
+    # Source document: the Standard tier was “some of these and only as optional fields”, and the
+    # structured, evidence-generated brief was deferred to “phase 4” — which is why the brief here
+    # is prose the designer writes rather than something assembled from stages 8 and 9. The
+    # boundary in the note is the other half of stage 4's.
     notes=(
-        "The reviewer marked the Standard tier “some of these and only as optional fields” and "
-        "deferred the structured, evidence-generated brief to “phase 4”. This is also where "
-        "traditional and contemporary DESIGN direction belongs, per the reviewer's note on "
-        "stage 4."
+        "Traditional and contemporary design direction belongs here, in the brief — not in the "
+        "cluster's craft background at stage 4, which records what the cluster already makes."
     ),
     entities=(
         single("designBrief", "DwDesignBrief", "Design brief", (
@@ -836,10 +881,15 @@ STAGE_10 = StageSpec(
             f("materialDirection", "Material direction", RICH, S, report_role=NARR),
             f("colourDirection", "Colour direction", RICH, S, report_role=NARR),
             f("motifFormDirection", "Motif & form direction", RICH, S, report_role=NARR),
+            # This field and its contemporary sibling were moved here from stage 4's cluster
+            # background on the source document's instruction. `help` is a client-facing string
+            # like `notes` is, and it used to end "…at the reviewer's request" — build-time
+            # provenance on a designer's screen. The move itself is worth stating (someone who
+            # knows the older shape will look in stage 4); who asked for it is not.
             f("traditionalDesignReference", "Traditional design reference", RICH, S,
               report_role=NARR,
-              help="The traditional designs this work draws on. Moved here from the cluster "
-                   "background at the reviewer’s request."),
+              help="The traditional designs this work draws on. Recorded here in the brief, not "
+                   "in the cluster background at stage 4."),
             f("contemporaryDesignReference", "Contemporary design reference", RICH, S,
               report_role=NARR),
             f("sustainability", "Sustainability", RICH, S, report_role=NARR),
@@ -862,10 +912,14 @@ STAGE_11 = StageSpec(
     key="SKETCH_DEVELOPMENT",
     title="Sketch Development",
     purpose="The design sketches produced during the workshop, each with its intent.",
+    # Source document: the Standard tier was marked “optional fields”, and the Advanced
+    # image-processing tier was pointed at another team's existing app. The slots such a tool
+    # would fill are declared (`lineArtFile`, carrying the remark on its `phase_note`); the
+    # processing is not claimed. The note says the same thing to the designer without the history,
+    # because a designer WILL go looking for a vectorise button.
     notes=(
-        "The reviewer marked the Standard tier “optional fields” and noted the Advanced "
-        "image-processing tier as “may be Deepika app for now”. The vector/line-art slots such "
-        "a tool would fill are present; the processing itself is not claimed here."
+        "Line-art and vector files can be attached to a sketch here. The app stores them; it does "
+        "not produce them from the sketch itself."
     ),
     entities=(
         many("sketch", "DwSketch", "Sketches", (
@@ -916,11 +970,23 @@ STAGE_12 = StageSpec(
         "the master craftsperson's as much as the designer's."
     ),
     optional_stage=True,
+    # WHY THIS STAGE STILL EXISTS. The source document proposed “we may consider deleting this
+    # entire section for now”. It was kept and marked `optional_stage=True` instead, because the
+    # selection reason recorded here is the only place in twenty-two stages that says why a design
+    # was DROPPED — and a shortlisting funnel with no recorded rejections cannot be analysed.
+    #
+    # The note below does not repeat "this stage is optional", because `optional_stage` is a
+    # structured boolean and BOTH clients render it on the screen this note appears on — checked,
+    # not assumed, and it was not true until it was checked. `StageScreen` prints "Stage 12 of 22 ·
+    # optional" in its header; the web's stage page printed nothing, because its "Optional stage"
+    # pill lives on the stage LIST at `design-workshops/[id]`, a different page, and the form's own
+    # previous/next controls walk from stage 11 straight to 12 without passing through it. Removing
+    # the sentence from this note therefore took the fact off the web entirely until the stage page
+    # was given its own pill. If a third client appears, it renders `optionalStage` or this note has
+    # to carry the words again.
     notes=(
-        "The reviewer wrote “we may consider deleting this entire section for now”. It is kept "
-        "but marked optional: a workshop that skips it is still complete, and no field here is "
-        "required of the workshop as a whole. It is retained because the selection reason is "
-        "the only record of WHY a design was dropped, which the research use of this data needs."
+        "The reason a sketch is taken forward or set aside is recorded only here — no other "
+        "stage captures why a design was dropped."
     ),
     entities=(
         many("sketchReview", "DwSketchReview", "Sketch reviews", (
@@ -959,11 +1025,11 @@ STAGE_13 = StageSpec(
         "The making of each prototype: who made it, from what, how long it took and what it "
         "cost, with the record of problems met along the way."
     ),
-    notes=(
-        "The reviewer wrote “let's simplify” on the Basic tier, and referred the Advanced "
-        "measurement tier to “Kumarjit da and team”, noting “the system we used in the "
-        "workshop app… we can supply a PDF of measurements to be printed”."
-    ),
+    # Source document: “let's simplify” against the Basic tier, which is why the required set
+    # below is short. The Advanced measurement tier was referred to another team, with the remark
+    # “the system we used in the workshop app… we can supply a PDF of measurements to be printed”
+    # — kept verbatim on `prototype.measurementSheet`'s `phase_note`, which is a FILE slot for
+    # exactly that PDF rather than a measurement feature this app claims to have.
     entities=(
         many("prototype", "DwPrototype", "Prototypes", (
             f("prototypeCode", "Prototype ID", T, B, required=True, report_role=COL,
@@ -1064,7 +1130,8 @@ STAGE_14 = StageSpec(
         "Every change made to a prototype after its first making, why it was made, and what it "
         "cost in time and money."
     ),
-    notes="The reviewer marked the Standard tier “optional fields”.",
+    # Source document: the Standard tier here was marked “optional fields”, which is why only the
+    # iteration's identity and its change are required below.
     entities=(
         many("prototypeIteration", "DwPrototypeIteration", "Iterations", (
             f("prototypeRef", "Prototype", REF, B, required=True, ref_model="DwPrototype",
@@ -1122,10 +1189,10 @@ STAGE_15 = StageSpec(
     purpose=(
         "Which prototypes were accepted, on what assessment, and with whose approval."
     ),
-    notes=(
-        "The reviewer marked the Standard tier “optional fields” and said of the Advanced tier "
-        "“at the beginning — just crowdsourced designer feedback mechanism. Reset for Phase 4.”"
-    ),
+    # Source document: the Standard tier here was marked “optional fields”; of the Advanced tier,
+    # “at the beginning — just crowdsourced designer feedback mechanism. Reset for Phase 4.” The
+    # remark survives on `prototypeValidation.buyerFeedback`'s `phase_note`, which is the free-text
+    # slot such a mechanism would eventually fill.
     entities=(
         many("prototypeValidation", "DwPrototypeValidation", "Validation", (
             f("prototypeRef", "Prototype", REF, B, required=True, ref_model="DwPrototype",
@@ -1174,7 +1241,9 @@ STAGE_16 = StageSpec(
         "The catalogue record of each accepted product: its name and code, its final "
         "photographs, dimensions, materials, technique and description."
     ),
-    notes="The reviewer referred the Advanced catalogue-asset tier to “Kumarjit plug in”.",
+    # Source document: the Advanced catalogue-asset tier was referred to another team's plug-in.
+    # The slots that plug-in would fill are declared (`catalogPhotos`, `turntablePhotos`, with the
+    # remark on their `phase_note`); nothing here generates them.
     entities=(
         many("finalProduct", "DwFinalProduct", "Final products", (
             f("productCode", "Product code", T, B, required=True, report_role=COL,
@@ -1224,10 +1293,13 @@ STAGE_17 = StageSpec(
         "What each product costs to make and what it should sell for, built from the line "
         "items rather than asserted, plus how it will reach a buyer."
     ),
+    # Source document: several Standard-tier items here were marked optional. Storing the cost
+    # calculator's INPUTS rather than only its totals was not asked for and is the reason the
+    # cost-head rows below exist at all — a ministry report that prints a selling price has to be
+    # able to show the arithmetic when someone asks.
     notes=(
-        "The reviewer marked several Standard-tier items optional. The cost-calculator inputs "
-        "are stored, not just the totals, so a figure in the report can always be traced to "
-        "the quantities and rates it came from."
+        "The cost sheet stores the quantities and rates you enter, not only the totals, so any "
+        "figure printed in the report can be traced back to the line items it came from."
     ),
     entities=(
         many("costSheet", "DwCostSheet", "Cost sheets", (
@@ -1337,11 +1409,17 @@ STAGE_18 = StageSpec(
         "What the workshop achieved, what went wrong, and what the artisans and the designer "
         "say about it."
     ),
+    # The Advanced tier below is “just option for voice and transcript — if you think it apt”
+    # from the source document, kept verbatim on `outcomes.feedbackAudio`'s `phase_note`.
+    #
+    # The note is about the OVERRIDE fields, which is behaviour a designer meets head-on: the
+    # headline counts arrive already filled in, and typing over one silently changes a number the
+    # report prints. `countOverrideReason` is what makes that traceable, and its own help text
+    # says it is required — the note is the stage-level warning that the counts are derived at all.
     notes=(
-        "The counts here are derived from the records by default; the manual fields exist only "
-        "to override a derived number, and an override carries a note explaining itself. The "
-        "reviewer asked for “just option for voice and transcript — if you think it apt”, which "
-        "is what the Advanced tier below is."
+        "The design and prototype counts are worked out from the records you have entered. The "
+        "override fields exist only to replace a derived number, and an override must carry a "
+        "reason, which is printed in the report beneath the figure it changed."
     ),
     entities=(
         single("outcomes", "DwOutcomes", "Outcomes", (
@@ -1553,11 +1631,27 @@ STAGE_21 = StageSpec(
         "Confirm that the record and its media are preserved, and record any quality problem "
         "found in the photographs before the record is archived."
     ),
+    # WHAT THE NOTE BELOW MUST STAY TRUE TO, AND WHERE TO CHECK IT.
+    #
+    # These flags are only half a feature in this file: the ENUM declares seven of them, and the
+    # handset computes four. `DwImageQuality.findQualityIssues` emits BLUR (variance of the
+    # Laplacian, against `BLUR_VARIANCE_FLOOR`), LOW_RESOLUTION (long edge against
+    # `MIN_LONG_EDGE_PX`), DUPLICATE (exact SHA-256 first, then a perceptual hash within
+    # `NEAR_DUPLICATE_MAX_DISTANCE`) and MISSING_VIEW (stage 6's named view slots). OVEREXPOSED,
+    # UNDEREXPOSED and WRONG_SUBJECT are judgements no measurement here makes.
+    #
+    # The note used to say duplicate detection was "not claimed", which was true when it was
+    # written and stopped being true when the perceptual hash landed. If the flag set in
+    # `QualityFlag` changes again, this note is the user-facing thing that goes stale with it.
+    #
+    # `autoDetected` is a plain BOOL the designer ticks — NOTHING writes it. The app raises its
+    # findings on the photo screen at capture time; these rows are entered by hand afterwards, and
+    # the note says so rather than implying the stage fills itself in.
     notes=(
-        "Blur and resolution ARE computable on device — the variance of the Laplacian and the "
-        "pixel dimensions — so those flags are real fields with an ``autoDetected`` marker "
-        "rather than a deferred feature. Duplicate detection and search indexing are not "
-        "claimed; the fields that would record their output are present."
+        "As photographs are taken, this device checks them for blur, low resolution, duplicates "
+        "and missing views. Overexposure, underexposure and wrong subject are not checked — judge "
+        "those by eye. Rows here are entered by hand either way; tick “Detected automatically” "
+        "for the ones the app raised."
     ),
     entities=(
         single("archive", "DwArchive", "Archive", (

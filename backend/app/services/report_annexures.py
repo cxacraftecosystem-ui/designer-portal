@@ -326,8 +326,70 @@ def transcript_body_blocks(text: str) -> list[Block]:
     return blocks
 
 
+#: Printed under every transcript heading whose text carries speaker turns.
+#:
+#: **A SPEAKER LABEL IS A MODEL'S GUESS AT WHO SPOKE, AND THIS ANNEXURE PRINTED IT LIKE A FACT.** The
+#: text below every heading here is ``MediaFile.transcriptText``, and ``ai._diarized_markdown`` builds
+#: its ``**Speaker 1:**`` labels by numbering whatever the provider separated out of the audio alone.
+#: Nobody in the courtyard told this system how many people were in the room or which of them was
+#: talking. Scribe v2 will separate up to 32 voices; both engines merge two quiet speakers, split one
+#: person who moved away from the microphone, and hand an interjection to whoever was louder. What an
+#: officer sees is a named-looking label down a page of a sanctioned report, which reads as a record of
+#: who said what.
+#:
+#: **THE SAME SENTENCE AS ``report_ai_layers.SPEAKER_NOTE``, AND DELIBERATELY NOT AN IMPORT OF IT.** The
+#: AI-layer annexure was given this caution and this one was left, which is the defect; copying the
+#: wording rather than sharing the constant is the choice this repository already makes for the speaker
+#: regex one module over (*"quoted rather than imported ... kept adjacent and named so a change to one is
+#: a change somebody has to make to both"*). A report can carry BOTH annexures, and two paragraphs that
+#: are meant to say the same thing must be able to be compared by eye in the document rather than being
+#: guaranteed identical by an import that hides which pages actually carry it.
+#:
+#: **WHY THERE IS NO SOURCE-KIND CONDITION HERE, WHICH IS THE ONE HALF THAT IS SIMPLER THAN THE LAYER
+#: CASE.** ``speaker_labels_are_guessed`` over a layer has to check that the layer stands on a
+#: RECORDING, because a layer built on supplied text may carry turns a designer typed — "**Rita:** …" in
+#: their own note — and telling an officer those were machine-guessed would be a false statement made in
+#: the name of honesty. Every item in THIS annexure is a recording by construction:
+#: ``workshop_transcripts.load_transcript_items`` builds each one from a ``MediaFile`` row reached
+#: through an AUDIO field, and the text is that row's transcript. There is no typed-turns case to
+#: exclude. Where a researcher has corrected the transcript by hand through
+#: ``POST /media/{id}/transcript``, the labels they corrected are still the ones the diarizer proposed —
+#: ``speaker_count``'s own docstring records that the labels *"survive every later edit including the
+#: human corrections a researcher makes by hand"* — so the caution stays true of that case too, and the
+#: sentence's instruction (check a line against the recording) is exactly what such a researcher did.
+SPEAKER_NOTE = (
+    "The speaker labels in this transcript — who is saying which line — were decided by the machine "
+    "that transcribed the recording, not by anybody who was present. Nothing recorded how many people "
+    "were speaking or who they were: the labels are that machine's separation of the voices it heard, "
+    "and it can merge two speakers into one or split one across two. The numbering is by order of first "
+    "speaking and is not a name. Check a line against the recording before attributing it to a "
+    "particular person."
+)
+
+
+def speaker_labels_are_guessed(item: TranscriptItem) -> bool:
+    """Whether this transcript prints speaker turns a diarizer decided. See :data:`SPEAKER_NOTE`.
+
+    One condition and not two, unlike the AI-layer twin: every item here came from a recording, so the
+    only question is whether the text names speakers at all. A transcript with no labels has nothing to
+    caution and gets no paragraph — printing one would tell an officer that a solo voice note's absent
+    labels were guessed.
+    """
+    return bool(item.text) and any(
+        _SPEAKER_LINE_RE.match(line) for line in _normalised_lines(item.text)
+    )
+
+
 def transcript_index_block(items: tuple[TranscriptItem, ...]) -> TableBlock:
-    """The contents table at the head of the annexure — what was recorded, and how much of it."""
+    """The contents table at the head of the annexure — what was recorded, and how much of it.
+
+    THE ``Speakers`` COLUMN IS A MACHINE'S COUNT AND THE CAPTION NOW SAYS SO. It is derived from the
+    labels (``speaker_count``), which are the diarizer's separation of the voices — so a column of bare
+    numerals in a contents table was the shortest and most authoritative-looking form of the same claim
+    :data:`SPEAKER_NOTE` exists to qualify: "3" in a ministry document reads as three people
+    established, not as three voices a model thought it could tell apart. The caption is where it
+    belongs, because a reader takes a number out of a table without reading the paragraphs below it.
+    """
     return TableBlock(
         columns=(
             TableColumn("Stage", 26.0),
@@ -347,7 +409,10 @@ def transcript_index_block(items: tuple[TranscriptItem, ...]) -> TableBlock:
             )
             for item in items
         ),
-        caption="Recordings transcribed during this workshop.",
+        caption=(
+            "Recordings transcribed during this workshop. The speaker count is the number of voices "
+            "the transcribing machine separated out of the audio, not a count of the people present."
+        ),
     )
 
 
@@ -399,16 +464,31 @@ def append_transcript_annexure(
     if page_break_before:
         doc.add(PageBreakBlock())
     doc.heading(heading or DEFAULT_HEADING, 1, numbered=numbered)
+    # THE SECOND CLAUSE USED TO BE FALSE, and it was false in the direction that misleads a reader into
+    # trusting the page more. It read: "where the transcript names speakers, the names are those of the
+    # roles rather than of the individuals" — which says somebody assigned roles. Nobody did. The labels
+    # are `**Speaker 1:**`, `**Speaker 2:**`, numbered by order of first speaking out of whatever the
+    # provider's diarizer separated (`ai._diarized_markdown`), and "Speaker 2" is not a role: it is an
+    # index into a machine's guess. A sentence promising an officer that the labels are roles converted
+    # a guess into a taxonomy. What replaces it claims only what is true of the text, and the claim about
+    # the labels is made properly, per transcript, by SPEAKER_NOTE below.
     doc.para(
         "The recordings made during this workshop, transcribed in full. The text is produced by "
-        "automatic speech recognition and lightly edited; where the transcript names speakers, the "
-        "names are those of the roles rather than of the individuals.",
+        "automatic speech recognition and lightly edited; it is the machine's reading of the audio "
+        "rather than a certified transcript, and the recordings themselves remain the record.",
         style=ParaStyle.LEAD,
     )
     doc.add(transcript_index_block(tuple(printed)))
     for item in printed:
         doc.heading(item.label, 2, numbered=numbered)
         doc.para(_provenance(item), style=ParaStyle.NOTE)
+        if speaker_labels_are_guessed(item):
+            # ABOVE THE TRANSCRIPT AND NEVER BELOW IT, which is `report_ai_layers`' own stated rule:
+            # "a caution about who is speaking, printed after two pages of dialogue, arrives once the
+            # reader has already assigned the lines." It matters more here than there, because a
+            # transcript is the longest thing in the document — a note at the end of an eleven-minute
+            # interview is three pages after the first line it was meant to qualify.
+            doc.para(SPEAKER_NOTE, style=ParaStyle.NOTE)
         for block in transcript_body_blocks(item.text):
             doc.add(block)
     return len(printed)

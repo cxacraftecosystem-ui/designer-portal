@@ -295,7 +295,7 @@ class ReportSourceShippedRegistryTest {
                 notes = "written with no signal",
                 completedAt = "2026-02-09T18:00:00Z",
                 emptiedEntities = listOf("costSheet"),
-                serverBaseline = false,
+                stageSeen = false,
             )
         }
         val onDevice = WorkshopDraft(

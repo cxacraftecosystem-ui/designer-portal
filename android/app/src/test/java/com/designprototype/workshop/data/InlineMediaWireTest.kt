@@ -106,7 +106,7 @@ class InlineMediaWireTest {
                 put("photos", JsonArray(photos.map { JsonPrimitive(it) }))
             }
         },
-        serverBaseline = true,
+        stageSeen = true,
     )
 
     private fun build(draft: StageDraft, media: List<DraftMedia>) =

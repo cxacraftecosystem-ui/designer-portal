@@ -41,6 +41,7 @@ import okhttp3.MediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Response
@@ -179,6 +180,54 @@ fun Throwable.apiRefusal(fallback: String): ApiRefusal {
     return ApiRefusal(detailMessage(detail) ?: plain, schemaSkew = skew)
 }
 
+/**
+ * Was this refusal ANSWERED BY THE APPLICATION, and if so what did it say?
+ *
+ * Null means the body was not FastAPI's — no JSON, or JSON with no `detail`. That distinction is not
+ * decoration: 502, 503 and 504 are the codes `ApiClient` documents CloudFront returning when this
+ * origin is slow or briefly unwell, so a status code alone cannot tell "the server has no
+ * transcription provider" from "the gateway could not reach the server just now", and the two lead a
+ * designer to completely different next moves. The gateway writes an HTML error page; the route
+ * writes `{"detail": "…"}`.
+ *
+ * CONSUMES THE BUFFERED ERROR BODY, exactly like [apiRefusal] — call one of them, once, per failure.
+ */
+private fun HttpException.serverDetail(): String? {
+    val raw = runCatching { response()?.errorBody()?.string() }.getOrNull()
+    if (raw.isNullOrBlank()) return null
+    val body = runCatching { errorBodyJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject
+    val detail = body?.get("detail") ?: return null
+    return detailMessage(detail)
+}
+
+/**
+ * A 429 read ONCE, into the sentence and the four facts that decide whether it is worth remembering.
+ *
+ * Everything comes out of a single `errorBody().string()` for [ApiRefusal]'s stated reason: Retrofit
+ * buffers the error body and reading it CONSUMES the buffer, so asking the same exception two questions
+ * silently answers the second one with nothing. Here that would mean either a refusal with no sentence
+ * on screen or a cap that was never written down — and the second costs a six-megabyte upload per field
+ * for the rest of the day.
+ *
+ * Both key names are the server's own and are checked against it rather than remembered: `dictationDay`
+ * from `dictation_cap.allowance_payload`, `retryAfterSeconds` from `app/scale/rate_limit.py`. Missing
+ * keys are not an error — [DwDictationCapRefused] documents what each absence means and which reading
+ * wins when a body carries neither.
+ */
+private fun HttpException.dictationCapRefusal(): DwDictationCapRefused {
+    val raw = runCatching { response()?.errorBody()?.string() }.getOrNull()
+    val body = raw
+        ?.takeIf { it.isNotBlank() }
+        ?.let { runCatching { errorBodyJson.parseToJsonElement(it) }.getOrNull() } as? JsonObject
+    fun number(key: String): Int? = (body?.get(key) as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+    return DwDictationCapRefused(
+        detail = body?.get("detail")?.let { detailMessage(it) },
+        day = (body?.get("dictationDay") as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+        limit = number("dictationsLimit"),
+        retryAfterSeconds = number("retryAfterSeconds"),
+    )
+}
+
 /** Pull the human-readable text out of whichever `detail` shape FastAPI returned. */
 private fun detailMessage(detail: JsonElement): String? = when (detail) {
     is JsonPrimitive -> detail.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
@@ -260,6 +309,28 @@ class WorkshopRepository(
     private val completeJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val syncMutex = Mutex()
     private val sweptStagedObjects = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    init {
+        /*
+          THE DICTATION CONTROL CANNOT BE HANDED A REPOSITORY, so it is left one here.
+
+          `DwDictationButton` is drawn into a text field's trailing-icon slot from two call sites, and
+          only one of them has a repository to pass: `RichTextEditor` is a general-purpose editor used
+          in previews with no data layer at all. Threading a parameter would therefore have produced a
+          handset where server dictation works in a short prose field and silently does not in a long
+          one — two dictation behaviours on one form, which is worse than either answer alone.
+
+          The alternative considered and rejected was a second HTTP stack built from
+          `ApiClient.retrofit(TokenStore(context))` inside the control. That would opt dictation out of
+          the gateway retry this origin needs and out of the auth header, and it would stand up an
+          OkHttp client per field on a screen that draws hundreds of them.
+
+          Publishing `this` from a constructor is only safe because nothing dereferences it until a
+          designer taps a microphone, which cannot happen before `MainActivity.onCreate` has returned.
+          See [DwDictationRun.repository].
+        */
+        DwDictationRun.adopt(this)
+    }
 
     fun hasToken(): Boolean = !tokenStore.getToken().isNullOrBlank()
 
@@ -349,6 +420,17 @@ class WorkshopRepository(
 
     suspend fun designWorkshopStage(id: String, stageKey: String): StageBucketDto =
         api.designWorkshopStage(id, stageKey)
+
+    /**
+     * One workshop's custom definition, straight off the wire and NOT cached here.
+     *
+     * Named `…Raw` because the caller that screens are meant to use is
+     * [designWorkshopCustomSections], which writes the answer to [DwCustomSectionStore] in the same
+     * step. Two doors into one fetch would be two ideas of what "this device holds a definition"
+     * means, and the whole three-state design turns on there being one.
+     */
+    suspend fun designWorkshopCustomSectionsRaw(id: String): DwCustomDefinitionDto =
+        api.designWorkshopCustomSections(id)
 
     /**
      * Push one whole stage.
@@ -500,6 +582,143 @@ class WorkshopRepository(
         return api.designWorkshopIdentityOcr(part)
     }
 
+    /**
+     * Send one dictated clip to be written down — rung 2 of the ladder in [dwDictationLadder].
+     *
+     * THROWS, for the same reason [designWorkshopIdentityOcr] does and for one more. The first: there
+     * is no cached anything that could stand in for a transcription, so a swallowed failure would
+     * reach the designer as an empty box, which reads as "the phone heard nothing" and sends them
+     * speaking louder at a control that was never going to answer. The second: the caller has a
+     * LADDER to walk. An exception is how it learns that this rung is spent and the next one should
+     * be tried, and a null would make "the server refused" and "the server heard silence"
+     * indistinguishable at exactly the point where they lead to different next moves.
+     *
+     * NOT QUEUED, EVER. See the route declaration in [WorkshopRepositoryApi.designWorkshopDictate].
+     *
+     * The bytes are STREAMED from the file rather than read into memory first. A six-megabyte
+     * `ByteArray` on a Galaxy M32 that is also holding Compose, a camera preview and a stage
+     * draft is a cost with no purpose here — `asRequestBody` reads the file as it writes the socket,
+     * and the size is taken from the filesystem for the cap check without touching the contents.
+     *
+     * THE THREE FAILURES IT TRANSLATES are the ones whose CODE alone cannot say what happened: the
+     * route's own 503 (told from a gateway's by its FastAPI `detail` — see [DwDictationNotConfigured]
+     * and [serverDetail]), the consent gate's 409, and the 429 that is either the daily cap or the
+     * courtesy rate limiter. Each becomes a type carrying the server's own sentence, because the control
+     * shows that sentence verbatim; everything else is rethrown untouched, so the caller still reads the
+     * server's words off a 413 or a 422.
+     *
+     * [workshopId] IS THE SERVER'S ID AND IS REQUIRED. `POST /design-workshops/{id}/dictate` is the only
+     * dictation route that can read a workshop's `dictationConsent` column, so the id is what the gate is
+     * enforced against — and a nullable or defaulted parameter here would put the ungated door back
+     * within reach of any call site that forgot, which is the whole defect this closed. A workshop that
+     * exists only on this device HAS no server id; the ladder refuses rung 2 for it before a microphone
+     * is ever opened ([DwDictationConditions.workshopOnServer]), so no caller has to invent one.
+     */
+    suspend fun designWorkshopDictate(
+        workshopId: String,
+        clip: File,
+        languageTag: String,
+    ): DwDictateDto {
+        val part = okhttp3.MultipartBody.Part.createFormData(
+            "file",
+            // The name and type the server reads its decoder from. `dictation.m4a` + `audio/mp4`
+            // describes what `DwDictationRecorder` actually produces (MPEG-4 container, AAC audio);
+            // the web sends `dictation.webm` or `dictation.m4a` depending on what the browser
+            // recorded, for the same reason — a hardcoded container name lies about the bytes.
+            "dictation.m4a",
+            clip.asRequestBody("audio/mp4".toMediaType())
+        )
+        try {
+            return api.designWorkshopDictate(
+                workshopId,
+                part,
+                languageTag.toRequestBody("text/plain".toMediaType()),
+            )
+        } catch (e: HttpException) {
+            /*
+              THE CONSENT GATE, READ FIRST BECAUSE THE ROUTE CHECKS IT FIRST.
+
+              A 409 from this route is the WORKSHOP being in no state to permit the send, and almost always
+              that is `DesignWorkshop.dictationConsent` not being GRANTED. The route deliberately answers
+              409 rather than 403 — a 403 is about the CALLER, and this designer is entitled to dictate —
+              and it writes a `detail` that is field copy, one sentence for "nobody has asked the artisan"
+              and a different one for "the artisan said no", because those have different next moves.
+
+              IT IS NOT THE ONLY 409 THE ROUTE CAN RAISE, AND THIS COMMENT USED TO SAY IT WAS ("a 409 from
+              this route means one thing"). Before the gate runs, `load_workshop_or_404(..., for_edit=True)`
+              answers 409 "This workshop is deleted. Restore it before editing." for a soft-deleted
+              workshop — reachable only by an admin, because that helper turns everybody else away with a
+              404 rather than confirm the id exists. WHAT MAKES ONE TYPE HONEST FOR BOTH is that the
+              server's own sentence is what the designer reads: a deleted workshop is told it is deleted and
+              named the restore, which is the right next move and not a consent question. What the type may
+              NOT do is invent a state for either of them, which is why a null `detail` stays null below
+              instead of being papered over with a sentence about consent.
+
+              SO THE SENTENCE IS CARRIED, NOT THE CODE, exactly as the 503 below is. This client may not
+              compose either sentence itself: it does not know WHICH state the server found, and a 409
+              body carries no discriminator — guessing would tell a designer to go and ask a question that
+              is already on record. Read once, for [ApiRefusal]'s reason: the buffered error body is
+              consumed by the first read.
+
+              NULL DETAIL IS KEPT AS NULL rather than papered over here, and the control falls back to
+              [DW_DICTATION_CONSENT_REFUSED], which says only what a bodiless 409 proves.
+            */
+            if (e.code() == 409) throw DwDictationConsentRefused(e.serverDetail())
+            // A 503 with a FastAPI `detail` is the route saying the deployment has no transcription
+            // provider — a fact about this deployment, worth remembering for the run. A 503 without
+            // one came from the gateway in front of it, means only "not now", and must NOT be
+            // remembered: retiring rung 2 for the rest of a fortnight's fieldwork over one
+            // CloudFront blip is the failure this branch exists to prevent.
+            if (e.code() == 503) e.serverDetail()?.let { throw DwDictationNotConfigured(it) }
+            // A 429 is EITHER this designer's daily allowance being spent OR the courtesy backstop in
+            // front of the whole API, and the two want opposite handling — one is remembered for the
+            // rest of the India-time day, the other must not be remembered at all. They are told apart
+            // by the keys in the body, in ONE read, because reading the buffered error body consumes
+            // it: a second pass hands back an empty string and the sentence with it. See
+            // [DwDictationCapRefused].
+            if (e.code() == 429) throw e.dictationCapRefusal()
+            throw e
+        }
+    }
+
+    /**
+     * Record one workshop's answer to "may its recordings leave the device for a third party".
+     *
+     * THROWS, unlike almost everything else in this block, and for the viewers routes' reason: this is a
+     * WRITE that says a named person took responsibility for an artisan's voice leaving the device, so
+     * a failure that was swallowed and reported as success would leave the phone gating on an answer the
+     * server never heard — and the server refusing every upload afterwards with a sentence the designer
+     * has no way to connect to the tap they made a fortnight earlier.
+     *
+     * [recordedAt] IS WHEN THE ARTISAN ANSWERED, on this device's clock, and it is sent even when the
+     * call happens seconds later: a consent recorded in a courtyard reaches the server on the next sync,
+     * which on this fleet can be a fortnight, and the server keeps its own `createdAt` for when it
+     * heard. The server refuses a stamp more than fifteen minutes in its own future rather than
+     * correcting it (`dictation_consent.MAX_DEVICE_CLOCK_SKEW`), so a phone with a hand-set clock is
+     * told to fix its date instead of having a fabricated moment stored for somebody's consent.
+     *
+     * THE RESPONSE IS DECODED LENIENTLY AND NOT DEPENDED ON. What is load-bearing is the 2xx: the answer
+     * is already on this device, and this call exists to get it to the server. The route was being
+     * written in parallel with this method, so the SHAPE of what it returns is unconfirmed — every field
+     * of [DwConsentDecisionDto] is defaulted, exactly as [DesignWorkshopDto]'s are and for the same
+     * reason, so a body that turns out to carry something else still decodes rather than turning a
+     * successful write into a failure. (That is the [DwIdentityOcrDto] defect, one file over: five keys
+     * declared that the endpoint never sent, and a perfect read reported as a failure.)
+     */
+    suspend fun designWorkshopRecordDictationConsent(
+        workshopId: String,
+        decision: DwTier3Consent,
+        recordedAt: String?,
+        note: String? = null,
+    ): DwConsentDecisionDto = api.recordDesignWorkshopDictationConsent(
+        id = workshopId,
+        body = DwConsentDecisionRequest(
+            decision = dwTier3ConsentToken(decision),
+            note = note?.trim()?.takeIf { it.isNotEmpty() },
+            recordedAt = recordedAt,
+        ),
+    )
+
     // ── Who may open one design workshop ─────────────────────────────────────────────────────────
     //
     // THESE THREE THROW, unlike almost everything above them, and the exception is the point. The
@@ -522,15 +741,23 @@ class WorkshopRepository(
      * roster, a clause this client cannot see. Computing it here would drift within a release, and
      * the drift shows up as an admin granting access that the next sign-in refuses.
      *
-     * NOT PAGED, and there is nothing to page. The endpoint caps at `ELIGIBLE_VIEWER_LIMIT = 2000`
-     * and carries no `page` and no `total`, because the eligible set is the admins plus the
-     * designers the roster still admits — a few dozen accounts. When the cap IS reached the server
-     * logs a warning and the wire has nowhere to say so, which is a gap this client cannot close by
-     * counting: it is not told what it is missing. Said here rather than left for a future reader to
-     * think was overlooked; closing it means adding `search` to the endpoint first.
+     * NOT PAGED, AND SEARCHED INSTEAD — and the note that used to sit here, saying the eligible set
+     * was "a few dozen accounts", was measured wrong. The endpoint caps at `ELIGIBLE_VIEWER_LIMIT =
+     * 2000` and this repository holds 2543 eligible accounts, because ADMINs are not roster-gated at
+     * all: 1344 of them plus the 1282 designers the roster admits. Ordered by name and cut at 2000,
+     * 398 eligible accounts were unreachable from this phone, and there was no `page` to ask for them
+     * and no `total` to notice them by.
+     *
+     * So [search] is how this client reaches past the ceiling, and it is applied by the SERVER — a
+     * filter over the list this method returns would only ever search the part of the alphabet that
+     * fitted. The answer now also carries `truncated`, which is the first time the wire could say it
+     * had cut anything; it is returned rather than dropped because a picker that hides people has to
+     * be able to say so. Null [search] is the unsearched (capped) list, exactly as before.
      */
-    suspend fun eligibleDesignWorkshopViewers(): List<DwEligibleViewerDto> =
-        api.eligibleDesignWorkshopViewers().users
+    suspend fun eligibleDesignWorkshopViewers(search: String? = null): DwEligibleViewers =
+        api.eligibleDesignWorkshopViewers(search).let {
+            DwEligibleViewers(users = it.users, truncated = it.truncated, search = search)
+        }
 
     /**
      * Everyone holding a viewer row on this workshop, oldest grant first.

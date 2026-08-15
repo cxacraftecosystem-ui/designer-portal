@@ -50,7 +50,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services import rich_text
+from app.services.report_ai_layers import ai_layers_of, append_ai_layer_annexure
 from app.services.report_annexures import append_transcript_annexure, transcripts_of
+from app.services.report_custom_sections import (
+    append_custom_section,
+    custom_scoring,
+    custom_section_of,
+)
 from app.services.report_questionnaires import (
     append_questionnaire_annexure,
     questionnaires_of,
@@ -1879,11 +1885,20 @@ class ReportBuilder:
         """What the record does and does not contain — the stage 20 completeness check."""
         rows: list[tuple[Any, ...]] = []
         for spec in stages():
+            # THE DESIGNER'S OWN REQUIRED FIELDS ARE COUNTED HERE TOO, and they have to be. This
+            # table and the readiness screen both read `stage_completeness`; if the annexure scored
+            # only the registry fields, a workshop whose stage 13 carries three unanswered custom
+            # requirements would print "100% | Complete" against a screen that says three things are
+            # outstanding — one document, two arithmetics, which is the exact defect the
+            # `ref_resolves` argument beside this one was added to end.
+            custom_fields, custom_values = custom_scoring(self.data, spec.key)
             score = stage_completeness(
                 spec,
                 self.data.singleton(spec.key),
                 {e.key: self.data.rows(spec.key, e.key) for e in spec.collections},
                 ref_resolves=self.ref_resolves,
+                custom_fields=custom_fields,
+                custom_values=custom_values,
             )
             rows.append((
                 runs_of(f"{spec.number}. {spec.title}"),
@@ -1964,6 +1979,57 @@ class ReportBuilder:
                     numbered=self.template.number_headings,
                     page_break_before=section.page_break_before,
                 )
+            elif section.special is SpecialSection.ANNEXURE_AI_LAYERS:
+                # THE ONE PLACE MODEL PROSE MAY ENTER A GENERATED DOCUMENT. Plan §3 rule 4: the
+                # report prints the ACCEPTED layer and names it as such, because an AI-cleaned
+                # passage in a government document must be identifiable as one.
+                #
+                # ONE CALL AND NOTHING ELSE, exactly as the two annexure branches above. The
+                # heading wording, the index table, the provenance line and the truncation note
+                # stay `report_ai_layers`', so this branch cannot grow a second opinion about any
+                # of them — and in particular cannot grow its own idea of what "accepted" means.
+                # That definition lives in `ai_layers.accepted_layers` and is checked again inside
+                # `append_ai_layer_annexure`; a third opinion here is how a layer nobody signed for
+                # would reach a ministry officer.
+                #
+                # With nothing attached — nobody accepted anything, or the report was not asked for
+                # the annexure — it appends nothing at all, not even the page break. No template in
+                # `TEMPLATES` carries this section, so every existing template renders exactly as it
+                # did before this branch existed; it is reached only when `apply_report_settings`
+                # spliced the section in because a caller passed `include_ai_layers=True`.
+                append_ai_layer_annexure(
+                    self.doc,
+                    ai_layers_of(self.data),
+                    heading=section.heading,
+                    numbered=self.template.number_headings,
+                    page_break_before=section.page_break_before,
+                )
+            elif section.special is SpecialSection.CUSTOM_SECTION:
+                # THE ONLY PLACE A DESIGNER'S OWN QUESTIONS ENTER A REPORT. Before this branch
+                # existed they entered by no path at all: the 22 stages are Python literals, so a
+                # question a designer added in the field was either typed into a free-text notes box
+                # where nothing could count it, or not recorded.
+                #
+                # ONE CALL AND NOTHING ELSE, exactly as the three annexure branches above. The
+                # heading, the "Not recorded." rule for an unanswered required question and the
+                # marker on a question that was reworded after it had been answered all stay
+                # `report_custom_sections`', so this branch cannot grow a second opinion about any
+                # of them — and in particular cannot grow its own idea of WHERE a section prints.
+                # That decision belongs to `apply_report_settings`, which is the single arbiter of
+                # the running order and was made one because three call sites used to disagree.
+                #
+                # With the named section not attached — a definition that changed between the two
+                # loads, or a section retired while the report was being generated — it appends
+                # nothing at all, not even the page break. No template in `TEMPLATES` carries this
+                # section, so every existing template renders exactly as it did before this branch
+                # existed.
+                append_custom_section(
+                    self.doc,
+                    custom_section_of(self.data, section.custom_key),
+                    heading=section.heading,
+                    numbered=self.template.number_headings,
+                    page_break_before=section.page_break_before,
+                )
             elif section.special is SpecialSection.COMPLETENESS:
                 self._render_completeness(section)
             elif section.special is SpecialSection.MAP:
@@ -2024,10 +2090,15 @@ def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResol
     for spec in stages():
         if not template.section_for(spec.key):
             continue
+        custom_fields, custom_values = custom_scoring(data, spec.key)
         score = stage_completeness(
             spec,
             data.singleton(spec.key),
             {e.key: data.rows(spec.key, e.key) for e in spec.collections},
+            # The same two arguments the annexure passes, for the same reason: this warning and that
+            # table must not be able to disagree about one stage of one workshop.
+            custom_fields=custom_fields,
+            custom_values=custom_values,
             # The BUILDER's resolver, after the document is built, so its label cache is warm and
             # so this warning says exactly what the completeness annexure inside the document
             # says. A stage whose required REF points at a deleted row now reports "1 required

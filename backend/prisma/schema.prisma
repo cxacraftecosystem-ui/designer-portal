@@ -204,6 +204,33 @@ model User {
   designWorkshopViewersGranted DesignWorkshopViewer[] @relation("DesignWorkshopViewerGrantedBy")
   dwStageEntriesCreated  DwStageEntry[]   @relation("DwStageEntryCreatedBy")
   dwReportExports        DwReportExport[] @relation("DwReportExportGeneratedBy")
+  /// The four sides of an AI layer's life this account can be on. Three are SetNull (the row
+  /// outlives the account with the pointer emptied) and the decision log is Restrict, because that
+  /// one records a person taking responsibility for model output entering a report. See DwAiLayer.
+  dwAiLayersCreated   DwAiLayer[] @relation("DwAiLayerCreatedBy")
+  dwAiLayersAccepted  DwAiLayer[] @relation("DwAiLayerAcceptedBy")
+  dwAiLayersDeleted   DwAiLayer[] @relation("DwAiLayerDeletedBy")
+  dwAiLayerDecisions  DwAiLayerDecision[] @relation("DwAiLayerDecisionActor")
+  /// The custom sections this account added to a workshop. SetNull on the far side, for
+  /// `DwStageEntry.createdBy`'s reason rather than `DesignWorkshop.createdBy`'s: a definition is a
+  /// form, not authorship of the research, and a departed colleague must not become a new reason an
+  /// admin cannot delete an account.
+  dwCustomSectionsCreated DwCustomSection[] @relation("DwCustomSectionCreatedBy")
+  /// Tier 3 consent: the workshops whose current answer this account recorded (SetNull — a cache of
+  /// the act) and the append-only log of the acts themselves (Restrict — this account said an
+  /// artisan's voice could leave the device, and that must outlive the account). See
+  /// DwWorkshopConsentDecision.
+  dwDictationConsentsRecorded DesignWorkshop[]            @relation("DesignWorkshopDictationConsentBy")
+  dwDictationConsentDecisions DwWorkshopConsentDecision[] @relation("DwWorkshopConsentDecisionActor")
+  /// This account's server-dictation spend, one row per India-time day. Cascade: a meter reading is
+  /// not authorship and must not hold an account deletion up. See DwDictationDailyUsage.
+  dwDictationDailyUsage       DwDictationDailyUsage[]     @relation("DwDictationDailyUsageUser")
+  /// This account's AI-verb spend, one row per India-time day PER VERB. Cascade for the same reason
+  /// as the line above. A SECOND meter and not a second column on the first one: the dictation cap
+  /// is scoped by a decision recorded in the plan to the transcription service alone, and a caption
+  /// counted against it would make the sentence a designer reads in a courtyard false. See
+  /// DwAiVerbDailyUsage.
+  dwAiVerbDailyUsage          DwAiVerbDailyUsage[]        @relation("DwAiVerbDailyUsageUser")
   designerRosterEntries  DesignerRoster[] @relation("DesignerRosterAddedBy")
   designerProfile        DesignerProfile? @relation("DesignerProfileUser")
   // Custom questionnaires this designer built from the .xlsx pro-forma, and the answer sheets they
@@ -798,6 +825,10 @@ model MediaFile {
   questionnaireInterview QuestionnaireInterview? @relation("QuestionnaireMedia", fields: [questionnaireInterviewId], references: [id], onDelete: SetNull)
   location   Location?             @relation(fields: [locationId], references: [id], onDelete: SetNull)
   processingJobs MediaProcessingJob[]
+  /// The layers derived FROM this file — the raw rung of both chains. `transcriptText` above stays
+  /// exactly as it is and stays the queue's business: this is the copy that carries which model
+  /// produced it, which that column has never had room to say. See DwAiLayer.
+  aiLayers   DwAiLayer[]           @relation("MediaFileAiLayers")
 
   @@index([mediaType])
   @@index([uploadedById])
@@ -1233,6 +1264,48 @@ model AppSetting {
   batchWindowStart   String   @default("02:00")
   batchWindowEnd     String   @default("05:00")
   batchTimezone      String   @default("Asia/Kolkata")
+
+  /// How many server dictations ONE DESIGNER may spend per India-time day. Plan §6.1's cost ceiling.
+  ///
+  /// **NULL MEANS UNCAPPED AND 0 MEANS REFUSE EVERY ONE. Both are real settings and neither is a
+  /// "not set" sentinel**, which is stated here because a reader who guesses will guess wrong in the
+  /// expensive direction. NULL is today's behaviour, so the migration that adds this column changes
+  /// nothing on deploy; 0 turns the server dictation rung off entirely and the refusal says so.
+  ///
+  /// **THE DEFAULT IS NULL BECAUSE THE RIGHT NUMBER IS UNMEASURED, IN THAT WORD.** Nothing in this
+  /// repository measures dictations per designer per day, and a placeholder shipped here would become
+  /// the number on the settings screen. What IS known bounds it rather than choosing it: 510 field
+  /// specs in the registry as counted today (the "496" repeated in older comments and in the plan is
+  /// stale), a 6 MB per-clip ceiling (DICTATION_MAX_BYTES), and a four-minute recorder limit at
+  /// 32 kbit/s which is about 960 KB per clip. The first real number is a deliberate decision for
+  /// whoever sees the first bill.
+  ///
+  /// ON THE MASTER-ADMIN SETTINGS ROW, and not in deploy-time env, because the whole point of the
+  /// number is that it is adjustable the day the bill arrives — an env var would need a redeploy. And
+  /// not narrowed to a lower rank the way the STT provider RANKING deliberately is: that is "an
+  /// editorial call about accuracy on Hindi and regional speech" and belongs to the admins who run
+  /// workshops, while a spend ceiling is a cost decision of exactly the kind the off-peak batch window
+  /// three lines above already is.
+  dwDictationDailyCap Int?
+
+  /// How many AI-VERB runs — proofread, expand, translate, caption, subtitle — ONE DESIGNER may
+  /// spend per India-time day, across all five together.
+  ///
+  /// **A SECOND CEILING AND NOT A SECOND USE OF THE ONE ABOVE, and the separation is a decision.**
+  /// Plan §6.1 settled that cap's scope in the user's own words: it "should only apply to the global
+  /// /dictate when it is utilizing the ElevenLabs / Deepgram / Whisper API". Counting a caption
+  /// against it would make the refusal a designer reads — "you have used all 40 of today's
+  /// dictations that go to the transcription service" — false on a day spent captioning photographs
+  /// at a desk, and would let desk work withdraw a control somebody needs in a courtyard. The bills
+  /// are different too: a chat completion is priced per token, a dictation per second of audio, so
+  /// one number cannot bound both.
+  ///
+  /// NULL MEANS UNCAPPED AND 0 MEANS REFUSE EVERY RUN, exactly as its sibling, and neither is a "not
+  /// set" sentinel. NULL ships, because the right number is UNMEASURED in that word: nothing in this
+  /// repository has ever measured verb runs per designer per day, and a placeholder here would
+  /// become the number on the settings screen.
+  dwAiVerbDailyCap Int?
+
   updatedAt          DateTime @updatedAt
   updatedById        String?
 }
@@ -1457,6 +1530,26 @@ enum DesignWorkshopStatus {
   ARCHIVED
 }
 
+/// May the recordings and dictation from ONE workshop leave the device for a third-party
+/// transcription provider? Plan §6 answer 3, and the answer is per workshop rather than per account.
+///
+/// THREE STATES, NOT A BOOLEAN, and the third one is the whole reason this is an enum. "Nobody has
+/// asked the artisan yet" and "the artisan said no" both stop a recording being sent, but they are
+/// different facts with different next moves: the first is answered by asking, the second only by
+/// the artisan changing their mind. A boolean would collapse them, and every workshop in the
+/// database on the day the column lands is in the FIRST state — so a boolean would have had to
+/// default to false and would then be indistinguishable from thirty thousand refusals nobody ever
+/// made.
+///
+/// AN ACCOUNT-LEVEL SETTING WAS REJECTED, and the reason is worth having here rather than only in the
+/// plan: a consent given for one cluster would silently cover the next one, and the artisan whose
+/// voice it is changes between them. One designer works six clusters in a season.
+enum DwDictationConsent {
+  NOT_RECORDED
+  GRANTED
+  REFUSED
+}
+
 model DesignWorkshop {
   id         String               @id @default(cuid())
   title      String
@@ -1484,6 +1577,48 @@ model DesignWorkshop {
   /// run once rather than being guessed at on every read.
   schemaVersion String?
 
+  /// ==================================================================================
+  /// TIER 3 CONSENT: may THIS workshop's recordings leave the device? Plan §6 answer 3.
+  /// ==================================================================================
+  ///
+  /// **COLUMNS AND A LOG, AND DELIBERATELY NOT A REGISTRY FIELD.** A consent question added to
+  /// stage 1 as a `FieldSpec` was the obvious-looking home and it is wrong in five independent
+  /// ways, any one of them sufficient. The decisive one is that a stage field CANNOT CARRY WHO AND
+  /// WHEN, which is the entire content of this decision: `save_stage`'s UPDATE branch writes exactly
+  /// {data, ordinal, deletedAt}, `DwStageEntry.createdById` is set on the CREATE branch alone, and
+  /// `DwStageEntry.updatedAt` is `@updatedAt` and moves whenever ANY field in that stage's row
+  /// changes. A consent stored there would be attributed to whoever first saved stage 1 and dated to
+  /// the last edit of any of stage 1's forty fields.
+  ///
+  /// The other four: it would move `registry_version()`, which is the refetch signal for a file
+  /// compiled into the APK, so every handset in the fleet would treat its bundled 119 KB schema as
+  /// stale; it would therefore force an Android release, because two tests pin the digest AND the
+  /// full `registry_to_dict()` content to that asset; `custom_sections.py` already wrote the rule
+  /// down for the immediately preceding feature ("`registry_to_dict()` gains nothing — not a key, not
+  /// a flag, not one string"); and it would move every existing workshop's completeness, because the
+  /// scorer counts every non-deprecated singleton field into requiredTotal/optionalTotal. A column
+  /// touches no score at all.
+  ///
+  /// See `app/services/dictation_consent.py` for what the three columns mean together and for the
+  /// gate they feed.
+  dictationConsent DwDictationConsent @default(NOT_RECORDED)
+
+  /// WHEN THE ARTISAN ANSWERED — not when this server heard about it, and the difference is a
+  /// fortnight in the field. A consent recorded in a courtyard reaches the server on the next sync,
+  /// so a client that answered offline sends the moment it happened and it lands here. When the
+  /// server hears it is `DwWorkshopConsentDecision.createdAt`, which is that table's own clock, and
+  /// both are kept because they answer different questions. Null while `dictationConsent` is
+  /// NOT_RECORDED: there is no moment, and now() would fabricate one.
+  dictationConsentAt DateTime?
+
+  /// WHO answered — the account that recorded the artisan's answer. Nullable so the relation below
+  /// can be SetNull.
+  dictationConsentById String?
+
+  // The daily dictation cap is deliberately NOT a column here. It is per DESIGNER (plan §6.1), so
+  // the counter hangs off `User` and is keyed by (userId, istDay) — see DwDictationDailyUsage.
+
+
   /// Set when a workshop is deleted. NOTHING in this table is hard-deleted: this is a research
   /// data set, the repo has no soft delete anywhere else, and a designer's two weeks of
   /// fieldwork is not something a mis-tap should end. Every read filters on `deletedAt: null`.
@@ -1504,12 +1639,33 @@ model DesignWorkshop {
   workshop  Workshop?       @relation("DesignWorkshopWorkshop", fields: [workshopId], references: [id], onDelete: SetNull)
   entries   DwStageEntry[]
   exports   DwReportExport[]
+  /// What models produced from this workshop's material, never mixed into `entries`. A layer is
+  /// annexure content and a suggestion; a stage entry is what the designer wrote. See DwAiLayer.
+  aiLayers  DwAiLayer[]      @relation("DesignWorkshopAiLayers")
   /// The colleagues an admin has let into this workshop besides `createdBy`. See
   /// `DesignWorkshopViewer` for why the creator is not the whole team.
   viewers   DesignWorkshopViewer[] @relation("DesignWorkshopViewers")
   /// Custom questionnaires attached to this workshop through the designer's dropdown. Nullable on
   /// the far side, so an unattached questionnaire is a first-class thing rather than an orphan.
   questionnaires Questionnaire[] @relation("DesignWorkshopQuestionnaires")
+  /// Questions this workshop's designer added to it without a deployment. The DEFINITION is here;
+  /// the ANSWERS are `entries` rows under the reserved entityKey "_custom". See DwCustomSection.
+  customSections DwCustomSection[] @relation("DesignWorkshopCustomSections")
+
+  /// SetNull, exactly as `DwAiLayer.acceptedById` is and for the same stated reason: the three
+  /// columns above are a CACHE of the current answer, and the record of the ACT is
+  /// `DwWorkshopConsentDecision`, whose actor is Restrict. So SetNull here is not what lets the
+  /// account go — anybody who has ever recorded a consent is undeletable for as long as that log
+  /// stands, and the admin is told so as a sentence. What it buys is narrower and still worth
+  /// having: if such an account is ever removed by hand, the workshop keeps its answer with an empty
+  /// name ("consented, recorded by somebody no longer on record") instead of the delete failing
+  /// halfway or the consent silently reverting to NOT_RECORDED and re-enabling a third-party send.
+  dictationConsentBy User? @relation("DesignWorkshopDictationConsentBy", fields: [dictationConsentById], references: [id], onDelete: SetNull)
+
+  /// Every consent answer this workshop has ever carried, in order. The columns above say what the
+  /// answer IS; this says what it has BEEN, which is the only way "granted on the 3rd, withdrawn on
+  /// the 9th" is answerable at all.
+  dictationConsents DwWorkshopConsentDecision[] @relation("DesignWorkshopDictationConsents")
 
   // The list's default order, and the two filters a researcher reaches for first.
   @@index([createdAt])
@@ -1520,6 +1676,11 @@ model DesignWorkshop {
   @@index([state, district])
   @@index([workshopId])
   @@index([deletedAt])
+  /// Indexed for the WRITE it is on the wrong end of rather than for any read: `dictationConsentById`
+  /// is ON DELETE SET NULL, so deleting a user makes Postgres find every workshop naming them, and
+  /// without this that is a sequential scan of the workshop table inside a request an admin is
+  /// waiting on. The same reasoning as `DwAiLayer`'s three account indexes.
+  @@index([dictationConsentById])
 }
 
 /// Who, besides the person who pressed "create", may open one design & prototype workshop.
@@ -1634,6 +1795,126 @@ model DwStageEntry {
   @@index([deletedAt])
 }
 
+/// A block of questions a DESIGNER added to ONE design workshop, with no deployment.
+///
+/// The 22 stages are Python literals in `services/stage_definitions.py`, and that file is a
+/// deployment. This table is how a designer standing in a cluster records one more thing without
+/// one — and everything about its shape is about making that safe rather than possible.
+///
+/// WORKSHOP-SCOPED, and that is a decision rather than a default (plan §6, answer 2). A bad
+/// definition damages one record instead of every record sharing a template; completeness scoring
+/// has one unambiguous owner; and editing a definition cannot retroactively change a workshop that
+/// has already been submitted. It also means no new permission concept exists —
+/// `DesignWorkshopViewer` already answers "who may open this workshop".
+///
+/// THE ANSWERS ARE NOT HERE. They live in one `DwStageEntry` row per (workshop, stage) whose
+/// `entityKey` is the reserved literal "_custom" and whose `data` is keyed by `DwCustomField.key`.
+/// That row is invisible to the registry, to `promoted_values` and to the collection sweep, which
+/// is exactly what makes a client that has never heard of this feature unable to destroy anything
+/// in it: `save_stage`'s default is a wholesale replace, so a nested container would have been
+/// deleted in silence by every client one release behind. See app/services/custom_sections.py.
+model DwCustomSection {
+  id               String @id @default(cuid())
+  designWorkshopId String
+
+  /// The `StageSpec.key` these questions are asked at, validated against `stages()` at definition
+  /// time. REQUIRED, and not the plan's nullable "belongs nowhere": the answers live in the
+  /// `_custom` row of this stage, so a section with no stage would have nowhere to put them. Where
+  /// the section PRINTS is a separate question — a template that does not carry this stage prints
+  /// the section as its own annexure (`apply_report_settings`).
+  stageKey String
+  /// Stable, unique within the workshop, and never renamed — it is what a definition edit matches
+  /// against, so renaming one makes the whole section read as new and retires the old one.
+  key         String
+  title       String
+  description String @default("")
+  /// Where in the running order this section prints among this workshop's own sections.
+  sortOrder   Int    @default(0)
+
+  /// Counts the edits that could not be applied in place — every supersede and every retire under
+  /// this section. Exactly what `Questionnaire.version` counts and for its reason: it ORDERS edits
+  /// for an audit and for two reports of one workshop that disagree. It is NOT the staleness
+  /// signal; that is the content digest `customSchemaVersion`, because a revision that only ever
+  /// increases on a destructive edit says nothing about the ordinary ones.
+  revision Int @default(1)
+
+  /// Retired rather than deleted once anything under it has been answered — the rule
+  /// `services/questionnaire_forms.py` states in full, for its reason.
+  isActive  Boolean   @default(true)
+  retiredAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+
+  designWorkshop DesignWorkshop  @relation("DesignWorkshopCustomSections", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+  createdBy      User?           @relation("DwCustomSectionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  fields         DwCustomField[]
+
+  /// Scoped uniqueness, exactly as `QuestionnaireFormSection.@@unique([questionnaireId, code])`:
+  /// two designers both naming a section "extra" is normal and must not collide.
+  @@unique([designWorkshopId, key])
+  @@index([designWorkshopId, sortOrder])
+  @@index([createdById])
+}
+
+/// One designer-defined field. Once it has an answer it is effectively IMMUTABLE — see
+/// `supersededById`.
+model DwCustomField {
+  id        String @id @default(cuid())
+  sectionId String
+
+  /// WHAT THE ANSWER IS STORED UNDER, inside the "_custom" row's `data`. Permanent: renaming one
+  /// orphans the answer, exactly as `stage_schema`'s rule 1 says of a `FieldSpec.key`. Unique
+  /// within the section here, and unique within the WHOLE WORKSHOP in the service — because one
+  /// stage's answers all share one flat container, so two fields on one stage sharing a key would
+  /// share one answer.
+  key   String
+  label String
+  help  String @default("")
+  /// One of the twelve `FieldType` tokens v1 allows. A String and not a Postgres enum, because the
+  /// vocabulary belongs to the registry and the registry is Python that deploys with the server —
+  /// unlike `DwAiLayerKind`, which is seven values fixed by a plan. A token this build does not
+  /// know is refused at definition time and read back as TEXT rather than raising.
+  type String
+  /// BASIC | STANDARD | ADVANCED. Only BASIC may be required — `validate_registry` rule 3, for its
+  /// reason: a workshop held in a village without power must still be able to complete.
+  tier       String  @default("STANDARD")
+  isRequired Boolean @default(false)
+  /// ENUM/MULTI_ENUM options as an ordered [{value,label}] array. Inline rather than an entry in
+  /// the shared `ENUMS` table: a designer's list is theirs, and a shared table is what makes
+  /// "cotton" the same answer in stage 5 and stage 17 — a promise a per-workshop list cannot keep.
+  options   Json?
+  unit      String  @default("")
+  maxLength Int?
+  minValue  Float?
+  maxValue  Float?
+  sortOrder Int     @default(0)
+
+  isActive  Boolean   @default(true)
+  /// When it stopped being asked. Set together with isActive=false so "retired" is distinguishable
+  /// from a field the designer unticked before anybody answered it.
+  retiredAt DateTime?
+  /// THE FIELD THAT REPLACED THIS ONE when its LABEL was rewritten after it had answers. A
+  /// deliberately PLAIN COLUMN and not a relation, exactly as `QuestionnaireFormQuestion.supersededById`
+  /// is: it is only ever read to follow "replaced by", never joined through.
+  ///
+  /// The recorded answers stay under THIS row's key with the label they were given under, and the
+  /// new wording becomes a new row under a newly minted key. The failure this prevents is the one
+  /// that module names: "How many looms?" answered "12", reworded to "How many weavers?", and a
+  /// ministry report now states there are twelve weavers.
+  supersededById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  section DwCustomSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@unique([sectionId, key])
+  @@index([sectionId, sortOrder])
+  @@index([supersededById])
+}
+
 /// Every report file ever produced for a workshop, whether by the server or on a phone with no
 /// network. The bytes are not stored here — only the fact, so a file handed to an office can be
 /// matched back to the record and the template it came from.
@@ -1662,6 +1943,560 @@ model DwReportExport {
 
   @@index([designWorkshopId, generatedAt])
   @@index([generatedById])
+}
+
+// ======================================================================================
+// AI layers: what a model produced, what it was produced FROM, and who accepted it
+//
+// THE LAW THESE THREE DECLARATIONS ENFORCE is written out in full in
+// `app/services/ai_layers.py` and in docs/PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md §3. In one
+// sentence: a model's output is a NEW ROW carrying the provenance of the run that made it, inert
+// until a person accepts it, and it never touches the thing it was made from.
+//
+// IT IS THE SAME LAW `REFERENCE_HYDRATION` ALREADY OBEYS, one step further out. Hydration copies a
+// referenced record's display fields onto the stage entry at SAVE time and the report never
+// re-resolves them, because a record edited in 2027 must not silently change a document handed to a
+// ministry officer in 2026. An AI layer is the same problem with a worse failure mode: re-running a
+// summariser six months later does not merely change a name, it replaces an artisan's account of
+// their own work with a different paraphrase, and nothing on the page would say it had happened.
+//
+// WHY A SEPARATE TABLE RATHER THAN COLUMNS ON `DwStageEntry` OR ON `MediaFile`. Because a column is
+// an edit. `MediaFile.transcriptText` is a single column, and `media_queue._transcript_write` has
+// already had to grow a long comment explaining that a FAILED re-run must not write its empty
+// result over a good transcript — that comment exists because a column has room for exactly one
+// answer and the second run destroys the first. The plan requires the opposite: Tier 1 on a phone
+// and Tier 3 in the cloud produce different text from the same audio, legitimately and for ever,
+// and BOTH have to survive so a reviewer can see which one a report printed.
+// ======================================================================================
+
+/// Which rung of which chain a layer occupies. Closed, and closed on purpose.
+///
+/// The vocabulary is exactly the plan's two chains plus the two extractive verbs it says to start
+/// with, and nothing else:
+///
+///     audio ──▶ RAW_TRANSCRIPT ──▶ CLEANED_TRANSCRIPT ──▶ SUMMARY
+///     photo ──▶ OCR_TEXT       ──▶ STRUCTURED_TEXT
+///     (either) ──▶ TAGS, METADATA
+///
+/// TAGS and METADATA are here and the generative verbs are deferred because of the plan's
+/// "Recommended first Tier 2 verb: none of the generative ones" (§2.1): a wrong tag is a suggestion
+/// the designer declines, whereas a wrong summary is model prose standing where an artisan's words
+/// were. Declaring the generative kinds now anyway is deliberate — the kind is what the report
+/// annexure prints as the layer's NAME ("AI-cleaned transcript"), so the vocabulary has to exist
+/// before the writing does or step 3 has nothing to name.
+///
+/// A DATABASE ENUM RATHER THAN A STRING COLUMN, unlike `DwStageEntry.stageKey`, which is free text
+/// because the 22 stages are Python literals that deploy with the server. This vocabulary is not
+/// like that: it is a closed set fixed by a plan, and a typo'd kind on a row would print as an
+/// unknown annexure heading in a submitted document. Postgres refuses the typo; a String column
+/// would store it. The cost is that a new verb needs a migration, which is the correct price for
+/// adding a way for a model to write into a government record.
+///
+/// THE SECOND FIVE ARRIVED WITH THE VERBS (migration 20260812150000) and each is a distinct promise
+/// to a reader rather than a synonym for one already here:
+///
+/// * `PROOFREAD` corrects spelling, grammar and punctuation and changes NOTHING else. It is not
+///   `CLEANED_TRANSCRIPT`, which restructures a conversation into speaker turns and, on a default
+///   deployment, translates it — two headings for two promises, because one heading for both would
+///   let a rewrite be printed under the word "proofread".
+/// * `EXPANDED` writes a terse field note out into prose. THE ONLY KIND THAT INVENTS SENTENCES
+///   rather than transforming ones somebody said, and therefore the one the annexure warns about by
+///   name.
+/// * `TRANSLATION` is always a SIBLING and never a replacement — see `sourceLanguage` below.
+/// * `CAPTION` describes a photograph or a video in one sentence, for the media annexure and for a
+///   screen reader.
+/// * `SUBTITLES` is timed text, and is the only kind whose principal content is `payload` rather
+///   than `text`: a subtitle without its timings is a transcript, and the timings are the verb.
+enum DwAiLayerKind {
+  RAW_TRANSCRIPT
+  CLEANED_TRANSCRIPT
+  SUMMARY
+  OCR_TEXT
+  STRUCTURED_TEXT
+  TAGS
+  METADATA
+  PROOFREAD
+  EXPANDED
+  TRANSLATION
+  CAPTION
+  SUBTITLES
+}
+
+/// WHICH MACHINE PRODUCED IT: 1 on the handset, 2 a small model on the handset, 3 the cloud.
+///
+/// This column is the safeguard that makes device-dependent tiering safe at all (plan §2.1, "The
+/// device decides the tier and the model"). A 4 GB Galaxy M32 and a 12 GB flagship will not run the
+/// same tier, so the fleet WILL produce two classes of workshop record; without this column they
+/// are indistinguishable on the page and a reviewer cannot tell a cloud-diarized interview from a
+/// device-guessed one. The plan states the pairing as a condition: device-based tiering and
+/// provenance ship together or not at all.
+///
+/// SPELLED `TIER_1` RATHER THAN STORED AS AN `Int`, for two reasons. Postgres can then refuse a 4
+/// or a 0 itself, and a CHECK constraint — which is the only way an Int column could refuse them —
+/// is invisible to schema.prisma and would have to be maintained by hand for ever. And it is not
+/// arithmetic: nothing computes with a tier, nothing compares 1 < 3 to decide anything, so an
+/// integer column would invite exactly the "higher tier is better" ordering the plan denies (Tier 1
+/// runs with no signal, which is the only tier that works in the courtyard).
+///
+/// NOT TO BE CONFUSED WITH `stage_schema.Tier` (BASIC / STANDARD / ADVANCED), which says how
+/// important a FIELD is to a complete record and has nothing to do with which machine ran a model.
+/// The two words collide in this repository and the Python side keeps them apart by naming this one
+/// `AiTier`; see the note at the head of app/services/ai_layers.py.
+enum DwAiTier {
+  TIER_1
+  TIER_2
+  TIER_3
+}
+
+/// The two things a person can do to a layer, recorded as an event rather than as a state.
+enum DwAiDecision {
+  ACCEPTED
+  WITHDRAWN
+}
+
+/// One thing a model produced, and everything needed to know what produced it.
+///
+/// RULE 1 — EVERY LAYER IS A ROW, NEVER AN EDIT. Nothing in this table is updated with new model
+/// output. A cleaned transcript is a row whose `sourceLayerId` names the raw transcript it was
+/// cleaned from; the raw row is untouched and stays readable beside it for ever.
+///
+/// RULE 2 — EVERY LAYER CARRIES ITS PROVENANCE. `tier`, `provider`, `modelId`, `modelVersion`,
+/// `language`, `producedAt`/`createdAt`, and the source it was derived from. The plan's reason is
+/// worth restating because it is not obvious on the day the row is written: without the model id, a
+/// systematic error found in six months — a provider silently changing a checkpoint, a
+/// quantization that mangles Odia numerals — cannot be traced to the material it damaged, and the
+/// only remedy left is to distrust every transcript in the archive.
+///
+/// RULE 3 — A LAYER IS INERT UNTIL A PERSON ACCEPTS IT. `acceptedAt`/`acceptedById` are null on
+/// every new row and no code path sets them except a human pressing accept. Reports print the
+/// accepted layer (rule 4, step 3 of the plan's sequence); an unaccepted one is a suggestion sitting
+/// in a table.
+///
+/// RULE 5 — DELETING A DERIVED LAYER NEVER TOUCHES ITS SOURCE. Deletion here is `deletedAt`, the
+/// same soft delete `DesignWorkshop` and `DwStageEntry` use for the same stated reason: a
+/// designer's two weeks of fieldwork is not something a mis-tap should end. A layer's source is
+/// reached through `sourceMediaId`/`sourceLayerId` and neither is ever written by a delete.
+model DwAiLayer {
+  id               String @id @default(cuid())
+  /// The workshop this layer belongs to, denormalised rather than walked to through the source.
+  /// Without it the annexure loader would have to resolve every layer's chain down to a media file
+  /// and then that media file back to a stage entry before it could ask "which of these are mine",
+  /// which is the shape of read this repository has already had to index its way out of once
+  /// (see the `DwStageEntry_entityKey_idx` migration).
+  designWorkshopId String
+
+  kind DwAiLayerKind
+  tier DwAiTier
+
+  /// THE SOURCE IS A DISCRIMINATED TRIPLE, NOT THREE OPTIONAL COLUMNS. Exactly one of these is set:
+  /// `sourceMediaId` for the raw rung of a chain (the transcript of a recording, the OCR or caption
+  /// of a photograph, the subtitles of a video), `sourceLayerId` for every rung derived from another
+  /// layer, and `sourceText` for a verb run over words the caller supplied. Zero set would be a
+  /// layer derived from nothing — model prose with no evidence behind it, which is the one thing
+  /// this table exists to make impossible. Two set would be a row claiming two different origins,
+  /// and the annexure would have to pick one to print.
+  ///
+  /// ENFORCED IN THE DATABASE by `DwAiLayer_source_is_exactly_one` (a CHECK on
+  /// `num_nonnulls(...) = 1`, written in the migration because Prisma has no syntax for it) AND in
+  /// `ai_layers.layer_create_plan`, which refuses the same shapes with a sentence naming what
+  /// to send instead. Two guards for one rule because the constraint gives a 500 with a Postgres
+  /// message and the service gives a 422 a client can act on; the constraint is what makes the rule
+  /// true for rows this API never sees, such as a backfill run by hand.
+  sourceMediaId String?
+  sourceLayerId String?
+  /// THE WORDS A VERB WAS GIVEN, WHEN THEY CAME FROM THE CALLER RATHER THAN FROM A ROW.
+  ///
+  /// A `PROOFREAD` or an `EXPANDED` of a designer's field note has nothing to point at: the note is
+  /// being typed into a form that has not been saved, which is the whole moment the verb exists for,
+  /// and even once it is saved there is deliberately nowhere on this table to say WHICH field it came
+  /// from — `test_the_layer_table_cannot_name_a_place_in_stage_data` forbids `fieldKey`, `entityKey`,
+  /// `stageKey`, `entryId` and `ordinal` precisely so that no later feature can answer "which box
+  /// does this belong in" by writing model prose into that box.
+  ///
+  /// So the evidence travels as a COPY, exactly as a layer holds a copy of a transcript instead of
+  /// pointing at `MediaFile.transcriptText`, and for REFERENCE_HYDRATION's reason: a field edited
+  /// next March must not silently change what an annexure printed last year under somebody's name.
+  ///
+  /// IT IS THE VERB'S INPUT AND NEVER ITS OUTPUT, which is the whole difference from the `text`
+  /// field `AiLayerRegisterIn` refuses in the strongest terms. A client chooses what to have
+  /// proofread; it cannot choose what the proofreading says, because `text` below is written from
+  /// the answer a provider gave to a call THIS server made, with the provider and model id this
+  /// server observed.
+  ///
+  /// READABLE BY ANYONE WHO MAY OPEN THE WORKSHOP, and that limit is stated rather than hidden: this
+  /// is workshop content, not a recording, so the per-file media gate does not reach it. A designer
+  /// who pastes an artisan's transcript in here has widened who can read those words.
+  sourceText    String?
+
+  /// WHO RAN IT AND WHAT THEY RAN. Both NOT NULL and both allowed to hold the exact string
+  /// `UNRECORDED`, which is the honest-unknown discipline this repository already applies to
+  /// language packs (`DwPackState`): a fact nobody recorded is stated as unrecorded, never guessed
+  /// and never left as a null that reads like "none".
+  ///
+  /// THE UNKNOWN IS NOT HYPOTHETICAL — IT IS THE COMMON CASE ON DAY ONE. Every transcript this
+  /// system has ever produced was written by `media_queue._transcript_write`, which stores
+  /// `transcriptText`, `transcriptSummary`, `transcriptStatus` and `transcriptError` and NOT which
+  /// of the four providers in the chain produced them. `services/ai.py` knows — it picks between
+  /// OpenAI, ElevenLabs Scribe v2, Deepgram Nova-3 and Gemini at call time, and Deepgram is called
+  /// with `language=multi` — but nothing persists the answer. So a Tier 3 raw transcript registered
+  /// from an existing `MediaFile` truthfully carries `provider = "UNRECORDED"`, and the annexure
+  /// can say so instead of asserting a model that may not have produced it.
+  provider     String
+  modelId      String
+  /// The checkpoint or dated version, when the provider publishes one distinct from `modelId`.
+  /// NULL means the writer recorded none. It deliberately does NOT distinguish "this model has no
+  /// version" from "nobody wrote it down" — that distinction is itself unrecorded, and inventing a
+  /// column to hold a guess at it would be worse than the ambiguity.
+  modelVersion String?
+  /// The language of THIS layer's content, as the run understood it. NULL means unrecorded.
+  ///
+  /// `multi` is a legitimate value, not a placeholder: Deepgram Nova-3 is deliberately called with
+  /// `language=multi` because a workshop is Hindi code-switched with English mid-sentence, so for
+  /// most of the archive "the language" genuinely is "several, interleaved". A column that only
+  /// admitted one BCP-47 tag would force a lie on the majority of rows.
+  language     String?
+  /// THE TWO HALVES OF A TRANSLATION, and null on every other kind.
+  ///
+  /// A translation is the one verb whose provenance is not answerable by one language: "in English"
+  /// says nothing about whether the artisan spoke Odia, Hindi or both, and that is exactly what a
+  /// reader checking a translated passage needs. So the pair is recorded as COLUMNS rather than
+  /// inside `payload` — the provenance line prints "translated from Odia into English", and a fact
+  /// that has to be dug out of a JSON blob is one the report will eventually stop printing.
+  ///
+  /// `language` above keeps its meaning and is written too, holding the same value as
+  /// `targetLanguage`, so a reader or a query that knows only about `language` is not silently wrong
+  /// about a translation.
+  ///
+  /// NULL MEANS NOBODY RECORDED IT — never "English". A provider that auto-detects may report
+  /// nothing (ElevenLabs Scribe is deliberately not told a language, because these interviews
+  /// code-switch mid-sentence), and `multi` is legitimate here for Deepgram's reason.
+  sourceLanguage String?
+  targetLanguage String?
+  /// When the MODEL produced this content, which is not when this row was written.
+  ///
+  /// NULL rather than defaulting to now(), and the difference is the whole point: a transcript
+  /// produced by the queue last March and registered as a layer today would carry a `producedAt` of
+  /// today, which is a fabricated fact of exactly the kind rule 2 exists to prevent. `createdAt`
+  /// below always says when the row appeared and is never null; this says when the work happened,
+  /// when somebody actually knows.
+  producedAt   DateTime?
+
+  /// The content, as prose. Uncapped on purpose — an hour-long interview is a large transcript and
+  /// refusing to record one would lose the material rather than the layer.
+  text    String?
+  /// The content, as structure: TAGS is a list, METADATA is an object.
+  ///
+  /// WHICH SLOT IS THE PRINCIPAL ONE IS DECIDED BY KIND, IN `ai_layers._check_content`: prose kinds
+  /// must fill `text`, structured kinds must fill this. The OTHER slot stays optional in both
+  /// directions rather than being forbidden, and that is not slackness — a Tier 3 transcript
+  /// legitimately has structure beside its prose (Scribe v2 diarizes up to 32 speakers, and those
+  /// turns belong with the text they came from rather than in a second row somebody has to keep in
+  /// step with it), and a structured layer may carry a human-readable rendering.
+  ///
+  /// The migration's second CHECK refuses only the row that carries NEITHER, because a layer with no
+  /// content at all is a provenance record for nothing: it would take a heading and an index line in
+  /// the annexure and print nothing underneath.
+  payload Json?
+
+  /// RULE 3, DENORMALISED FOR THE READ PATH. The authoritative history of acceptance is
+  /// `DwAiLayerDecision` below; these two columns are the current state, kept here so the report
+  /// builder can select the accepted layer without walking a log per layer per render.
+  ///
+  /// Null on every insert, always. There is no default and no code path that sets them at creation.
+  acceptedAt   DateTime?
+  /// SetNull, unlike the decision log's `actorId`, which is Restrict. The log is the record of the
+  /// act and must outlive the account; this is a cache of it, so it is emptied rather than allowed
+  /// to hold a delete up.
+  ///
+  /// IT IS NOT WHAT LETS THE ACCOUNT GO, AND SAYING SO WOULD BE FALSE: every acceptance writes a
+  /// `DwAiLayerDecision` row in the same breath, and THAT row's `actorId` is Restrict — so anybody
+  /// who has ever accepted a layer is undeletable for as long as the log stands, which is for ever.
+  /// The admin is told so as a sentence rather than as a 500 (`_undeletable_detail` in
+  /// api/routes/users.py degrades honestly for relations it cannot name, and this is one of them).
+  /// What SetNull buys is narrower and still worth having: if such an account is ever removed by
+  /// hand, the layer keeps `acceptedAt` with an empty name — "accepted by somebody no longer on
+  /// record" — instead of the delete failing halfway or the acceptance disappearing.
+  acceptedById String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  /// Soft delete, exactly as `DesignWorkshop.deletedAt` and `DwStageEntry.deletedAt`. Every read
+  /// filters `deletedAt: null`. A deleted layer is a suggestion the designer declined, and keeping
+  /// the row is what lets "this was declined on the 3rd" be answerable at all.
+  deletedAt   DateTime?
+  deletedById String?
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopAiLayers", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+
+  /// CASCADE, and chosen for a narrow reason rather than a principled one. Restrict would be the
+  /// principled choice — a transcript is evidence and should not vanish with its audio — but it
+  /// would also give this table a VETO over deleting a `MediaFile`, which the media routes permit
+  /// today. Adding a new refusal to somebody else's endpoint is not this step's to make. Recorded
+  /// as a decision so the next reader knows it was considered, not overlooked.
+  sourceMedia MediaFile? @relation("MediaFileAiLayers", fields: [sourceMediaId], references: [id], onDelete: Cascade)
+
+  /// CASCADE, AND IT HAS TO MATCH `sourceMedia` ABOVE OR AN ORDINARY MEDIA DELETE BECOMES A 500.
+  ///
+  /// Restrict reads like the principled choice here — a hard delete of a layer something was
+  /// derived FROM would destroy the derived row, which is rule 5 read backwards — and it was
+  /// written that way first, on the reasoning that nothing in this codebase hard-deletes a layer so
+  /// the constraint could only ever fire against a hand-written statement. That reasoning missed
+  /// the cascade one line above. `DELETE /api/media/{id}` is a HARD delete (`db.mediafile.delete`,
+  /// api/routes/media.py:740), and on a default REFINED_TRANSLATED deployment registering one
+  /// recording writes TWO rows: a raw rung pointing at the media file and a cleaned rung pointing
+  /// at the raw rung. Deleting that recording cascades into the raw rung, whose deletion the
+  /// cleaned rung's Restrict then refuses — inside Postgres, where `delete_media` has no handler
+  /// for a ForeignKeyViolationError, so it reaches the admin as "Something went wrong on the
+  /// server. The error has been logged." (app/main.py:295). That is the exact defect the user-delete
+  /// route already had to grow an except clause for (api/routes/users.py:283), and this table is not
+  /// entitled to plant it in another lane's endpoint.
+  ///
+  /// So the whole chain goes when its audio goes, which is the consequence the media cascade above
+  /// already accepted for the raw rung — including the acceptance log, since `DwAiLayerDecision`
+  /// cascades from the layer. Deleting a recording therefore destroys the record that a person
+  /// accepted a transcript of it. That is a real loss and it is stated here rather than discovered:
+  /// making it a refusal instead means giving the media routes a veto, which is the change this
+  /// step deliberately does not make.
+  sourceLayer DwAiLayer?  @relation("DwAiLayerDerivedFrom", fields: [sourceLayerId], references: [id], onDelete: Cascade)
+  derived     DwAiLayer[] @relation("DwAiLayerDerivedFrom")
+
+  acceptedBy User? @relation("DwAiLayerAcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
+  createdBy  User? @relation("DwAiLayerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  deletedBy  User? @relation("DwAiLayerDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+
+  decisions DwAiLayerDecision[]
+
+  /// Every read of this table starts with one workshop, so every one of them starts with this
+  /// index: the list screen (whole workshop, newest first — it narrows by kind in Python because
+  /// the chain walk needs every rung loaded) and the report's `accepted_layers`, which is the read
+  /// that does ask SQL for one kind.
+  @@index([designWorkshopId, kind, createdAt])
+  /// "What has already been derived from this recording", which is how a second registration of the
+  /// same transcript is caught before it puts the same text in an annexure twice.
+  @@index([sourceMediaId])
+  /// The chain walk: given a layer, the rungs above it. It is also what keeps the cascade above
+  /// cheap: deleting a recording has to find the rungs standing on the rung it is deleting.
+  @@index([sourceLayerId])
+  /// The three account pointers, indexed for the WRITE they are on the wrong end of rather than for
+  /// any read this step performs: all three are `onDelete: SetNull`, so deleting a user makes
+  /// Postgres find every layer naming them, and without these that is three sequential scans of the
+  /// layer table inside a request an admin is waiting on.
+  @@index([acceptedById])
+  @@index([createdById])
+  @@index([deletedById])
+}
+
+/// Every acceptance and withdrawal of a layer, kept for ever.
+///
+/// WHY A LOG AND NOT JUST THE TWO COLUMNS ABOVE. Because withdrawal would erase the acceptance that
+/// a report has already printed. A designer accepts a cleaned transcript on the 3rd, a .docx goes
+/// to the directorate on the 4th naming it as accepted, and on the 11th somebody withdraws it —
+/// with columns alone, `acceptedById` goes back to null and the document in the officer's hand
+/// becomes unexplainable: it names an acceptance the database now denies ever happened. This table
+/// is what keeps "who stood behind this text, and when" RECORDED after the fact.
+///
+/// RECORDED, NOT YET SERVED. Nothing reads this table back over HTTP except the response to the
+/// accept and unaccept calls themselves, so today the question is answerable to somebody with a
+/// database and not to somebody with the screen. Step 3 of the plan — the annexure that prints an
+/// accepted layer and names it as one — is its first real reader, through
+/// `ai_layers.layer_decisions`. A read endpoint for the history is a deliberate omission of this
+/// step and not an oversight.
+///
+/// MODELLED ON `ReviewLog`, which does the same job for record review: an append-only row per
+/// decision carrying the actor and the moment, alongside a current-state column on the record
+/// itself. The vocabulary is borrowed deliberately so a reader who knows one knows the other.
+model DwAiLayerDecision {
+  id       String       @id @default(cuid())
+  layerId  String
+  decision DwAiDecision
+  /// Why. Optional, because "I read it and it is right" needs no note, but a WITHDRAWAL usually has
+  /// a reason worth keeping ("the model invented a village name").
+  note     String?
+  actorId  String
+  createdAt DateTime @default(now())
+
+  layer DwAiLayer @relation(fields: [layerId], references: [id], onDelete: Cascade)
+
+  /// RESTRICT, exactly as `ReviewLog.reviewer` is, and for the same reason: this row says a named
+  /// person took responsibility for putting model output into a government document. An account
+  /// that can be deleted out from under that leaves the record saying a decision was made by
+  /// nobody. Deleting such an account already fails on a dozen other relations and the message the
+  /// admin is shown degrades honestly for relations it cannot name (`_undeletable_detail`).
+  actor User @relation("DwAiLayerDecisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  /// The history of one layer, in order.
+  @@index([layerId, createdAt])
+  /// The actor, indexed for the Restrict above rather than for a read: deleting a user makes
+  /// Postgres look for a decision row naming them, on every account deletion.
+  @@index([actorId])
+}
+
+// ======================================================================================
+// Tier 3 consent, and the per-designer daily ceiling on what it permits
+// ======================================================================================
+
+/// Every answer a workshop has ever given to "may its recordings leave the device", kept for ever.
+///
+/// WHY A LOG AND NOT JUST THE THREE COLUMNS ON `DesignWorkshop`. Because consent can be WITHDRAWN,
+/// and a withdrawal would erase the answer that a send was made under. An artisan agrees on the 3rd,
+/// nine dictations go to Deepgram over the following week, the artisan changes their mind on the 9th
+/// and a designer records REFUSED — with columns alone the database now says this workshop never
+/// permitted anything, and there is nothing left that explains the nine transcripts sitting in it.
+/// "Granted on the 3rd, withdrawn on the 9th" is only answerable from a log. That is exactly the
+/// argument `DwAiLayerDecision` above already carries, and the cache-versus-log split is copied from
+/// it deliberately so that a reader who knows one knows the other.
+///
+/// RECORDED, NOT YET SERVED. Nothing reads this table back over HTTP except the response to the
+/// consent call itself. A read endpoint for the history is a deliberate omission — the same omission
+/// `DwAiLayerDecision` records — and not an oversight.
+model DwWorkshopConsentDecision {
+  id               String             @id @default(cuid())
+  designWorkshopId String
+  decision         DwDictationConsent
+  /// Why, or under what circumstances. Optional: "the artisan agreed" needs no note, but a REFUSAL
+  /// often has a reason worth keeping ("she asked that the audio stay on the phone").
+  note             String?
+  actorId          String
+
+  /// WHAT THE DEVICE SAID, as distinct from when this server heard it.
+  ///
+  /// A consent recorded in a courtyard reaches the server on the next sync, which can be a fortnight
+  /// later. `createdAt` below is the SERVER's clock and always says when the row appeared; this is
+  /// the moment the artisan actually answered, as the device that was there reported it. Null when
+  /// the answer was recorded straight against the server, in which case `createdAt` is the same
+  /// moment and repeating it here would add nothing.
+  ///
+  /// It is a separate column rather than a correction to `createdAt` for `DwAiLayer.producedAt`'s
+  /// reason, stated there in full: two different questions, and collapsing them means one of the two
+  /// answers is fabricated. Here the fabrication would be a consent dated to the sync — a signature
+  /// dated to the day it was filed.
+  recordedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopDictationConsents", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+
+  /// RESTRICT, exactly as `DwAiLayerDecision.actor` and `ReviewLog.reviewer` are, and for a sharper
+  /// version of their reason: this row says A NAMED PERSON TOOK RESPONSIBILITY FOR AN ARTISAN'S VOICE
+  /// LEAVING THE DEVICE for a third party. An account deleted out from under it would leave the
+  /// record saying somebody's recordings were cleared for export by nobody. Deleting such an account
+  /// already fails on a dozen other relations and the message the admin is shown degrades honestly
+  /// for relations it cannot name (`_undeletable_detail` in api/routes/users.py).
+  actor User @relation("DwWorkshopConsentDecisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  /// The history of one workshop's consent, in order — the only read this table has.
+  @@index([designWorkshopId, createdAt])
+  /// The actor, indexed for the Restrict above rather than for a read: deleting a user makes Postgres
+  /// look for a decision row naming them, on every account deletion.
+  @@index([actorId])
+}
+
+/// One designer's server-dictation spend on one India-time calendar day. Plan §6.1's cap, counted.
+///
+/// **AUTHORITATIVE HERE AND NOWHERE ELSE.** A client-side counter is a client-side counter: process
+/// memory clears on a swipe-away, and a spend ceiling defeated by a swipe-away is the one direction
+/// that costs money rather than a retry. The handset keeps a copy so the dictation control can fall
+/// back to the phone's own recogniser BEFORE recording — not so it can enforce anything.
+///
+/// WHY A TABLE AND NOT A COUNTER IN MEMORY OR IN REDIS. One uvicorn worker per pod is deliberate, but
+/// prod runs two replicas, so an in-process counter would give every designer TWICE the cap in
+/// production and once in staging — a cap wrong by the replica count is worse than no cap, because
+/// the number on the settings screen would be a lie. Redis is not there to fall back on either:
+/// `scale_cache_backend` defaults to "memory" and the compose Redis is profile-gated, so a Redis
+/// INCR+EXPIRE day key would silently do nothing on a default deployment. Postgres is the only
+/// always-present store. Redis may later sit IN FRONT of this table; it may never replace it.
+///
+/// AND NOT `app/scale/rate_limit.py`, which looks like the obvious home and is disqualified four
+/// times over: it is flag-gated OFF by default, it keys on a digest of the BEARER TOKEN or the client
+/// IP and never on a user id (so one designer's phone and laptop are two buckets), it is in-process
+/// unless Redis is configured, and its own docstring calls it "a courtesy backstop … NOT a security
+/// control". A spend ceiling that is off in production is not a ceiling.
+///
+/// ONE ROW PER (designer, day) RATHER THAN ONE PER DICTATION. A per-dictation event table is a row
+/// per sentence across the registry's 510 fields per workshop per designer, to answer a question nobody has asked
+/// yet ("what did we spend last month") — and that question is still answerable from these rows by
+/// summing them. This shape is idempotent, is served entirely by its own primary key, and needs no
+/// reset job at all: the key IS the day, so a new day is a new row and the old ones are ordinary
+/// history (about one row per designer per working day).
+model DwDictationDailyUsage {
+  userId String
+  /// The SERVER's India-time calendar date as "YYYY-MM-DD". A STRING and not a `DateTime`, because
+  /// what is stored is a calendar day and not an instant: a `DateTime` would have to pick a time of
+  /// day to represent midnight IST and every reader would have to remember which one.
+  ///
+  /// **IST, AND THE BOUNDARY IS THE POINT.** "Daily" means nothing without a stated boundary, and a
+  /// UTC day would reset a designer's allowance at 05:30 IST — mid-morning to the fleet, which is
+  /// what `api/routes/public.py` calls "visibly wrong to the people it is for" about the same choice
+  /// for the census. The handset's own timezone is deliberately NOT consulted: two phones with
+  /// different clocks would then hold two different allowances against one server row. Computed with
+  /// a fixed +05:30 offset by `dictation_cap.ist_day`; see there for why not `ZoneInfo`.
+  istDay String
+  /// Uploads that actually reached a transcription provider on that day. Incremented after the
+  /// provider call, and NOT for a clip refused for size or for a 503 that means no provider is
+  /// configured — see `dictation_cap.spend` for the full rule and what it costs.
+  count     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  /// CASCADE, matching `DesignWorkshopViewer.user` and `WorkshopAssignment.user` rather than the
+  /// Restrict the consent log above carries. A usage row is not a record of anybody taking
+  /// responsibility for anything — it is a meter reading — so it must never become a new reason an
+  /// admin cannot delete an account.
+  user User @relation("DwDictationDailyUsageUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The pair IS the identity, and it serves the only read this table has: "how much has THIS
+  /// designer spent TODAY". No second index and no scan — the same argument
+  /// `DesignWorkshopViewer.@@id([designWorkshopId, userId])` makes, with the leading column chosen
+  /// the same way, because every question starts with the user.
+  @@id([userId, istDay])
+}
+
+/// One designer's AI-VERB spend on one India-time calendar day, broken down by verb.
+///
+/// The sibling of `DwDictationDailyUsage` above, deliberately modelled on it down to the string day
+/// key so that a reader who knows one knows the other — and the day itself is computed by
+/// `dictation_cap.ist_day` and by nothing else, because two definitions of "daily" is how a designer
+/// ends up with two allowances or with none.
+///
+/// **WHY A SECOND TABLE RATHER THAN A `verb` COLUMN ON THE FIRST.** Adding one would change that
+/// table's primary key, which is the identity a live feature reads on every dictation, and it would
+/// merge two meters whose whole point is that they are separate: plan §6.1 scopes the dictation cap
+/// to the transcription service alone, in the user's own words, so a caption must not be able to
+/// exhaust it. A migration that reshapes a working meter to avoid creating an empty one is the wrong
+/// trade.
+///
+/// THE VERB IS IN THE KEY THOUGH THE CEILING IS SHARED. The ceiling counts every verb together
+/// because the bill does; the breakdown is kept because the first thing anybody asks when a cap is
+/// hit is WHICH verb spent it, and a single counter can never answer that. It is also the only
+/// measurement of what these verbs cost that this system will ever have — the same argument
+/// `dictation_cap.spend` makes for counting while uncapped.
+model DwAiVerbDailyUsage {
+  userId String
+  /// The SERVER's India-time calendar date as "YYYY-MM-DD" — see `DwDictationDailyUsage.istDay` for
+  /// why a string, why IST, and why the handset's clock is not consulted.
+  istDay String
+  /// PROOFREAD / EXPAND / TRANSLATE / CAPTION / SUBTITLES, as `ai_verbs.Verb` spells them.
+  ///
+  /// A String and NOT a Postgres enum, unlike `DwAiLayerKind`, and the difference is what the value
+  /// does. A kind is printed as a heading in a submitted document, so a typo there is a document
+  /// defect and the database must refuse it. This is a meter label: a typo produces a wrong
+  /// breakdown line and nothing else, and an enum here would mean a migration before anybody could
+  /// meter a sixth verb — which is the friction that gets the meter left out instead.
+  verb   String
+  /// Runs that actually reached a provider. NOT incremented for a body refused before the call and
+  /// NOT for the 503 that means no provider key is configured: neither spent anything, and charging
+  /// a designer's allowance for the server's own misconfiguration is the one refusal they can do
+  /// nothing whatever about. The identical rule, for the identical reason, as `dictation_cap.spend`.
+  count     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  /// CASCADE, matching `DwDictationDailyUsage.user`: a meter reading is not authorship and must
+  /// never become a new reason an admin cannot delete an account.
+  user User @relation("DwAiVerbDailyUsageUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The triple IS the identity. Leading with the user for the sibling's reason — every question
+  /// starts with the account — and the day before the verb because the allowance is scoped to the
+  /// day and the verb is only ever the breakdown.
+  @@id([userId, istDay, verb])
 }
 
 // ======================================================================================

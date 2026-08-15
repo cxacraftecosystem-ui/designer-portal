@@ -1,8 +1,9 @@
 "use client";
 
 import { DraftingCompass, Save } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { SearchInput } from "@/components/SearchInput";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown, MultiSelectDropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
@@ -10,6 +11,8 @@ import { ApiError, listResource } from "@/lib/api";
 import { listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
 import {
   designWorkshopType,
+  eligibleViewerNotice,
+  ELIGIBLE_VIEWER_SEARCH_MAX,
   listDesignWorkshopViewers,
   listEligibleDesignWorkshopViewers,
   putDesignWorkshopViewers,
@@ -36,7 +39,7 @@ import { WORKSHOP_TYPE_LABELS, type Workshop, type WorkshopType } from "@/lib/ty
  * with admin view off gets the panel, not a redirect), and both of those gates are the ones this
  * panel needs. A second route would have been a second copy of them to keep in step.
  *
- * FOUR DECISIONS THAT LOOK LIKE DETAIL AND ARE NOT.
+ * FIVE DECISIONS THAT LOOK LIKE DETAIL AND ARE NOT.
  *
  * - **The creator is shown OUTSIDE the picker.** They hold the workshop because they made it, not
  *   because of a row in this list, and the PUT cannot take that away. Putting them in the
@@ -53,6 +56,13 @@ import { WORKSHOP_TYPE_LABELS, type Workshop, type WorkshopType } from "@/lib/ty
  *   link that is seconds. So the picker edits a PENDING set, the panel says what is unsaved, and
  *   one button sends it.
  * - **The type dropdown NARROWS, it does not set.** See {@link TYPE_OPTIONS}.
+ * - **THE PEOPLE SEARCH IS THE SERVER'S, and the picker's own filter box is turned OFF so that there
+ *   is exactly one of them.** `eligible-viewers` answers at most 2000 accounts ordered by name and
+ *   that cut is being hit on this repository — see point 4 of `lib/designWorkshopViewers.ts` — so a
+ *   box that filtered the options already in the browser would search only the part of the alphabet
+ *   that fitted and answer "no matches" for a colleague who is eligible, present and simply sorts
+ *   late. The same box, wired to the server, reaches them. See {@link SEARCH_DEBOUNCE_MS} and the
+ *   `searchable={false}` on the picker.
  */
 
 /**
@@ -85,6 +95,20 @@ const TYPE_OPTIONS: DropdownOption[] = [
  */
 const DESIGN_WORKSHOP_PAGE = 100;
 const WORKSHOP_PAGE = 200;
+
+/**
+ * How long after the last keystroke the people search goes out.
+ *
+ * 300 ms, the same number and for the same measured reason as `StageReferenceField`: the server
+ * matches `name` OR `email` with an `ILIKE '%term%'` that no index can answer, so every keystroke
+ * that escapes the debounce is a full scan of `User` — 4157 rows here, up from 3632 the same morning,
+ * and only ever more. Shorter and a fast typist fires six scans for one surname; longer and the list
+ * visibly lags the box.
+ *
+ * Clearing the box does NOT wait: an empty term is the unnarrowed list, which is the one request that
+ * is always about to be needed and never about to be superseded by the next letter.
+ */
+const SEARCH_DEBOUNCE_MS = 300;
 
 /** Title plus the day it ran, never an id — the same shape `workshopLabel` gives ordinary workshops. */
 function designWorkshopLabel(summary: DwSummary): string {
@@ -134,7 +158,24 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
   const [typeFilter, setTypeFilter] = useState("");
   const [workshopId, setWorkshopId] = useState("");
 
+  /** What the admin has typed to find somebody. Sent to the server; never used to filter locally. */
+  const [search, setSearch] = useState("");
   const [eligible, setEligible] = useState<DwEligibleViewer[] | null>(null);
+  /** The server's own word for "this answer is not the whole eligible set". Rendered, once, when true. */
+  const [eligibleTruncated, setEligibleTruncated] = useState(false);
+  /** A search is pending or in flight — so a stale list on screen is never read as the answer. */
+  const [searching, setSearching] = useState(false);
+  /**
+   * Every eligible account this panel has seen, across every search it has run.
+   *
+   * Needed because the option list is now a MOVING window over the table rather than the whole of it.
+   * Search "Padma", tick her, clear the box, and she is no longer in the server's answer — but she is
+   * still in `selected`, and without a remembered label the pending-grant line would name her
+   * "Unknown user" and the picker would draw a ticked row with no name on it. State rather than a ref
+   * on purpose: `viewerOptions` memoises on it, and a ref mutated during a fetch is not a dependency
+   * anything recomputes from.
+   */
+  const [known, setKnown] = useState<Map<string, DwEligibleViewer>>(() => new Map());
   /**
    * The routes are being built in parallel with this screen and ship separately, so "the server has
    * not got this yet" is a state the panel has to render rather than a case to assume away. See
@@ -207,29 +248,59 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
     };
   }, [refreshToken]);
 
+  /**
+   * The eligible accounts — the SERVER'S answer to whatever is in the search box.
+   *
+   * A generation counter rather than a `cancelled` flag, and the difference matters here in a way it
+   * did not before this effect could re-run on every keystroke: `apiFetch` takes no `AbortSignal`, so
+   * two searches can be in flight at once and the house convention (`StageReferenceField`, the list
+   * pages) is to count them and ignore the late answer. Without it a slow response for "kam" lands
+   * after the fast one for "kamla" and the picker shows the wrong list under the typed word — which
+   * is precisely when somebody ticks the first row without reading it.
+   */
+  const eligibleGeneration = useRef(0);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await listEligibleDesignWorkshopViewers();
-        if (cancelled) return;
-        setEligible(result.users ?? []);
-        setFeatureMissing(false);
-      } catch (err) {
-        if (cancelled) return;
-        if (viewerAdministrationMissing(err)) {
-          setFeatureMissing(true);
-          setEligible([]);
-          return;
-        }
-        setEligible([]);
-        setLoadError(describeFailure(err, "Unable to load the designers who may be given access"));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshToken]);
+    const term = search.trim();
+    const current = eligibleGeneration.current + 1;
+    eligibleGeneration.current = current;
+    setSearching(true);
+    const timer = window.setTimeout(
+      () => {
+        listEligibleDesignWorkshopViewers(term)
+          .then((result) => {
+            if (eligibleGeneration.current !== current) return;
+            const users = result.users ?? [];
+            setEligible(users);
+            // Coerced, not trusted: see `DwEligibleViewerList`. A server that predates the field
+            // leaves this `undefined`, and an unknown flag must say nothing rather than cry
+            // truncation at a list that is complete.
+            setEligibleTruncated(Boolean(result.truncated));
+            setKnown((previous) => {
+              const next = new Map(previous);
+              for (const person of users) next.set(person.id, person);
+              return next;
+            });
+            setFeatureMissing(false);
+            setSearching(false);
+          })
+          .catch((err) => {
+            if (eligibleGeneration.current !== current) return;
+            setSearching(false);
+            setEligibleTruncated(false);
+            if (viewerAdministrationMissing(err)) {
+              setFeatureMissing(true);
+              setEligible([]);
+              return;
+            }
+            setEligible([]);
+            setLoadError(describeFailure(err, "Unable to load the designers who may be given access"));
+          });
+      },
+      term ? SEARCH_DEBOUNCE_MS : 0
+    );
+    return () => window.clearTimeout(timer);
+  }, [refreshToken, search]);
 
   /* ── The chosen workshop's current viewers ──────────────────────────────── */
 
@@ -321,40 +392,70 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
     if (!creatorId) return null;
     const fromViewers = (viewers ?? []).find((row) => row.userId === creatorId);
     if (fromViewers) return { name: personLabel(fromViewers), role: fromViewers.role };
-    const fromEligible = (eligible ?? []).find((row) => row.id === creatorId);
-    if (fromEligible) return { name: personLabel(fromEligible), role: fromEligible.role };
+    // `known` and not the answer currently on screen: that answer is now whatever the search box
+    // narrowed it to, and the creator is very often not in it — so reading it there would blank the
+    // creator's name the moment an admin typed a colleague's surname, on the one block of this panel
+    // that exists to say who already has access.
+    const remembered = known.get(creatorId);
+    if (remembered) return { name: personLabel(remembered), role: remembered.role };
     // Never the raw cuid. A list of twenty-five random characters asks an admin to recognise
     // somebody they cannot possibly recognise — the same defect the artisan pickers shipped once.
     return { name: "The designer who created it", role: "" };
-  }, [creatorId, viewers, eligible]);
+  }, [creatorId, viewers, known]);
+
+  /** What the server was actually asked — `buildQuery` sends this, and sends nothing when it is "". */
+  const searchTerm = search.trim();
 
   /**
-   * Everyone the picker offers: the eligible accounts, plus anybody who already HOLDS a row and has
-   * since dropped off that list. The creator is in neither — their access is not on offer here.
+   * IS THE ANSWER ON SCREEN THE WHOLE ELIGIBLE SET?
+   *
+   * Only when nothing was cut and nothing is narrowing it. It decides one thing, and that thing used
+   * to be asserted on no evidence: whether a viewer's ABSENCE from the eligible list proves they are
+   * no longer eligible. Under a truncated answer it proves nothing at all — a perfectly eligible
+   * viewer whose name sorts past the 2000th row is absent for a reason that has nothing to do with
+   * their standing, and the old code labelled them "no longer eligible" anyway. Marking somebody
+   * suspended when they are not is exactly as misleading as failing to mark somebody who is.
+   */
+  const eligibleListIsComplete = !eligibleTruncated && !searchTerm;
+
+  /**
+   * Everyone the picker offers: the accounts the server's current answer holds, plus anybody who
+   * already HOLDS a row, plus anybody ticked from an earlier search. The creator is in none of them —
+   * their access is not on offer here.
    *
    * The second group is the load-bearing one. The PUT replaces the whole set, so an option that is
    * not rendered is a row the next Save silently deletes; a designer suspended on the roster last
    * month is exactly that person, and leaving them out would revoke them as a side effect of adding
-   * somebody unrelated.
+   * somebody unrelated. The third group exists because the first is now a search result rather than
+   * the whole table: narrowing the list must never un-name a grant the admin has already made in this
+   * sitting. Both are pinned into view by `SearchableSelect`, which lifts anything ticked above its own
+   * render cap for the same reason.
    */
   const viewerOptions = useMemo(() => {
     const options: DropdownOption[] = [];
     const seen = new Set<string>();
+    const offer = (id: string, label: string) => {
+      if (!id || id === creatorId || seen.has(id)) return;
+      seen.add(id);
+      options.push({ value: id, label });
+    };
     for (const person of eligible ?? []) {
-      if (person.id === creatorId) continue;
-      seen.add(person.id);
-      options.push({ value: person.id, label: `${personLabel(person)} · ${roleLabel(person.role)}` });
+      offer(person.id, `${personLabel(person)} · ${roleLabel(person.role)}`);
     }
     for (const row of viewers ?? []) {
-      if (row.userId === creatorId || seen.has(row.userId)) continue;
-      seen.add(row.userId);
-      options.push({
-        value: row.userId,
-        label: `${personLabel(row)} · ${roleLabel(row.role)} — has access, no longer eligible`
-      });
+      offer(
+        row.userId,
+        `${personLabel(row)} · ${roleLabel(row.role)}${
+          eligibleListIsComplete ? " — has access, no longer eligible" : " — has access"
+        }`
+      );
+    }
+    for (const id of selected) {
+      const person = known.get(id);
+      if (person) offer(person.id, `${personLabel(person)} · ${roleLabel(person.role)}`);
     }
     return options;
-  }, [eligible, viewers, creatorId]);
+  }, [eligible, viewers, selected, known, creatorId, eligibleListIsComplete]);
 
   /* ── Unsaved state ──────────────────────────────────────────────────────── */
 
@@ -363,6 +464,51 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
     const held = new Set(baseline);
     return selected.some((id) => !held.has(id));
   }, [selected, baseline]);
+
+  /**
+   * The one line under the search box — one line, not a paragraph about pagination.
+   *
+   * FOUR FACTS, AND THEY ARE DIFFERENT FACTS: people are hidden and searching reaches them; people
+   * are hidden from THIS search and it needs narrowing; people are hidden from EVERY search because
+   * the roster read was cut, so narrowing cannot help; the search matched nobody, which is not the
+   * same as nobody being eligible. When `truncated` is false and the search matched somebody the line
+   * is absent entirely — a complete list has nothing to explain, and the repository owner has asked
+   * twice this week for less text on these screens.
+   *
+   * **THE WORDS ARE ANDROID'S, VERBATIM** (`dwViewerOfferNotice`, the same four states in the same
+   * order), because a researcher moves between the two apps mid-workshop and the shared vocabulary is
+   * the whole reason the server carries one flag instead of each client inventing its own sentence.
+   * The choice itself lives in `lib/designWorkshopViewers.eligibleViewerNotice` for the reason given
+   * there: one of the four states no live database can produce, so it must be reachable without a
+   * browser.
+   *
+   * "Searching…" takes the same slot rather than adding a second line, and only once something has
+   * been typed. Android shows a spinner in the search field's trailing slot for this; `SearchInput`
+   * has no such slot — its trailing position is the clear button — so the same fact is a word here.
+   * It matters either way: a stale list of two thousand names under a half-typed surname is exactly
+   * when a reader concludes the person is not there.
+   */
+  const searchNotice = searching && searchTerm
+    ? "Searching…"
+    : eligibleViewerNotice({
+        truncated: eligibleTruncated,
+        offered: eligible?.length ?? 0,
+        searched: Boolean(searchTerm)
+      });
+  const searchNoticeId = useId();
+
+  /**
+   * What the picker says when it has no rows to draw — two different facts, again Android's words.
+   *
+   * "No designers are eligible" is a statement about the roster and is only true of an unsearched
+   * empty answer. Saying it under a search term would be the silent-emptiness bug in one sentence: the
+   * reader mistyped a surname and is told the repository has nobody in it.
+   */
+  const pickerEmptyLabel = searching
+    ? "Searching…"
+    : searchTerm
+      ? "No eligible account matches that search."
+      : "No designers are eligible";
 
   const labelById = useMemo(() => new Map(viewerOptions.map((option) => [option.value, option.label])), [viewerOptions]);
   const added = useMemo(() => selected.filter((id) => !baseline.includes(id)), [selected, baseline]);
@@ -534,15 +680,41 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                     </p>
                   }
                 >
-                  <MultiSelectDropdown
-                    ariaLabel="Designers who may see this workshop"
-                    confirmLabel="Done"
-                    emptyLabel="No designers are eligible"
-                    onChange={setSelected}
-                    options={viewerOptions}
-                    placeholder="Select one or more designers"
-                    values={selected}
-                  />
+                  <div className="grid gap-2">
+                    {/* The one search box. It asks the SERVER, which is the only thing that can see past
+                        the 2000-account ceiling — see the file header. Capped at the length the endpoint
+                        accepts so a long paste narrows the list instead of returning a 422. */}
+                    <SearchInput
+                      onChange={(next) => setSearch(next.slice(0, ELIGIBLE_VIEWER_SEARCH_MAX))}
+                      placeholder="Search designers by name or email"
+                      value={search}
+                    />
+                    {/* At most ONE line here, ever: what the search is doing, or the single sentence that
+                        says the list is incomplete. Nothing at all when the list is whole. */}
+                    {searchNotice ? (
+                      <p className="text-xs leading-5 text-ink-500" id={searchNoticeId}>
+                        {searchNotice}
+                      </p>
+                    ) : null}
+                    <MultiSelectDropdown
+                      ariaLabel="Designers who may see this workshop"
+                      confirmLabel="Done"
+                      // Pointed at the truncation line only while it is on screen: `aria-describedby`
+                      // naming an id that is not in the document is worse than naming nothing.
+                      describedBy={searchNotice ? searchNoticeId : undefined}
+                      emptyLabel={pickerEmptyLabel}
+                      onChange={setSelected}
+                      options={viewerOptions}
+                      placeholder="Select one or more designers"
+                      // OFF, deliberately. The box above is the search, and it reaches the whole table;
+                      // this control's own filter box would have searched only the accounts that fitted
+                      // under the ceiling and answered "No matches" for a colleague who is eligible and
+                      // merely sorts late — the defect this panel is being fixed for, wearing a search
+                      // box. Two boxes over two different scopes would also be two boxes.
+                      searchable={false}
+                      values={selected}
+                    />
+                  </div>
                 </FieldBlock>
               </div>
 

@@ -321,7 +321,12 @@ object DwSubmissionReadiness {
      * material can work down the list from there; sending them to the last one would have them scroll
      * back up.
      */
-    private fun stageAddresses(spec: StageDto, stored: StageDraft?): Map<String, DwReadinessAddress> {
+    private fun stageAddresses(
+        spec: StageDto,
+        stored: StageDraft?,
+        /** This stage's custom questions, grouped by the section the form draws them under. */
+        customBlocks: List<DwCustomStageBlock> = emptyList(),
+    ): Map<String, DwReadinessAddress> {
         val singleton = stored?.values.orEmpty()
         val found = LinkedHashMap<String, DwReadinessAddress>()
 
@@ -375,6 +380,45 @@ object DwSubmissionReadiness {
                         ),
                     )
                 }
+            }
+        }
+
+        /*
+          THE DESIGNER'S OWN QUESTIONS, ADDRESSED UNDER THE BARE LABEL THE SCORER FILES THEM UNDER.
+
+          A label this map has no entry for keeps its row and opens the stage with nothing focused —
+          the degrade this whole walk is built around — so a missing custom address costs precision
+          and never an item. It is worth having anyway: `missing` is where a designer taps, and the
+          commonest reason a workshop cannot be submitted once a designer has added their own
+          required question is that question.
+
+          The entity key is the SECTION's rendering identity ([customSectionEntityKey]) and not
+          `_custom`, because that is the string the stage form draws the section under and a focus
+          naming anything else would land on a stage with nothing highlighted.
+
+          AFTER the registry entities so that a custom label colliding with a registry label does not
+          steal its address. The scorer de-duplicates `missing` and the registry's own field is the
+          one the designer is likelier to mean; the server refuses a duplicate LABEL within a
+          definition for the same class of reason.
+        */
+        for (block in customBlocks) {
+            for (field in block.fields) {
+                if (field.retired || !field.required) continue
+                if (DwValues.isFilled(stored?.custom.orEmpty()[field.key])) continue
+                note(
+                    field.label.ifBlank { field.key },
+                    DwReadinessAddress(
+                        entityKey = customSectionEntityKey(block.section),
+                        entityTitle = block.section.title,
+                        fieldKey = field.key,
+                        fieldLabel = field.label,
+                        anchorFieldKey = field.key,
+                        rowKey = null,
+                        rowTitle = null,
+                        occurrences = 1,
+                        rowCount = 1,
+                    ),
+                )
             }
         }
 
@@ -511,10 +555,24 @@ object DwSubmissionReadiness {
      * walking ITS list rather than the registry's is what keeps the two in step even if the server
      * ever serves the stages out of order.
      */
-    fun assess(schema: SchemaResponse, draft: WorkshopDraft?, workshopId: String): DwWorkshopReadiness {
+    fun assess(
+        schema: SchemaResponse,
+        draft: WorkshopDraft?,
+        workshopId: String,
+        /**
+         * This workshop's custom definition as this device holds it, or null.
+         *
+         * ASSEMBLY, NOT ARITHMETIC — the law in this file's own header. Nothing here counts a custom
+         * field; it is handed straight to [computeWorkshopCompleteness], which is the single scorer,
+         * and everything below merely orders and addresses what that returned. A fourth scorer
+         * written here to drive the checklist would be a fourth opinion, and the day it disagreed the
+         * designer would be told to go and fill in a field the Save button was perfectly happy with.
+         */
+        definition: DwCustomCache? = null,
+    ): DwWorkshopReadiness {
         // THE SINGLE AUTHORITY. Everything below counts, addresses and orders what this returned;
         // nothing below decides whether a field is filled.
-        val scores = computeWorkshopCompleteness(schema, draft)
+        val scores = computeWorkshopCompleteness(schema, draft, definition)
         val specs = schema.stages.associateBy { it.key }
 
         val blocking = ArrayList<DwReadinessItem>()
@@ -533,7 +591,9 @@ object DwSubmissionReadiness {
 
             if (score.missing.isNotEmpty()) {
                 blockedStages += 1
-                val addresses = stageAddresses(spec, draft?.stages?.get(spec.key))
+                val addresses = stageAddresses(
+                    spec, draft?.stages?.get(spec.key), customStageBlocks(definition, spec.key),
+                )
                 for (label in score.missing) {
                     val address = addresses[label]
                     blocking.add(

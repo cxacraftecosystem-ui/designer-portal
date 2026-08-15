@@ -22,32 +22,66 @@ class DwLanguagePackTest {
 
     private val tags = DW_DICTATION_LANGUAGES.map { it.tag }
 
-    /** The M32 as verified in docs/DICTATION-DEVICE-VERIFICATION.md: English there, Hindi not. */
-    /**
-     * WHAT THE FLEET'S GALAXY M32 ACTUALLY ANSWERS. Measured, not imagined.
+    /*
+     * ---- THE FLEET'S GALAXY M32, TWICE. Two readings, four days apart, both taken off the handset.
      *
-     * Captured 2026-08-09 from the handset itself by `androidTest/DwLanguagePackProbeTest`, which
-     * calls `checkRecognitionSupport` and prints the four lists; the run is written up in
+     * There are two fixtures rather than one because THE HANDSET CHANGED, and each reading pins a
+     * different rule. Both are raw output from `androidTest/DwLanguagePackProbeTest`, which calls
+     * `checkRecognitionSupport` and prints the four lists; both runs are written up in
      * docs/DICTATION-LANGUAGE-PACK-MEASUREMENT.md.
      *
-     * THE VERSION THIS REPLACES WAS INVENTED, and it is why the defect below survived review. It
+     * THE VERSION THESE REPLACED WAS INVENTED, and that is why the defect they pin survived review. It
      * claimed this phone could fetch on-device packs for Odia, Bengali, Tamil, Telugu, Marathi and
-     * Gujarati. The phone offers none of them: its `supportedOnDeviceLanguages` is the thirty
-     * entries below, and the only two of our nineteen on it are `hi-IN` and `en-IN`. A fixture named
-     * after a specific handset, asserting capabilities that handset does not have, made the suite
-     * agree with a device that does not exist — so the tests passed while the settings screen told
-     * seventeen languages they were unsupported.
+     * Gujarati. The phone offers none of them. A fixture named after a specific handset, asserting
+     * capabilities that handset does not have, made the suite agree with a device that does not exist
+     * — so the tests passed while the settings screen told seventeen working languages they were
+     * unsupported.
      *
-     * `online` is empty because an on-device recogniser returns an empty online list BY
+     * `online` is empty in BOTH, because an on-device recogniser returns an empty online list BY
      * CONSTRUCTION. That emptiness is the absence of an answer, and treating it as a finding is the
-     * bug these tests now pin.
+     * bug these tests exist to pin.
      */
-    private val galaxyM32 = DwRecognitionSupport(
+
+    /**
+     * **2026-08-09 — BEFORE ANYBODY DOWNLOADED ANYTHING.** `en-GB` installed; `hi-IN` and `en-IN`
+     * sitting in `supportedOnDevice`, one tap away.
+     *
+     * KEPT AS HISTORY RATHER THAN OVERWRITTEN, and it is not sentiment: this is the reading
+     * [DwPackState.NO_OFFLINE_PACK] was derived from, and it is the only reading in which any of our
+     * nineteen is DOWNLOADABLE at all. Delete it and there is no fixture left in which the download
+     * control is drawable, so the tests that prove a designer can be offered a pack would have nothing
+     * to run against.
+     */
+    private val galaxyM32BeforeTheDownloads = DwRecognitionSupport(
         installedOnDevice = listOf("en-GB"),
         supportedOnDevice = listOf(
             "en-US", "de-DE", "es-ES", "fr-FR", "it-IT", "en-AU", "en-IE", "en-SG", "ja-JP",
             "de-AT", "de-BE", "de-CH", "en-CA", "en-IN", "es-US", "fr-BE", "fr-CA", "fr-CH",
             "hi-IN", "id-ID", "it-CH", "ko-KR", "pt-BR", "th-TH", "cmn-Hans-CN", "cmn-Hant-TW",
+            "pl-PL", "ru-RU", "tr-TR", "vi-VN",
+        ),
+        pendingOnDevice = emptyList(),
+        online = emptyList(),
+    )
+
+    /**
+     * **2026-08-13 — THE SAME HANDSET, AFTER BOTH PACKS WERE FETCHED. This is the phone as it is.**
+     *
+     * `hi-IN` and `en-IN` have MOVED from `supportedOnDevice` to `installedOnDevice`, which is what a
+     * completed download looks like through this API — the list shrinks from thirty to twenty-eight and
+     * **contains no Indian language at all**. So on this reading there is nothing left of ours to
+     * download, and every rule about offering a pack has to hold with an empty offer.
+     *
+     * THIS IS THE READING THE SHIPPING SCREEN IS JUDGED AGAINST. `dwPackRowWorthShowing` draws two rows
+     * here, both INSTALLED, and therefore **zero download controls** — the state the settings card is in
+     * on the attached phone right now.
+     */
+    private val galaxyM32Today = DwRecognitionSupport(
+        installedOnDevice = listOf("hi-IN", "en-IN", "en-GB"),
+        supportedOnDevice = listOf(
+            "en-US", "de-DE", "es-ES", "fr-FR", "it-IT", "en-AU", "en-IE", "en-SG", "ja-JP",
+            "de-AT", "de-BE", "de-CH", "en-CA", "es-US", "fr-BE", "fr-CA", "fr-CH",
+            "id-ID", "it-CH", "ko-KR", "pt-BR", "th-TH", "cmn-Hans-CN", "cmn-Hant-TW",
             "pl-PL", "ru-RU", "tr-TR", "vi-VN",
         ),
         pendingOnDevice = emptyList(),
@@ -162,14 +196,14 @@ class DwLanguagePackTest {
     /**
      * The seventeen. This is the state most of the list is really in, and it used to be UNSUPPORTED.
      *
-     * `galaxyM32` has an empty `online` list because that is what an on-device recogniser returns —
+     * `galaxyM32BeforeTheDownloads` has an empty `online` list because that is what an on-device recogniser returns —
      * so "not in any list" is the absence of an answer about online support, not a finding. Calling
      * it UNSUPPORTED printed "does not offer Manipuri (Meitei) ... pick another language" over a
      * language the network recogniser dictates perfectly well.
      */
     @Test
     fun `a language in no list, from an engine that never answered about online, is not called unsupported`() {
-        assertEquals(DwPackState.NO_OFFLINE_PACK, dwPackState("mni-IN", galaxyM32))
+        assertEquals(DwPackState.NO_OFFLINE_PACK, dwPackState("mni-IN", galaxyM32BeforeTheDownloads))
         // Still nothing to download — the correction is to the sentence, not to the button.
         assertEquals(DwPackOffer.UNAVAILABLE, dwPackOffer(DwPackState.NO_OFFLINE_PACK, DwConnection.UNMETERED))
         assertFalse(dwMayAsk(dwPackOffer(DwPackState.NO_OFFLINE_PACK, DwConnection.UNMETERED), requested = false, refused = false))
@@ -277,12 +311,18 @@ class DwLanguagePackTest {
         // The wrong claim this whole feature exists to avoid. On Android 8 and 9 — a large share of
         // the field fleet — there is no way to find out, so the copy must say it cannot be asked and
         // must not slip into telling a designer a pack is present or missing.
-        assertTrue(DW_PACK_CANNOT_ASK_SENTENCE.contains("cannot be asked"))
+        //
+        // RE-POINTED 2026-08-13 from the deleted `DW_PACK_CANNOT_ASK_SENTENCE`, whose 58 words said
+        // this in three clauses and one of them narrated the ladder. The state is unchanged and is
+        // still on screen — `DwLanguagePackController.refresh` assigns this exact string for API < 33
+        // and the pack list draws it — so this test still guards the sentence a designer reads.
+        val unaskable = dwPackEmptyListSentence(canAsk = false)
+        assertTrue(unaskable.contains("cannot be asked"))
         listOf("not installed", "is missing", "is installed", "not downloaded", "no pack")
             .forEach { claim ->
                 assertFalse(
                     "the unaskable sentence must claim nothing either way, but says \"$claim\"",
-                    DW_PACK_CANNOT_ASK_SENTENCE.contains(claim, ignoreCase = true)
+                    unaskable.contains(claim, ignoreCase = true)
                 )
             }
         // And the state it pairs with is rendered as the word itself, not as an absence.
@@ -302,7 +342,7 @@ class DwLanguagePackTest {
      */
     @Test
     fun `on the real M32 exactly two of the nineteen can be fetched and none is called unsupported`() {
-        val states = dwPackStates(tags, galaxyM32)
+        val states = dwPackStates(tags, galaxyM32BeforeTheDownloads)
         assertEquals(
             listOf("hi-IN", "en-IN"),
             states.filterValues { it == DwPackState.DOWNLOADABLE }.keys.toList()
@@ -316,7 +356,7 @@ class DwLanguagePackTest {
 
     @Test
     fun `every dictation language gets exactly one state and none is missed`() {
-        val states = dwPackStates(tags, galaxyM32)
+        val states = dwPackStates(tags, galaxyM32BeforeTheDownloads)
         assertEquals(tags, states.keys.toList())
         assertTrue(states.values.none { it == DwPackState.UNKNOWN })
     }
@@ -344,9 +384,150 @@ class DwLanguagePackTest {
         }
     }
 
+    // ---------------------------------------------------------------------------------------
+    // WHICH LANGUAGES ARE A ROW AT ALL — the owner's central instruction, which had NO TESTS
+    //
+    // `dwPackRowWorthShowing`, `dwPackRows` and `dwPackEmptyListSentence` are the whole of
+    // *"For the language that have no download option at all, why even show them in the very first
+    // place?"*, and until 2026-08-13 not one line of them was covered anywhere in the test tree —
+    // while `DwLanguagePackList`'s own docstring called the row decision "pure and tested". It was
+    // pure and untested, which is the more dangerous of the two halves to be missing: the rule
+    // decides what a designer is shown, so a regression in it is invisible from the code and visible
+    // on every handset.
+    // ---------------------------------------------------------------------------------------
+
     @Test
-    fun `the offline sentence promises no download`() {
-        assertFalse(DW_PACK_NO_CONNECTION_SENTENCE.contains("Download", ignoreCase = true))
-        assertTrue(DW_PACK_NO_CONNECTION_SENTENCE.contains("no connection"))
+    fun `exactly three states are a row, and the other four are not`() {
+        // Written as a partition over the WHOLE enum rather than as three positive cases, so a state
+        // added later fails here instead of quietly becoming a row (or quietly not becoming one).
+        val rows = DwPackState.entries.filter { dwPackRowWorthShowing(it) }
+        assertEquals(
+            listOf(DwPackState.INSTALLED, DwPackState.DOWNLOADING, DwPackState.DOWNLOADABLE).sortedBy { it.name },
+            rows.sortedBy { it.name }
+        )
+    }
+
+    @Test
+    fun `a state no button on the screen can change is never a row`() {
+        // The three that no control can move, and the reason the seventeen paragraphs went. Each of
+        // these languages still dictates through the server; that is said in the dictation flow.
+        assertFalse(dwPackRowWorthShowing(DwPackState.NO_OFFLINE_PACK))
+        assertFalse(dwPackRowWorthShowing(DwPackState.NETWORK_ONLY))
+        assertFalse(dwPackRowWorthShowing(DwPackState.UNSUPPORTED))
+    }
+
+    @Test
+    fun `UNKNOWN is not a row, so an Android 12 handset gets one line and not nineteen`() {
+        /*
+         * THE CALL WORTH DEFENDING, AND THE ONE MOST LIKELY TO BE "FIXED" BACK. On API < 32 every one
+         * of the nineteen is UNKNOWN. Admitting UNKNOWN as a row would put nineteen rows of "Unknown"
+         * on those handsets — nineteen rows of nothing-to-do, which is the exact failure this rule
+         * exists to end, spelled with a different word.
+         */
+        assertFalse(dwPackRowWorthShowing(DwPackState.UNKNOWN))
+        val unasked = dwPackStates(tags, null)
+        assertEquals(19, unasked.size)
+        assertTrue("a phone that cannot be asked draws no rows at all", dwPackRows(unasked).isEmpty())
+    }
+
+    @Test
+    fun `on the handset as it is today the list is two installed rows and no download control`() {
+        /*
+         * THE MEASUREMENT THE WHOLE INSTRUCTION TURNS ON, on the phone attached right now. Nineteen
+         * rows and a paragraph each became two rows and no button.
+         */
+        val states = dwPackStates(tags, galaxyM32Today)
+        assertEquals(listOf("hi-IN", "en-IN"), dwPackRows(states))
+        assertEquals(
+            "both rows read the same two words, and no third row is drawn",
+            listOf(DwPackState.INSTALLED, DwPackState.INSTALLED),
+            dwPackRows(states).map { states[it] }
+        )
+        // AND NOT ONE DOWNLOAD CONTROL, which is the half a reader would assume rather than check:
+        // both rows are INSTALLED, so `dwPackOffer` answers INSTALLED and `dwMayAsk` is false for
+        // every one of the nineteen. The only control left on the card is "Check again".
+        assertTrue(
+            tags.none {
+                dwMayAsk(
+                    offer = dwPackOffer(states[it]!!, DwConnection.UNMETERED),
+                    requested = false,
+                    refused = false,
+                )
+            }
+        )
+    }
+
+    @Test
+    fun `the same rule on the earlier reading draws the two rows a designer could act on`() {
+        // THE OTHER DIRECTION, so the filter cannot be passing by accident on a phone where nothing is
+        // downloadable. On 2026-08-09 the same two languages were one tap away, and the rule shows
+        // exactly them — with a live download offer, which is what makes the row worth drawing.
+        val states = dwPackStates(tags, galaxyM32BeforeTheDownloads)
+        assertEquals(listOf("hi-IN", "en-IN"), dwPackRows(states))
+        assertEquals(
+            listOf(DwPackState.DOWNLOADABLE, DwPackState.DOWNLOADABLE),
+            dwPackRows(states).map { states[it] }
+        )
+        assertTrue(
+            dwPackRows(states).all {
+                dwMayAsk(
+                    offer = dwPackOffer(states[it]!!, DwConnection.UNMETERED),
+                    requested = false,
+                    refused = false,
+                )
+            }
+        )
+    }
+
+    @Test
+    fun `the row order is the dropdown's order and is never re-sorted by state`() {
+        // A settings list that reordered itself by state would move the row a designer is reaching for
+        // as they reach for it. Hindi is first in DW_DICTATION_LANGUAGES and must be first here.
+        val mixed = DwRecognitionSupport(
+            installedOnDevice = listOf("en-IN"),
+            supportedOnDevice = listOf("hi-IN"),
+        )
+        assertEquals(listOf("hi-IN", "en-IN"), dwPackRows(dwPackStates(tags, mixed)))
+    }
+
+    @Test
+    fun `an empty list says so in one line, and never that dictation is unavailable`() {
+        /*
+         * THE SENTENCE MOST AT RISK OF OVERSTATING. Zero installable packs is NOT zero dictation:
+         * every one of the nineteen still works through the server and seventeen only ever did. A line
+         * a designer reads as "dictation is unavailable" makes them stop using a control that works.
+         */
+        val canAsk = dwPackEmptyListSentence(canAsk = true)
+        assertTrue("it must say dictation still works", canAsk.contains("Dictation works as normal"))
+        val cannotAsk = dwPackEmptyListSentence(canAsk = false)
+        assertTrue(cannotAsk.contains("Dictation still works"))
+        // The two cases differ because the NEXT MOVE differs: one is "your phone's catalogue has none
+        // of these", the other is "this Android version cannot be asked — use the phone's settings".
+        assertTrue(cannotAsk.contains("phone's own speech or keyboard settings"))
+        assertFalse(canAsk.contains("cannot be asked"))
+        listOf(canAsk, cannotAsk).forEach {
+            assertFalse("no empty list may read as broken dictation", it.contains("unavailable"))
+            assertFalse(it.contains("cannot dictate"))
+        }
+    }
+
+    @Test
+    fun `no row and no empty-list line ever announces that a language uses the internet`() {
+        /*
+         * PRINCIPLE 2, AS AN ASSERTION. *"What is the point of giving user a disclaimer that the
+         * language would utilise internet?"* Two constants carrying exactly that disclaimer were
+         * deleted on 2026-08-13; this is what stops a third being written. It is asked of the strings
+         * a designer meets WITHOUT having asked for anything — the row labels and the empty line.
+         *
+         * It deliberately does NOT police `dwPackStateSentence`, which is drawn only inside the offer
+         * dialog a designer opened themselves, nor `dwDownloadCostSentence`, which is money.
+         */
+        val standing = DwPackState.entries.map { dwPackStateLabel(it) } +
+            listOf(dwPackEmptyListSentence(canAsk = true), dwPackEmptyListSentence(canAsk = false))
+        standing.forEach { line ->
+            assertFalse("“$line” announces the network", line.contains("internet", ignoreCase = true))
+            assertFalse("“$line” announces the network", line.contains("connection", ignoreCase = true))
+            assertFalse("“$line” announces the network", line.contains("network", ignoreCase = true))
+        }
     }
 }

@@ -52,6 +52,16 @@ import com.designprototype.workshop.data.DwTier
 import com.designprototype.workshop.data.DwReferenceStore
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.designWorkshopQuestionnaires
+import com.designprototype.workshop.data.DwCustomCache
+import com.designprototype.workshop.data.DwCustomSectionStore
+import com.designprototype.workshop.data.customFieldsForStage
+import com.designprototype.workshop.data.customSectionEntity
+import com.designprototype.workshop.data.customStageBlocks
+import com.designprototype.workshop.data.dwCustomCopy
+import com.designprototype.workshop.data.dwCustomDefinition
+import com.designprototype.workshop.data.dwCustomSectionWarnings
+import com.designprototype.workshop.data.retiredCustomFieldsWithAnswers
+import com.designprototype.workshop.data.undrawableCustomFieldsWithValues
 import com.designprototype.workshop.data.dwQuestionnaireCopy
 import com.designprototype.workshop.data.dwQuestionnaireWarnings
 import com.designprototype.workshop.data.EntityDto
@@ -206,6 +216,15 @@ fun ReportScreen(
      * here as a nullable rather than flattened to `emptyList()` on the way in.
      */
     var questionnaires by remember(workshopId) { mutableStateOf<DwQuestionnaireCache?>(null) }
+    /**
+     * This workshop's own questions, as this device holds them. NULL IS A STATE — see [DwCustomCopy].
+     *
+     * It reaches the document itself and not only the warnings: the answers are rendered into the
+     * stage they belong to, so a field copy exported in a courtyard carries the designer's own
+     * questions and the answers recorded against them. Before this it carried neither, and said
+     * nothing about either.
+     */
+    var customSections by remember(workshopId) { mutableStateOf<DwCustomCache?>(null) }
 
     LaunchedEffect(workshopId) {
         loading = true
@@ -235,7 +254,27 @@ fun ReportScreen(
             // that is about to be written. Scoring the local draft while exporting the merged one is
             // how a screen comes to say "18% of the required fields are filled in" over a report
             // that is in fact complete — and, before this, the other way round.
-            val scores = computeWorkshopCompleteness(registry, stored)
+            /*
+              THE DEFINITION, BEFORE ANYTHING IS SCORED FROM IT.
+
+              BOTH IDS ARE TRIED, for the reason the questionnaire read further down tries both: a
+              workshop created offline keeps its LOCAL id on this screen for ever, while the
+              definition is fetched under the SERVER's, and [dwCustomDefinition] files a fresh read
+              under the id it was asked to cache it as.
+
+              It is read HERE rather than beside the questionnaires because the percentage under the
+              export buttons is computed on the next line and must count the designer's own required
+              questions — a screen that said "94% of the required fields are filled in" over a report
+              missing two required custom answers would be the one number the export screen exists to
+              print, and wrong.
+            */
+            customSections = if (remoteId != null) {
+                runCatching { repository.dwCustomDefinition(appContext, workshopId, remoteId) }
+                    .getOrNull()
+            } else {
+                DwCustomSectionStore.load(appContext, workshopId)
+            }
+            val scores = computeWorkshopCompleteness(registry, stored, customSections)
             schema = registry
             draft = stored
             percent = overallPercent(scores)
@@ -264,6 +303,18 @@ fun ReportScreen(
                     "missing (${stage.missing.take(3).joinToString(", ")}" +
                     (if (stage.missing.size > 3) ", …" else "") + ")"
             }
+            // APPENDED AFTER the assignment above and never before it — that line REPLACES the
+            // list rather than adding to it, so a warning written earlier in this effect is simply
+            // gone. The questionnaire warning further down is appended for the same reason.
+            warnings = warnings + dwCustomSectionWarnings(
+                copy = dwCustomCopy(customSections),
+                // Sharpens the sentence rather than gating it: answers held on this phone with no
+                // definition to label them with is a strictly worse state than no answers at all,
+                // and the designer standing at the export screen can act on either.
+                answersHeld = stored?.stages.orEmpty().values.any { stage ->
+                    stage.custom.values.any { DwValues.isFilled(it) }
+                },
+            )
 
             // ── the questionnaire annexure's answers ─────────────────────────────────────────────
             //
@@ -307,6 +358,7 @@ fun ReportScreen(
             }
             questionnaires = held
             warnings = warnings + dwQuestionnaireWarnings(held)
+
         }.onFailure { onError(it.message ?: "Unable to prepare the report.") }
         loading = false
     }
@@ -358,6 +410,7 @@ fun ReportScreen(
                         format = format,
                         plan = plan,
                         questionnaires = questionnaires,
+                        customSections = customSections,
                     )
                 }
                 val loader = deviceImageLoader()
@@ -773,6 +826,8 @@ private fun buildWorkshopDocument(
     format: String = "DOCX",
     plan: ReportPlan? = null,
     questionnaires: DwQuestionnaireCache? = null,
+    /** See the internal overload below - null is "this device has never read a definition". */
+    customSections: DwCustomCache? = null,
 ): ReportDocument {
     val mediaById = draft?.media.orEmpty().associateBy { it.id }
     return buildWorkshopDocument(
@@ -785,6 +840,7 @@ private fun buildWorkshopDocument(
         warnings = warnings,
         accent = accent,
         questionnaires = questionnaires,
+        customSections = customSections,
         imageFor = { mediaId ->
             val descriptor = mediaById[mediaId]
             val file = descriptor?.let { WorkshopDraftStore.mediaFile(context, workshopId, it) }
@@ -859,6 +915,15 @@ internal fun buildWorkshopDocument(
      * annexure either — but for a reason the file and the export screen are allowed to state.
      */
     questionnaires: DwQuestionnaireCache? = null,
+    /**
+     * This workshop's custom definition, as this device holds it - see [DwCustomSectionStore].
+     *
+     * NULL AND EMPTY ARE DIFFERENT and both are legitimate. Null is "this handset has never read the
+     * definition", which is what every caller that does not consult the store means, and which prints
+     * no custom questions at all; a cache with no sections is "the server says this workshop has
+     * none", which also prints nothing - but for a reason the export screen is allowed to state.
+     */
+    customSections: DwCustomCache? = null,
 ): ReportDocument {
     val resolved = plan ?: reportPlanFor(
         schema = schema,
@@ -894,12 +959,13 @@ internal fun buildWorkshopDocument(
         if (special != null) {
             renderSpecialSection(
                 builder, special, section, resolved, schema, draft, imageFor, refs, figures,
-                questionnaires,
+                questionnaires, customSections,
             )
         } else {
             stages[section.stageKey]?.let { stage ->
                 renderStageSection(
                     builder, stage, section, resolved, schema, draft, imageFor, refs, figures,
+                    customSections,
                 )
             }
         }
@@ -932,6 +998,8 @@ private fun renderStageSection(
     imageFor: (String) -> ImageRef?,
     refs: DwRefLabels,
     figures: DwFigures,
+    /** This workshop's custom definition, or null when this device has never read one. */
+    customSections: DwCustomCache? = null,
 ) {
     val template = plan.template
     val options = RenderOptions(
@@ -943,10 +1011,35 @@ private fun renderStageSection(
     )
     val stored = draft?.stages?.get(stage.key)
     val singletonValues = stored?.values.orEmpty()
+    val customValues = stored?.custom.orEmpty()
     val hasCollections = stage.collections.any { stored?.rowsFor(it.key).orEmpty().isNotEmpty() }
+    // The designer's own blocks for this stage, resolved once. Empty for every stage of every
+    // workshop with no definition, which is most of them, and for every stage the definition says
+    // nothing about - so nothing below this line runs on the ordinary report.
+    val customBlocks = customStageBlocks(customSections, stage.key)
+    /*
+      THE TEMPLATE'S TIER CAP IS ASKED WHEREVER THIS FILE DECIDES WHETHER SOMETHING IS EMPTY, OR THE
+      EMPTINESS TEST IS ANSWERING A DIFFERENT QUESTION FROM THE ONE THE WRITER ANSWERS.
+
+      `renderEntity` prints only `tier <= options.maxTier` — COMPACT_SUMMARY caps at BASIC — while
+      both tests below asked whether ANY custom field held an answer at ANY tier. STANDARD is the
+      server's DEFAULT tier for a custom field, so the ordinary section is entirely STANDARD: under
+      that template a stage whose only content was custom printed a numbered stage heading, then a
+      section heading, then its description, and then nothing at all — the "heading over nothing" the
+      custom block below says in as many words that it exists to prevent.
+    */
+    fun withinTier(tier: String): Boolean = DwTier.of(tier).ordinal <= options.maxTier.ordinal
+    val hasCustom = customBlocks.any { block ->
+        block.fields.any { withinTier(it.tier) && DwValues.isFilled(customValues[it.key]) }
+    }
     // A stage with nothing in it is skipped entirely. Printing 22 headings with nothing under
     // them turns a five-page report into a twenty-page one that says the same amount.
-    if (singletonValues.isEmpty() && !hasCollections && section.omitIfEmpty) return
+    //
+    // `hasCustom` counted with the other two, and it is not defensive: EIGHT of the twenty-two stages
+    // declare no singleton entity at all, so a stage whose only content is a designer's own answers
+    // is exactly the case this omission would silently drop - the whole section gone from the file,
+    // under `omitIfEmpty`, with nothing anywhere saying a heading had been skipped.
+    if (singletonValues.isEmpty() && !hasCollections && !hasCustom && section.omitIfEmpty) return
 
     if (section.pageBreakBefore) builder.add(PageBreakBlock)
     builder.heading(
@@ -960,6 +1053,79 @@ private fun renderStageSection(
     stage.singleton?.let { entity ->
         if (singletonValues.isNotEmpty()) {
             wrote = renderEntity(builder, entity, singletonValues, imageFor, refs, options) || wrote
+        }
+    }
+
+    /*
+      THE DESIGNER'S OWN QUESTIONS, BETWEEN THE STAGE'S SINGLETON AND ITS COLLECTIONS.
+
+      THE POSITION IS THE SCORER'S. `computeStageCompleteness` counts custom fields between the two,
+      the completeness annexure prints `missing.take(3)` in that order, and the stage form draws them
+      in that order - so a document that printed them last would put the questions in an order that
+      matches neither the form the answers were typed into nor the Outstanding column three pages
+      later.
+
+      RENDERED THROUGH [renderEntity] AND NOT BY A SECOND WRITER. `customSectionEntity` turns one
+      section into a synthetic SINGLETON [EntityDto] carrying only its live, drawable fields, so a
+      custom answer gets the identical label/value grid, tier cap, unit suffix, enum-label lookup and
+      MONEY formatting the stage's own answers get. A second writer would be a second set of answers
+      to all of that, and the day the two disagreed one question would print unlike every other
+      question in the same table.
+
+      A SECTION IS SKIPPED WHEN NOTHING UNDER IT IS ANSWERED. `renderEntity` already omits an unfilled
+      field, so an untouched section would otherwise print a level-2 heading over nothing - which, in
+      a generated report, is the commonest way a file looks broken.
+
+      RETIRED FIELDS ARE PRINTED WHERE THEY HOLD AN ANSWER, under their own note, because that answer
+      was given under a wording that appears nowhere else and dropping it is how two copies of one
+      report come to disagree about the fieldwork.
+    */
+    // The cap is applied to the retired and unreadable notes as well as to the grid, so that one
+    // export cannot omit a live STANDARD answer while printing a retired one beside it — see
+    // [withinTier] above.
+    customBlocks.forEach { block ->
+        val entity = customSectionEntity(block.section)
+        val retired = retiredCustomFieldsWithAnswers(block.section, customValues)
+            .filter { withinTier(it.tier) }
+        val anyLive = entity.fields.any {
+            withinTier(it.tier) && DwValues.isFilled(customValues[it.key])
+        }
+        if (!anyLive && retired.isEmpty()) return@forEach
+        builder.heading(
+            block.section.title.ifBlank { block.section.key },
+            level = 2,
+            numbered = template.numberHeadings,
+        )
+        if (block.section.description.isNotBlank()) {
+            builder.para(block.section.description, style = ParaStyle.NOTE)
+        }
+        if (anyLive) {
+            wrote = renderEntity(builder, entity, customValues, imageFor, refs, options) || wrote
+        }
+        retired.forEach { field ->
+            builder.para(
+                (field.label.ifBlank { field.key }) + ": " +
+                    DwValues.text(customValues[field.key]) +
+                    " (recorded under a wording this workshop no longer asks)",
+                style = ParaStyle.NOTE,
+            )
+            wrote = true
+        }
+        // NAMED RATHER THAN DROPPED, and its VALUE deliberately not printed. This build has no way to
+        // read a type it does not know, so anything it printed here would be a raw stored shape an
+        // officer would read as the designer's words. Saying the question exists and that this copy
+        // cannot carry its answer is the honest version — and it is the same register the export
+        // screen's own unsupported-section sentences use.
+        undrawableCustomFieldsWithValues(block.section, customValues)
+            .filter { withinTier(it.tier) }
+            .forEach { field ->
+            builder.para(
+                (field.label.ifBlank { field.key }) + ": recorded, but this version of the app " +
+                    "cannot read an answer of this kind (" + field.type + "), so it is not " +
+                    "reproduced here. The office's copy of this report carries it.",
+                style = ParaStyle.NOTE,
+            )
+            wrote = true
         }
     }
 
@@ -1072,6 +1238,8 @@ private fun renderSpecialSection(
     refs: DwRefLabels,
     figures: DwFigures,
     questionnaires: DwQuestionnaireCache?,
+    /** This workshop's custom definition - the completeness annexure counts the same things. */
+    customSections: DwCustomCache? = null,
 ) {
     when (special) {
         SpecialSection.COVER -> renderCover(builder, section, plan, schema, draft, imageFor, refs)
@@ -1094,7 +1262,7 @@ private fun renderSpecialSection(
         SpecialSection.ANNEXURE_MEDIA ->
             renderMediaAnnexure(builder, section, plan, schema, draft, imageFor)
         SpecialSection.COMPLETENESS ->
-            renderCompletenessAnnexure(builder, section, plan, schema, draft, refs)
+            renderCompletenessAnnexure(builder, section, plan, schema, draft, refs, customSections)
         SpecialSection.MAP -> renderMap(builder, section, plan, draft)
         SpecialSection.CHART -> renderCharts(builder, section, plan, figures)
 
@@ -1120,6 +1288,25 @@ private fun renderSpecialSection(
         // With no copy on the device it still draws nothing and still warns, exactly as before.
         SpecialSection.ANNEXURE_QUESTIONNAIRES ->
             renderQuestionnaireAnnexure(builder, section, plan, questionnaires)
+
+        // THE SECOND SECTION THIS DEVICE DOES NOT EMIT, and — like the transcripts above — the gap
+        // is the DATA and not the drawing. An AI layer is a row on the server carrying which model
+        // produced a piece of text and which person accepted it; nothing under `data/` holds one,
+        // no endpoint this client binds asks for one, and no screen here offers to fetch them. So
+        // there is nothing to lay out, and laying out a numbered heading over nothing would be
+        // worse than the honest gap for the reason the transcript arm gives: a heading in the
+        // contents that leads nowhere reads as a corrupt file.
+        //
+        // IN PRACTICE THIS ARM IS UNREACHABLE TODAY, and it is written anyway. No template in
+        // `REPORT_TEMPLATES` carries the section and this handset never asks the server to splice
+        // it in, so nothing puts it in a plan. But `renderSpecialSection` is exhaustive by
+        // construction — that is what made the compiler stop the build when the enum member was
+        // added, which is exactly the forcing function this port wants — and an arm that silently
+        // did the wrong thing would be indistinguishable from one nobody thought about. The
+        // sentence a designer would read is in `ReportSettings.UNSUPPORTED_SECTIONS`, and it is
+        // unconditional there because, unlike a transcript or a questionnaire copy, there is no
+        // action on this phone that could ever close this gap.
+        SpecialSection.ANNEXURE_AI_LAYERS -> Unit
     }
 }
 
@@ -1214,6 +1401,8 @@ private fun renderCompletenessAnnexure(
     schema: SchemaResponse,
     draft: WorkshopDraft?,
     refs: DwRefLabels,
+    /** This workshop's custom definition; null scores exactly as this annexure did before it existed. */
+    customSections: DwCustomCache? = null,
 ) {
     val rows = schema.stages.sortedBy { it.number }.map { stage ->
         val stored = draft?.stages?.get(stage.key)
@@ -1226,6 +1415,12 @@ private fun renderCompletenessAnnexure(
                 entity.key to stored?.rowsFor(entity.key).orEmpty()
                     .map { maskUnresolvableRefs(entity, it.values, refs) }
             },
+            // NO REF MASKING FOR THESE, and none is possible: v1 declares no REF type at all, so
+            // there is no reference a custom answer could hold that the report could fail to resolve.
+            // That exclusion is the whole reason - a dangling custom reference would read FILLED on
+            // every form and UNFILLED in the document, which is the defect this annexure measures.
+            customFields = customFieldsForStage(customSections, stage.key),
+            customValues = stored?.custom.orEmpty(),
         )
         listOf(
             runsOf("${score.number}. ${score.title}"),

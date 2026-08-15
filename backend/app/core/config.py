@@ -177,6 +177,16 @@ class Settings(BaseSettings):
     # see app/services/s3.py and docs/SECURITY.md for why bucket default encryption carries those.
     aws_s3_sse_algorithm: str = Field(default="AES256", alias="AWS_S3_SSE_ALGORITHM")
 
+    # --- Offline speech model artifacts (app/services/asr_artifacts.py) --------------------------
+    # Directory this API reads the ASR model files out of, one subdirectory per artifact id. UNSET by
+    # default, which means /api/asr-models reports every artifact as unpublished and the byte routes
+    # answer 503: a deployment that has not been given the bytes must say so, never serve a short
+    # body. It is a filesystem path rather than an object-storage key on purpose — the digest this
+    # endpoint publishes is COMPUTED from the file on each change, so there is no stored copy of it
+    # to drift, and that is only affordable against a local read. The full argument, and the operator
+    # step that puts the bytes there, are in docs/ASR-MODEL-HOSTING.md.
+    asr_model_dir: str | None = Field(default=None, alias="ASR_MODEL_DIR")
+
     next_public_app_url: AnyHttpUrl | str = Field(
         default="http://localhost:3000", alias="NEXT_PUBLIC_APP_URL"
     )

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -8,6 +9,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.core.config import Settings, get_settings
 from app.core.db import db
+from app.services import dictation_consent
 from app.services.ai import (
     analyze_measurement_image_bytes,
     redact_secrets,
@@ -21,6 +23,8 @@ from app.services.app_settings import (
 )
 from app.services.s3 import get_object_bytes
 from prisma import Json
+
+logger = logging.getLogger(__name__)
 
 TRANSCRIPTION = "TRANSCRIPTION"
 MEASUREMENT = "MEASUREMENT"
@@ -126,9 +130,72 @@ async def enqueue_media_processing_jobs(
     processing_requests: list[str] | None,
     requested_by_id: str,
     settings: Settings | None = None,
+    *,
+    design_workshop_id: str | None = None,
 ) -> list[Any]:
+    """Queue the processing this upload asked for. **Transcription is gated on the artisan's consent.**
+
+    ================================================================================================
+    THE HOLE THIS CLOSES, AND IT WAS THE WIDEST DOOR ONTO A PAID PROVIDER IN THE REPOSITORY
+    ================================================================================================
+
+    ``DesignWorkshop.dictationConsent`` — the artisan's recorded answer to *"may recordings and
+    dictation from this workshop leave the phone to be written down by a transcription service outside
+    it"* — was read in exactly one place: the gate on ``POST /design-workshops/{id}/dictate``. This
+    function is where the recordings actually go. Every design-workshop AUDIO clip reaches
+    ``ai.transcribe_audio_bytes`` through a job created HERE, by one of two callers, and neither read
+    the column:
+
+    * ``POST /media/complete`` — and note that the auto-enqueue in :func:`_job_requests` is NOT the
+      live path. **Both shipped clients ask for TRANSCRIPTION explicitly** on every audio upload
+      (``WorkshopRepository.uploadDesignWorkshopMedia`` sends ``listOf("TRANSCRIPTION")``;
+      ``frontend/lib/media.ts``'s ``resolveProcessing`` adds it whenever ``transcribeAudio``, which
+      defaults to true). So a gate placed only on the ``requested is None`` branch would have closed a
+      door nobody uses and left the one the fleet drives through wide open. The gate is therefore on
+      the REQUEST, not on how the request was arrived at.
+    * ``workshop_transcripts.enqueue_stage_transcriptions``, from ``save_stage`` — which reported
+      ``"transcriptionsQueued": 1`` to a designer on a workshop whose consent was NOT_RECORDED, in the
+      same minute that ``POST /{id}/dictate`` refused the same workshop with a 409.
+
+    **THE FAILURE IN ONE SENTENCE:** an artisan who was asked and said no had their eleven-minute
+    recording sent to ElevenLabs, Deepgram or OpenAI anyway, because the answer they gave governed the
+    thirty-second dictation and not the interview — and the app told them so
+    (``DwDictationConsent.kt``'s ``DW_CONSENT_MEDIA_NOT_GATED``: *"this answer was not given the power
+    to stop that. Until it is, do not attach a recording of anybody who has said no."*). That sentence
+    is now false in the artisan's favour, and correcting it is an Android change this lane cannot make.
+
+    ================================================================================================
+    WHY THE GATE IS HERE AND NOT IN THE TWO ROUTES
+    ================================================================================================
+
+    One choke point, because "one gate with a door beside it is not a gate" is the lesson this feature
+    has already paid for twice — ``POST /design-workshops/dictate`` retired to a 410, and
+    ``POST /media/transcribe`` narrowed to admin. Every TRANSCRIPTION job in this system is created by
+    the loop below. A check in ``media.py`` and a check in ``workshop_transcripts.py`` would be two
+    places to forget, and a third caller added next season would arrive ungated by default. Here, a new
+    caller is gated whether or not its author has read this file.
+
+    ``design_workshop_id`` is for a caller that knows the workshop from something other than the file —
+    ``save_stage`` holds it in a path parameter. It is optional rather than required because
+    ``/media/complete`` genuinely does not know it and must not be made to invent one; the row's own
+    ``linkedRecordType``/``linkedRecordId`` tag answers for that path. See
+    ``dictation_consent.MEDIA_TAG``.
+
+    **MEASUREMENT IS NOT GATED, deliberately.** It sends a photograph of an object on a grid sheet to a
+    vision model. That is not a recording of anybody's voice, no consent question in this repository
+    asks about it, and ``ENQUEUEABLE_PROCESSING_REQUESTS`` already refuses it at the only route that
+    could request it. Gating it on an answer nobody gave about photographs would be the same overreach
+    §6 of this module's docstring warns about, in the other direction.
+    """
     settings = settings or get_settings()
     requests = _job_requests(media, processing_requests)
+    if TRANSCRIPTION in requests:
+        verdict = await dictation_consent.transcription_verdict(
+            media, design_workshop_id=design_workshop_id
+        )
+        if not verdict.may_send:
+            requests.discard(TRANSCRIPTION)
+            await _record_transcription_refused(media, verdict)
     if not requests:
         return []
 
@@ -156,6 +223,56 @@ async def enqueue_media_processing_jobs(
         await _mark_measurement_queued(media_id, target_data)
 
     return created_jobs
+
+
+async def _record_transcription_refused(media: Any, verdict: Any) -> None:
+    """Write the consent refusal onto the clip, so a designer is TOLD rather than left with silence.
+
+    **THE ALTERNATIVE WAS THE REAL RISK OF FAILING CLOSED.** A recording that is simply never
+    transcribed looks exactly like a recording the worker has not got to yet: the transcripts screen
+    shows it with no text, the annexure leaves it out, and ``report_annexures.missing_transcript_note``
+    counts it among the clips that "have no transcript yet". A designer would wait for a night that
+    never comes, and the feature would be reported as broken rather than as refused — which is how a
+    privacy gate gets ripped out by somebody debugging a support ticket.
+
+    ``FAILED`` and not a new status token. It is already in this module's vocabulary, both clients
+    already render it, and — decisively — it is deliberately absent from
+    ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES``, so the clip becomes a candidate again on the
+    next save of its stage. That is exactly the behaviour a refusal needs: **the moment the artisan
+    changes their mind and somebody records GRANTED, the next stage save picks the recording up.** A
+    terminal status would have needed a person to find every refused clip by hand.
+
+    The sentence in ``transcriptError`` is the gate's own field copy, unabbreviated. Never raises: this
+    is a note about a send that did not happen, and failing to write the note must not turn into a
+    failed upload or a failed stage save.
+
+    **IT WILL NOT WRITE OVER A TRANSCRIPT THAT ALREADY EXISTS**, which is this file's own hardest-won
+    lesson applied to a new writer. ``_transcript_write`` records what happened the last time something
+    here wrote a status without looking: *"writing that empty result verbatim NULLED OUT a transcript
+    that was already stored … destroyed it the moment the provider was down, and nothing else holds a
+    copy."* The same shape is reachable here — a clip transcribed months ago under a grant since
+    withdrawn, whose uploader retries ``/media/complete`` — and marking that row FAILED would leave a
+    stored transcript sitting under a status saying it failed, which is a lie about the row and hides it
+    from every screen that filters on the status. Nothing is sent either way; the refusal held. What is
+    skipped is only the note, on the one row where the note would be false.
+    """
+    media_id = str(_value(media, "id") or "")
+    if not media_id:
+        return
+    if str(_value(media, "transcriptText") or "").strip():
+        return
+    try:
+        await db.mediafile.update(
+            where={"id": media_id},
+            data={"transcriptStatus": FAILED, "transcriptError": verdict.refusal},
+        )
+    except Exception as exc:  # noqa: BLE001 — the refusal already held; this is only the note.
+        logger.warning(
+            "media_queue: transcription of media %s was refused for consent, and the reason could "
+            "not be written onto the row (%s)",
+            media_id,
+            exc,
+        )
 
 
 async def _mark_measurement_queued(media_id: str, target_data: dict[str, str]) -> None:
@@ -241,8 +358,29 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
     "Transcribe now" action: it bypasses the queue AND the off-peak window so the result is produced on
     the spot. Mirrors the worker's TRANSCRIPTION path so a manual run and a queued run agree. Never
     raises on an AI failure — it records the status/error on the media row and returns the result so the
-    caller can surface it."""
+    caller can surface it.
+
+    **IT BYPASSES THE QUEUE, SO IT NEEDS THE QUEUE'S GATE OF ITS OWN.** This function reaches
+    ``transcribe_audio_bytes`` without passing through ``_process_job``, which is precisely the shape of
+    the two doors this feature has already had to close — the retired id-less ``/dictate`` and
+    ``POST /media/transcribe``. An admin pressing "Transcribe now" on a recording whose artisan refused
+    would otherwise send it, and would be the one caller for whom nothing on screen said so.
+
+    **AND AN ADMIN IS NOT AN EXCEPTION HERE, which is a departure from this repository's own note that
+    "the consent gate has never been a refusal an admin could meet".** That observation is true of the
+    routes it was written about, and it is an argument about PERMISSION: an admin is inside
+    ``DESIGN_WORKSHOP_ROLES`` and can record a GRANTED decision themselves, so the gate cannot restrain
+    them. It is not an argument for sending. Recording the grant is a visible, attributed, logged act
+    with the artisan's name on the row; sending anyway is the same outcome with no record that anybody
+    decided it. An admin who believes the artisan agreed has a route for saying so, and this refusal
+    names it. :class:`dictation_consent.SendRefused` is raised — see that class for why not a result."""
     settings = settings or get_settings()
+    # ``resolve_from_stages`` for the drain's reason above, and this route needed it just as badly:
+    # measured on the running API, an admin pressing "Transcribe now" on an untagged clip that a stage
+    # of a REFUSED workshop names got HTTP 200 and the recording went to all three providers.
+    verdict = await dictation_consent.transcription_verdict(media, resolve_from_stages=True)
+    if not verdict.may_send:
+        raise dictation_consent.SendRefused(verdict)
     media_id = str(_value(media, "id"))
     await db.mediafile.update(where={"id": media_id}, data={"transcriptStatus": PROCESSING})
     content = await asyncio.to_thread(get_object_bytes, _value(media, "objectKey"))
@@ -366,6 +504,33 @@ async def _lock_job(job_id: str, worker_id: str) -> Any | None:
 
 async def _process_job(job: Any, settings: Settings) -> None:
     media = job.mediaFile
+    if job.jobType == TRANSCRIPTION:
+        # RE-READ AT THE MOMENT OF SENDING, AND THIS IS THE CHECK THAT MAKES A WITHDRAWAL MEAN
+        # SOMETHING. The enqueue gate is not sufficient on its own, and the module docstring of
+        # `dictation_consent` names the exact scenario: "An artisan agrees on the 3rd, nine dictations
+        # go to a provider over the following week, the artisan changes their mind on the 9th." A job
+        # queued under the grant sits in this table until the off-peak window opens; without this line
+        # the withdrawal on the 9th would stop nothing that was already queued, and the recordings
+        # would leave after the artisan had said stop.
+        #
+        # It costs one primary-key read per transcription job, on a path that is about to spend a
+        # provider round trip and read the whole file out of object storage — and it is BEFORE the
+        # bytes are fetched, so a refused job does not even pull the audio.
+        #
+        # ``resolve_from_stages`` BECAUSE A JOB CARRIES NO WORKSHOP AND THE CLIP MAY NOT EITHER, which
+        # is the hole this argument closes and it was measured on the running API rather than reasoned
+        # about: a clip uploaded through ``POST /media/complete`` with no ``designWorkshop`` tag is
+        # queued here with nothing anywhere naming a workshop — correctly, since at that instant none
+        # does — and is written into a stage field only afterwards, which is the ordinary order of
+        # events. From then on the stage says whose recording it is. Without this the drain read only
+        # the absent tag, answered NOT_WORKSHOP_MATERIAL, and handed the recording of an artisan who
+        # had REFUSED to ElevenLabs, Deepgram and OpenAI in turn. See
+        # ``dictation_consent.stage_attached_workshop_ids``; the extra read happens only for a clip
+        # that carries no tag at all, which is never a clip either shipped client uploaded.
+        verdict = await dictation_consent.transcription_verdict(media, resolve_from_stages=True)
+        if not verdict.may_send:
+            await _finalize_refused_job(job, verdict)
+            return
     content = await asyncio.to_thread(get_object_bytes, media.objectKey)
     if job.jobType == TRANSCRIPTION:
         result = await transcribe_audio_bytes(
@@ -529,6 +694,35 @@ async def _finalize_unavailable_job(job_id: str, result: dict[str, Any], message
             "completedAt": datetime.now(UTC),
             "result": Json(jsonable_encoder(result)),
             "error": str(message or "Required AI API key is not configured."),
+        },
+    )
+
+
+async def _finalize_refused_job(job: Any, verdict: Any) -> None:
+    """Close a queued transcription that consent will not permit. Terminal, and it says why.
+
+    ``FAILED`` immediately and NOT a retry, which is the opposite of every other failure in this file.
+    The retry ladder above exists for conditions that clear by themselves — a provider that is down, a
+    rate limit, a worker that died holding a lock. This one clears only when a person records a
+    different answer, and re-attempting it every few minutes until ``maxAttempts`` is spent would put
+    the same refusal in the log three times and tell a reader that something was being retried.
+
+    IT DOES NOT RAISE, so the batch keeps draining. A refused clip is not an error in the queue; it is
+    the queue working. Raising here would count it as a failure in the pass's tally, page whoever reads
+    that tally, and — through ``_handle_job_failure`` — reschedule it.
+
+    The clip itself is written by :func:`_record_transcription_refused`, which leaves it eligible for a
+    later pass once the answer changes.
+    """
+    await _record_transcription_refused(job.mediaFile, verdict)
+    await db.mediaprocessingjob.update(
+        where={"id": job.id},
+        data={
+            "status": FAILED,
+            "lockedAt": None,
+            "lockedBy": None,
+            "completedAt": datetime.now(UTC),
+            "error": str(verdict.refusal or "")[:2000],
         },
     )
 

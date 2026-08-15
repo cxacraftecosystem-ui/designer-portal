@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.WorkshopSyncStatus
+import com.designprototype.workshop.data.dwDeviceSyncBanner
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text. Without this import the bare
 // `Text` below resolves to Material's, inherits whatever family LocalTextStyle carries, and quietly
 // sets these lines in the wrong face — the exact failure ui/FieldText.kt exists to prevent.
@@ -85,7 +86,18 @@ internal fun WorkshopSyncChip(status: WorkshopSyncStatus, sending: Boolean) {
             MaterialTheme.colorScheme.onPrimaryContainer,
             MaterialTheme.colorScheme.primaryContainer
         )
-        status.hasFailures -> Triple(
+        // A REFUSED ANSWER WEARS THE REFUSAL ICON, NOT THE CLOUD-OFF ONE. It is not a failed stage —
+        // the stage saved, and `hasFailures` is right to exclude it — but it is equally not "waiting
+        // for signal", which is what the `else` arm below draws. Sending somebody out of a building
+        // to look for a bar of signal, over an answer the repository has already considered and
+        // declined, is the same wrong story `isConnectionFailure` exists to stop telling.
+        // AND SO DOES A DELETION THAT CANNOT TRAVEL, for the identical reason and to keep this chip
+        // saying what the banner ten pixels above it says. `unsentDeletions` is a term of
+        // `isFullySynced`, so without this arm such a workshop fell to the `else` below and wore the
+        // cloud with a line through it — a claim that the next bar of signal carries it away. No pass
+        // ever will: `pushStages` only pushes, and this needs the stage READ. See
+        // [DwDeviceSyncBanner.waiting], which draws exactly this distinction from the same two counts.
+        status.hasFailures || status.refusedAnswers > 0 || status.unsentDeletions > 0 -> Triple(
             Icons.Filled.ErrorOutline,
             MaterialTheme.colorScheme.onErrorContainer,
             MaterialTheme.colorScheme.errorContainer
@@ -226,11 +238,35 @@ internal fun DeviceSyncBanner(
     stages: Int,
     files: Int,
     bytes: Long,
+    /** Stages and files the server refused OUTRIGHT — see [WorkshopSyncStatus.hasFailures]. */
     refusals: Int,
+    /**
+     * Answers refused INSIDE saves that otherwise succeeded — see
+     * [WorkshopSyncStatus.refusedAnswers], and [dwDeviceSyncBanner] for what leaving this out said.
+     */
+    refusedAnswers: Int,
+    /**
+     * Stages holding a row deletion that cannot be sent until the stage has been READ — see
+     * [WorkshopSyncStatus.unsentDeletions].
+     *
+     * Handed down for the same reason `refusedAnswers` is, and it is the same omission that made the
+     * banner lie once already: it is a term of [WorkshopSyncStatus.isFullySynced], so such a workshop
+     * reaches the caller's `outstanding` list, and a banner given no number for it would draw a
+     * workshop it cannot name.
+     */
+    unsentDeletions: Int,
     busy: Boolean,
     onSyncNow: () -> Unit,
 ) {
-    if (workshops == 0 && refusals == 0) return
+    val banner = dwDeviceSyncBanner(
+        workshops = workshops,
+        stages = stages,
+        files = files,
+        bytesText = syncBytes(bytes),
+        failures = refusals,
+        refusedAnswers = refusedAnswers,
+        unsentDeletions = unsentDeletions,
+    ) ?: return
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -246,8 +282,12 @@ internal fun DeviceSyncBanner(
                 strokeWidth = 2.dp
             )
         } else {
+            // THE CLOUD WITH A LINE THROUGH IT IS A CLAIM ABOUT THE NETWORK, so it is drawn only
+            // when something is actually waiting for one. See [DwDeviceSyncBanner.waiting] — this is
+            // the same distinction [WorkshopSyncChip] draws one line down the same screen, and the
+            // two disagreeing about one phone is the defect that put it here.
             Icon(
-                Icons.Filled.CloudOff,
+                if (banner.waiting) Icons.Filled.CloudOff else Icons.Filled.ErrorOutline,
                 contentDescription = null,
                 tint = MaterialTheme.field.onWarningContainer,
                 modifier = Modifier.size(16.dp)
@@ -255,18 +295,13 @@ internal fun DeviceSyncBanner(
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
-                buildList {
-                    if (stages > 0) add("$stages stage(s)")
-                    if (files > 0) add("$files file(s), ${syncBytes(bytes)}")
-                    if (refusals > 0) add("$refusals refused")
-                }.joinToString(" · ").ifBlank { "Waiting to upload" },
+                banner.headline,
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                "Across $workshops workshop(s) on this device. Everything is saved here and editable " +
-                    "offline; it uploads whenever there is a connection.",
+                banner.detail,
                 color = MaterialTheme.field.onWarningContainer,
                 fontSize = 10.sp
             )

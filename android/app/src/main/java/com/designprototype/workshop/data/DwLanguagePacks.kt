@@ -168,8 +168,14 @@ internal fun dwNormalizeLanguageTag(raw: String): String =
  * (India) transcribed by a US model is exactly the silent-wrong-output failure `EXTRA_LANGUAGE_
  * PREFERENCE` exists to avoid in DwDictation. Matching on the primary subtag in both directions
  * would claim eight of the nineteen were installed on a handset carrying only `en-US`.
+ *
+ * INTERNAL RATHER THAN PRIVATE SINCE 2026-08-12, AND FOR ONE REASON ONLY: `DwModelLanguages.kt` asks
+ * the same question of a model's own language list ("this artifact says it serves `or`; does that
+ * cover `or-IN`?"), and a second copy of an asymmetry this subtle is a second copy that will be
+ * "tidied" into a symmetric one by somebody who has not read the paragraph above. One function, one
+ * rule, both callers. No behaviour changed when the keyword did.
  */
-private fun dwTagCovers(reported: String, wanted: String): Boolean {
+internal fun dwTagCovers(reported: String, wanted: String): Boolean {
     val r = dwNormalizeLanguageTag(reported)
     val w = dwNormalizeLanguageTag(wanted)
     if (r.isEmpty() || w.isEmpty()) return false
@@ -297,6 +303,83 @@ fun dwMayAsk(offer: DwPackOffer, requested: Boolean, refused: Boolean): Boolean 
     offer == DwPackOffer.DOWNLOAD && (!requested || refused)
 
 // ---------------------------------------------------------------------------------------------
+// WHICH LANGUAGES ARE A ROW AT ALL — the owner's third instruction, as a function
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * **THE ROWS A LIST ABOUT MANAGING PACKS MAY CONTAIN. Exactly three states, and no others.**
+ *
+ * ── THE OWNER'S OWN WORDS, WHICH THIS FUNCTION IS ────────────────────────────────────────────
+ *
+ * *"For the language that have no download option at all, why even show them in the very first
+ * place?"* and *"I do not need to know it about each and every language in three paragraphs whether
+ * it has been downloaded or not."*
+ *
+ * ── WHAT IT REMOVES, MEASURED ON THE FLEET'S HANDSET ──────────────────────────────────────────
+ *
+ * On the SM-M325F (device-verified 2026-08-12) the nineteen resolve to: `hi-IN` and `en-IN`
+ * INSTALLED, **zero** DOWNLOADABLE, and **seventeen** [DwPackState.NO_OFFLINE_PACK]. Those seventeen
+ * had a checkbox-less row and a paragraph each, 1,207 words of settings copy whose entire content was
+ * that nothing could be done — and every one of those languages **still dictates perfectly well**
+ * through the server. A list about managing packs is a list of things that can be managed.
+ *
+ * ── WHY THE THREE, AND WHY [DwPackState.UNKNOWN] IS NOT ONE OF THEM ───────────────────────────
+ *
+ * INSTALLED is a row because it is the answer to "did my download arrive" and because a list that
+ * showed only what was missing could never be seen to have worked. DOWNLOADING and DOWNLOADABLE are
+ * rows because they are, respectively, a thing in progress and a thing one tap away.
+ *
+ * UNKNOWN is **not** a row, and that is the call worth defending. On API < 32 every one of the
+ * nineteen is UNKNOWN, so admitting it would put nineteen rows of "Unknown" on those handsets —
+ * nineteen rows of nothing-to-do, which is the exact failure this function exists to end, merely
+ * spelled with a different word. The honest "this Android version cannot be asked" is said ONCE,
+ * above the list, by [dwPackEmptyListSentence] with `canAsk = false` — corrected 2026-08-13, when
+ * the 58-word `DW_PACK_CANNOT_ASK_SENTENCE` this line used to name was deleted for saying the same
+ * thing at three times the length.
+ *
+ * NETWORK_ONLY, NO_OFFLINE_PACK and UNSUPPORTED are not rows because no button on this screen can
+ * change any of them. What a designer needs to know about those languages they meet **in the
+ * dictation flow, at the moment it costs something** — which is where the web puts it too.
+ */
+fun dwPackRowWorthShowing(state: DwPackState): Boolean =
+    state == DwPackState.INSTALLED ||
+        state == DwPackState.DOWNLOADING ||
+        state == DwPackState.DOWNLOADABLE
+
+/** The tags worth a row, in the order given. One pass, so the caller cannot re-order by accident. */
+fun dwPackRows(states: Map<String, DwPackState>): List<String> =
+    states.filterValues { dwPackRowWorthShowing(it) }.keys.toList()
+
+/**
+ * What to say when the list has **no rows at all** — which is this handset's answer on API < 33 and
+ * on any phone whose recogniser carries none of our nineteen.
+ *
+ * ── A LIST WITH NOTHING IN IT MUST SAY SO, NOT RENDER AN EMPTY BOX ────────────────────────────
+ *
+ * The brief: *"If the list would be EMPTY on a device, the screen says so in one line rather than
+ * rendering an empty box or nineteen rows of nothing-to-do."* An empty bordered box under a heading
+ * reads as a list that failed to load, and a designer who thinks a screen is broken stops using it.
+ *
+ * ── AND IT NEVER SAYS DICTATION IS BROKEN, BECAUSE IT IS NOT ──────────────────────────────────
+ *
+ * This is the sentence most at risk of overstating. Zero installable packs is **not** zero dictation:
+ * every one of the nineteen still works through the server, and seventeen of them only ever did. So
+ * the second clause is load-bearing rather than reassurance — without it this line reads as "offline
+ * dictation is unavailable on this phone", which a designer would reasonably take as "dictation is
+ * unavailable", and the control they would then stop using is one that works.
+ *
+ * @param canAsk false on API < 33, where the platform cannot be asked at all. The two cases get
+ *   different first clauses because the next move differs: one is "your phone's catalogue has none of
+ *   these", the other is "this Android version cannot be asked, use the phone's own settings".
+ */
+fun dwPackEmptyListSentence(canAsk: Boolean): String = if (!canAsk) {
+    "This Android version cannot be asked which speech packs are installed. Dictation still works — " +
+        "add packs in the phone's own speech or keyboard settings."
+} else {
+    "No offline packs to add on this phone. Dictation works as normal."
+}
+
+// ---------------------------------------------------------------------------------------------
 // The words. Android owns wording in this repository, and one language's state must read the same
 // on the settings list, in the first-run offer and in the dialog that opens when a language is
 // picked — three surfaces, one string, so they cannot drift into three different claims.
@@ -367,26 +450,31 @@ fun dwDownloadCostSentence(connection: DwConnection): String = when (connection)
             "fetches it, but nothing here is charged by the megabyte."
 }
 
-/**
- * The one-sentence pitch, used verbatim by the first-run offer and by the settings card.
- *
- * Two clauses because there are exactly two facts a designer needs to decide: what a pack buys
- * (dictation with no signal) and what it costs (a download now, storage on the phone).
- */
-const val DW_PACK_OFFER_BLURB: String =
-    "A language pack lets you dictate into the workshop's fields with no signal at all — the phone " +
-        "does the listening instead of a server. It costs a download now and some space on the " +
-        "phone, and nothing is fetched unless you ask for it."
-
-/**
- * What to say when the designer picks a language whose pack is missing AND there is no connection.
- *
- * Never paired with a download button — see [DwPackOffer.NO_CONNECTION].
- */
-const val DW_PACK_NO_CONNECTION_SENTENCE: String =
-    "The pack cannot be fetched now, because there is no connection. Dictation will use the network " +
-        "engine while there is signal; in a courtyard without one, type the answer in and dictate " +
-        "the rest later."
+// ---------------------------------------------------------------------------------------------
+// TWO CONSTANTS STOOD HERE AND BOTH ARE DELETED, 2026-08-13. Neither had a caller; both were drawn
+// by surfaces that have since been removed, and each is exactly one of the two things the owner
+// named. Recorded rather than silently dropped, because both are the kind of sentence a reader
+// invents again from scratch.
+//
+// `DW_PACK_OFFER_BLURB` — 44 words: what a language pack buys and what it costs. It was drawn by the
+// FIRST-RUN DASHBOARD CARD, which is itself gone (the note explaining why is at the foot of
+// `ui/designworkshop/DwLanguagePackUi.kt`: on the fleet's own handset that card offered a designer
+// something their phone cannot do, on the first screen after install). The settings card it also
+// claimed to serve had already dropped it — a list whose rows say "Works offline" in two words does
+// not need a paragraph defining what offline means. What survives of the cost half, and MUST survive,
+// is `dwDownloadCostSentence`: it is drawn immediately above the download button, and it is the money.
+//
+// `DW_PACK_NO_CONNECTION_SENTENCE` — 39 words, and it is PRINCIPLE 2'S FORBIDDEN CASE IN ITS PUREST
+// FORM: *"Dictation will use the network engine while there is signal; in a courtyard without one,
+// type the answer in."* A standing announcement that a language uses the internet, shown to a
+// designer who had asked for nothing. The owner: *"what is the point of giving user a disclaimer that
+// the language would utilise internet?"* It was drawn by `DwLanguagePackOfferDialog`'s
+// NO_CONNECTION arm; that dialog is now opened only where `dwMayAsk` is true, so the arm was
+// unreachable as well as wrong. A missing connection is reported AT THE MOMENT IT FAILS —
+// `dwDictationNothingLeftSentence` when the ladder runs out — and never in advance.
+//
+// DO NOT REINTRODUCE EITHER AS A STANDING PARAGRAPH ON A ROW OR A CARD.
+// ---------------------------------------------------------------------------------------------
 
 /**
  * What the platform actually promises when a download is requested, in a designer's words.
@@ -407,9 +495,20 @@ const val DW_PACK_NO_PROGRESS_ON_13: String =
     "This phone runs Android 13, which cannot report download progress. The request has gone to the " +
         "speech service — tap “Check again” in a few minutes to see whether the pack arrived."
 
-/** Said on API < 33, where there is no way to ask the platform anything. */
-const val DW_PACK_CANNOT_ASK_SENTENCE: String =
-    "This phone's Android version cannot be asked which speech packs are installed — that was added " +
-        "in Android 13. Dictation still works: it uses the offline engine when the language is " +
-        "there and the network engine when it is not, and it says which happened. To add a pack, " +
-        "use the phone's own speech or keyboard settings."
+// `DW_PACK_CANNOT_ASK_SENTENCE` STOOD HERE and is deleted, 2026-08-13. 58 words for API < 33: *"This
+// phone's Android version cannot be asked which speech packs are installed — that was added in Android
+// 13. Dictation still works: it uses the offline engine when the language is there and the network
+// engine when it is not, and it says which happened. To add a pack, use the phone's own speech or
+// keyboard settings."*
+//
+// WHY IT WENT, AND WHAT KEPT ITS JOB. Its middle clause narrates the ladder — which engine serves
+// which language, a choice no designer makes — which is principle 2's case. Every fact a designer
+// acts on survives in [dwPackEmptyListSentence] with `canAsk = false`: it cannot be asked, dictation
+// still works, add packs in the phone's own settings, in 23 words. `DwLanguagePackController.refresh`
+// now assigns THAT for this state, so the sentence a designer reads and the sentence the tests pin are
+// the same string.
+//
+// NOT A LOST STATE. The API < 33 reading is still SAID — it is drawn at the head of the pack list from
+// `cannotAsk`, alongside the three "we asked and could not find out" readings. Removing the sentence
+// from the screen, rather than shortening it, is the defect that was found on 2026-08-13 and fixed in
+// the same change; see the block above `dwPackEmptyListSentence`'s call site.

@@ -132,8 +132,23 @@ async def enqueue_stage_transcriptions(
     settings: Settings | None = None,
     *,
     viewer: Any,
+    design_workshop_id: str | None = None,
 ) -> list[str]:
     """Queue a TRANSCRIPTION job for every untranscribed AUDIO clip in ``entries``.
+
+    ``design_workshop_id`` IS THE CONSENT GATE'S EVIDENCE AND SHOULD ALWAYS BE PASSED. Every clip
+    reached from here belongs to the workshop whose stage was just saved, and the artisan's recorded
+    answer about that workshop is what decides whether it may be written down by a third party. The
+    caller has the id in a path parameter, so nothing needs looking up — it is handed to
+    ``enqueue_media_processing_jobs``, which refuses any clip whose workshop has not answered GRANTED.
+    See ``dictation_consent.transcription_verdict``.
+
+    It is nonetheless OPTIONAL rather than a keyword with no default, and that is a considered choice
+    against this file's own ``load_transcript_items`` precedent. The clips themselves carry the workshop
+    in their ``linkedRecordType``/``linkedRecordId`` tag — both clients file every design-workshop
+    upload under it — so a caller that omits this is gated by the row's own link rather than waved
+    through. Making it mandatory would buy a compile-time reminder at the cost of a runtime crash in a
+    ``try``-wrapped path whose whole contract is never to fail a designer's stage save.
 
     Returns the media ids actually queued, so a caller can report the count without asking the
     queue again. Never raises: a stage save is a designer's fieldwork reaching the server, and a
@@ -203,7 +218,11 @@ async def enqueue_stage_transcriptions(
             continue
         try:
             created = await enqueue_media_processing_jobs(
-                row, [TRANSCRIPTION], requested_by_id, settings
+                row,
+                [TRANSCRIPTION],
+                requested_by_id,
+                settings,
+                design_workshop_id=design_workshop_id,
             )
             if created:
                 queued.append(row.id)
@@ -219,10 +238,17 @@ async def enqueue_stage_transcriptions_for_stage(
     settings: Settings | None = None,
     *,
     viewer: Any,
+    design_workshop_id: str | None = None,
 ) -> list[str]:
     """:func:`enqueue_stage_transcriptions` narrowed to the rows of one stage."""
     scoped = [row for row in entries if getattr(row, "stageKey", "") == spec.key]
-    return await enqueue_stage_transcriptions(scoped, requested_by_id, settings, viewer=viewer)
+    return await enqueue_stage_transcriptions(
+        scoped,
+        requested_by_id,
+        settings,
+        viewer=viewer,
+        design_workshop_id=design_workshop_id,
+    )
 
 
 # --------------------------------------------------------------------------------------

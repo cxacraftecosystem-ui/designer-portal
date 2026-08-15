@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,9 +56,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DW_CONSENT_NOT_YOURS_TO_RECORD
+import com.designprototype.workshop.data.DW_CONSENT_NO_LABEL
+import com.designprototype.workshop.data.DW_CONSENT_QUESTION
+import com.designprototype.workshop.data.DW_CONSENT_ROW_TITLE
+import com.designprototype.workshop.data.DW_CONSENT_YES_LABEL
 import com.designprototype.workshop.data.DW_MAX_HITS
 import com.designprototype.workshop.data.DW_MIN_QUERY_CHARS
+import com.designprototype.workshop.data.DraftConsent
+import com.designprototype.workshop.data.DwConsentMerge
+import com.designprototype.workshop.data.DwDictationRun
 import com.designprototype.workshop.data.DwSearchStatus
+import com.designprototype.workshop.data.DwTier3Consent
+import com.designprototype.workshop.data.DesignWorkshopDetailDto
 import com.designprototype.workshop.data.DwStageCompleteness
 import com.designprototype.workshop.data.DwStageFocus
 import com.designprototype.workshop.data.DwSubmissionReadiness
@@ -64,13 +76,27 @@ import com.designprototype.workshop.data.DwWorkshopSearch
 import com.designprototype.workshop.data.DwWorkshopSearchHit
 import com.designprototype.workshop.data.DwWorkshopSearchIndex
 import com.designprototype.workshop.data.StageCompletenessDto
+import com.designprototype.workshop.data.UserDto
+import com.designprototype.workshop.data.DwCustomSectionStore
 import com.designprototype.workshop.data.WorkshopDraftStore
+import com.designprototype.workshop.data.dwCustomDefinition
+import com.designprototype.workshop.data.isHeld
 import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.computeWorkshopCompleteness
+import com.designprototype.workshop.data.dwConsentMerge
+import com.designprototype.workshop.data.dwConsentRecordedNote
+import com.designprototype.workshop.data.dwConsentStateSentence
+import com.designprototype.workshop.data.dwTier3ConsentOf
+import com.designprototype.workshop.data.dwTier3ConsentToken
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.overallPercent
+import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import java.time.Instant
+import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 /**
  * The 22 stages of one workshop, each with its percentage and the list of what is still missing.
@@ -187,18 +213,37 @@ fun StageIndexScreen(
      * quarter of a megabyte on a 6 GB handset for every letter typed.
      */
     var searchIndex by remember(workshopId) { mutableStateOf(DwWorkshopSearch.emptyIndex()) }
+    /**
+     * Whether this workshop's recordings may be sent out to be written down, as this device has it.
+     *
+     * ON THIS SCREEN because it is a fact about the WORKSHOP rather than about any one of its stages —
+     * the same rule the viewers row above states for itself, and the reason both live here. It is also
+     * the screen a designer can be SENT to: every sentence the dictation control prints about a missing
+     * consent names "this workshop's own screen", and that has to be somewhere findable.
+     */
+    var consent by remember(workshopId) { mutableStateOf(DraftConsent()) }
+    /** True while an answer is being written down and pushed, so the two buttons cannot be double-tapped. */
+    var recordingConsent by remember(workshopId) { mutableStateOf(false) }
+    /** What just happened to the answer, said in place rather than as a toast that outlives the screen. */
+    var consentNote by remember(workshopId) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(workshopId) {
         loading = true
         runCatching {
             val schema = repository.designWorkshopSchema(appContext)
             val draft = WorkshopDraftStore.load(appContext, workshopId)
-            val local = computeWorkshopCompleteness(schema, draft)
+            // Read off disk BEFORE the network call below, like the search index under it and for the
+            // same reason: a designer opening this screen with no signal waits for a timeout, and the
+            // figures beside all 22 stages must be right the moment the spinner goes rather than a
+            // request later. The refresh happens further down, once `remoteId` is known.
+            var definition = DwCustomSectionStore.load(appContext, workshopId)
+            var local = computeWorkshopCompleteness(schema, draft, definition)
             // Computed from the same registry and the same draft, with no network in it — which is
             // the point: the question "where is the field I am missing" is asked in a courtyard on
             // the last afternoon, not from a desk with a connection.
             addresses = DwSubmissionReadiness.addressBook(
-                DwSubmissionReadiness.assess(schema, draft, workshopId)
+                DwSubmissionReadiness.assess(schema, draft, workshopId, definition)
             )
             // Same two inputs again, and deliberately before the network call below: a designer who
             // opens this screen with no signal waits for a timeout, and the search must be ready the
@@ -210,19 +255,102 @@ fun StageIndexScreen(
             val remote = remoteId?.let {
                 runCatching { repository.designWorkshop(it) }.getOrNull()
             }
+            // Refreshed opportunistically, and only ever ADDING to what was read off disk above: a
+            // failure leaves the cached copy exactly where it was — see [dwCustomDefinition].
+            if (remoteId != null) {
+                val seeded = definition?.customSchemaVersion
+                definition = runCatching {
+                    repository.dwCustomDefinition(appContext, workshopId, remoteId)
+                }.getOrNull() ?: definition
+                /*
+                  AND EVERYTHING SCORED OFF THE OLD COPY IS SCORED AGAIN, WHICH IS THE WHOLE POINT OF
+                  THE DIGEST COMPARISON TWENTY LINES DOWN.
+
+                  `local` and `addresses` were computed against the definition that was on disk when
+                  this screen opened; `heldDigest` below is read from the one this refresh just
+                  fetched. Left as they were, the refresh that MOVED the definition — a designer
+                  adding a required question on the web this morning, which is the ordinary way this
+                  screen meets a new definition — would make the two disagree in exactly the shape
+                  this screen refuses elsewhere: the server's score adopted for untouched stages
+                  under today's definition, sitting in one column beside this device's own totals
+                  computed under yesterday's, with the digests reported as equal and nothing on
+                  screen to say why. The guard would have passed while the list showed two
+                  arithmetics — the failure it exists to prevent, arrived at through its own door.
+
+                  Only when the digest actually moved: this is a full 22-stage walk plus a readiness
+                  assembly, and re-running it on every open of the ordinary workshop — whose digest
+                  is `""` before and after — would spend that for nothing.
+                */
+                if (definition?.customSchemaVersion != seeded) {
+                    local = computeWorkshopCompleteness(schema, draft, definition)
+                    addresses = DwSubmissionReadiness.addressBook(
+                        DwSubmissionReadiness.assess(schema, draft, workshopId, definition)
+                    )
+                }
+            }
             serverNote = when {
                 remoteId == null -> "This workshop has not been created on the server yet."
                 remote == null -> "The server could not be reached. These figures are from this device."
                 else -> null
             }
 
+            // The consent, reconciled between this device and the server and — where this device holds
+            // an answer the server has not heard — pushed while there is a connection to push it over.
+            // Never allowed to fail the screen: see the function.
+            consent = dwResolveDictationConsent(
+                context = appContext,
+                repository = repository,
+                workshopId = workshopId,
+                onDevice = draft?.consent ?: DraftConsent(),
+                remote = remote,
+                remoteId = remoteId,
+            )
+            // Handed to the stage screens for the one case the draft cannot cover: a workshop authored in
+            // a browser, whose consent is already recorded up there and which has no draft on this
+            // handset to write it into yet. Without it this screen would say the recordings may be sent
+            // out while the microphone one tap away went on withholding the rung — see
+            // [DwDictationRun.consentAnswerSeen].
+            DwDictationRun.rememberConsentAnswer(workshopId, dwTier3ConsentOf(consent.decision))
+
+            /*
+              WHETHER THE SERVER'S SCORE MAY BE ADOPTED AT ALL — the second arithmetic this list
+              could otherwise show.
+
+              `fromServer` replaces `requiredTotal`, `requiredFilled` and `missing` for a stage this
+              device has never touched. Once the server counts a designer's own required questions,
+              that number is computed under a DEFINITION, and this device may be holding an older one
+              or none: the list would then print the server's higher total for untouched stages and
+              its own lower one for touched stages, in one column, with nothing on screen to say why.
+              A designer reading "3 of 7" beside "2 of 4" on two stages of one workshop has no way to
+              know which arithmetic either row used.
+
+              The server carries `customSchemaVersion` beside the score for exactly this — the route's
+              own comment names this failure — so the digests are compared and a score computed under
+              a definition this device does not hold is REFUSED, falling back to the local number.
+              Two equal digests are the same definition, because it is a content digest.
+
+              A device holding NO definition compares as `""`, which is also what the server sends for
+              a workshop that has none — so the ordinary workshop, which is most of them, adopts
+              exactly as it always did and nothing about this screen changes for it.
+            */
+            val heldDigest = definition?.takeIf { it.isHeld }?.customSchemaVersion.orEmpty()
+            val serverScoreUsable = remote != null && remote.customSchemaVersion == heldDigest
+            if (remote != null && !serverScoreUsable && serverNote == null) {
+                serverNote = "These figures are this device's own. The server counts this workshop's " +
+                    "own questions using a version of them this phone has not read yet, so its " +
+                    "figures are not shown here — they would not be counting the same things. " +
+                    "Open this screen again with a connection to pick up the current set."
+            }
             val merged = local.map { stage ->
+                // `custom` counted with the other two: a stage whose only answers are the designer's
+                // own would otherwise be judged untouched, and the server's score adopted over the
+                // very work this handset is holding.
                 val touchedLocally = draft?.stages?.get(stage.stageKey)?.let {
-                    it.values.isNotEmpty() || it.rows.isNotEmpty()
+                    it.values.isNotEmpty() || it.rows.isNotEmpty() || it.custom.isNotEmpty()
                 } ?: false
                 // Only fall back to the server for a stage this device has never touched — see the
                 // KDoc. Anything else would let a stale snapshot overwrite this morning's work.
-                if (touchedLocally) stage
+                if (touchedLocally || !serverScoreUsable) stage
                 else remote?.completeness?.get(stage.stageKey)?.let { fromServer(it, stage) } ?: stage
             }
             (remote?.title ?: draft?.title.orEmpty()) to merged
@@ -335,6 +463,46 @@ fun StageIndexScreen(
 
         HorizontalDivider()
 
+        DwDictationConsentRow(
+            consent = consent,
+            // `can_run_design_workshops` — {DESIGNER, ADMIN, MASTER_ADMIN}, the set the server's own
+            // consent route is gated on. NOT the rank ladder: a PROFESSOR outranks a designer and may
+            // not run a workshop, so a threshold would put these two buttons in front of a 403.
+            mayRecord = viewer != null && FieldPermissions.canRunDesignWorkshops(viewer),
+            busy = recordingConsent,
+            note = consentNote,
+            onRecord = { decision ->
+                recordingConsent = true
+                consentNote = null
+                scope.launch {
+                    val written = dwRecordDictationConsent(
+                        context = appContext,
+                        repository = repository,
+                        workshopId = workshopId,
+                        decision = decision,
+                        actor = viewer,
+                    )
+                    consent = written.consent
+                    consentNote = dwConsentRecordedNote(
+                        consent = dwTier3ConsentOf(written.consent.decision),
+                        synced = written.consent.synced,
+                        storedOnDevice = written.storedOnDevice,
+                        // The server ANSWERED and refused — its own sentence, which names the fix.
+                        // Null for the ordinary courtyard case of no connection at all.
+                        serverRefusal = written.serverRefusal,
+                    )
+                    // Held for the rest of the run as well, so walking straight into a stage honours the
+                    // answer even in the case where the draft write is what failed.
+                    if (written.storedOnDevice || written.consent.synced) {
+                        DwDictationRun.rememberConsentAnswer(workshopId, decision)
+                    }
+                    recordingConsent = false
+                }
+            },
+        )
+
+        HorizontalDivider()
+
         WorkshopSearchPanel(
             index = searchIndex,
             // The receiving half. [DwWorkshopSearch.focusOf] is the ONE place a hit becomes an
@@ -356,6 +524,345 @@ fun StageIndexScreen(
         }
         Spacer(Modifier.padding(bottom = 8.dp))
     }
+}
+
+// =================================================================================================
+// May this workshop's recordings leave the device? — plan §6 answer 3
+// =================================================================================================
+
+/**
+ * THE ROW WHERE AN ARTISAN'S ANSWER IS PUT ON RECORD, and the question in the words it is asked in.
+ *
+ * ── WHY THE QUESTION IS PRINTED IN FULL RATHER THAN REDUCED TO A SWITCH ────────────────────────
+ *
+ * This is the whole difference between a consent and a checkbox. The person who ASKS is the designer
+ * holding this phone, and if the screen says only "Allow cloud dictation" then what the artisan is
+ * actually asked is whatever that designer improvises — no two artisans asked the same thing, and no
+ * way afterwards to know what any of them agreed to. So [DW_CONSENT_QUESTION] is on screen, in full,
+ * above the two buttons, and the buttons are worded as the ARTISAN'S ANSWER ("they agreed") rather than
+ * as a setting the designer is choosing for them.
+ *
+ * ── NO GREYED CONTROLS, IN EITHER DIRECTION ────────────────────────────────────────────────────
+ *
+ * The viewers row above states the rule and this row follows it: an account that may not record this
+ * gets a SENTENCE naming who can, never a disabled button, because "a greyed control refuses a tap
+ * without saying why, which is how somebody concludes the app is broken". And the button matching the
+ * CURRENT answer is not disabled either — recording the same answer again is a legitimate act (an
+ * artisan asked a second time and saying the same thing is worth a second row in the log), and the
+ * state sentence above already says which answer is on record. The only disabling here is while a
+ * write is in flight, which is the same reason the microphone disables while a clip is uploading.
+ */
+@Composable
+private fun DwDictationConsentRow(
+    consent: DraftConsent,
+    mayRecord: Boolean,
+    busy: Boolean,
+    note: String?,
+    onRecord: (DwTier3Consent) -> Unit,
+) {
+    val state = dwTier3ConsentOf(consent.decision)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            DW_CONSENT_ROW_TITLE,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        // WHAT IS ON RECORD AND WHAT IT MEANS FOR THE MICROPHONE, in one sentence, because "not
+        // recorded" on its own tells a designer nothing about why dictation behaved differently on the
+        // stage they have just come from.
+        Text(
+            dwConsentStateSentence(state, consent),
+            color = if (state == DwTier3Consent.GRANTED) {
+                MaterialTheme.field.body
+            } else {
+                MaterialTheme.field.warning
+            },
+            fontSize = 12.sp,
+        )
+        if (mayRecord) {
+            Text(DW_CONSENT_QUESTION, color = MaterialTheme.field.muted, fontSize = 12.sp)
+            // STACKED AND FULL WIDTH, not side by side: both labels are sentences rather than verbs,
+            // and two of them in one row would truncate to "They agreed —…" on the narrow handsets this
+            // fleet runs, which is where a consent control must be least ambiguous.
+            OutlinedButton(
+                onClick = { onRecord(DwTier3Consent.GRANTED) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(DW_CONSENT_YES_LABEL) }
+            OutlinedButton(
+                onClick = { onRecord(DwTier3Consent.REFUSED) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(DW_CONSENT_NO_LABEL) }
+        } else {
+            Text(DW_CONSENT_NOT_YOURS_TO_RECORD, color = MaterialTheme.field.muted, fontSize = 12.sp)
+        }
+        note?.let {
+            Text(
+                it,
+                color = MaterialTheme.field.muted,
+                fontSize = 12.sp,
+                // Announced, because the visible change this write makes is one line of prose several
+                // rows away from the button that caused it.
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        }
+    }
+}
+
+/**
+ * Write a recorded answer down on THIS DEVICE first, then try to tell the server.
+ *
+ * ── THE ORDER IS THE WHOLE DESIGN ──────────────────────────────────────────────────────────────
+ *
+ * The draft is written first and the push is attempted second, because the artisan is standing there
+ * and the courtyard has no signal. A control that recorded consent only when it could reach the server
+ * would refuse the answer at the exact moment it was given, and the designer would be told to walk to
+ * the guest house and ask again. So the answer lands in the document the device owns, the ladder on this
+ * phone honours it immediately, and the server hears about it when there is something to hear it over.
+ *
+ * [WorkshopDraftStore.update] and not `updateBookkeeping`: a designer recording an artisan's answer is an
+ * act they performed, and it belongs in `updatedAt` — the workshop list sorts by it, and this is
+ * fieldwork rather than a background refresh.
+ *
+ * ── AND THE PUSH NEVER THROWS INTO THE SCREEN ──────────────────────────────────────────────────
+ *
+ * A failed push is not a failed recording. The answer IS recorded — on this device, where the gate that
+ * matters to this phone reads it — so raising the network failure would tell a designer their consent
+ * was not taken when it was. What the sentence they read says instead is that it has not reached the
+ * server yet, which is true and is the one thing they could not otherwise know: the server checks its
+ * own column on the upload, so until this arrives up there, dictation sent out may still be refused.
+ */
+private suspend fun dwRecordDictationConsent(
+    context: Context,
+    repository: WorkshopRepository,
+    workshopId: String,
+    decision: DwTier3Consent,
+    actor: UserDto?,
+): DwConsentWriteResult {
+    // WHEN THE ARTISAN ANSWERED, on this device's clock, which is the moment the server stores as the
+    // consent's own timestamp — its `createdAt` records when it heard, and on this fleet the two can
+    // differ by a fortnight. A device clock more than fifteen minutes ahead of the server's is refused
+    // rather than corrected, because a corrected stamp is a fabricated fact about when somebody agreed.
+    val recorded = DraftConsent(
+        decision = dwTier3ConsentToken(decision),
+        // TRUNCATED TO MILLISECONDS, which is not tidiness. `Instant.now()` on Android can carry
+        // nanoseconds, and the moment is parsed server-side by `datetime.fromisoformat` against a field
+        // capped at 32 characters — so a nine-digit fraction risks a 422 on a value the designer can do
+        // nothing about, and a 422 here is not a visible failure: the push simply never succeeds, the
+        // answer stays marked unsent for ever, and every upload from this workshop goes on being refused
+        // up there. Milliseconds are more precision than "when the artisan answered" has any use for.
+        recordedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS).toString(),
+        recordedById = actor?.id,
+        recordedByName = actor?.name,
+        synced = false,
+    )
+    val draft = runCatching {
+        WorkshopDraftStore.update(context, workshopId) { it.copy(consent = recorded) }
+    }.getOrNull()
+    val remoteId = draft?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
+    if (remoteId == null) return DwConsentWriteResult(recorded, storedOnDevice = draft != null)
+    val failure = runCatching {
+        repository.designWorkshopRecordDictationConsent(
+            workshopId = remoteId,
+            decision = decision,
+            recordedAt = recorded.recordedAt,
+        )
+    }.exceptionOrNull()
+    if (failure != null) {
+        return DwConsentWriteResult(
+            recorded,
+            storedOnDevice = draft != null,
+            serverRefusal = dwConsentPushRefusal(failure),
+        )
+    }
+    val acknowledged = recorded.copy(synced = true)
+    // Bookkeeping and not an edit: the designer's act was the tap, and it has already been stamped.
+    // Stamping it again because a request came back would make one act look like two.
+    runCatching {
+        WorkshopDraftStore.updateBookkeeping(context, workshopId) { it.copy(consent = acknowledged) }
+    }
+    return DwConsentWriteResult(acknowledged, storedOnDevice = draft != null)
+}
+
+/**
+ * Where a recorded answer actually landed, so the sentence about it can be true.
+ *
+ * [storedOnDevice] IS NOT DECORATION. `WorkshopDraftStore.update` can fail — a full disk, a quarantined
+ * draft — and the answer is then only wherever the push put it. A control that reported "saved on this
+ * phone" regardless would tell a designer an artisan's answer was on record when nothing had kept it.
+ */
+private data class DwConsentWriteResult(
+    val consent: DraftConsent,
+    val storedOnDevice: Boolean,
+    /**
+     * The server's own sentence, when the server ANSWERED and refused — never when it was merely
+     * unreachable. See [dwConsentPushRefusal]; null is the ordinary courtyard state.
+     */
+    val serverRefusal: String? = null,
+)
+
+/**
+ * A push failure the designer has to be told about, or null for one that will clear itself.
+ *
+ * ── WHY THE TWO CANNOT SHARE A SENTENCE ─────────────────────────────────────────────────────────
+ *
+ * A dropped connection is the ORDINARY state here: the answer is in the draft, the gate on this phone
+ * honours it, and the next open with signal carries it up. Saying anything about that would turn the
+ * normal case into an error.
+ *
+ * A 4xx is the opposite. The server has read the body and refused it, and it will refuse the identical
+ * body on every open for ever — so the note that says "it goes to the server the next time this
+ * workshop is opened here with a connection" is a promise that can never come true, repeated daily,
+ * while every dictation from this workshop goes on being refused up there with a sentence a designer
+ * cannot connect to a tap they made a fortnight ago. The one refusal a field phone actually earns is a
+ * wrong date: the consent route declines a `recordedAt` more than fifteen minutes in its own future
+ * rather than storing a corrected one, and its 422 names the fix in words.
+ *
+ * 401 AND 429 ARE EXCLUDED, and that is the whole reason this is not "any HttpException". A 401 clears
+ * when the token is renewed and a 429 is the courtesy limiter answering about this instant; both DO
+ * succeed on a later open, so reporting them as permanent would be the false claim in the other
+ * direction.
+ */
+private fun dwConsentPushRefusal(failure: Throwable): String? {
+    val http = failure as? HttpException ?: return null
+    val code = http.code()
+    if (code !in 400..499 || code == 401 || code == 429) return null
+    return http.apiErrorMessage(
+        "The server would not record that answer, and did not say why. Tell whoever runs the server " +
+            "before dictating anything from this workshop."
+    )
+}
+
+/**
+ * Reconcile the answer on this device with the answer on the server, and carry an unsent one over.
+ *
+ * ── WHICH COPY WINS IS [dwConsentMerge]'S DECISION AND NOT THIS FUNCTION'S ─────────────────────
+ *
+ * It used to be decided here, in four lines, on the rule "an unsent local answer is newer by
+ * construction" — which is false, and whose failure is a WITHDRAWN CONSENT COMING BACK: a GRANTED
+ * recorded offline on the 3rd pushed over a REFUSED recorded on the web on the 5th, silently, on the
+ * 9th. The ordering rule and the fail-closed tie-break are now a pure function with the whole argument
+ * against it, tested on the desktop JVM, because a rule about whose voice may leave a device is not a
+ * rule to hold in a composable where nothing can assert it.
+ *
+ * What is left here is the IO each answer implies, and nothing else.
+ *
+ * ── AND WHY NOTHING HERE MAY THROW ─────────────────────────────────────────────────────────────
+ *
+ * This runs inside the screen's one load, whose failure path calls `onError` and replaces the whole list
+ * of stages with a message. A consent that could not be reconciled — or a push that failed — must not
+ * cost a designer the screen they opened to find a missing field on. Every write and the push are
+ * wrapped, and the worst case is that the answer stays as it was, unsent, and is offered again next time.
+ */
+private suspend fun dwResolveDictationConsent(
+    context: Context,
+    repository: WorkshopRepository,
+    workshopId: String,
+    onDevice: DraftConsent,
+    remote: DesignWorkshopDetailDto?,
+    remoteId: String?,
+): DraftConsent = when (
+    dwConsentMerge(
+        onDevice = onDevice,
+        serverDecision = remote?.dictationConsent,
+        serverRecordedAt = remote?.dictationConsentAt,
+        // NOT `remote?.dictationConsent != null`: the field is defaulted, so a payload from a server
+        // that predates the column decodes as NOT_RECORDED and would otherwise look like an answer.
+        // What is being asked is whether the server was READ at all.
+        serverKnown = remote != null,
+    )
+) {
+    DwConsentMerge.KEEP_DEVICE -> onDevice
+    DwConsentMerge.MARK_SYNCED -> dwMarkSynced(context, workshopId, onDevice)
+    DwConsentMerge.PUSH_DEVICE ->
+        dwPushUnsent(context, repository, workshopId, onDevice, remoteId)
+    // Reachable only with `serverKnown`, so `remote` is there; an elvis rather than a `!!` because a
+    // crash on the workshop screen would cost a designer the list of missing fields they opened it for.
+    DwConsentMerge.TAKE_SERVER ->
+        remote?.let { dwLearnFromServer(context, workshopId, it) } ?: onDevice
+}
+
+/**
+ * The server's answer is the one to honour. Written down as BOOKKEEPING and not as an edit.
+ *
+ * Nobody on this handset performed an act, so `updatedAt` must not move: the workshop list sorts by it,
+ * and a background refresh that reordered the list under a designer's thumb would look like somebody
+ * else editing the record. `updateBookkeeping` also refuses to CREATE a draft that is not already there
+ * — bookkeeping about a workshop that has been deleted must not resurrect it as an empty document —
+ * which is why [DwDictationRun.consentAnswerSeen] exists to carry the answer to the stage screens in
+ * exactly that case.
+ */
+private suspend fun dwLearnFromServer(
+    context: Context,
+    workshopId: String,
+    remote: DesignWorkshopDetailDto,
+): DraftConsent {
+    val learned = DraftConsent(
+        decision = dwTier3ConsentToken(dwTier3ConsentOf(remote.dictationConsent)),
+        recordedAt = remote.dictationConsentAt,
+        recordedById = remote.dictationConsentById,
+        recordedByName = remote.dictationConsentByName,
+        synced = true,
+    )
+    runCatching {
+        WorkshopDraftStore.updateBookkeeping(context, workshopId) { it.copy(consent = learned) }
+    }
+    return learned
+}
+
+/**
+ * A consent recorded in a courtyard, carried to the server the next time this screen is opened with
+ * signal.
+ *
+ * ── THIS IS THE CARRIER, AND IT IS NOT THE DRAFT SYNC PASS ─────────────────────────────────────
+ *
+ * `WorkshopSync`'s pass pushes the workshop create, the stages and the media; there is no
+ * workshop-HEADER write anywhere in it and `DraftSyncState` has no slot for one. So this screen is the
+ * carrier: it is the screen a designer is sent to by every sentence about a missing consent, it already
+ * reads the draft and reaches the server on every open, and one more push costs nothing beside the
+ * request it is already making.
+ *
+ * WHAT THAT LEAVES OPEN, SAID PLAINLY RATHER THAN LEFT TO BE DISCOVERED: a workshop whose consent was
+ * recorded offline and whose designer never opens this screen again with a connection keeps that answer
+ * on the device alone. The ladder here honours it, so dictation behaves correctly on this phone; the
+ * server, which checks its own column, refuses those uploads with its own sentence. The fix is a
+ * `DraftSyncState.consent` record and a push step after the create in `WorkshopSync` — the create is
+ * what produces the `remoteId` this needs — and it is a change to a file this lane did not otherwise
+ * touch.
+ */
+private suspend fun dwPushUnsent(
+    context: Context,
+    repository: WorkshopRepository,
+    workshopId: String,
+    onDevice: DraftConsent,
+    remoteId: String?,
+): DraftConsent {
+    // No server row to push against: a workshop created in a courtyard has none until the sync pass
+    // creates it, and the answer waits in the draft, where the gate on this phone already reads it.
+    if (remoteId == null) return onDevice
+    val pushed = runCatching {
+        repository.designWorkshopRecordDictationConsent(
+            workshopId = remoteId,
+            decision = dwTier3ConsentOf(onDevice.decision),
+            recordedAt = onDevice.recordedAt,
+        )
+    }.isSuccess
+    return if (pushed) dwMarkSynced(context, workshopId, onDevice) else onDevice
+}
+
+/** The server has this answer. Bookkeeping only — nobody performed an act, so nothing is re-stamped. */
+private suspend fun dwMarkSynced(
+    context: Context,
+    workshopId: String,
+    onDevice: DraftConsent,
+): DraftConsent {
+    val acknowledged = onDevice.copy(synced = true)
+    runCatching {
+        WorkshopDraftStore.updateBookkeeping(context, workshopId) { it.copy(consent = acknowledged) }
+    }
+    return acknowledged
 }
 
 /**
