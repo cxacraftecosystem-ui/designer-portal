@@ -56,6 +56,7 @@ from app.services.report_custom_sections import (
     append_custom_section,
     custom_scoring,
     custom_section_of,
+    sections_hidden_by_tier,
 )
 from app.services.report_questionnaires import (
     append_questionnaire_annexure,
@@ -1061,11 +1062,36 @@ class ReportBuilder:
 
         table_rows: list[tuple[tuple[Any, ...], ...]] = []
         for row in rows:
+            # THE EMPTY NOTE HAS TO COME FROM ``_printable``, AND THIS CALL SITE USED TO SKIP IT.
+            # Every other presentation asks ``_printable`` for its text, so an unfilled REQUIRED
+            # field printed "Not recorded." in prose and in the key-value grid — and a table asked
+            # ``_value`` directly, which answers "" for the same field, so the identical gap in the
+            # identical record was stated in one presentation and silently blank in the other. It is
+            # the table that matters most: the case that shows it worst is eighteen prototype rows
+            # with one required column left blank on several of them, and a reviewing officer reading
+            # a blank cell has no way to tell "not answered" from "not applicable".
+            #
+            # ``_cell_runs``'s own docstring has asserted for a long time that "``_printable``
+            # substitutes 'Not recorded.' for an unfilled required field" and that routing that
+            # through ``plain_runs`` "would replace the note with a blank cell — turning a visible
+            # gap into an invisible one". That was a true statement about a note this path never
+            # handed it: the guard was correct and unreachable. Now it is reached.
+            #
+            # Keyed by field key rather than zipped, because ``_printable`` legitimately returns
+            # FEWER entries than there are columns — an unfilled OPTIONAL column is absent from it,
+            # which is exactly the distinction the note exists to draw — and a positional pairing
+            # would then shift every remaining cell one column to the left.
+            printable = {
+                spec.key: text
+                for spec, text in self._printable(entity, row, {ReportRole.TABLE_COLUMN})
+            }
             table_rows.append(tuple(
                 # `_value` and not `format_value`: eight of the eleven REF fields the registry
                 # prints are TABLE_COLUMNs, so this is the call site that put raw cuids into the
-                # prototype, cost sheet and follow-up tables.
-                self._cell_runs(spec, row, self._value(spec, row))
+                # prototype, cost sheet and follow-up tables. It stays as the fallback so a column
+                # ``_printable`` declines to speak for — an unfilled optional one, or a caption
+                # field it deliberately withholds — renders exactly as it did before.
+                self._cell_runs(spec, row, printable.get(spec.key) or self._value(spec, row))
                 for spec in columns
             ))
 
@@ -2023,12 +2049,28 @@ class ReportBuilder:
                 # nothing at all, not even the page break. No template in `TEMPLATES` carries this
                 # section, so every existing template renders exactly as it did before this branch
                 # existed.
+                #
+                # THE TIER CAP IS PASSED FOR THE SAME REASON `numbered` IS: this branch must not
+                # grow a second opinion, and the template's `max_tier` is a decision the template
+                # already made for every registry field through `_visible`. It did not reach a
+                # designer's own questions, and the gap was visible in one document: COMPACT_SUMMARY
+                # describes itself as "Basic-tier fields only, one photograph per prototype" and is
+                # the only template in `TEMPLATES` whose `max_tier` is not ADVANCED, so it correctly
+                # suppressed every Standard and Advanced REGISTRY field and then printed the
+                # designer's Standard-tier answers underneath in full. One report, two rules, one
+                # declared attribute.
+                #
+                # `.rank` and not the `Tier` itself, because `report_custom_sections` is pure and
+                # transliterable into the phone's renderer and must not import the registry — see
+                # `_TIER_RANK` there for the argument and for the test that pins the two ladders
+                # together.
                 append_custom_section(
                     self.doc,
                     custom_section_of(self.data, section.custom_key),
                     heading=section.heading,
                     numbered=self.template.number_headings,
                     page_break_before=section.page_break_before,
+                    max_tier_rank=self.template.max_tier.rank,
                 )
             elif section.special is SpecialSection.COMPLETENESS:
                 self._render_completeness(section)
@@ -2056,9 +2098,14 @@ def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResol
     """Build the report document for one workshop under one template.
 
     Returns the document and any warnings — a substituted template, a stage whose required
-    fields are unfilled — which the caller shows beside the download rather than writing into
-    the file. A warning belongs to the act of generating, not to the document: the officer who
-    opens the .docx next month should not find a note about what was missing on the day.
+    fields are unfilled, a designer's own section this template's capture tier left out — which
+    the caller shows beside the download rather than writing into the file. A warning belongs to
+    the act of generating, not to the document: the officer who opens the .docx next month should
+    not find a note about what was missing on the day.
+
+    THE THIRD OF THOSE IS HERE AND NOT IN THE LOADER because it is the only place that knows both
+    halves: the sections attached to ``data`` and the SHAPED ``template`` that decided which of them
+    could print. See the block that raises it, at the end of this function.
 
     ``theme`` overrides the template's palette for this one document, exactly as ``meta``
     overrides its page size and running furniture, and for the same reason: a designer trying
@@ -2113,5 +2160,60 @@ def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResol
                 f"not recorded — {', '.join(score.missing[:4])}"
                 + ("…" if len(score.missing) > 4 else "")
             )
+
+    # ── the designer's own sections THIS TEMPLATE could not print ──────────────────────────────
+    #
+    # THE OTHER HALF OF A WARNING WHOSE FIRST HALF LIVES IN THE LOADER, and the reason this is here
+    # rather than beside it. `design_workshops.attach_report_custom_sections` already names the
+    # sections that print nothing because nothing was recorded in them — it asks the renderer's own
+    # `has_content`, which is `section_prints` with every tier admitted, and that is the only cap it
+    # can honestly ask: it runs BEFORE `apply_report_settings`, which is what splices these sections
+    # in and cannot do so until it has been handed the definition that load produces. No template
+    # ever reaches it.
+    #
+    # THE GAP THAT LEFT, WHICH IS THIS BLOCK'S WHOLE REASON. Two fixes landed on this render in the
+    # same afternoon: one gave `append_custom_section` the template's tier cap, so a designer's
+    # Standard-tier question stopped printing under COMPACT_SUMMARY ("Basic-tier fields only" — the
+    # one non-ADVANCED `max_tier` in `TEMPLATES`); the other re-pointed that loader warning at
+    # `has_content`, because it had been firing for exactly the sections the renderer DOES print.
+    # Each was right alone. Together they opened the quiet direction: a section whose every answered
+    # question is above the cap is skipped by the renderer and is invisible to a cap-blind warning,
+    # so the designer submits a .docx with their own block silently missing and is told nothing.
+    # The loud direction — warned about but present — is what the second fix closed. Both are the
+    # same defect: the document and its own warning list telling a ministry two stories about one
+    # section.
+    #
+    # ASKED THROUGH `sections_hidden_by_tier`, WHICH IS `section_prints` TWICE, so this cannot drift
+    # from what the branch above actually did. Do not "simplify" it into a tier comparison here: a
+    # second copy of "did this section print" is precisely how these two came apart. The two
+    # warnings are disjoint by construction (`fields_at` is monotone in the cap, so a section that
+    # prints nothing at ALL_TIERS prints nothing at any cap) — a section is named once or not at
+    # all, never twice in one download.
+    #
+    # WALKED OFF `template.sections` AND NOT OFF THE ATTACHED TUPLE, because it must report what the
+    # `CUSTOM_SECTION` branch above was asked to draw and didn't. A caller that passes no shaped
+    # template — every test that builds a bare `TEMPLATES` entry, and the 38 pinned
+    # `apply_report_settings` cases — carries no CUSTOM_SECTION at all and gets an empty list here,
+    # so no existing report gains a warning it did not have.
+    hidden = sections_hidden_by_tier(
+        [
+            custom_section_of(data, section.custom_key)
+            for section in template.sections
+            if section.special is SpecialSection.CUSTOM_SECTION
+        ],
+        template.max_tier.rank,
+    )
+    if hidden:
+        # NAMED, AND WITH THE REASON, for the reason the loader's twin gives: a block the designer
+        # added themselves and then finds missing from a sixty-page document reads as a bug in the
+        # app. Saying which one, and that the TEMPLATE left it out rather than the feature failing,
+        # is the difference between "the export is broken" and "generate this one as
+        # DETAILED_TECHNICAL" — which is a thing the designer can actually do about it.
+        titles = sorted(item.title for item in hidden)
+        warnings.append(
+            f"{len(hidden)} of this workshop's own section(s) ask only questions above "
+            f"{template.name}'s capture tier ({template.max_tier.value.title()}) and are not in "
+            f"this file: " + ", ".join(titles[:4]) + ("…" if len(titles) > 4 else "")
+        )
 
     return document, warnings

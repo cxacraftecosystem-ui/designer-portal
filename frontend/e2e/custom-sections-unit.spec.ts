@@ -1174,3 +1174,90 @@ test("an option's own two bounds are refused here, because they live only in the
     ])
   ).toEqual([]);
 });
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The two STAGE-SCOPED collisions — the half of the mirror that was missing
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Audit 2026-08-15 (MINOR, frontend): "the definition editor's pre-flight validator omits both
+ * stage-scoped collision checks the server enforces, so Save is offered for a definition the server
+ * refuses outright". `customDefinitionProblems` took only `sections`, so neither it nor
+ * `fieldProblems` had a stage to check against — `problems` was empty for a colliding definition and
+ * the Save gate (`disabled={busy || problems.length > 0 || …}`) was open. A whole-set PUT was then
+ * refused after the fact for a rule this editor exists to catch before it, taking every unrelated
+ * edit in the same body down with it.
+ *
+ * These pin all three halves: that each check fires, that the NARROWING of each is respected, and
+ * that no registry means silence rather than a refusal.
+ */
+
+test("a custom key equal to a live registry field of that stage is refused before the round trip", () => {
+  const problems = customDefinitionProblems(
+    [section({ fields: [field({ key: "artisanHouseholds", label: "How many households?", required: true })] })],
+    [STAGE]
+  );
+  expect(problems.some((problem) => problem.includes("is already a field of stage 4"))).toBe(true);
+});
+
+test("the key check walks EVERY entity of the stage, collections included", () => {
+  // `name` is a field of the `tool` COLLECTION, not of the singleton. The server walks
+  // `for entity in stage.entities` and so must this: a designer looking at one stage form must not
+  // see two different questions under one key, wherever the core one lives.
+  const problems = customDefinitionProblems(
+    [section({ fields: [field({ key: "name", label: "Who runs the shed?", required: true })] })],
+    [STAGE]
+  );
+  expect(problems.some((problem) => problem.includes("Tools: Tool name"))).toBe(true);
+});
+
+test("a custom label equal to a SINGLETON field's label of that stage is refused, case-folded", () => {
+  const problems = customDefinitionProblems(
+    [section({ fields: [field({ key: "households", label: "  artisan HOUSEHOLDS ", required: true })] })],
+    [STAGE]
+  );
+  expect(problems.some((problem) => problem.includes("is already called"))).toBe(true);
+});
+
+test("a label equal to a COLLECTION field's label is ALLOWED — the narrowing is the correctness", () => {
+  /*
+    A collection field files its label as `"{entity.title}: {label}"` and a custom field files it
+    bare, so the two can never collapse into one row of `missing`. Refusing "Tool name" on stage 4
+    because a tool row has that column would be a refusal with no failure behind it — and, worse, a
+    refusal the SERVER does not make, which is the one thing a pre-flight check may never do.
+  */
+  const problems = customDefinitionProblems(
+    [section({ fields: [field({ key: "toolNote", label: "Tool name", required: true })] })],
+    [STAGE]
+  );
+  expect(problems).toEqual([]);
+});
+
+test("with NO registry the two checks are silent, so absent evidence never becomes a refusal", () => {
+  // The default parameter. A browser that has not loaded the registry has no evidence either way,
+  // and blocking Save on it would be worse than the defect being fixed.
+  expect(
+    customDefinitionProblems([
+      section({ fields: [field({ key: "artisanHouseholds", label: "Artisan households", required: true })] })
+    ])
+  ).toEqual([]);
+});
+
+test("a section naming a stage the registry does not carry is not double-reported", () => {
+  // The unknown stage is the mistake; adding "and by the way it collides with nothing" beside it is
+  // noise about the same thing. The server skips both checks when the stage does not resolve.
+  const problems = customDefinitionProblems(
+    [section({ stageKey: "NO_SUCH_STAGE", fields: [field({ key: "artisanHouseholds", label: "Artisan households" })] })],
+    [STAGE]
+  );
+  expect(problems.some((problem) => problem.includes("is already a field of stage"))).toBe(false);
+});
+
+test("a sound definition is still sound once the registry is supplied", () => {
+  expect(
+    customDefinitionProblems(
+      [section({ fields: [field({ key: "loomCount", label: "How many looms?", required: true, tier: "BASIC" })] })],
+      [STAGE]
+    )
+  ).toEqual([]);
+});

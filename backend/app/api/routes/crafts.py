@@ -30,6 +30,7 @@ from app.services.workshop_access import (
     link_workshop_craft,
     pin_pending_if_late,
     stamp_workshop_submission,
+    sync_workshop_craft,
 )
 
 router = APIRouter(prefix="/crafts", tags=["crafts"])
@@ -126,6 +127,11 @@ async def update_craft(
     current_user: Any = Depends(require_craft_manager),
 ) -> dict[str, Any]:
     craft = await require_record(db.craft, craft_id)
+    # Read BEFORE anything writes: the mirrored WorkshopCraft row is keyed on the workshop the craft
+    # is LEAVING, and after ``db.craft.update`` below that value is gone — ``updated.workshopId`` is
+    # null in exactly the case that needs cleaning up. See the ``sync_workshop_craft`` call at the
+    # end of this route for the unlink this pairs with, and ``update_artisan`` for the twin.
+    previous_workshop_id = craft.workshopId
     data = clean_data(payload.model_dump(exclude_unset=True))
     # Moving a record into (or between) workshops is a workshop submission too, so the create-time
     # guard can't be bypassed by PATCHing the workshop in afterwards.
@@ -139,8 +145,40 @@ async def update_craft(
     pin_pending_if_late(data, current_user, check=check, record=craft)
     merge_field_provenance(data, current_user, previous=craft)
     resubmit_status(craft, current_user, data)
-    updated = await db.craft.update(where={"id": craft_id}, data=data, include=INCLUDE)
-    await link_workshop_craft(updated.workshopId, updated.id)
+    # THE SAME UNIQUE INDEX AS THE CREATE, SO THE SAME ANSWER. ``Craft.name`` is @unique and
+    # ``clean_data`` title-cases it on the way in, so a professor renaming a duplicate ("Bandhej") to
+    # the canonical spelling that already exists ("Bandhani") writes exactly the value another row
+    # holds. Without this the driver's UniqueViolationError reached the catch-all in main.py, which
+    # logged a stack trace and answered 500 with "Something went wrong on the server" — telling the
+    # professor the server is broken, when the truth is that the name is taken and retrying cannot
+    # help. The create path five lines up has always answered 409 for the identical collision; two
+    # routes over one index must not disagree about what a clash is. The detail string is kept
+    # BYTE-IDENTICAL to the create's so a client can match one sentence for both.
+    try:
+        updated = await db.craft.update(where={"id": craft_id}, data=data, include=INCLUDE)
+    except UniqueViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Craft name already exists") from exc
+    # BIDIRECTIONAL, unlike the create path's one-way ``link_workshop_craft`` twenty lines up. An
+    # edit can REMOVE a workshop, and until this call the removal stopped at the column: ``workshopId``
+    # is in ``records.CLEARABLE_KEYS`` so an explicit null really does clear the column, but the old
+    # ``link_workshop_craft(updated.workshopId, …)`` was then handed that null, returned immediately
+    # (its contract is "never removes a link"), and the ``WorkshopCraft`` row written when the craft
+    # was first filed survived. Everything that reads the join — ``craft_workshop_clause``'s second
+    # arm, and through today's ``bucket_workshop_clause`` that means search, the map, the completion
+    # matrix and the datasets export all at once; ``GET /crafts?workshopId=`` sixty lines up; the
+    # workshop form's "Crafts covered" picker; the export tree's craft folders — kept the craft in a
+    # workshop its own page reports it as having left. Re-filing it under a second workshop added a
+    # row without removing the first, so one craft was counted in two workshops.
+    #
+    # THIS BITES HARDER FOR CRAFTS THAN FOR ARTISANS: ``craft_workshop_clause``'s docstring records
+    # that on the live repository every craft predates the column, so the join is the ONLY link most
+    # of them have — the stale row is not a second opinion there, it is the whole answer.
+    #
+    # Do NOT "simplify" this back to passing one argument. The previous value is what makes the
+    # delete possible at all, and it must be read before the update, not after. See
+    # ``sync_workshop_craft`` for what it deliberately does NOT try to tell apart (an admin-curated
+    # roster row is indistinguishable from a mirrored one until the join grows a ``source`` column).
+    await sync_workshop_craft(previous_workshop_id, updated.workshopId, updated.id)
     return public_encode(updated)
 
 

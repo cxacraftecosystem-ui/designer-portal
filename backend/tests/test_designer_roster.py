@@ -84,6 +84,9 @@ PROFILE_YEARS = 12
 # reading the refusal has to be told the same actionable thing either way.
 ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("admin", "ADMIN", "Roster Admin"),
+    # OUTRANKS A DESIGNER AND STILL CANNOT RUN A WORKSHOP. Here so the directory has a professor
+    # to leave out; see test_the_directory_leaves_out_a_professor_the_viewer_write_would_refuse.
+    ("professor", "PROFESSOR", "Senior Professor"),
     ("adminSuspended", "ADMIN", "Admin With A Suspended Row"),
     ("adminRostered", "ADMIN", "Admin On The Roster"),
     ("active", "DESIGNER", "Empanelled Designer"),
@@ -93,6 +96,14 @@ ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("unlisted", "DESIGNER", "Never Empanelled Designer"),
     ("volunteer", "CROWDSOURCE_VOLUNTEER", "Empanelled Volunteer"),
     ("stranger", "CROWDSOURCE_VOLUNTEER", "Ordinary Volunteer"),
+    # The pair that proves the directory's cap is spent on eligible rows. Their names carry the run
+    # stamp so one search term reaches these two and nothing else — neither the rest of this run
+    # (whose stamp is in the EMAIL, not the name) nor the leftovers of a hundred previous runs. "A"
+    # sorts before "Z" under the endpoint's ``name asc``, so with the cap moved to one row the
+    # suspended designer is the row the take lands on. See
+    # test_the_directory_cap_is_spent_on_designers_the_roster_still_admits.
+    ("capSuspended", "DESIGNER", "Cap Probe {stamp} A Suspended"),
+    ("capActive", "DESIGNER", "Cap Probe {stamp} Z Active"),
 )
 
 #: slug -> isActive. "newcomer" has a row and NO account, which is how an admin empanels somebody
@@ -106,6 +117,8 @@ ROSTER: tuple[tuple[str, bool], ...] = (
     ("adminRostered", True),
     ("volunteer", True),
     ("newcomer", True),
+    ("capSuspended", False),
+    ("capActive", True),
 )
 
 
@@ -146,7 +159,12 @@ async def world():
         for slug, role, name in ACCOUNTS:
             people[slug] = await db.user.create(data={
                 "email": address(slug),
-                "name": name,
+                # ``format`` so an account can put the run stamp in its DISPLAY NAME. Only the cap
+                # probes need it — a name is the one field the directory's search matches that the
+                # address helper does not stamp, and without it no search term can single out two
+                # accounts on a database holding a hundred previous runs. Every other name is
+                # brace-free, so this is a no-op for them.
+                "name": name.format(stamp=stamp),
                 "role": role,
                 "passwordHash": hash_password(PASSWORD),
             })
@@ -220,6 +238,28 @@ def _roster_rows(client: Any, world: dict[str, Any]) -> dict[str, Any]:
     )
     assert response.status_code == 200, response.text
     return {row["email"]: row for row in response.json()["items"]}
+
+
+def directory_rows(client: Any, world: dict[str, Any], **params: Any) -> dict[str, Any]:
+    """This run's directory rows, keyed by email, narrowed by the run stamp for the same reason
+    ``_roster_rows`` narrows: the endpoint caps at 500 accounts and a database carrying a hundred
+    previous runs would otherwise push this run's people off the end of the cut."""
+    response = client.get(
+        "/api/designers/directory",
+        params={"search": world["stamp"], **params},
+        headers=_headers(world, "admin"),
+    )
+    assert response.status_code == 200, response.text
+    return {row["email"]: row for row in response.json()}
+
+
+def _role_only_user(role: str) -> Any:
+    """The least a permission predicate needs: an object with a ``role``. Deliberately not one of
+    the fixture's real rows — the question "may this ROLE run a workshop" must be answerable from
+    the role alone, and passing a full user would let a capability grant answer it instead."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(role=role)
 
 
 # --------------------------------------------------------------------------------------
@@ -506,6 +546,76 @@ async def test_the_directory_hides_a_suspended_designer_unless_asked(world, clie
 
     shown = directory(includeSuspended=True)
     assert shown[world["address"]("suspended")]["canSignIn"] is False
+
+
+async def test_the_directory_cap_is_spent_on_designers_the_roster_still_admits(
+    world, client, monkeypatch
+):
+    """THE CAP MUST APPLY TO ROWS THAT ARE ALREADY ELIGIBLE.
+
+    The suspension filter used to run in Python AFTER ``take=500``, so the cap was spent on rows
+    the route then dropped: twenty suspended designers sorting inside the first 500 came back as
+    480, with eligible designers past the cut never read at all. Both clients infer "this list was
+    cut" from its length against their own copy of 500 (``DIRECTORY_CAP`` on the web,
+    ``DESIGNER_DIRECTORY_CAP`` on Android), and a post-take drop is precisely what makes that
+    inference wrong in the direction that matters — a short list reported as complete.
+
+    Driven by moving the cap to one row rather than by writing five hundred users, the same way
+    ``test_a_cut_roster_read_is_reported_instead_of_dropping_designers_in_silence`` drives the
+    roster read's cap. With the cap at one, the suspended probe is the row the take lands on: the
+    old code returned NOTHING here, having spent its only row on an account it then discarded.
+    """
+    from app.api.routes import designers as designers_route
+
+    monkeypatch.setattr(designers_route, "DIRECTORY_TAKE", 1)
+    probe = f"Cap Probe {world['stamp']}"
+
+    admitted = directory_rows(client, world, search=probe)
+    assert list(admitted) == [world["address"]("capActive")], (
+        "the one row the cap allowed was spent on a suspended designer and then thrown away, so "
+        "an eligible designer past the cut was never read"
+    )
+
+    # The other arm is unchanged and still shows the suspended row FIRST, which is what makes the
+    # assertion above a statement about the WHERE and not about the sort order changing.
+    shown = directory_rows(client, world, search=probe, includeSuspended=True)
+    assert list(shown) == [world["address"]("capSuspended")]
+    assert shown[world["address"]("capSuspended")]["canSignIn"] is False
+
+
+async def test_the_directory_leaves_out_a_professor_the_viewer_write_would_refuse(world, client):
+    """THE ONE NON-MONOTONIC RULE IN THIS PERMISSION MODEL, pinned on the endpoint that got it wrong.
+
+    ``WORKSHOP_CAPABLE_ROLES`` was ``[role for role, rank in ROLE_RANK.items() if rank >=
+    ROLE_RANK["DESIGNER"]]``, and PROFESSOR is 40 to DESIGNER's 35 — so this directory returned
+    professors, with ``canSignIn: true`` (the roster gates DESIGNER rows only, so a professor is
+    ungated and therefore unmarked). ``design_workshop_viewers`` refuses a professor's grant with
+    an all-or-nothing 422: a picker built on this list would offer an account whose selection
+    discards the entire PUT body, and the admin's whole roster change with it.
+
+    Both halves are asserted deliberately. The membership assertion catches the shipped defect;
+    the agreement assertion catches its cause, because a rank threshold that happens to exclude
+    professors today would pass the first one and go wrong again the moment a tier is inserted.
+    """
+    from app.api.routes.designers import WORKSHOP_CAPABLE_ROLES
+    from app.core.deps import ROLE_RANK, can_run_design_workshops
+
+    listed = directory_rows(client, world, includeSuspended=True)
+    assert world["address"]("professor") not in listed, (
+        "a professor was offered as somebody an admin may hand a workshop to; the viewer write "
+        "answers 422 to exactly that grant"
+    )
+    # The designer and the admin are still there — this must be a professor-shaped hole and not an
+    # endpoint that quietly stopped returning anyone.
+    assert world["address"]("active") in listed
+    assert world["address"]("admin") in listed
+
+    for role in ROLE_RANK:
+        expected = can_run_design_workshops(_role_only_user(role))
+        assert (role in WORKSHOP_CAPABLE_ROLES) is expected, (
+            f"{role}: the directory's role set and can_run_design_workshops disagree — the "
+            "capability is a frozenset, never a rank floor"
+        )
 
 
 # --------------------------------------------------------------------------------------

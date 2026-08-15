@@ -22,6 +22,7 @@ from app.services.records import (
     enum_filter_or_422,
     hydrate_relations,
     include_of,
+    media_url_owners,
     merge_field_provenance,
     public_encode,
     require_record,
@@ -50,15 +51,30 @@ RELATIONS = (
 )
 INCLUDE = include_of(RELATIONS)
 
+# WHY EVERY ENCODE BELOW NAMES THE CALLER. ``public_encode(obj)`` with no viewer is not "the default";
+# it is the CHEAPEST SAFE answer — mask every identity number and withhold every media URL — and it is
+# the answer a route reaches by not thinking about the question. This module used to take it on all
+# four of its record responses, and the cost was not theoretical: ``RELATIONS`` declares ``media``, so
+# every tool came back with its photographs listed and their ``url``/``publicUrl``/``objectKey``
+# popped off. ``tools/page.tsx`` builds its tile from ``media.url``, so the list proved a photograph
+# existed and then rendered a placeholder with nothing to open — for a MASTER_ADMIN and for the
+# designer who had uploaded it seconds earlier, because the viewer-less branch is taken before any
+# rank test. Naming the caller also lifts the Aadhaar/Pehchan mask for the ranks entitled to it, which
+# is the same policy artisans.py, media.py and search.py already apply on their own reads.
 
-async def _assigned_artisans(tool_id: str) -> list[dict[str, Any]]:
-    """All artisans a tool is assigned to (the many-to-many links), oldest first."""
+
+async def _assigned_artisans(tool_id: str, viewer: Any) -> list[dict[str, Any]]:
+    """All artisans a tool is assigned to (the many-to-many links), oldest first.
+
+    The viewer is named here for the identity mask alone: an Artisan carries ``aadhaarNumber`` and
+    ``pehchanCardNumber`` and no media, so there is no URL decision to pay ``media_url_owners`` for.
+    """
     links = await db.toolartisan.find_many(
         where={"toolId": tool_id},
         include={"artisan": True},
         order={"createdAt": "asc"},
     )
-    return public_encode([link.artisan for link in links if link.artisan])
+    return public_encode([link.artisan for link in links if link.artisan], viewer)
 
 
 @router.get("")
@@ -125,7 +141,16 @@ async def list_tools(
         order={"createdAt": "desc"},
         relations=RELATIONS,
     )
-    return page_payload(public_encode(items), total, page, page_size)
+    # ONE grant lookup for the whole page — ``media_url_owners`` costs a single query, and only below
+    # professor, which is exactly the rank whose colleagues' photographs would otherwise be listed and
+    # withheld. The cheap ``viewer``-derived default would hand back only the caller's OWN uploads,
+    # which on a shared workshop's tool list is most of a page of dead tiles.
+    return page_payload(
+        public_encode(items, current_user, media_urls=await media_url_owners(current_user)),
+        total,
+        page,
+        page_size,
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -143,14 +168,17 @@ async def create_tool(
     # After the status policy, so a late submission outranks the submitter's own approval rights.
     pin_pending_if_late(data, current_user, check=check)
     created = await db.tooldocumentation.create(data=data, include=INCLUDE)
-    return public_encode(created)
+    # No grant lookup on the create: a MediaFile points at its tool by ``toolId``, and this tool did
+    # not exist until the statement above, so ``media`` is empty by construction and there is no URL
+    # for a resolved set to decide about. The viewer is still named, for the identity mask.
+    return public_encode(created, current_user)
 
 
 @router.get("/{tool_id}")
 async def get_tool(tool_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     tool = await require_record(db.tooldocumentation, tool_id)
     await hydrate_relations([tool], RELATIONS)
-    return public_encode(tool)
+    return public_encode(tool, current_user, media_urls=await media_url_owners(current_user))
 
 
 @router.patch("/{tool_id}")
@@ -176,7 +204,12 @@ async def update_tool(
     merge_field_provenance(data, current_user, previous=tool)
     resubmit_status(tool, current_user, data)
     updated = await db.tooldocumentation.update(where={"id": tool_id}, data=data, include=INCLUDE)
-    return public_encode(updated)
+    # The PATCH response carries ``media`` (it is in ``INCLUDE``) and the editor need not be the
+    # uploader — an EDIT-tier grantee or a professor routinely saves a tool somebody else
+    # photographed. Resolved rather than left to the cheap default so a photograph that was openable
+    # before the save is still openable in the response that comes back from it; a URL that vanishes on
+    # save reads as the save having destroyed the file.
+    return public_encode(updated, current_user, media_urls=await media_url_owners(current_user))
 
 
 @router.delete("/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -189,7 +222,7 @@ async def delete_tool(tool_id: str, current_user: Any = Depends(get_current_user
 @router.get("/{tool_id}/artisans")
 async def list_tool_artisans(tool_id: str, current_user: Any = Depends(get_current_user)) -> list[dict[str, Any]]:
     await require_record(db.tooldocumentation, tool_id)
-    return await _assigned_artisans(tool_id)
+    return await _assigned_artisans(tool_id, current_user)
 
 
 @router.post("/{tool_id}/artisans")
@@ -213,7 +246,7 @@ async def assign_tool_artisans(
     # of makers took longer than recording the tool did.
     wanted = [aid for aid in dict.fromkeys(payload.artisanIds) if aid and aid not in have]
     if not wanted:
-        return await _assigned_artisans(tool_id)
+        return await _assigned_artisans(tool_id, current_user)
     artisans = await db.artisan.find_many(where={"id": {"in": wanted}})
     by_id = {a.id: a for a in artisans}
     for artisan_id in wanted:
@@ -230,7 +263,7 @@ async def assign_tool_artisans(
     await db.toolartisan.create_many(
         data=[{"toolId": tool_id, "artisanId": aid} for aid in wanted]
     )
-    return await _assigned_artisans(tool_id)
+    return await _assigned_artisans(tool_id, current_user)
 
 
 @router.delete("/{tool_id}/artisans/{artisan_id}", status_code=status.HTTP_204_NO_CONTENT)

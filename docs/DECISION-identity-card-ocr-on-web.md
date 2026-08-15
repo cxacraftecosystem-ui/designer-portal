@@ -285,14 +285,30 @@ Verified: `backend/tests/test_workshop_transcripts.py` — **34 passed**, includ
 
 ## 6. Do the clients agree, and how that is kept true
 
-There are now up to three ports of one rule, and this repository has already been bitten twice today
-by the fourth kind of drift — a client decoding keys the server never sent.
+There are **three** ports of one rule — server, browser and handset, all three live as of 2026-08-09
+— and this repository has already been bitten twice today by the fourth kind of drift, a client
+decoding keys the server never sent.
 
 | Where | What it parses | Status |
 |---|---|---|
 | `backend/app/services/identity_ocr.py::aadhaar_candidates` | text from a vision model | **the source of truth** |
 | `frontend/lib/identityCardText.ts::identityCandidatesFromText` | text from `TextDetector` | ported, pinned |
-| Android | text from ML Kit, once the bundled recogniser lands | **does not exist yet** |
+| `android/…/data/IdentityCardText.kt::read` (`scanDigitRuns`) | text from bundled ML Kit, on the handset | **ported 2026-08-09, NOT pinned** |
+
+*Row three was corrected on 2026-08-15; it read "Android — does not exist yet" and had been wrong
+since the day the row was written. The Android decision was reversed the same week
+([`DECISION-identity-card-ocr-on-android.md`](DECISION-identity-card-ocr-on-android.md), 2026-08-09),
+`com.google.mlkit:text-recognition` went into the APK, and the parser landed with it. Leaving the row
+as written and correcting it in a footnote — which is what was done first — put an absence claim in
+the one table this document offers as the place to look before porting the rule a fourth time.*
+
+**"NOT pinned" is the live gap and the word to read in that row.** The Kotlin port carries both
+things §5 says it must — the token has to be a **whole** run of exactly twelve digits, and a run that
+was never twelve digits is not counted as a rejection — and `IdentityCardTextTest.kt` asserts each
+rule case by case. What it does **not** have is the web port's guard: no fixture in it is the verbatim
+output of `aadhaar_candidates` run under the backend venv, so nothing fails when the server's rule and
+the handset's rule stop agreeing. Two of the three ports are checked against the source of truth and
+one is checked against its author's reading of it.
 
 The web port is not kept true by care. `e2e/identity-card-web-unit.spec.ts` carries a twelve-row
 agreement table whose right-hand side is the **verbatim output of the server's own function**,
@@ -301,14 +317,18 @@ Python. One of the rows is the text Tesseract actually returned from a rendered 
 VID and enrolment number and pin code included. A change to either side that makes them disagree
 fails in Node, in seconds, with no server and no browser.
 
-**Android has no such parser today**, because it has no recogniser: `DECISION-identity-card-ocr-on-android.md`
-refused one and the handset reads cards through the same server endpoint. The decision to bundle ML
-Kit changes that — the moment ML Kit returns `Text` on the device, Android needs this rule, and the
-place to get it is this table and not a fresh reading of the regex. Two things it must carry, both
-of which are the difference between "a digit filter" and "the rule": the token must be a **whole**
-run of exactly twelve digits (section 5), and the rejection **count** must exclude everything that
-was never twelve digits, or the handset will tell a designer to re-photograph a card that was
-photographed perfectly.
+**Android had no such parser when this section was written**, because it had no recogniser:
+`DECISION-identity-card-ocr-on-android.md` refused one and the handset read cards through the same
+server endpoint. **That reversed on 2026-08-09**, in the same week and for the offline reason §3
+explains does not transfer to a browser: ML Kit was bundled, and the moment it returned `Text` on the
+device Android needed this rule. It took it from this table rather than from a fresh reading of the
+regex, which is what the next sentence asked for and is the reason the sentence was worth writing.
+Two things it had to carry, both of which are the difference between "a digit filter" and "the rule":
+the token must be a **whole** run of exactly twelve digits (section 5), and the rejection **count**
+must exclude everything that was never twelve digits, or the handset will tell a designer to
+re-photograph a card that was photographed perfectly. Both are in `IdentityCardText.kt` — the first as
+`scanDigitRuns` returning MAXIMAL runs so a grouped sixteen-digit VID is one token, the second as the
+`digits.length != AADHAAR_LENGTH` arm returning **before** the counter, not after it.
 
 The wire shape is untouched by this lane. `identityChoices` and `DwIdentityOcrResult` still read
 `aadhaarCandidates`/`pehchanCandidates`, and `e2e/identity-ocr-unit.spec.ts` still pins them against
@@ -371,3 +391,51 @@ Two, and they are independent.
 2. **If `TextDetector` ships unflagged on the platforms this client runs on.** The code path is
    already there and costs nothing; the table in section 1 is the measurement to re-run. It should
    be re-run with a real card and a real camera before anything in section 8 is described as fixed.
+
+---
+
+## How this document is kept true
+
+Two halves, kept true two different ways, and confusing them is how a decision record rots.
+
+**The decision and its argument (§1–§3, §7–§9) are frozen.** They record what was weighed on
+2026-08-09 and are not updated to match later code. If the "no" is overturned, add a block on top
+saying so — do not edit the case it defeated.
+
+**The claims about live code (§4–§6) can and do rot**, and §6 is the only part of this file with a
+mechanical guard behind it.
+
+| Claim class | Kept true by |
+|---|---|
+| The `TextDetector` / `BarcodeDetector` / `FaceDetector` availability table (§1) | **A dated probe on one Windows 11 machine, 2026-08-09.** Nothing re-runs it. It is the measurement named by revisit condition 2, so re-launch the browsers rather than trusting the table; browser support moves and this table cannot. Firefox and WebKit are marked *not measured* and must stay that way until somebody launches them. |
+| Tesseract.js bundle sizes and accuracy (§2) | Read from the published package on 2026-08-09. Re-check against npm before repeating a number. |
+| That the two parsers agree (§6) | **`frontend/e2e/identity-card-web-unit.spec.ts`** — a twelve-row table whose right-hand side is the verbatim output of `aadhaar_candidates` in `backend/app/services/identity_ocr.py`, printed by running it. This is the one claim in the document that fails loudly and in seconds when it stops being true. `frontend/e2e/identity-ocr-unit.spec.ts` does the same for the wire shape. **Nothing does this for the third port.** The Android column of that table is kept true by reading — re-read `IdentityCardText.kt` against `aadhaar_candidates` whenever either moves, until somebody pins it. |
+| The zero-bundle-bytes claim (§4) | `frontend/components/designworkshop/IdentityCardReader.tsx` and `frontend/lib/identityCardText.ts` must stay free of any imported recogniser. A `grep -ri tesseract frontend/` is the whole check, and it is worth running rather than assuming, because this decision is exactly the kind that gets undone by one convenient `npm i`. **It does not return nothing, and expecting nothing is how a check gets ignored:** there is exactly one hit, a prose comment in `frontend/e2e/identity-card-web-unit.spec.ts` explaining where a fixture's text came from. One hit, in that file, is the passing state. A hit in `frontend/package.json`, `frontend/lib/` or `frontend/components/` is the failure. |
+
+**The §6 third row: corrected in place on 2026-08-15, and why "left as written" was the wrong
+call.** The row used to read *"Android — does not exist yet"*, on the grounds that
+[`DECISION-identity-card-ocr-on-android.md`](DECISION-identity-card-ocr-on-android.md) refused a
+recogniser. That decision was reversed on 2026-08-09 and the recogniser shipped; Android has had its
+own port of this rule since, in
+`android/app/src/main/java/com/designprototype/workshop/data/IdentityCardText.kt`
+(`scanDigitRuns`). The first attempt at this correction left the row untouched and wrote the truth
+*here*, seventy lines below it, on the argument that §6 is an account of what was true when it was
+written. **That argument does not hold, and the distinction is worth stating because it is the one
+this whole document turns on:** §1–§3 and §7–§9 are frozen because they are an *argument*, and an
+argument that is edited to agree with later code stops being evidence of anything. The §6 table is
+not an argument. It is a **register of where the rule currently lives**, offered to whoever ports it
+next — which is precisely why the paragraph under it says *"the place to get it is this table and not
+a fresh reading of the regex."* A register that records an absence which ended six days ago sends
+that reader to write a fourth port of a rule that already has three, and no footnote seventy lines
+down stops them, because a register is consulted by looking at the row. Frozen means "do not rewrite
+the case you lost"; it has never meant "do not correct a fact".
+
+**What is still owed, and it is unchanged by the correction:** the third column of the agreement
+guard. The Kotlin port has no equivalent of `identity-card-web-unit.spec.ts` pinning it against the
+server's verbatim output — `IdentityCardTextTest.kt` asserts the rules as its author read them — so
+two of the three ports are checked against the source of truth and one is not. That is the sentence
+the row's **NOT pinned** is short for.
+
+**Review triggers:** `backend/app/services/identity_ocr.py`, `frontend/lib/identityCardText.ts`,
+`frontend/components/designworkshop/IdentityCardReader.tsx`, or any new dependency under
+`frontend/package.json` that could contain a recogniser.

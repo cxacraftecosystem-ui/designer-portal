@@ -476,9 +476,44 @@ def custom_schema_version(sections: Sequence[CustomSectionSpec]) -> str:
 
     Retired fields are inside the digest as well — a phone holding a copy that still OFFERS a
     retired question is stale in the way that matters most.
+
+    **THE SECTION'S OWN TITLE AND SORT ORDER ARE IN IT TOO, and leaving them out was a real defect
+    rather than a judgement.** The argument above is that the label IS the question; a section
+    heading is the wording those same answers were given UNDER, and it is what the .docx prints over
+    them (``report_custom_sections.append_custom_section`` heads the block with ``item.title``),
+    while ``sort_order`` decides the running order the annexure is spliced in (``report_templates``).
+    The first version of this loop iterated fields only, so retitling "Loom shed" to "Weaver shed",
+    or dragging it above another section, digested BYTE-IDENTICALLY — and the web's cache is not
+    merely permitted to keep the old copy on an equal digest, it is REQUIRED to: ``fetchCustomDefinition``
+    and ``adoptCustomDefinition`` (frontend/lib/customSections.ts) discard the freshly fetched
+    definition and return the previously cached object for identity reasons. So the browser printed
+    "Loom shed" over the same answers the server's .docx printed "Weaver shed" over, in a different
+    order, with nothing on either surface saying they disagreed — the exact staleness this digest
+    exists to detect, reached through the one field it did not cover. Measured after the fix: the
+    two definitions in ``test_the_digest_moves_when_a_section_is_retitled_or_reordered`` produce
+    three distinct 16-character digests where they previously produced one.
+
+    ``description`` stays OUT, on the same judgement as ``help`` above and for the same reason: it is
+    guidance prose beside the questions rather than the wording an answer was given under, and it is
+    edited far more often than a heading. If that ever stops being true — if a description starts
+    carrying instructions a report is read against — it belongs in the parts string beside the title.
+
+    THE SECTION PART IS EMITTED ONLY FOR A SECTION THAT HAS FIELDS, which is what keeps
+    ``custom_schema_version([_section()]) == ""`` true. A section with no questions prints nothing
+    (``has_content`` is false with no fields), is asked on no screen, and is exactly the
+    half-finished row a designer leaves behind mid-edit; giving it a digest would make "I hold
+    nothing" and "there is nothing to hold" look identical again for the commonest way a definition
+    is empty. Do not "simplify" this by hoisting the append out of the ``if s.fields`` guard.
     """
     parts: list[str] = []
     for s in sections:
+        if s.fields:
+            # ``§`` cannot occur in a field key (``validate_definition`` admits ASCII identifiers
+            # only), so a section part can never be mistaken for a field part when the two are
+            # sorted together into one string.
+            parts.append(
+                f"{s.stage_key}.{s.key}:§:{s.title}:{s.sort_order}:{int(s.retired)}"
+            )
         for f in s.fields:
             options = ",".join(f"{o.value}={o.display}" for o in f.options)
             parts.append(
@@ -1179,6 +1214,20 @@ def plan_definition(
       with a new field minted for the new wording;
     * an answered field the payload no longer names is RETIRED, never deleted;
     * a section is retired if anything under it has been answered, deleted if not.
+
+    **RETITLING AN ANSWERED SECTION IS AN EDIT AND NOT A SUPERSEDE, and that asymmetry with the
+    field rule above is deliberate.** It was put to this module as a defect — a heading is the
+    wording answers were given under, exactly as a label is — and the reasoning that keeps it an EDIT
+    is: a field label IS the question a value answers, so re-attributing it makes the row assert
+    something nobody said (twelve looms becoming twelve weavers); a section heading names the group
+    the questions were asked IN, and every question under it still carries its own unchanged label,
+    so the answer still asserts what it always did. Against that, superseding a section means
+    retiring it whole and minting a new key for every field beneath it — a designer correcting a typo
+    in a heading would lose their entire live form and the .docx would print the block twice — which
+    is a far larger loss than the imprecision it fixes. What the retitle DOES have to do is
+    invalidate every cached copy that renders the heading, and that half is enforced:
+    :func:`custom_schema_version` digests ``title`` and ``sort_order``. If the product decision ever
+    reverses, the refusal belongs here, in the shape of the stage-move refusal below.
 
     **A KEY STILL HELD BY ANY QUESTION ON THIS STAGE CANNOT BE CLAIMED BY A NEW FIELD, whichever
     section claims it.** ``validate_definition`` cannot see this — it is pure and reads only the

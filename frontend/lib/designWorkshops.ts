@@ -1091,12 +1091,22 @@ function isMultiField(field: DwField): boolean {
  *   has wrong — and a picker that reverted every correction the moment it was used would be watched
  *   doing it, which is a worse failure than retyping.
  * - **Unless the row named a DIFFERENT record before**, in which case every mapped single-value
- *   field is rewritten. Leaving the previous artisan's name beside the new artisan's id is the one
- *   outcome worse than either alternative: the report and the research data then name two different
- *   people for the same row and nothing says which was meant.
+ *   field is CLEARED FIRST and then rewritten with whatever the new record has to say. Clearing is
+ *   the half that was missing for a year — see the block comment below, which names the defect.
+ *   Leaving the previous artisan's name beside the new artisan's id is the one outcome worse than
+ *   either alternative: the report and the research data then name two different people for the
+ *   same row and nothing says which was meant.
  * - **A list is only ever seeded, never replaced.** The documented product's photograph is a
  *   starting point; overwriting a gallery with it would destroy the only copy of the photographs the
  *   designer took at the workshop.
+ *
+ * The returned patch is applied with a spread (`{...row, ...patch}` — `patchRowMany` in
+ * EntityForm.tsx, and the singleton grid), so a cleared key travels as an explicit `null` VALUE
+ * rather than as an absent one. An absent key cannot delete anything through a spread; a `null`
+ * blanks the box on screen, and on the wire `coerce_value` reads it as blank and `validate_entry`
+ * drops it, so the stored row loses the key. That is the same thing the handset sends
+ * (`hydrationPatch` emits `null` for what it is clearing) and the same end state the server reaches
+ * with `item.data.pop(target_key)`.
  */
 export function hydrateFromReference(
   entity: DwEntity,
@@ -1109,6 +1119,48 @@ export function hydrateFromReference(
   if (!mapping) return {};
   const replaced = Boolean(previousRefId) && previousRefId !== option.id;
   const patch: Record<string, DwValue> = {};
+
+  if (replaced) {
+    // THE PREVIOUS RECORD'S VALUES ARE CLEARED FIRST, BEFORE ANYTHING IS COPIED IN.
+    //
+    // The rewrite promised three lines above used to be applied field by field in the loop below,
+    // which SKIPS a source value that is blank — so it rewrote only the fields the NEW record
+    // happens to have filled in, and every field the new record leaves blank kept the OLD record's
+    // answer. Pick a fully documented artisan, notice the phone belongs to a different Sita Devi,
+    // re-point the row at a thinly documented one, and the row now reads as artisan B's name and
+    // craft beside artisan A's phone, village, gender and PHOTOGRAPH, with `artisanRef` naming B so
+    // nothing can ever re-resolve it. That participant table goes into a .docx sent to a ministry.
+    //
+    // THE SERVER-SIDE HALF OF THIS RULE IS NOT ENOUGH ON ITS OWN, and that is the whole reason
+    // these lines are here rather than only in `hydrate_entries`. The server pops the mapped
+    // targets only when `replaced` is true, and it computes `replaced` against the STORED row —
+    // `was = item.previous.get(spec.key)`. So it fires exactly ONCE. Save 1 sends
+    // `{artisanRef: B, phone: A's}`, the stored row still says A, the pop clears the phone. But the
+    // browser's draft was never touched, so it still holds A's phone; save 2 sends the same pair,
+    // the stored row NOW says B, `replaced` is false, the only-fill-blanks rule sees a filled value
+    // and leaves it alone — and A's phone is written straight back under B's id. Anything that
+    // triggers a second save of an unchanged draft does it: a retry after a dropped connection, an
+    // autosave, or the designer simply pressing Save again.
+    //
+    // Cleared to `null` rather than to `""`, and cleared here rather than by writing blanks in the
+    // loop, because "the new record has nothing to say about this field" and "the new record says
+    // it is empty" are the same thing on the wire: the reference payload carries `null` for a
+    // column nobody filled in, and the loop below refuses a blank source outright.
+    //
+    // THE MULTI ARM IS DELIBERATELY EXEMPT, matching the gallery rule below and on both other
+    // surfaces: a gallery is seeded when empty and never overwritten, because it holds the
+    // photographs the designer took at the workshop and there is no second copy of those anywhere.
+    //
+    // A DEPRECATED TARGET IS CLEARED TOO, even though the loop below refuses to WRITE to one.
+    // Refusing to put new data into a retired field is not a reason to keep a DIFFERENT PERSON's
+    // data there — the value still travels in `data` and still prints. The server's pop makes the
+    // same call for the same reason; if you narrow one of them, narrow both or they diverge.
+    for (const targetKey of Object.values(mapping)) {
+      const target = entity.fields.find((candidate) => candidate.key === targetKey);
+      if (!target || isMultiField(target)) continue;
+      patch[targetKey] = null;
+    }
+  }
 
   for (const [sourceKey, targetKey] of Object.entries(mapping)) {
     const raw = option.data?.[sourceKey];

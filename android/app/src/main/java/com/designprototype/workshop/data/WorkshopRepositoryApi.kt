@@ -835,19 +835,45 @@ interface WorkshopRepositoryApi {
 
     // The options behind one REF field's dropdown.
     //
-    // `model` is the registry's `refModel`; `filterBy` is the value of the field named by
-    // `refFilterBy` on the same row, which is what turns "every product in the cluster" into "this
-    // artisan's products". Both are sent as the registry spelled them — the client invents neither,
-    // so a scope or a model the server later renames cannot end up with two spellings.
+    // `model` is the registry's `refModel`; `scope` is its `refScope`; `filterBy` is the value of the
+    // field named by `refFilterBy` on the same row, which is what turns "every product in the cluster"
+    // into "this artisan's products". All three are sent as the registry spelled them — the client
+    // invents none of them, so a scope or a model the server later renames cannot end up with two
+    // spellings.
+    //
+    // `scope` WAS MISSING FROM THIS SIGNATURE AND THAT MADE THE NARROWING DEAD ON THE WIRE FOR THE
+    // WHOLE HANDSET. The route declares `scope: str = Query(REF_SCOPE_ALL, max_length=16)`
+    // (backend/app/api/routes/design_workshops.py), and `reference_options` adds the workshop clause
+    // only under `if scope == REF_SCOPE_WORKSHOP and spec.workshop_where and record.workshopId`
+    // (backend/app/services/design_workshops.py) — so an OMITTED parameter is not "the server works it
+    // out", it is the server being told ALL. `WorkshopRepository.designWorkshopReferences` has always
+    // taken a `scope` and always spent it on the cache key alone; the four WORKSHOP-scoped REF fields
+    // in the bundled registry (`processStep.processRef` → Process, `existingProduct.artisanRef` →
+    // Artisan, `existingProduct.productRef` and `prototype.productRef` → ProductDocumentation) were
+    // therefore answered with the first fifty rows of the WHOLE table, name-ascending, on every phone.
+    // The browser has always sent it (`scope: field.refScope`, frontend/components/designworkshop/
+    // StageReferenceField.tsx), so the two surfaces narrowed differently for the same field — the
+    // parity class this repository keeps getting bitten by. [DwField.refScope]'s own KDoc already
+    // describes this parameter as something "the picker sends straight back"; until this line existed
+    // that sentence described an intention, not the wire.
+    //
+    // NULLABLE, AND BLANK MUST BECOME NULL AT THE CALL SITE. `refScope` defaults to "" when the
+    // registry did not say, and Retrofit sends a non-null value even when it is empty: `scope=` is
+    // parsed by FastAPI as the empty string, which `reference_options` answers with a 422 ("scope must
+    // be one of ALL, WORKSHOP") rather than by falling back. That 422 is swallowed by the repository's
+    // deliberate `runCatching { … }.getOrNull() ?: return`, so the symptom would not be an error — it
+    // would be a picker that silently never refreshes again. Omitting the parameter is the only way to
+    // say "the server did not tell us a scope, so choose your own default".
     //
     // `search` is declared because the endpoint offers it, and is deliberately NOT used by the phone's
-    // picker: the picker fetches the WHOLE list for a (model, filter) pair so it can be cached and
-    // searched with no signal at all (see [DwReferenceStore]). A per-keystroke server search would be
-    // faster in an office and useless in a courtyard, which is the wrong trade for this app.
+    // picker: the picker fetches the WHOLE list for a (model, scope, filter) triple so it can be cached
+    // and searched with no signal at all (see [DwReferenceStore]). A per-keystroke server search would
+    // be faster in an office and useless in a courtyard, which is the wrong trade for this app.
     @GET("design-workshops/{id}/references")
     suspend fun designWorkshopReferences(
         @Path("id") id: String,
         @Query("model") model: String,
+        @Query("scope") scope: String? = null,
         @Query("filterBy") filterBy: String? = null,
         @Query("search") search: String? = null
     ): DwReferenceResponseDto

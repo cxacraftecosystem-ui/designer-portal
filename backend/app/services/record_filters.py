@@ -184,6 +184,62 @@ def craft_workshop_clause(ids: list[str], include_unassigned: bool) -> dict[str,
     return {"OR": branches} if branches else {"id": {"in": []}}
 
 
+#: Which bucket names get a reading of "belongs to this workshop" that is WIDER than the bare
+#: ``workshopId`` column, and which helper holds that reading. Keyed by the bucket names
+#: ``build_record_wheres`` returns, plus the singular table names ``datasets`` narrows by, so one
+#: table cannot be spelled two ways into two different answers.
+_WIDE_WORKSHOP_CLAUSES = {
+    "artisans": artisan_workshop_clause,
+    "artisan": artisan_workshop_clause,
+    "crafts": craft_workshop_clause,
+    "craft": craft_workshop_clause,
+}
+
+
+def bucket_workshop_clause(
+    bucket: str, ids: list[str], include_unassigned: bool
+) -> dict[str, Any]:
+    """"Which rows of ``bucket`` belong to these workshops" — the ONE answer, always non-empty.
+
+    THIS FUNCTION EXISTS BECAUSE THE ANSWER WAS ONCE WRITTEN TWICE AND THE TWO DISAGREED. The
+    artisans bucket of ``build_record_wheres`` was narrowed by the generic ``workshop_clause`` —
+    the bare ``Artisan.workshopId`` column — while ``GET /artisans``, the dataset export and the
+    consolidated questionnaire index all narrowed it with ``artisan_workshop_clause``'s three
+    readings. So an artisan linked ONLY by a ``WorkshopArtisan`` roster row (which is what the
+    workshop form's "linked artisans" picker writes, without ever touching the column) or ONLY by
+    having sat in an interview taken there was returned by Browse artisans and absent from Search
+    and the map, under the SAME scope control. Two screens disagreeing about who was at a workshop
+    is two screens disagreeing about what the workshop's data IS — the exact failure the docstrings
+    in this module are written to prevent, occurring inside this module.
+
+    The fix is not a second fork at the second call site; a second copy is how the divergence got
+    here. Every caller that has a table in hand and a workshop selection asks THIS, and the
+    per-table reading lives in exactly one place: ``_WIDE_WORKSHOP_CLAUSES`` above. A table that
+    grows a second link tomorrow (crafts already have one, artisans have two) is widened once and
+    every screen moves together.
+
+    ``bucket`` accepts both spellings the repository already uses for a table — the plural bucket
+    names ``build_record_wheres`` returns and the singular ``DatasetSpec.workshop_filter`` values
+    ("artisan", "craft", "self", "column") — so ``api/routes/datasets.py`` can drop its own copy of
+    this fork for ``bucket_workshop_clause(dataset.workshop_filter, ids, include_unassigned)``
+    without either side having to be renamed first. Until it does, that fork is the THIRD place
+    this question is answered, and it is only by inspection that it still agrees.
+
+    ALWAYS RETURNS A PREDICATE, never ``None``. ``workshop_clause`` returns ``None`` for a
+    selection that cannot narrow a table — "unassigned only" against the workshops table is the
+    real case — and every caller then had to remember to substitute an impossible predicate.
+    Forgetting leaves the bucket UNFILTERED, which shows the whole repository under a scope that
+    excludes all of it. That substitution is made here so it cannot be forgotten.
+    """
+    wide = _WIDE_WORKSHOP_CLAUSES.get(bucket)
+    if wide is not None:
+        return wide(ids, include_unassigned)
+    clause = workshop_clause(
+        ids, include_unassigned, is_workshop_table=(bucket in ("workshops", "self"))
+    )
+    return clause if clause is not None else {"id": {"in": []}}
+
+
 def resolve_types(raw: list[str] | None) -> set[str]:
     """Which buckets this request covers. Absent, empty, or all-blank means all five.
 
@@ -329,23 +385,29 @@ async def build_record_wheres(
     # the search box, the completion matrix and the consolidated questionnaire all read it from here,
     # so they cannot disagree about what "this workshop" contains.
     #
+    # PER BUCKET, THROUGH ``bucket_workshop_clause``, AND NOT THROUGH ``workshop_clause`` DIRECTLY.
+    # This loop used to call the generic column clause for all five buckets, which made the claim
+    # in the paragraph above false for artisans: Search and the map saw only artisans carrying
+    # ``Artisan.workshopId``, while Browse artisans, the dataset export and the questionnaire index
+    # saw those PLUS the workshop's roster PLUS anyone who sat in an interview taken there. One
+    # scope control, two answers, and the wrong one under-counted silently — "this workshop
+    # documented no artisans" over a roster sitting in the database. The dispatcher owns the
+    # per-table reading now, so widening a table widens every screen at once.
+    #
     # Nested under AND, like the row filter and the workshop-date clause above, so it composes with
     # the free-text OR instead of overwriting it — and so a bucket that already has an AND (workshops,
-    # once a date range is in play) gains a clause rather than losing one.
+    # once a date range is in play) gains a clause rather than losing one. This matters more now than
+    # it did: the artisans clause is itself an OR, so assigning it would destroy the free-text search.
     resolved = resolve_workshop_ids(workshop_ids)
     if resolved is not None:
         ids, include_unassigned = resolved
         for bucket, where in wheres.items():
-            clause = workshop_clause(
-                ids, include_unassigned, is_workshop_table=(bucket == "workshops")
+            # Never None — a selection that cannot narrow this bucket ("unassigned only" against the
+            # workshops bucket is the real case) comes back as an impossible predicate rather than as
+            # nothing, because leaving the bucket unfiltered would show every workshop in the
+            # repository under a scope that excludes them all.
+            where.setdefault("AND", []).append(
+                bucket_workshop_clause(bucket, ids, include_unassigned)
             )
-            if clause is not None:
-                where.setdefault("AND", []).append(clause)
-            else:
-                # The selection cannot match anything in this bucket — "unassigned only" against the
-                # workshops bucket is the real case. An impossible predicate is the honest answer: the
-                # alternative is leaving the bucket unfiltered, which would show every workshop in the
-                # repository under a scope that excludes them all.
-                where.setdefault("AND", []).append({"id": {"in": []}})
 
     return wheres

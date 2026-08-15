@@ -10,6 +10,15 @@ asking for it. Only GRANTED confers anything — a PENDING request is not access
 rows are kept rather than deleted, so a refusal stays on the record instead of being silently
 re-requested away.
 
+WHAT "KEPT" HAS TO MEAN, because for a while it did not mean this: the ROW surviving is not the
+guarantee — ``decidedById``, ``decidedAt`` and ``decisionNote`` are the only record a decision has,
+and ``POST /workshops/access-requests`` used to null all three when the person who had been refused
+asked again. The row was kept and the decision was gone, which is the same audit hole with a
+survivor. Re-requesting now flips ``status`` back to PENDING (and clears ``assignedById``, which is
+about curation, not about the decision) and leaves the three decision columns standing, so the queue
+can say "denied by X on the 3rd — asked again on the 9th". Any future writer of this table inherits
+that rule: a request may be re-opened, a decision may not be erased by its subject.
+
 Whether a workshop is CURATED at all is a different question from whether it has rows, and getting
 that wrong locks people out of workshops they have always been able to use. The rule is:
 
@@ -497,6 +506,45 @@ async def link_workshop_artisan(workshop_id: str | None, artisan_id: str) -> Non
         pass
 
 
+async def sync_workshop_artisan(
+    previous_workshop_id: str | None, next_workshop_id: str | None, artisan_id: str
+) -> None:
+    """Move an artisan's mirrored join row FROM its old workshop TO the new one. Use this on edits.
+
+    THE ADD-ONLY MIRROR ABOVE MADE UNLINKING A LIE, ONE LAYER DOWN FROM WHERE IT WAS ALREADY FIXED
+    ONCE. ``workshopId`` is in ``records.CLEARABLE_KEYS`` precisely because stripping an explicit
+    ``null`` used to make "remove this artisan from this workshop" a silent no-op — 200, the form
+    redrew as unlinked, the column kept its old value. That fix cleared the COLUMN. The PATCH route
+    then called ``link_workshop_artisan(updated.workshopId, …)`` with the NEW value, which returns
+    immediately on a null, so the ``WorkshopArtisan`` row written when the artisan was first filed
+    survived untouched. Every read that honours the join — ``artisan_workshop_clause``'s roster arm,
+    ``GET /artisans?workshopId=``, the dataset export, the workshop's own roster screen — kept
+    returning the artisan under a workshop the artisan's own page says they left. Re-filing them
+    under a second workshop then added a second row without removing the first, so one artisan was
+    counted in two workshops at once.
+
+    IT DELETES ONLY THE EXACT ``(previous, artisan)`` PAIR, AND ONLY WHEN THE COLUMN ACTUALLY MOVED.
+    A PATCH that never mentions ``workshopId`` arrives here with ``previous == next`` and touches
+    nothing. The known cost of this — say it out loud rather than discover it later — is that a
+    roster row an ADMIN curated from the workshop form is indistinguishable from one this mirror
+    wrote, so if both the column and the admin's roster named the same workshop, clearing the column
+    takes the admin's row with it. That is the lesser of the two wrongs available today: the
+    alternative is telling a designer their unlink succeeded when it did not, on every single edit.
+    Making it selective needs a ``source`` column on the join table to tell the two apart — worth
+    doing, and a schema change rather than a fix to this function.
+
+    ``delete_many`` and not ``delete``: the row is absent for every artisan filed before the mirror
+    existed, and a missing row must be a no-op rather than a 500 on an ordinary save.
+    """
+    if not artisan_id:
+        return
+    if previous_workshop_id and previous_workshop_id != next_workshop_id:
+        await db.workshopartisan.delete_many(
+            where={"workshopId": previous_workshop_id, "artisanId": artisan_id}
+        )
+    await link_workshop_artisan(next_workshop_id, artisan_id)
+
+
 async def link_workshop_craft(workshop_id: str | None, craft_id: str) -> None:
     """Mirror a craft's explicit ``workshopId`` into the WorkshopCraft join table (see
     :func:`link_workshop_artisan` — same contract, same idempotence)."""
@@ -511,3 +559,35 @@ async def link_workshop_craft(workshop_id: str | None, craft_id: str) -> None:
         await db.workshopcraft.create(data={"workshopId": workshop_id, "craftId": craft_id})
     except UniqueViolationError:
         pass
+
+
+async def sync_workshop_craft(
+    previous_workshop_id: str | None, next_workshop_id: str | None, craft_id: str
+) -> None:
+    """The craft twin of :func:`sync_workshop_artisan` — same defect, same remedy, same caveat.
+
+    ``PATCH /crafts`` has the identical hole: the column clears, ``link_workshop_craft`` is handed
+    the new (null) value and returns, and ``craft_workshop_clause``'s join arm keeps the craft in
+    the workshop it was just removed from — which bites HARDER for crafts than for artisans,
+    because that clause's docstring records that on the live repository the join is the ONLY link
+    most crafts have.
+
+    It is defined here rather than inlined at the call site so the two halves of one rule cannot
+    drift. WIRED UP AND LIVE: ``update_craft`` (``api/routes/crafts.py``, the
+    ``sync_workshop_craft`` call at the end of the route) captures ``craft.workshopId`` into
+    ``previous_workshop_id`` BEFORE ``db.craft.update`` and passes it here afterwards, exactly as
+    ``update_artisan`` does for :func:`sync_workshop_artisan`. That is the only call site.
+
+    This paragraph used to say the call site was "owned by another change in flight" and describe
+    the wiring as still owed. It was true for about an hour and then was not, and a reader who
+    believed it would have gone looking for a one-line change that was already made — or, worse,
+    made it twice. If you move or rename the call site, correct this sentence in the same commit:
+    a helper whose docstring lies about who calls it is how the previous stale note happened.
+    """
+    if not craft_id:
+        return
+    if previous_workshop_id and previous_workshop_id != next_workshop_id:
+        await db.workshopcraft.delete_many(
+            where={"workshopId": previous_workshop_id, "craftId": craft_id}
+        )
+    await link_workshop_craft(next_workshop_id, craft_id)

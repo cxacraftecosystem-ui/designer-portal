@@ -480,3 +480,28 @@ showed it holding a listing object per matching row (§8).
   third is a descriptor in `registry.py`, a `MarketResearchProvider` subclass that maps its key
   names onto `RawListing`, and nothing else — none of the parsing, deduplication, currency or
   provenance logic is per-vendor, by design.
+
+---
+
+## How this document is kept true
+
+This file has an unusual property that makes it easier to keep honest than most: **the feature is
+dormant.** No route imports it, nothing is installed for it, and a fresh clone behaves as it did
+before it existed. So the commonest way a document rots — the code moving under it while somebody
+uses the feature — cannot happen quietly here. The compensating risk is the opposite one: **nothing
+exercises the prose either**, and a dormant capability's description drifts because nobody is ever
+contradicted by it.
+
+| Claim class | Kept true by |
+|---|---|
+| Behaviour: parsing, deduplication, currency refusal, provenance, the 16 MB ceiling, the two-path tokeniser | **`backend/tests/test_market_research.py` and `backend/tests/test_market_research_providers.py`**, run as §9 gives them. This is the mechanical half and it covers the parts of §4, §5 and §8 that are assertions about code rather than about a machine. |
+| "Status: dormant — nothing calls this" | `grep -rn "market_research" backend/app --include=*.py` outside `backend/app/ai_features/`. The day a route, a queue job or a UI imports it, the first line of this document is false and §10's first bullet with it — and that is the single most consequential sentence here, because everything about consent and cost in §6 is written on the assumption that an operator has to switch this on deliberately. |
+| The variable list | **Owned by [AI_FEATURES.md](AI_FEATURES.md) §9**, which is the single index for the whole `backend/app/ai_features/` package. This file must not grow a second list, or the two disagree. §10 already records that these fifteen variables are not in `backend/app/core/config.py`. |
+| Provider descriptors and the registry claim ("a third vendor is a descriptor plus a subclass and nothing else") | `backend/app/ai_features/registry.py` and `backend/app/ai_features/providers/`. Checkable by reading, and the claim is only as true as the last vendor added; if per-vendor logic ever leaks out of a provider class, that sentence in §10 is the one to delete. |
+| The §8 measurements — 27–28 MB flat, 0.18 / 1.7 / 8 s, 97 µs → 25 µs | **A dated run on one laptop, 2026-08-08, and not maintained.** Re-measure rather than trust: the method is stated in §8 (`PeakWorkingSetSize`, three runs, synthetic catalogues) so it can be reproduced. §8 already flags the timings as an upper bound taken under load; the memory figure is the one the deployment decision rests on. |
+| The hosted providers' behaviour | **Unverified and stated as such** — never called, because it needs an account and costs money. Nothing here should be strengthened past that without a receipt. |
+| §6, the legal and ethical boundary | Not a code claim and nothing mechanical can hold it. It is what an operator agrees to by setting the variables, and it needs a human read whenever a provider is added or a refusal in §5 is relaxed. |
+
+**Review triggers:** anything under `backend/app/ai_features/`; a new caller of `market_research`;
+a change to `backend/app/services/market_analysis.py`, whose tokeniser this package is asserted to
+agree with.

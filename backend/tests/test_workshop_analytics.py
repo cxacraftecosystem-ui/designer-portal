@@ -532,6 +532,54 @@ def test_an_uncostable_sheet_is_counted_rather_than_treated_as_a_ratio_of_zero()
     assert "could not be costed at all" in groups[0].message
 
 
+def test_a_cluster_whose_sheets_are_all_uncostable_still_appears_instead_of_vanishing():
+    """THE REGRESSION. The group loop walked `by_cluster`, and a cluster only gains a key there on
+    the costable branch — so when every sheet in a cluster was skipped, `uncostable[cluster]` was
+    incremented and then read by nobody and the cluster produced no group at all.
+
+    On the admin page a cluster that costed every product and agreed no price read exactly like a
+    cluster that recorded no cost sheets: absent. Nothing else in the payload covered for it —
+    `sheetsWithoutCluster` counts a blank clusterName, which is a different thing, and
+    `coverage.workshopsWithCostSheets` still counted these workshops.
+
+    A blank "Expected price" alone is enough to reach it, which is the ordinary state of a cluster
+    that has costed but not yet priced. Both arms are asserted: the all-uncostable cluster is here,
+    and the costable one beside it is untouched — a fix that turned every cluster into a
+    ratio-less group would pass the first assertion on its own.
+    """
+    priced = ["150.00", "200.00", "250.00", "300.00", "350.00"]
+    groups, unattributed = analyse_cost_ratios([
+        # No expected price on either sheet, in two different workshops of one cluster.
+        WorkshopRows(workshop_id="w1", cluster="Sambalpur",
+                     cost_sheets=({"materialCost": "100.00", "labourCost": "20.00"},)),
+        WorkshopRows(workshop_id="w2", cluster="Sambalpur",
+                     cost_sheets=({"materialCost": "80.00", "labourCost": "0.00"},
+                                  {"expectedPrice": "500.00"})),
+        WorkshopRows(workshop_id="w3", cluster="Bargarh",
+                     cost_sheets=tuple(sheet("100.00", p) for p in priced)),
+    ])
+    assert unattributed == 0
+    by_cluster = {group.cluster: group for group in groups}
+    assert set(by_cluster) == {"Sambalpur", "Bargarh"}, \
+        "the all-uncostable cluster was dropped, and reads as a cluster that costed nothing"
+
+    dropped = by_cluster["Sambalpur"]
+    assert dropped.sheets == 0
+    assert dropped.uncostable == 3
+    # TWO, not three: `w2` filed two of the three sheets. Counting the sheets and calling them
+    # workshops would over-state the cluster's participation in the one column an admin scans.
+    assert dropped.workshops == 2
+    assert dropped.ratio is None
+    assert dropped.below_cost == 0
+    assert "not one of them can be costed" in dropped.message
+
+    # The costable cluster is unchanged, and still sorts FIRST — the refusal must not push the one
+    # group that carries a comparison down the page.
+    assert groups[0].cluster == "Bargarh"
+    assert groups[0].ratio is not None
+    assert groups[0].sheets == 5
+
+
 def test_cost_sheets_on_a_workshop_with_no_cluster_are_counted_not_pooled_into_an_empty_group():
     groups, unattributed = analyse_cost_ratios([
         WorkshopRows(workshop_id="w1", cluster="", cost_sheets=(sheet("100.00", "200.00"),)),

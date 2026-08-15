@@ -69,6 +69,24 @@ RETIRED_NOTE = "no longer asked"
 #: other annexures carry one — both renderers lay out every row before the designer sees a page.
 MAX_ROWS_PER_SECTION = 200
 
+#: The capture-tier ladder as plain tokens, so this module can answer "does the template admit this
+#: question" without importing :class:`app.services.stage_schema.Tier`.
+#:
+#: **A SECOND COPY OF A RULE IS HOW MOST OF THIS REPOSITORY'S DEFECTS AROSE, SO SAY WHY THIS ONE
+#: EXISTS.** This module is pure and has to stay transliterable into the Kotlin that builds the
+#: on-device report (see the module docstring) — ``Tier`` lives beside the whole 22-stage registry
+#: and dragging it in at module scope would put the registry's import graph inside the phone's
+#: renderer. The copy is three tokens that have not moved since the source matrix was written, and
+#: ``test_the_local_tier_ladder_is_the_registrys_own`` compares this dict against ``Tier`` member by
+#: member, so the two cannot silently diverge. If a fourth tier is ever added, that test fails
+#: before anything reaches a document.
+_TIER_RANK: dict[str, int] = {"BASIC": 0, "STANDARD": 1, "ADVANCED": 2}
+
+#: The rank that admits every tier. The default everywhere below, so a caller that has no template
+#: in hand — a test, the web preview, ``custom_section_blocks_standalone`` — keeps printing every
+#: question exactly as it did before tiers were consulted at all.
+ALL_TIERS = 2
+
 
 @dataclass(frozen=True, slots=True)
 class CustomReportField:
@@ -89,6 +107,42 @@ class CustomReportField:
     options: tuple[tuple[str, str], ...] = ()
     required: bool = False
     retired: bool = False
+    #: The capture tier the designer chose for this question, as a ``Tier`` token string.
+    #:
+    #: **WHY THIS IS HERE AT ALL.** ``CustomFieldSpec.tier`` is a real choice in the section editor
+    #: ("Which capture tier this question belongs to"), it is validated, it is stored, and it is
+    #: serialised to both clients — and until this attribute existed it was read by nothing at
+    #: render time. Every registry field passes ``ReportBuilder._visible``
+    #: (``spec.tier.rank <= template.max_tier.rank``); a designer's own question passed no such
+    #: gate, so COMPACT_SUMMARY — whose stated description is "Basic-tier fields only, one
+    #: photograph per prototype" and whose ``max_tier`` is the only non-ADVANCED one in
+    #: ``TEMPLATES`` — correctly suppressed every Standard and Advanced REGISTRY field and then
+    #: printed the designer's Standard-tier answers in full. One document, two rules, one declared
+    #: attribute.
+    #:
+    #: **THE DEFAULT IS BASIC AND NOT STANDARD, WHICH IS THE OPPOSITE OF ``CustomFieldSpec``'s.**
+    #: That is deliberate and it is the safe direction. BASIC is the rank every template admits, so
+    #: a ``CustomReportField`` built by a caller that does not yet supply a tier prints exactly
+    #: where it printed before — whereas defaulting to STANDARD would make one missing keyword
+    #: argument silently delete a designer's genuinely Basic-tier questions from a submitted
+    #: report. Losing recorded fieldwork out of a ministry's copy is a far worse failure than
+    #: printing an answer a terse template might not have asked for, and the same asymmetry is why
+    #: ``display_value`` prints an unknown field type as plain text rather than dropping it.
+    tier: str = "BASIC"
+
+    @property
+    def tier_rank(self) -> int:
+        """This field's rank on the capture ladder; ``BASIC`` for anything unrecognised.
+
+        Unrecognised falls to 0 — printed by every template — for the reason the ``tier`` default
+        gives: a definition written by a newer server and read by an older one must not lose the
+        designer's answers to a token this build has never heard of.
+        """
+        return _TIER_RANK.get(str(self.tier).upper(), 0)
+
+    def within(self, max_tier_rank: int) -> bool:
+        """Whether a template capped at ``max_tier_rank`` asks this question."""
+        return self.tier_rank <= max_tier_rank
 
     def option_label(self, value: Any) -> str:
         """The printable label for a stored token, falling back to the token itself.
@@ -122,9 +176,19 @@ class CustomSectionItem:
     def answer(self, field: CustomReportField) -> Any:
         return self.values.get(field.key)
 
-    @property
-    def printed_fields(self) -> tuple[CustomReportField, ...]:
-        """The fields this section actually prints, in order.
+    def fields_at(self, max_tier_rank: int = ALL_TIERS) -> tuple[CustomReportField, ...]:
+        """Every field of this section a template capped at ``max_tier_rank`` asks about.
+
+        THE ONE PLACE THE TIER GATE IS APPLIED. ``printed_fields``, ``has_content`` and
+        ``answered_count`` all come through here, so a template cannot print a question it did not
+        count or count one it did not print — which is the shape of the defect this repository has
+        already shipped once, as a completeness table claiming 100% eighteen pages after the same
+        document said "Not recorded." thirty-six times.
+        """
+        return tuple(f for f in self.fields if f.within(max_tier_rank))
+
+    def printed_fields_at(self, max_tier_rank: int = ALL_TIERS) -> tuple[CustomReportField, ...]:
+        """The fields this section actually prints under a tier cap, in order.
 
         A LIVE field prints whether or not it was answered — an unanswered required one prints
         "Not recorded." and an unanswered optional one prints nothing, which is the builder's rule.
@@ -133,27 +197,54 @@ class CustomSectionItem:
         submitted document for every wording the designer ever corrected.
         """
         return tuple(
-            f for f in self.fields
+            f for f in self.fields_at(max_tier_rank)
             if not f.retired or _has_answer(self.values.get(f.key))
         )
 
     @property
-    def has_content(self) -> bool:
-        """Whether there is anything worth a heading.
+    def printed_fields(self) -> tuple[CustomReportField, ...]:
+        """:meth:`printed_fields_at` with every tier admitted. Kept as a property because it is the
+        shape three callers outside the renderer already read."""
+        return self.printed_fields_at()
+
+    def has_content_at(self, max_tier_rank: int = ALL_TIERS) -> bool:
+        """Whether there is anything worth a heading under a tier cap.
 
         An answered field, or a required field whose absence has to be visible. A section that is
         neither — a block of optional questions nobody has got to yet — appends nothing at all, not
         even the heading, so a report of a workshop that has not reached those questions is exactly
         the report it would have been.
+
+        ASKED AT THE SAME CAP THE RENDERER WILL USE, or a terse template grows an empty heading over
+        nothing: a Standard-tier block on a COMPACT_SUMMARY would answer "yes, there is content",
+        print its heading, and then find every one of its fields filtered out below.
         """
         return any(
             _has_answer(self.values.get(f.key)) or (f.required and not f.retired)
-            for f in self.fields
+            for f in self.fields_at(max_tier_rank)
+        )
+
+    @property
+    def has_content(self) -> bool:
+        """:meth:`has_content_at` with every tier admitted.
+
+        THIS IS THE CAP-BLIND READING AND IT ANSWERS ONE CALLER'S QUESTION, NOT THE RENDERER'S.
+        ``design_workshops.attach_report_custom_sections`` asks it because it runs before any
+        template has been resolved and so has no cap to offer; everything that HAS a template must
+        go through :func:`section_prints` with it. Reaching for this property where a cap is in
+        hand is how the render and the warning list came to tell two stories about one section —
+        see :func:`section_prints` for the incident.
+        """
+        return self.has_content_at()
+
+    def answered_count_at(self, max_tier_rank: int = ALL_TIERS) -> int:
+        return sum(
+            1 for f in self.fields_at(max_tier_rank) if _has_answer(self.values.get(f.key))
         )
 
     @property
     def answered_count(self) -> int:
-        return sum(1 for f in self.fields if _has_answer(self.values.get(f.key)))
+        return self.answered_count_at()
 
 
 def _has_answer(value: Any) -> bool:
@@ -217,6 +308,16 @@ def custom_scoring(data: Any, stage_key: str) -> tuple[tuple[CustomReportField, 
 
     Several sections can be asked at one stage, so their fields are concatenated in the order they
     print and their values come from the one container they share.
+
+    **NO TIER FILTER HERE, AND THAT IS NOT AN OMISSION — IT IS THE ONLY READING THAT MATCHES THE
+    REGISTRY.** ``stage_completeness`` has no tier test of any kind: it scores every non-deprecated
+    field a stage declares, whatever the template's ``max_tier``, because completeness is a fact
+    about the FIELDWORK and not about the document somebody chose to print. A registry field
+    suppressed from a COMPACT_SUMMARY still counts against that stage's percentage, and a designer's
+    Standard-tier question must count the same way or the workshop would score differently depending
+    on which template a reader happened to pick. So ``fields`` and not ``fields_at`` — and if you are
+    here because you are adding a cap, the number this feeds is compared against the readiness
+    screen's, and the two arithmetics diverging is this repository's oldest report defect.
     """
     fields: list[CustomReportField] = []
     values: dict[str, Any] = {}
@@ -227,6 +328,66 @@ def custom_scoring(data: Any, stage_key: str) -> tuple[tuple[CustomReportField, 
         fields.extend(item.fields)
         values.update(item.values)
     return tuple(fields), values
+
+
+def section_prints(item: CustomSectionItem | None, max_tier_rank: int = ALL_TIERS) -> bool:
+    """**THE** answer to "will this section appear in the document". One predicate, two readers.
+
+    ``append_custom_section`` asks it before it writes a heading, and
+    ``report_builder.build_report`` asks it again — same function, same item, same cap — before it
+    tells the designer which of their sections are missing from the file. That is the whole reason
+    this exists as a named function rather than as a condition inside the appender.
+
+    **THE DEFECT THAT MADE IT NECESSARY, WHICH IS THE SECOND OF ITS SHAPE ON THIS ONE FEATURE.**
+    Two fixes landed on this render in the same afternoon. One gave the appender a tier cap, so a
+    designer's Standard-tier question stopped printing under COMPACT_SUMMARY ("Basic-tier fields
+    only", the only non-ADVANCED ``max_tier`` in ``TEMPLATES``). The other re-pointed the loader's
+    "not in this file" warning at ``has_content``, because it had been firing for exactly the
+    sections the renderer DOES print — a designer was told "Dye bath log … is not in this file"
+    about a document containing the heading "Dye bath log" and "Dye source — Not recorded."
+    underneath it.
+
+    Separately each was right. Together they left a section whose every answered question sits above
+    the template's cap: the renderer prints nothing, and the warning — which has no template to ask
+    and so reads the cap-blind ``has_content`` — says nothing either. The designer submits a .docx
+    with their block silently absent, told nothing, which is the FIRST defect's cost arrived at from
+    the other side. A document and its own warning list must not tell a ministry two stories about
+    one section, in either direction.
+
+    So: a section that does not print is named exactly once, and the two halves of that guarantee
+    are ``has_content`` at :data:`ALL_TIERS` (the loader's half — see
+    ``design_workshops.attach_report_custom_sections``, which is called before any template is
+    resolved and so can honestly ask nothing else) and :func:`sections_hidden_by_tier` at the
+    template's own cap (the builder's half, which has the template in hand). They are disjoint by
+    construction because ``fields_at`` is monotone in the cap, and
+    ``test_report_custom_section_tier_warning`` pins both the disjointness and the coverage.
+
+    ``None`` is not printing and is not warned about: an item that is not attached at all was never
+    the template's to print — see :func:`custom_section_of` for when that happens.
+    """
+    return item is not None and item.has_content_at(max_tier_rank)
+
+
+def sections_hidden_by_tier(
+    items: Sequence[CustomSectionItem | None], max_tier_rank: int
+) -> tuple[CustomSectionItem, ...]:
+    """The sections that would have printed, and do not, because of THIS template's tier cap.
+
+    Exactly the residue the loader's warning cannot see: ``section_prints`` is true at
+    :data:`ALL_TIERS` (so ``attach_report_custom_sections`` said nothing about it) and false at the
+    template's cap (so the renderer wrote nothing). Both halves go through :func:`section_prints`
+    rather than through a hand-rolled tier comparison, because a second copy of that decision is
+    precisely how the render and the warning came apart in the first place.
+
+    ``None`` entries are tolerated and dropped, so the builder can hand this the result of
+    ``custom_section_of`` for every ``CUSTOM_SECTION`` the template carries without filtering first
+    — a template section naming a definition that changed between the two loads is an ordinary
+    outcome, not something to warn a designer about.
+    """
+    return tuple(
+        item for item in items
+        if section_prints(item, ALL_TIERS) and not section_prints(item, max_tier_rank)
+    )
 
 
 def custom_section_of(data: Any, key: str) -> CustomSectionItem | None:
@@ -298,20 +459,26 @@ def _label_runs(field: CustomReportField) -> str:
     return field.label
 
 
-def custom_section_blocks(item: CustomSectionItem) -> list[Block]:
+def custom_section_blocks(
+    item: CustomSectionItem, *, max_tier_rank: int = ALL_TIERS
+) -> list[Block]:
     """One section's answers as report blocks, below its heading.
 
     LONG TEXT IS PROSE AND EVERYTHING ELSE IS A GRID, which is the builder's own editorial rule
     stated in its module docstring: "Long text becomes prose paragraphs under their own sub-heading;
     short values become a key-value grid. Mixing the two in one block is what made the first drafts
     unreadable." A designer's own long answer is prose for the same reason a registry one is.
+
+    ``max_tier_rank`` is the template's ``max_tier.rank``, passed as a bare int rather than a
+    ``Tier`` so this module stays free of the registry's import graph — see ``_TIER_RANK``. It
+    defaults to admitting everything, which is what every caller without a template does.
     """
     pairs: list[tuple[str, Any]] = []
     prose: list[tuple[str, str]] = []
     printed = 0
     truncated = False
 
-    for field in item.printed_fields:
+    for field in item.printed_fields_at(max_tier_rank):
         if printed >= MAX_ROWS_PER_SECTION:
             truncated = True
             break
@@ -357,6 +524,7 @@ def append_custom_section(
     heading: str = "",
     numbered: bool = True,
     page_break_before: bool = False,
+    max_tier_rank: int = ALL_TIERS,
 ) -> int:
     """Append one custom section to ``doc``. Returns how many answers it printed.
 
@@ -369,17 +537,27 @@ def append_custom_section(
     With nothing attached, or a section with nothing worth a heading, this appends nothing at all —
     not even the page break — so a workshop that has not reached those questions produces exactly
     the report it would have produced without them.
+
+    ``max_tier_rank`` IS PASSED HERE AND NOT DECIDED HERE, exactly as ``numbered`` is. The template
+    owns the cap; this function owns the wording. Both the emptiness test and the block walk read
+    the SAME cap, so a section whose every question sits above the template's tier appends nothing
+    rather than an empty heading.
+
+    THE EMPTINESS TEST IS :func:`section_prints` AND NOT AN INLINE ``has_content_at``, because
+    ``build_report`` has to ask the identical question afterwards to warn about what it skipped.
+    Two spellings of "did this print" is how the renderer and the warning list came to tell a
+    designer two different stories about one section; see that function for the incident.
     """
-    if item is None or not item.has_content:
+    if item is None or not section_prints(item, max_tier_rank):
         return 0
     if page_break_before:
         doc.add(PageBreakBlock())
     doc.heading(heading or item.title, 1, numbered=numbered)
     if item.description.strip():
         doc.para(item.description, style=ParaStyle.LEAD)
-    for block in custom_section_blocks(item):
+    for block in custom_section_blocks(item, max_tier_rank=max_tier_rank):
         doc.add(block)
-    return item.answered_count
+    return item.answered_count_at(max_tier_rank)
 
 
 def custom_section_blocks_standalone(
@@ -397,6 +575,7 @@ def custom_section_blocks_standalone(
 
 
 __all__ = [
+    "ALL_TIERS",
     "MAX_ROWS_PER_SECTION",
     "NOT_RECORDED",
     "RETIRED_NOTE",
@@ -410,4 +589,6 @@ __all__ = [
     "custom_section_of",
     "custom_sections_of",
     "display_value",
+    "section_prints",
+    "sections_hidden_by_tier",
 ]

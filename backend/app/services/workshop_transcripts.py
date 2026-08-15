@@ -29,9 +29,12 @@ is a silently untranscribed recording. Enqueuing on the save means a clip is tra
 was ATTACHED to a workshop, which is the fact that actually matters, and it also picks up a
 recording attached weeks after it was uploaded.
 
-The enqueue is idempotent and cheap: a clip that already has a transcript, or already has a job
+The enqueue is idempotent and cheap: a clip that already has a transcript, or already has a JOB
 queued or running, is skipped. Re-saving a stage twenty times does not queue twenty jobs, and does
 not re-transcribe a clip a researcher has already corrected by hand.
+
+"A JOB", and not "a ``transcriptStatus`` that says QUEUED" — the two are not the same fact and the
+difference stranded recordings for good. See :data:`_IN_FLIGHT_TRANSCRIPT_STATUSES`.
 """
 
 from __future__ import annotations
@@ -48,8 +51,8 @@ logger = logging.getLogger(__name__)
 
 TRANSCRIPTION = "TRANSCRIPTION"
 
-# A clip in one of these states must not be queued again: it either has a transcript already or one
-# is on its way. These are ``MediaFile.transcriptStatus`` values, NOT job statuses, and the two
+# A clip in one of these states must not be queued again, ever: the transcription question has been
+# answered for it. These are ``MediaFile.transcriptStatus`` values, NOT job statuses, and the two
 # vocabularies are not the same one — RATE_LIMITED is a MediaProcessingJob status and never reaches
 # this column, because a throttled run writes the clip back to QUEUED so the worker finishes it
 # later (``media_queue._apply_transcription_result``). Listing it here would have matched nothing.
@@ -57,7 +60,31 @@ TRANSCRIPTION = "TRANSCRIPTION"
 # FAILED and UNAVAILABLE are deliberately absent, so a clip whose provider run failed becomes a
 # candidate again on the next save of its stage. That is the retry, and the pending-job read below
 # is what stops it queueing a second job while the first is still in flight.
-_SETTLED_TRANSCRIPT_STATUSES = frozenset({"COMPLETED", "EMPTY", "QUEUED", "PROCESSING"})
+_SETTLED_TRANSCRIPT_STATUSES = frozenset({"COMPLETED", "EMPTY"})
+
+# QUEUED AND PROCESSING ARE NOT SETTLED, THEY ARE A CLAIM THAT A JOB EXISTS — AND THE CLAIM CAN BE
+# FALSE. This list used to be folded into the set above, and that is what stranded recordings.
+# ``MediaFile.transcriptStatus`` is written QUEUED at enqueue time (``media_queue`` :220) and is
+# written back ONLY by ``_apply_transcription_result``, which is reached only once a provider has
+# ANSWERED. Every exception raised before the answer — the consent re-read, ``get_object_bytes`` on
+# an object key that no longer resolves, the provider call itself, ``load_app_settings`` — lands in
+# ``_handle_job_failure``, which updates the JOB row and nothing else. So at ``attempts >=
+# maxAttempts`` the job is FAILED and the clip still reads QUEUED with no error on it, for ever:
+# every later stage save skipped it as "one is on its way", ``/media/complete`` would not re-enqueue
+# it either (``_finish_pending_media`` requires an EMPTY ``processingJobs`` list, and a FAILED job is
+# still a job), and ``report_annexures.annexure_warnings`` classifies QUEUED as "still being
+# transcribed" — so the one message the designer got told them to keep waiting. Recovery existed only
+# through the admin queue panel's Retry, which no designer can reach.
+#
+# The truthful reading of QUEUED/PROCESSING is therefore conditional: in flight IF AND ONLY IF a live
+# TRANSCRIPTION job backs it. The pending-job read further down already asks exactly that question
+# for its own reasons, so this costs no extra round trip — it just stops the column being believed
+# over the queue table it is supposed to be describing.
+#
+# Do NOT "simplify" this back into one set. Doing so restores a permanent, silent loss of a
+# transcript for any clip whose job died before the provider replied — an S3 blip overnight is
+# enough — with every designer-facing surface still saying the transcript is coming.
+_IN_FLIGHT_TRANSCRIPT_STATUSES = frozenset({"QUEUED", "PROCESSING"})
 
 # Where an uploader might have put a clip's length. The web recorder and the Android recorder each
 # write their own key into ``extraMetadata`` and neither is authoritative, so all of them are read
@@ -196,10 +223,19 @@ async def enqueue_stage_transcriptions(
 
     # A job already in flight for a clip means another save (or the upload itself) got there
     # first. Creating a second one would transcribe the same audio twice, pay the provider twice,
-    # and have the two results race to write the same column. Failing this read is not fatal —
-    # `enqueue_media_processing_jobs` is itself idempotent on the queue — so an empty set means
-    # "ask the queue", never "skip the clip".
+    # and have the two results race to write the same column.
+    #
+    # THIS READ IS NOW THE ARBITER OF QUEUED/PROCESSING, so a failure of it can no longer be waved
+    # through the way it was. The old comment here said an empty set means "ask the queue, never skip
+    # the clip", on the grounds that `enqueue_media_processing_jobs` is idempotent — it is not: that
+    # function calls `db.mediaprocessingjob.create` unconditionally (media_queue.py:203-217), so an
+    # empty set genuinely does buy a second job and a second provider bill. That was harmless only
+    # because a clip whose status said QUEUED had already been filtered out above. It is not harmless
+    # now. So on a failed read we fall back to believing the column: an in-flight-looking clip is
+    # skipped this pass and picked up on the next save, which is the direction that costs a delay
+    # rather than a duplicate charge and a write race over one transcript column.
     already_queued: set[str] = set()
+    pending_jobs_known = False
     try:
         pending = await db.mediaprocessingjob.find_many(
             where={
@@ -209,6 +245,7 @@ async def enqueue_stage_transcriptions(
             }
         )
         already_queued = {job.mediaFileId for job in pending}
+        pending_jobs_known = True
     except Exception as exc:  # noqa: BLE001 - see the docstring: never fail the stage save
         logger.warning("Could not read pending transcription jobs: %s", exc)
 
@@ -216,6 +253,21 @@ async def enqueue_stage_transcriptions(
     for row in candidates:
         if row.id in already_queued:
             continue
+        in_flight_claim = (
+            str(getattr(row, "transcriptStatus", "") or "").upper()
+            in _IN_FLIGHT_TRANSCRIPT_STATUSES
+        )
+        if in_flight_claim and not pending_jobs_known:
+            continue
+        if in_flight_claim:
+            # The column says a job is on its way and the queue table says there is none. That is a
+            # job that died before the provider answered (see _IN_FLIGHT_TRANSCRIPT_STATUSES) — the
+            # clip is stranded, and this save is the designer-reachable recovery it never had.
+            logger.info(
+                "Re-queueing transcription for media %s: status %s with no live job",
+                row.id,
+                getattr(row, "transcriptStatus", ""),
+            )
         try:
             created = await enqueue_media_processing_jobs(
                 row,

@@ -122,6 +122,10 @@ import { loadDraft } from "@/lib/designWorkshopStore";
 import { ACCENT_PRESETS } from "@/lib/reportTheme";
 import { ApiError } from "@/lib/api";
 import { isUnreachable } from "@/lib/offline";
+// The route param is not always a server id and the header column is not the template — both rules,
+// and what they cost when they are skipped, are written out in that module. Shared with the history
+// view beside this one, which had the first defect in exactly the same shape.
+import { reportServerId, reportTemplateId } from "./reportTarget";
 
 /**
  * What this file asks for on top of the saved settings, for ONE download.
@@ -172,10 +176,44 @@ const EMPTY_SETTINGS: DwEntryData = {};
 export default function DesignWorkshopReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
 
+  /**
+   * The id the SERVER knows this workshop by — null until the local draft has been read, and null
+   * for good while the workshop exists only on this device.
+   *
+   * NOTHING ON THIS PAGE MAY BE ASKED OF THE SERVER UNDER THE ROUTE PARAM. A workshop created with
+   * no signal lives at `/design-workshops/dwlocal-…`, which is a URL this application navigates to
+   * itself; every server call made with that param 404s with "Record not found" over a workshop the
+   * stage index, the 22 forms, readiness and the codes screen all open perfectly well from the same
+   * URL, because each of those resolves `remoteId` first. See `reportTarget.ts` for the rule and for
+   * why the `<Link>`s below still carry `id`.
+   *
+   * Every fetch on this page is therefore keyed on `remoteId` and refuses to run while it is null,
+   * which is also what stops a request going out under the wrong id in the frame before the draft
+   * read lands.
+   */
+  const [remoteId, setRemoteId] = useState<string | null>(null);
+  /** True once the draft has been read and there is no server record to generate a report from. */
+  const [localOnly, setLocalOnly] = useState(false);
+
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [detail, setDetail] = useState<DwDetail | null>(null);
   const [templates, setTemplates] = useState<DwTemplate[]>([]);
   const [templateId, setTemplateId] = useState<string>("");
+  /**
+   * Whether the DESIGNER picked the template on this screen, as opposed to the page having seeded it.
+   *
+   * THE PAGE'S SEED IS NOT AN INSTRUCTION AND MUST NOT BE SENT AS ONE. `resolve_template_id` reads
+   * the request first, stage 20 second and the header column last; a screen that echoes its own
+   * resolution back as `requested` short-circuits that loop on its first rung and makes this
+   * browser's copy of the precedence — rather than the server's — decide what a ministry receives.
+   * Untouched, the request stays silent and the server resolves the workshop it holds; touched, the
+   * choice is sent because it IS a choice, for this file only, exactly like `themeAccent` below.
+   *
+   * It is also what makes the re-seed in {@link refreshWorkshop} safe: re-reading the workshop after
+   * a save must correct a dropdown nobody has touched and must never overwrite a selection the
+   * designer is standing in front of.
+   */
+  const [templateTouched, setTemplateTouched] = useState(false);
   const [settings, setSettings] = useState<DwEntryData>(EMPTY_SETTINGS);
   const [preview, setPreview] = useState<DwPreview | null>(null);
   const [previewing, setPreviewing] = useState(true);
@@ -257,7 +295,13 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   }, []);
 
   /**
-   * How much of this workshop the server has not seen yet, and whether stage 20 is part of it.
+   * WHICH WORKSHOP THIS IS ON THE SERVER, how much of it the server has not seen yet, and whether
+   * stage 20 is part of that.
+   *
+   * THE ID RESOLUTION IS THE FIRST THING THIS PAGE DOES AND EVERY FETCH WAITS ON IT. The draft was
+   * already being read here for the two counts below and its `remoteId` was thrown away, which is
+   * how the whole screen came to 404 on a workshop reached by its local id. Resolving it in this
+   * effect rather than in a second one keeps the one read serving all three purposes.
    *
    * A report is generated from the SERVER's copy, so a stage captured this morning and not yet
    * synced is simply absent from the .docx — and nothing in the file would admit it. Counting it
@@ -270,7 +314,18 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   useEffect(() => {
     let cancelled = false;
     void loadDraft(id).then((draft) => {
-      if (cancelled || !draft) return;
+      if (cancelled) return;
+      // `loadDraft` matches EITHER id (see `matchesId`) and a missing draft is ordinary — a
+      // colleague's workshop opened on this laptop for the first time has none — so the resolution
+      // runs whether or not one came back. `null` here means "no server record yet", which the page
+      // renders as a state with a date on it instead of firing a request that 404s.
+      const target = reportServerId(id, draft);
+      setRemoteId(target);
+      setLocalOnly(target === null);
+      // Nothing below can arrive, so the "Refreshing…" the page mounts in would otherwise spin for
+      // ever over a preview that is never going to be requested.
+      if (target === null) setPreviewing(false);
+      if (!draft) return;
       setUnsentStages(
         Object.values(draft.stages).filter((stage) => stage.dirtyAt !== null || stage.removedFrom.length > 0).length
       );
@@ -283,12 +338,13 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   }, [id]);
 
   useEffect(() => {
+    if (!remoteId) return;
     let cancelled = false;
     (async () => {
       try {
         const [nextRegistry, nextDetail, nextTemplates] = await Promise.all([
           fetchStageRegistry(),
-          getDesignWorkshop(id),
+          getDesignWorkshop(remoteId),
           listReportTemplates()
         ]);
         if (cancelled) return;
@@ -296,11 +352,20 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         setDetail(nextDetail);
         setTemplates(nextTemplates);
         // The whole workshop arrives with its stages, so the settings need no second request.
-        setSettings(nextDetail.stages?.[REPORT_STAGE_KEY]?.singleton ?? EMPTY_SETTINGS);
-        // The workshop's own stored template is the starting point, not the first in the list — a
-        // designer who chose the photo catalogue last week must not find themselves back on the
-        // DCH format merely by opening this page.
-        setTemplateId(nextDetail.templateId);
+        const nextSettings = nextDetail.stages?.[REPORT_STAGE_KEY]?.singleton ?? EMPTY_SETTINGS;
+        setSettings(nextSettings);
+        // STAGE 20 FIRST, THE HEADER COLUMN SECOND — the order `resolve_template_id` reads them in.
+        //
+        // This used to be `nextDetail.templateId` alone, which is the workshop ROW's column: the
+        // value the create form defaulted to `DCH_STANDARD` on the day the workshop was made, and
+        // the LAST rung the server falls back to. Nothing promotes stage 20's answer into it
+        // (`PROMOTED_COLUMNS` maps `workshopSetup.*` only), so a designer who answered the required
+        // 'Report template' question with the photo catalogue opened this screen on the DCH format,
+        // previewed the DCH document and downloaded a DCH file — while the handset, reading the
+        // stage answer, produced the catalogue from the same record. One record, two documents, and
+        // the required answer the form insisted on inert on this surface. Every other stage-20
+        // setting on this page is already read off the stage entry; `templateId` was the exception.
+        setTemplateId(reportTemplateId(settingText(nextSettings, "templateId"), nextDetail.templateId));
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
@@ -309,8 +374,12 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [remoteId]);
 
+  /**
+   * Rebuild the sheets. `template` is what the DESIGNER asked for and is empty for "the server
+   * resolves it", which is not the same as "the template on screen" — see {@link templateTouched}.
+   */
   const loadPreview = useCallback(
     async (template: string) => {
       /*
@@ -329,10 +398,13 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         Every setter below is guarded, including the one in `finally`: a late failure clearing
         `previewing` would take the "Refreshing…" state off a request that is still in flight.
       */
+      // Refuses rather than falls back to the route param: a preview requested under a `dwlocal-…`
+      // id 404s, and the banner it paints says the workshop does not exist.
+      if (!remoteId) return;
       const mine = ++previewGeneration.current;
       setPreviewing(true);
       try {
-        const next = await previewDesignWorkshopReport(id, template || undefined);
+        const next = await previewDesignWorkshopReport(remoteId, template || undefined);
         if (mine !== previewGeneration.current) return;
         setPreview(next);
         setError(null);
@@ -358,13 +430,13 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         if (mine === previewGeneration.current) setPreviewing(false);
       }
     },
-    [id]
+    [remoteId]
   );
 
   useEffect(() => {
     if (!templateId) return;
-    loadPreview(templateId);
-  }, [templateId, loadPreview]);
+    loadPreview(templateTouched ? templateId : "");
+  }, [templateId, templateTouched, loadPreview]);
 
   /**
    * Re-read the workshop after the settings have been written.
@@ -378,15 +450,33 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
    * A failure here is deliberately silent: the save itself succeeded and said so, and a banner
    * reporting that the re-read failed would read as the save having failed.
    */
-  const refreshWorkshop = useCallback(async () => {
+  const refreshWorkshop = useCallback(async (): Promise<boolean> => {
+    if (!remoteId) return false;
     try {
-      const next = await getDesignWorkshop(id);
+      const next = await getDesignWorkshop(remoteId);
       setDetail(next);
-      setSettings(next.stages?.[REPORT_STAGE_KEY]?.singleton ?? EMPTY_SETTINGS);
+      const nextSettings = next.stages?.[REPORT_STAGE_KEY]?.singleton ?? EMPTY_SETTINGS;
+      setSettings(nextSettings);
+      // AND THE TEMPLATE, WHICH THIS RE-READ USED TO IGNORE. `templateId` was seeded once, in the
+      // mount effect, so changing 'Report template' inside the settings panel and pressing Save
+      // wrote the new answer, printed "Saved. The preview below has been rebuilt from them." and
+      // then rebuilt the preview from the template that had just been replaced — with the dropdown
+      // above it still naming it. Re-seeded in the server's own order, and only while the dropdown
+      // is untouched: a designer who has picked a template for THIS file must not have it snatched
+      // back by a re-read fired by an unrelated save (the accent picker calls this too).
+      if (!templateTouched) setTemplateId(reportTemplateId(settingText(nextSettings, "templateId"), next.templateId));
+      return true;
     } catch {
-      /* the save is what mattered, and it reported itself */
+      /*
+        STILL SILENT, AND NOW ANSWERABLE. The silence is right — the save succeeded and said so, and a
+        banner reporting that the RE-READ failed reads as the save having failed. What was wrong was
+        that callers could not tell, so the accent handler below cleared the override that was the
+        only thing holding the new colour on screen and repainted the whole preview in the OLD one
+        under a success message. Audit 2026-08-15 (LOW, frontend).
+      */
+      return false;
     }
-  }, [id]);
+  }, [remoteId, templateTouched]);
 
   /**
    * The recordings, fetched only when the annexure is actually in play.
@@ -399,9 +489,9 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   const annexureWanted = transcriptOverride === "YES" || (transcriptOverride === "" && wantsTranscripts(settings));
 
   useEffect(() => {
-    if (!annexureWanted) return;
+    if (!remoteId || !annexureWanted) return;
     let cancelled = false;
-    void listDesignWorkshopTranscripts(id)
+    void listDesignWorkshopTranscripts(remoteId)
       .then((next) => {
         if (!cancelled) setTranscripts(next);
       })
@@ -412,7 +502,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     return () => {
       cancelled = true;
     };
-  }, [id, annexureWanted]);
+  }, [remoteId, annexureWanted]);
 
   /**
    * How many accepted layers the machine-assisted annexure would carry — read only once the box is
@@ -425,10 +515,10 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
    * failed read is recorded as UNKNOWN and said in those words.
    */
   useEffect(() => {
-    if (!includeAiLayers) return;
+    if (!remoteId || !includeAiLayers) return;
     let cancelled = false;
     setAcceptedLayersUnknown(false);
-    void listDesignWorkshopAiLayers(id)
+    void listDesignWorkshopAiLayers(remoteId)
       .then((next) => {
         if (cancelled) return;
         setAcceptedLayerCount(next.accepted);
@@ -444,7 +534,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     return () => {
       cancelled = true;
     };
-  }, [id, includeAiLayers]);
+  }, [remoteId, includeAiLayers]);
 
   const templateName = templates.find((template) => template.id === templateId)?.name ?? preview?.meta.templateName ?? "";
   const { headerText, footerText } = useMemo(
@@ -492,12 +582,21 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   const codeSpans = useMemo(() => countCodeSpans(blocks), [blocks]);
 
   async function download(format: "DOCX" | "PDF") {
+    // Belt as well as braces: the buttons are disabled without a server id, and a file generated
+    // under the route param would 404 rather than produce anything.
+    if (!remoteId) return;
     setDownloading(format);
     setError(null);
     setDownloadWarnings(null);
     try {
-      const file = await downloadDesignWorkshopReport(id, {
-        templateId: templateId || null,
+      const file = await downloadDesignWorkshopReport(remoteId, {
+        // ONLY WHAT THE DESIGNER ASKED FOR. Untouched, this is silent and `resolve_template_id`
+        // reads stage 20's answer and then the header column — the same order the dropdown above is
+        // seeded in, so the file matches the screen. Sending the seeded value back would put this
+        // page's copy of the precedence in charge of the document a ministry receives, and that is
+        // exactly how the header column (`DCH_STANDARD`, defaulted at create) came to override a
+        // required stage-20 answer on this surface and nowhere else.
+        templateId: templateTouched ? templateId || null : null,
         formats: [format],
         // THE STAGE-20 ANSWERS ONLY, AND ONLY WHERE THEY WERE FILLED IN. `report_meta` does not
         // read these three off the stage entry, so they reach a file only through this request —
@@ -601,7 +700,14 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <FieldBlock label="Report template">
             <Dropdown
               value={templateId}
-              onChange={setTemplateId}
+              // Recorded as a CHOICE, which is what puts it on the wire — see `templateTouched`.
+              // Set even when the value is unchanged: picking the template that was already
+              // selected is still a designer deciding this file's template, and treating it as a
+              // no-op would leave the next re-read free to move the dropdown under them.
+              onChange={(value) => {
+                setTemplateTouched(true);
+                setTemplateId(value);
+              }}
               options={templates.map((template) => ({ value: template.id, label: template.name }))}
               ariaLabel="Report template"
               // This dropdown reconfigures the screen it sits on, so focus must stay on it rather
@@ -740,11 +846,48 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               name the designer recognises when they come back to the screen.
             */
             onSave={async (accent) => {
+              /*
+                EVERY REFUSAL LIVES IN THIS HANDLER, NOT ON THE BUTTON. `commit()` routes Escape,
+                click-away, blur and `AnchoredPopover.onClose` through here as well as the Save
+                press, so a `disabled` attribute guards exactly one of five doors into the same
+                write. The picker's own button is `disabled={saving}` alone and that is deliberate;
+                this is where the conditions are checked.
+
+                THE OTHER TWO CONDITIONS WERE MISSING AND EACH COST THE COLOUR. Audit 2026-08-15
+                (MAJOR, frontend). `ReportSettingsPanel` beside this control refuses the identical
+                write to the identical entity of the identical stage when stage 20 has unsent local
+                changes — `disabled={saving || !dirty || !online || draftPending}` — and prints
+                "Saving from here would be undone the moment those changes sync". It is the same
+                fact here: `buildStageEntries` sends a READ stage's singleton with no `merge` flag
+                and `save_stage` then replaces that singleton's `data` wholesale, so the sync pass
+                writes the draft's stage-20 copy — which has no `themeAccent` — straight over the
+                colour that was just saved. A designer chose a brand colour, was told it was saved,
+                and found the old one the next morning with nothing having said why.
+
+                Offline is refused for the plainer reason: this write does not queue. Without the
+                check the picker reported a saved colour that had never left the laptop.
+              */
+              if (!remoteId) return;
+              if (!online) {
+                setError(
+                  "There is no connection, so this colour cannot be saved to the workshop yet. It is still applied to any " +
+                    "file you download from this page right now."
+                );
+                return;
+              }
+              if (stage20Pending) {
+                setError(
+                  "Stage 20 has changes on this device that have not reached the repository. Saving the colour from here " +
+                    "would be undone the moment those changes sync, so it has not been saved — send them first, from the " +
+                    "stage itself, and then set the colour."
+                );
+                return;
+              }
               const hex = accent.trim().toUpperCase();
               setSavingAccent(true);
               setError(null);
               try {
-                await saveDesignWorkshopStage(id, REPORT_STAGE_KEY, {
+                await saveDesignWorkshopStage(remoteId, REPORT_STAGE_KEY, {
                   entries: [
                     {
                       entityKey: "reportSettings",
@@ -763,9 +906,20 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                 // a network round trip, which the sheets below repaint in and then repaint out of.
                 // Every commit out of the colour panel comes through here, so that flash would be
                 // the ordinary experience of choosing a colour rather than a rare one.
-                await refreshWorkshop();
-                setAccentOverride("");
-                if (templateId) void loadPreview(templateId);
+                /*
+                  AND ONLY DROP THE OVERRIDE IF THE RE-READ ACTUALLY HAPPENED. Audit 2026-08-15 (LOW).
+
+                  The comment above reasons about the ORDER of these two lines and not about the
+                  re-read failing, which is the one case where the chosen order is wrong. On a failed
+                  re-read `settings` still holds the PREVIOUS entry and `savedAccent` still resolves
+                  to the previous hex, so clearing the override — the only thing holding the new
+                  colour on screen — repainted the whole preview in the old colour under a successful
+                  save message. The screen showed the opposite of what had happened, and a download
+                  taken from that state built the file from a colour the preview was not showing.
+                */
+                const reread = await refreshWorkshop();
+                if (reread) setAccentOverride("");
+                if (templateId) void loadPreview(templateTouched ? templateId : "");
               } catch (err) {
                 setError(err instanceof Error ? err.message : "Unable to save the report colour");
               } finally {
@@ -775,7 +929,33 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           />
         </div>
 
-        {!online ? (
+        {localOnly ? (
+          /*
+            THE WORKSHOP IS REAL AND IS NOT LOST — it has simply never been to the repository, and
+            everything on this screen is produced BY the repository.
+
+            This is the state that used to be a red "Record not found", because the page carried the
+            route param — a `dwlocal-…` id the create fell back to with no signal — straight into
+            `GET /api/design-workshops/…`. The stage index, all 22 forms, readiness, the codes screen
+            and Cards & tags all open from that same URL, so the two report screens were alone in
+            telling a designer their fieldwork did not exist. Said as a sentence with a date on it,
+            and pointed at the one surface that CAN produce the file today.
+          */
+          <div className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
+            <p className="flex items-start gap-1.5 font-semibold">
+              <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              This workshop has not reached the repository yet
+            </p>
+            <p className="mt-1 leading-6">
+              It was created on this device without a connection and everything in it is saved here — nothing is lost. The
+              preview, the .docx and the .pdf are all written by the server from the copy it holds, and it has no copy yet.
+              It is created automatically on the next connection; open this page again then and it works. The Android app
+              generates the same document on the handset in the meantime.
+            </p>
+          </div>
+        ) : null}
+
+        {!online && !localOnly ? (
           // SAID BEFORE THE CLICK, not after it. A designer who presses Download and gets an error
           // has already decided the app is broken; a disabled button with the reason beside it is a
           // fact about the world, and it names the thing that DOES work offline.
@@ -807,7 +987,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <button
             type="button"
             className="field-button"
-            disabled={downloading !== null || !online}
+            disabled={downloading !== null || !online || !remoteId}
             onClick={() => download("DOCX")}
           >
             <Download className="h-4 w-4" aria-hidden />
@@ -816,7 +996,7 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <button
             type="button"
             className="field-button-secondary"
-            disabled={downloading !== null || !online}
+            disabled={downloading !== null || !online || !remoteId}
             onClick={() => download("PDF")}
           >
             <Download className="h-4 w-4" aria-hidden />
@@ -860,20 +1040,32 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         ) : null}
       </section>
 
-      <ReportSettingsPanel
-        workshopId={id}
-        registry={registry}
-        settings={settings}
-        online={online}
-        draftPending={stage20Pending}
-        onSaved={() => {
-          // The document the server builds has just changed, so the pages below are stale until
-          // they are rebuilt. Two round trips is cheap next to a designer approving a preview of
-          // the settings they replaced a moment ago.
-          void refreshWorkshop();
-          if (templateId) void loadPreview(templateId);
-        }}
-      />
+      {/*
+        THE PANEL IS A SERVER WRITE AND IS WITHHELD UNTIL THERE IS SOMETHING TO WRITE TO. Its Save
+        posts stage 20 under the id it is handed, so handing it the route param put a `dwlocal-…` id
+        on a PUT that 404s. Hidden rather than disabled: with no server record the settings are not
+        "temporarily unavailable", they have nowhere to go, and the banner above says so in the one
+        place a designer is already looking. It comes back by itself the moment the sync creates the
+        workshop, because `remoteId` is what gates it.
+      */}
+      {remoteId ? (
+        <ReportSettingsPanel
+          workshopId={remoteId}
+          registry={registry}
+          settings={settings}
+          online={online}
+          draftPending={stage20Pending}
+          onSaved={() => {
+            // The document the server builds has just changed, so the pages below are stale until
+            // they are rebuilt. Two round trips is cheap next to a designer approving a preview of
+            // the settings they replaced a moment ago. `refreshWorkshop` is also what moves the
+            // template dropdown when the template is what was saved — the preview alone rebuilding
+            // is how this screen came to assert "rebuilt from them" over the previous template.
+            void refreshWorkshop();
+            if (templateId) void loadPreview(templateTouched ? templateId : "");
+          }}
+        />
+      ) : null}
 
       {annexureWanted ? <TranscriptAnnexurePanel transcripts={transcripts} /> : null}
 

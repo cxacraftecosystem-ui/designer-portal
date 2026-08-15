@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
+import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
 import { CarryForwardCards } from "@/components/CarryForwardCards";
 import { Field, MultiNoteField, Select, TextArea, TextInput } from "@/components/FormControls";
 import { AadhaarField, aadhaarValidationError, isMaskedIdentityNumber } from "@/components/forms/AadhaarField";
@@ -16,6 +18,7 @@ import { LocationFields, type LocationInitialValues } from "@/components/forms/L
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
 import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
+import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
@@ -395,10 +398,24 @@ export function ArtisanForm({
     email.trim() && !EMAIL_RE.test(email.trim()) ? "Enter a valid email address (name@example.com)." : null;
   const emailErrorId = `${identityLabelId}-email-error`;
 
+  /**
+   * The craft dropdown, and what it is NOT showing — see `components/data/cappedList`.
+   *
+   * `pageSize` is clamped to 100 server-side and `/crafts` orders NAME ASCENDING (deliberately, see
+   * the ordering comment in `routes/crafts.py`), so this is the first hundred crafts of the alphabet
+   * out of 178 on this database (counted 2026-08-15) — not the newest hundred, which matters,
+   * because the cut is stable and always falls in the same place. A craft whose name sorts past it
+   * is unreachable in this REQUIRED picker, and the field beside it offers "Or new craft name",
+   * which is exactly the wrong thing to reach for: the researcher creates a second craft row for a
+   * craft the taxonomy already holds. Saying the list is cut is what stops that.
+   */
+  const [craftCut, setCraftCut] = useState<ListCut | null>(null);
+
   useEffect(() => {
-    listResource<Craft>("/crafts", { pageSize: 100 })
+    listResource<Craft>("/crafts", { pageSize: LIST_PAGE_CEILING })
       .then((result) => {
         setCrafts(result.items);
+        setCraftCut(listCut(result, "crafts"));
         setCraftListState("loaded");
       })
       .catch(() => {
@@ -406,6 +423,16 @@ export function ArtisanForm({
         setCraftListState("unavailable");
       });
   }, []);
+
+  /**
+   * THIS ARTISAN'S OWN CRAFT IS ALWAYS AN OPTION, wherever it sorts.
+   *
+   * Editing an artisan whose craft sits past the alphabetical cut drew a REQUIRED dropdown with
+   * nothing selected in it, beside a box inviting a new craft name — so the obvious repair for what
+   * looked like missing data was to type the craft in again and duplicate it. See `useRecordOffPage`.
+   */
+  const offPageCraft = useRecordOffPage<Craft>("/crafts", craftId, crafts);
+  const craftOptions = useMemo(() => (offPageCraft ? mergeById(crafts, [offPageCraft]) : crafts), [crafts, offPageCraft]);
 
   /**
    * The craft and the workshop carry into a new artisan; the ARTISAN in the bag never does.
@@ -418,7 +445,7 @@ export function ArtisanForm({
    */
   const carry = useCarryContext({
     enabled: !initial,
-    scopes: [carryScope("craft", craftListState, crafts)],
+    scopes: [carryScope("craft", craftListState, craftOptions)],
     applies: ["craft", "workshop"],
     onApply: (context) => {
       if (context.craftId) setCraftId(context.craftId);
@@ -697,18 +724,19 @@ export function ArtisanForm({
                 setCraftId(event.target.value);
                 // An explicit pick replaces the remembered craft and retires the banner: from here
                 // on what is on screen is the researcher's own choice, not a suggestion.
-                const craft = crafts.find((candidate) => candidate.id === event.target.value);
+                const craft = craftOptions.find((candidate) => candidate.id === event.target.value);
                 if (craft) carry.remember({ craftId: craft.id, craftName: craft.name }, { explicit: true });
                 markDirty();
               }}
             >
               <option value="">Select existing craft</option>
-              {crafts.map((craft) => (
+              {craftOptions.map((craft) => (
                 <option value={craft.id} key={craft.id}>
                   {craft.name}
                 </option>
               ))}
             </Select>
+            <CappedListNotice cuts={[craftCut]} />
           </Field>
           <Field label="Or new craft name">
             <TitleCasedInput name="newCraftName" placeholder="Used when no existing craft is selected" />

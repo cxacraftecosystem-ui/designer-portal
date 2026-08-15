@@ -41,6 +41,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.core.db import db
 from app.core.deps import (
     ROLE_LABELS,
+    ROLE_RANK,
     get_current_user,
     get_value,
     is_admin,
@@ -52,7 +53,7 @@ from app.core.deps import (
 )
 from app.schemas.tasks import TaskBatchCreate, TaskCreate, TaskUpdate
 from app.services.pagination import normalize_pagination, page_payload
-from app.services.records import clean_data, public_encode
+from app.services.records import clean_data, contains, public_encode
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,15 @@ DERIVED_CONCURRENCY = 8
 # How many task rows the batch/progress rollups scan. Both group in Python (Prisma has no "group by
 # batch, with per-member detail" in one call), so the window has to be explicitly bounded.
 ROLLUP_SCAN_LIMIT = 2000
+
+# The assignment dialog's three picker ceilings. NAMED rather than left as literals in the query,
+# because each of them is now read twice — once as the ``take`` (plus one, to detect the cut) and
+# once as the trim — and a cap that disagrees with its own truncation flag reports the exact lie the
+# flag exists to prevent. The numbers themselves are unchanged from when they were literals; what
+# changed is that ``search`` can now reach past them and the answer says when it did not.
+TASK_OPTION_USER_LIMIT = 500
+TASK_OPTION_WORKSHOP_LIMIT = 200
+TASK_OPTION_ARTISAN_LIMIT = 500
 
 
 # ---------------------------------------------------------------------------------------------
@@ -128,6 +138,46 @@ async def assert_assignable(assigner: Any, assignee_id: str) -> Any:
             detail="You can only assign tasks to users below your own tier",
         )
     return assignee
+
+
+# ── AUTHORITY OVER WORK SOMEBODY ELSE HANDED OUT ────────────────────────────────────────────────
+# THE RULE, WRITTEN ONCE BECAUSE IT WAS PREVIOUSLY WRITTEN TWICE AND THE TWO COPIES DISAGREED.
+#
+# An ``AssignedTask`` row belongs to the admin who created it. Being an ADMIN is what lets you hand
+# work OUT; it is not authority over the work another admin handed out. Only the creator — or the
+# master admin, who is the account that has to be able to unstick anything — may withdraw, reassign,
+# cancel or re-scope a row.
+#
+# ``delete_task_batch`` stated exactly that rule in its docstring ("otherwise one admin could quietly
+# delete another's assignments") and enforced it. ``delete_task`` and ``update_task``, over the same
+# rows, tested ``task.createdById != current_user.id and not is_admin(current_user)`` — a comparison
+# every admin short-circuits — so the batch rule was bypassable by iterating: ``GET /tasks?view=all&
+# batchId=…`` is admin-readable and hands over every member id, then N single deletes finish the job
+# with five 204s where one call had returned a 403 explaining why it must not happen. The rows are
+# HARD deleted (``db.assignedtask.delete``) and nothing is written anywhere that says they existed,
+# so the assignees' to-do lists simply empty. ``update_task``'s ``is_manager`` had the same shape and
+# handed a non-creating admin the whole manager arm, reassignment and ``status: CANCELLED`` included.
+#
+# One predicate, three call sites, so there is no second copy left to drift. IF THIS RULE IS EVER
+# RELAXED — if any admin genuinely should be able to unsend anybody's task — relax it HERE and delete
+# the batch route's docstring claim in the same commit; what must not come back is two routes over
+# one table stating opposite rules, which is what an admin reading the batch route's 403 was entitled
+# to believe could not happen.
+def has_task_authority(user: Any, tasks: Any) -> bool:
+    """True when *user* may change every row in *tasks*: the master admin, or their creator."""
+    if is_master_admin(user):
+        return True
+    uid = get_value(user, "id")
+    # ALL, not ANY: a batch is only the creator's if every row in it is, and one foreign row in the
+    # set is exactly the case the batch guard exists to refuse.
+    return all(get_value(task, "createdById") == uid for task in tasks)
+
+
+def assert_task_authority(user: Any, tasks: Any, *, detail: str) -> None:
+    """:func:`has_task_authority` as a guard. *detail* names the action, because "forbidden" beside a
+    button an admin has every right to press on their OWN tasks is not enough to work out why."""
+    if not has_task_authority(user, tasks):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
 def dedupe(values: list[str] | None) -> list[str]:
@@ -983,28 +1033,125 @@ async def task_progress(
 async def task_options(
     current_user: Any = Depends(require_admin),
     workshopId: str | None = Query(None),
+    # THE PARAMETER WHOSE ABSENCE MADE THE THREE CAPS BELOW UNREACHABLE. See the docstring.
+    search: str | None = Query(None, max_length=120),
 ) -> dict[str, Any]:
     """Everything the assignment dialog needs, in one call: the record-type catalogue, the users
     this admin is allowed to assign to, the workshops, the artisans (narrowed to the workshop when
-    one is given) and the questionnaire sections."""
-    users = await db.user.find_many(order={"name": "asc"}, take=500)
-    assignable = [
-        user_brief(user)
-        for user in users
-        if user.id != current_user.id
-        and (is_master_admin(current_user) or role_rank(user) < role_rank(current_user))
-    ]
+    one is given) and the questionnaire sections.
 
-    workshops = await db.workshop.find_many(order={"date": "desc"}, take=200)
-    artisan_where: dict[str, Any] = {}
+    ── THE CAPS ARE FINE; BEING UNREACHABLE AND UNANNOUNCED WAS NOT ────────────────────────────────
+    Three lists here are capped, and on this repository's own measured population (3632 accounts, 731
+    artisans — ``docs/OPEN_FINDINGS.md``, 2026-08-13) two of those caps are live TODAY. There was no
+    search parameter of any kind and no truncation flag on any list, and ``AssignmentBuilder`` builds
+    every picker purely from what arrived, filtering in the browser. So an admin looking for a
+    colleague whose name sorts late in the alphabet was shown the same nothing they would be shown for
+    a colleague who has no account — which is precisely the "hidden from you vs nobody matched"
+    failure the eligible-viewers picker was fixed for on 2026-08-13, reopened in a different endpoint.
+
+    Three things follow, and each of them is load-bearing:
+
+    * **``search`` is folded into the WHERE, not applied to the result.** Searching after the ``take``
+      searches the first 500 names of the alphabet and stops at exactly the ceiling the parameter was
+      added to reach past — the parameter would exist and still not find her. Same argument, verbatim,
+      as ``design_workshop_viewers.eligible_viewers``.
+    * **The rank filter moved INTO the user query.** It used to run in Python over the already-capped
+      500 rows, so the window was drawn from every account in the table — including the professors,
+      admins and the caller themselves, who are then dropped — and the assignable list came back
+      shorter than 500 by however many higher-ranked accounts happened to sort early. The cap now
+      applies to rows that are already assignable, so it can only ever truncate a genuinely long tail.
+    * **Both name orders are total.** ``name`` alone is not a unique sort key on this data: 204
+      accounts share the name "Sync Test" (same OPEN_FINDINGS entry), so which of them fell inside the
+      cut was Postgres's choice and could differ between two identical requests. ``id`` is the
+      tiebreaker; ``date`` on workshops gets the same treatment for the same reason.
+
+    ONE ``search`` FOR ALL THREE LISTS, deliberately, rather than three per-picker parameters. The
+    name matches the one both clients already decode on the viewer picker, and — the argument that
+    settled it — a parameter this route does not declare is silently DISCARDED by FastAPI, so a client
+    sending ``assigneeSearch`` at a server that only knows ``search`` would render a search box that
+    narrows nothing, which is the very defect being fixed here wearing different clothes.
+
+    THE RULE THAT COMES WITH IT, FOR WHOEVER WIRES THE DIALOG: send the term of the picker being typed
+    into, and never read the absence of an already-selected id from a narrowed list as "that record is
+    gone" and clear it. ``ProductForm``'s craft-change handler does exactly that against a capped page
+    and unlinks the artisan; do not repeat it here.
+
+    ``assigneesTruncated`` / ``workshopsTruncated`` / ``artisansTruncated`` are exact rather than
+    guessed — one row more than the cap is read and trimmed — so a list of exactly the cap reports
+    ``False`` honestly and no second COUNT is paid.
+    """
+    term = (search or "").strip()
+
+    # AND-composed clauses, never assigned to one ``where["OR"]``: the rank filter is an OR-shaped
+    # membership test and so is the search, and writing both to the same key lets the later one win
+    # outright. If that is the search, the RANK GATE IS GONE and the dialog offers an admin the option
+    # of assigning work to their own superiors.
+    user_clauses: list[dict[str, Any]] = [{"id": {"not": get_value(current_user, "id")}}]
+    if not is_master_admin(current_user):
+        # A master admin may assign to anybody, which is why they get no role clause at all. For
+        # everyone else this is ``role_rank(user) < role_rank(current_user)`` expressed as the set of
+        # role VALUES that satisfy it — the same predicate, asked of Postgres instead of of Python.
+        user_clauses.append(
+            {"role": {"in": [r for r, rank in ROLE_RANK.items() if rank < role_rank(current_user)]}}
+        )
+    if term:
+        user_clauses.append({"OR": [{"name": contains(term)}, {"email": contains(term)}]})
+    users = await db.user.find_many(
+        where={"AND": user_clauses},
+        order=[{"name": "asc"}, {"id": "asc"}],
+        take=TASK_OPTION_USER_LIMIT + 1,
+    )
+    assignees_truncated = len(users) > TASK_OPTION_USER_LIMIT
+    assignable = [user_brief(user) for user in users[:TASK_OPTION_USER_LIMIT]]
+
+    workshop_where: dict[str, Any] = {}
+    if term:
+        workshop_where["OR"] = [{"title": contains(term)}, {"place": contains(term)}]
+    workshops = await db.workshop.find_many(
+        where=workshop_where,
+        order=[{"date": "desc"}, {"id": "asc"}],
+        take=TASK_OPTION_WORKSHOP_LIMIT + 1,
+    )
+    workshops_truncated = len(workshops) > TASK_OPTION_WORKSHOP_LIMIT
+    workshops = workshops[:TASK_OPTION_WORKSHOP_LIMIT]
+
+    artisan_clauses: list[dict[str, Any]] = []
     if workshopId:
         # Both readings of "at this workshop" — the explicit column and the join — so artisans
         # linked only through WorkshopArtisan still show up in the picker.
-        artisan_where["OR"] = [
-            {"workshopId": workshopId},
-            {"workshops": {"some": {"workshopId": workshopId}}},
-        ]
-    artisans = await db.artisan.find_many(where=artisan_where, order={"name": "asc"}, take=500)
+        artisan_clauses.append(
+            {
+                "OR": [
+                    {"workshopId": workshopId},
+                    {"workshops": {"some": {"workshopId": workshopId}}},
+                ]
+            }
+        )
+    if term:
+        artisan_clauses.append({"OR": [{"name": contains(term)}, {"place": contains(term)}]})
+    # Two ORs again, and again AND-composed: the workshop narrowing and the search must both hold.
+    artisan_where: dict[str, Any] = {"AND": artisan_clauses} if artisan_clauses else {}
+    artisans = await db.artisan.find_many(
+        where=artisan_where,
+        order=[{"name": "asc"}, {"id": "asc"}],
+        take=TASK_OPTION_ARTISAN_LIMIT + 1,
+    )
+    artisans_truncated = len(artisans) > TASK_OPTION_ARTISAN_LIMIT
+    artisans = artisans[:TASK_OPTION_ARTISAN_LIMIT]
+
+    if assignees_truncated or workshops_truncated or artisans_truncated:
+        # Reported on the wire AND logged. The log is what an operator reads when an admin says "she
+        # is not in the list": it names the term that was too broad, which the response cannot.
+        logger.warning(
+            "task options hit a picker ceiling (search=%r, workshopId=%r): assignees=%s "
+            "workshops=%s artisans=%s",
+            term,
+            workshopId,
+            assignees_truncated,
+            workshops_truncated,
+            artisans_truncated,
+        )
+
     sections = await db.questionnairesection.find_many(
         where={"isActive": True}, order={"sortOrder": "asc"}
     )
@@ -1024,6 +1171,13 @@ async def task_options(
             for w in workshops
         ],
         "artisans": [{"id": a.id, "name": a.name, "place": a.place} for a in artisans],
+        # THE THREE FIELDS THE WIRE HAD NOWHERE TO SAY BEFORE. A cut list that says so can be
+        # narrowed; a cut list that does not is indistinguishable from the whole truth, and that is
+        # what an admin was acting on. Named ``truncated`` in the same word the viewer picker and the
+        # reference picker already use, so neither client is learning a new vocabulary.
+        "assigneesTruncated": assignees_truncated,
+        "workshopsTruncated": workshops_truncated,
+        "artisansTruncated": artisans_truncated,
         "sections": [
             {"id": s.id, "code": s.code, "title": s.title, "sortOrder": s.sortOrder}
             for s in sections
@@ -1058,9 +1212,11 @@ async def update_task(
     payload: TaskUpdate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """The creator or an admin may edit everything (scope, CANCELLED, reassignment included); the
-    assignee may only move the status between OPEN, IN_PROGRESS and DONE, and report
-    ``progressCount``."""
+    """The creator (or the master admin) may edit everything — scope, CANCELLED and reassignment
+    included; the assignee may only move the status between OPEN, IN_PROGRESS and DONE, and report
+    ``progressCount``. Another admin, who did not hand this work out, may do neither: see
+    ``has_task_authority`` for why that is the same rule ``DELETE /tasks/batch/{id}`` has always
+    enforced, and what happened while these two routes stated opposite versions of it."""
     task = await require_task(task_id)
     data = payload.model_dump(exclude_unset=True)
     # Explicit nulls only make sense for the nullable/clearable columns (description, dueAt,
@@ -1081,8 +1237,13 @@ async def update_task(
     if new_status is not None:
         assert_status_value(new_status)
 
-    is_manager = task.createdById == current_user.id or is_admin(current_user)
-    if is_manager:
+    # THE MANAGER ARM IS THE CREATOR'S (or the master admin's), NOT EVERY ADMIN'S — see
+    # ``has_task_authority``. This used to read ``task.createdById == current_user.id or
+    # is_admin(current_user)``, which handed any admin the reassignment and CANCELLED arms over
+    # another admin's assignment while ``DELETE /tasks/batch/{id}`` refused the far less destructive
+    # act of withdrawing the same rows. An admin who is the ASSIGNEE of somebody else's task still
+    # falls through to the assignee arm below, which is the access they should have had all along.
+    if has_task_authority(current_user, [task]):
         if data.get("assigneeId") and data["assigneeId"] != task.assigneeId:
             await assert_assignable(current_user, data["assigneeId"])
     elif task.assigneeId == current_user.id:
@@ -1102,7 +1263,10 @@ async def update_task(
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the assignee, the creator, or an admin can update this task",
+            detail=(
+                "Only the assignee, the admin who created this task, or the master admin "
+                "can update this task"
+            ),
         )
 
     if {"workshopId", "recordTypes", "artisanIds", "sectionIds", "targetCount"} & set(data):
@@ -1155,22 +1319,57 @@ async def delete_task_batch(batch_id: str, current_user: Any = Depends(require_a
     tasks = await db.assignedtask.find_many(where={"batchId": batch_id})
     if not tasks:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
-    if not is_master_admin(current_user) and any(
-        task.createdById != current_user.id for task in tasks
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the admin who created this batch (or the master admin) can delete it",
-        )
+    assert_task_authority(
+        current_user,
+        tasks,
+        detail="Only the admin who created this batch (or the master admin) can delete it",
+    )
     await db.assignedtask.delete_many(where={"batchId": batch_id})
+    _audit_withdrawal(current_user, tasks, scope=f"batch={batch_id}")
+
+
+# THE ONLY TRACE A WITHDRAWN ASSIGNMENT LEAVES. ``AssignedTask`` rows are HARD deleted by the batch
+# route above and the single route below — no ``deletedAt``, no tombstone, no audit table — so the
+# whole event used to be: N designers' to-do lists quietly emptied, and nothing anywhere to answer "who
+# withdrew this, and when". That was the half of the audit finding on these two routes that the
+# authority rule did not close: the rule decides WHO may delete, and says nothing about the deletion
+# being reconstructable afterwards. An admin asking why a task vanished from their team's list now
+# has one line in the journal to find, naming the caller, the assignees whose work was withdrawn and
+# the batch or task id.
+#
+# WARNING and not INFO, and this is not a taste question: the API process configures no root handler,
+# so under uvicorn an app logger's INFO records are dropped entirely and the line would exist only in
+# the tests (the same reasoning is written out at ``managed_secrets.set_secret`` and at the STT
+# provider test in ``routes/settings.py``, which is why all three read "AUDIT " and are greppable
+# together). Never let this become ``logger.info`` "because it is not a problem" — it is not a
+# problem, it is a RECORD, and a record nobody can read is not one.
+#
+# Assignee ids and not names: this must not cost a query, and an id is what the reader of a journal
+# line needs in order to look the row up. Titles are deliberately absent for the same reason — a
+# batch of forty tasks would bury the line it belongs to.
+def _audit_withdrawal(user: Any, tasks: Any, *, scope: str) -> None:
+    logger.warning(
+        "AUDIT task withdrawal: %s by=%s count=%s assignees=%s",
+        scope,
+        get_value(user, "email") or get_value(user, "id"),
+        len(tasks),
+        ",".join(sorted({get_value(task, "assigneeId") or "?" for task in tasks})),
+    )
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_task(task_id: str, current_user: Any = Depends(get_current_user)) -> None:
+    """Withdraw ONE assignment. Same rule as the batch above, deliberately: a batch is nothing but
+    ``AssignedTask`` rows sharing a ``batchId``, so a looser test here is not a looser test on a
+    different object — it is the batch rule with a ``for`` loop in front of it."""
     task = await require_task(task_id)
-    if task.createdById != current_user.id and not is_admin(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the task creator or an admin can delete a task",
-        )
+    assert_task_authority(
+        current_user,
+        [task],
+        detail="Only the admin who created this task (or the master admin) can delete it",
+    )
     await db.assignedtask.delete(where={"id": task_id})
+    # Logged on the SINGLE route too, and that is the point rather than symmetry for its own sake:
+    # withdrawing a batch one row at a time is exactly the shape the authority fix above refuses, so
+    # the path that was the bypass is the path whose journal line matters most.
+    _audit_withdrawal(current_user, [task], scope=f"task={task_id}")

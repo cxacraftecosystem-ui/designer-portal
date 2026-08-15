@@ -88,6 +88,14 @@ _PENDING_SOURCES: list[tuple[str, Any, tuple[str, ...]]] = [
 
 # Per-record-type row cap on the queue. It is a cap on REVIEWABLE rows (see
 # _reviewable_creator_roles), not on pending rows in general.
+#
+# THE CAP IS READ AS ``PENDING_TAKE + 1`` AND THE EXTRA ROW IS THROWN AWAY. Reading exactly this
+# many and reporting ``truncated = len(rows) == PENDING_TAKE`` claims a shortfall on the queue that
+# happens to hold precisely 200 pending artisans, and a reviewer told the list was cut when it is
+# whole has no way to find that out. One row over is the difference between detecting the cut and
+# guessing at it — the same trick, for the same reason, as ``_STUB_CAP`` in ``map_points`` and
+# ``ELIGIBLE_VIEWER_LIMIT`` in ``design_workshop_viewers``, whose ``truncated`` this deliberately
+# matches in name so both clients already know the word.
 PENDING_TAKE = 200
 
 
@@ -138,24 +146,60 @@ async def list_pending_reviews(reviewer: Any = Depends(require_reviewer)) -> dic
     below the viewer show up (the master admin sees everything), so the per-type cap holds the
     newest rows this reviewer can act on rather than the newest rows overall. Each item carries
     ``needsAdminApproval``: true means it was submitted outside its workshop's dates, so only an
-    admin can approve it."""
+    admin can approve it.
+
+    **THE ANSWER SAYS WHETHER IT WAS CUT, AND ``total`` IS A REAL TOTAL.** This used to return
+    ``{"items": items, "total": len(items)}`` — the length of the already-capped list under the
+    name of a count — with nothing anywhere saying the queue had been truncated. A reviewer with
+    340 pending artisans and a reviewer with exactly 200 got byte-identical responses, and because
+    the per-source order is ``createdAt desc`` the rows hidden behind the cap are the OLDEST: the
+    most overdue work was the work that disappeared. The only way to discover the backlog was that
+    the number refused to go down as the queue was worked.
+
+    So: ``shown`` is the length of the list, ``total`` is what the same WHERE actually matches,
+    ``cap`` is the per-record-type ceiling and ``truncated`` says the ceiling bit. There is no
+    "narrow your search" advice here and there must not be — this route takes no search parameter,
+    so a reviewer cannot narrow anything, and the closed viewer-picker finding (docs/OPEN_FINDINGS.md,
+    2026-08-13) is on record for what telling somebody to narrow an unnarrowable list costs. The
+    honest instruction is that the oldest pending records are behind the cap and will surface as
+    the queue drains; that sentence belongs to the client, which is why the wire carries the facts
+    and not the prose. Note also that ``truncated`` here can never accompany an EMPTY ``items`` —
+    the cut is by count alone, so a truncated answer holds ``cap`` rows by construction — which is
+    the state that made that earlier finding hard.
+    """
     roles = _reviewable_creator_roles(reviewer)
     if roles is not None and not roles:
         # Review access with nobody beneath them on the ladder — a granted ``canReview`` on the
         # bottom tier. There is no record they may act on; six queries to prove it are wasted.
-        return {"items": [], "total": 0}
+        # Spelled with every key the full answer carries, because a client that reads ``truncated``
+        # or ``shown`` off one shape and finds it missing on the other is a client that has to
+        # defend against this branch existing at all.
+        return {"items": [], "shown": 0, "total": 0, "cap": PENDING_TAKE, "truncated": False}
     where: dict[str, Any] = {"status": "PENDING"}
     if roles is not None:
         where["createdBy"] = {"is": {"role": {"in": roles}}}
 
     items: list[dict[str, Any]] = []
+    truncated = False
+    total = 0
     for record_type, delegate, label_fields in _PENDING_SOURCES:
         rows = await delegate.find_many(
             where=where,
             include={"createdBy": True},
             order={"createdAt": "desc"},
-            take=PENDING_TAKE,
+            take=PENDING_TAKE + 1,
         )
+        if len(rows) > PENDING_TAKE:
+            truncated = True
+            rows = rows[:PENDING_TAKE]
+            # AN EXTRA QUERY ONLY FOR A RECORD TYPE THAT ACTUALLY OVERFLOWED. Where the cap did not
+            # bite, the rows read ARE the whole matching set and their length is the exact count, so
+            # a queue under the cap costs the six reads it has always cost. Counting all six
+            # unconditionally would read more evenly but would double the query load of this page to
+            # buy five numbers already in hand. Do not "simplify" this into an unconditional count.
+            total += await delegate.count(where=where)
+        else:
+            total += len(rows)
         for row in rows:
             creator = get_value(row, "createdBy")
             items.append(
@@ -170,7 +214,18 @@ async def list_pending_reviews(reviewer: Any = Depends(require_reviewer)) -> dic
                 }
             )
     items.sort(key=lambda item: item.get("createdAt") or "", reverse=True)
-    return {"items": items, "total": len(items)}
+    return {
+        "items": items,
+        # ``shown`` is the length of THIS list; ``total`` is how many rows the same WHERE matches
+        # across the six record types. They differ exactly when ``truncated`` is true, and a client
+        # that shows one where it means the other reports 200 of 340 as "340" or as "200 of 200".
+        # ``total`` was previously ``len(items)`` under this same key, so a client already reading
+        # it now gets the number the name always promised rather than a different number.
+        "shown": len(items),
+        "total": total,
+        "cap": PENDING_TAKE,
+        "truncated": truncated,
+    }
 
 
 async def set_review_status(

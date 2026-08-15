@@ -5,12 +5,15 @@ first, and an optional off-peak window during which the heavy transcription + re
 (so it doesn't compete with daytime field uploads).
 """
 
+import logging
 from collections.abc import Collection
 from datetime import datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.core.db import db
+
+logger = logging.getLogger(__name__)
 
 SINGLETON_ID = "singleton"
 DEFAULT_TRANSCRIPTION_MODE = "REFINED_TRANSLATED"
@@ -201,6 +204,104 @@ def is_valid_hhmm(value: str | None) -> bool:
         return False
 
 
+def is_valid_timezone(value: str | None) -> bool:
+    """Can ``within_processing_window`` below actually USE this string as a timezone?
+
+    ``batchTimezone`` was the one field on PUT /settings with no validation while every sibling had
+    one, and the settings page offers it as a free-text box rather than a picker. So "IST", "India
+    Standard Time" or any alias this host's tzdata does not carry was accepted, echoed back by the
+    response, redrawn on the page — and silently discarded by the queue, which fell back to
+    Asia/Kolkata. On a deployment whose intended zone is not IST that runs the heavy transcription
+    window at the wrong hours while the one screen that says when the servers do their heavy work
+    displays something else.
+
+    The check is ZoneInfo itself rather than a list of names, because ZoneInfo is what the queue
+    calls: agreeing with the consumer is the only definition of "valid" that means anything here.
+
+    THE SECOND BRANCH IS NOT DEAD CODE. On a host with no tz database at all — Windows without the
+    ``tzdata`` package, which is a supported way to run the tests on this repository — every name
+    fails to construct, and rejecting everything would make the field unsettable rather than
+    validated. There we accept exactly the default the fallback chain lands on anyway, so the row
+    can only ever hold a string that describes what actually happens.
+
+    THE VALUE IS JUDGED EXACTLY AS IT WILL BE STORED — no strip, no normalisation. An earlier draft
+    of this function stripped first, which quietly reopened the very defect it was written to close:
+    ``"Asia/Kolkata "`` with a trailing space validated (the stripped form resolves), went into the
+    column with the space still on it, and then failed in ``_tz_or_fallback`` below, which consumes
+    the raw column. The result would have been an accepted, echoed-back setting the queue could not
+    use — the original bug, now wearing a validator. If lenient input is ever wanted, the route must
+    strip the value BEFORE both the check and the write, so that one string is judged and stored;
+    validating one string and storing another is what must not happen.
+    """
+    if not value:
+        return False
+    name = str(value)
+    try:
+        ZoneInfo(name)
+        return True
+    except Exception:  # noqa: BLE001 - unknown zone, malformed name, or no tz database at all
+        try:
+            ZoneInfo(DEFAULT_TIMEZONE)
+        except Exception:  # noqa: BLE001 - no tz database: nothing but the fallback is knowable
+            return name == DEFAULT_TIMEZONE
+        return False
+
+
+# Zone names already reported as unusable. `within_processing_window` runs once per queued job, and
+# a row that predates `is_valid_timezone` would otherwise write the same line thousands of times a
+# day and bury everything else in the journal. One line per distinct bad name per process is enough
+# to find it; the set is bounded by the number of distinct strings the column has ever held.
+_warned_timezones: set[str] = set()
+
+
+def _tz_or_fallback(tz_name: str) -> Any:
+    """The configured zone, or the default, or a fixed +05:30 — saying so when it is not the first.
+
+    The fallback chain itself is deliberate and must stay: a bad timezone string must never stall
+    the queue. What it lacked was a voice. A value that slipped in before `is_valid_timezone`
+    existed (or straight into the database by hand) is otherwise invisible — the settings page shows
+    the stored string, the queue uses a different zone, and nothing anywhere says the two disagree.
+
+    THE DEFAULT NAME IS NEVER WARNED ABOUT, and that exclusion is the whole reason this is a
+    function rather than three lines inline. On a host with no time-zone database at all — Windows
+    without the ``tzdata`` package, which is how this repository's backend suite runs on this
+    machine: ``ZoneInfo("Asia/Kolkata")`` itself raises ``ZoneInfoNotFoundError`` — the FIRST
+    ``ZoneInfo`` call fails even for a perfectly correct setting, and the earlier version of this
+    warning therefore fired on every deployment configured with the default, telling the operator
+    that ``'Asia/Kolkata'`` "is not a usable timezone" and to "re-save the setting to fix it". Both
+    halves were false: re-saving is accepted (see the second branch of ``is_valid_timezone``) and
+    changes nothing, and the window is not in fact being evaluated wrongly — the last-resort zone is
+    a fixed +05:30 named IST, which is Asia/Kolkata exactly. India has held one offset with no DST
+    since 1945, so for THIS name, and only this name, the fallback is behaviourally identical and
+    there is nothing to report. A warning an operator cannot act on is how a journal gets ignored,
+    which would cost us the one line that matters when the name really is wrong.
+
+    So: warn when the configured name differs from the default, because then the window genuinely
+    moves to hours nobody asked for; stay silent when it IS the default. Do not "simplify" this back
+    into one unconditional log line — the regression test
+    ``test_the_default_zone_never_warns_even_where_zoneinfo_cannot_build_it`` in
+    tests/test_batch_timezone.py fails immediately on any host without tzdata if you do, which is
+    how this was caught.
+    """
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:  # noqa: BLE001 - bad tz string must not stall the queue
+        if tz_name != DEFAULT_TIMEZONE and tz_name not in _warned_timezones:
+            _warned_timezones.add(tz_name)
+            logger.warning(
+                "batchTimezone %r is not a usable timezone on this host; the off-peak window is "
+                "being evaluated in %s instead. Re-save the setting to fix it.",
+                tz_name,
+                DEFAULT_TIMEZONE,
+            )
+        try:
+            return ZoneInfo(DEFAULT_TIMEZONE)
+        except Exception:  # noqa: BLE001 - no tz database at all (Windows without tzdata)
+            # Named IST rather than left anonymous so anything that formats this zone (a log line,
+            # a debugger) says what it is. +05:30 IS Asia/Kolkata's only offset, ever — see above.
+            return timezone(timedelta(hours=5, minutes=30), name="IST")
+
+
 def within_processing_window(row: Any | None, now: datetime | None = None) -> bool:
     """True when heavy transcription/refinement jobs may run right now.
 
@@ -211,13 +312,7 @@ def within_processing_window(row: Any | None, now: datetime | None = None) -> bo
     if row is None or not getattr(row, "batchWindowEnabled", False):
         return True
     tz_name = getattr(row, "batchTimezone", None) or DEFAULT_TIMEZONE
-    try:
-        tz = ZoneInfo(tz_name)
-    except Exception:  # noqa: BLE001 - bad tz string must not stall the queue
-        try:
-            tz = ZoneInfo(DEFAULT_TIMEZONE)
-        except Exception:  # noqa: BLE001 - no tz database at all (Windows without tzdata)
-            tz = timezone(timedelta(hours=5, minutes=30), name="IST")
+    tz = _tz_or_fallback(tz_name)
     current = (now or datetime.now(tz)).astimezone(tz).time()
     start = parse_hhmm(getattr(row, "batchWindowStart", None), time(2, 0))
     end = parse_hhmm(getattr(row, "batchWindowEnd", None), time(5, 0))

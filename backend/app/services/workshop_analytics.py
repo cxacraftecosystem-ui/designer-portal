@@ -541,10 +541,28 @@ def analyse_cost_ratios(workshops: list[WorkshopRows]) -> tuple[list[CostRatioGr
     group — "the cost ratio for cluster ''" is not a finding — and they are not silently dropped
     either. They are counted and returned, so the page can say how much of the archive the
     comparison could not reach.
+
+    A CLUSTER WHOSE SHEETS ARE ALL UNCOSTABLE STILL GETS A GROUP, with `sheets=0`, `ratio=None`
+    and its `uncostable` count. It used to get nothing at all: the group loop walked `by_cluster`,
+    and `by_cluster` only gains a key on the costable branch below, so `uncostable[cluster]` was
+    incremented and then read by nobody — a cluster that did the costing but never agreed a price
+    vanished from `costRatios` entirely and read, on the admin page, exactly like a cluster that
+    recorded no cost sheets at all. Nothing else in the payload covers for it: `sheetsWithoutCluster`
+    is a different quantity (a blank `clusterName`, counted above), `coverage.workshopsWithCostSheets`
+    still counts those workshops, and neither `notes` nor `cautions` mentions uncostability. A blank
+    "Expected price" alone is enough to reach this — `cost_integrity.compute_margin` returns
+    NOT_COMPUTABLE for it — so it is the ordinary state of a cluster that has costed but not priced,
+    not an exotic one.
     """
     by_cluster: dict[str, list[tuple[str, float]]] = {}
     unattributed = 0
     uncostable: Counter[str] = Counter()
+    # The workshops behind those uncostable sheets, tracked as a SET OF IDS rather than counted,
+    # because the costable branch derives `workshops` the same way and the two numbers appear in
+    # the same column of the same table. Counting sheets and calling them workshops would report
+    # one workshop's six unpriced sheets as six workshops — the shape of over-statement this whole
+    # module's floors exist to prevent.
+    uncostable_workshops: dict[str, set[str]] = {}
     below: Counter[str] = Counter()
 
     for workshop in workshops:
@@ -556,6 +574,7 @@ def analyse_cost_ratios(workshops: list[WorkshopRows]) -> tuple[list[CostRatioGr
             margin = compute_margin(f"sheet {index + 1}", sheet)
             if margin.verdict == "NOT_COMPUTABLE" or not margin.total_cost:
                 uncostable[cluster] += 1
+                uncostable_workshops.setdefault(cluster, set()).add(workshop.workshop_id)
                 continue
             if margin.verdict == "BELOW_COST":
                 below[cluster] += 1
@@ -566,7 +585,32 @@ def analyse_cost_ratios(workshops: list[WorkshopRows]) -> tuple[list[CostRatioGr
             )
 
     groups: list[CostRatioGroup] = []
-    for cluster, entries in by_cluster.items():
+    # THE UNION, NOT `by_cluster` ALONE. A cluster reaches `uncostable` and not `by_cluster` when
+    # every one of its sheets was skipped above; iterating the costable map alone is what dropped
+    # it. `sorted` because the union of a dict and a Counter has no meaningful order of its own and
+    # a group list that reorders between two identical requests is a diff nobody can read — the
+    # final `groups.sort` decides the real order, this only makes the walk deterministic.
+    for cluster in sorted(set(by_cluster) | set(uncostable)):
+        entries = by_cluster.get(cluster, [])
+        if not entries:
+            # ALL-UNCOSTABLE. Said in full rather than left to the reader to infer from `sheets: 0`,
+            # because the distinction that matters to an admin is between "this cluster recorded no
+            # cost sheets" (absent from this list entirely) and "this cluster recorded cost sheets
+            # that carry no price" (here, with a count and an instruction). `below_cost` is always
+            # zero on this branch — BELOW_COST is a computable verdict — and is passed through from
+            # the counter anyway so the two branches cannot disagree if that ever stops holding.
+            groups.append(CostRatioGroup(
+                cluster,
+                len(uncostable_workshops.get(cluster, set())),
+                0,
+                uncostable[cluster],
+                below[cluster],
+                None,
+                f"{cluster}: {uncostable[cluster]} cost sheet(s) recorded and not one of them can "
+                f"be costed — each is missing its expected price, missing its cost heads, or "
+                f"totals zero. There is no price-to-cost multiple for this cluster to compare.",
+            ))
+            continue
         values = [ratio for _, ratio in entries]
         workshop_count = len({workshop_id for workshop_id, _ in entries})
         enough = len(values) >= MIN_SHEETS_FOR_RATIO

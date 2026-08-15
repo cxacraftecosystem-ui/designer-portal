@@ -135,7 +135,7 @@ by the same host that supplies the bytes verifies the file against its own sende
 is correct and it still holds.**
 
 The value the handset trusts is still the constant compiled into the APK — `DwAsrModelFile.sha256` in
-`android/…/data/DwAsrModel.kt`, signed with the APK. The digest published here is a different thing
+`android/app/src/main/java/com/designprototype/workshop/data/DwAsrModel.kt`, signed with the APK. The digest published here is a different thing
 with three uses, none of which is being the trust anchor:
 
 - **It is the server's own tripwire.** The Python catalogue pins the digest the release builder

@@ -16,8 +16,23 @@ from app.services.access import owner_download_scope
 from app.services.csv_export import records_to_csv
 from app.services.record_fields import info_panel, info_text, interview_label
 from app.services.records import owned_or_granted_where
+from app.services.s3 import presign_get_url
 
 router = APIRouter(prefix="/export", tags=["export"])
+
+# THE ORDER EVERY CAPPED READ IN THIS MODULE USES, AND IT IS NOT DECORATION. A LIMIT with no ORDER BY
+# has no defined row set in Postgres: the surviving rows can change with statistics, with a concurrent
+# vacuum, or with an index choice. Two downloads of the same archive a week apart could therefore hold
+# two DIFFERENT five thousands, both reporting ``truncated: true``, and a reviewer diffing them would
+# conclude records had been deleted. The two CSV routes at the bottom of this file always got this
+# right; the manifest's seven reads did not.
+#
+# THE ``id`` TIEBREAKER IS LOAD-BEARING. ``createdAt`` alone is not unique — the closed viewer-picker
+# finding measured 204 accounts sharing one sort key on the live corpus — so a timestamp-only order
+# still leaves the cut arbitrary inside a tie. ASCENDING rather than descending so successive exports
+# are NESTED as the archive grows (last week's zip is a prefix of this week's) instead of disjoint,
+# which is the property an archivist comparing two downloads actually needs.
+_EXPORT_ORDER = [{"createdAt": "asc"}, {"id": "asc"}]
 
 # Per-table row cap. The whole repository is pulled into memory here and this runs on a
 # single-worker t3.micro, so an unbounded find_many is one bad day away from an OOM; 5000 matches
@@ -42,7 +57,14 @@ def csv_response(filename: str, body: str) -> Response:
 # tree:  Workshops/<workshop>/<craft>/<artisan>/{Products/<p>/Processes/<proc>,
 # Tools/<t>, Questionnaires/<i>} plus an _Unlinked area so nothing is dropped.
 # Each leaf carries the record's media (original, already-nomenclatured filenames)
-# and a details.txt. Records with no workshop land under _Unlinked.
+# and a details.txt. Records with no workshop land under _Unlinked — INCLUDING
+# ARTISANS, who for a long time were the one record type this sentence promised for
+# and the emit loop did not deliver: see ``placed_artisans`` below. Those get a
+# section of their own, _Unlinked/_Artisans, because a PERSON'S folder and the
+# _Unlinked/<artisanName> grouping label are different things and must not be able
+# to resolve to the same path: see ``UNLINKED_ARTISAN_FOLDER``. A FILE whose
+# parent record no longer exists lands there too, under _Detached files: see the
+# sweep at the end of ``dataset_manifest``, which is the same defect one level down.
 #
 # Every details.txt body comes from the shared field registry
 # (app/services/record_fields.py), so this manifest, the data browser's info cards and the .xlsx
@@ -94,6 +116,40 @@ _TAG_ALIASES = {"questionnaireinterview": "questionnaire"}
 # tree finds the same artisan under the same name.
 NO_CRAFT_FOLDER = "No craft"
 
+# Where a file whose slot nothing emitted is filed. See the sweep at the bottom of
+# ``dataset_manifest`` for why such a file exists at all.
+DETACHED_FOLDER = "_Unlinked/_Detached files"
+
+# Where an artisan no workshop reaches is filed, with their own records nested beneath them.
+#
+# A SECTION OF ITS OWN, BECAUSE THE TWO KINDS OF ``_Unlinked`` FOLDER MEAN DIFFERENT THINGS AND
+# COLLIDED WHEN THEY SHARED A NAMESPACE. ``_Unlinked/<name>`` has always been a GROUPING LABEL built
+# from ``product.artisanName`` / ``tool.artisanName`` — a denormalised string on the record, never
+# resolved to a person — and it is deliberately not uniqued, so that every orphan record naming the
+# same string lands in one folder. The artisan folder added later is the opposite: a RECORD, one per
+# person, uniqued, carrying that person's details.txt and photographs.
+#
+# Spelled the same way they overlap on the string, and the flat buckets are emitted AFTER the artisan
+# pass, so the overlap resolves the wrong way round: an unlinked artisan called "Kamla Devi" takes
+# ``_Unlinked/Kamla Devi``, and then any unattached product whose ``artisanName`` column happens to
+# read "Kamla Devi" — a DIFFERENT artisan of the same name, one filed under a workshop, or a typed-in
+# string with no artisan row behind it at all — is emitted into that person's folder as
+# ``_Unlinked/Kamla Devi/Products/…``. Nothing warns; ``_uniq`` cannot help, because the flat prefix
+# never goes through it; and the zip now attributes one person's work to another, which for a
+# craft repository is the single worst thing this manifest can get wrong.
+#
+# The section separates them for good, and does it by moving the NEW folder rather than the old
+# bucket: ``_Unlinked/<artisanName>`` is what every zip downloaded before today already spells, and
+# the artisan folder has shipped in nothing yet. The leading underscore matches ``_Detached files``
+# beside it — in this tree it marks a folder the exporter invented rather than one named after a row.
+UNLINKED_ARTISAN_FOLDER = "_Unlinked/_Artisans"
+
+#: The ``media_by`` key the detached sweep parks its rows under so it can hand them to ``add_media``
+#: rather than growing a second copy of the URL/presign/skip rule. ``_media_slot`` can never produce
+#: it: both halves are truthy there by construction (``tag`` and ``media.linkedRecordId``, or an FK
+#: value), so an empty pair collides with no real slot.
+_DETACHED_SLOT = ("", "")
+
 
 def _media_slot(media: Any) -> tuple[str, str] | None:
     """The one ``(record kind, record id)`` slot a media row belongs in, or None when unattached."""
@@ -125,8 +181,9 @@ async def dataset_manifest(
     data access: an all-data DOWNLOAD+ grant yields everything that owner uploaded; a subset grant
     yields only the granted records. Admins/global downloaders/the owner always get everything.
 
-    Response: ``{files, totalFiles, totalMedia, truncated}`` — ``truncated`` is true when any table
-    hit its row cap, so the client can warn rather than present a partial zip as complete.
+    Response: ``{files, totalFiles, totalMedia, skippedMedia, truncated}`` — ``truncated`` is true
+    when any table hit its row cap OR when a media row could not be addressed at all, so the client
+    can warn rather than present a partial zip as complete. ``skippedMedia`` counts the second case.
     """
     rec_where: dict[str, Any] = {}
     media_vis: dict[str, Any] = {}
@@ -151,22 +208,22 @@ async def dataset_manifest(
         return scope is None or rid in scope.get(rtype, set())
 
     workshops = await db.workshop.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_WORKSHOP_INCLUDE
+        where=rec_where, take=EXPORT_TAKE, include=_WORKSHOP_INCLUDE, order=_EXPORT_ORDER
     )
     artisans = await db.artisan.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_ARTISAN_INCLUDE
+        where=rec_where, take=EXPORT_TAKE, include=_ARTISAN_INCLUDE, order=_EXPORT_ORDER
     )
     products = await db.productdocumentation.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_PRODUCT_INCLUDE
+        where=rec_where, take=EXPORT_TAKE, include=_PRODUCT_INCLUDE, order=_EXPORT_ORDER
     )
     tools = await db.tooldocumentation.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_TOOL_INCLUDE
+        where=rec_where, take=EXPORT_TAKE, include=_TOOL_INCLUDE, order=_EXPORT_ORDER
     )
     interviews = await db.questionnaireinterview.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE
+        where=rec_where, take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE, order=_EXPORT_ORDER
     )
     processes = await db.process.find_many(
-        where=rec_where, take=EXPORT_TAKE, include=_PROCESS_INCLUDE
+        where=rec_where, take=EXPORT_TAKE, include=_PROCESS_INCLUDE, order=_EXPORT_ORDER
     )
     truncated = any(
         len(rows) >= EXPORT_TAKE
@@ -222,15 +279,27 @@ async def dataset_manifest(
         media_where: dict[str, Any] = {"OR": media_or}
         if media_vis:
             media_where = {"AND": [media_where, media_vis]}
-        media = await db.mediafile.find_many(where=media_where, take=MEDIA_TAKE)
+        media = await db.mediafile.find_many(
+            where=media_where, take=MEDIA_TAKE, order=_EXPORT_ORDER
+        )
         truncated = truncated or len(media) >= MEDIA_TAKE
 
     # Group media by the single slot it belongs in.
+    #
+    # A ROW WITH NO SLOT IS NOT A ROW WITH NO BYTES. ``_media_slot`` returns None for a file carrying
+    # neither a typed FK nor a tag pair, and until now such a row was dropped on this line — never
+    # keyed, never emitted, never counted. It is reachable through the ``{"uploadedById": ownerId}``
+    # arm of ``media_or`` above: an owner-scoped export is defined as "everything that owner
+    # uploaded", and an upload they never attached to anything is exactly that. Kept aside here and
+    # filed by the detached sweep at the bottom.
     media_by: dict[tuple[str, str], list[Any]] = {}
+    slotless_media: list[Any] = []
     for m in media:
         slot = _media_slot(m)
         if slot is not None:
             media_by.setdefault(slot, []).append(m)
+        else:
+            slotless_media.append(m)
 
     files: list[dict[str, str]] = []
     # Two same-named products (or two photos with the same original filename) used to resolve to
@@ -240,11 +309,81 @@ async def dataset_manifest(
     used_dirs: set[str] = set()
     used_files: set[str] = set()
 
+    # Files this manifest could not address at all: no ``url`` on the row AND no ``objectKey`` to
+    # sign one from. Counted rather than passed over in silence — see ``add_media``.
+    skipped_media: list[str] = []
+
+    # Which ``media_by`` slots an emit loop actually reached. Written by ``add_media`` and read once,
+    # by the detached sweep at the bottom — a slot nobody asked for is a file nobody zipped.
+    placed_media_slots: set[tuple[str, str]] = set()
+
     def add_media(prefix: str, rtype: str, rid: str) -> None:
+        placed_media_slots.add((rtype, rid))
         for m in media_by.get((rtype, rid), []):
+            leaf = _seg(m.originalFilename, m.id)
             if m.url:
-                path = _uniq(f"{prefix}/{_seg(m.originalFilename, m.id)}", used_files)
-                files.append({"path": path, "url": m.url})
+                files.append({
+                    "path": _uniq(f"{prefix}/{leaf}", used_files),
+                    "url": m.url,
+                })
+                continue
+            # A NULL ``url`` USED TO MEAN "SILENTLY NOT IN THE ZIP", and it is not a broken row.
+            # ``MediaFile.url`` is nullable and ``s3.public_url_for_key`` returns None whenever
+            # neither ``AWS_S3_PUBLIC_BASE_URL`` nor ``AWS_S3_ENDPOINT`` is configured — both
+            # optional — and ``complete_media_upload`` stores that None verbatim. Its comment there
+            # says the download path "already handles [it] by streaming the bytes", which is true of
+            # ``/data/media/{id}/download`` and was false of this manifest: the row was fetched from
+            # Postgres, keyed into ``media_by``, and dropped by an ``if m.url`` with no else. The
+            # researcher's zip was short by exactly those files, ``totalMedia`` counted only the
+            # survivors, and ``truncated`` stayed false — so "the zip is complete" and "N files could
+            # not be addressed" rendered as the same sentence.
+            #
+            # THE FALLBACK IS THE ONE ITS THREE SIBLINGS ALREADY HAVE: ``download_media`` streams
+            # from ``objectKey``, ``datasets._presign_media_row`` signs from it, and
+            # ``MediaIndex.prefetch`` fetches by it. Signing here also removes the manifest's
+            # standing dependence on the bucket being anonymously readable, which is a premise this
+            # module never stated and cannot check.
+            #
+            # A LONG EXPIRY, DELIBERATELY. The default 900s is sized for a single click; this URL
+            # goes into a manifest the client works through file by file, and a repository zip of a
+            # few thousand objects over a field-office connection outlives fifteen minutes easily. A
+            # URL that expires mid-download produces a corrupt archive with no error, which is worse
+            # than the narrower window is good. Six hours is the shape of the job, not a guess at a
+            # safe number.
+            #
+            # ``_uniq`` IS CALLED ONLY ON THE BRANCHES THAT EMIT, because it RESERVES the name it
+            # returns (lower-cased) in ``used_files``. Reserving a path for a file that is then
+            # skipped would push the next genuine file with that name to "photo (2).jpg" — a
+            # numbered duplicate with no original beside it, which reads as a lost file.
+            #
+            # WRAPPED, BECAUSE SIGNING IS THE ONE THING IN THIS FUNCTION THAT CAN RAISE. Every other
+            # line here is dictionary work over rows already in memory; ``presign_get_url`` builds a
+            # boto3 client and needs credentials and a region. A deployment with no object storage
+            # configured at all would have turned a manifest that used to come back short into a 500
+            # for the whole archive — trading a quiet defect for a loud one is not a fix. A key we
+            # cannot sign is counted exactly like a key that is not there.
+            if m.objectKey:
+                try:
+                    signed = presign_get_url(
+                        m.objectKey,
+                        filename=leaf,
+                        mime_type=m.mimeType or "application/octet-stream",
+                        expires_in=6 * 3600,
+                    )
+                except Exception:  # noqa: BLE001 — see above: a signing failure is a skipped file.
+                    signed = None
+                if signed:
+                    files.append({"path": _uniq(f"{prefix}/{leaf}", used_files), "url": signed})
+                    continue
+            # Neither a URL nor a signable key: nothing anywhere can fetch this row's bytes. Say so.
+            #
+            # ``objectKey`` is ``String @unique`` and NOT NULL on MediaFile, so in practice this line
+            # is reached by the SIGNING failure above rather than by a keyless row — the falsy-key
+            # test is belt and braces against a future selective read that does not load the column.
+            # Either way the row is counted rather than dropped, which is the whole point: the two
+            # states a researcher must be able to tell apart are "the zip is complete" and "N files
+            # could not be addressed", and before this they rendered as the same sentence.
+            skipped_media.append(m.id)
 
     def add_text(prefix: str, name: str, content: str) -> None:
         if content.strip():
@@ -257,6 +396,18 @@ async def dataset_manifest(
     placed_products: set[str] = set()
     placed_tools: set[str] = set()
     placed_interviews: set[str] = set()
+    # THE FOURTH SET, AND ITS ABSENCE WAS A HOLE IN THE ONE PROMISE THIS MANIFEST MAKES. Artisans are
+    # emitted in exactly one place — inside ``for ws in workshops:`` — and the ``_Unlinked`` fallbacks
+    # below covered products, tools and interviews and NOT artisans. So an artisan no workshop
+    # reaches had no folder anywhere in the tree: no details.txt, and none of their own photographs,
+    # which were nonetheless FETCHED (``media_or`` includes ``{"artisanId": {"in": ids}}`` over ALL
+    # artisans), keyed into ``media_by`` and then thrown away uncounted by ``totalMedia`` and
+    # unflagged by ``truncated``. Both ``workshopId`` and ``craftId`` are optional on create and
+    # nullable in the schema, so such an artisan is ordinary rather than exotic — and this is the
+    # SECOND time this loop has silently dropped people: see the note below about route 1 of
+    # ``workshop_reaches_artisan``. That fix corrected which artisans a workshop reaches; it did not
+    # give a home to artisans no workshop reaches.
+    placed_artisans: set[str] = set()
 
     def emit_product(prefix: str, product: Any) -> None:
         placed_products.add(product.id)
@@ -347,6 +498,7 @@ async def dataset_manifest(
                 continue  # a declared craft no visible artisan practises contributes no files
             cbase = _uniq(f"{wbase}/{craft_names.get(craft_id) or NO_CRAFT_FOLDER}", used_dirs)
             for artisan in bucket:
+                placed_artisans.add(artisan.id)
                 abase = _uniq(f"{cbase}/{_seg(artisan.name, artisan.id)}", used_dirs)
                 add_text(abase, "details.txt", _details("artisan", artisan))
                 add_media(abase, "artisan", artisan.id)
@@ -357,8 +509,54 @@ async def dataset_manifest(
                 for it in interviews_for_artisan.get(artisan.id, []):
                     emit_interview(abase, it)
 
-    # Anything not attached to a workshop goes here so nothing is lost. The per-artisan grouping
-    # prefix is deliberately NOT uniqued — every record of one artisan belongs in the same folder.
+    # Anything not attached to a workshop goes here so nothing is lost.
+    #
+    # ARTISANS FIRST, AND THE ORDER IS LOAD-BEARING. An unlinked artisan is emitted with the same
+    # shape as a linked one — details.txt, their own media, then their products, tools and interviews
+    # nested beneath through the very same ``emit_*`` helpers — so an archivist opening the zip finds
+    # one subtree per person wherever that person sits. Running this pass BEFORE the three flat
+    # fallbacks is what puts those records under the artisan they belong to: ``emit_product`` and its
+    # siblings record their ids in ``placed_*``, so the loops below skip what has just been nested and
+    # a product is never written twice. Reversing these four blocks would scatter one artisan's
+    # records across ``_Unlinked/<artisanName>`` buckets with their owner's folder empty beside them.
+    #
+    # ``_uniq`` on the artisan folder, unlike the flat buckets below, because two DIFFERENT unlinked
+    # artisans can share a name and must not have their details.txt and photographs merged into one
+    # folder — the folder is a record here, not a grouping label.
+    #
+    # AND IT SITS IN ``UNLINKED_ARTISAN_FOLDER`` RATHER THAN DIRECTLY UNDER ``_Unlinked`` FOR THE
+    # SAME REASON, one level up: ``_uniq`` only keeps this pass's own folders apart, and the flat
+    # buckets below never go through it, so while both spellings were ``_Unlinked/<name>`` a stray
+    # record carrying a matching ``artisanName`` string was emitted straight into this person's
+    # subtree. See the constant for the full argument — the short version is that a grouping label
+    # and a person must not be able to resolve to one path.
+    products_by_artisan: dict[str, list[Any]] = {}
+    for product in products:
+        if product.artisanId:
+            products_by_artisan.setdefault(product.artisanId, []).append(product)
+    tools_by_artisan: dict[str, list[Any]] = {}
+    for tool in tools:
+        if tool.artisanId:
+            tools_by_artisan.setdefault(tool.artisanId, []).append(tool)
+    for artisan in artisans:
+        if artisan.id in placed_artisans:
+            continue
+        abase = _uniq(f"{UNLINKED_ARTISAN_FOLDER}/{_seg(artisan.name, artisan.id)}", used_dirs)
+        add_text(abase, "details.txt", _details("artisan", artisan))
+        add_media(abase, "artisan", artisan.id)
+        for product in products_by_artisan.get(artisan.id, []):
+            if product.id not in placed_products:
+                emit_product(abase, product)
+        for tool in tools_by_artisan.get(artisan.id, []):
+            if tool.id not in placed_tools:
+                emit_tool(abase, tool)
+        for it in interviews_for_artisan.get(artisan.id, []):
+            if it.id not in placed_interviews:
+                emit_interview(abase, it)
+
+    # The remaining three, for records whose artisan IS filed under a workshop (or who name no
+    # artisan at all) but which are themselves attached to none. The per-artisan grouping prefix is
+    # deliberately NOT uniqued — every record of one artisan belongs in the same folder.
     for product in products:
         if product.id not in placed_products:
             emit_product(f"_Unlinked/{_seg(product.artisanName, 'artisan')}", product)
@@ -369,12 +567,86 @@ async def dataset_manifest(
         if it.id not in placed_interviews:
             emit_interview("_Unlinked", it)
 
+    # THE LAST SWEEP, AND IT IS THE MEDIA HALF OF THE PROMISE THIS MODULE'S HEADER MAKES.
+    #
+    # Every emit loop above asks ``media_by`` for the slot of a record it is writing. Nothing asked
+    # the opposite question — which slots were never claimed — and the answer was not empty. A media
+    # row is keyed by ``_media_slot`` at the id its tag or FK NAMES, not at an id that still exists,
+    # so a photograph whose parent has died is fetched from Postgres, keyed at ``("processstep",
+    # dead_id)``, and then discarded because ``add_media`` is only ever called with LIVE ids. That is
+    # not exotic: ``processes._sync_steps`` hard-deletes every ProcessStep the form did not re-send,
+    # so a researcher who opens a process, drops one duplicated step and saves has just detached that
+    # step's photographs — no delete of anything else required. The rows keep the ``workshopId`` they
+    # inherited at upload, which is precisely why the ``{"workshopId": {"in": ids}}`` arm of
+    # ``media_or`` keeps fetching them, and why the waste was invisible: they arrived in memory and
+    # left in silence, uncounted by ``totalMedia`` and unflagged by ``truncated``.
+    #
+    # THIS IS THE SAME DEFECT AS THE UNPLACED ARTISAN ABOVE, one record type down. Both are a loop
+    # that emits only what a parent reaches, under a header sentence promising "an _Unlinked area so
+    # nothing is dropped". Fixing one shape and not the other is how this module has now been burned
+    # three times; if a fourth kind of leaf is ever added, give it a ``placed_*`` set and let this
+    # sweep be the thing that proves nothing fell out.
+    #
+    # THEY ARE EMITTED, NOT MERELY COUNTED. The bytes are in the bucket and the researcher's zip is
+    # the archival copy; a folder saying "these files exist and their parent record does not" is a
+    # recoverable state, and a file that is simply absent is not. ``_Unlinked/_Detached files`` names
+    # exactly that, beside the ``_Unlinked`` folders an archivist is already reading. The recovery
+    # path for re-attaching them is ``GET /media/orphans`` plus ``POST /media/{id}/relink``, which
+    # now understand tag-only links; this is the export's side of that same repair.
+    #
+    # ``add_media`` IS REUSED THROUGH A SENTINEL SLOT RATHER THAN RE-SPELLED. Everything that decides
+    # how a row becomes a manifest entry — the url, the presigned fallback, the six-hour expiry, the
+    # skip counter, the ``_uniq`` reservation discipline — lives in that closure, and a second copy
+    # of it here is exactly how the null-url drop it was written to close got written in the first
+    # place.
+    #
+    # NOT RE-SORTED, AND THAT IS THE STABLE CHOICE RATHER THAN THE LAZY ONE. ``media`` was read under
+    # ``_EXPORT_ORDER`` and both ``slotless_media`` and each ``media_by`` bucket were appended to in
+    # that order, and dicts preserve insertion order — so this folder's contents are already fixed by
+    # the same total order the caps depend on, and two downloads a week apart agree. Sorting again
+    # here on ``createdAt`` would only re-derive that, and would do it against a column a selective
+    # read is not obliged to load.
+    #
+    # NOT UNDER A SUBSET GRANT, AND THIS CONDITION IS AN ENTITLEMENT CONTROL RATHER THAN A TASTE.
+    # On the ``ownerId`` path ``media_vis`` is empty and the media read is widened by
+    # ``{"uploadedById": ownerId}`` — EVERY file that owner uploaded, whatever it hangs off. What
+    # narrows it back down for a subset grantee is precisely the mechanism this sweep undoes: the
+    # files of records outside the grant land in slots no emit loop claims, and are dropped. So on a
+    # subset grant an unclaimed slot does not mean "the parent is gone", it means "the parent is not
+    # yours", and sweeping those into ``_Unlinked/_Detached files`` would hand a grantee holding two
+    # of a researcher's fifty artisans the photography of the other forty-eight.
+    #
+    # ``scope is None`` is the whole repository export (where ``media_vis`` has already row-gated the
+    # media by uploader, so every row in hand is one the caller may take) or an all-data owner export
+    # (where every file that owner uploaded belongs in the researcher's dataset by definition) —
+    # ``owner_download_scope`` returns None for exactly those, which is why ``_in_scope`` reads the
+    # same way. Under a subset grant the detached rows stay dropped and this defect stays open for
+    # that one caller; closing it there needs the media read narrowed to the granted records rather
+    # than to the owner, which is a change to what ``media_or`` asks for and not to what this sweep
+    # does with the answer.
+    detached: list[Any] = []
+    if scope is None:
+        detached.extend(slotless_media)
+        for slot, rows in media_by.items():
+            if slot not in placed_media_slots:
+                detached.extend(rows)
+    if detached:
+        media_by[_DETACHED_SLOT] = detached
+        add_media(_uniq(DETACHED_FOLDER, used_dirs), *_DETACHED_SLOT)
+
     media_count = sum(1 for f in files if "url" in f)
+    # ``skippedMedia`` IS OR-ED INTO ``truncated`` RATHER THAN REPORTED ALONE. ``truncated``'s
+    # documented job (see EXPORT_TAKE above) is "so the client can say so instead of quietly handing
+    # over a partial dataset", and a zip short by an unaddressable file is exactly as partial as one
+    # short by a capped row — the client's existing warning is already the right sentence. The count
+    # travels beside it so a researcher can tell the two states apart: which rows were left out is a
+    # different conversation from how many.
     return {
         "files": files,
         "totalFiles": len(files),
         "totalMedia": media_count,
-        "truncated": truncated,
+        "skippedMedia": len(skipped_media),
+        "truncated": truncated or bool(skipped_media),
     }
 
 

@@ -120,8 +120,7 @@ internal fun reportSourceFor(
         // handset's custom answers would be judged "not work", the server's copy of that stage would
         // be adopted over them, and a report generated on the phone would print the office's answers
         // in place of the ones typed in the courtyard that morning.
-        val touchedLocally = stored != null &&
-            (stored.values.isNotEmpty() || stored.rows.isNotEmpty() || stored.custom.isNotEmpty())
+        val touchedLocally = stored != null && stored.holdsWork()
         if (touchedLocally) {
             kept += stageKey
             return@forEach
@@ -134,9 +133,15 @@ internal fun reportSourceFor(
         // already deleted the whole of. Counted as neither side's, because it is in the file as
         // neither — saying "downloaded from the server just now" over a stage that prints nothing is
         // how the built-from line stops being a count of the document.
-        if (downloaded.values.isEmpty() && downloaded.rows.isEmpty() &&
-            downloaded.custom.isEmpty()
-        ) return@forEach
+        //
+        // ASKED WITH THE SAME PREDICATE AS THE DECISION ABOVE, and it has to be: the question here
+        // ("does this stage put anything in the document?") is word for word the question
+        // [holdsWork] answers, and the two were separately spelled-out booleans that agreed only by
+        // accident. They stopped agreeing the moment `stageDraftFromRemote` began carrying this
+        // device's `_`-prefixed provenance across the fill-in — an inline `values.isEmpty()` here
+        // would then read a carried `_recordingPlace` as content and report an emptied stage as
+        // "downloaded from the server just now" over a stage the file contains nothing of.
+        if (!downloaded.holdsWork()) return@forEach
         merged[stageKey] = downloaded
         filled += stageKey
     }
@@ -145,9 +150,7 @@ internal fun reportSourceFor(
     // untouched, and they are the whole reason this is a merge.
     local?.stages.orEmpty().forEach { (stageKey, stored) ->
         if (stageKey in kept || stageKey in filled) return@forEach
-        if (stored.values.isNotEmpty() || stored.rows.isNotEmpty() || stored.custom.isNotEmpty()) {
-            kept += stageKey
-        }
+        if (stored.holdsWork()) kept += stageKey
     }
 
     val draft = when {
@@ -189,6 +192,51 @@ internal fun reportSourceFor(
 }
 
 /**
+ * Whether this device's copy of a stage holds anything the DOCUMENT could carry.
+ *
+ * ── AN UNDERSCORE KEY IS NOT WORK, AND COUNTING IT KEPT A WHOLE STAGE OUT OF THE REPORT ───────────
+ *
+ * The merge above is all-or-nothing per stage: a stage this device holds work for is the device's,
+ * and the server's copy of it is not read. That is the right rule, and it was being fed the wrong
+ * question. `values.isNotEmpty()` counted keys that can never leave this phone and can never print:
+ * `WorkshopSync.wireData` strips every `_`-prefixed key from the payload by design (they are the
+ * protocol's, not the designer's), and the on-device writer's `renderEntity` walks
+ * `entity.liveFields`, so an underscore key is unreachable by construction on both paths.
+ *
+ * The one that actually gets written is `_recordingPlace` — "where were you when this stage was
+ * filled in?", offered on all 22 stages by `DwRecordingPlaceCard`. So: a designer opens stage 14 in a
+ * courtyard where the server read fails, the screen seeds a blank state, they answer only the
+ * recording place, and stage 14's draft now holds exactly one key. Build the report and this
+ * function said "the device's stage", returned before merging, and the office's full stage 14 —
+ * every row of it — was left out of the file, while the built-from line counted it as kept from the
+ * device. Nothing on the screen or in the document said so.
+ *
+ * `StageScreen` recovers from the same shape on its next online open (its `holdsWork` branch folds
+ * the server's values back in); this merge has no fold and is all-or-nothing, which is why the
+ * consequence lands here. Rows and custom answers are counted whole: a row's presence IS work, and
+ * its `_clientKey`/`_entryId` are carried inside the row rather than beside it.
+ *
+ * ── "NOT WORK" IS NOT "NOTHING", AND THAT DISTINCTION IS LOAD-BEARING ─────────────────────────────
+ *
+ * `ReportSourceShippedRegistryTest` shipped green with a fixture whose only local content was an
+ * underscore key, standing for "one stage the device holds work for"; this predicate turned it red.
+ * The predicate is the one that is right — a stage the document cannot print a syllable of must not
+ * be allowed to suppress the server's twenty rows — but the objection inside that fixture is real
+ * too: `_recordingPlace` IS an answer a designer typed, `DwLocationField` documents it as surviving
+ * in the draft the report is generated from, and the migration written down there (copy the key into
+ * a real registry field when one exists) depends on it not being quietly dropped along the way.
+ *
+ * Both are honoured, and the split is the whole point: an underscore key does not DECIDE the merge,
+ * and it is not ERASED by it either — `stageDraftFromRemote` carries this device's underscore values
+ * across the fill-in. So the courtyard stage above gets the office's twenty rows AND keeps its record
+ * of where it was written. Anyone tempted to "simplify" this back to `values.isNotEmpty()` is
+ * choosing the near-empty .docx this whole file exists to stop; anyone tempted to drop the carry in
+ * `stageDraftFromRemote` is choosing to delete an answer on the designer's behalf.
+ */
+private fun StageDraft.holdsWork(): Boolean =
+    values.keys.any { !it.startsWith("_") } || rows.isNotEmpty() || custom.isNotEmpty()
+
+/**
  * One line naming both halves of the merge, so "which copy is this?" is answered on the screen the
  * file is generated from rather than by opening the file and counting what is missing.
  */
@@ -215,11 +263,18 @@ private fun builtFromLine(serverAnswered: Boolean, fromServer: Int, fromDevice: 
  *
  * Photographs are NOT invented here. A media id in a server answer names a `MediaFile` on the
  * server, and `imageFor` resolves ids against this device's own `draft.media`; a stage downloaded
- * here therefore prints its words and skips its pictures, which is the documented contract — a
- * photograph whose bytes are missing costs the report one picture and one warning, never the export.
- * Fabricating [StageDraft.mediaIds] out of server ids would instead point the on-device renderer at
- * an id space it cannot read, which is the id-space confusion `DraftMedia.remoteMediaId` exists to
- * keep apart.
+ * here therefore prints its words and skips its pictures. Fabricating [StageDraft.mediaIds] out of
+ * server ids would instead point the on-device renderer at an id space it cannot read, which is the
+ * id-space confusion `DraftMedia.remoteMediaId` exists to keep apart.
+ *
+ * AND THE SKIPPED PICTURES ARE COUNTED AND SAID, which this comment used to claim ("one picture and
+ * one warning") while no warning existed anywhere. Every token `imageFor` cannot resolve is now
+ * collected by `buildWorkshopDocument` and stated three times in one sentence — beside the saved
+ * file on the export screen, in the document itself (in the 'Photographic record' annexure where the
+ * template carries one, at the foot of the document where it does not), and in the row this app
+ * posts to the office's export log. That is the whole difference between "this workshop was never
+ * photographed" and "this handset does not hold the pictures", and a downloaded stage is exactly the
+ * case that produces the second while reading as the first.
  *
  * A COLLECTION THIS DEVICE HAS EMPTIED IS NOT READ BACK IN. Eight of the twenty-two stages —
  * sketches, prototypes, iterations, cost sheets — hold nothing BUT collections, so deleting their
@@ -242,7 +297,21 @@ private fun stageDraftFromRemote(
         stageId = stageKey,
         title = spec?.title ?: existing?.title.orEmpty(),
         order = spec?.number ?: existing?.order ?: 0,
-        values = bucket.singleton.toMap(),
+        // THE SERVER'S ANSWERS, PLUS THIS DEVICE'S OWN UNDERSCORE KEYS — never the other way round.
+        //
+        // The `_` prefix is the sync protocol's marker for "this never leaves the phone"
+        // (`WorkshopSync.wireData` strips every one of them from a PUT), so the server's bucket
+        // cannot carry one and there is nothing here for it to overwrite. What it CAN carry is
+        // `_recordingPlace`: the "where were you standing when you wrote this stage down?" answer
+        // `DwRecordingPlaceCard` offers on all 22 stages, which [DwLocationField] documents as
+        // surviving in the draft the report is generated from.
+        //
+        // [holdsWork] deliberately does not count that key as work, so a stage holding only it is
+        // filled in from the server — and without this line the fill-in would take the designer's
+        // provenance answer with it. Not counting an answer is a merge decision; deleting it is a
+        // different act, and this file is not entitled to it.
+        values = bucket.singleton.toMap() +
+            existing?.values.orEmpty().filterKeys { it.startsWith("_") },
         // THE DESIGNER'S OWN ANSWERS, CARRIED. Without this line the offline export prints the
         // server's core fields for a downloaded stage and silently nothing at all from its custom
         // section — which is the exact shape of the divergence this whole lane exists to remove,

@@ -785,6 +785,68 @@ def test_multi_value_field_rejects_a_scalar():
     assert coerce_value(_f(type=FieldType.TAGS), "not a list")[1] is not None
 
 
+def test_a_multi_valued_field_is_bounded_in_both_directions():
+    """THE REGRESSION. Every multi-valued field accepted an unbounded array of unbounded strings.
+
+    The ``is_multi`` branch RETURNS before the scalar-text branch where ``max_length`` is applied,
+    so neither bound existed: no item cap anywhere in the codebase, and no length check on any one
+    entry. The envelope bounds do not reach it — ``MAX_STAGE_ROWS`` counts rows and
+    ``MAX_FIELD_KEYS`` counts keys per entry, while ONE key may hold an arbitrarily long array —
+    and MULTI_ENUM's allow-list does not either, because duplicates of an allowed token pass the
+    unknown-token check.
+
+    What it cost is a permanent write amplified on every later read: the blob lands in a jsonb
+    column that ``GET /{id}/stages`` serialises in full on every stage-index open, for every
+    designer who can see the workshop, with no path that trims it and no error recording it.
+    """
+    tags = _f(type=FieldType.TAGS, label="Tags")
+    assert coerce_value(tags, ["a"] * stage_schema.DEFAULT_MAX_ITEMS)[1] is None
+    assert coerce_value(tags, ["a"] * (stage_schema.DEFAULT_MAX_ITEMS + 1)) == (
+        None, f"Tags may hold at most {stage_schema.DEFAULT_MAX_ITEMS} entries"
+    )
+    # ONE entry, not the joined length: a designer given "Tags is too long" for a list of eight
+    # short words and one pasted paragraph cannot tell which box to look in.
+    assert coerce_value(tags, ["x" * stage_schema.DEFAULT_MAX_ITEM_CHARS])[1] is None
+    assert "longer than" in coerce_value(
+        tags, ["ok", "x" * (stage_schema.DEFAULT_MAX_ITEM_CHARS + 1)]
+    )[1]
+    # A REPEATED allowed token is still an entry. `["EMPORIUM"] * 1_000_000` used to be stored.
+    multi = _f(type=FieldType.MULTI_ENUM, enum="MARKET_CHANNEL", label="Channels")
+    assert coerce_value(multi, ["EMPORIUM"] * 5_000)[1] is not None
+
+
+def test_a_declared_bound_on_a_multi_field_is_no_longer_a_silent_no_op():
+    """``max_length`` and ``max_items`` are both consulted for a multi field.
+
+    ``max_length`` was unreachable for these types — the branch returned first — so a field that
+    declared one was declaring nothing. No registry field declares either today (measured: 35
+    multi-valued fields, none with ``max_length``), which is exactly why the defaults above are
+    what actually bound the fleet; these two assertions keep the declared path honest for the
+    first field that needs it.
+    """
+    capped = _f(type=FieldType.TAGS, label="Tags", max_items=2, max_length=4)
+    assert coerce_value(capped, ["ikat", "silk"]) == (["ikat", "silk"], None)
+    assert coerce_value(capped, ["ikat", "silk", "wool"]) == (
+        None, "Tags may hold at most 2 entries"
+    )
+    assert coerce_value(capped, ["sambalpuri"]) == (
+        None, "Tags: one entry is longer than 4 characters"
+    )
+
+
+def test_max_items_crosses_the_wire_only_once_a_field_declares_one():
+    """It follows the file's "only non-default keys are emitted" rule, so today's digest is safe.
+
+    The whole registry crosses the wire on every app start and the bundled Android asset is
+    compared against this dump; emitting a key nothing sets would rewrite every cached registry in
+    the fleet for no client behaviour at all.
+    """
+    from app.services.stage_schema import field_to_dict
+
+    assert "maxItems" not in field_to_dict(_f(type=FieldType.TAGS))
+    assert field_to_dict(_f(type=FieldType.TAGS, max_items=12))["maxItems"] == 12
+
+
 def test_date_requires_iso_8601():
     """Accepting 10/02/2026 would silently store a February date as an October one."""
     spec = _f(type=FieldType.DATE)

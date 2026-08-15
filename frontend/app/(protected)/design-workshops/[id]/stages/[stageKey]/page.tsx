@@ -58,7 +58,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, CloudOff, Layers } from "lucide-react";
 
 import { CustomSectionsForm } from "@/components/designworkshop/CustomSections";
-import { CollectionTable, EntityForm, type FieldErrors } from "@/components/designworkshop/EntityForm";
+import {
+  CollectionTable,
+  EntityForm,
+  removalIsADeletion,
+  rowsTheServerCouldHold,
+  type FieldErrors,
+  type ServerHeldRows
+} from "@/components/designworkshop/EntityForm";
 import { ANALYSIS_STAGE, MarketFindingsPanel } from "@/components/designworkshop/MarketFindingsPanel";
 import {
   EMPTY_RECORDING_PLACE,
@@ -76,6 +83,7 @@ import {
   type DwEntryData,
   type DwRegistry,
   type DwRow,
+  type DwSaveResult,
   type DwStage,
   type DwStageCompleteness,
   type DwValue
@@ -108,9 +116,13 @@ import {
   type CustomDefinitionSource,
   type DwDraft,
   type DwDraftStage,
+  type DwRowKey,
   type RegistrySource
 } from "@/lib/designWorkshopStore";
+import { registryProvenanceNotice } from "@/lib/registryProvenance";
+import { localWriteDecision, stageRefusalResult, stageRefusalWroteCount } from "@/lib/stageSaveOutcome";
 import { isUnreachable } from "@/lib/offline";
+import { neverReconciled } from "@/lib/workshopOpenability";
 import { readStageFocus } from "@/lib/workshopSearch";
 
 /**
@@ -246,6 +258,9 @@ function DesignWorkshopStagePageBody({
 
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [registrySource, setRegistrySource] = useState<RegistrySource | null>(null);
+  // Whether this render's field list has to explain itself, and in which words — decided in
+  // `lib/registryProvenance`, never with a comparison in the JSX. See the banner near the bottom.
+  const registryNotice = registryProvenanceNotice(registrySource);
   const [singleton, setSingleton] = useState<DwEntryData>({});
   const [collections, setCollections] = useState<Record<string, DwRow[]>>({});
   const [errors, setErrors] = useState<Record<string, Record<string, string>>>({});
@@ -315,6 +330,16 @@ function DesignWorkshopStagePageBody({
    * this one must survive all of them.
    */
   const [neverDownloaded, setNeverDownloaded] = useState(false);
+  /**
+   * The repository refused this workshop outright and this browser has never held a copy of it.
+   *
+   * NOT THE SAME FACT AS `neverDownloaded`, and the difference is the whole point. That one means
+   * "this stage is blank because it was never read" and is a note on a form that is still the right
+   * thing to fill in. This one means there is no record to fill in at all: the draft underneath was
+   * fabricated by `ensureDraft` from the route id and the server has answered 404. See the load
+   * effect's catch, and {@link neverReconciled}.
+   */
+  const [unopenable, setUnopenable] = useState(false);
   const [saving, setSaving] = useState(false);
   /**
    * Entities a row has been REMOVED from in this session. See decision 2 in the file header: it is
@@ -335,6 +360,15 @@ function DesignWorkshopStagePageBody({
   const [stageSync, setStageSync] = useState<Pick<DwDraftStage, "dirtyAt" | "lastPushedAt" | "failure"> | null>(null);
   /** True between a keystroke and the debounced IndexedDB write that banks it. Milliseconds. */
   const [localPending, setLocalPending] = useState(false);
+  /**
+   * The local write was REFUSED, and the text on screen is the only copy of it that exists.
+   *
+   * ITS OWN STATE AND NOT `error`, for the same reason `neverDownloaded` is: every save writes over
+   * `error` and `notice`, and this fact must survive all of them — it is true until a write actually
+   * succeeds, not until the next thing happens. Cleared in exactly one place, the success arm of the
+   * autosave's `write()`.
+   */
+  const [localWriteFailed, setLocalWriteFailed] = useState(false);
   /**
    * Where and when this stage is being recorded.
    *
@@ -362,6 +396,24 @@ function DesignWorkshopStagePageBody({
    * no-op `setState` (`setRemovedFrom([])` after a successful save) re-marking a stage unsent.
    */
   const banked = useRef<StageSnapshot | null>(null);
+  /**
+   * The rows of this stage the REPOSITORY could be holding, by entity key — what makes a removal a
+   * deletion rather than a change of mind.
+   *
+   * IT REPLACED A ROW COUNT, AND THE COUNT WAS DELETING WHOLE COLLECTIONS. `patchCollection`'s only
+   * test was "the array came back shorter", which is true of an Add-then-Delete on one blank row —
+   * the most ordinary correction this form offers, and one that changes nothing anywhere. That
+   * wrote a phantom `removedFrom` entry which `putDraftStage` then UNIONS in and no later edit can
+   * withdraw; `foldStageInto` reads the same list as an instruction, so the next online open
+   * withheld the server's rows for that collection AND stamped `serverLoadedAt`, and the save after
+   * that swept every one of them under a 200 reading "Stage saved — 0 added, 1 updated, 6 removed".
+   *
+   * A ref and not state, for the reason `banked` is: nothing renders it, and a re-render of 496
+   * field descriptors to record a row key would be a wasted pass. It is rebuilt by `seed` on every
+   * stage open and GROWS on every successful push — see {@link rowsTheServerCouldHold}, which owns
+   * the rule and is where the argument for it is written down.
+   */
+  const serverHeld = useRef<ServerHeldRows>({});
   /** The newest pending write, so a navigation or a `pagehide` can run it immediately. */
   const flushRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -437,6 +489,10 @@ function DesignWorkshopStagePageBody({
     setAwaitingServer(false);
     setNeverDownloaded(false);
     banked.current = null;
+    // Cleared with `banked`, and for the same reason: this effect re-runs when the URL names a
+    // DIFFERENT stage, and a set of row keys carried over from the stage just left would tell
+    // `patchCollection` that rows of this one had been to the server. `seed` refills it below.
+    serverHeld.current = {};
 
     const seed = (draftStage: DwDraftStage | undefined) => {
       const data = stageDataOf(draftStage);
@@ -456,6 +512,11 @@ function DesignWorkshopStagePageBody({
       // describes. Until this is set, no autosave can run at all — which is what makes seeding
       // unable to mark a stage edited. See {@link banked}.
       banked.current = { singleton: data.singleton, collections: data.collections, custom: held, removedFrom: removed };
+      // WHICH OF THESE ROWS COULD BE ON THE SERVER — read off the same draft record the boxes were
+      // just filled from, so the two can never describe different stages. Empty for a stage that has
+      // neither been read from the repository nor pushed to it: nothing in it has ever crossed the
+      // wire, so no removal out of it is a deletion anybody upstream needs to hear about.
+      serverHeld.current = rowsTheServerCouldHold(draftStage);
       setStageSync({
         dirtyAt: draftStage?.dirtyAt ?? null,
         lastPushedAt: draftStage?.lastPushedAt ?? null,
@@ -585,6 +646,34 @@ function DesignWorkshopStagePageBody({
         setLoading(false);
       } catch (err) {
         if (cancelled) return;
+        /*
+          THE ONE FAILURE THAT MUST NOT LEAVE AN EDITABLE FORM ON SCREEN. Audit 2026-08-15 (MAJOR).
+
+          Every other failure here means "the repository could not tell us about this stage", and the
+          local copy is then the best and only answer — which is why the line below seeds it. A 404
+          that is NOT "Unknown stage" means something else entirely: `load_workshop_or_404` answered,
+          and it answered that this account may not open this workshop (or that no such workshop
+          exists — it deliberately will not say which). There is no local copy in that case either,
+          because the draft `ensureDraft` returned was fabricated by this browser from the route id.
+
+          Seeding and clearing `loading` on that path is what made the defect expensive: the stage
+          index sent a designer here with a convincing 0% workshop, the form rendered fully editable
+          under an amber "this device has never downloaded this stage" notice, and a day's interview
+          was typed into a record the server will refuse for ever. `neverReconciled` is what keeps a
+          real workshop that an admin has since soft-deleted OUT of this branch — that draft holds
+          fieldwork read from the repository and this screen is the only place it can be seen.
+        */
+        if (
+          err instanceof ApiError &&
+          err.status === 404 &&
+          err.message !== "Unknown stage" &&
+          (!draft || neverReconciled(draft))
+        ) {
+          setUnopenable(true);
+          setAwaitingServer(false);
+          setLoading(false);
+          return;
+        }
         // The reconciliation failed. Whatever this device holds is now the only thing there is, so
         // put it on screen — but say which of the two kinds of blank it is.
         if (!banked.current) seed(draft?.stages[stageKey]);
@@ -613,9 +702,33 @@ function DesignWorkshopStagePageBody({
           if (stageNeverRead(draft, stageKey)) setNeverDownloaded(true);
           return;
         }
+        /*
+          THE 404 IS THE SERVER'S TO EXPLAIN, AND IT HAS TWO DIFFERENT THINGS TO SAY.
+
+          This branch used to answer every 404 with "That stage does not exist in this build's field
+          registry" — the one cause it CANNOT be by the time the line runs. `spec` is resolved from
+          `loaded.registry.stages` above and the effect returns early when it is missing, so the
+          request is only ever made for a stage this build's registry declares.
+
+          The route has exactly two 404s, with two readable and opposite details.
+          `load_workshop_or_404` answers "Record not found" for a workshop that does not exist OR
+          that this account may not open — deliberately not distinguishing the two. The unknown-stage
+          branch answers "Unknown stage", which means the SERVER's registry is missing a stage this
+          build has, i.e. the skew runs the other way from what the old sentence claimed.
+
+          Both arrive intact in `ApiError.message`. Substituting a fixed sentence for them sent a
+          designer who had simply not been granted access to look for an app update — on a metered
+          rural connection, a reinstall — for a problem an admin fixes in one click. Only the
+          "Unknown stage" case gets a gloss, and the gloss names the right side of the skew.
+        */
         setError(
           err instanceof ApiError && err.status === 404
-            ? "That stage does not exist in this build's field registry."
+            ? err.message === "Unknown stage"
+              ? `The repository does not recognise stage "${stageKey}". This browser's field list has it and the server's ` +
+                "does not, so this app is running ahead of the repository — the stage cannot be opened until the server " +
+                "catches up."
+              : `That stage could not be opened: ${err.message} The workshop may not exist, or it may not be one this ` +
+                "account has been given access to — an administrator can grant it."
             : err instanceof Error
               ? err.message
               : "Unable to load this stage"
@@ -693,12 +806,52 @@ function DesignWorkshopStagePageBody({
       if (written) return;
       written = true;
       const saved = await putDraftStage(target, stageKey, payload);
+      /*
+        A NULL IS A FAILED WRITE AND MUST NOT BE BANKED. Audit 2026-08-15 (MAJOR, frontend).
+
+        `mutate` — which `putDraftStage` returns straight through — collapses three outcomes into
+        one `null`: the draft was not found, the draft belongs to another session on this laptop,
+        and the IndexedDB transaction ABORTED. That last one is not hypothetical: a readwrite `put`
+        on a quota-full origin rejects by exactly that route, and so does a store deleted underneath
+        us by "clear site data".
+
+        The four lines below used to run unconditionally, and each of them told a lie about that
+        null. `banked.current = snapshot` declares the typed text already saved, so the autosave
+        effect's `sameSnapshot` short-circuit refuses to write it EVER AGAIN — the loss is permanent
+        within the session, not merely delayed. `flushRef.current = null` throws away the retry.
+        `setLocalPending(false)` puts out the amber "Saved on this device only" chip, which is the
+        designer's only indication that anything is outstanding. And `save()` re-reads the DRAFT off
+        disk rather than sending React state, so pressing "Save stage" afterwards uploads the stale
+        copy and reports "Stage saved" over text that reached neither the disk nor the wire.
+
+        On the failure path we therefore change NOTHING and say so. The baseline stays stale, which
+        is what makes the next keystroke's snapshot differ from it and re-arm this effect; `written`
+        is lowered so an already-armed `flushRef`/timer can genuinely retry rather than return at the
+        latch; `flushRef` is re-pointed at this same closure because `flushLocal` nulls it before
+        calling (so a retry through a navigation would otherwise disarm the next one).
+
+        If you "simplify" this back to an unconditional bank, the failure mode is silent, permanent
+        loss of a stage a designer watched turn from amber to nothing.
+      */
+      const decision = localWriteDecision(saved);
+      if (!decision.bank) {
+        // `written` is lowered so an already-armed timer or flush can genuinely retry rather than
+        // return at the latch, and `flushRef` is re-pointed at this same closure because
+        // `flushLocal` nulls it before calling — without that, a retry through a navigation would
+        // disarm the next one.
+        written = false;
+        flushRef.current = decision.retry ? write : null;
+        setLocalPending(decision.pending);
+        setLocalWriteFailed(decision.failed);
+        return;
+      }
       // Banked before anything else: from here on this snapshot is what "already saved" means, and
       // a re-render carrying the same values must not write it a second time.
       banked.current = snapshot;
       flushRef.current = null;
-      setLocalPending(false);
-      const next = saved?.stages[stageKey];
+      setLocalPending(decision.pending);
+      setLocalWriteFailed(decision.failed);
+      const next = saved!.stages[stageKey];
       if (next) setStageSync({ dirtyAt: next.dirtyAt, lastPushedAt: next.lastPushedAt, failure: next.failure });
     };
     flushRef.current = write;
@@ -706,12 +859,22 @@ function DesignWorkshopStagePageBody({
     return () => window.clearTimeout(timer);
   }, [singleton, collections, custom, removedFrom, stage, stageKey]);
 
-  /** Run the pending write now. Awaited before every navigation and before every push. */
+  /**
+   * Run the pending write now. Awaited before every navigation and before every push.
+   *
+   * ANSWERS WHETHER THE DISK TOOK IT, because `save()` reads the draft back OFF DISK to build its
+   * payload — so a flush that failed and a flush that succeeded produce two completely different
+   * uploads, and only one of them contains what is on screen. `true` when there was nothing pending
+   * (that is not a failure) or when the write landed; `false` only when the write was refused.
+   */
   const flushLocal = useCallback(async () => {
     const write = flushRef.current;
-    if (!write) return;
+    if (!write) return true;
     flushRef.current = null;
     await write();
+    // `write` re-arms `flushRef` on failure and nulls it on success — reading it back is how this
+    // learns the outcome without threading a return value through the closure the timer also calls.
+    return flushRef.current === null;
   }, []);
 
   /**
@@ -798,10 +961,27 @@ function DesignWorkshopStagePageBody({
    * Reading `collections` from the render closure and deciding before either call is both correct
    * and easier to read than making the removal test idempotent enough to survive being run twice.
    */
-  function patchCollection(entityKey: string, rows: DwRow[]) {
-    // A removal is detected by COUNT rather than by asking the table to report one: the table's job
-    // is to hand back a list, and what that list implies for the save is this page's job.
-    if (rows.length < (collections[entityKey] ?? []).length) {
+  function patchCollection(entityKey: string, rows: DwRow[], removed?: DwRow) {
+    /*
+      A REMOVAL IS STILL DETECTED BY COUNT, BUT A REMOVAL IS NO LONGER AUTOMATICALLY A DELETION.
+
+      The count is what says "this call is a removal at all" — the table's job is to hand back a
+      list, and what that list implies for the save is this page's job. What the count CANNOT say is
+      whether the row that went could exist in the repository, and taking "shorter" to mean "delete
+      rows on the server" is what made Add-then-Delete on one blank row arm a sweep that soft-deleted
+      every row of that collection this browser had never downloaded. The row itself answers it:
+      `removalIsADeletion` asks whether it carries a server-minted `_entryId`, or a `_clientKey` this
+      stage has ever been read with or pushed with. A row minted by `blankRow()` in this render
+      answers no to both and its removal is not news for anybody.
+
+      THE TEST IS HERE AND NOWHERE ELSE. `removedFrom` is the single input read by the save's
+      `replaceCollections`, by the "you deleted rows this browser may not send" sentence, and by
+      `foldStageInto`'s decision to withhold the server's rows for an emptied collection. Repeating
+      the test at any of those would be three chances to disagree; keeping a phantom out of the list
+      at the one place a removal is RECORDED closes all three at once.
+    */
+    const shorter = rows.length < (collections[entityKey] ?? []).length;
+    if (shorter && removalIsADeletion(removed, serverHeld.current[entityKey])) {
       setRemovedFrom((keys) => (keys.includes(entityKey) ? keys : [...keys, entityKey]));
     }
     setCollections((current) => ({ ...current, [entityKey]: rows }));
@@ -841,14 +1021,110 @@ function DesignWorkshopStagePageBody({
    * INDEX IN THE ARRAY THAT WAS SENT. Two builders would be two orderings, and the error map decoded
    * against the wrong one puts every message after the first collection on the wrong row.
    */
+  /**
+   * Take everything a `save_stage` response says about the answers, whatever status code carried it.
+   *
+   * WHY IT IS A FUNCTION AND NOT TWO COPIES. Audit 2026-08-15 filed the same defect twice — once for
+   * the strict pass losing the per-field `errors`, once for it naming no field — and they are one
+   * defect: this block existed only on the 200 path. The 422 raised by `submit=true` carries an
+   * IDENTICAL result object (routes/design_workshops.py:1133-1135 spreads the whole `result` under
+   * `detail`, precisely so a client can say "the stage was written and 1 row removed, but it cannot
+   * be submitted yet"), and the catch below read nothing out of it. `describeApiDetail` reads
+   * `detail.message` alone, so the map never reached the screen and `ApiError.payload` — which has
+   * held the whole parsed body all along — was the only route to it.
+   *
+   * THE FOUR PIECES OF STATE MOVE TOGETHER OR NOT AT ALL. `errors` and `unplaced` are the two halves
+   * of one decode; `dropped` and `droppedCustom` are the same response's other two lists, kept apart
+   * from each other for the reason set out below but always written in the same breath. A second
+   * copy of this block is exactly how the 422 path came to be missing three quarters of it.
+   */
+  function applyStageResult(
+    result: DwSaveResult,
+    keys: DwRowKey[]
+  ): { marked: number; unplacedLines: string[] } {
+    /*
+      RE-ADDRESSED FROM "THE ARRAY I SENT" TO "THE BOXES ON SCREEN", so a message lands on the box that
+      produced it rather than in a banner nobody can act on — AND WHAT CANNOT BE RE-ADDRESSED IS
+      RETURNED RATHER THAN DROPPED. `placeStageErrors` lives in the store beside `buildStageEntries`,
+      which is the function that DEFINES the indices being decoded: two halves of one contract, in one
+      place, and testable without a browser.
+    */
+    const { decoded, unplaced: unplacedLines } = placeStageErrors(result.errors, keys);
+    setErrors(decoded);
+    setUnplaced(unplacedLines);
+    setDropped(result.droppedKeys ?? []);
+    /*
+      TWO LISTS, TWO SENTENCES, AND THEY ARE NEVER MERGED. `droppedKeys` means "this build sent a
+      registry field the server has never heard of", which is a client/server version skew and the only
+      drift signal this repository has. `droppedCustomKeys` means "the definition this browser holds
+      names a question the server's copy does not", which is a definition that has been edited since
+      this browser read it — a different fact, with a different remedy (reload, not report), and one
+      that would otherwise fire the registry banner on every save of every workshop that has a custom
+      section.
+
+      THE DIGEST IS RECORDED WHETHER OR NOT ANYTHING WAS DROPPED, because the two are independent: a
+      designer can add a question without invalidating any answer this browser holds, in which case
+      nothing is dropped and the copy on screen is still short of a question that is being asked.
+    */
+    setDroppedCustom(result.droppedCustomKeys ?? []);
+    setServerCustomVersion(result.customSchemaVersion ?? null);
+    /*
+      THE COUNT INCLUDES THE UNPLACEABLE REFUSALS TOO, OR AN ENTIRELY UNPLACEABLE SET READS AS A CLEAN SAVE.
+
+      `decoded` holds only what could be attached to a box. When every refusal in a response is
+      unplaceable, `decoded` is EMPTY — so the caller's gate fell through, no error was shown, and the
+      save went on to `markStagePushed`, which stamps the stage as pushed and clears the unsent marks. A
+      stage the server had partly refused was recorded as landed, and the refusal was reported nowhere at
+      all. Both numbers are returned for the same reason the caller's sentence names both.
+    */
+    return { marked: Object.keys(decoded).length, unplacedLines };
+  }
+
   async function save(submit: boolean) {
     if (!stage) return;
     const target = draftIdRef.current;
     setSaving(true);
     setError(null);
     setNotice(null);
+    /*
+      THE PREVIOUS SAVE'S MARKS COME OFF HERE, AND NOT ONLY ITS SENTENCE. Audit 2026-08-15 (MAJOR).
+
+      `setError(null)` above cleared the banner and left `errors`, `unplaced`, `dropped` and
+      `droppedCustom` standing, so every early return and every refused save below re-rendered the
+      PREVIOUS response's red marks under the new one's message. A designer who fixed the two fields
+      a 422 named, pressed Save again and was refused for a third field saw all three marked and no
+      way to tell which of them the server had just objected to.
+
+      They are reset together because they are one response: `placeStageErrors` writes the first two
+      from the same map, and `dropped`/`droppedCustom` are the other two lists the same response
+      carries. Anything that sets one of the four must set all four — see `applyStageResult`.
+    */
+    setErrors({});
+    setUnplaced([]);
+    setDropped([]);
+    setDroppedCustom([]);
+    /**
+     * The row addresses of the payload this save built, hoisted out of the `try` SO THE CATCH CAN
+     * SEE THEM. A 422 is answered with the same per-field map a 200 is, and re-addressing it needs
+     * exactly the array the entries were built from.
+     */
+    let rowKeys: DwRowKey[] = [];
     try {
-      await flushLocal();
+      /*
+        A REFUSED LOCAL WRITE STOPS THE SAVE DEAD, because everything after this line is built from
+        the draft READ BACK OFF DISK. Without the check, a failed flush meant `loadDraft` returned
+        the copy from before the designer started typing, `buildStageEntries` built a payload out of
+        it, the server took it, and the screen said "Stage saved" over a stage whose newest answers
+        had reached neither the disk nor the wire — the worst outcome this page can produce, because
+        it is the one that makes a designer close the tab.
+      */
+      if (!(await flushLocal())) {
+        setError(
+          "This browser refused to save this stage to its own storage, so there is nothing dependable to send. What is in " +
+            "the boxes has not been kept on this device — copy it somewhere safe before leaving this page."
+        );
+        return;
+      }
       const draft = target ? await loadDraft(target) : null;
       const draftStage = draft?.stages[stageKey] ?? emptyStage(stageKey);
       const sinceDirtyAt = draftStage.dirtyAt;
@@ -893,7 +1169,11 @@ function DesignWorkshopStagePageBody({
         return;
       }
 
-      const { entries, rowKeys, merged } = buildStageEntries(stage, draftStage);
+      const { entries, rowKeys: builtRowKeys, merged } = buildStageEntries(stage, draftStage);
+      // Published to the hoisted binding the CATCH reads. A 422 is answered with the same per-field
+      // map a 200 is, keyed by index into exactly this array — so the catch cannot re-address a
+      // single refusal without it.
+      rowKeys = builtRowKeys;
       if (!entries.length) {
         // `buildStageEntries` omits an empty singleton for a stage this device has never read from
         // the repository, so an empty entry list means there is genuinely nothing here to send —
@@ -931,6 +1211,25 @@ function DesignWorkshopStagePageBody({
       });
 
       /*
+        THE ROWS THIS PUT CARRIED ARE NOW ROWS THE SERVER COULD BE HOLDING, so deleting one of them
+        later IS a deletion and must arm the sweep. Read off `draftStage`, which is the copy the
+        payload was built from — not off React state, which may already hold a row typed during the
+        round trip that this PUT did not carry.
+
+        RECORDED HERE AND NOT AFTER `markStagePushed`, deliberately: the partial-refusal branch below
+        RETURNS before the acknowledgement, and its own message says "everything else was saved" —
+        the rows it accepted are up there whether or not this browser got as far as banking the push.
+        Growing the set on a response the server refused outright cannot lose anything either; the
+        cost of an over-wide set is one redundant `replaceCollections` over rows the payload carries,
+        and the cost of a too-narrow one is a deletion that never happens. See
+        {@link rowsTheServerCouldHold}.
+      */
+      serverHeld.current = rowsTheServerCouldHold(
+        { serverLoadedAt: draftStage.serverLoadedAt, lastPushedAt: Date.now(), collections: draftStage.collections },
+        serverHeld.current
+      );
+
+      /*
         RE-ADDRESSED FROM "THE ARRAY I SENT" TO "THE BOXES ON SCREEN", so a message lands on the box that
         produced it rather than in a banner nobody can act on — AND WHAT CANNOT BE RE-ADDRESSED IS
         RETURNED RATHER THAN DROPPED.
@@ -945,36 +1244,7 @@ function DesignWorkshopStagePageBody({
         It now lives in the store beside `buildStageEntries`, which is the function that DEFINES the
         indices being decoded. Two halves of one contract, in one place, and testable without a browser.
       */
-      const { decoded, unplaced: unplacedLines } = placeStageErrors(result.errors, rowKeys);
-      setErrors(decoded);
-      setUnplaced(unplacedLines);
-      setDropped(result.droppedKeys ?? []);
-      /*
-        TWO LISTS, TWO SENTENCES, AND THEY ARE NEVER MERGED. `droppedKeys` means "this build sent a
-        registry field the server has never heard of", which is a client/server version skew and the only
-        drift signal this repository has. `droppedCustomKeys` means "the definition this browser holds
-        names a question the server's copy does not", which is a definition that has been edited since
-        this browser read it — a different fact, with a different remedy (reload, not report), and one
-        that would otherwise fire the registry banner on every save of every workshop that has a custom
-        section.
-
-        THE DIGEST IS RECORDED WHETHER OR NOT ANYTHING WAS DROPPED, because the two are independent: a
-        designer can add a question without invalidating any answer this browser holds, in which case
-        nothing is dropped and the copy on screen is still short of a question that is being asked.
-      */
-      setDroppedCustom(result.droppedCustomKeys ?? []);
-      setServerCustomVersion(result.customSchemaVersion ?? null);
-
-      /*
-        THE GATE COUNTS THE UNPLACEABLE REFUSALS TOO, OR AN ENTIRELY UNPLACEABLE SET READS AS A CLEAN SAVE.
-
-        `decoded` holds only what could be attached to a box. When every refusal in a response is
-        unplaceable, `decoded` is EMPTY — so this gate fell through, no error was shown, and the save went
-        on to `markStagePushed`, which stamps the stage as pushed and clears the unsent marks. A stage the
-        server had partly refused was recorded as landed, and the refusal was reported nowhere at all.
-        `refused` is the count of both kinds for the same reason the sentence names both.
-      */
-      const marked = Object.keys(decoded).length;
+      const { marked, unplacedLines } = applyStageResult(result, rowKeys);
       if (marked || unplacedLines.length) {
         setError(
           marked
@@ -1071,8 +1341,48 @@ function DesignWorkshopStagePageBody({
         );
         return;
       }
-      // A 422 from `submit=true` is the expected answer to "is this stage finished", not a fault —
-      // its detail names the fields, and `describeApiDetail` has already turned it into a sentence.
+      /*
+        A 422 FROM `submit=true` IS A FULL RESPONSE, NOT A SENTENCE. Audit 2026-08-15 (MAJOR ×2).
+
+        The comment that used to stand here claimed "its detail names the fields, and
+        `describeApiDetail` has already turned it into a sentence". It had not, and could not:
+        `describeApiDetail`'s object branch (lib/api.ts) reads `detail.message` and returns it,
+        so the per-field map under `detail.errors` never reached this page. The designer was told
+        "Some required fields are missing" over a form with nothing marked and no field named, on
+        the one control whose entire purpose is to name them — while the previous save's marks, which
+        this function now clears at the top, stayed on screen pretending to be this answer.
+
+        WORSE, AND THE HALF THAT IS NOT ABOUT MESSAGES: this refusal is raised AFTER `save_stage` has
+        committed. Rows were created, rows were updated, the sweep's soft-deletes landed and the
+        workshop moved DRAFT→IN_PROGRESS. Reporting it as a bare failure told a designer that a
+        deletion they had just made had not happened. The route spreads the whole result under
+        `detail` for exactly this reason, so the 422 is handled with the SAME function the 200 is and
+        the acknowledgement below can state what was written.
+
+        `ApiError.payload` is the whole parsed body (lib/api.ts) — the only route to `detail`, since
+        `message` has already been flattened. It is `unknown` by declaration and is narrowed here
+        rather than cast: a body that is not the shape we expect must degrade to the sentence below,
+        never throw inside a catch.
+      */
+      const refusal = stageRefusalResult(err);
+      if (refusal) {
+        const { marked, unplacedLines } = applyStageResult(refusal, rowKeys);
+        const message = err instanceof Error ? err.message : "Some answers were not accepted.";
+        const wrote = stageRefusalWroteCount(refusal)
+          ? ` The rest of the stage WAS written — ${refusal.created ?? 0} added, ${refusal.updated ?? 0} updated${
+              refusal.removed ? `, ${refusal.removed} removed` : ""
+            } — so nothing you typed has been thrown away.`
+          : "";
+        setError(
+          (marked
+            ? `${message} The fields that need attention are marked below.`
+            : unplacedLines.length
+              ? `${message} They are listed below exactly as the repository reported them; this page could not tell which ` +
+                "boxes they belong to."
+              : message) + wrote
+        );
+        return;
+      }
       setError(err instanceof Error ? err.message : "Unable to save this stage");
     } finally {
       setSaving(false);
@@ -1212,6 +1522,39 @@ function DesignWorkshopStagePageBody({
   const heldBack = stageSync?.failure && !stageSync.failure.permanent ? stageSync.failure.message : null;
   const refused = stageSync?.failure?.permanent ? stageSync.failure.message : null;
 
+  if (unopenable) {
+    /*
+      A DEAD END, BEFORE ANY BOX EXISTS TO TYPE IN — the twin of the stage index's own. Returning
+      early is the fix: an editable form beside a red line was read as a glitch, and the day's
+      interview went into a draft the repository will refuse for ever. The wording stays ambiguous
+      between "no such workshop" and "not yours", because `load_workshop_or_404` is.
+    */
+    return (
+      <>
+        <PageHeader
+          title="Stage"
+          description="This stage could not be opened."
+          icon={<Layers className="h-5 w-5" aria-hidden />}
+          actions={
+            <Link href="/design-workshops" className="field-button-secondary">
+              All design workshops
+            </Link>
+          }
+        />
+        <section className="panel grid gap-3 p-4">
+          <p className="text-sm font-medium text-ink-900">
+            There is no design workshop at this address that this account can open.
+          </p>
+          <p className="text-sm leading-6 text-ink-700">
+            Either no such workshop exists, or it belongs to another designer and has not been shared with you. No form
+            is shown because nothing typed into one could be saved anywhere. If a colleague sent you this link, ask them
+            to add you as a viewer of their workshop — an administrator can also do it — and then open the link again.
+          </p>
+        </section>
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
@@ -1225,19 +1568,47 @@ function DesignWorkshopStagePageBody({
         }
       />
 
+      {localWriteFailed ? (
+        /*
+          FIRST OF ALL THE BANNERS, ABOVE `error`, because it is the only one that says the text on
+          screen exists nowhere else. Everything below this line assumes the draft on disk is a
+          faithful copy of the form; when this is showing, it is not.
+
+          The remedy names a SCREEN action a designer can actually take — copy the text out — rather
+          than "try again", because the two reachable causes (a full origin quota, a store cleared
+          under the tab) are both ones a retry cannot clear on its own.
+        */
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700">
+          This browser refused to save this stage to its own storage, so what is in the boxes below is the only copy of
+          it. It has NOT been kept on this device and it has NOT been sent. Do not close this tab: copy anything you have
+          just typed somewhere safe, then check that this browser is not out of storage and is not set to clear site data
+          on close.
+        </div>
+      ) : null}
       {error ? (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
       ) : null}
       {notice ? (
         <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{notice}</div>
       ) : null}
-      {registrySource === "cache" ? (
-        // Which field list a designer is looking at is not a detail. The cached registry may predate
-        // a deploy, so a field added last week is simply absent here — saying so is the difference
-        // between "this stage does not ask for that" and "this browser has not been told about it".
+      {registryNotice ? (
+        /*
+          Which field list a designer is looking at is not a detail. A registry that predates a
+          deploy simply lacks a field added last week, and saying so is the difference between "this
+          stage does not ask for that" and "this browser has not been told about it".
+
+          THIS USED TO BE `registrySource === "cache"` WITH THE SENTENCE INLINE, AND THAT GATE WAS
+          THE RAREST OF THE THREE WAYS A BROWSER GETS BEHIND. Audit 2026-08-15 (LOW, frontend).
+          `"cache"` is reachable only when the network actually failed; the ordinary way to be stale
+          is `"memory"` — `fetchStageRegistry` serves this tab's module cache without a request on
+          every call after the first, and nothing in the frontend revalidates. A tab open across a
+          deploy therefore drew the old field list and said nothing at all. Both states now speak,
+          in `lib/registryProvenance`, which is where the wording and the decision live so that a
+          state no browser can be put into deliberately is still exercised by a spec. Do not put a
+          `source ===` comparison back in this render.
+        */
         <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">
-          This form is drawn from the field list saved in this browser, because the server could not be reached. It is
-          whatever was current the last time this laptop had a connection; a field added since will not appear until it does.
+          {registryNotice}
         </div>
       ) : null}
       {neverDownloaded ? (
@@ -1391,7 +1762,7 @@ function DesignWorkshopStagePageBody({
                 <CollectionTable
                   entity={entity}
                   rows={collections[entity.key] ?? []}
-                  onRowsChange={(rows) => patchCollection(entity.key, rows)}
+                  onRowsChange={(rows, removed) => patchCollection(entity.key, rows, removed)}
                   workshopId={id}
                   errorsByIndex={collectionErrors(entity)}
                   disabled={saving}

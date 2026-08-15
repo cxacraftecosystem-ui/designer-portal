@@ -48,8 +48,10 @@ import {
   localCompleteness,
   type DwDraft
 } from "@/lib/designWorkshopStore";
+import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
+import { neverReconciled } from "@/lib/workshopOpenability";
 import { buildWorkshopSearchIndex, emptyWorkshopSearchIndex } from "@/lib/workshopSearch";
 
 /**
@@ -176,6 +178,34 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
   const [serverSchemaVersion, setServerSchemaVersion] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
+  /**
+   * The repository refused to hand this workshop over, and this browser has never held a copy of it.
+   *
+   * WHY IT IS A SEPARATE STATE FROM `error`, AND WHY IT GATES THE WHOLE PAGE. Audit 2026-08-15
+   * (MAJOR, frontend). `ensureDraft(id)` below FABRICATES a local draft for any id it is handed —
+   * no server call, no ownership check — so `draft` is non-null within milliseconds of mount and
+   * every render gate on this page keys on `draft`, not on `error`. A designer forwarded a
+   * colleague's link, or one who mistyped a cuid, got a 404 from the API and then a complete,
+   * convincing workshop: "Untitled design workshop", 0%, a status badge, twenty-two clickable stage
+   * rows and the Cards & tags / Import photographs / Report buttons, with one red line above it.
+   * Reading 0% as "not started yet" she opened stage 4 — where the same fabricated draft makes the
+   * stage form seed itself, clear `loading` and render fully editable — and typed a day's interview
+   * into a record that will never be accepted. Nor is it recoverable by browsing: the list page
+   * prepends a local draft only when it has no `remoteId`, and this one has the route's.
+   *
+   * The 404 is the ONLY status that raises this. `isUnreachable` and 5xx both mean "the repository
+   * did not answer about this workshop", where the local copy is the right thing to show and the
+   * amber offline banner is the right thing to say. A 404 means the repository answered, and
+   * `load_workshop_or_404` deliberately gives the same 404 for "no such record" and "not one this
+   * account may open" — so the sentence below must stay ambiguous between them, exactly as the
+   * server is.
+   *
+   * The second half of the test is what keeps a genuine offline-created workshop safe: a draft that
+   * has ever been reconciled (`lastSyncedAt`, or any stage with `serverLoadedAt`) holds real
+   * fieldwork read from the repository, and a later 404 — an admin soft-deleted it — must not blank
+   * a screen that is the designer's only copy of it.
+   */
+  const [unopenable, setUnopenable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -257,6 +287,14 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           if (!local) setError("There is no connection and this browser has no copy of this workshop.");
           return;
         }
+        // A 404 over a draft this browser has never reconciled means the record was FABRICATED by
+        // `ensureDraft` and there is nothing behind it. See {@link unopenable} — everything on this
+        // page is gated on it, because a red line above a complete-looking workshop was read as a
+        // transient glitch and typed into.
+        if (err instanceof ApiError && err.status === 404 && (!local || neverReconciled(local))) {
+          setUnopenable(true);
+          return;
+        }
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
       }
     })();
@@ -300,6 +338,48 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
   const unsentStages = draft
     ? Object.values(draft.stages).filter((stage) => stage.dirtyAt !== null || stage.removedFrom.length > 0).length
     : 0;
+
+  if (unopenable) {
+    /*
+      A DEAD END, AND DELIBERATELY NOT A WORKSHOP WITH A WARNING ON IT.
+
+      Returning early — before the header's eight action links, before the detail panel, before the
+      search panel and before the `<ol>` of twenty-two stage rows — is the whole fix. Rendering any
+      of those beside a message is what produced the defect: the message read as a transient glitch
+      and the workshop below it read as real, so a designer opened stage 4 and typed into it.
+
+      THE WORDING STAYS AMBIGUOUS BETWEEN THE TWO CAUSES because the server's is. `load_workshop_or_404`
+      answers the identical 404 for "no such record" and "not one this account may open", with a
+      comment explaining that it will not distinguish them — telling a designer which one it is would
+      confirm the existence of a record she may not see. "Ask the designer who sent you the link" is
+      the remedy for both, and it is a remedy she can act on today rather than a status code.
+    */
+    return (
+      <>
+        <PageHeader
+          title="Design workshop"
+          description="This link could not be opened."
+          icon={<DraftingCompass className="h-5 w-5" aria-hidden />}
+          actions={
+            <Link href="/design-workshops" className="field-button-secondary">
+              All design workshops
+            </Link>
+          }
+        />
+        <section className="panel grid gap-3 p-4">
+          <p className="text-sm font-medium text-ink-900">
+            There is no design workshop at this address that this account can open.
+          </p>
+          <p className="text-sm leading-6 text-ink-700">
+            Either no such workshop exists, or it belongs to another designer and has not been shared with you. Nothing
+            has been created here and nothing you type would be saved, so this page stops rather than offering you an
+            empty workshop to fill in. If a colleague sent you this link, ask them to add you as a viewer of their
+            workshop — an administrator can also do it — and then open the link again.
+          </p>
+        </section>
+      </>
+    );
+  }
 
   return (
     <>

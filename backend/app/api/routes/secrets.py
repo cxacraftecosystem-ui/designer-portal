@@ -60,14 +60,21 @@ async def reveal_secret(
     uvicorn an ``app.*`` logger has no handler and INFO records are swallowed entirely — only
     WARNING and above reach stderr (and therefore journald on the deployed box). An audit line that
     is silently discarded is worse than none, because it looks like coverage that isn't there.
+
+    ONE CALL, NOT TWO. This used to read the value with ``get_secret`` and its label with
+    ``describe_secret`` on the next line, which are two different questions with two different
+    answers whenever a stored override cannot be decrypted: ``get_secret`` falls through to the
+    environment while the description called the row's mere existence ``source: "database"``. The
+    master admin pressing the eye button after a JWT_SECRET rotation was then shown a full,
+    plausible key labelled as the stored one — it was the deployment's environment variable, and the
+    override they were checking on was dead. ``reveal_secret`` resolves both from one read of one
+    ciphertext, so the two can no longer disagree; keep it that way.
     """
     _require_managed(key)
     logger.warning(
         "AUDIT managed-secret reveal: key=%s by=%s (%s)", key, current_user.email, current_user.id
     )
-    value = await managed_secrets.get_secret(key)
-    described = await managed_secrets.describe_secret(key)
-    return {"key": key, "value": value, "source": described["source"]}
+    return await managed_secrets.reveal_secret(key)
 
 
 @router.put("/{key}", response_model=ManagedSecretDto)

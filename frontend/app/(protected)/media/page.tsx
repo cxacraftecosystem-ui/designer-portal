@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioLines, Images, Loader2, Upload } from "lucide-react";
 
+import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
@@ -69,53 +71,103 @@ function sortRecent<T extends { createdAt?: string }>(items: T[]) {
   return [...items].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 }
 
-/** Android `loadViewEntries` parity: label each entry with its human name/title. */
-async function loadEntryOptions(type: string): Promise<Array<{ value: string; label: string }>> {
-  const params = { pageSize: 100 };
+/**
+ * Android `loadViewEntries` parity: label each entry with its human name/title — AND say how much of
+ * the type this page of them is.
+ *
+ * WHY THE RETURN TYPE GREW. This builds the second dropdown of the upload form, the one that decides
+ * WHICH RECORD a file is attached to, and it did so from a single `pageSize: 100` request per type
+ * with `total` discarded in all eight branches. 100 is the ceiling `normalize_pagination` clamps to,
+ * the lists are ordered newest-first, and the tables behind them are far past it — 2530 media files,
+ * 878 products, 749 artisans, 196 workshops, 178 crafts, 177 tools, 177 processes, counted against
+ * this repository's Postgres on 2026-08-15. The ComboBox this feeds filters the array it is handed
+ * (`components/ui/SearchableSelect`), so its "type to search" affordance searched the newest hundred
+ * and nothing else, and the placeholder said "Select an entry" — never "showing 100 of 749".
+ *
+ * That makes this a WRITE defect rather than a read one. A designer uploading photographs of an
+ * artisan entered months ago types the name, gets nothing, and the upload button only requires
+ * `linkedType` — so the batch lands attached to the type and no record. It does not appear in that
+ * artisan's "Previously uploaded media", does not travel with the record, and has to be repaired
+ * later through the relink route.
+ *
+ * The cut is REPORTED rather than removed, and the difference matters: removing it needs the
+ * server's `search=` (which all eight routes accept) threaded out of `SearchableSelect`'s own filter
+ * box, and that is a shared primitive this change does not own. A stated cut is the difference
+ * between a list that is short and a list that lies; it is not the whole fix, and the follow-up is
+ * recorded with the audit.
+ */
+type EntryOptions = { options: Array<{ value: string; label: string }>; cut: ListCut | null };
+
+async function loadEntryOptions(type: string): Promise<EntryOptions> {
+  const params = { pageSize: LIST_PAGE_CEILING };
   switch (type) {
     case "artisan": {
       const page = await listResource<Artisan>("/artisans", params);
-      return sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.name} · ${x.place}` }));
+      return {
+        options: sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.name} · ${x.place}` })),
+        cut: listCut(page, "artisans")
+      };
     }
     case "workshop": {
       const page = await listResource<Workshop>("/workshops", params);
-      return sortRecent(page.items).map((x) => ({ value: x.id, label: x.title?.trim() || "Untitled workshop" }));
+      return {
+        options: sortRecent(page.items).map((x) => ({ value: x.id, label: x.title?.trim() || "Untitled workshop" })),
+        cut: listCut(page, "workshops")
+      };
     }
     case "craft": {
       const page = await listResource<Craft>("/crafts", params);
-      return sortRecent(page.items).map((x) => ({ value: x.id, label: x.place ? `${x.name} · ${x.place}` : x.name }));
+      return {
+        options: sortRecent(page.items).map((x) => ({ value: x.id, label: x.place ? `${x.name} · ${x.place}` : x.name })),
+        cut: listCut(page, "crafts")
+      };
     }
     case "tool": {
       const page = await listResource<ToolDocumentation>("/tools", params);
-      return sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.toolkitName} · ${x.artisanName}` }));
+      return {
+        options: sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.toolkitName} · ${x.artisanName}` })),
+        cut: listCut(page, "tools")
+      };
     }
     case "product": {
       const page = await listResource<ProductDocumentation>("/products", params);
-      return sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.productName} · ${x.artisanName}` }));
+      return {
+        options: sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.productName} · ${x.artisanName}` })),
+        cut: listCut(page, "products")
+      };
     }
     case "process": {
       const page = await listResource<ProcessListItem>("/processes", params);
-      return sortRecent(page.items).map((x) => ({
-        value: x.id,
-        label: x.product?.productName ? `${x.name} · ${x.product.productName}` : x.name
-      }));
+      return {
+        options: sortRecent(page.items).map((x) => ({
+          value: x.id,
+          label: x.product?.productName ? `${x.name} · ${x.product.productName}` : x.name
+        })),
+        cut: listCut(page, "processes")
+      };
     }
     case "questionnaire": {
       const page = await listResource<QuestionnaireInterview>("/questionnaire/interviews", params);
-      return sortRecent(page.items).map((x) => ({ value: x.id, label: x.title?.trim() || "Untitled interview" }));
+      return {
+        options: sortRecent(page.items).map((x) => ({ value: x.id, label: x.title?.trim() || "Untitled interview" })),
+        cut: listCut(page, "interviews")
+      };
     }
     case "media": {
       const page = await listResource<MediaFile>("/media", params);
-      return sortRecent(page.items).map((x) => {
-        const tag = x.linkedRecordType?.trim()
-          ? x.linkedRecordType.charAt(0).toUpperCase() + x.linkedRecordType.slice(1)
-          : null;
-        const name = x.originalFilename?.trim() || "Media";
-        return { value: x.id, label: [name, x.mediaType, tag].filter(Boolean).join(" · ") };
-      });
+      return {
+        options: sortRecent(page.items).map((x) => {
+          const tag = x.linkedRecordType?.trim()
+            ? x.linkedRecordType.charAt(0).toUpperCase() + x.linkedRecordType.slice(1)
+            : null;
+          const name = x.originalFilename?.trim() || "Media";
+          return { value: x.id, label: [name, x.mediaType, tag].filter(Boolean).join(" · ") };
+        }),
+        cut: listCut(page, "media files")
+      };
     }
     default:
-      return [];
+      return { options: [], cut: null };
   }
 }
 
@@ -190,6 +242,8 @@ function MediaPageBody() {
   const [linkedType, setLinkedType] = useState("");
   const [linkedEntryId, setLinkedEntryId] = useState("");
   const [entryOptions, setEntryOptions] = useState<Array<{ value: string; label: string }>>([]);
+  /** How much of the chosen record type the entry dropdown holds — see `loadEntryOptions`. */
+  const [entryCut, setEntryCut] = useState<ListCut | null>(null);
   const [loadingEntries, setLoadingEntries] = useState(false);
 
   const [uploading, setUploading] = useState(false);
@@ -197,12 +251,43 @@ function MediaPageBody() {
   const [error, setError] = useState<string | null>(null);
   const [activePreview, setActivePreview] = useState<PreviewMedia | null>(null);
 
+  /**
+   * Which fetch is the current one — the counter /artisans, /questionnaires and /design-workshops
+   * already carry, now also on /products, /tools and /processes.
+   *
+   * The 300 ms debounce below is NOT this guard: `clearTimeout` cancels loads that have not fired
+   * yet, and does nothing at all to one already in flight. Type a term, wait past the debounce so
+   * request A goes out, then press Next — request B goes out beside it, and on a slow link A can
+   * answer last.
+   *
+   * That matters more than a stale table because `<Pagination>` is rendered with `page={data.page}`
+   * — the ANSWERED page — while the reload effect depends on `page`, the REQUESTED one. With
+   * `data.page === 1` and `page === 2`, Next calls `setPage(data.page + 1)` = `setPage(2)`, React
+   * bails on the identical scalar, no dependency changes, no request is issued, and the button is
+   * simply dead until Previous is pressed. Audit 2026-08-15 filed that against this file, /products,
+   * /tools and /processes.
+   *
+   * Counted rather than aborted because `listResource` takes no `AbortSignal`; ignoring the late
+   * answer is the part that matters. `useRef` is stable across renders, so `load`'s empty dependency
+   * array stays correct — do not add the ref to it. Any new `setData`/`setError` inside `load` needs
+   * the same guard in front of it.
+   */
+  const currentLoad = useRef(0);
+
   const load = useCallback(
     async (pageToLoad: number, term: string) => {
+      const generation = (currentLoad.current += 1);
       try {
-        setData(await listResource<MediaFile>("/media", { page: pageToLoad, pageSize: 20, search: term || undefined }));
+        const result = await listResource<MediaFile>("/media", {
+          page: pageToLoad,
+          pageSize: 20,
+          search: term || undefined
+        });
+        if (generation !== currentLoad.current) return;
+        setData(result);
         setError(null);
       } catch (err) {
+        if (generation !== currentLoad.current) return;
         setError(err instanceof Error ? err.message : "Unable to load media");
       }
     },
@@ -220,12 +305,15 @@ function MediaPageBody() {
   useEffect(() => {
     setLinkedEntryId("");
     setEntryOptions([]);
+    setEntryCut(null);
     if (!linkedType) return;
     let cancelled = false;
     setLoadingEntries(true);
     loadEntryOptions(linkedType)
-      .then((options) => {
-        if (!cancelled) setEntryOptions(options);
+      .then((loaded) => {
+        if (cancelled) return;
+        setEntryOptions(loaded.options);
+        setEntryCut(loaded.cut);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : `Unable to load ${LINK_TYPE_LABEL.get(linkedType) ?? linkedType} entries`);
@@ -390,10 +478,20 @@ function MediaPageBody() {
               value={linkedEntryId}
               onChange={setLinkedEntryId}
               placeholder={
-                loadingEntries ? "Loading…" : entryOptions.length === 0 ? "No entries for this type" : "Select an entry"
+                loadingEntries
+                  ? "Loading…"
+                  : entryOptions.length === 0
+                    ? "No entries for this type"
+                    : entryCut
+                      // Naming the number in the placeholder is not decoration: it is the first
+                      // thing read by somebody about to type a name into this box, and it is what
+                      // stops an empty result being taken as proof the record does not exist.
+                      ? `Select one of these ${entryOptions.length}`
+                      : "Select an entry"
               }
               name="linkedRecordId"
             />
+            <CappedListNotice cuts={[entryCut]} />
           </Field>
         ) : null}
         <Field label="Caption">

@@ -48,6 +48,8 @@ import com.designprototype.workshop.data.DW_ROW_KEY_SEPARATOR
 import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.DwQuestionnaireCache
 import com.designprototype.workshop.data.DwQuestionnaireStore
+import com.designprototype.workshop.data.DwReadinessCheck
+import com.designprototype.workshop.data.DwSubmissionReadiness
 import com.designprototype.workshop.data.DwTier
 import com.designprototype.workshop.data.DwReferenceStore
 import com.designprototype.workshop.data.DwValues
@@ -165,6 +167,27 @@ fun ReportScreen(
     var templates by remember(workshopId) { mutableStateOf<List<ReportTemplateDto>>(emptyList()) }
     var templateId by remember(workshopId) { mutableStateOf("DCH_STANDARD") }
     var warnings by remember(workshopId) { mutableStateOf<List<String>>(emptyList()) }
+    /**
+     * What stage 20 does to the delivered document — [DwSubmissionReadiness.reportChecks].
+     *
+     * ── HELD SEPARATELY FROM [warnings], AND THAT IS THE POINT ────────────────────────────────────
+     *
+     * `warnings` is a list of stages with unanswered REQUIRED fields, drawn under the heading "N
+     * stage(s) are incomplete" and the line "these fields will print as blanks". Neither sentence is
+     * true of these. A stage named in `excludedStages` is not incomplete — it is complete and
+     * deliberately left out — and nothing about it will print as a blank, because the whole section
+     * is absent from the file. Folding one into the other would file the most consequential thing
+     * this screen can say under a heading that mis-states it, next to nineteen entries about
+     * optional boxes.
+     *
+     * These were computed on every stage-index open and rendered on no screen at all: the only
+     * caller of `assess` in the app reads `blocking` and discards `checks`, `advisory` and
+     * `isSubmittable`. A designer therefore exported a workshop with stage 17 excluded — set on the
+     * web weeks earlier while trialling a buyer-facing copy — and handed over a file with every cost
+     * sheet missing, while the Data completeness annexure inside that same file scored stage 17 as
+     * complete.
+     */
+    var reportChecks by remember(workshopId) { mutableStateOf<List<DwReadinessCheck>>(emptyList()) }
     var percent by remember(workshopId) { mutableStateOf(0) }
     var loading by remember(workshopId) { mutableStateOf(true) }
     var busy by remember(workshopId) { mutableStateOf(false) }
@@ -178,6 +201,19 @@ fun ReportScreen(
      * is why they appear beside the saved file rather than above the buttons.
      */
     var exportNotes by remember(workshopId) { mutableStateOf<List<String>>(emptyList()) }
+    /**
+     * How many distinct photographs the last export referenced and could not find on this device.
+     *
+     * BESIDE [ReportExport.Result.droppedImages] AND NOT FOLDED INTO IT, because they are different
+     * facts with different remedies. `droppedImages` is a file this device HAS whose bytes would not
+     * load — a corrupt or deleted capture, and something is wrong with this handset. This is a media
+     * id this device never held at all, which is the ordinary state of a workshop captured on
+     * somebody else's phone and read back through [reportSourceFor]: nothing is wrong anywhere, the
+     * bytes are on the server, and the remedy is to generate the office's copy. Counting them
+     * together would send a designer looking for a fault that does not exist, and — worse — the
+     * common case would swamp the rare one that really is a fault.
+     */
+    var unresolvedMedia by remember(workshopId) { mutableStateOf(0) }
     /**
      * The report's accent colour for the next export, blank for "the colour the record already has".
      *
@@ -295,6 +331,21 @@ fun ReportScreen(
             // authority and the preset name is consulted only when it is blank. A hex the registry
             // has never heard of still renders, because it is a colour and not a token.
             accent = resolveAccent(null, settings).orEmpty()
+            /*
+              WHAT STAGE 20 DOES TO THE FILE, said BEFORE the buttons.
+
+              Both checks were already written, already ported from the web and already computed on
+              every stage-index open — and discarded there, because that screen reads `blocking` and
+              nothing else. This is the screen they were written for: a template token this build has
+              retired, and a stage deliberately excluded from the report while holding answers.
+
+              Scored from the SAME `scores` the percentage above is printed from, which is the merged
+              draft — local work plus the stages downloaded for this export. A second scoring pass
+              would be a second opinion about the one document, and the disagreement would land
+              exactly on the workshop captured on somebody else's handset: the stage looks empty
+              here, so the exclusion looks harmless, so nothing is said.
+            */
+            reportChecks = DwSubmissionReadiness.reportChecks(registry, stored, workshopId, scores)
             // One warning per stage rather than one per missing field. A report generated from a
             // half-filled workshop is still worth having in the field — the warnings are there so the
             // designer knows what the officer will notice, not to block the export.
@@ -398,6 +449,13 @@ fun ReportScreen(
                     questionnaires = dwQuestionnaireCopy(questionnaires),
                 )
                 exportNotes = plan.warnings
+                // Collected on the render thread and read back on this one AFTER `withContext`
+                // returns, which is what makes the hand-off ordered. Assigning the Compose state
+                // from inside the lambda would be a write from Dispatchers.Default to a value this
+                // composable reads on the main thread — snapshot state tolerates it, but the
+                // ordering would then be the snapshot system's business rather than this function's,
+                // and the count would be applied on a frame nobody can name.
+                var unresolvedIds: List<String> = emptyList()
                 val document = withContext(Dispatchers.Default) {
                     buildWorkshopDocument(
                         context = appContext,
@@ -411,8 +469,14 @@ fun ReportScreen(
                         plan = plan,
                         questionnaires = questionnaires,
                         customSections = customSections,
+                        onUnresolvedMedia = { ids -> unresolvedIds = ids },
                     )
                 }
+                // ASSIGNED ON EVERY EXPORT, including the one that resolves everything — the builder
+                // hands back an empty list there and this clears. A designer who re-exports after
+                // opening the workshop with a connection must see the count go, or the notice beside
+                // the saved file is describing the previous file.
+                unresolvedMedia = unresolvedIds.size
                 val loader = deviceImageLoader()
                 val exported = if (format == "PDF") {
                     ReportExport.exportPdf(appContext, repository, document, loader)
@@ -455,8 +519,21 @@ fun ReportScreen(
                                 // only place the finished bytes exist as a file it can read.
                                 fileSizeBytes = exported.sizeBytes,
                                 checksumSha256 = exported.checksumSha256,
-                                warnings = (warnings + plan.warnings).joinToString("\n")
-                                    .takeIf { it.isNotBlank() },
+                                // THE STAGE-20 CHECKS AND THE UNRESOLVED PHOTOGRAPHS GO INTO THE
+                                // OFFICE'S LOG TOO, for one reason: this row is where somebody at a
+                                // desk decides whether the file that was handed over is the whole of
+                                // the record, and a row that says nothing is a row asserting there
+                                // was nothing to say. Both are also the two things the FILE cannot
+                                // show — an excluded section is absent, so its absence is
+                                // indistinguishable from a stage nobody captured, and a photograph
+                                // that never resolved leaves no gap on the page.
+                                warnings = (
+                                    warnings + plan.warnings + reportChecks.map { it.title } +
+                                        listOfNotNull(
+                                            unresolvedIds.size.takeIf { it > 0 }
+                                                ?.let { unresolvedMediaNote(it) },
+                                        )
+                                    ).joinToString("\n").takeIf { it.isNotBlank() },
                             )
                         )
                     }
@@ -519,8 +596,17 @@ fun ReportScreen(
 
         ReportAccentPicker(accent = accent, onAccent = { accent = it })
 
+        // THE COUNT COMES FROM THE REGISTRY THAT WAS SCORED, not from a literal 22. `percent` is
+        // computed over `schema.stages` — whatever the server served on the last refresh — while
+        // this sentence said "the 22 stages" from a hard-coded number. The screen eight lines below
+        // renders `unknownStageWarning`, which exists precisely because a stage added on the server
+        // reaches the phone's registry while this build's template catalogue is compiled into the
+        // APK: on the day it fires, this line and that card disagree about how many stages the
+        // workshop has, on the one screen a designer reads to decide whether the file is fit to hand
+        // over. `StageIndexScreen` already words it from `stages.size`; this now matches it.
         Text(
-            "$percent% of the required fields across the 22 stages are filled in.",
+            "$percent% of the required fields across the ${schema?.stages?.size ?: 0} stages are " +
+                "filled in.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -561,6 +647,58 @@ fun ReportScreen(
                     )
                     warnings.forEach {
                         Text("· $it", color = MaterialTheme.field.onWarningContainer, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+
+        /*
+          WHAT STAGE 20 IS ABOUT TO DO TO THIS FILE — its own card, above the buttons.
+
+          ABOVE THE BUTTONS AND NOT BESIDE THE SAVED FILE, which is the difference between this and
+          `exportNotes`. Every one of these is knowable before a button is pressed and every one of
+          them is actionable: re-pick a template the build has retired, or clear an exclusion set on
+          the web six weeks ago. Said after the .docx exists, the same sentence is only an
+          explanation of a document that is already in somebody's hand.
+
+          Its own card, and NOT folded into the incomplete-stages card above, because that card's
+          heading counts stages that are INCOMPLETE and its subtitle promises the missing fields
+          "will print as blanks". An excluded stage is neither: it is complete, and nothing of it
+          prints at all — no heading, no blanks, no entry in the contents.
+        */
+        if (reportChecks.isNotEmpty()) {
+            ElevatedCard(
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.warningContainer),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        if (reportChecks.size == 1) "1 stage-20 setting changes this document"
+                        else "${reportChecks.size} stage-20 settings change this document",
+                        color = MaterialTheme.field.onWarningContainer,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    reportChecks.forEach { check ->
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                "· ${check.title}",
+                                color = MaterialTheme.field.onWarningContainer,
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                            )
+                            // THE DETAIL, NOT ONLY THE TITLE. The title names the condition; the
+                            // detail is the half that says how many fields are being left out of the
+                            // submitted document and that the choice was a legitimate one — which is
+                            // what makes this a decision the designer can take rather than an alarm.
+                            Text(
+                                check.detail,
+                                color = MaterialTheme.field.onWarningContainer,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                            )
+                        }
                     }
                 }
             }
@@ -615,6 +753,20 @@ fun ReportScreen(
                         "${exported.droppedImages.size} photograph(s) could not be embedded and were left out.",
                         color = MaterialTheme.field.warning,
                         fontSize = 11.sp
+                    )
+                }
+                // THE OTHER HALF OF THAT COUNT, and until this line existed there was no half at all:
+                // `droppedImages` counts an image the writer HAD and could not load, so every media
+                // id this device never held — the ordinary shape of a workshop captured on a
+                // colleague's phone — fell out of the document with no counter, no notice here and
+                // no line in the file. See [unresolvedMediaNote] and [buildWorkshopDocument]'s
+                // `onUnresolvedMedia`.
+                if (unresolvedMedia > 0) {
+                    Text(
+                        unresolvedMediaNote(unresolvedMedia),
+                        color = MaterialTheme.field.warning,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
                     )
                 }
                 if (exported.shareUri != null) {
@@ -828,11 +980,14 @@ private fun buildWorkshopDocument(
     questionnaires: DwQuestionnaireCache? = null,
     /** See the internal overload below - null is "this device has never read a definition". */
     customSections: DwCustomCache? = null,
+    /** See the internal overload below — the media tokens this device could not resolve to a file. */
+    onUnresolvedMedia: (List<String>) -> Unit = {},
 ): ReportDocument {
     val mediaById = draft?.media.orEmpty().associateBy { it.id }
     return buildWorkshopDocument(
         format = format,
         plan = plan,
+        onUnresolvedMedia = onUnresolvedMedia,
         schema = schema,
         draft = draft,
         workshopId = workshopId,
@@ -924,6 +1079,28 @@ internal fun buildWorkshopDocument(
      * none", which also prints nothing - but for a reason the export screen is allowed to state.
      */
     customSections: DwCustomCache? = null,
+    /**
+     * Every media token [imageFor] answered null for, deduplicated, in first-use order — handed back
+     * ONCE, after the whole template has been walked.
+     *
+     * ── THE DEFECT THIS CLOSES ────────────────────────────────────────────────────────────────────
+     *
+     * Both consumers of [imageFor] used to be `ids.mapNotNull(imageFor)`, and a `mapNotNull` is the
+     * shape this repository has now paid for four times: the residue is dropped where it is produced
+     * and no counter, no screen and no line in the file ever learns of it. It is ordinary, not
+     * exotic — [reportSourceFor] fills stages this handset has never opened straight from the
+     * server, and those answers carry the SERVER's `MediaFile` ids, which resolve against nothing in
+     * `draft.media`. So the phone's copy of a colleague's workshop came out with every table, every
+     * paragraph, no photographs, no 'Photographic record' annexure (`gathered.isEmpty()` deleted the
+     * heading as well), and `ReportExport.Result.droppedImages` empty — because that list counts an
+     * `ImageRef` whose BYTES failed to load, and an id that never became an `ImageRef` never reaches
+     * a writer at all. Nothing anywhere said the file was short.
+     *
+     * Counted here rather than at either call site because there are three of them (`renderEntity`,
+     * [imagesOf] and the inline images inside RICH_TEXT), and a count kept by one of them would be a
+     * count of a third of the document.
+     */
+    onUnresolvedMedia: (List<String>) -> Unit = {},
 ): ReportDocument {
     val resolved = plan ?: reportPlanFor(
         schema = schema,
@@ -949,6 +1126,21 @@ internal fun buildWorkshopDocument(
     val figures = DwFigures(schema, draft)
     val stages = schema.stages.associateBy { it.key }
 
+    /*
+      THE ONE RESOLVER EVERY SECTION GETS, so that what could not be resolved is counted once and in
+      one place — see [onUnresolvedMedia] for the defect this closes.
+
+      DEDUPLICATED BY TOKEN, and that is not tidiness: the media annexure re-resolves every id the
+      stage sections already tried, so a set is the difference between "3 photographs are missing"
+      and "6 photographs are missing" on the same three files. A LinkedHashSet keeps first-use order
+      for the same reason `collectImages` does — a list of ids a support engineer can match against
+      the stage that referenced them.
+    */
+    val unresolvedMedia = LinkedHashSet<String>()
+    val resolveImage: (String) -> ImageRef? = { token ->
+        imageFor(token).also { if (it == null && token.isNotBlank()) unresolvedMedia.add(token) }
+    }
+
     // THE TEMPLATE'S SECTION LIST IS THE DOCUMENT, and this loop is the whole of `ReportBuilder.build`.
     // What it replaces is `schema.stages.sortedBy { it.number }`, which printed CAPTURE order — the
     // designer's — where a reviewing officer expects the narrative order, printed stages 20 and 21
@@ -958,20 +1150,71 @@ internal fun buildWorkshopDocument(
         val special = section.special
         if (special != null) {
             renderSpecialSection(
-                builder, special, section, resolved, schema, draft, imageFor, refs, figures,
+                builder, special, section, resolved, schema, draft, resolveImage, refs, figures,
                 questionnaires, customSections,
             )
         } else {
             stages[section.stageKey]?.let { stage ->
                 renderStageSection(
-                    builder, stage, section, resolved, schema, draft, imageFor, refs, figures,
+                    builder, stage, section, resolved, schema, draft, resolveImage, refs, figures,
                     customSections,
                 )
             }
         }
     }
 
+    /*
+      WHAT THE FILE DOES NOT CARRY, SAID IN THE FILE — and said exactly once.
+
+      [renderMediaAnnexure] already prints this sentence under its own heading when the template
+      carries that section, because that is where a reader goes looking for the photographs and
+      where their absence is a hole they can see. Four of the six templates do not carry it, and for
+      those the note goes at the foot of the document rather than nowhere: a short report is
+      internally consistent — right cover, right contents, fewer plates — so the only reader who can
+      ever detect the gap is the one holding the file, and only if it says so.
+
+      `builder.warn` in BOTH cases, because that is what carries the count back to the export screen
+      through [ReportDocument.warnings]; the paragraph is for the officer who opens the .docx next
+      month and was never standing at the phone.
+    */
+    if (unresolvedMedia.isNotEmpty()) {
+        builder.warn(unresolvedMediaNote(unresolvedMedia.size))
+        if (template.sections.none { it.special == SpecialSection.ANNEXURE_MEDIA }) {
+            builder.para(unresolvedMediaNote(unresolvedMedia.size), style = ParaStyle.NOTE)
+        }
+    }
+    // ALWAYS CALLED, empty list and all: a caller that assigns this to a screen counter must be able
+    // to CLEAR that counter on the export that resolved everything. Handing back nothing on the
+    // clean path is how a stale "3 photographs are missing" survives onto a file that is whole.
+    onUnresolvedMedia(unresolvedMedia.toList())
+
     return builder.build()
+}
+
+/**
+ * The one sentence for "this workshop references photographs this device does not hold".
+ *
+ * ONE SPELLING, THREE SURFACES — the document's own note, the media annexure's note and the line
+ * beside the saved file on the export screen all call this. The alternative was three sentences that
+ * agree today; `reportPlanFor` exists because two readings of one stage-20 answer had already
+ * produced a screen and a file that disagreed about the same document, and a count is exactly the
+ * kind of thing that drifts.
+ *
+ * IT NAMES WHERE THE BYTES ARE, and that is the load-bearing half. Nothing is lost here: a media id
+ * that reaches this path is a `MediaFile` on the SERVER — [stageDraftFromRemote] copies the server's
+ * answers verbatim and does not download their pictures — so the office's copy of this report prints
+ * every one of them. A designer told only "3 photographs are missing" would go hunting for a fault
+ * on the handset; what they can actually act on is "generate this one from the web, or hand it over
+ * saying so".
+ */
+internal fun unresolvedMediaNote(count: Int): String {
+    val photographs = if (count == 1) "1 photograph" else "$count photographs"
+    val they = if (count == 1) "it is" else "they are"
+    return "$photographs referenced by this workshop " +
+        (if (count == 1) "is" else "are") +
+        " not stored on the handset that generated this file, so $they not in it. The bytes are on " +
+        "the server and the office's copy of this report carries them — generate that copy, or say " +
+        "so when handing this one over."
 }
 
 /**
@@ -1008,9 +1251,42 @@ private fun renderStageSection(
         photoColumns = section.photoColumns,
         maxPhotos = section.maxPhotos,
         numbered = template.numberHeadings,
+        // ALL SIX TEMPLATES SET THIS TRUE on both surfaces — `grep -rn showEmptyNote
+        // android/app/src/main` and `grep -rn show_empty_note backend/app` each return the
+        // declaration and the use site and nothing else. It is threaded rather than assumed because
+        // a template that turned it off and still printed "Not recorded." would be a template
+        // setting that lies, and this is the field the setting is about.
+        showEmptyNote = template.showEmptyNote,
+        // A STAGE SINGLETON'S FIELDS HEAD AT LEVEL 2, under the stage's own level-1 heading. This is
+        // `_render_narrative(single, singleton_data, 1)` and its `min(4, level + 1)`.
+        level = 1,
     )
     val stored = draft?.stages?.get(stage.key)
     val singletonValues = stored?.values.orEmpty()
+    /*
+      THE DESIGNER'S ANSWERS, WITH THE PROTOCOL'S OWN KEYS TAKEN OUT — and it is the same question
+      `ReportSource.holdsWork` was fixed to ask, asked in the second place that was asking it wrong.
+
+      A stage's singleton map is not purely the registry's: `DwRecordingPlaceCard` writes
+      [DW_RECORDING_PLACE_KEY] — "where were you when this stage was filled in?" — straight into it
+      under an underscore, which is the sync protocol's marker for "this never goes on the wire"
+      (`WorkshopSync.wireData` strips every one of them). So `singletonValues.isEmpty()` was
+      answering "does this stage hold anything at all", where the two tests below need "does this
+      stage hold anything the DOCUMENT can print".
+
+      They diverge on an ordinary case. A designer opens a stage, answers only the recording-place
+      card and leaves: the map holds one key, `isEmpty()` is false, the section is not skipped, and
+      the file prints a numbered stage heading with "Not recorded." under it — because
+      [renderEntity] walks `entity.liveFields` and an underscore key is unreachable by construction
+      on that path. On a fortnight's fieldwork that is several stage headings in the submitted
+      document standing over nothing, each one occupying a line in the contents page.
+
+      Handed to [renderEntity] as well as to the tests, so the emptiness question and the printing
+      question can never again be asked of two different maps. Nothing moves for the registry's own
+      fields: every read in there is keyed by a `FieldDto.key`, and no field in the registry begins
+      with an underscore.
+     */
+    val answered = singletonValues.filterKeys { !it.startsWith("_") }
     val customValues = stored?.custom.orEmpty()
     val hasCollections = stage.collections.any { stored?.rowsFor(it.key).orEmpty().isNotEmpty() }
     // The designer's own blocks for this stage, resolved once. Empty for every stage of every
@@ -1039,7 +1315,7 @@ private fun renderStageSection(
     // declare no singleton entity at all, so a stage whose only content is a designer's own answers
     // is exactly the case this omission would silently drop - the whole section gone from the file,
     // under `omitIfEmpty`, with nothing anywhere saying a heading had been skipped.
-    if (singletonValues.isEmpty() && !hasCollections && !hasCustom && section.omitIfEmpty) return
+    if (answered.isEmpty() && !hasCollections && !hasCustom && section.omitIfEmpty) return
 
     if (section.pageBreakBefore) builder.add(PageBreakBlock)
     builder.heading(
@@ -1049,10 +1325,42 @@ private fun renderStageSection(
     )
     if (section.intro.isNotBlank()) builder.para(section.intro, style = ParaStyle.LEAD)
 
+    /*
+      WHERE THE STAGE WAS WRITTEN DOWN — the one answer on this form that no field-list walk can
+      ever reach, printed by name because that is the only way it can be printed at all.
+
+      `DwRecordingPlaceCard` is offered on all 22 stages and its own KDoc promised this: "It survives
+      in the local draft, which is what the report is generated from, so the provenance prints even
+      though it never leaves the phone." It did not print. A repo-wide grep for the key found the
+      constant, the card, one write in `StageScreen` and no reader anywhere — a question asked
+      twenty-two times a workshop, over a fortnight, consumed by nothing. It is asked because a
+      ministry reviewer's "was stage 14 written at the cluster, or typed up afterwards in Jaipur?"
+      had nothing to read; that is exactly a thing a report answers.
+
+      IMMEDIATELY UNDER THE HEADING, BEFORE ANY ANSWER, because it is a statement about the record
+      below it rather than a part of that record. A provenance line at the foot would read as the
+      last thing the designer wrote about the craft.
+
+      IT DOES NOT SET [wrote]. `wrote` decides whether the section gets the "Not recorded." note, and
+      a stage whose only content is a note about where somebody was standing IS a stage with nothing
+      recorded — claiming otherwise would let one provenance line suppress the note on a blank
+      section. The `answered.isEmpty()` test above already means this line never prints alone under
+      `omitIfEmpty`: no place is named without a stage to be the provenance OF.
+
+      THE SENTENCE SAYS THE OFFICE'S COPY LACKS IT, in full, every time. This is the one line in the
+      document that the server CANNOT reproduce — the key never reaches the wire — so the phone's
+      copy and the office's copy of one workshop differ by exactly it. Every other divergence between
+      the two has been treated in this file as a defect; this one is deliberate and therefore has to
+      be legible from inside the file, by a reader holding both copies and no access to this comment.
+     */
+    recordingPlaceLine(singletonValues[DW_RECORDING_PLACE_KEY])?.let { line ->
+        builder.para(line, style = ParaStyle.NOTE)
+    }
+
     var wrote = false
     stage.singleton?.let { entity ->
-        if (singletonValues.isNotEmpty()) {
-            wrote = renderEntity(builder, entity, singletonValues, imageFor, refs, options) || wrote
+        if (answered.isNotEmpty()) {
+            wrote = renderEntity(builder, entity, answered, imageFor, refs, options) || wrote
         }
     }
 
@@ -1100,7 +1408,10 @@ private fun renderStageSection(
             builder.para(block.section.description, style = ParaStyle.NOTE)
         }
         if (anyLive) {
-            wrote = renderEntity(builder, entity, customValues, imageFor, refs, options) || wrote
+            // The designer's own section carries its own level-2 heading two lines above, so its
+            // questions head at 3 — one below the thing they are part of, the same rule the stage
+            // singleton follows against the stage's level-1 heading.
+            wrote = renderEntity(builder, entity, customValues, imageFor, refs, options.copy(level = 2)) || wrote
         }
         retired.forEach { field ->
             builder.para(
@@ -1214,6 +1525,37 @@ private fun renderStageSection(
 }
 
 /**
+ * The stage-provenance sentence, or null when the card was never answered — see [DW_RECORDING_PLACE_KEY].
+ *
+ * ── WHY THIS IS NOT `describePlace` ───────────────────────────────────────────────────────────────
+ *
+ * The card's own summary (`DwLocationField.describePlace`) prints the names when it has them and the
+ * coordinate only when it has not, because it is one 11sp line under a collapsed disclosure and has to
+ * choose. A page has no such constraint and a submitted document has the opposite requirement: the
+ * NAMES are what a reviewer reads and the COORDINATE is what an auditor checks, and a provenance line
+ * that carried only the first is a claim nobody can verify. So both print where both exist. This is a
+ * different rendering of the same value for a different reader, not a second copy of the card's rule —
+ * if it were the same rule stated twice, the right fix would be to call the card's.
+ *
+ * FIVE DECIMAL PLACES, matching the card, which is about a metre — enough to say which courtyard and
+ * not enough to imply the handset knew more than it did. [Locale.ROOT] because a document generated on
+ * a phone set to a comma-decimal locale must not print "20,36790" into a coordinate pair separated by
+ * commas.
+ */
+private fun recordingPlaceLine(stored: JsonElement?): String? {
+    val place = dwLocationFromValue(stored) ?: return null
+    val named = listOfNotNull(
+        place.village?.takeIf { it.isNotBlank() },
+        place.district?.takeIf { it.isNotBlank() },
+        place.state?.takeIf { it.isNotBlank() },
+    ).joinToString(", ")
+    val coordinate = String.format(Locale.ROOT, "%.5f, %.5f", place.latitude, place.longitude)
+    val where = if (named.isBlank()) coordinate else "$named ($coordinate)"
+    return "Recorded at $where. Noted on the handset this stage was filled in on; it is not sent " +
+        "to the server, so the office's copy of this report does not carry this line."
+}
+
+/**
  * The sections that are not one of the 22 stages.
  *
  * TEN OF THE ELEVEN ARE BUILT HERE — the cover, the contents, the metric row, the acknowledgement,
@@ -1260,7 +1602,7 @@ private fun renderSpecialSection(
             }
         }
         SpecialSection.ANNEXURE_MEDIA ->
-            renderMediaAnnexure(builder, section, plan, schema, draft, imageFor)
+            renderMediaAnnexure(builder, section, plan, schema, draft, imageFor, refs)
         SpecialSection.COMPLETENESS ->
             renderCompletenessAnnexure(builder, section, plan, schema, draft, refs, customSections)
         SpecialSection.MAP -> renderMap(builder, section, plan, draft)
@@ -1342,8 +1684,36 @@ private fun renderMediaAnnexure(
     schema: SchemaResponse,
     draft: WorkshopDraft?,
     imageFor: (String) -> ImageRef?,
+    /**
+     * The same label index the stage sections use — [imagesOf]'s second pass needs it.
+     *
+     * The contact sheet has to be gathered by the identical function the stage sections gather by,
+     * WITH the identical arguments, or the two disagree about what was photographed: the server's
+     * `_render_media_annexure` calls the whole of `_images`, REF pass included, so an annexure built
+     * here from pass one alone is short by exactly the borrowed pictures — which is the divergence
+     * this annexure's own KDoc says it walks the registry rather than the template to avoid.
+     */
+    refs: DwRefLabels,
 ) {
     val gathered = ArrayList<Pair<ImageRef, String>>()
+    /*
+      WHAT THIS WALK ASKED FOR AND DID NOT GET, counted here as well as by the document-wide resolver.
+
+      The outer count decides whether the DOCUMENT says anything at all; this one decides whether
+      THIS SECTION exists. They are different questions and the answers differ: a template can print
+      photographs in its stage sections and carry no annexure, and — the case that matters — this
+      walk can come back with nothing whatever while every id it asked about was real.
+
+      `if (gathered.isEmpty()) return` used to be the whole of that decision, and it deleted the
+      heading, the plates and the contents entry together. A reader of the resulting file cannot tell
+      "this workshop was never photographed" from "this handset does not hold the pictures" — the
+      first is a fact about the fieldwork and the second is a fact about the phone, and the file
+      presented both as the first.
+    */
+    val unresolvedHere = LinkedHashSet<String>()
+    val resolve: (String) -> ImageRef? = { token ->
+        imageFor(token).also { if (it == null && token.isNotBlank()) unresolvedHere.add(token) }
+    }
     // Stage order, and the registry's own order within a stage. A contact sheet whose plates run in
     // the order the phone happened to store them cannot be read against the report it belongs to.
     schema.stages.sortedBy { it.number }.forEach { stage ->
@@ -1358,15 +1728,19 @@ private fun renderMediaAnnexure(
                 // The SAME resolver the stage sections use, deliberately: a photograph that prints
                 // on page 20 and is missing from the annexure — or the reverse — is one document
                 // disagreeing with itself about what was photographed.
-                imagesOf(entity, values, imageFor, plan.template.maxTier).forEach { (ref, caption) ->
-                    // The stage's own title where the photograph has no caption of its own. A plate
-                    // with no line under it is a picture, not evidence.
-                    gathered += ref to caption.ifBlank { stage.title }
-                }
+                imagesOf(entity, values, resolve, plan.template.maxTier, refs = refs)
+                    .forEach { (ref, caption) ->
+                        // The stage's own title where the photograph has no caption of its own. A
+                        // plate with no line under it is a picture, not evidence.
+                        gathered += ref to caption.ifBlank { stage.title }
+                    }
             }
         }
     }
-    if (gathered.isEmpty()) return
+    // Nothing was photographed and nothing was asked for: the section is genuinely empty and stays
+    // out of the file, which is the behaviour this annexure has always had and the only case it was
+    // ever right for.
+    if (gathered.isEmpty() && unresolvedHere.isEmpty()) return
 
     if (section.pageBreakBefore) builder.add(PageBreakBlock)
     builder.heading(
@@ -1374,7 +1748,14 @@ private fun renderMediaAnnexure(
         level = 1,
         numbered = plan.template.numberHeadings,
     )
-    builder.add(ImageGridBlock(images = gathered, columns = 3))
+    // The note goes ABOVE the plates that did resolve, not below them: a reader who counts twelve
+    // photographs against a workshop they know held fifteen must meet the explanation before they
+    // start counting, and a reader of a section with no plates at all must meet it instead of a
+    // blank half page.
+    if (unresolvedHere.isNotEmpty()) {
+        builder.para(unresolvedMediaNote(unresolvedHere.size), style = ParaStyle.NOTE)
+    }
+    if (gathered.isNotEmpty()) builder.add(ImageGridBlock(images = gathered, columns = 3))
 }
 
 /**
@@ -1526,7 +1907,8 @@ private fun renderCover(
     }.orEmpty()
 
     val hero = if (section.includePhotos && setupEntity != null) {
-        imagesOf(setupEntity, setupValues, imageFor, plan.template.maxTier, limit = 1).firstOrNull()?.first
+        imagesOf(setupEntity, setupValues, imageFor, plan.template.maxTier, limit = 1, refs = refs)
+            .firstOrNull()?.first
     } else {
         null
     }
@@ -1699,13 +2081,64 @@ internal data class RenderOptions(
     /** Whether the sub-headings a collection emits carry section numbers. */
     val numbered: Boolean = false,
     val presentation: Presentation = Presentation.AUTO,
+    /**
+     * Whether an unfilled REQUIRED field prints "Not recorded." — `TemplateSection`'s
+     * `show_empty_note`, which is `true` on all six templates on both surfaces.
+     *
+     * Defaulted true because that is what every template says and what the server does. A missing
+     * REQUIRED field is information — it says the record is incomplete — and a missing optional one
+     * is not, which is why the substitution is keyed on `required` and not on emptiness.
+     */
+    val showEmptyNote: Boolean = true,
+    /**
+     * The heading level a FIELD's own sub-heading sits at, before the `min(4, level + 1)` the two
+     * writers cap everything by. 1 for a stage singleton, the record's own level inside a card.
+     *
+     * Defaulted to 1 so no existing call site moves — see [renderEntity] for what the level is for.
+     */
+    val level: Int = 1,
+    /**
+     * Photographs BEFORE the fields rather than after them.
+     *
+     * The server's asymmetry, reproduced rather than tidied away: `_render_cards` places a record's
+     * pictures immediately under its heading and before any field, and `_render_stage` places a
+     * singleton's after everything. It reads correctly both ways round — a card IS its photograph
+     * and a stage's photographs are an appendix to its prose — and the point of this port is that
+     * the phone's copy and the office's copy of one workshop are the same document, not that this
+     * file has a tidier rule than `report_builder.py`.
+     */
+    val photosFirst: Boolean = false,
 )
 
 /**
- * Every resolvable image on one record, paired with its caption.
+ * Every resolvable image on one record, paired with its caption — `ReportBuilder._images`.
  *
- * [limit] of 0 is no cap. Split out of [renderEntity] because the cover's hero photograph and a
- * GALLERY section need the same list without the rest of a record's fields.
+ * [limit] of 0 is no cap. Split out of [renderEntity] because the cover's hero photograph, a GALLERY
+ * section and the photographic annexure all need the same list without the rest of a record's fields
+ * — and because [renderEntity] used to repeat the walk inline, which is how the two came to disagree.
+ *
+ * ── TWO SOURCES, IN THIS ORDER, AND THE ORDER IS THE POINT ────────────────────────────────────────
+ *
+ * PASS ONE is the row's own media fields. PASS TWO is the photograph of whatever each REF field on
+ * the row points at ([DwRefLabels.photoOf]) — the half of the registry where the picture was never
+ * copied onto the row. Eleven REF fields in the registry are printed and five entities name a REF as
+ * their `labelField`, so this is not a corner: a prototype with no progress shots of its own printed
+ * no picture on the handset and its sketch on the server, and the two contact sheets of one workshop
+ * came out with different numbers of plates with nothing in either file admitting it.
+ *
+ * SEPARATE PASSES AND NOT ONE WALK, for the reason `_images` states in as many words: the registry's
+ * field ORDER decides nothing here and a single walk would let it decide everything. `prototype`
+ * declares its REF fields above its photo fields, so one pass would lead a prototype's sub-section
+ * with a borrowed catalogue picture and bury the four progress shots the artisan actually took. The
+ * designer's own photographs come first and the reference's is an addition, never a substitute.
+ *
+ * DEDUPLICATED BY MEDIA ID, first caption winning, insertion-ordered — the `wanted` map in `_images`.
+ * Hydration already copies an artisan's picture onto `participant.photo` at save time, so the
+ * `artisanRef` beside it can resolve to the very same file; without the map that participant's
+ * photograph prints twice on one card.
+ *
+ * A caller with no [refs] gets pass one only. Nothing in `main/` passes null — it is there so a test
+ * that only cares about a row's own pictures does not have to build a label index for it.
  */
 private fun imagesOf(
     entity: EntityDto,
@@ -1713,10 +2146,15 @@ private fun imagesOf(
     imageFor: (String) -> ImageRef?,
     maxTier: DwTier,
     limit: Int = 0,
+    refs: DwRefLabels? = null,
 ): List<Pair<ImageRef, String>> {
     val visible = entity.liveFields.filter { DwTier.of(it.tier).ordinal <= maxTier.ordinal }
     val captionByTarget = visible.filter { it.captionFor.isNotBlank() }.associateBy { it.captionFor }
-    val gathered = ArrayList<Pair<ImageRef, String>>()
+
+    // (media id -> caption). `LinkedHashMap` + `putIfAbsent` IS the dedup, and it is keyed on the id
+    // rather than on the field for the participant case above.
+    val wanted = LinkedHashMap<String, String>()
+
     visible.forEach { field ->
         if (field.reportRole == "HIDDEN" || field.captionFor.isNotBlank()) return@forEach
         val type = DwFieldType.of(field.type)
@@ -1725,8 +2163,38 @@ private fun imagesOf(
         if (!DwValues.isFilled(stored)) return@forEach
         val caption = captionByTarget[field.key]?.let { DwValues.text(values[it.key]) }.orEmpty()
         val ids = if (type == DwFieldType.IMAGE_LIST) DwValues.list(stored) else listOf(DwValues.text(stored))
-        ids.mapNotNull(imageFor).forEach { ref -> gathered += ref to caption.ifBlank { field.label } }
+        ids.filter { it.isNotBlank() }.forEach { id ->
+            wanted.putIfAbsent(id, caption.ifBlank { field.label })
+        }
     }
+
+    if (refs != null) {
+        visible.forEach { field ->
+            if (field.reportRole == "HIDDEN" || field.captionFor.isNotBlank()) return@forEach
+            if (DwFieldType.of(field.type) != DwFieldType.REF) return@forEach
+            val refId = dwRefId(values[field.key]).trim()
+            val photo = refs.photoOf(refId)?.takeIf { it.isNotBlank() } ?: return@forEach
+            // THE REFERENCE'S OWN LABEL, because the field's label is the relationship and not the
+            // subject: "Sketch" under a photograph is a category, "SK-04 — bandha runner" is a
+            // caption. The field label is the fallback for a row whose label never resolved.
+            wanted.putIfAbsent(photo, refs.label(refId).ifBlank { field.label })
+        }
+    }
+
+    val gathered = ArrayList<Pair<ImageRef, String>>()
+    for ((id, caption) in wanted) {
+        val ref = imageFor(id) ?: continue
+        gathered += ref to caption
+    }
+    // EVERY ID IS OFFERED TO [imageFor] EVEN WHEN [limit] WILL DISCARD THE ANSWER, which is where
+    // this deliberately diverges from `_images` (it breaks out of the resolve loop once it has
+    // enough). `imageFor` is not a pure lookup on this client: `buildWorkshopDocument` wraps it so
+    // that a token it cannot resolve is recorded, and that record is the only thing on any surface
+    // that says the file is short of photographs. Stopping early would make the count depend on how
+    // many plates the cover happened to ask for — four of the six templates carry no photographic
+    // annexure, so for those the cover's `limit = 1` would be the ONLY walk of the setup entity and
+    // the rest of its unresolvable ids would go unmentioned. The cost is a `HashMap` lookup per
+    // extra id; the benefit is that "3 photographs are missing" means three photographs.
     return if (limit > 0) gathered.take(limit) else gathered
 }
 
@@ -1817,6 +2285,43 @@ internal class DwRefLabels(
         return label
     }
 
+    /**
+     * The first photograph on the row a reference points at — `ReportData.reference(...).photo`.
+     *
+     * PASS TWO OF [imagesOf] IS BUILT ON THIS, and it is the whole of "a photograph appears beside
+     * the thing it is a photograph of" for the half of the registry where the picture was never
+     * copied onto the row. `prototype.sketchRef` points at a sketch row whose own photographs live in
+     * stage 11 of the same draft; without this the phone's copy of stage 13 prints no picture for
+     * every prototype that carries none of its own, while the office's copy prints the sketch.
+     *
+     * ONLY ROWS OF THIS WORKSHOP, never an external record, and that is a deliberate narrowing of the
+     * server's behaviour rather than an oversight. The server resolves an artisan through the
+     * database and finds a `MediaFile` it can read; the phone's only knowledge of an external record
+     * is whatever a picker cached ([DwReferenceStore]), whose media ids belong to the SERVER's id
+     * space and resolve against nothing in `draft.media`. Asking [imageFor] for one would not produce
+     * a picture — it would produce a token counted as unresolved by `buildWorkshopDocument`, so the
+     * export screen would report "4 photographs are missing" for four pictures that were never on
+     * this handset and were never going to be. A silent gap is wrong; a wrong count is worse.
+     *
+     * The tier cap is deliberately NOT applied to the referenced row's own fields: the cap asks what
+     * THIS template prints of THIS record, and the borrowed picture is being printed as context for
+     * the referring row, which has already passed the cap. `_images` makes the same choice — it tests
+     * `_visible` on the REF spec and never on the reference's photo.
+     */
+    internal fun photoOf(refId: String): String? {
+        if (refId.isBlank()) return null
+        val (entity, row) = rowsById[refId] ?: return null
+        entity.liveFields.forEach { spec ->
+            val type = DwFieldType.of(spec.type)
+            if (!type.isMedia || spec.reportRole == "HIDDEN") return@forEach
+            val stored = row[spec.key]
+            if (!DwValues.isFilled(stored)) return@forEach
+            val ids = if (type == DwFieldType.IMAGE_LIST) DwValues.list(stored) else listOf(DwValues.text(stored))
+            ids.firstOrNull { it.isNotBlank() }?.let { return it }
+        }
+        return null
+    }
+
     /** The label field's printed value, following a REF label through to a name. */
     private fun rowLabel(entity: EntityDto, row: Map<String, JsonElement>, seen: Set<String>): String {
         entity.field(entity.labelField)?.let { spec ->
@@ -1848,12 +2353,51 @@ internal class DwRefLabels(
 private val OPAQUE_ID = Regex("^[a-z0-9]{16,}$")
 
 /**
- * One record's fields, sorted into the report roles the registry declares.
+ * The substitute an unfilled REQUIRED field prints — `_printable`'s "Not recorded."
+ *
+ * ONE SPELLING, because it is compared as well as printed: the section-level note at the foot of an
+ * empty stage uses the same string, and the two saying nearly-the-same-thing is how a reader comes to
+ * believe they mean different things.
+ */
+private const val NOT_RECORDED = "Not recorded."
+
+/**
+ * One record's fields, sorted into the report roles the registry declares — `_render_narrative`.
  *
  * Returns whether anything at all reached the document, which is what decides between "Not recorded."
  * and a bare heading over half a blank page. It is measured from [DocumentBuilder.blockCount] rather
  * than tracked by hand because `para`, `bullets` and `keyValues` all silently drop empty content —
  * a record can go through every branch below and add nothing.
+ *
+ * ── FOUR PASSES IN THE SERVER'S ORDER, NOT ONE WALK OF THE FIELD LIST ─────────────────────────────
+ *
+ * This used to be a single walk that emitted a RICH_TEXT field's blocks INLINE the moment it met one
+ * and buffered everything else, so one record came out as prose, then metrics, then the key-value
+ * grid, then photographs, while `_render_narrative` emits the grid, then the prose, then the bullets,
+ * then (from its caller) the metrics and the photographs. Every record in the document was laid out
+ * in a different order in the two copies of one workshop — so the page boundaries moved, and with
+ * them the contents page's page numbers. A reader comparing the phone's copy against the office's,
+ * which is the case this whole port exists to serve, sees a document that has been rearranged.
+ *
+ * ── EVERY PRINTED FIELD CARRIES ITS LABEL, WHICH 98 OF THEM DID NOT ───────────────────────────────
+ *
+ * The old RICH_TEXT branch emitted `toReportBlocks(...)` and nothing else. All 81 NARRATIVE and 17
+ * BULLETS fields in the bundled registry are RICH_TEXT, so ALL 98 printed as anonymous prose: stage
+ * 2 came out of the handset as one heading followed by eight consecutive unlabelled runs of text,
+ * where the office's copy prints eight numbered sub-headings that also appear in its contents page.
+ * An officer reading the handset's copy could not tell which pro-forma question any paragraph
+ * answered. `_render_narrative`'s rule is ported exactly: a heading when the flattened text runs past
+ * 160 characters or the field produced more than one block, a `"Label:"` lead-in otherwise, and for
+ * BULLETS a heading unconditionally.
+ *
+ * ── AND AN UNFILLED REQUIRED FIELD IS SAID RATHER THAN SKIPPED ────────────────────────────────────
+ *
+ * `if (!DwValues.isFilled(stored)) return@forEach` dropped required and optional fields alike, while
+ * `_printable` substitutes [NOT_RECORDED] for a required one on all six templates. The handset's
+ * report therefore understated incompleteness in its body while the Data completeness annexure in
+ * the SAME file stated it — one document, two arithmetics, which is the failure [maskUnresolvableRefs]
+ * exists to prevent, reached through the other door. It fires whenever a required field is unfilled,
+ * which is the normal mid-workshop state.
  */
 private fun renderEntity(
     builder: DocumentBuilder,
@@ -1865,68 +2409,135 @@ private fun renderEntity(
 ): Boolean {
     val before = builder.blockCount
     val visible = entity.liveFields.filter { DwTier.of(it.tier).ordinal <= options.maxTier.ordinal }
-    val captionByTarget = visible.filter { it.captionFor.isNotBlank() }.associateBy { it.captionFor }
-    val printable = visible.filter { it.reportRole != "HIDDEN" && it.captionFor.isBlank() }
 
-    val keyValues = ArrayList<Pair<String, Any?>>()
-    val metrics = ArrayList<Triple<String, String, String>>()
-    val gallery = ArrayList<Pair<ImageRef, String>>()
+    /*
+      `_printable`, PORTED WHOLE — the one place emptiness is decided, asked four times below.
 
-    printable.forEach { field ->
-        val stored = values[field.key]
-        if (!DwValues.isFilled(stored)) return@forEach
-        val type = DwFieldType.of(field.type)
+      A field answers with its text, or with [NOT_RECORDED] when it is REQUIRED and the template
+      wants the note, or with nothing at all. Printing "Not recorded." for every unfilled ADVANCED
+      field would bury the report in negatives, which is why the substitution keys on `required`.
 
-        if (type.isMedia) {
-            // `includePhotographs = false` and the templates that set it per section — the price
-            // list a buyer sees, the narrative stages of the compact summary — stop here. The
-            // photographs are not merely hidden by the writer, they never enter the document, so a
-            // report that excludes them does not carry their bytes either.
-            if (!options.includePhotos) return@forEach
-            val caption = captionByTarget[field.key]?.let { DwValues.text(values[it.key]) }.orEmpty()
-            val ids = if (type == DwFieldType.IMAGE_LIST) DwValues.list(stored) else listOf(DwValues.text(stored))
-            ids.mapNotNull(imageFor).forEach { ref -> gallery += ref to caption.ifBlank { field.label } }
-            return@forEach
-        }
-
-        // ── RICH_TEXT IS DISPATCHED BEFORE THE ROLE SWITCH, and it has to be ────────────────────
-        //
-        // A rich value is a JsonObject, and every scalar path below flattens it to nothing:
-        // `DwValues.text` answers "" for a JsonObject and `DwValues.list` answers an empty list
-        // (StageSchema.kt). So NARRATIVE printed a blank paragraph, which `builder.para` then
-        // dropped entirely, and BULLETS printed an empty list, which `builder.bullets` also
-        // dropped — all 98 narrative and bulleted fields in the registry, which is the entire prose
-        // of the report: the acknowledgement, the brief, the purpose, the cluster background, the
-        // designer's comments, the problems faced, the artisan feedback, the recommendations, the
-        // marketing strategy. Nothing warned. The headings printed with nothing under them, and the
-        // same workshop rendered by the server came out with all of it — two files, one officer's
-        // desk, different documents.
-        //
-        // `toReportBlocks` is the same function the server calls (`rich_text.to_report_blocks`) and
-        // the same one the editor's own preview calls, which is why the prose looked right on screen
-        // right up to the moment of export. It already merges consecutive BULLET_ITEM/ORDERED_ITEM
-        // runs into one list block, so BULLETS needs no separate treatment — the difference between
-        // the two roles is only the paragraph style a plain block falls back to.
-        if (type == DwFieldType.RICH_TEXT) {
-            toReportBlocks(stored, ParaStyle.BODY, imageFor).forEach(builder::add)
-            return@forEach
-        }
-
-        when (field.reportRole) {
-            "NARRATIVE" -> builder.para(displayValue(field, stored, refs))
-            "BULLETS" -> builder.bullets(DwValues.list(stored).ifEmpty { listOf(DwValues.text(stored)) })
-            "METRIC" -> metrics += Triple(field.label, displayValue(field, stored, refs), field.unit)
-            else -> keyValues += field.label to displayValue(field, stored, refs)
+      MEDIA-TYPED FIELDS ARE NEVER ASKED. `_images` never substitutes and `_printable` is only ever
+      asked for non-media roles on the server; a photograph that was not taken is a gap in a contact
+      sheet, not a sentence in a grid. They are gathered by [imagesOf] below instead.
+     */
+    fun printable(match: (String) -> Boolean): List<Pair<FieldDto, String>> = visible.mapNotNull { field ->
+        if (field.reportRole == "HIDDEN" || !match(field.reportRole)) return@mapNotNull null
+        if (field.captionFor.isNotBlank()) return@mapNotNull null   // placed with their image
+        if (DwFieldType.of(field.type).isMedia) return@mapNotNull null
+        val text = displayValue(field, values[field.key], refs)
+        when {
+            text.isNotBlank() -> field to text
+            field.required && options.showEmptyNote -> field to NOT_RECORDED
+            else -> null
         }
     }
 
-    if (metrics.isNotEmpty()) builder.add(MetricRowBlock(metrics = metrics))
-    if (keyValues.isNotEmpty()) builder.keyValues(keyValues)
-    placeImages(
-        builder,
-        if (options.maxPhotos > 0) gallery.take(options.maxPhotos) else gallery,
-        options.photoColumns,
-    )
+    val narrative = printable { it == "NARRATIVE" }
+    val bullets = printable { it == "BULLETS" }
+    val metrics = printable { it == "METRIC" }
+    /*
+      EVERYTHING ELSE IS A PAIR, stated as a negative and not as a list of four role names.
+
+      `_render_narrative` groups KEY_VALUE, COVER_FIELD and TABLE_COLUMN into the grid, and this
+      file's `when` has always had an `else ->` arm that also caught a BLANK role and any role a
+      registry one version ahead of this build might carry. Naming the four positively would have
+      turned that `else` into a silent drop the day the server added a fifth role — which is the same
+      shape as the RICH_TEXT drop this whole function was rewritten over. Printing an unknown role in
+      the grid is the honest degrade: the answer reaches paper under its own label.
+
+      Including TABLE_COLUMN is what makes CARDS presentation lossless: a sketch's number, category
+      and expected price are TABLE_COLUMNs, and omitting them from every presentation that draws no
+      table would be a filter on the designer's work rather than a layout of it.
+    */
+    val pairs = printable { it != "NARRATIVE" && it != "BULLETS" && it != "METRIC" }
+
+    val gallery = if (options.includePhotos) {
+        // `includePhotographs = false` and the templates that set it per section — the price list a
+        // buyer sees, the narrative stages of the compact summary — gather nothing at all. The
+        // photographs are not merely hidden by the writer, they never enter the document, so a
+        // report that excludes them does not carry their bytes either.
+        val every = imagesOf(entity, values, imageFor, options.maxTier, refs = refs)
+        if (options.maxPhotos > 0) every.take(options.maxPhotos) else every
+    } else {
+        emptyList()
+    }
+
+    fun drawImages() = placeImages(builder, gallery, options.photoColumns)
+    if (options.photosFirst) drawImages()
+
+    // THE GRID FIRST, which is the whole of the ordering fix — `_render_narrative` emits its
+    // `KeyValueBlock` before any prose. Still through [DocumentBuilder.keyValues] and still at one
+    // column: this change is about WHERE the grid sits, and widening it to the server's two columns
+    // would move every page boundary in the document on top of that. See the ledger note.
+    if (pairs.isNotEmpty()) builder.keyValues(pairs.map { (field, text) -> field.label to text })
+
+    // THE HEADING LEVEL IS THE CALLER'S PLUS ONE, capped at 4 — `min(4, level + 1)`. Both writers
+    // index a four-element table by level (`DocxWriter.emitHeading`), so a fifth is an index out of
+    // bounds in the middle of an export a designer is waiting on.
+    val fieldLevel = minOf(4, options.level + 1)
+
+    narrative.forEach { (field, text) ->
+        // `toReportBlocks` is the same function the server calls (`rich_text.to_report_blocks`) and
+        // the same one the editor's own preview calls, which is why the prose looked right on screen
+        // right up to the moment of export. It already merges consecutive BULLET_ITEM/ORDERED_ITEM
+        // runs into one list block, so BULLETS needs no separate treatment below — the difference
+        // between the two roles is only whether the label is a heading or a lead-in.
+        val blocks = if (DwFieldType.of(field.type) == DwFieldType.RICH_TEXT) {
+            toReportBlocks(values[field.key], ParaStyle.BODY, imageFor)
+        } else {
+            emptyList()
+        }
+        if (blocks.isNotEmpty()) {
+            if (text.length > 160 || blocks.size > 1) {
+                builder.heading(field.label, level = fieldLevel, numbered = options.numbered)
+            } else {
+                builder.para("${field.label}:")
+            }
+            blocks.forEach(builder::add)
+            return@forEach
+        }
+        // No blocks and yet [printable] gave us something means either a plain LONG_TEXT answer or a
+        // REQUIRED field that is unfilled and `text` is the note. Falling through rather than
+        // skipping is the difference between a gap the reader can see and one they cannot.
+        if (DwFieldType.of(field.type) == DwFieldType.LONG_TEXT && text.length > 160) {
+            builder.heading(field.label, level = fieldLevel, numbered = options.numbered)
+            builder.para(text)
+        } else {
+            builder.para("${field.label}: $text")
+        }
+    }
+
+    bullets.forEach { (field, text) ->
+        // UNCONDITIONALLY A HEADING, where NARRATIVE decides by length. A bulleted answer is a list
+        // the designer built in the editor and a list with no title above it reads as a continuation
+        // of the paragraph before it.
+        builder.heading(field.label, level = fieldLevel, numbered = options.numbered)
+        val blocks = if (DwFieldType.of(field.type) == DwFieldType.RICH_TEXT) {
+            toReportBlocks(values[field.key], ParaStyle.BODY, imageFor)
+        } else {
+            emptyList()
+        }
+        if (blocks.isNotEmpty()) {
+            blocks.forEach(builder::add)
+            return@forEach
+        }
+        // THE PRE-PROMOTION PATH, still reached by a plain LONG_TEXT bullets field, by a rich field
+        // whose value is a bare string written before the promotion, and by the [NOT_RECORDED] note.
+        // Semicolons are treated as line breaks because that is how these fields were filled in for
+        // two seasons — `_render_narrative` says the same and splits on the same characters.
+        builder.bullets(text.replace(";", "\n").split("\n").map { it.trim() })
+    }
+
+    if (metrics.isNotEmpty()) {
+        // FOUR, as the server caps it. A metric row is a band of big numbers across the text column
+        // and the fifth one is unreadable at any width the page can give it.
+        builder.add(
+            MetricRowBlock(metrics = metrics.take(4).map { (field, text) -> Triple(field.label, text, field.unit) })
+        )
+    }
+
+    if (!options.photosFirst) drawImages()
     return builder.blockCount != before
 }
 
@@ -1963,11 +2574,29 @@ private fun renderCollection(
 ): Boolean {
     val before = builder.blockCount
     val visible = entity.liveFields.filter { DwTier.of(it.tier).ordinal <= options.maxTier.ordinal }
-    val columns = visible.filter { it.reportRole == "TABLE_COLUMN" && !DwFieldType.of(it.type).isMedia }
+    /*
+      SIX COLUMNS, AND NO MORE — `_table_columns`' `return columns[:6]`, which this had no equivalent
+      of at all.
+
+      Six on A4 is about the limit before a cell is too narrow to hold a craft name. THREE live
+      collections in the bundled registry declare seven TABLE_COLUMN fields — `existingProduct`
+      (stage 6), `prototypeValidation` (stage 15) and `followUp` (stage 22) — and every one of the
+      21 columns is BASIC or STANDARD, so no template's tier cap trims them under seven either. All
+      three reached the table path, so stage 22 printed as seven columns on the phone and as six plus
+      a per-row key-value line at the office: different column counts, different row heights,
+      different pagination, and nothing in either file admitting it.
+
+      Nothing is LOST by capping, because the overflow lands in `leftovers` below — which is exactly
+      what `_render_table`'s `skip=column_keys` makes of it.
+    */
+    val columns = visible
+        .filter { it.reportRole == "TABLE_COLUMN" && !DwFieldType.of(it.type).isMedia }
+        .take(6)
+    val columnKeys = columns.map { it.key }.toSet()
 
     // GALLERY prints the pictures and nothing else: every image on every row, under one heading.
     if (options.presentation == Presentation.GALLERY) {
-        val every = rows.flatMap { imagesOf(entity, it, imageFor, options.maxTier) }
+        val every = rows.flatMap { imagesOf(entity, it, imageFor, options.maxTier, refs = refs) }
         placeImages(builder, if (options.maxPhotos > 0) every.take(options.maxPhotos) else every, options.photoColumns)
         return builder.blockCount != before
     }
@@ -1978,10 +2607,19 @@ private fun renderCollection(
         (options.presentation != Presentation.NARRATIVE &&
             options.presentation != Presentation.KEY_VALUE &&
             columns.isEmpty())
+    // A RECORD'S OWN LEVEL IS [rowLevel], so its FIELDS' sub-headings sit one below it. Threaded
+    // rather than defaulted, or every narrative on every card would head at level 2 beside the
+    // record's own level-3 heading and read as a sibling of the record rather than as part of it.
+    val rowOptions = options.copy(level = rowLevel)
+
     if (asCards) {
         rows.forEachIndexed { index, row ->
             builder.heading(rowHeading(entity, row, index, refs), level = rowLevel, numbered = options.numbered)
-            renderEntity(builder, entity, row, imageFor, refs, options)
+            // PHOTOGRAPHS BEFORE THE FIELDS, which is `_render_cards`' order and not this file's old
+            // one — see [RenderOptions.photosFirst]. A card IS its photograph: the office's copy of
+            // stage 13 reads heading, prototype photographs, grid, prose, and the handset's read
+            // heading, prose, grid, photographs.
+            renderEntity(builder, entity, row, imageFor, refs, rowOptions.copy(photosFirst = true))
         }
         return builder.blockCount != before
     }
@@ -1990,29 +2628,60 @@ private fun renderCollection(
     // no per-record heading. It is what the agency format asks for on the outcomes stage, where a
     // heading per record would put a numbered sub-section around a single paragraph.
     if (options.presentation == Presentation.NARRATIVE || options.presentation == Presentation.KEY_VALUE) {
-        rows.forEach { row -> renderEntity(builder, entity, row, imageFor, refs, options) }
+        rows.forEach { row -> renderEntity(builder, entity, row, imageFor, refs, rowOptions) }
         return builder.blockCount != before
     }
 
     builder.add(
         TableBlock(
             columns = tableColumns(columns),
-            rows = rows.map { row -> columns.map { cellRuns(it, row, refs) } },
+            rows = rows.map { row ->
+                columns.map { cellRuns(it, row, refs, showEmptyNote = options.showEmptyNote) }
+            },
             caption = entity.title,
         )
     )
 
-    // Whatever the table could not carry — the photographs, the prose — follows underneath, per row,
-    // rather than being dropped. A sketch table with no sketches in it is a table of file names.
+    /*
+      Whatever the table could not carry — the overflow columns, the photographs, the prose — follows
+      underneath, per row, rather than being dropped. A sketch table with no sketches in it is a
+      table of file names.
+
+      MEMBERSHIP OF THE DRAWN COLUMNS, NOT THE TABLE_COLUMN ROLE. This tested the role, which meant
+      two silent drops. The seventh TABLE_COLUMN of stage 22 could not reach the per-row block even
+      once the cap above existed, because the role test excluded it exactly as it excluded the six
+      that WERE drawn; and a media-typed TABLE_COLUMN was excluded from `columns` by `!isMedia` above
+      AND from the leftovers by the role test, so it would have been dropped from the document
+      entirely. The registry declares no such field today, so that half is latent — but it is a
+      silent drop, not a layout difference, and it costs one word to close.
+
+      `_render_table` says the same thing with `skip=column_keys`: what the narrative block prints is
+      everything the TABLE did not.
+
+      NOTE ONE DELIBERATE DIVERGENCE FROM THE SERVER, which keeps a raw id off paper. `_table_columns`
+      applies no media filter, so a media TABLE_COLUMN would become a column there and print through
+      `format_value` — i.e. as a media id. Here it stays out of the table and prints as a photograph
+      underneath instead. That is one of the two answers the audit's remedy asked for ("one of the
+      two, not one each"); the other half — adding the media filter to `_table_columns` — belongs to
+      whoever owns `report_builder.py` and is recorded as a follow-up.
+    */
     val leftovers = visible.filter {
-        it.reportRole != "TABLE_COLUMN" && it.reportRole != "HIDDEN" && it.captionFor.isBlank()
+        it.key !in columnKeys && it.reportRole != "HIDDEN" && it.captionFor.isBlank()
     }
     if (leftovers.isEmpty()) return true
     // A media leftover in a section that prints no photographs is not a leftover at all. Counting it
     // would head a sub-section for every row of a photographs-off table and then print nothing in it.
     val carried = leftovers.filter { options.includePhotos || !DwFieldType.of(it.type).isMedia }
     rows.forEachIndexed { index, row ->
-        if (carried.none { DwValues.isFilled(row[it.key]) }) return@forEachIndexed
+        // A REQUIRED leftover that is unfilled IS something to print — it prints [NOT_RECORDED] —
+        // so it has to count here too, or the heading is suppressed over the one note the reviewing
+        // officer needs. `_render_table` computes `has_extra` from `_printable`, which is the same
+        // statement: the substitution is part of what a row has to say.
+        val hasExtra = carried.any { field ->
+            DwValues.isFilled(row[field.key]) ||
+                (field.required && options.showEmptyNote && !DwFieldType.of(field.type).isMedia)
+        }
+        if (!hasExtra) return@forEachIndexed
         builder.heading(rowHeading(entity, row, index, refs), level = rowLevel, numbered = options.numbered)
         renderEntity(
             builder,
@@ -2020,7 +2689,9 @@ private fun renderCollection(
             row,
             imageFor,
             refs,
-            options,
+            // Photographs first here too: `_render_table` calls `_place_images` before
+            // `_render_narrative` on the per-row block, exactly as `_render_cards` does.
+            rowOptions.copy(photosFirst = true),
         )
     }
     return true
@@ -2059,15 +2730,36 @@ internal fun rowHeading(
  * [displayValue] instead would drop the marks, and routing it through `runsOf(DwValues.text(...))` —
  * which is what this did — dropped the entire value, because `DwValues.text` answers "" for the
  * JsonObject a rich value is. This is `ReportBuilder._cell_runs`.
+ *
+ * ── AN UNFILLED REQUIRED CELL SAYS SO, WHICH IT DID NOT ───────────────────────────────────────────
+ *
+ * `_printable` substitutes [NOT_RECORDED] for a required field with no answer, and every other
+ * presentation on the server carries that substitute through. The table did not, on either surface,
+ * until the server's `_render_table` was fixed to route its cells through `_printable`; this is the
+ * Android half of the same repair. The case that shows it worst is eighteen prototype rows with one
+ * required column left blank on several of them: a reviewing officer reading a blank cell has no way
+ * to tell "not answered" from "not applicable", and the same file's completeness annexure states the
+ * shortfall three pages later — one document, two arithmetics.
+ *
+ * AN EMPTY RICH VALUE FALLS THROUGH TO THE NOTE rather than to `plainRuns`, which is the guard
+ * `_cell_runs`'s own docstring has always described ("would replace the note with a blank cell —
+ * turning a visible gap into an invisible one"). It was a true statement about a note this path never
+ * produced: the guard was correct and unreachable. Now it is reached.
  */
 private fun cellRuns(
     field: FieldDto,
     row: Map<String, JsonElement>,
     refs: DwRefLabels,
+    /** The template's `showEmptyNote`. Defaulted false so a caller with no template substitutes nothing. */
+    showEmptyNote: Boolean = false,
 ): List<Run> {
     val stored = row[field.key]
-    if (DwFieldType.of(field.type) == DwFieldType.RICH_TEXT) return plainRuns(stored)
-    return runsOf(displayValue(field, stored, refs))
+    if (DwFieldType.of(field.type) == DwFieldType.RICH_TEXT && DwValues.isFilled(stored)) {
+        return plainRuns(stored)
+    }
+    val text = displayValue(field, stored, refs)
+    if (text.isBlank() && field.required && showEmptyNote) return runsOf(NOT_RECORDED)
+    return runsOf(text)
 }
 
 /**

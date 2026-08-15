@@ -36,6 +36,15 @@ export type ManagedSecret = {
   description: string;
   configured: boolean;
   source: SecretSource;
+  /**
+   * A stored override row exists whose ciphertext this deployment cannot open — the
+   * JWT_SECRET-rotated-without-SECRETS_ENCRYPTION_KEY casualty `managed_secrets._describe`
+   * documents. The value in force is then the ENVIRONMENT one, which is why `source` reads
+   * "environment" (or "unset") rather than "database" in this state. Optional on the wire only
+   * defensively: the DTO always sends it, but a row read from a cached response predating the
+   * field must not silently become "yes, unreadable".
+   */
+  overrideUnreadable?: boolean;
   hint: string | null;
   lastStatus: SecretStatus;
   lastCheckedAt: string | null;
@@ -43,6 +52,30 @@ export type ManagedSecret = {
   updatedBy: string | null;
   updatedAt: string | null;
 };
+
+/**
+ * IS THERE A STORED OVERRIDE TO CLEAR? — which is NOT the same question as "where did the value in
+ * force come from", and this repository has already paid for conflating them.
+ *
+ * `source` was made honest in `managed_secrets._describe`: when a saved override cannot be
+ * decrypted, the value every provider call sends is the environment one, so the row now reports
+ * `source: "environment"` (or `"unset"`) instead of the old lie `"database"`. Three audit findings
+ * closed at once — the reveal endpoint, the Test button, and the hint beside the value.
+ *
+ * But this panel drew its "Clear override" button from `secret.source === "database"`, so that fix
+ * took the button off the ONE row it exists for: the admin was told an override was broken and
+ * given no control to remove it. The remedy for a state must not be gated on the state's absence.
+ *
+ * So the two facts are separated here, permanently. `source` = where the VALUE came from;
+ * `hasStoredOverride` = whether a ROW exists to delete. The disjunction below is exact rather than
+ * a guess: the backend sets `source = "database"` exactly when a row exists AND opens, and
+ * `overrideUnreadable` exactly when a row exists and does NOT open. Those two are the whole of
+ * "a row exists". If a future field ever states row existence directly, use it — but do NOT go
+ * back to reading it off `source`.
+ */
+export function hasStoredOverride(secret: Pick<ManagedSecret, "source" | "overrideUnreadable">): boolean {
+  return secret.source === "database" || secret.overrideUnreadable === true;
+}
 
 type RevealResponse = { key: string; value: string | null; source: SecretSource };
 
@@ -317,6 +350,16 @@ export function ApiKeysPanel() {
                           {source.label}
                         </span>
                         <p className="mt-1 max-w-[12rem] text-[0.6875rem] leading-4 text-ink-500">{source.help}</p>
+                        {/* Why an "Environment" (or "Not set") row is nonetheless offering "Clear
+                            override": there IS a saved key here, it just cannot be decrypted any
+                            more, so it is not the key being sent. Without this sentence the badge
+                            and the button contradict each other on screen. */}
+                        {secret.overrideUnreadable ? (
+                          <p className="mt-1 max-w-[12rem] text-[0.6875rem] leading-4 text-error-600">
+                            A key saved here can no longer be decrypted, so it is not in use. Re-enter it, or clear the
+                            broken override.
+                          </p>
+                        ) : null}
                       </td>
 
                       <td className="px-4 py-3">
@@ -366,7 +409,11 @@ export function ApiKeysPanel() {
                               </>
                             )}
                           </button>
-                          {secret.source === "database" ? (
+                          {/* Drawn from "is there a row to delete", never from "where did the value
+                              come from" — see `hasStoredOverride`. An unreadable override reports
+                              source "environment"/"unset" and is precisely the row an admin needs
+                              this button for. */}
+                          {hasStoredOverride(secret) ? (
                             <button
                               className={rowAction("danger")}
                               onClick={() => {
@@ -437,8 +484,9 @@ export function ApiKeysPanel() {
                           <div className="mt-3 rounded-md border border-red-200 bg-error-100 p-3 text-left">
                             <p className="text-xs font-medium text-error-600">Clear the stored {secret.label} key?</p>
                             <p className="mt-1 text-[0.6875rem] leading-4 text-ink-700">
-                              The saved override is deleted and the deployed environment value applies again from the next
-                              call. If the environment has no value for this key, the features that need it stop working.
+                              {secret.overrideUnreadable
+                                ? "The saved override cannot be decrypted, so nothing is using it: deleting it changes no value, it only removes the broken row and the warning beside it."
+                                : "The saved override is deleted and the deployed environment value applies again from the next call. If the environment has no value for this key, the features that need it stop working."}
                             </p>
                             <div className="mt-2 flex justify-end gap-2">
                               <button className={rowAction("neutral")} onClick={() => setConfirmingClear(null)} type="button">

@@ -34,7 +34,10 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { cutOf, LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { EmptyState } from "@/components/EmptyState";
+import { Pagination } from "@/components/Pagination";
 import { PageHeader } from "@/components/PageHeader";
 import { useAuth } from "@/components/AuthProvider";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
@@ -47,6 +50,7 @@ import type {
   Artisan,
   Craft,
   MediaFile,
+  PageResult,
   ProductDocumentation,
   QuestionnaireInterview,
   ToolDocumentation,
@@ -544,21 +548,54 @@ function sortRecent<T extends { createdAt?: string }>(items: T[]) {
   return [...items].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 }
 
+/**
+ * ONE PAGE of a record type, with the arithmetic that says it is one page.
+ *
+ * `load` used to be `() => Promise<BrowseRow[]>` — no page argument to give it, and `PageResult.total`
+ * discarded in all eight implementations. The panel then drew those rows in a scroll box that simply
+ * ended: no pager, no count, no notice. On this database that meant the first 100 of 2530 media
+ * files and the first 100 of 749 artisans (counted 2026-08-15) on the screen whose entire purpose is
+ * "browse everything we hold", with ~96% of the media table withheld and nothing saying so — and the
+ * "Narrow to one record" ComboBox beside it filtering only those 100, so a researcher who typed a
+ * filename they were holding in their hand was told there is no such record.
+ *
+ * The same file already surfaces truncation twice, in the tree panel ("This listing was truncated at
+ * the server cap…") and in the dataset download; this panel knew the vocabulary and did not use it.
+ */
+type BrowsePage = { rows: BrowseRow[]; page: number; pages: number; total: number };
+
 type BrowseTypeDef = {
   label: string;
   /** linkedRecordType value used by /media for this record type. */
   linkedType: string;
   editHref: (id: string) => string;
-  load: () => Promise<BrowseRow[]>;
+  load: (page: number) => Promise<BrowsePage>;
 };
+
+/**
+ * Map one server page into browse rows, keeping the envelope.
+ *
+ * The recency sort is WITHIN THE PAGE, exactly as it always was — `/crafts` answers name-ascending
+ * on purpose (see the ordering comment in `routes/crafts.py`) and this screen prefers newest-first,
+ * so each page is re-ordered locally. It cannot and must not try to be a global sort: the rows past
+ * the page boundary are not here, and pretending otherwise is the defect this whole change is about.
+ */
+function browsePage<T>(result: PageResult<T>, map: (row: T) => BrowseRow): BrowsePage {
+  return {
+    rows: sortRecent(result.items.map(map)),
+    page: result.page,
+    pages: result.pages,
+    total: result.total
+  };
+}
 
 const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
   artisan: {
     label: "Artisans",
     linkedType: "artisan",
     editHref: (id) => `/artisans/${id}/edit`,
-    load: async () =>
-      sortRecent((await listResource<Artisan>("/artisans", { pageSize: 100 })).items).map((x) => ({
+    load: async (page) =>
+      browsePage(await listResource<Artisan>("/artisans", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
         name: `${x.name}${x.place ? ` · ${x.place}` : ""}`,
         creator: x.createdBy?.name ?? "-",
@@ -569,8 +606,8 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Products",
     linkedType: "product",
     editHref: (id) => `/products/${id}/edit`,
-    load: async () =>
-      sortRecent((await listResource<ProductDocumentation>("/products", { pageSize: 100 })).items).map((x) => ({
+    load: async (page) =>
+      browsePage(await listResource<ProductDocumentation>("/products", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
         name: `${x.productName} · ${x.artisanName}`,
         creator: x.createdBy?.name ?? "-",
@@ -581,8 +618,8 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Tools",
     linkedType: "tool",
     editHref: (id) => `/tools/${id}/edit`,
-    load: async () =>
-      sortRecent((await listResource<ToolDocumentation>("/tools", { pageSize: 100 })).items).map((x) => ({
+    load: async (page) =>
+      browsePage(await listResource<ToolDocumentation>("/tools", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
         name: `${x.toolkitName} · ${x.artisanName}`,
         creator: x.createdBy?.name ?? "-",
@@ -598,8 +635,8 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     // bare list route, which rendered the CREATE form: "Edit record" on a record the researcher had
     // already drilled into showed them an empty form, and filling it in made a second record.
     editHref: (id) => `/workshops?edit=${id}`,
-    load: async () =>
-      sortRecent((await listResource<Workshop>("/workshops", { pageSize: 100 })).items).map((x) => ({
+    load: async (page) =>
+      browsePage(await listResource<Workshop>("/workshops", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
         name: x.title?.trim() || "Untitled workshop",
         creator: x.createdBy?.name ?? "-",
@@ -610,8 +647,8 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Crafts",
     linkedType: "craft",
     editHref: (id) => `/crafts?edit=${id}`,
-    load: async () =>
-      sortRecent((await listResource<Craft & WithCreator>("/crafts", { pageSize: 100 })).items).map((x) => ({
+    load: async (page) =>
+      browsePage(await listResource<Craft & WithCreator>("/crafts", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
         name: x.place ? `${x.name} · ${x.place}` : x.name,
         creator: x.createdBy?.name ?? "-",
@@ -622,8 +659,9 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Questionnaire",
     linkedType: "questionnaire",
     editHref: () => "/questionnaire",
-    load: async () =>
-      sortRecent((await listResource<QuestionnaireInterview>("/questionnaire/interviews", { pageSize: 100 })).items).map(
+    load: async (page) =>
+      browsePage(
+        await listResource<QuestionnaireInterview>("/questionnaire/interviews", { page, pageSize: LIST_PAGE_CEILING }),
         (x) => ({
           id: x.id,
           name: x.title?.trim() || "Untitled interview",
@@ -636,26 +674,26 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     label: "Processes",
     linkedType: "process",
     editHref: (id) => `/processes?edit=${id}`,
-    load: async () =>
-      sortRecent(
-        (
-          await listResource<{ id: string; name: string; createdAt?: string } & WithCreator>("/processes", {
-            pageSize: 100
-          })
-        ).items
-      ).map((x) => ({
-        id: x.id,
-        name: x.name,
-        creator: x.createdBy?.name ?? "-",
-        createdAt: x.createdAt
-      }))
+    load: async (page) =>
+      browsePage(
+        await listResource<{ id: string; name: string; createdAt?: string } & WithCreator>("/processes", {
+          page,
+          pageSize: LIST_PAGE_CEILING
+        }),
+        (x) => ({
+          id: x.id,
+          name: x.name,
+          creator: x.createdBy?.name ?? "-",
+          createdAt: x.createdAt
+        })
+      )
   },
   media: {
     label: "Media",
     linkedType: "media",
     editHref: () => "/media",
-    load: async () =>
-      sortRecent((await listResource<MediaFile>("/media", { pageSize: 100 })).items).map((x) => ({
+    load: async (page) =>
+      browsePage(await listResource<MediaFile>("/media", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
         name: [x.originalFilename?.trim() || "Media", x.mediaType].filter(Boolean).join(" · "),
         creator: x.uploadedBy?.name ?? "-",
@@ -681,10 +719,35 @@ function mediaTypeIcon(mediaType?: string | null) {
 
 function BrowseByTypePanel() {
   const [typeKey, setTypeKey] = useState("");
-  const [rows, setRows] = useState<BrowseRow[] | null>(null);
+  /**
+   * The page on screen, envelope and all. `null` means "loading", `[]` means "there really are
+   * none" — the distinction this repository keeps deliberately, so a fetch in flight never renders
+   * as an empty repository.
+   */
+  const [browse, setBrowse] = useState<BrowsePage | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [recordId, setRecordId] = useState("");
+  /**
+   * THE OPEN RECORD, HELD — the row itself, not an id to be looked up in whatever page is loaded.
+   *
+   * This is the whole of the page-turn guarantee, and it is deliberately structural rather than a
+   * rule somebody has to remember. When the panel kept only `recordId` and recovered the row with
+   * `rows?.find((row) => row.id === recordId)`, every fact on screen about the open record — its
+   * name, its creator, its date, whether the card rendered at all — was a property of the page in
+   * `browse`. Load a different page and the card silently emptied: `recordId` was still set, so the
+   * table branch below (`typeKey && !recordId`) stayed hidden too, and the panel rendered NOTHING
+   * with a record still selected in the box above it. The reset effect below says a page turn must
+   * not close the open record; holding the row is what makes that true instead of aspirational.
+   *
+   * It also removes the second copy of the same state. `recordId` is derived from this, so the two
+   * cannot disagree, and a row can only be selected from rows that were on screen when it was
+   * picked — which is where it came from.
+   */
+  const [selected, setSelected] = useState<BrowseRow | null>(null);
+  const recordId = selected?.id ?? "";
   const [recordMedia, setRecordMedia] = useState<MediaFile[] | null>(null);
+  /** How much of this record's media the panel is holding — same ceiling, same rule. */
+  const [recordMediaCut, setRecordMediaCut] = useState<ListCut | null>(null);
   const [mediaLoading, setMediaLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -693,18 +756,30 @@ function BrowseByTypePanel() {
 
   const def = typeKey ? BROWSE_TYPES[typeKey] : null;
 
+  // A record type is a different question, so it starts at page 1 and drops the open record — an
+  // artisan is not a row of the media table. Changing the PAGE must do neither: turning to page 2
+  // is the same question, further down.
+  //
+  // The deps list is only half of that promise, and it was the half that was kept. The other half is
+  // that nothing on the record's card may be re-derived from the page underneath it — see `selected`
+  // above, and note that the loader effect below no longer clears `recordMedia` either. Clearing it
+  // there emptied "Media linked to this record" on a page turn, which is the same closure the
+  // comment forbids, arriving by the other door.
   useEffect(() => {
-    setRows(null);
-    setRecordId("");
-    setRecordMedia(null);
+    setPage(1);
+    setSelected(null);
+  }, [typeKey]);
+
+  useEffect(() => {
+    setBrowse(null);
     if (!typeKey) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
     BROWSE_TYPES[typeKey]
-      .load()
+      .load(page)
       .then((loaded) => {
-        if (!cancelled) setRows(loaded);
+        if (!cancelled) setBrowse(loaded);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load records");
@@ -715,16 +790,23 @@ function BrowseByTypePanel() {
     return () => {
       cancelled = true;
     };
-  }, [typeKey]);
+  }, [typeKey, page]);
 
   useEffect(() => {
     setRecordMedia(null);
+    setRecordMediaCut(null);
     if (!recordId || !def) return;
     let cancelled = false;
     setMediaLoading(true);
-    listResource<MediaFile>("/media", { linkedRecordType: def.linkedType, linkedRecordId: recordId, pageSize: 100 })
-      .then((page) => {
-        if (!cancelled) setRecordMedia(sortRecent(page.items));
+    listResource<MediaFile>("/media", {
+      linkedRecordType: def.linkedType,
+      linkedRecordId: recordId,
+      pageSize: LIST_PAGE_CEILING
+    })
+      .then((mediaPage) => {
+        if (cancelled) return;
+        setRecordMedia(sortRecent(mediaPage.items));
+        setRecordMediaCut(listCut(mediaPage, "files attached to this record"));
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load this record's media");
@@ -804,8 +886,28 @@ function BrowseByTypePanel() {
     }
   }
 
+  const rows = browse?.rows ?? null;
   const recordOptions = (rows ?? []).map((row) => ({ value: row.id, label: row.name }));
-  const selectedRow = recordId ? rows?.find((row) => row.id === recordId) : undefined;
+  /*
+    NO `selectedRow` LOOKUP LIVES HERE ANY MORE. `const selectedRow = recordId ? rows?.find((row) =>
+    row.id === recordId) : undefined` is what stood on this line, and it is the coupling that let a
+    page turn close an open record: `rows` is one page of at most `LIST_PAGE_CEILING`, so a record
+    opened from page 1 is simply absent from page 2 and its card stopped rendering — while `recordId`
+    stayed set, which also kept the table hidden, so the panel showed nothing at all. The card below
+    reads `selected` directly. The option LIST is still page-scoped, honestly and by design (the
+    notice under the table says so); the record already OPEN is not a search result.
+  */
+  /**
+   * The cut, computed from the page on screen rather than from the request.
+   *
+   * `reach="pager"` is what makes the sentence honest HERE and only here: this is the one site in
+   * this pass that has a real second page, so it may say "use the pager to reach the rest" — and it
+   * must also say that the "Narrow to one record" box does NOT search them, because that ComboBox
+   * filters the array it was handed (`components/ui/SearchableSelect`) and nothing else. Typing a
+   * filename that lives on page 14 returns nothing, and without the sentence that reads as proof
+   * the file was never uploaded.
+   */
+  const browseCut = browse ? cutOf(browse.rows.length, browse.total, def?.label.toLowerCase() ?? "records") : null;
 
   return (
     <section className="panel mb-5 p-4">
@@ -829,8 +931,19 @@ function BrowseByTypePanel() {
             <ComboBox
               options={recordOptions}
               value={recordId}
-              onChange={setRecordId}
-              placeholder={loading ? "Loading…" : recordOptions.length === 0 ? "No records" : "Type to filter records"}
+              // The ROW is what is kept, not the id: from here on the open record owes nothing to
+              // which page is loaded. An id the current page does not hold cannot arrive — these
+              // options ARE the current page — so the `?? null` branch is "cleared", not "lost".
+              onChange={(id) => setSelected((rows ?? []).find((row) => row.id === id) ?? null)}
+              placeholder={
+                loading
+                  ? "Loading…"
+                  : recordOptions.length === 0
+                    ? "No records"
+                    : browseCut
+                      ? `Type to filter these ${recordOptions.length}`
+                      : "Type to filter records"
+              }
             />
           </div>
         ) : null}
@@ -853,7 +966,8 @@ function BrowseByTypePanel() {
             <EmptyState title={`No ${def?.label.toLowerCase()} yet`} />
           </div>
         ) : (
-          <div className="mt-4 max-h-96 overflow-auto rounded-md border border-line-200">
+          <div className="mt-4 overflow-hidden rounded-md border border-line-200">
+            <div className="max-h-96 overflow-auto">
             <table className="w-full min-w-[560px] text-left text-sm">
               <thead className="sticky top-0 bg-surface-50 text-xs uppercase text-ink-500">
                 <tr>
@@ -882,18 +996,29 @@ function BrowseByTypePanel() {
                 ))}
               </tbody>
             </table>
+            </div>
+            {/* The pager and the sentence are one answer in two parts: `Pagination` prints "Page 3 of
+                26 · 2530 records" (its own wording, unchanged across every list screen in the app),
+                and the notice says what the filter box above can and cannot see. Neither is
+                sufficient alone — the pager was missing entirely and the box silently searched a
+                hundred rows of two and a half thousand. */}
+            <CappedListNotice cuts={[browseCut]} reach="pager" className="px-4 pt-3" />
+            <Pagination page={browse?.page ?? 1} pages={browse?.pages ?? 0} total={browse?.total ?? 0} onPage={setPage} />
           </div>
         )
       ) : null}
 
-      {recordId && selectedRow ? (
+      {/* One condition, on the held row. It used to be `recordId && selectedRow`, whose two halves
+          could disagree — an id with no matching row on the loaded page rendered neither this card
+          nor the table above, i.e. an empty panel with a record still named in the box. */}
+      {selected ? (
         <div className="mt-4 grid gap-3">
           <div className="flex flex-wrap items-center gap-3 rounded-md border border-line-200 bg-surface-50 px-4 py-3">
             <div className="min-w-0 flex-1">
-              <div className="font-display font-semibold text-ink-900">{selectedRow.name}</div>
+              <div className="font-display font-semibold text-ink-900">{selected.name}</div>
               <div className="text-xs text-ink-500">
-                {selectedRow.creator !== "-" ? `${selectedRow.creator} · ` : ""}
-                {formatDateTime(selectedRow.createdAt)}
+                {selected.creator !== "-" ? `${selected.creator} · ` : ""}
+                {formatDateTime(selected.createdAt)}
               </div>
             </div>
             <Link
@@ -945,6 +1070,11 @@ function BrowseByTypePanel() {
               ))}
             </ul>
           )}
+          {/* A record's media list is capped at the same 100. Multi-file upload against one linked
+              record is a first-class path here, so "100 files" can be the request's page size rather
+              than the record's truth — and the older half of a bulk import would otherwise be
+              invisible on a panel that presents itself as the record's complete media. */}
+          <CappedListNotice cuts={[recordMediaCut]} />
         </div>
       ) : null}
     </section>

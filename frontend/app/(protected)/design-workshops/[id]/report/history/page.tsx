@@ -70,8 +70,12 @@ import {
   type ReportDiff,
   type StageChange
 } from "@/lib/reportDiff";
+import { loadDraft } from "@/lib/designWorkshopStore";
 import { bytes, formatDateTime } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
+// Same rule as the report page beside this, from the same module: the route param may be a local
+// draft id and `GET /report/history` only knows server ids.
+import { reportServerId } from "../reportTarget";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Small presentational pieces
@@ -129,6 +133,15 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
   const [templates, setTemplates] = useState<DwTemplate[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
+  /**
+   * True once the draft has been read and this workshop has no server record yet.
+   *
+   * There is nothing to be sorry about in this state: no file has been generated from a workshop the
+   * repository has never seen, because both writers are on the server. What there IS to avoid is the
+   * screen this page used to draw — a red "Record not found" produced by carrying the `dwlocal-…`
+   * route param into `GET /report/history`, which reads as the workshop itself having been lost.
+   */
+  const [localOnly, setLocalOnly] = useState(false);
   const [leftId, setLeftId] = useState("");
   const [rightId, setRightId] = useState("");
 
@@ -137,9 +150,24 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
     // is for a list that refetches on filter changes; nothing here refetches).
     let cancelled = false;
     (async () => {
+      /*
+        THE SERVER'S ID FIRST, AND NOTHING IS ASKED OF THE SERVER WITHOUT ONE.
+
+        `loadDraft` matches either id, so this one read answers for both shapes of URL; a workshop
+        this browser has no draft for is an ordinary case (a colleague's, opened here for the first
+        time) and its route param is then already a server id. Only a `dwlocal-…` id with no
+        `remoteId` behind it has no server record at all, and that is the state below.
+      */
+      const draft = await loadDraft(id);
+      if (cancelled) return;
+      const target = reportServerId(id, draft);
+      if (!target) {
+        setLocalOnly(true);
+        return;
+      }
       try {
         const [loaded, loadedRegistry] = await Promise.all([
-          fetchDesignWorkshopReportHistory(id),
+          fetchDesignWorkshopReportHistory(target),
           fetchStageRegistry()
         ]);
         if (cancelled) return;
@@ -248,6 +276,15 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
       ) : null}
 
+      {localOnly ? (
+        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
+          This workshop was created on this device without a connection and has not reached the repository yet, so there
+          is no history to read — every .docx and .pdf recorded here is written by the server, and none has been. It is
+          created automatically on the next connection, and anything generated from then on is listed here. Nothing you
+          have captured is affected.
+        </div>
+      ) : null}
+
       {offline ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
           There is no connection, so the history cannot be read. It lists files generated on other devices by other
@@ -255,7 +292,9 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
         </div>
       ) : null}
 
-      {history === null && !error && !offline ? <p className="text-sm text-ink-muted">Loading the history…</p> : null}
+      {history === null && !error && !offline && !localOnly ? (
+        <p className="text-sm text-ink-muted">Loading the history…</p>
+      ) : null}
 
       {history && ordered.length === 0 ? (
         <EmptyState
@@ -293,6 +332,7 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
                   <ExportCard
                     record={row}
                     generation={generationOf(row.id)}
+                    windowTruncated={history.exportsTruncated}
                     templateName={templateName(row.templateId)}
                     duplicates={sameFileAs(history, row.id)
                       .map((other) => generationOf(other.id))
@@ -316,12 +356,28 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
 function ExportCard({
   record,
   generation,
+  windowTruncated,
   templateName,
   duplicates,
   staleStages
 }: {
   record: DwExportRecord;
   generation: number;
+  /**
+   * True when the server cut the window this generation number is a position inside.
+   *
+   * `GET .../report/history` takes the NEWEST hundred and flags the overflow as `exportsTruncated`;
+   * `inGenerationOrder` then re-sorts THAT WINDOW oldest-first and every label on this screen is an
+   * index into it. So once the cap bites, "Generation 3" means "the third of the hundred listed",
+   * not the third file this workshop ever produced — off by exactly the number of files cut, which
+   * this page knows it does not know. Audit 2026-08-15 (LOW, frontend).
+   *
+   * The screen already discloses that files are missing, in two places. What it did not say is that
+   * the NUMBERS are relative to what is left, and a generation number is precisely the thing a
+   * designer quotes months later ("the cost sheet changed at generation 7") — a number that silently
+   * means something different from what it did last quarter is worse than no number.
+   */
+  windowTruncated: boolean;
   templateName: string;
   duplicates: number[];
   /** Stages edited since this file was made — only computed for the newest, else null. */
@@ -335,7 +391,11 @@ function ExportCard({
             comparison can include, which the wording says rather than leaving the reader to
             discover it in the picker. */}
         <span className="font-medium text-ink-900">
-          {generation > 0 ? `Generation ${generation}` : "Undated file — it cannot be compared"}
+          {generation > 0
+            ? windowTruncated
+              ? `Generation ${generation} of the 100 most recent`
+              : `Generation ${generation}`
+            : "Undated file — it cannot be compared"}
         </span>
         <Chip>{record.format}</Chip>
         {/* Where the file came from is a fact about the archive, not trivia: a file a phone made
@@ -513,6 +573,10 @@ function DiffPanel({
               <p className="mt-4 text-sm leading-6 text-ink-700" data-testid="diff-summary">
                 <strong className="text-ink-900">
                   Generation {diff.earlierGeneration} → generation {diff.laterGeneration}
+                  {/* Same caveat as the card's, in the one other place these numbers are printed —
+                      see `ExportCard`'s `windowTruncated`. Two labels for one arithmetic must never
+                      disagree about how honest it is. */}
+                  {history.exportsTruncated ? " (of the 100 most recent)" : ""}
                 </strong>
                 {": "}
                 {touched.length === 0
@@ -736,7 +800,12 @@ function Limits({ diff, history }: { diff: ReportDiff; history: DwReportHistory 
             evidence and no stage above can be called identical — only &ldquo;nothing written that we can see&rdquo;.
           </li>
         ) : null}
-        {history.exportsTruncated ? <li>Only the most recent 100 files are listed.</li> : null}
+        {history.exportsTruncated ? (
+          <li>
+            Only the most recent 100 files are listed, and the generation numbers above count only those hundred — an
+            older file made before them is not generation 0, it is simply not here.
+          </li>
+        ) : null}
       </ul>
     </div>
   );

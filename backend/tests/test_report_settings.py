@@ -28,6 +28,7 @@ from app.services.report_model import (
 from app.services.report_templates import (
     SpecialSection,
     apply_report_settings,
+    inert_section_toggles,
     template as get_template,
 )
 
@@ -103,6 +104,46 @@ def test_completeness_annexure_can_be_turned_off():
         get_template(TEMPLATE_ID), {"includeCompletenessAnnexure": False}
     )
     assert not any(s.special is SpecialSection.COMPLETENESS for s in dropped.sections)
+
+
+def test_turning_a_section_on_that_the_template_has_not_got_says_so():
+    """The other half of a removal-only switch, which used to be silent.
+
+    These three toggles can only take a section AWAY — stated three times over in the designer-facing
+    Kotlin ledger and implemented the same way in the Android port, so it stays a stated limitation
+    rather than becoming a Python-only insertion that would make the two surfaces print different
+    documents from one workshop. What was a defect is that a designer on the default DCH_STANDARD
+    could switch "Include the completeness annexure" on, generate, and receive a file without one,
+    with nothing in the response, the warning header or the document saying why: only
+    DETAILED_TECHNICAL declares ANNEXURE_MEDIA and COMPLETENESS at all, and COMPACT_SUMMARY and
+    PHOTO_CATALOGUE carry no TOC.
+
+    So the assertion is the sentence, and the first two lines assert the behaviour it explains has
+    NOT changed — a report that started growing sections here would break the 485 KB by-value
+    ``report_templates_pin.json`` comparison against Kotlin, which can only be regenerated inside the
+    API container.
+    """
+    settings = {"includeCompletenessAnnexure": True, "includeMediaAnnexure": True}
+    standard = get_template("DCH_STANDARD")
+    assert not any(s.special is SpecialSection.COMPLETENESS for s in standard.sections)
+
+    shaped = apply_report_settings(standard, settings)
+    assert not any(s.special is SpecialSection.COMPLETENESS for s in shaped.sections), (
+        "the toggle started INSERTING sections, which the Android port does not do"
+    )
+
+    said = inert_section_toggles(standard, settings)
+    assert len(said) == 2
+    joined = " ".join(said)
+    assert "Include the completeness annexure" in joined
+    assert "Include the photographic annexure" in joined
+    assert standard.name in joined, "a designer must be told which template cannot carry it"
+
+    # And it is silent where the template CAN honour the switch, or the one warning that matters
+    # gets read as noise — which is the failure `questionnaire_warnings` was written about.
+    assert inert_section_toggles(get_template(TEMPLATE_ID), settings) == ()
+    assert inert_section_toggles(standard, {"includeCompletenessAnnexure": False}) == ()
+    assert inert_section_toggles(standard, None) == ()
 
 
 def test_excluded_stages_removes_exactly_those_stages():
@@ -530,3 +571,40 @@ def test_a_workshop_that_never_opened_stage_20_gets_the_cover_it_always_got():
     assert cover.logo is None
     assert cover.org_lines[0] == "Government of India • Ministry of Textiles"
     assert not any(line.startswith("Submitted") for line in cover.footer_lines)
+
+
+# --------------------------------------------------------------------------------------
+# The request itself: one file per request, said out loud
+# --------------------------------------------------------------------------------------
+
+
+def test_asking_for_two_formats_is_refused_rather_than_half_served():
+    """A 422 a client can act on, where there used to be a 200 with half the answer.
+
+    ``ReportGenerateIn``'s docstring promised that a list of formats existed so the common case —
+    "give me both, I am about to submit them" — was one request over one consistent snapshot. The
+    route reads ``payload.formats[0]``, renders once, writes one export row and returns one body,
+    and the validator SORTS the set, so ``["PDF", "DOCX"]`` normalised to ``["DOCX", "PDF"]`` and the
+    PDF was always the file that vanished — with nothing in the response, in ``x-report-warnings``
+    or in the export ledger saying a requested format had been dropped.
+
+    The contract is narrowed to what the endpoint does rather than half-supported both ways; the
+    honouring alternative is a zip or a multipart body and a second ledger row, which would change
+    the content-type contract for every existing caller. The message names the two requests to make
+    because an integration script is the caller that will hit this.
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas.design_workshops import ReportGenerateIn
+
+    with pytest.raises(ValidationError) as raised:
+        ReportGenerateIn(formats=["DOCX", "PDF"])
+    assert "one format per request" in str(raised.value)
+
+    # The arms that must not have been broken to get there: one format, either case, and the
+    # duplicate a client with a checkbox bug sends, which is still one file.
+    assert ReportGenerateIn(formats=["PDF"]).formats == ["PDF"]
+    assert ReportGenerateIn(formats=["docx"]).formats == ["DOCX"]
+    assert ReportGenerateIn(formats=["DOCX", "docx"]).formats == ["DOCX"]
+    assert ReportGenerateIn().formats == ["DOCX"], "the default is still one .docx"

@@ -2967,8 +2967,29 @@ async def download_media(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Audio conversion unavailable: pydub is not installed on the server.",
             ) from exc
-        size = int(media.sizeBytes or 0)
-        if size > MAX_CONVERT_BYTES:
+        # TWO CHECKS, BECAUSE THE COLUMN IS A CLAIM AND THE LENGTH IS A FACT.
+        #
+        # ``MediaFile.sizeBytes`` is whatever the client declared at ``POST /media/complete``: the
+        # schema bounds it only from below (``Field(gt=0)``), it is stored verbatim, and nothing in
+        # this codebase ever reconciles it against the stored object — there is no ``head_object``
+        # anywhere in ``backend/app``. Nor does the upload signature bound the body:
+        # ``s3.presign_put_url`` signs Bucket/Key/ContentType and no ``content-length-range``, and
+        # its docstring records why that must stay so (a signed condition breaks every Android build
+        # already in the field). So an account holding ``canDownloadDataset`` could presign an upload
+        # declaring ``sizeBytes: 1024``, PUT 1.5 GB to the returned URL, complete it as AUDIO, and
+        # then click download on their OWN row: the 413 below would not fire, ``get_object_bytes``
+        # would pull 1.5 GB into the heap of this single-worker uvicorn process, and pydub/ffmpeg
+        # would decode a second copy beside it. The box OOMs, taking every in-flight request with it.
+        #
+        # The declared size is kept as the CHEAP first refusal — it costs nothing and rejects the
+        # honest large recording before a byte moves. The real length is then checked before the
+        # expensive half, which is the transcode: ffmpeg decoding compressed audio is where one copy
+        # becomes several, so refusing between the fetch and the decode removes the multiplier even
+        # though the fetch itself has already happened. What remains after this is one oversized read
+        # into the heap; closing that needs a ``head_object`` helper in ``services/s3``, which is
+        # written up as a follow-up rather than bolted on from here.
+        declared = int(media.sizeBytes or 0)
+        if declared > MAX_CONVERT_BYTES:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="This recording is too large to convert in-process; download the original.",
@@ -2981,6 +3002,16 @@ async def download_media(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Could not fetch the audio bytes from object storage.",
             ) from exc
+        if len(raw) > MAX_CONVERT_BYTES:
+            # Same answer as the declared-size refusal, deliberately: the caller asked for a
+            # conversion of something too big to convert, and which of the two numbers caught it is
+            # the server's business. Dropping the reference first so the bytes are collectable while
+            # FastAPI builds the response.
+            del raw
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="This recording is too large to convert in-process; download the original.",
+            )
         try:
             # ffmpeg decode + AAC encode runs in a worker thread so requests keep flowing.
             out = await asyncio.to_thread(_convert_audio_to_mp4, raw)

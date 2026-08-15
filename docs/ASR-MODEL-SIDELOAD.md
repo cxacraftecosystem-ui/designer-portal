@@ -167,3 +167,29 @@ SM-M325F and recorded in `docs/DEVICE-TIER-MEASUREMENT.md`.
 
 **The studio figures are the good case.** Nobody has yet recorded an artisan in a courtyard with this
 model and scored it, and until somebody does, that row stays the word "unmeasured".
+
+---
+
+## How this document is kept true
+
+**This is a procedure, and a procedure is kept true by somebody running it.** Nothing here is
+generated and nothing is asserted by a test — the only proof that these two commands still work is a
+cable, a handset and ninety seconds. If you are reading it because you are about to sideload a model,
+you are the maintenance mechanism; if a step is wrong, fix the step here before you fix it in your
+shell history.
+
+| Claim class | Kept true by |
+|---|---|
+| The two `adb push` destinations | `android/app/src/main/java/com/designprototype/workshop/data/DwAsrModelInstall.kt` and `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwAsrModelInstallUi.kt` — the staging directories are string constants there. If a constant changes and this page does not, the push lands somewhere the app never looks and the failure is silent ("no model found"), which is the worst shape this document can take. |
+| The menu path (**Settings › Appearance & accessibility › Offline speech model**) | `android/app/src/main/java/com/designprototype/workshop/ui/AppearanceScreen.kt`. A human read; nothing mechanical connects a menu label to a sentence here. |
+| The SHA-256 digests and byte counts | Re-run `sha256sum` on the two files. They are pinned to a specific upstream release; if the publisher re-cuts the release under the same tag these become wrong, and a wrong digest here reads as "your download is corrupt". |
+| "The bytes go through exactly the same fingerprint check as a download would" | This is the load-bearing safety claim of the whole page. It is true only while the install path and the download path share one verifier. Re-read `DwAsrModelInstall.kt` against `android/app/src/main/java/com/designprototype/workshop/data/DwDownload.kt` if either is touched. |
+| "No surface in the app fetches from the endpoint yet" | `DW_ASR_MODEL_ARTIFACTS` in `android/app/src/main/java/com/designprototype/workshop/data/DwAsrModelInstall.kt`. **This is the sentence most likely to go stale**, because the server side already works (`docs/ASR-MODEL-HOSTING.md`) and the only thing keeping the cable mandatory is that constant still pointing at the GitHub `.tar.bz2`. The day it points at `/api/asr-models/{id}/files/{name}`, the amendment block at the top of this document is wrong and this page becomes optional rather than the only route. |
+| The accuracy / speed / memory table at the foot | **Not maintained here.** Copied from `docs/DEVICE-TIER-MEASUREMENT.md`, which is a dated measurement record on one handset. Re-measure there; do not update the numbers here without updating that document, or the two disagree and neither is trusted. |
+
+**Review triggers:** any change to `DwAsrModelInstall.kt`, `DwAsrModelInstallUi.kt`, `DwDownload.kt`,
+`DW_ASR_MODEL_ARTIFACTS`, or the Appearance settings screen; a new upstream model release.
+
+**Known unverified:** everything in *What you get once it is installed* is FLEURS studio speech on one
+SM-M325F. The row that says "accuracy in a courtyard — unmeasured" is the honest state of this
+document and must not be filled in from anything but a courtyard recording.

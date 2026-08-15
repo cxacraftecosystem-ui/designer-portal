@@ -164,6 +164,22 @@ class _Reads:
     def __init__(self, rows: list[SimpleNamespace]) -> None:
         self.rows = rows
         self.queries: list[dict[str, Any]] = []
+        self.counts: list[dict[str, Any]] = []
+
+    async def count(self, where: dict[str, Any] | None = None) -> int:
+        """The generation-number anchor: how many files sort BELOW the oldest one being returned.
+
+        Honours the `generatedAt: {lt: ...}` clause rather than returning `len(self.rows)`, because
+        the whole point of the count is that it is taken over rows the window does NOT contain — a
+        delegate that ignored the filter would let a route counting the entire table pass, and that
+        route is wrong for the reason argued at the call site (an export appended by another device
+        between the two queries would shift every number on the screen).
+        """
+        self.counts.append({"where": where})
+        clause = ((where or {}).get("generatedAt") or {}).get("lt")
+        if clause is None:
+            return len(self.rows)
+        return sum(1 for r in self.rows if r.generatedAt < clause)
 
     async def find_many(
         self,
@@ -287,6 +303,54 @@ def test_every_export_comes_back_newest_first_with_the_facts_that_identify_the_f
     # until somebody copies it off, so the distinction is a fact about the archive, not trivia.
     assert newest["generatedOnDevice"] is True
     assert newest["generatedByName"] == "Anil Kumar"
+
+
+def test_the_generation_number_counts_from_the_first_file_ever_and_not_from_the_window(
+    history, monkeypatch
+) -> None:
+    """WHAT A DESIGNER QUOTES INTO A COVERING EMAIL HAS TO BE THE RECORD'S OWN NUMBER.
+
+    The browser used to derive "Generation N" itself, by re-sorting the returned window oldest-first
+    and indexing into it (`reportDiff.inGenerationOrder`). That is exactly right until the export cap
+    bites, and wrong by the number of files cut from that moment on — the query is `generatedAt desc`
+    with `take = limit + 1`, so the hundred that survive are the NEWEST hundred and the numbering
+    started again at 1 on whichever file happened to be oldest in the window. A workshop that
+    regenerates on every edit passes a hundred exports, and from then on the diff header read
+    "generation 3 → generation 7" about two files the repository itself would call 47 and 51 — and it
+    read something different again the next time anybody generated a report.
+
+    So the cap is squeezed to two here, which leaves exp-4 and exp-3 on the wire out of four stored
+    files. Numbering the window would call them 2 and 1. The record calls them 4 and 3.
+    """
+    monkeypatch.setattr(route_module, "_HISTORY_EXPORT_LIMIT", 2)
+    body = history.get().json()
+
+    assert body["exportsTruncated"] is True
+    assert [(e["id"], e["generation"]) for e in body["exports"]] == [("exp-4", 4), ("exp-3", 3)]
+    # And the anchor was asked for over the files the caller cannot see, not over the whole table:
+    # a whole-table count gives the same answer here and a different one the moment another device
+    # appends an export between the two queries.
+    assert history.exports.counts, "the route must count the files below the window"
+    assert history.exports.counts[-1]["where"]["generatedAt"]["lt"] == _at(9)
+
+
+def test_the_generation_numbers_are_one_based_and_oldest_first_when_nothing_is_cut(history) -> None:
+    """The uncapped case the truncated one above must not have broken: four stored files number 1
+    through 4 from the oldest, and the list itself stays newest-first, so the newest card carries the
+    highest number. A workshop with no exports at all asks for no anchor — there is nothing to
+    number, and a count query to establish that is a query for nothing."""
+    body = history.get().json()
+
+    assert [(e["id"], e["generation"]) for e in body["exports"]] == [
+        ("exp-4", 4), ("exp-3", 3), ("exp-2", 2), ("exp-1", 1),
+    ]
+    assert body["exportsTruncated"] is False
+
+    history.exports.rows = []
+    history.exports.counts.clear()
+    empty = history.get().json()
+    assert empty["exports"] == []
+    assert history.exports.counts == [], "an empty history must not cost a count query"
 
 
 def test_an_export_whose_author_has_been_deleted_names_nobody_rather_than_guessing(history) -> None:

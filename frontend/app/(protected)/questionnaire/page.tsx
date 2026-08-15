@@ -257,6 +257,7 @@ function QuestionnairePageBody() {
         page,
         pageSize: 20,
         artisanId: funnel.artisanId || undefined,
+        workshopId: funnel.workshopId || undefined,
         search: searchQuery || undefined
       });
       // The answer to a question already moved on from must not land last and win — see the ref.
@@ -274,11 +275,30 @@ function QuestionnairePageBody() {
   }, []);
 
   // Backend already returns interviews most-recent-first (createdAt desc); the funnel narrows by
-  // artisan (the only list param the interviews endpoint supports) and the search box by text.
+  // artisan AND by workshop, and the search box by text.
+  //
+  // WORKSHOP IS IN BOTH THE PARAMS AND THIS DEPENDENCY ARRAY BECAUSE IT USED TO BE IN NEITHER, and
+  // the comment that stood here — "artisan is the only list param the interviews endpoint supports"
+  // — was simply wrong: ``list_interviews`` has declared ``workshopId`` and applied
+  // ``where["workshopId"]`` all along (backend/app/api/routes/questionnaire.py). The dropdown above
+  // the table rendered the workshop as the active filter and no byte about it ever left the browser,
+  // so the list underneath stayed the whole repository — every other designer's interviews at every
+  // other workshop — with the pager's ``total`` counting them all. Nothing was hidden, which is what
+  // made it so hard to see: the reader takes the rows below a filter control as that workshop's
+  // interviews and acts on rows that are not.
+  //
+  // Both halves are needed. Without the dependency the fetch does not re-run at all when a workshop
+  // is picked with no artisan selected (``selectWorkshop`` clears an already-empty ``artisanId`` and
+  // ``setPage(1)`` is a no-op on page 1); without the param it re-runs and asks for everything.
+  //
+  // CRAFT IS DELIBERATELY ABSENT and that is not an oversight: this endpoint has no craft parameter,
+  // so the craft dropdown legitimately does nothing here but cascade into the artisan picker
+  // (FunnelFilters narrows the artisans it offers). Do not "restore parity" by adding craftId — it
+  // would be silently ignored by the server, which is the same defect in the other direction.
   useEffect(() => {
     loadInterviews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, funnel.artisanId, searchQuery]);
+  }, [page, funnel.artisanId, funnel.workshopId, searchQuery]);
 
   // Leaving the page mid-recording must release the microphone and the clock, not leak either.
   useEffect(() => {

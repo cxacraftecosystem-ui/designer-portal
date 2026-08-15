@@ -791,7 +791,7 @@ def test_a_cut_roster_read_is_reported_instead_of_dropping_designers_in_silence(
                                                                                monkeypatch):
     """The second truncation, which had no warning and no wire signal at all.
 
-    ``_active_roster_emails`` borrowed the picker's ``ELIGIBLE_VIEWER_LIMIT`` as a read cap, and the
+    ``active_roster_emails`` borrowed the picker's ``ELIGIBLE_VIEWER_LIMIT`` as a read cap, and the
     two are not the same quantity. Its rows are not a page shown to anybody — they are folded into
     the user query's ``WHERE`` — so a roster row past the cut does not shorten a list, it removes an
     ELIGIBLE DESIGNER from the picker as though they had never been empanelled. At 1282 active rows
@@ -979,7 +979,7 @@ def test_the_roster_read_cap_is_its_own_number_and_stays_a_backstop():
 def test_a_designer_whose_address_is_stored_shouting_is_offered_and_may_be_granted(world, client):
     """The picker and the write must agree about the same account, in both directions.
 
-    ``_active_roster_emails`` returns ``normalise_email``'d — lower-cased — addresses and the picker
+    ``active_roster_emails`` returns ``normalise_email``'d — lower-cased — addresses and the picker
     folded them into ``{"email": {"in": …}}``, an exact comparison against ``User.email`` as stored.
     The WRITE path (``_designers_the_roster_still_admits``) normalises BOTH sides. So a designer whose
     address is stored in a different case from their roster row was hidden from the picker while the

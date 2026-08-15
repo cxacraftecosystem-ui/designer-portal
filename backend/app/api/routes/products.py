@@ -22,6 +22,7 @@ from app.services.records import (
     enum_filter_or_422,
     hydrate_relations,
     include_of,
+    media_url_owners,
     merge_field_provenance,
     public_encode,
     require_record,
@@ -48,6 +49,18 @@ RELATIONS = (
     Relation("createdBy", "user", "createdById"),
 )
 INCLUDE = include_of(RELATIONS)
+
+# WHY EVERY ENCODE BELOW NAMES THE CALLER. ``public_encode(obj)`` with no viewer is not "the default";
+# it is the CHEAPEST SAFE answer — mask every identity number and withhold every media URL — and it is
+# the answer a route reaches by not thinking about the question. This module used to take it on all
+# four of its responses, and the cost was not theoretical: ``RELATIONS`` declares ``media`` two lines
+# up, so every product came back with its photographs listed and their ``url``/``publicUrl``/
+# ``objectKey`` popped off. ``products/page.tsx`` builds its tile from ``media.url``, so the list
+# proved a photograph existed and then rendered a placeholder with nothing to open — for a
+# MASTER_ADMIN and for the designer who had uploaded it seconds earlier, because the viewer-less
+# branch is taken before any rank test. Naming the caller also lifts the Aadhaar/Pehchan mask for the
+# ranks entitled to it, which is the same policy artisans.py, media.py and search.py already apply on
+# their own reads.
 
 
 @router.get("")
@@ -132,7 +145,16 @@ async def list_products(
         order={"createdAt": "desc"},
         relations=RELATIONS,
     )
-    return page_payload(public_encode(items), total, page, page_size)
+    # ONE grant lookup for the whole page — ``media_url_owners`` costs a single query, and only below
+    # professor, which is exactly the rank whose colleagues' photographs would otherwise be listed and
+    # withheld. The cheap ``viewer``-derived default would hand back only the caller's OWN uploads,
+    # which on a shared workshop's product list is most of a page of dead tiles.
+    return page_payload(
+        public_encode(items, current_user, media_urls=await media_url_owners(current_user)),
+        total,
+        page,
+        page_size,
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -151,14 +173,17 @@ async def create_product(
     # After the status policy, so a late submission outranks the submitter's own approval rights.
     pin_pending_if_late(data, current_user, check=check)
     created = await db.productdocumentation.create(data=data, include=INCLUDE)
-    return public_encode(created)
+    # No grant lookup on the create: a MediaFile points at its product by ``productId``, and this
+    # product did not exist until the statement above, so ``media`` is empty by construction and there
+    # is no URL for a resolved set to decide about. The viewer is still named, for the identity mask.
+    return public_encode(created, current_user)
 
 
 @router.get("/{product_id}")
 async def get_product(product_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     product = await require_record(db.productdocumentation, product_id)
     await hydrate_relations([product], RELATIONS)
-    return public_encode(product)
+    return public_encode(product, current_user, media_urls=await media_url_owners(current_user))
 
 
 @router.patch("/{product_id}")
@@ -184,7 +209,12 @@ async def update_product(
     merge_field_provenance(data, current_user, previous=product)
     resubmit_status(product, current_user, data)
     updated = await db.productdocumentation.update(where={"id": product_id}, data=data, include=INCLUDE)
-    return public_encode(updated)
+    # The PATCH response carries ``media`` (it is in ``INCLUDE``) and the editor need not be the
+    # uploader — an EDIT-tier grantee or a professor routinely saves a product somebody else
+    # photographed. Resolved rather than left to the cheap default so a photograph that was openable
+    # before the save is still openable in the response that comes back from it; a URL that vanishes on
+    # save reads as the save having destroyed the file.
+    return public_encode(updated, current_user, media_urls=await media_url_owners(current_user))
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)

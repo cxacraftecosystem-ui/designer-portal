@@ -80,8 +80,8 @@ interpretation:
   688 ms of the difference is the `db.user.find_unique` inside `get_current_user`
   (`backend/app/core/deps.py:127`). An endpoint that reads nothing costs one round trip because
   authentication reads something.
-- `GET /review/pending` (`backend/app/api/routes/review.py:139`) loops over six record types issuing
-  one `find_many` each (`review.py:141-147`). It returns **22 bytes** — the queue is empty — and takes
+- `GET /review/pending` (`backend/app/api/routes/review.py::list_pending_reviews`) loops over six
+  record types issuing one `find_many` each. It returns **22 bytes** — the queue is empty — and takes
   **4,958 ms MEASURED**. That is 7.00 implied round trips against a model that predicted 7.
 
 ### 1.2 The measured table
@@ -170,11 +170,11 @@ Ranked by *when* it bites, not by size of eventual win.
 | 4 | **Write-path N+1** | `questionnaire.py:216-258` = 3 queries per answer | **Now**, at ~14 answers in one save | `db.batch_()` / `create_many` — one round trip | None; strictly fewer queries |
 | 5 | **Connection pool under burst** | Knee at 8 concurrent, MEASURED §6 | **Now**, at ~8 simultaneous users | Remove queries (see 1, 2); make the pool a knob | None |
 | 6 | **Reports and manifests built entirely in RAM** | 284 B/cell MEASURED; caps allow 2.1 M cells | ~10–20× today's records | `write_only` workbook to a temp file; stream rows | Column widths become fixed, not content-fitted |
-| 7 | **Queue throughput: one worker, serial batch** | `media_queue.py:194-213`; `main.py:31` | ~5–10× today's audio | Concurrency as a setting (default 1); DB lease instead of `flock` | None at default |
-| 8 | **Unbounded aggregate responses** | `review.py:139` (no paging), `data_browser.py:132,143` | ~200 pending per type | Paginate; stream the manifest | None |
+| 7 | **Queue throughput: one worker, serial batch** | `media_queue.py::process_next_media_jobs`; `main.py::_acquire_queue_worker_lock` | ~5–10× today's audio | Concurrency as a setting (default 1); DB lease instead of `flock` | None at default |
+| 8 | **Unbounded aggregate responses** | `review.py::list_pending_reviews` (no paging), `data_browser.py:132,143` | ~200 pending per type | Paginate; stream the manifest | None |
 | 9 | **Multi-column `ILIKE '%term%'`** | `records.py:231-244`, 57 call sites | ~100–150 k rows in a searched table, MODELLED | `pg_trgm` GIN indexes — inside Postgres, no new service | Index build + write amplification; kilobytes today |
 | 10 | **OFFSET pagination depth** | `pagination.py:10` | ~100 k rows **and** deep paging, MODELLED | Cursor alongside page numbers, not instead | None; additive field |
-| 11 | **Exact `COUNT(*)` per list response** | `records.py:451-454` | ~1 M rows, MODELLED | Fetch `pageSize + 1`; report `hasMore` above a threshold | None until the threshold |
+| 11 | **Exact `COUNT(*)` per list response** | `records.py::count_and_page` | ~1 M rows, MODELLED | Fetch `pageSize + 1`; report `hasMore` above a threshold | None until the threshold |
 
 Items 9, 10 and 11 are the three the brief asked about most pointedly, and they rank **last**. That
 is the finding, not an oversight; §7 shows the arithmetic.
@@ -215,9 +215,9 @@ flowchart TB
 
 `backend/app/services/concurrency.py::gather_reads` already implements exactly this, bounded by the
 Prisma pool so one request cannot drain it. Routes still to convert, from the measurements above:
-`review.py:139` (7 → 2 trips), `export.py:153` (13 → 3), `media.py` list (`count` then `find_many`
-then `_interview_labels`, still sequential at `media.py` list route), and the nineteen queries behind
-`/data/report`.
+`review.py::list_pending_reviews` (7 → 2 trips), `export.py:153` (13 → 3), `media.py` list (`count`
+then `find_many` then `_interview_labels`, still sequential at `media.py` list route), and the
+nineteen queries behind `/data/report`.
 
 **Cost to the small deployment: none.** Fewer wall-clock seconds for the same queries, the same
 memory, no new dependency. This is the fix the brief's design rule was written for.
@@ -231,7 +231,7 @@ of one. On a pool of ten that is fine for one request and interesting for three.
 
 The fixes that improve throughput as well as latency are the ones that **delete** queries: caching
 the auth read (§4), the `group_by` that replaced four count pairs in `dashboard.py:59-82`, and
-`hydrate_relations`' one-query-per-relation batching in `records.py:392`.
+`hydrate_relations`' one-query-per-relation batching in `backend/app/services/records.py`.
 
 ---
 
@@ -500,18 +500,18 @@ an arbitrary page sends `page` and pays the OFFSET it asked for. Real users over
 sequentially, so this captures nearly all of the benefit with **zero contract break** — the Android
 app and the web app keep working unchanged, and neither has to be released in lockstep.
 
-One correctness note for whoever implements it: every list orders by `createdAt desc`
-(`records.py:250` and siblings), and `createdAt` is **not unique**. A stable cursor must be the
-compound `(createdAt, id)`, and the supporting index should be `(createdAt DESC, id DESC)` rather
-than the bare `createdAt` the index migration adds. Otherwise two records saved in the same
-millisecond will duplicate or skip across a page boundary.
+One correctness note for whoever implements it: every list orders by `createdAt desc` (the `order=`
+each list route hands to `records.py::count_and_page`), and `createdAt` is **not unique**. A stable
+cursor must be the compound `(createdAt, id)`, and the supporting index should be
+`(createdAt DESC, id DESC)` rather than the bare `createdAt` the index migration adds. Otherwise two
+records saved in the same millisecond will duplicate or skip across a page boundary.
 
 **Cost to the pilot:** one extra field in a response body. Nothing else.
 
 ### 7.2 Exact `COUNT(*)` on every list response (rank 11)
 
-`count_and_page` (`records.py:451-454`) issues `delegate.count(where=where)` alongside the page —
-and, importantly, *concurrently* with it in the tree version. Two consequences:
+`count_and_page` (`backend/app/services/records.py`) issues `delegate.count(where=where)` alongside
+the page — and, importantly, *concurrently* with it in the tree version. Two consequences:
 
 - While the count is faster than the page query, it costs **zero wall-clock time**. On the deployed
   sequential build it costs a full 694 ms; gathering it (§3) removes that without touching the
@@ -807,8 +807,9 @@ Worth recording, because the temptation in a scale review is to touch everything
   indexes matching real query shapes and drops 34 that no query can reach, with EXPLAIN evidence on a
   100× copy for each. Adding `(createdAt DESC, id DESC)` for keyset (§7.1) is the only amendment
   I would make.
-- **`hydrate_relations`** (`records.py:392`) is the correct answer to the relation cost in §1.3: one
-  batched query per relation, all issued together, three waits per page regardless of relation count.
+- **`hydrate_relations`** (`backend/app/services/records.py`) is the correct answer to the relation
+  cost in §1.3: one batched query per relation, all issued together, three waits per page regardless
+  of relation count.
 - **`/health` deliberately does not touch the database** (`main.py:412-424`), so a recovering pooler
   cannot cost the box its CloudFront origin health. Do not "improve" this into a real check.
 - **The `P2024` guard in the watchdog** (`main.py:90-93`) prevents a saturated pool from being

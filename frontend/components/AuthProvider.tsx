@@ -22,7 +22,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshMe = useCallback(async () => {
     try {
-      const me = await apiFetch<User>("/me");
+      /*
+        `redirectOn401: false` is load-bearing, not tidiness.
+
+        This provider is mounted in the ROOT layout, above the public landing page and /login as well
+        as the protected tree, and the effect below runs this probe on every single page load. Left
+        on the default, a visitor holding an EXPIRED token in localStorage — the returning designer
+        who last signed in weeks ago — sends it, gets a 401, and `apiFetch` hard-navigates her off
+        the public home page to a sign-in form she never asked for, mid-read. Audit 2026-08-15
+        (MINOR, frontend) filed exactly that.
+
+        Nothing is lost by opting out, because this function already handles the 401 completely: it
+        clears the dead token in the catch below and sets `user` to null, and `AppShell` turns that
+        into a soft `router.replace("/login")` FOR PROTECTED ROUTES ONLY. That is the routing
+        decision the app already makes correctly; `apiFetch`'s blanket one only ever duplicated it
+        on protected pages and got it wrong on public ones.
+
+        If you delete this argument, the landing page starts bouncing returning visitors again.
+      */
+      const me = await apiFetch<User>("/me", {}, { redirectOn401: false });
       setUser(me);
     } catch (err) {
       // Only discard the stored token when the server explicitly rejected it. On network

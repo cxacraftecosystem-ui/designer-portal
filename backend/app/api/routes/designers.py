@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.db import db
 from app.core.deps import (
-    ROLE_RANK,
+    DESIGN_WORKSHOP_ROLES,
     is_admin,
     require_designer,
     require_designer_roster_manager,
@@ -43,6 +43,7 @@ from app.schemas.designers import (
     DesignerRosterCreate,
     DesignerRosterUpdate,
 )
+from app.services.design_workshop_viewers import active_roster_emails
 from app.services.designers import (
     get_or_create_profile,
     normalise_email,
@@ -54,12 +55,34 @@ from app.services.pagination import normalize_pagination, page_payload
 
 router = APIRouter(prefix="/designers", tags=["designers"])
 
-# The roles that may run a design workshop, and therefore the accounts the assignment picker
-# offers. Derived from the ladder rather than written out, so inserting a tier above DESIGNER
-# next year does not quietly drop it out of every admin's picker.
-WORKSHOP_CAPABLE_ROLES = [
-    role for role, rank in ROLE_RANK.items() if rank >= ROLE_RANK["DESIGNER"]
-]
+# The roles that may run a design workshop, and therefore the accounts this directory offers.
+#
+# IMPORTED FROM THE ONE SET, NEVER RE-DERIVED FROM THE RANK LADDER. This list used to read
+# ``[role for role, rank in ROLE_RANK.items() if rank >= ROLE_RANK["DESIGNER"]]`` under a comment
+# arguing that deriving it meant "a tier inserted above DESIGNER next year does not quietly drop
+# out of every admin's picker". That argument is exactly backwards for this one capability, and
+# the ladder already contains the counter-example: PROFESSOR is 40 and DESIGNER is 35, so the
+# derivation returned ['DESIGNER', 'PROFESSOR', 'ADMIN', 'MASTER_ADMIN'] and this endpoint listed
+# professors as workshop-capable while ``design_workshop_viewers`` refuses a professor's viewer
+# grant with an all-or-nothing 422 that discards the whole PUT body.
+#
+# ``can_run_design_workshops`` is THE ONE PREDICATE IN deps.py THAT IS A SET RATHER THAN A RANK
+# THRESHOLD — read its docstring for why a professor outranking a designer is not the same thing
+# as being one. A second, rank-derived copy of a non-monotonic rule is not a copy at all; it is a
+# different rule that agrees today only by accident. If professors are ever admitted, change
+# ``DESIGN_WORKSHOP_ROLES`` and every surface follows; do NOT reintroduce a threshold here.
+#
+# ``sorted`` because a frozenset has no order and this goes into a query's ``IN`` list — a stable
+# order keeps the emitted SQL identical between processes, which is what makes a query plan and a
+# test assertion reproducible.
+WORKSHOP_CAPABLE_ROLES = sorted(DESIGN_WORKSHOP_ROLES)
+
+#: How many directory rows one request will read. Named rather than inlined because two clients
+#: hard-code the same number to decide whether the answer was cut — ``DIRECTORY_CAP`` in
+#: ``frontend/app/(protected)/admin/designers/page.tsx`` and ``DESIGNER_DIRECTORY_CAP`` in
+#: ``android/…/DesignerRosterScreen.kt`` — and a length inference is only sound while every filter
+#: this endpoint applies is inside the query. See :func:`designer_directory`.
+DIRECTORY_TAKE = 500
 
 # Identical text for "you may not see this profile" and "no such user", because they are answered
 # with the same status and must not be told apart. See :func:`_assert_may_touch_profile`.
@@ -229,17 +252,65 @@ async def designer_directory(
     and the gap is discovered when the report is due. ``includeSuspended=true`` shows them,
     marked, for an admin who is deciding whom to restore.
 
-    Accounts above DESIGNER are listed unconditionally — they can run a workshop and the roster
-    does not gate them, which is the whole reason the two facts are kept apart.
+    ADMINS AND THE MASTER ADMIN are listed unconditionally — they can run a workshop and the
+    roster does not gate them, which is the whole reason the two facts are kept apart.
+
+    A PROFESSOR IS NOT LISTED AT ALL, even though they outrank a designer. This paragraph used to
+    say "accounts above DESIGNER are listed unconditionally", which was the rank ladder's answer
+    and not this capability's: ``deps.can_run_design_workshops`` is a SET, and the viewer write
+    refuses a professor with a 422 that discards the entire request body. The docstring said one
+    thing, the server did another, and the next person to build the picker this endpoint's name
+    promises would have shipped the docstring's version. See ``WORKSHOP_CAPABLE_ROLES`` above.
     """
-    where: dict[str, Any] = {"role": {"in": WORKSHOP_CAPABLE_ROLES}}
+    # EVERY FILTER GOES IN THE ``WHERE``, AND THE SUSPENSION FILTER MOST OF ALL.
+    #
+    # The roster check used to run in Python after the read (``continue`` in the loop below), so
+    # the ``take`` was spent on rows that were then thrown away: twenty suspended designers
+    # sorting inside the first 500 came back as 480 rows, with eligible designers past the cut
+    # never considered at all. Both clients infer "the list was cut" from ``len(rows) >= 500``
+    # (``DIRECTORY_CAP`` on the web, ``DESIGNER_DIRECTORY_CAP`` on Android) and a post-take drop
+    # is exactly what breaks that inference — it reports a COMPLETE list that is missing people.
+    # Filtering in the query makes the cap apply to rows that are already eligible, which is what
+    # makes the length honest again. This is the same defect, in the same shape, that
+    # ``eligible_viewers`` was fixed for on 2026-08-13.
+    clauses: list[dict[str, Any]] = [{"role": {"in": WORKSHOP_CAPABLE_ROLES}}]
+    if not includeSuspended:
+        # The flag is discarded deliberately: this route answers a bare JSON array, so there is
+        # nowhere on the wire to say the roster read itself was cut. ``active_roster_emails``
+        # already logs that case at ERROR, which is the whole reason it returns the flag rather
+        # than swallowing it — see the follow-up note about giving this endpoint an envelope.
+        admitted, _roster_read_was_cut = await active_roster_emails()
+        clauses.append({
+            "OR": [
+                # Admins are not roster-gated at any point, the same rule ``roster_allows``
+                # applies at sign-in: an admin empanelled years ago and later suspended must not
+                # lose the ability to administer anything.
+                {"role": {"in": ["ADMIN", "MASTER_ADMIN"]}},
+                # ``mode: "insensitive"`` because ``admitted`` is lower-cased and ``User.email``
+                # is not — an address stored shouting would otherwise match no roster row and the
+                # designer would vanish from a directory the roster admits.
+                {"AND": [{"role": "DESIGNER"}, {"email": {"in": admitted, "mode": "insensitive"}}]},
+            ]
+        })
     if search:
         token = search.strip()
-        where["OR"] = [
+        # AND-COMPOSED WITH THE CLAUSE ABOVE, NEVER ASSIGNED TO THE SAME ``OR`` KEY. Two ORs
+        # written to ``where["OR"]`` let the later one win, and if that is the search then the
+        # eligibility clause is gone and the directory offers suspended designers to the one
+        # caller that asked not to see them.
+        clauses.append({"OR": [
             {"name": {"contains": token, "mode": "insensitive"}},
             {"email": {"contains": token, "mode": "insensitive"}},
-        ]
-    users = await db.user.find_many(where=where, order={"name": "asc"}, take=500)
+        ]})
+    users = await db.user.find_many(
+        where={"AND": clauses},
+        # The id is the TIEBREAKER and it is load-bearing on a capped read: display names are not
+        # unique in this table, so with ``name`` alone which rows fall inside the 500 is Postgres's
+        # choice and can differ between two identical requests — "who is missing" changing on
+        # refresh, which no search term can be relied on to reach.
+        order=[{"name": "asc"}, {"id": "asc"}],
+        take=DIRECTORY_TAKE,
+    )
     if not users:
         return []
 
@@ -252,15 +323,24 @@ async def designer_directory(
         db.designerroster.find_many(where={"email": {"in": emails}}),
         db.designerprofile.find_many(where={"userId": {"in": ids}}),
     )
-    by_email = {r.email: r for r in roster_rows}
+    # KEYED LOWER-CASED ON BOTH SIDES. ``DesignerRoster.email`` is normalised on the way in and
+    # ``User.email`` is not, so an exact-string key silently misses the roster row of anybody whose
+    # account address is stored with a capital — and a DESIGNER with no roster row found reads as
+    # suspended, which is the one verdict this payload exists to report.
+    by_email = {r.email.lower(): r for r in roster_rows}
     by_user = {p.userId: p for p in profiles}
 
     out: list[dict[str, Any]] = []
     for user in users:
-        roster = by_email.get(user.email)
+        roster = by_email.get((user.email or "").lower())
         profile = by_user.get(user.id)
         gated = role_value(user) == "DESIGNER"
         can_sign_in = bool(roster and roster.isActive) if gated else True
+        # A BACKSTOP, NOT THE FILTER. Since the roster fold moved into the WHERE above this is
+        # unreachable on the ``includeSuspended=false`` arm, and it must stay that way: put the
+        # suspension test back here as the only filter and the cap starts being spent on rows that
+        # are discarded again. It is kept because a mismatch between the two would otherwise ship a
+        # suspended designer to a picker, and silence is the wrong failure for that.
         if gated and not can_sign_in and not includeSuspended:
             continue
         out.append({

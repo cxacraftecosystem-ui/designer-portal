@@ -31,18 +31,61 @@ import { CloudOff, RefreshCw, TriangleAlert } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { useToast } from "@/components/ui/Toast";
 import {
+  acknowledgeStoreTrouble,
   getDraftsSnapshot,
   getServerDraftsSnapshot,
+  getServerStoreHealth,
+  getStoreHealth,
   refreshDrafts,
   retryDraft,
   setDraftSessionUser,
+  storeIsAnswering,
   subscribeDrafts,
   syncDesignWorkshopDrafts,
   type DwDraft
 } from "@/lib/designWorkshopStore";
 
-/** What is outstanding on one draft, derived from the draft itself so there is no second source. */
-function outstanding(draft: DwDraft) {
+/**
+ * What a completed pass should SAY, given what it did.
+ *
+ * Exported and pure so the three-way choice can be asserted without a browser, a store and a
+ * refused save — which is the condition under which the two-way version survived for as long as it
+ * did. `DwSyncResult.failed` was maintained at six sites in `runSync` and read by nothing, so a pass
+ * that refused six things answered the click in the same words, and the same tone, as a pass that
+ * had nothing to do.
+ */
+export function syncOutcome(result: {
+  workshopsCreated: number;
+  stagesSent: number;
+  mediaUploaded: number;
+  failed: number;
+  pending: number;
+  stoppedOffline: boolean;
+}): { kind: "sent" | "refused" | "offline" | "idle"; tone: "success" | "error" | "info"; title: string } {
+  const sent = result.workshopsCreated + result.stagesSent + result.mediaUploaded;
+  if (sent) {
+    return { kind: "sent", tone: "success", title: `${sent} saved ${sent === 1 ? "change" : "changes"} sent` };
+  }
+  // Refusals first: "still no connection" is a fact about the wifi and "nothing to send" is a fact
+  // about an empty queue, while a refusal is the only one of the three a person can act on.
+  if (result.failed > 0) {
+    return {
+      kind: "refused",
+      tone: "error",
+      title: `${result.failed} ${result.failed === 1 ? "item was" : "items were"} refused`
+    };
+  }
+  if (result.stoppedOffline) return { kind: "offline", tone: "error", title: "Still no connection" };
+  return { kind: "idle", tone: "info", title: "Nothing to send" };
+}
+
+/**
+ * What is outstanding on one draft, derived from the draft itself so there is no second source.
+ *
+ * Exported for the tests, which is worth the export: the fold warning below is the most
+ * consequential sentence this component can draw and it reached no screen at all until now.
+ */
+export function outstanding(draft: DwDraft) {
   const stages = Object.values(draft.stages).filter((stage) => stage.dirtyAt !== null || stage.removedFrom.length > 0);
   const refusals = [
     ...(draft.failure?.permanent ? [draft.failure.message] : []),
@@ -53,17 +96,53 @@ function outstanding(draft: DwDraft) {
   const held = Object.values(draft.stages)
     .filter((stage) => stage.failure && !stage.failure.permanent)
     .map((stage) => stage.failure?.message ?? "");
+  /*
+    THE FOLD'S OWN WARNING, WHICH WAS COMPOSED CORRECTLY AND SHOWN TO NOBODY.
+
+    `adoptServerStage`'s dirty branch folds the server's copy in and writes `foldNotice(fold)` to
+    `DwDraftStage.foldNote`. A grep for that field across the whole frontend returned exactly two
+    hits — the declaration and that one write. There was no reader anywhere, and the comment above
+    the write said it was "kept on the record rather than raised as a toast, because the read that
+    produced it may have happened while the designer was on another screen", which states an
+    intention to display it later that nothing carried out.
+
+    What was being discarded is the ONLY place on the web a designer is told that a fold has just
+    armed a destructive save: "You had deleted everything in {entities} in this browser, so N rows
+    the server still holds there have NOT been added back, and the next save will delete them on the
+    server — including anything added there by somebody else since you deleted." Android draws its
+    identical `DwStageFold.notice` on the stage screen, so the two surfaces disagreed about whether
+    this warning exists at all.
+
+    DRAWN HERE, ON THE BANNER, AND NOT ONLY ON THE STAGE FORM. This component is mounted in the
+    protected layout, so it is on every screen the designer can reach — including the workshop list
+    and the report, which is exactly where somebody goes after leaving the stage that folded. A fold
+    only happens on a DIRTY stage, so a draft carrying a note always has unsent work and this banner
+    is always rendered for it; the note cannot be composed and then hidden by the panel's own
+    visibility rule. It is discharged by the push it warns about — see the acknowledgement sites in
+    `designWorkshopStore` — so it neither repeats for ever nor disappears before the save it is
+    about.
+  */
+  const folds = Object.values(draft.stages)
+    .filter((stage) => (stage.foldNote ?? "").trim().length > 0)
+    .map((stage) => ({ stageKey: stage.stageKey, note: stage.foldNote as string }));
   return {
     stages: stages.length,
     neverSent: draft.remoteId === null,
     headerOnly: draft.headerDirtyAt !== null,
     refusals,
-    held
+    held,
+    folds
   };
 }
 
 export function DesignWorkshopDraftBanner() {
   const drafts = useSyncExternalStore(subscribeDrafts, getDraftsSnapshot, getServerDraftsSnapshot);
+  /**
+   * Whether IndexedDB is answering at all — subscribed through the SAME publish the drafts use, so
+   * the two snapshots can never describe different moments. See `DwStoreHealth` for why a store that
+   * cannot be read must not be rendered as a store with nothing in it.
+   */
+  const health = useSyncExternalStore(subscribeDrafts, getStoreHealth, getServerStoreHealth);
   const [syncing, setSyncing] = useState(false);
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
@@ -87,6 +166,30 @@ export function DesignWorkshopDraftBanner() {
   useEffect(() => {
     if (!sessionResolved) return;
     setDraftSessionUser(user?.id ?? null);
+    /*
+      AND ON THE WAY OUT, BECAUSE SIGNING OUT UNMOUNTS THIS COMPONENT BEFORE THE EFFECT ABOVE CAN RUN.
+
+      `AppShell` does `if (!user) return null;` before it ever produces `children`, and this banner is
+      one of those children (protected layout). So the instant `logout()` sets `user` to null the
+      whole subtree unmounts, and the re-run that would pass `null` never commits: `sessionUserId`
+      kept the previous designer's id, with `sessionKnown` still true, for the entire signed-out
+      period. The docstring on `setDraftSessionUser` states the opposite as a guarantee, and what
+      actually held the door shut was that `syncDesignWorkshopDrafts` has exactly one call site — this
+      component — inside the same unmounted subtree. A protection enforced by where a component
+      happens to be mounted is not enforced.
+
+      A cleanup is the smallest thing that closes it from inside this file. It also fires when the
+      banner is unmounted for a reason OTHER than signing out — a route where `AppShell` swaps
+      `children` for its blocked/chrome-hidden panel — and that direction is safe: the store then
+      treats every draft as somebody else's, shows nothing and sends nothing, which is the fail-quiet
+      end. The re-mount passes the real id straight back.
+
+      The right home for this is above the `!user` return altogether — an effect in `AuthProvider` or
+      a small client component in the root layout — so that the store's idea of the session does not
+      depend on the render tree at all. That is a change to files outside this one and is recorded as
+      outstanding.
+    */
+    return () => setDraftSessionUser(null);
   }, [sessionResolved, user?.id]);
 
   const drain = useCallback(
@@ -94,23 +197,39 @@ export function DesignWorkshopDraftBanner() {
       setSyncing(true);
       try {
         const result = await syncDesignWorkshopDrafts();
-        const sent = result.workshopsCreated + result.stagesSent + result.mediaUploaded;
-        if (sent) {
+        const outcome = syncOutcome(result);
+        if (outcome.kind === "sent") {
           toast({
             id: "dw-draft-sync",
-            tone: "success",
-            title: `${sent} saved ${sent === 1 ? "change" : "changes"} sent`,
+            tone: outcome.tone,
+            title: outcome.title,
             description: result.pending ? `${result.pending} workshop(s) still waiting.` : "Everything on this device has been sent."
           });
         } else if (trigger === "manual") {
           // Only a click deserves an answer when nothing moved; an automatic pass stays quiet.
+          /*
+            THREE OUTCOMES, NOT TWO. `DwSyncResult.failed` is maintained at six sites in `runSync` —
+            a refused photograph twice over, a stage whose registry entry is missing, a stage the
+            server refused, a partly-refused stage, and a whole-workshop refusal — and it was read by
+            nothing. So a pass in which the server refused six things answered the click in the same
+            words, and the same informational tone, as a pass that had nothing to do: "Nothing to
+            send". The refusals do appear as red lines further down this banner, but the toast is
+            what renders on top and it is the direct answer to the button.
+
+            Ordered refusals-first because a refusal is the only one of the three the designer can act
+            on: "still no connection" is a fact about the wifi and "nothing to send" is a fact about
+            an empty queue, while a refusal is somebody's decision waiting to be made.
+          */
           toast({
             id: "dw-draft-sync",
-            tone: result.stoppedOffline ? "error" : "info",
-            title: result.stoppedOffline ? "Still no connection" : "Nothing to send",
-            description: result.stoppedOffline
-              ? "Everything stays queued on this device. Try again once you have signal."
-              : undefined
+            tone: outcome.tone,
+            title: outcome.title,
+            description:
+              outcome.kind === "refused"
+                ? "Nothing has been thrown away. Each one is listed below with what it needs."
+                : outcome.kind === "offline"
+                  ? "Everything stays queued on this device. Try again once you have signal."
+                  : undefined
           });
         }
       } finally {
@@ -166,14 +285,69 @@ export function DesignWorkshopDraftBanner() {
   const rows = drafts
     .map((draft) => ({ draft, state: outstanding(draft) }))
     .filter(
-      ({ state }) => state.stages > 0 || state.neverSent || state.headerOnly || state.refusals.length > 0 || state.held.length > 0
+      ({ state }) =>
+        state.stages > 0 ||
+        state.neverSent ||
+        state.headerOnly ||
+        state.refusals.length > 0 ||
+        state.held.length > 0 ||
+        state.folds.length > 0
     );
 
-  if (!rows.length) return null;
+  /*
+    "THIS DEVICE CANNOT TELL YOU WHAT IS HERE" IS NOT "THERE IS NOTHING HERE", AND THEY USED TO
+    RENDER IDENTICALLY — as nothing at all.
+
+    `refreshDrafts` reports an unreadable store as an empty array and `mutate` reports a refused
+    write as `null`, both deliberately: neither may throw into a render or fail a designer's edit.
+    The consequence was that the amber panel below — which carries the only sentence telling a
+    designer not to clear this browser or hand the laptop on — simply vanished on the morning their
+    store stopped answering, holding a fortnight of unsent stages. A false all-clear, produced by the
+    store rather than by its absence, on the one surface that answers "may I pack up".
+
+    Drawn ABOVE the early return, so it appears whether or not any drafts could be listed — the
+    unreadable case is precisely the one in which `rows` is empty. Dismissible, because a disk freed
+    an hour ago must be able to stop shouting: `acknowledgeStoreTrouble` clears the marks and repairs
+    nothing, exactly like the "Try again" below it.
+  */
+  const trouble = !storeIsAnswering(health);
+
+  if (!rows.length && !trouble) return null;
 
   const waiting = rows.filter(({ state }) => !state.refusals.length).length;
 
+  const troublePanel = trouble ? (
+    <section
+      // `assertive`, unlike the amber panel's `polite`: the amber one describes a normal working
+      // state that a designer reads when they choose to, and this one says the app has stopped being
+      // able to answer the question the amber one exists to answer.
+      aria-live="assertive"
+      className="mb-4 grid gap-2 rounded-lg border border-error-600/40 bg-error-50 p-4 text-ink-900"
+    >
+      <div className="flex items-start gap-2">
+        <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error-600" aria-hidden />
+        <div>
+          <h2 className="font-display text-sm font-bold">This browser&rsquo;s local store is not answering</h2>
+          <p className="mt-0.5 text-xs text-ink-700">
+            {health.writeFailedAt
+              ? "Something could not be written to this device's storage — usually a full disk, or a private-mode window whose storage the browser will not keep. Recent edits may not have been saved here, and this panel cannot tell you what is still waiting to be sent. Free some space, then reload before typing anything else."
+              : "This device's storage could not be read, so the app cannot say what design-workshop work is still waiting here. Do NOT clear this browser's data and do not hand the laptop on: what is here may still be recoverable. Reload the page, and if this persists tell whoever runs the repository."}
+          </p>
+        </div>
+      </div>
+      <div>
+        <button type="button" className="field-button-secondary" onClick={() => acknowledgeStoreTrouble()}>
+          I have read this
+        </button>
+      </div>
+    </section>
+  ) : null;
+
+  if (!rows.length) return troublePanel;
+
   return (
+    <>
+    {troublePanel}
     <section
       aria-live="polite"
       className="mb-4 grid gap-3 rounded-lg border border-amber-500/40 bg-amber-100/60 p-4 text-ink-900"
@@ -233,6 +407,18 @@ export function DesignWorkshopDraftBanner() {
                   {message}
                 </p>
               ))}
+              {/* The fold's warning — see `outstanding`'s note. Drawn in the refusal colour and NOT
+                  in the muted "held" colour: what it describes is rows that are about to be deleted
+                  on the server, which is the most consequential thing this banner ever says. */}
+              {state.folds.map((fold) => (
+                <p key={`fold-${fold.stageKey}`} className="mt-0.5 flex items-start gap-1 text-xs text-error-600">
+                  <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                  <span>
+                    <span className="font-semibold">{fold.stageKey}: </span>
+                    {fold.note}
+                  </span>
+                </p>
+              ))}
               {state.refusals.map((message, index) => (
                 <p key={`refused-${index}`} className="mt-0.5 flex items-start gap-1 text-xs text-error-600">
                   <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
@@ -261,5 +447,6 @@ export function DesignWorkshopDraftBanner() {
         ))}
       </ul>
     </section>
+    </>
   );
 }

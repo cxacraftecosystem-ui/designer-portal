@@ -100,10 +100,12 @@ logger = logging.getLogger(__name__)
 async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = False) -> Any:
     """Fetch a workshop the caller may see, or raise.
 
-    A soft-deleted workshop is a 404 for everyone but an admin, who needs to be able to find it
-    in order to restore it. Returning 403 instead of 404 for a workshop the caller may not see
-    would confirm that the id exists, which for a research data set keyed by cuid is a small
-    but free leak.
+    A soft-deleted workshop is a 404 to READ for everyone but an admin, who needs to be able to
+    find it in order to restore it. To EDIT (``for_edit=True``) it is a 409 for anybody the
+    grants above admit — which is the whole point of the ordering below, and is what makes the
+    one sentence a designer can act on reachable. Returning 403 instead of 404 for a workshop the
+    caller may not see would confirm that the id exists, which for a research data set keyed by
+    cuid is a small but free leak.
 
     THREE WAYS IN, not two. The creator, an admin, and — since the workshop stopped being a
     one-person record — anybody an admin has given a ``DesignWorkshopViewer`` row. A real Design &
@@ -123,8 +125,6 @@ async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = 
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     admin = is_admin(user)
-    if record.deletedAt is not None and not admin:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     if (
         record.createdById != user.id
         and not admin
@@ -134,11 +134,42 @@ async def load_workshop_or_404(workshop_id: str, user: Any, *, for_edit: bool = 
         # change what a stranger is told: a 403 here would confirm the id exists to exactly the
         # people the clause is turning away.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-    if for_edit and record.deletedAt is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This workshop is deleted. Restore it before editing.",
-        )
+    # WHO-MAY-ENTER IS ANSWERED BEFORE IS-IT-DELETED, AND THAT ORDER IS THE FIX RATHER THAN THE
+    # STYLE. The deleted check used to run FIRST, so a non-admin got 404 before the `for_edit`
+    # 409 below could ever be reached — and the only accounts that reach this helper with
+    # `for_edit=True` are designers, who are not admins. The 409 was therefore dead code for
+    # every caller who could hit the condition.
+    #
+    # What that cost is on the client. `frontend/lib/designWorkshopStore.ts` rethrows 409 out of
+    # the stage arm precisely so the workshop-level catch can print the one correct sentence
+    # ("Ask an admin to restore it, then sync again"); a 404 is not rethrown, so an admin
+    # soft-deleting a duplicate while a designer's laptop held unsent stages stamped EVERY one of
+    # them permanent with "it will keep being refused until the answer that caused it is
+    # corrected — this is not a connection problem". One red line per stage, sending the designer
+    # to audit answers that nothing had objected to, and the sentence that would have told them
+    # what actually happened was unreachable.
+    #
+    # NOTHING IS DISCLOSED BY THE SWAP. The 409 is only reachable once the caller has already
+    # proved they are the creator, an admin, or the holder of a `DesignWorkshopViewer` grant —
+    # people who may see that this workshop exists. A stranger still gets the same 404 with the
+    # same detail string, and a REVOKED grantee gets it too, because the grant check above fails
+    # for them before this line. It costs one extra `has_viewer_grant` round trip in the deleted
+    # case only, which is a case nobody is in twice.
+    #
+    # THE READ PATH IS UNCHANGED: `for_edit` is false there, so a deleted workshop still answers
+    # 404 to everyone but an admin, who needs to be able to find it in order to restore it.
+    if record.deletedAt is not None:
+        # No second authorisation test here: reaching this line already means creator, admin or
+        # grantee, because the clause above turned everybody else away with a 404.
+        if for_edit:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This workshop is deleted. Restore it before editing.",
+            )
+        if not admin:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Record not found"
+            )
     return record
 
 
@@ -664,9 +695,13 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
     overwrites something:
 
     * A row that already named a DIFFERENT record and now names this one has every mapped field
-      rewritten. Leaving the old artisan's name beside the new artisan's id is the one outcome
-      worse than either alternative: the report and the research data would then name two
-      different people for the same row, and nothing on screen would say which was meant.
+      rewritten — INCLUDING the fields the new record leaves blank, which are cleared rather than
+      left holding the previous record's answer. Leaving the old artisan's name beside the new
+      artisan's id is the one outcome worse than either alternative: the report and the research
+      data would then name two different people for the same row, and nothing on screen would say
+      which was meant. Half-rewriting is that same outcome one field at a time, and it is the
+      shape the failure actually took for a year: the id and the name moved, the phone number and
+      the photograph did not.
     * EVERYWHERE ELSE ONLY BLANKS ARE FILLED — including on a brand-new row. What the client
       sent is what the designer typed or accepted in the room: a name the artisan prefers, a
       village the master record has wrong, a price agreed on the day. Treating a first save as a
@@ -718,6 +753,41 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
                 continue
             was = str(item.previous.get(spec.key) or "")
             replaced = bool(was) and was != str(ref_id)
+            if replaced:
+                # THE PREVIOUS RECORD'S VALUES ARE CLEARED FIRST, BEFORE ANYTHING IS COPIED IN.
+                #
+                # The overwrite promised by this function's docstring — "a row that already named a
+                # DIFFERENT record and now names this one has every mapped field rewritten" — used
+                # to be applied field by field inside the loop below, which skips a source value
+                # that is blank. So it rewrote only the fields the NEW record happens to have
+                # filled in, and every field the new record leaves blank kept the OLD record's
+                # answer. Pick a fully documented artisan, notice the phone belongs to a different
+                # Sita Devi, re-point the row at a thinly documented one, and the row is stored as
+                # artisan B's name and craft beside artisan A's phone, village, gender and
+                # PHOTOGRAPH — with `artisanRef` naming B, so nothing can ever re-resolve it. That
+                # participant table goes into a .docx submitted to a ministry.
+                #
+                # Clearing here rather than writing blanks in the loop because "the new record has
+                # nothing to say about this field" and "the new record says it is empty" are the
+                # same thing on the wire: `REFERENCE_MODELS[...].data` returns None for a column
+                # nobody filled in, and `coerce_value` would reject the None anyway.
+                #
+                # THE MULTI ARM IS DELIBERATELY EXEMPT, matching the gallery rule below: a gallery
+                # is seeded when empty and never overwritten, because it holds the photographs the
+                # designer took at the workshop and there is no second copy of those anywhere.
+                #
+                # This is the rule the handset already applies — see `hydrationPatch` in
+                # DwReferenceField.kt, whose comment is "Leaving it would attach the old artisan's
+                # phone number to the new artisan's name" — so the server is being brought into
+                # line with the client that got it right, not inventing a policy.
+                for target_key in mapping.values():
+                    target = item.entity.field(target_key)
+                    if target is None or target.type.is_multi:
+                        continue
+                    # Deprecated targets are cleared too, even though the loop below refuses to
+                    # WRITE to them. Refusing to put new data into a retired field is not a reason
+                    # to keep a different person's data there: the value still travels in `data`.
+                    item.data.pop(target_key, None)
             for source_key, target_key in mapping.items():
                 value = source.get(source_key)
                 if value in (None, ""):
@@ -747,7 +817,9 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
 # --------------------------------------------------------------------------------------
 
 
-async def seed_designer_prefill(record: Any, user: Any) -> Any:
+async def seed_designer_prefill(
+    record: Any, user: Any, *, extra: Mapping[str, Any] | None = None
+) -> Any:
     """Start a new workshop with the creator's profile already in stage 1 and stage 3.
 
     Returns the workshop header, updated if a promoted column was seeded, so the caller can
@@ -769,9 +841,36 @@ async def seed_designer_prefill(record: Any, user: Any) -> Any:
     a convenience value went wrong has lost the whole feature to help with; the workshop is
     already committed by the time this runs, and an empty stage 1 is a minor inconvenience the
     designer can type past.
+
+    ``extra`` IS THE CREATE FORM'S OWN ANSWERS, AND IT IS SEEDED HERE RATHER THAN IN A SECOND
+    WRITE BECAUSE THEY LAND IN THE SAME ENTITY — ``workshopSetup`` holds ``designerName`` and
+    ``craftName`` alike, and two creates for one singleton would be two rows where the matcher
+    expects one.
+
+    ``POST /design-workshops`` accepts craft, cluster, state, district and the two dates, and used
+    to copy them straight onto the ``DesignWorkshop`` COLUMNS with no stage entry behind them —
+    making the create route a second writer of columns whose single writer is supposed to be
+    ``promoted_values``. The FIRST stage-1 save then erased every one of them: ``touched_entities``
+    gains ``workshopSetup`` for any entry naming it, answered or not; the web sends a read stage's
+    singleton whether or not it holds anything; and ``_coerce_promoted`` nulls a promoted column
+    of a touched entity whose value is blank. A designer who typed "Ikat / Barpali / Odisha /
+    Bargarh" into the create form, opened stage 1, typed the venue and pressed Save watched
+    craftName, clusterName, state, district, startDate, endDate, scheme, implementingAgency,
+    sponsor and workshopCode all go to NULL under a 200 reading "Stage saved" — the workshop then
+    invisible to every list filter and search on craft, state, district and date, and showing "—"
+    in the list's own columns, for the whole fortnight of capture, repairing itself only when
+    stage 1 was finally completed.
+
+    Seeding the ENTRY closes both halves and adds no third writer: the columns now have something
+    behind them, stage 1 opens with those boxes already filled in (nothing else fills them — the
+    stage form does not read the header), and a later save merges with them rather than
+    contradicting them. ``extra`` wins over a profile value of the same key, because it is what
+    the designer typed thirty seconds ago; the two sets do not overlap today.
     """
     try:
-        values = await prefill_from_profile(user.id)
+        values: dict[str, Any] = {
+            **(await prefill_from_profile(user.id)), **dict(extra or {})
+        }
         if not values:
             return record
         header: dict[str, Any] = {}
@@ -804,6 +903,18 @@ async def seed_designer_prefill(record: Any, user: Any) -> Any:
                 # `_coerce_promoted` is deliberately NOT reused: it nulls every promoted column of
                 # a touched entity, which here would blank the workshop's own title on creation.
                 for column, value in promoted_values(entity.key, clean).items():
+                    # THE TWO DATE COLUMNS ARE NAMED AND SKIPPED, and they are named rather than
+                    # inferred because a DATE field coerces to an ISO *string* ("2026-08-15") —
+                    # which sails through `isinstance(value, str)` and lands on a Prisma DateTime
+                    # column as text. That is a driver error, not a validation one: it would be
+                    # swallowed by the `except` below and leave a workshop whose stage entries
+                    # were half seeded and whose header was not written at all. `_coerce_promoted`
+                    # parses them for the stage-save path; here there is nothing to parse for,
+                    # because the create route wrote both columns from the same request through
+                    # `_parse_date` before calling us. Only `extra` can put a date in reach — the
+                    # profile carries none — so this guard arrived with it.
+                    if column in ("startDate", "endDate"):
+                        continue
                     if isinstance(value, str) and value:
                         header[column] = value[:220]
         if header:
@@ -863,7 +974,32 @@ def refused_answer_count(errors: Mapping[str, Any]) -> int:
 
 
 async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any) -> dict[str, Any]:
-    """Write one stage, returning what was stored, what failed validation and what was dropped."""
+    """Write one stage, returning HOW MUCH was stored, what failed validation and what was dropped.
+
+    **IT DOES NOT RETURN THE STORED VALUES THEMSELVES, and this sentence used to say it did.**
+    There was a `stored` dict built here for every non-`_custom` entry of every save, two write
+    sites and no read site, dropped on the floor at the return — while this docstring, the
+    comments beside the two write sites and the route's own docstring all described a response
+    field that had never been on the wire. Android had already MEASURED the absence and written
+    it down as fact (`DwStageRefusal.kt`: "The save response does not carry it — measured",
+    listing the same key set), and built its three-state `DwHeld.UNRECORDED` around the gap.
+
+    The reply carries counts, refusals and drift — `saved`, `created`, `updated`, `removed`,
+    `errors`, `refusedAnswers`, `droppedKeys`, `droppedCustomKeys`, `completeness`,
+    `transcriptionsQueued`, `transcriptionConsentRefusal`, `schemaVersion`,
+    `customSchemaVersion` — and a client that needs the values back reads
+    `GET /{id}/stages/{key}`. That IS a real cost: hydration can legitimately change what was
+    written (a MONEY value normalised, an ENUM token the target field will not admit dropped, a
+    photograph resolved by `_reference_photos`), so the form goes on showing the client's guess
+    until somebody makes that second request. Echoing the values back instead is an additive
+    change both clients would ignore safely, and it is written up as a follow-up rather than
+    done here for two reasons: `stored` carries no row identity, so a client cannot address it
+    to a row without `_clientKey`/`_entryId` being put back beside each entry (and a CREATE has
+    no id until after the transaction), and it doubles the response of every stage save for a
+    fleet that is often on one bar. What is NOT defensible is code and prose disagreeing about
+    the wire, which is what this deletion ended. Do not reintroduce the variable without
+    returning it.
+    """
     # THE DESIGNER'S OWN QUESTIONS, LOADED BEFORE ANYTHING IS VALIDATED, because the answers to them
     # arrive in the same payload as the registry ones and are validated in the same pass.
     #
@@ -911,9 +1047,29 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     entities = {e.key: e for e in spec.entities}
     errors: dict[str, Any] = {}
     dropped: list[str] = []
-    stored: dict[str, Any] = {}
     touched_ids: set[str] = set()
     touched_entities: set[str] = set()
+    # ENTITIES WHOSE ENTRIES IN THIS PAYLOAD SAID `merge: true`, HELD SEPARATELY FROM
+    # `touched_entities` BECAUSE THEY ANSWER OPPOSITE QUESTIONS.
+    #
+    # `touched_entities` means "the payload named this entity", and it ARMS the sweep. `merge`
+    # means, in `StageEntryIn`'s own words, "I am sending every key I HAVE, not every key there
+    # IS" — set "when, and only when, the client knows it has not seen the server's copy". A
+    # payload can assert both at once, and until this set existed the server obeyed the second
+    # and ignored the first: `entry.merge` was read at exactly one place (the key-level merge
+    # below) and had no bearing on which ROWS survived.
+    #
+    # That combination is not hypothetical. It is the shipped Android BLOCKER of 2026-08-13
+    # ("the handset's whole sweep gate was spelled as silence"): the phone sent `merge: true`
+    # with `replaceCollections` omitted, the absent key defaulted to TRUE, and three rows the
+    # phone had never downloaded were soft-deleted under a 200 reporting `removed: 3`. That
+    # client bug was closed by removing a kotlinx default. The server-side contradiction that
+    # turned it into row deletion was not, and the same shape is reachable from an older build,
+    # a script, or any direct caller that sets merge and leaves `replaceCollections` alone.
+    #
+    # See the sweep below for why an `emptiedEntities` name still wins: that is a deliberate
+    # statement about a whole collection, not an inference drawn from silence.
+    merged_entities: set[str] = set()
     # Client keys claimed by an earlier entry of THIS payload, so a client that generated the
     # same id twice collides here rather than inside the unique index as a 500.
     claimed_client_keys: set[tuple[str, str]] = set()
@@ -1011,9 +1167,57 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # Keep going. A stage with one bad number still saves its other twenty fields; the
             # alternative loses everything the designer typed because of one typo.
 
+        if entry.merge:
+            merged_entities.add(entity.key)
+
         row = None
         if entry.entryId:
             row = by_id.get(entry.entryId)
+            # THE ENTRY ID ARM IS GUARDED THE WAY THE OTHER TWO ALREADY WERE, and it was the only
+            # one that was not. `by_client_key` is keyed by `(entityKey, clientKey)` and the
+            # singleton fallback filters on `r.entityKey == entity.key`; `by_id` is keyed by row
+            # id ALONE, over every live row of the stage whatever entity it belongs to.
+            #
+            # WRONG ENTITY. Stage 5 declares `processStep`, `tool` and `rawMaterial`. A caller
+            # that lets an `_entryId` cross collections — a bulk import, a repair script, a draft
+            # migration that re-keys rows — sends a `tool` entry carrying a `processStep` row's
+            # id, and nothing downstream recovers: the UPDATE writes `data`, `ordinal` and
+            # `deletedAt` and never `entityKey`, so the process-step row keeps its entity while
+            # its answers become a tool's, `validate_entry` cannot object because it validated
+            # against the entity the PAYLOAD named, and the real tool row — named by nothing in
+            # `touched_ids` — is soft-deleted by the sweep as a row the client no longer has. One
+            # 200 reading `saved: 1, removed: 1`, one row of fieldwork replaced by another
+            # entity's answers and one deleted, and the corrupted row then prints in the
+            # process-step table of the .docx with a tool's fields in it.
+            #
+            # TWICE IN ONE PAYLOAD. Two entries carrying one id both resolved through `by_id`,
+            # both became `(row_id, …)` update tuples, and the transaction applied them in order
+            # so the SECOND entry's data won wholesale — one row destroyed, `saved: 2` reported,
+            # nothing in `dropped` and nothing in `errors`. `_clientKey` has been guarded against
+            # exactly this since the duplicate-key 500 (three lines below); `entryId` has no
+            # unique index to fail loudly, so it lost the answers quietly instead. The path is
+            # ordinary the moment anything copies a row's `data` to make a second row: `_entryId`
+            # is put INTO that data by the stage read and by `assemble_workshop_data`.
+            #
+            # `touched_ids` IS THE CLAIM SET and no second set is kept, because it is populated
+            # at exactly one place — the match below — and therefore holds precisely the rows
+            # earlier entries of this payload have already taken. That also catches the mixed
+            # case (entry 1 matched a row by client key, entry 2 names the same row by id),
+            # which a set of only-entryId claims would miss.
+            #
+            # BOTH ARMS FALL THROUGH RATHER THAN FAILING THE ENTRY. Setting `row = None` sends it
+            # to the clientKey lookup and then to a create, so the designer's answers are still
+            # written — under their real identity, or as a new row — which is the same recovery
+            # the duplicate-clientKey branch chose and for the same reason. The refusal is
+            # reported in `dropped`, which is the channel both clients already render.
+            if row is not None and row.entityKey != entity.key:
+                dropped.append(
+                    f"{entity.key}._entryId={entry.entryId} (belongs to {row.entityKey})"
+                )
+                row = None
+            elif row is not None and row.id in touched_ids:
+                dropped.append(f"{entity.key}._entryId={entry.entryId} (duplicate in payload)")
+                row = None
         client_key = str(entry.data["_clientKey"]) if entry.data.get("_clientKey") else None
         if row is None and client_key:
             row = by_client_key.get((entity.key, client_key))
@@ -1067,9 +1271,10 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # craftName, state, district and the dates along with it, so the workshop fell out of
             # every filter and the report cover printed blank.
             #
-            # Applied HERE, before `pending`, so the merged dict is the one that reaches the row,
-            # the promoted columns AND the `stored` block echoed back — three readers that must
-            # not disagree about what was just written.
+            # Applied HERE, before `pending`, so the merged dict is the one that reaches BOTH the
+            # row and the promoted columns — two readers that must not disagree about what was
+            # just written. (There was a third, a `stored` echo block; it was never returned and
+            # has been deleted. See this function's docstring.)
             #
             # `clean` wins every key it holds: this fills the gaps in what the client sent, it
             # never overrides it. An empty string the designer actually typed is a value and stays.
@@ -1082,14 +1287,14 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         ))
         if client_key:
             claimed_client_keys.add((entity.key, client_key))
-        bucket = stored.setdefault(entity.key, [])
-        bucket.append(clean)
 
     # The chosen references write their display fields onto the entries here, BEFORE anything is
     # serialised for the database and before the promoted columns are read out of them. `clean`
-    # is mutated in place, so the same dict reaches the row, the promoted columns and the
-    # `stored` block echoed back to the client — the form shows what was actually written rather
-    # than what it sent, which is how a designer sees that picking the artisan filled the row in.
+    # is mutated in place, so the same dict reaches the row and the promoted columns.
+    #
+    # NOTE THAT THE CLIENT DOES NOT SEE THE RESULT OF THIS until it reads the stage back: the
+    # save response carries counts, not values (see the docstring). Hydration is exactly where
+    # that costs something, because coercion can change what the client sent.
     await hydrate_entries(pending)
 
     for item in pending:
@@ -1181,7 +1386,22 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         collection_keys = {
             e.key for e in spec.entities if e.cardinality is Cardinality.COLLECTION
         }
-        sweep_entities = (touched_entities | set(payload.emptiedEntities)) & collection_keys
+        # AN ENTITY WHOSE OWN ENTRIES SAID `merge: true` IS NOT SWEPT, because the payload is then
+        # making two contradictory claims about it and only one of them can be honoured: "I have
+        # not seen the server's copy" (the entry) and "delete every row I did not name" (the
+        # absent `replaceCollections`, whose default is TRUE). Obeying the destructive half of a
+        # contradiction is how three rows a phone had never downloaded were soft-deleted under a
+        # 200. See `merged_entities` above for the incident.
+        #
+        # `emptiedEntities` IS SUBTRACTED BACK IN AFTERWARDS AND THAT ORDER MATTERS. Naming a
+        # collection as emptied is an explicit statement about the whole of it — the web tracks it
+        # per entity as `removedFrom` and the phone as `emptiedEntities` — and it is the ONLY way
+        # a client can delete the last row of a collection, there being no per-row delete
+        # endpoint. A client that both empties a collection and merges it is not contradicting
+        # itself; it is saying "I hold none of these, and I mean none".
+        sweep_entities = (
+            (touched_entities - merged_entities) | set(payload.emptiedEntities)
+        ) & collection_keys
         # Over `live`, not `existing`: a row that was already soft-deleted must not be counted
         # as newly removed, or every save would report a growing `removed` tally for rows
         # deleted weeks ago and rewrite their deletedAt to today, destroying the record of when
@@ -2082,6 +2302,31 @@ async def attach_report_custom_sections(
                     unit=f.unit,
                     options=tuple((o.value, o.display) for o in f.options),
                     required=f.required,
+                    # THE DESIGNER'S CHOICE OF CAPTURE TIER, WHICH THIS LOOP USED TO DROP.
+                    #
+                    # `CustomFieldSpec.tier` is a real choice in the section editor ("Which
+                    # capture tier this question belongs to"), it is validated, it is stored and
+                    # it is serialised to both clients — and six attributes were copied here and
+                    # this was not, so every custom question arrived at the renderer carrying the
+                    # BASIC default and was printed by every template. Every REGISTRY field
+                    # passes `ReportBuilder._visible` (`spec.tier.rank <= template.max_tier.rank`);
+                    # a designer's own question passed no gate at all. COMPACT_SUMMARY is the only
+                    # template whose `max_tier` is not ADVANCED, and its own description promises
+                    # "Basic-tier fields only, one photograph per prototype" — so it correctly
+                    # suppressed every Standard and Advanced registry field and then printed the
+                    # designer's Standard-tier answers underneath in full. One document, two
+                    # rules, one declared attribute.
+                    #
+                    # `.value` AND NOT THE ENUM, because `CustomReportField` is a flat value
+                    # object with no server type inside it — the phone builds the same shape from
+                    # its own cached definition, and a renderer that could reach `Tier` would not
+                    # be transliterable. See that class's docstring.
+                    #
+                    # THE SCORER IS UNAFFECTED and that is checked rather than assumed:
+                    # `custom_scoring` hands `stage_completeness` every field of the stage with no
+                    # tier test, deliberately, because completeness is a fact about the workshop
+                    # and not about the file being generated. Only the RENDERER filters.
+                    tier=f.tier.value,
                     # A RETIRED SECTION'S FIELDS ARE RETIRED, whatever their own flag says, and this
                     # is not cosmetic. A section's flag and its fields' flags are two facts, and only
                     # one of them answers "is this asked" for a field under a section nobody is being
@@ -2120,10 +2365,38 @@ async def attach_report_custom_sections(
 
     attach_custom_sections(data, items)
     warnings: list[str] = []
-    unanswered = [
-        item for item in items
-        if not item.answered_count and any(not f.retired for f in item.fields)
-    ]
+    # THE WARNING ASKS THE RENDERER'S OWN QUESTION AND NOT A SECOND ONE THAT LOOKS LIKE IT.
+    #
+    # Everything in `items` is attached and spliced into the template unconditionally; whether a
+    # section PRINTS is decided solely by `append_custom_section`, which appends nothing when
+    # `has_content` is false. `has_content` is true for an answered section OR one with a live
+    # required field — deliberately, so an unanswered required question prints "Not recorded."
+    # and its absence is visible in the document.
+    #
+    # This list used to be `not item.answered_count and any(not f.retired …)`, which is true for
+    # EXACTLY the class `has_content` prints: zero answers plus at least one live required field.
+    # So a designer who added "Dye bath log" with one required question and did not reach it got
+    # a .docx containing the heading and "Dye source — Not recorded.", beside a warning saying
+    # "1 of this workshop's own section(s) … are not in this file: Dye bath log". They then
+    # either hunt for a bug that is not there, or submit the file believing the ministry's copy
+    # does not carry the empty block. The warning's whole purpose, per the note below, is the
+    # difference between "the feature is broken" and "we did not get to those questions" — and
+    # as written it manufactured the first.
+    #
+    # `has_content` is a property of `CustomSectionItem`, which is already the type of everything
+    # in `items`, so this is the renderer's answer rather than a copy of its rule. Do not
+    # "simplify" it back into a hand-rolled test: a second copy of the rule is how the two came
+    # apart in the first place.
+    #
+    # IT IS THE TIER-BLIND READING (`has_content` == `has_content_at(ALL_TIERS)`) BECAUSE THIS
+    # FUNCTION HAS NO TEMPLATE TO ASK. `apply_report_settings` is what splices these sections in
+    # and it can only do that once it has been handed the definition this load produces, so the
+    # template is resolved above us and never reaches here. The one case the two still part on is
+    # a section whose every question is above COMPACT_SUMMARY's cap: the renderer prints nothing
+    # and this warning says nothing. That is the quiet direction of the two, and closing it means
+    # threading `max_tier` down from `_report_inputs` — written up rather than done, because the
+    # loader taking a rendering argument is a design change and not a fix.
+    unanswered = [item for item in items if not item.has_content]
     if unanswered:
         # NAMED RATHER THAN SILENT, for the reason the AI annexure's warning gives: a block the
         # designer added themselves and then finds missing from a sixty-page document reads as a

@@ -1336,7 +1336,8 @@ an answer to point it at.
    2/4/8-bit QAT mobile scheme rather than a plain int4. The Gemma **3n** pair
    (`google/gemma-3n-E2B-it-litert-lm`, `-E4B-`) exists too and is `gated=manual` — one click on the
    model page. Everything measured is in `TIER2-LANGUAGE-MODEL-MEASUREMENT.md`; the code that carries it
-   is `android/…/data/DwTier2Models.kt`. **What is NOT answered is the runtime half of this question**,
+   is `android/app/src/main/java/com/designprototype/workshop/data/DwTier2Models.kt`. **What is NOT
+   answered is the runtime half of this question**,
    and it moved rather than closing: `DW_TIER2_RUNTIME_PRESENT` is still `false`, and the reason is no
    longer "nothing is published" — `com.google.ai.edge.litertlm:litertlm-android:0.16.0` is on
    `google()` and resolves — but that its Kotlin metadata is `mv=[2,3,0]` against this project's 2.0.21

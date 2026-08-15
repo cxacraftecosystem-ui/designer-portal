@@ -604,3 +604,358 @@ async def test_a_never_read_client_merges_its_singleton_instead_of_replacing_it(
     assert "clusterName" not in after or after["clusterName"] in (None, ""), \
         "an omitted key from a client that has read the row is still a deletion"
     assert after["craftName"] == "Ikat"
+
+
+# --------------------------------------------------------------------------------------
+# Which ROW a payload addresses, and which rows it is allowed to delete
+#
+# Every failure in this block is a row of somebody's fieldwork disappearing or being overwritten
+# under an HTTP 200. They sit together because two of the three share one cause: `save_stage`'s
+# three-way matcher carried a guard on two of its arms and not on the third.
+# --------------------------------------------------------------------------------------
+
+
+async def test_an_entry_id_belonging_to_another_collection_is_refused_not_obeyed(client, workshop):
+    """THE REGRESSION. `by_id` is keyed by row id ALONE, across every entity of the stage.
+
+    The clientKey arm is keyed by `(entityKey, clientKey)` and the singleton arm filters on
+    `r.entityKey == entity.key`; the entryId arm had no entity test, and nothing downstream
+    recovered — the UPDATE writes `data`, `ordinal` and `deletedAt` and never `entityKey`. So a
+    `tool` entry carrying a `rawMaterial` row's id rewrote the raw material's answers with a
+    tool's while it stayed a raw material, `validate_entry` could not object (it validated against
+    the entity the PAYLOAD named), and the real tool row — named by nothing in `touched_ids` —
+    was soft-deleted by the sweep. One 200 reading `saved: 1, removed: 1`, and the corrupted row
+    then prints in a .docx table with another entity's fields in it.
+    """
+    path = f"/api/design-workshops/{workshop}/stages/TRADITIONAL_PROCESS_BASELINE"
+    client.put(path, json={"entries": [
+        {"entityKey": "tool", "ordinal": 0, "data": {"_clientKey": "t1", "name": "Pit loom"}},
+        {"entityKey": "rawMaterial", "ordinal": 0,
+         "data": {"_clientKey": "m1", "name": "Tussar yarn"}},
+    ]})
+    before = client.get(path).json()["collections"]
+    material_id = before["rawMaterial"][0]["_entryId"]
+
+    crossed = client.put(path, json={"entries": [
+        {"entityKey": "tool", "ordinal": 0,
+         "data": {"_clientKey": "t1", "name": "Warping drum", "_entryId": material_id}},
+    ]})
+    assert crossed.status_code == 200, crossed.text
+    assert any("belongs to rawMaterial" in k for k in crossed.json()["droppedKeys"]), \
+        "the refusal has to be visible in the one channel both clients already render"
+
+    after = client.get(path).json()["collections"]
+    assert [r["name"] for r in after["rawMaterial"]] == ["Tussar yarn"], \
+        "the raw material must not be overwritten with a tool's answers"
+    # The tool falls through to its own client key and is UPDATED, not duplicated and not lost.
+    assert [r["name"] for r in after["tool"]] == ["Warping drum"]
+
+
+async def test_two_entries_sharing_one_entry_id_do_not_silently_overwrite_each_other(
+    client, workshop
+):
+    """The mirror of the duplicate-clientKey guard, on the key that has no unique index.
+
+    Both entries resolved through `by_id` to one row, both became update tuples, and the
+    transaction applied them in order so the SECOND entry's data won wholesale: one row destroyed,
+    `saved: 2` reported, nothing in `droppedKeys` and nothing in `errors`. The path is ordinary the
+    moment anything copies a row's `data` to make a second row — `_entryId` is put INTO that data
+    by the stage read and by `assemble_workshop_data`.
+    """
+    path = f"/api/design-workshops/{workshop}/stages/TRADITIONAL_PROCESS_BASELINE"
+    client.put(path, json={"entries": [
+        {"entityKey": "tool", "ordinal": 0, "data": {"_clientKey": "t1", "name": "Pit loom"}},
+    ]})
+    tool_id = client.get(path).json()["collections"]["tool"][0]["_entryId"]
+
+    duplicated = client.put(path, json={"entries": [
+        {"entityKey": "tool", "ordinal": 0,
+         "data": {"_clientKey": "t1", "name": "Pit loom", "_entryId": tool_id}},
+        {"entityKey": "tool", "ordinal": 1,
+         "data": {"_clientKey": "t2", "name": "Warping drum", "_entryId": tool_id}},
+    ]})
+    assert duplicated.status_code == 200, duplicated.text
+    assert any("duplicate in payload" in k for k in duplicated.json()["droppedKeys"])
+
+    rows = client.get(path).json()["collections"]["tool"]
+    assert sorted(r["name"] for r in rows) == ["Pit loom", "Warping drum"], \
+        "the second entry must become its own row, not eat the first one's"
+
+
+async def test_an_entry_that_says_it_is_merging_never_arms_the_sweep(client, workshop):
+    """THE SERVER SIDE OF THE BLOCKER OF 2026-08-13, which was closed on the client only.
+
+    `merge: true` means, in `StageEntryIn`'s own words, "I am sending every key I HAVE, not every
+    key there IS" — set when the client knows it has not seen the server's copy.
+    `replaceCollections` defaults to TRUE when absent and soft-deletes every row the payload does
+    not name. A payload can assert both, and the server obeyed the destructive one: three rows the
+    phone had never downloaded went, under a 200 reporting `removed: 3`.
+
+    The handset was fixed by removing a kotlinx default. The contradiction that turned it into row
+    deletion was not, and it is reachable from an older build, a script, or any direct caller.
+    """
+    path = f"/api/design-workshops/{workshop}/stages/TRADITIONAL_PROCESS_BASELINE"
+    client.put(path, json={"entries": [
+        {"entityKey": "tool", "ordinal": 0, "data": {"_clientKey": "t1", "name": "Pit loom"}},
+        {"entityKey": "tool", "ordinal": 1, "data": {"_clientKey": "t2", "name": "Bobbin winder"}},
+    ]})
+
+    # `replaceCollections` deliberately OMITTED, exactly as the shipped handset sent it.
+    unread = client.put(path, json={"entries": [
+        {"entityKey": "tool", "ordinal": 0,
+         "data": {"_clientKey": "t3", "name": "Warping drum"}, "merge": True},
+    ]})
+    assert unread.status_code == 200, unread.text
+    assert unread.json()["removed"] == 0, \
+        "a client that has not read the collection must delete nothing"
+    rows = client.get(path).json()["collections"]["tool"]
+    assert sorted(r["name"] for r in rows) == ["Bobbin winder", "Pit loom", "Warping drum"]
+
+    # AND THE EXPLICIT STATEMENT STILL WINS. `emptiedEntities` is not an inference drawn from
+    # silence; it is the only way a client can delete the last row of a collection, there being no
+    # per-row delete endpoint. Merging must not disarm it.
+    emptied = client.put(path, json={
+        "entries": [{"entityKey": "tool", "ordinal": 0,
+                     "data": {"_clientKey": "t3", "name": "Warping drum"}, "merge": True}],
+        "emptiedEntities": ["tool"],
+    })
+    assert emptied.status_code == 200, emptied.text
+    assert emptied.json()["removed"] == 2
+    assert [r["name"] for r in client.get(path).json()["collections"]["tool"]] == ["Warping drum"]
+
+    # ...and the ordinary replace is untouched, or the fix would make deletion impossible.
+    replaced = client.put(path, json={
+        "entries": [{"entityKey": "tool", "ordinal": 0,
+                     "data": {"_clientKey": "t4", "name": "Reed"}}],
+    })
+    assert replaced.json()["removed"] == 1
+
+
+# --------------------------------------------------------------------------------------
+# What a refusal tells the designer
+# --------------------------------------------------------------------------------------
+
+
+async def test_a_refused_submit_still_reports_everything_it_wrote(client, workshop):
+    """`save_stage` COMMITS before the route looks at `errors`, so a 422 has already mutated.
+
+    The refusal used to carry `{message, errors}` alone, throwing away `removed`, `created`,
+    `updated`, `droppedKeys`, `completeness` and the rest — leaving every client with the
+    reasonable and WRONG reading that nothing was written. The deleted row had gone and the
+    workshop had left DRAFT, and the designer was told only "Some required fields are missing".
+    """
+    _sketches(client, workshop, [A, B])
+    refused = client.put(
+        f"/api/design-workshops/{workshop}/stages/SKETCH_DEVELOPMENT",
+        json={
+            # `image` is a required Basic field and is deliberately absent, which is what makes
+            # this a strict-pass refusal at all; `unknownKey` is here to prove `droppedKeys`
+            # survives the 422 too.
+            "entries": [{"entityKey": "sketch", "ordinal": 0,
+                         "data": {"_clientKey": "sk-a", "sketchNo": "SK-01",
+                                  "name": "Runner", "unknownKey": "x"}}],
+            "replaceCollections": True,
+            "submit": True,
+        },
+    )
+    assert refused.status_code == 422, refused.text
+    detail = refused.json()["detail"]
+    assert detail["removed"] == 1, "the sweep landed and the body has to say so"
+    assert detail["updated"] == 1
+    assert "sketch.unknownKey" in detail["droppedKeys"]
+    assert detail["completeness"]["stageKey"] == "SKETCH_DEVELOPMENT"
+    assert detail["errors"], "the per-field marks a strict pass exists to produce still travel"
+    assert detail["refusedAnswers"] >= 1
+    assert detail["message"]
+    # The write really did land, which is the fact the old body hid.
+    assert [r["name"] for r in _rows(client, workshop)] == ["Runner"]
+
+
+async def test_the_submit_message_names_the_kind_of_fault_it_found(client, workshop):
+    """One hard-coded sentence reported a fat-fingered decimal as a missing required field.
+
+    `errors` mixes `validate_entry`'s "… is required" with `coerce_value`'s "… is not a valid
+    number", and the strict pass called every one of them a missing required field — sending the
+    designer to the empty boxes rather than to the wrong one.
+    """
+    path = f"/api/design-workshops/{workshop}/stages/EXISTING_PRODUCTS_BASELINE"
+    unreadable = client.put(path, json={
+        "entries": [{"entityKey": "existingProduct", "ordinal": 0,
+                     "data": {"_clientKey": "p1", "name": "Stole", "price": "65OO"}}],
+        "submit": True,
+    })
+    assert unreadable.status_code == 422, unreadable.text
+    assert unreadable.json()["detail"]["message"] == "Some answers could not be read"
+
+    missing = client.put(f"/api/design-workshops/{workshop}/stages/WORKSHOP_SETUP", json={
+        "entries": [{"entityKey": "workshopSetup", "data": {"venue": "Barpali weavers hall"}}],
+        "submit": True,
+    })
+    assert missing.status_code == 422, missing.text
+    assert missing.json()["detail"]["message"] == "Some required fields are missing"
+
+
+async def test_the_save_response_carries_no_stored_echo_block(client, workshop):
+    """THE WIRE CONTRACT, PINNED BECAUSE THREE DOCSTRINGS ONCE DESCRIBED A FIELD THAT WAS NOT ON IT.
+
+    `save_stage` built a `stored` dict for every non-`_custom` entry of every save — two write
+    sites, no read site — and dropped it at the return, while its own docstring, the comments
+    beside both write sites and the route's docstring all said it was "echoed back to the client".
+    Android had already MEASURED the absence and written it down as fact in `DwStageRefusal.kt`,
+    and built its three-state `DwHeld.UNRECORDED` around the gap.
+
+    This test cannot fail against the old code — the field was never on the wire, which was the
+    defect — so it is a contract pin rather than a regression: the deliverable for that finding is
+    the corrected prose. Its job is to fail the day somebody adds `stored` to a docstring again
+    without adding it to the response, or adds it to the response without saying so here.
+    """
+    saved = _sketches(client, workshop, [A]).json()
+    assert "stored" not in saved
+    assert set(saved) == {
+        "stageKey", "saved", "created", "updated", "removed", "errors", "refusedAnswers",
+        "droppedKeys", "droppedCustomKeys", "completeness", "transcriptionsQueued",
+        "transcriptionConsentRefusal", "schemaVersion", "customSchemaVersion",
+    }
+
+
+# --------------------------------------------------------------------------------------
+# The create form's own answers
+# --------------------------------------------------------------------------------------
+
+
+async def test_the_create_forms_craft_is_backed_by_a_stage_entry(client):
+    """THE REGRESSION: the create wrote promoted COLUMNS that no stage entry backed.
+
+    `POST /design-workshops` copies craft, cluster, state, district and the dates onto the header,
+    but every one of those columns is declared in `PROMOTED_COLUMNS` under `workshopSetup.*`, whose
+    single writer is supposed to be the stage entry. With nothing behind them, stage 1 opened with
+    those boxes BLANK — nothing seeded them from the header — and the first save nulled all six
+    (and the four beside them) under a 200 reading "Stage saved". The workshop then fell out of
+    every list filter and search on craft, state, district and date, and showed "—" in the list's
+    own columns, for the whole fortnight of capture.
+
+    The walk asserted here is the designer's real one: create, OPEN the stage, add the venue, save.
+    A payload that deliberately omits craftName is a designer CLEARING the box and must still clear
+    it — `test_a_promoted_column_can_be_cleared_and_others_are_untouched` pins that and is left
+    alone — so the fix is that the box is no longer empty when the form opens.
+    """
+    created = client.post("/api/design-workshops", json={
+        "title": "Seeded workshop", "craftName": "Ikat", "clusterName": "Barpali",
+        "state": "Odisha", "district": "Bargarh",
+        "startDate": "2026-03-02", "endDate": "2026-03-15",
+    })
+    assert created.status_code == 201, created.text
+    workshop_id = created.json()["id"]
+
+    path = f"/api/design-workshops/{workshop_id}/stages/WORKSHOP_SETUP"
+    opened = client.get(path).json()["singleton"]
+    assert opened["craftName"] == "Ikat", "the form must open showing what the create form asked"
+    assert opened["clusterName"] == "Barpali"
+    assert opened["state"] == "Odisha"
+    assert opened["district"] == "Bargarh"
+    assert opened["startDate"] == "2026-03-02"
+    assert opened["endDate"] == "2026-03-15"
+
+    typed = {k: v for k, v in opened.items() if not k.startswith("_")}
+    typed["venue"] = "Barpali weavers hall"
+    saved = client.put(path, json={"entries": [
+        {"entityKey": "workshopSetup", "data": typed},
+    ]})
+    assert saved.status_code == 200, saved.text
+
+    header = client.get(f"/api/design-workshops/{workshop_id}").json()
+    assert header["craftName"] == "Ikat", "the first stage-1 save used to null this"
+    assert header["clusterName"] == "Barpali"
+    assert header["state"] == "Odisha"
+    assert header["district"] == "Bargarh"
+    assert str(header["startDate"]).startswith("2026-03-02")
+
+
+# --------------------------------------------------------------------------------------
+# What a designer is told about a workshop an admin deleted
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+async def designer_client(client):
+    """A second signed-in client, a DESIGNER rather than an admin.
+
+    The rest of this module runs as an ADMIN, which is exactly why the defect below survived: the
+    409 was reachable for an admin and for nobody else, and an admin is not who owns unsent stages.
+
+    IT DEPENDS ON ``client`` AND OPENS NO SECOND LIFESPAN, and both halves of that are deliberate.
+    ``db`` is a module-level singleton: a fixture of its own that ran ``db.connect()`` /
+    ``db.disconnect()`` around its setup would disconnect the connection the app is already using
+    the moment the second one finished, and every later test in the file would fail somewhere
+    inside Prisma with nothing pointing back here. Taking ``client`` guarantees the app has
+    started and the connection is live, so the user row can simply be created on it, and a bare
+    ``TestClient(app)`` — no ``with`` — issues requests against that same running app without
+    running startup or shutdown a second time.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    email = f"sync-designer-{uuid.uuid4().hex[:8]}@example.org"
+    user = await db.user.create(data={
+        "email": email, "name": "Sync Designer", "role": "DESIGNER",
+        "passwordHash": hash_password("unused"),
+    })
+    second = TestClient(app)
+    second.headers.update({"Authorization": f"Bearer {create_access_token(subject=user.id)}"})
+    return second
+
+
+async def test_a_designer_editing_a_deleted_workshop_is_told_it_is_deleted(
+    client, designer_client
+):
+    """THE REGRESSION: the 409 was dead code for the only people who could reach the condition.
+
+    `load_workshop_or_404` refused a soft-deleted workshop with a 404 for every non-admin BEFORE
+    the `for_edit` branch could answer 409 — and the accounts that reach this helper with
+    `for_edit=True` are designers, who are not admins.
+
+    What that cost is on the client. `designWorkshopStore` rethrows 409 out of the stage arm
+    precisely so the workshop-level catch can print "Ask an admin to restore it, then sync again";
+    a 404 is not rethrown, so an admin soft-deleting a duplicate while a designer's laptop held
+    unsent stages stamped EVERY one of them permanent with "it will keep being refused until the
+    answer that caused it is corrected — this is not a connection problem". One red line per stage,
+    sending the designer to audit answers nothing had objected to.
+    """
+    mine = designer_client.post(
+        "/api/design-workshops", json={"title": "Designer's own workshop"}
+    )
+    assert mine.status_code == 201, mine.text
+    workshop_id = mine.json()["id"]
+    assert _sketches(designer_client, workshop_id, [A]).status_code == 200
+
+    assert client.delete(f"/api/design-workshops/{workshop_id}").status_code == 204
+
+    refused = _sketches(designer_client, workshop_id, [A])
+    assert refused.status_code == 409, refused.text
+    assert "deleted" in refused.json()["detail"].lower()
+
+    # READING IT IS STILL A 404, and that half must not move: the same 404 covers a REVOKED viewer
+    # grant, and answering anything else there would confirm the id exists to somebody who has just
+    # been turned away.
+    assert designer_client.get(f"/api/design-workshops/{workshop_id}").status_code == 404
+
+    client.post(f"/api/design-workshops/{workshop_id}/restore")
+
+
+async def test_a_stranger_is_still_told_nothing_about_a_deleted_workshop(
+    client, designer_client, workshop
+):
+    """The disclosure half of the swap above, asserted rather than argued.
+
+    The ordering change moved the deleted test AFTER the who-may-enter test, so the 409 is only
+    ever reachable by an account that has already proved it is the creator, an admin or a grantee.
+    A designer with no claim on this workshop gets the same 404 with the same detail string
+    whether it is deleted or merely somebody else's.
+    """
+    assert _sketches(designer_client, workshop, [A]).status_code == 404
+    assert client.delete(f"/api/design-workshops/{workshop}").status_code == 204
+    stranger = _sketches(designer_client, workshop, [A])
+    assert stranger.status_code == 404, stranger.text
+    assert stranger.json()["detail"] == "Record not found"
+    client.post(f"/api/design-workshops/{workshop}/restore")

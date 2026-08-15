@@ -69,6 +69,30 @@ export type TaskOptions = {
   workshops: { id: string; title: string; place?: string | null; date?: string | null }[];
   artisans: TaskArtisanRef[];
   sections: TaskSectionRef[];
+  /*
+    ── THREE CAPS THAT USED TO ARRIVE UNANNOUNCED ─────────────────────────────────────────────────
+    Audit 2026-08-15 (MAJOR). `task_options` reads 500 users, 200 workshops and 500 artisans and
+    returns whatever fell inside; on this repository's own measured population (3632 accounts, 731
+    artisans — docs/OPEN_FINDINGS.md, 2026-08-13) two of those cuts are live TODAY. Until these
+    three fields existed the wire had no way to say so, and `AssignmentBuilder` builds every picker
+    purely from what arrived — so an admin hunting a colleague whose name sorts late in the alphabet
+    was shown the same nothing they would be shown for a colleague with no account at all. That is
+    the "hidden from you vs nobody matched" class this repository already paid for once in the
+    design-workshop viewer picker (353 invisible accounts, closed 2026-08-13).
+
+    OPTIONAL ON PURPOSE, AND IT MUST STAY OPTIONAL. `apiFetch` casts the body, it does not validate
+    it, so a browser held open across a rollback — or pointed at an older API — receives no field at
+    all. `flagCutNotice` reads `undefined` as "nothing to say", which is the only safe reading:
+    inventing a cut nobody can act on is as bad as hiding one. Do not make these required to "tidy
+    the type"; the compiler would be satisfied and the runtime would still hand you `undefined`.
+
+    They are booleans and not counts because the route trims a `take=CAP + 1` read. Counting the
+    whole table to print "of 3632" is a second query for a number nobody acts on — the actionable
+    fact is that the list is short and there is a search box. See `flagCutNotice`.
+  */
+  assigneesTruncated?: boolean;
+  workshopsTruncated?: boolean;
+  artisansTruncated?: boolean;
 };
 
 export type TaskBatchAssignee = {

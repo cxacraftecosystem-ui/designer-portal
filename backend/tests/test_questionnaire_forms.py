@@ -435,6 +435,22 @@ async def world():
                     "role": role,
                 }
             )
+        # ROSTER ROWS FOR THE DESIGNERS, because a viewer GRANT refuses an account the ACTIVE
+        # designer roster does not admit — with a 422 saying so, rather than writing a viewer row
+        # for somebody who cannot sign in. The cross-workshop attachment test needs a real grant to
+        # prove its gate is the grant and not a blanket refusal, so it needs these rows; every other
+        # test in this file is indifferent to them, and tokens are minted directly rather than by
+        # signing in, so the roster is invisible everywhere else here.
+        for slug in ("designer", "colleague", "stranger"):
+            await db.designerroster.create(
+                data={
+                    "email": f"cq-{slug}-{stamp}@example.org",
+                    "fullName": people[slug].name,
+                    "institution": "Directorate of Handicrafts",
+                    "isActive": True,
+                    "addedById": people["admin"].id,
+                }
+            )
     finally:
         await db.disconnect()
     with TestClient(app) as client:
@@ -1028,6 +1044,172 @@ async def test_a_questionnaire_attaches_to_a_workshop_and_shows_up_in_the_dropdo
         headers=_headers(world),
     ).json()
     assert detached["designWorkshopId"] is None
+
+
+@pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
+@pytest.mark.anyio
+async def test_a_questionnaire_cannot_be_attached_to_a_workshop_the_designer_cannot_open(
+    client, world
+):
+    """ALL THREE ATTACHMENT DOORS, WALKED BY A DESIGNER WHO IS 404'D FROM THE WORKSHOP.
+
+    Attaching used to ask only whether the workshop ROW EXISTED — ``require_record`` is a bare
+    ``find_unique`` — while the caller was gated as "is a designer at all". So any designer could
+    point their own questionnaire at any other designer's workshop by id, through the upload form
+    field, the JSON create, or the PATCH. That is not a read leak that stops at the API: the
+    annexure is in ALL SIX report templates and ``report_items`` selects purely on
+    ``designWorkshopId``, so the stranger's respondents, notes and answers printed inside the
+    .docx that the other designer submits to a ministry under their own name — and symmetrically,
+    everyone on that workshop could then read the stranger's sittings.
+
+    THE THREE DOORS ARE ASSERTED SEPARATELY ON PURPOSE. They are three different call sites and the
+    fix is three call sites; a test that only exercised PATCH would have passed against a tree where
+    upload and create were still open, which is exactly the shape the defect had.
+
+    The last two blocks are the controls that stop this from being satisfied by "refuse everybody":
+    a viewer grant makes the very same PATCH succeed, and the workshop's creator attaching their own
+    form is pinned by the test above.
+    """
+    workshop = client.post(
+        "/api/design-workshops",
+        json={"title": f"Not yours {world['stamp']}"},
+        headers=_headers(world),
+    )
+    assert workshop.status_code == 201, workshop.text
+    workshop_id = workshop.json()["id"]
+
+    # The premise: to this designer the workshop does not exist.
+    assert (
+        client.get(
+            f"/api/design-workshops/{workshop_id}", headers=_headers(world, "stranger")
+        ).status_code
+        == 404
+    )
+
+    # Door 1 — JSON create, attached at birth.
+    made = client.post(
+        "/api/questionnaires",
+        json={"title": f"Injected {world['stamp']}", "designWorkshopId": workshop_id},
+        headers=_headers(world, "stranger"),
+    )
+    assert made.status_code == 404, made.text
+
+    # ...and it left nothing behind. A 404 that still wrote the questionnaire would read to the
+    # designer as a failure and be a half-success in the database.
+    mine = client.get("/api/questionnaires", headers=_headers(world, "stranger")).json()
+    assert f"Injected {world['stamp']}" not in {row["title"] for row in mine["items"]}
+
+    # Door 2 — the multipart upload, where designWorkshopId is a FORM field beside the file.
+    marker = f"Which loom did you inherit {world['stamp']}?"
+    workbook = build_questionnaire_workbook(
+        title=f"Uploaded elsewhere {world['stamp']}",
+        description=None,
+        questionnaire_id="",
+        version=1,
+        sections=[{"code": "A", "title": "A", "questions": [{"id": "", "prompt": marker,
+                                                             "answers": {"Ramesh": "The big one"}}]}],
+        entry_labels=["Ramesh"],
+    )
+    uploaded = client.post(
+        "/api/questionnaires/upload",
+        files={"file": ("form.xlsx", workbook, XLSX_MIME)},
+        data={"designWorkshopId": workshop_id},
+        headers=_headers(world, "stranger"),
+    )
+    assert uploaded.status_code == 404, uploaded.text
+
+    # Door 3 — PATCH, which passes `_require_owner` because the stranger DOES own this form. Owning
+    # the questionnaire has never said anything about the workshop it is being pointed at.
+    own = client.post(
+        "/api/questionnaires/upload",
+        files={"file": ("form.xlsx", workbook, XLSX_MIME)},
+        headers=_headers(world, "stranger"),
+    )
+    assert own.status_code == 201, own.text
+    own_id = own.json()["questionnaire"]["id"]
+
+    patched = client.patch(
+        f"/api/questionnaires/{own_id}",
+        json={"designWorkshopId": workshop_id},
+        headers=_headers(world, "stranger"),
+    )
+    assert patched.status_code == 404, patched.text
+    still = client.get(f"/api/questionnaires/{own_id}", headers=_headers(world, "stranger")).json()
+    assert still["designWorkshopId"] is None
+
+    # THE CONSEQUENCE, not just the status codes: nothing of the stranger's is inside the other
+    # designer's workshop, and nothing of it reaches the report they would submit.
+    scoped = client.get(
+        "/api/questionnaires",
+        params={"designWorkshopId": workshop_id},
+        headers=_headers(world),
+    ).json()
+    assert scoped["items"] == []
+    preview = client.get(
+        f"/api/design-workshops/{workshop_id}/report/preview", headers=_headers(world)
+    )
+    assert preview.status_code == 200, preview.text
+    assert marker not in preview.text
+
+    # CONTROL — the gate is the grant, not a blanket refusal. An admin puts the stranger on the
+    # workshop as a co-designer and the identical PATCH goes through.
+    grant = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [world["people"]["stranger"].id]},
+        headers=_headers(world, "admin"),
+    )
+    assert grant.status_code == 200, grant.text
+    allowed = client.patch(
+        f"/api/questionnaires/{own_id}",
+        json={"designWorkshopId": workshop_id},
+        headers=_headers(world, "stranger"),
+    )
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["designWorkshopId"] == workshop_id
+
+
+@pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
+@pytest.mark.anyio
+async def test_a_questionnaire_cannot_be_attached_to_a_deleted_workshop(client, world):
+    """The second thing ``require_record`` never asked: whether the workshop is still there.
+
+    It carried no ``deletedAt`` filter, so a soft-deleted workshop accepted attachments exactly like
+    a live one — filling the annexure of a record its own designer is 404'd from, which nobody can
+    then open to find out what is in it. ``for_edit=True`` is what makes this a 409 with a sentence
+    that names the way out ("Restore it before editing") rather than a silent 200.
+    """
+    workshop = client.post(
+        "/api/design-workshops",
+        json={"title": f"Deleted target {world['stamp']}"},
+        headers=_headers(world),
+    )
+    workshop_id = workshop.json()["id"]
+    created = client.post(
+        "/api/questionnaires",
+        json={"title": f"For a dead workshop {world['stamp']}"},
+        headers=_headers(world),
+    )
+    assert created.status_code == 201, created.text
+    questionnaire_id = created.json()["id"]
+
+    # Deleting is admin-only (assert_can_delete), which is why the admin account does it here.
+    removed = client.delete(
+        f"/api/design-workshops/{workshop_id}", headers=_headers(world, "admin")
+    )
+    assert removed.status_code == 204, removed.text
+
+    refused = client.patch(
+        f"/api/questionnaires/{questionnaire_id}",
+        json={"designWorkshopId": workshop_id},
+        headers=_headers(world),
+    )
+    # 409 for the creator (the workshop is visible to them, just not editable); 404 is the answer
+    # anyone else gets. Either way the attachment does not happen, which is the assertion below.
+    assert refused.status_code in (404, 409), refused.text
+    still = client.get(
+        f"/api/questionnaires/{questionnaire_id}", headers=_headers(world)
+    ).json()
+    assert still["designWorkshopId"] is None
 
 
 def _annexure_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:

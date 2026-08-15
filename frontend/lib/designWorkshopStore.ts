@@ -93,6 +93,7 @@ import {
   isFilled,
   newClientKey,
   patchDesignWorkshop,
+  peekStageRegistry,
   saveDesignWorkshopStage,
   type DwDetail,
   type DwEntity,
@@ -285,6 +286,43 @@ export type DwDraftStage = {
    * stage record is missing.
    */
   foldNote?: string | null;
+  /**
+   * Singleton answers the SERVER sent under keys this build's registry does not declare.
+   *
+   * ── WHY THEY ARE KEPT INSTEAD OF DROPPED, WHICH IS WHAT USED TO HAPPEN ───────────────────────
+   *
+   * `_stages_payload` hands back a singleton row's stored `data` verbatim — no registry filter —
+   * so a key the server knows and this build does not really does arrive. {@link splitSingletons}
+   * copied across only `field.key in singleton` for the fields the browser's own spec declares and
+   * dropped the rest on the floor, and it is the only writer of `singletons` on all three read
+   * paths (the fold, the list adopt, the stage adopt). The key was then absent from IndexedDB, from
+   * the form and from {@link buildStageEntries} — and because the stage HAS been read, `neverRead`
+   * is false, the singleton entry goes up without `merge`, and `save_stage` writes the payload's
+   * `data` over the row **wholesale** with no `RecordRevision`. A colleague's answer, gone in place.
+   *
+   * `droppedKeys` could not report it either: the server computes that over the keys the CLIENT
+   * SENT, and this client had already removed them. So the one drift signal the repository has was
+   * made structurally unreachable by the function that removed the evidence.
+   *
+   * THE REACHABLE ROUTE IS THIS APP'S OWN OFFLINE MODEL, not a deploy race. {@link loadRegistry}
+   * falls back to the IndexedDB copy when the network cannot answer and seeds `designWorkshops`'
+   * module cache with it; `fetchStageRegistry` then serves that object for the rest of the tab's
+   * life and nothing anywhere calls it with `{refresh: true}`. A tab that opened in a courtyard is
+   * therefore behind the server's field list by design, for as long as it stays open.
+   *
+   * So the keys are carried here and merged back into the singleton entry by
+   * {@link buildStageEntries}. The server then either accepts them (its registry is the newer one,
+   * which it is) or names them in `droppedKeys` and the existing drift banner fires. Either way the
+   * browser stops being the thing that deletes them.
+   *
+   * KEYED BY ENTITY, like {@link singletons}, so a second declared singleton could never collect
+   * another one's leftovers. Android does not have this defect — `DwStageFold` folds the whole
+   * bucket with no registry test at all — so keeping them is also what makes the two surfaces agree.
+   *
+   * **OPTIONAL, AND EVERY READ MUST DEFAULT IT.** No migration rung is spent — the same rule and the
+   * same reason as `custom` and `foldNote` above.
+   */
+  unknownSingleton?: Record<string, DwEntryData>;
   updatedAt: number;
   /** When this stage was last edited locally. Null means "identical to what the server last sent". */
   dirtyAt: number | null;
@@ -435,6 +473,31 @@ export type DwDraftMedia = {
   confirmedAt: number | null;
   attempts: number;
   lastError: string | null;
+  /**
+   * Why this file has not reached the server, triaged the way a stage's and a workshop's refusal are.
+   *
+   * ── THE ARM THAT HAD NO TRIAGE AT ALL ────────────────────────────────────────────────────────
+   *
+   * The stage arm and the workshop arm of {@link runSync} both turn a refusal into a
+   * {@link DwDraftFailure} and both are gated by {@link blocksRetry} on the next pass. The media arm
+   * had neither: its only skip test was `media.remoteMediaId || !media.blob`, and a refusal sets
+   * neither, so the SAME BYTES were re-sent on every pass for ever. `attempts` and `lastError` were
+   * written here and read by nothing — grep found the declaration, two initialisers and one writer,
+   * and no reader anywhere in `app/`, `components/` or `lib/`.
+   *
+   * The stage referencing the file was meanwhile held back with a NON-permanent failure whose
+   * sentence promised the opposite of what would happen — "It sends itself as soon as they upload"
+   * — so the banner offered no "Try again" (that is gated on `permanent`) and no screen ever named
+   * the file or the reason. A 415 on a video container therefore stranded a whole stage of
+   * fieldwork behind a reassurance, and re-uploaded the video on every connectivity flap, on the
+   * metered connection this feature exists for.
+   *
+   * `lastError` and `attempts` are KEPT rather than replaced: they are already on disk in every
+   * draft in the field, `noteMediaFailure` still writes both, and a reader that wants the bare
+   * sentence has it. This field is what carries the two facts they never could — whether waiting
+   * will help, and whether an app update is the thing that would clear it.
+   */
+  failure?: DwDraftFailure | null;
 };
 
 type RegistryRecord = { version: string; registry: DwRegistry; storedAt: number };
@@ -637,6 +700,94 @@ const listeners = new Set<() => void>();
 let cache: DwDraft[] = [];
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * Whether this browser's store is answering at all
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * When IndexedDB last refused this store a READ, and when it last refused it a WRITE.
+ *
+ * ── ONE FLAG FOR TWO FINDINGS, BECAUSE THEY ARE ONE DEFECT ───────────────────────────────────────
+ *
+ * Every failure in this file is swallowed, deliberately: a store that cannot be read must not throw
+ * into whichever render happened to ask, and a housekeeping write must never fail a designer's edit.
+ * That policy is right and is not what is being changed here. What was wrong is that the swallowing
+ * left NO TRACE, so two different failures came out looking like good news:
+ *
+ *   • `refreshDrafts`' catch sets `cache = []`, which is published to every `useSyncExternalStore`
+ *     consumer. `DraftSyncBanner` then renders `null` — the amber "they live in this browser, so do
+ *     not clear its data or hand the laptop on" sentence that has been on every screen for a
+ *     fortnight simply disappears — and the workshop list stops showing local-only workshops. On the
+ *     one surface that answers "may I pack the laptop up", "this device cannot tell you what is
+ *     waiting" is rendered identically to "nothing is waiting".
+ *
+ *   • `mutate`'s blanket `.catch(() => null)` collapses three outcomes into one: no such draft, not
+ *     this session's draft, and THE TRANSACTION FAILED. A `QuotaExceededError` on a readwrite put —
+ *     the ordinary end state of a field laptop twelve days into a workshop, with persistence never
+ *     granted — arrives by exactly that route, and the caller cannot tell it from "there was nothing
+ *     to write to".
+ *
+ * So the outcome is recorded rather than the policy changed. Nothing throws that did not throw
+ * before; there is now a fact on the record that a surface can render, and {@link DraftSyncBanner}
+ * renders it in place of the silence.
+ *
+ * TIMESTAMPS AND NOT BOOLEANS, because "it failed once an hour ago and has worked since" and "it is
+ * failing now" want different sentences, and because a successful read is allowed to clear the read
+ * flag while a write failure stands on its own — a store can perfectly well read and refuse to
+ * write, which is precisely what a full disk looks like.
+ */
+export type DwStoreHealth = {
+  /** When a read of the drafts store last failed, or null when none has since the last success. */
+  readFailedAt: number | null;
+  /** When a WRITE last failed. Never cleared by a read: a full disk reads fine. */
+  writeFailedAt: number | null;
+};
+
+let health: DwStoreHealth = { readFailedAt: null, writeFailedAt: null };
+
+/**
+ * Stable identity while nothing has changed — `useSyncExternalStore` re-renders on every snapshot
+ * whose reference moved, so returning a fresh object per call would loop the banner for ever.
+ */
+export function getStoreHealth(): DwStoreHealth {
+  return health;
+}
+
+const SERVER_HEALTH: DwStoreHealth = { readFailedAt: null, writeFailedAt: null };
+export function getServerStoreHealth(): DwStoreHealth {
+  return SERVER_HEALTH;
+}
+
+/** True when this browser cannot currently be trusted to say what it is holding. */
+export function storeIsAnswering(state: DwStoreHealth = health): boolean {
+  return state.readFailedAt === null && state.writeFailedAt === null;
+}
+
+function noteStoreFailure(kind: "read" | "write"): void {
+  const now = Date.now();
+  health = kind === "read" ? { ...health, readFailedAt: now } : { ...health, writeFailedAt: now };
+  // Deliberately does NOT publish on its own: every call site is inside a read or a write that
+  // publishes (or returns to one that does) a moment later, and a second notification per failure
+  // would double every render of the banner it exists to draw.
+}
+
+function noteStoreRead(): void {
+  if (health.readFailedAt === null) return;
+  health = { ...health, readFailedAt: null };
+}
+
+/**
+ * The designer has been told, and has decided to carry on. Clears both marks.
+ *
+ * Nothing is repaired by this — it is an acknowledgement, exactly like {@link retryDraft}'s. It
+ * exists because the alternative is a red panel that cannot be dismissed on a laptop whose disk was
+ * freed an hour ago, and a warning that cannot go away is a warning people stop reading.
+ */
+export function acknowledgeStoreTrouble(): void {
+  health = { readFailedAt: null, writeFailedAt: null };
+  publish();
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Whose drafts these are
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -728,10 +879,17 @@ export async function refreshDrafts(): Promise<DwDraft[]> {
     // `pendingWork`, so one unfiltered read here is enough to put another designer's unsent work on
     // screen and into the next sync pass. See {@link draftBelongsToSession}.
     cache = rows.map(migrateDraft).filter(draftBelongsToSession).sort((a, b) => b.updatedAt - a.updatedAt);
+    noteStoreRead();
   } catch {
     // A store that cannot be read is reported as empty rather than throwing into whichever render
-    // asked. The banner then says nothing, which is the honest answer: this browser has no drafts it
-    // can see. Nothing is deleted by this path.
+    // asked. Nothing is deleted by this path.
+    //
+    // AND THE EMPTINESS IS NOW MARKED AS A FAILURE RATHER THAN PRESENTED AS AN ANSWER. The comment
+    // that stood here called `[]` "the honest answer: this browser has no drafts it can see", and it
+    // is not one — it is the same sentence as "there is nothing waiting on this device", published
+    // to the banner and to the workshop list, at the moment a fortnight of unsent fieldwork is most
+    // at risk. See {@link DwStoreHealth}: the array stays empty, and the surfaces are told WHY.
+    noteStoreFailure("read");
     cache = [];
   }
   publish();
@@ -757,7 +915,14 @@ function matchesId(draft: DwDraft, id: string): boolean {
 export async function loadDraft(id: string): Promise<DwDraft | null> {
   const rows = await transact([STORE_DRAFTS], "readonly", async (stores) =>
     req<Record<string, unknown>[]>(stores[STORE_DRAFTS].getAll() as IDBRequest<Record<string, unknown>[]>)
-  ).catch(() => [] as Record<string, unknown>[]);
+  ).catch(() => {
+    // Marked, for the reason `refreshDrafts` is: `ensureDraft` reads "no such draft" out of this
+    // empty array and mints a SECOND local copy of a workshop this browser already holds, so a
+    // transient read failure here forks the draft. The atomic check-and-create inside `ensureDraft`
+    // closes that particular door; this is what stops the failure being invisible everywhere else.
+    noteStoreFailure("read");
+    return [] as Record<string, unknown>[];
+  });
   return rows.map(migrateDraft).find((draft) => matchesId(draft, id) && draftBelongsToSession(draft)) ?? null;
 }
 
@@ -915,8 +1080,38 @@ async function mutate<P = undefined>(
     };
     await req(store.put(updated));
     return updated;
-  }).catch(() => null);
+  }).catch(() => {
+    /*
+      THE THREE OUTCOMES THIS `null` USED TO COLLAPSE, AND WHY ONLY ONE OF THEM IS BENIGN.
+
+      `mutate` can answer `null` because the draft is not there, because it belongs to the other
+      session on this laptop, or because THE TRANSACTION FAILED — `req` rejects on `onerror` and
+      `transact` on `onabort`/`onerror`, which is exactly the route a `QuotaExceededError` on a
+      readwrite put takes on a laptop twelve days into a workshop. The first two are ordinary
+      answers to a question. The third is a designer's paragraphs not reaching the disk, and it
+      was reported in the same word.
+
+      The contract is deliberately UNCHANGED — every caller in this file, and `putDraftStage`'s
+      callers outside it, read `null` as "nothing was written" and act correctly on that; making
+      this reject would put an unhandled rejection into an autosave effect, which is a worse
+      failure than the one being fixed. What changes is that the failure now leaves a mark
+      {@link DraftSyncBanner} can render, so "nothing could be written to this device's storage"
+      is said out loud somewhere instead of nowhere. See {@link DwStoreHealth}.
+
+      The remaining half of this defect is the stage form's: `write()` advances its banked baseline
+      and clears the pending chip whether or not the write landed, and `sameSnapshot` then makes
+      the loss permanent. That lives in `stages/[stageKey]/page.tsx` and is recorded as outstanding.
+    */
+    noteStoreFailure("write");
+    return null;
+  });
   if (next) await refreshDrafts();
+  // A failed write publishes WITHOUT re-reading. The listeners have to be told, because the failure
+  // is precisely the case in which nothing else is going to tell them and the health mark above
+  // would sit on the record unrendered — but re-reading the whole drafts store to deliver a flag
+  // costs a `getAll` over a fortnight of documents on the laptop least able to afford it, and the
+  // rows have not changed by definition: the write did not land.
+  else publish();
   return next;
 }
 
@@ -974,8 +1169,6 @@ export async function ensureDraft(
   remoteId: string,
   seed?: { title?: string; templateId?: string; ownerUserId?: string | null }
 ): Promise<DwDraft> {
-  const existing = await loadDraft(remoteId);
-  if (existing) return existing;
   const now = Date.now();
   const draft: DwDraft = {
     schemaVersion: DW_DRAFT_SCHEMA_VERSION,
@@ -1001,9 +1194,51 @@ export async function ensureDraft(
     lastSyncedAt: null,
     failure: null
   };
-  await transact([STORE_DRAFTS], "readwrite", async (stores) => req(stores[STORE_DRAFTS].put(draft)));
+  /*
+    THE LOOK AND THE CREATE ARE ONE TRANSACTION, WHICH IS THE RULE EVERY OTHER WRITE IN THIS FILE
+    ALREADY OBEYS.
+
+    This was `const existing = await loadDraft(remoteId); if (existing) return existing;` followed by
+    a SECOND, readwrite transaction that put the new record — a check-then-act with a commit boundary
+    down the middle, in the one file whose header argues at length (see {@link mutate}) that the
+    load-decide-save-later shape is what lets two writers lose each other's work.
+
+    WHAT THE GAP COST. The object store's keyPath is `localId`, so nothing constrains two records
+    carrying the same `remoteId`. Two tabs opening the same server-owned workshop for the first time
+    within the same few milliseconds — the ordinary pairing of a workshop in one tab and the list in
+    another — both read null, both mint a `localId`, and both write. From then on each tab's
+    autosaves land in a DIFFERENT draft record, while `adoptServerDetail`/`adoptServerStage`, which
+    resolve by REMOTE id through `getAll().find()`, write into whichever record key order reaches
+    first — not necessarily the one the tab is editing. Once both have been folded, the second PUT
+    replaces the singleton row wholesale with the second draft's bucket and the first tab's answers
+    are gone from the server, under a 200, with both local copies marked pushed. Recovery meant
+    clearing browser storage, which is the one thing the banner tells a designer never to do.
+    `loadDraft`'s `.catch(() => [])` widened it further: a transient read failure forked the draft
+    single-tab.
+
+    The transform is the same `matchesId && draftBelongsToSession` test the reads use, run against
+    rows fetched INSIDE the readwrite transaction, so a concurrent writer over this scope is
+    serialised wholly before the read or wholly after the put and neither order can fork the record.
+  */
+  const stored = await transact([STORE_DRAFTS], "readwrite", async (stores) => {
+    const store = stores[STORE_DRAFTS];
+    const rows = await req<Record<string, unknown>[]>(store.getAll() as IDBRequest<Record<string, unknown>[]>);
+    const existing = rows
+      .map(migrateDraft)
+      .find((row) => matchesId(row, remoteId) && draftBelongsToSession(row));
+    if (existing) return existing;
+    await req(store.put(draft));
+    return draft;
+  }).catch(() => {
+    // A store that refuses the whole transaction cannot be told apart from one that has nothing in
+    // it, so the in-memory record is handed back and the caller carries on: refusing to open a
+    // workshop because a housekeeping write failed would lose the screen as well as the write. The
+    // mark is what stops that being silent — see {@link DwStoreHealth}.
+    noteStoreFailure("write");
+    return draft;
+  });
   await refreshDrafts();
-  return draft;
+  return stored;
 }
 
 /**
@@ -1105,11 +1340,31 @@ export async function putDraftStage(
             custom: data.custom ?? previous.custom ?? {},
             updatedAt: now,
             dirtyAt: now,
-            // A stage first written while the workshop has NO server record is reconciled by
-            // definition: there is nothing up there for it to overwrite, and it is created together
-            // with the workshop on the next connection. Anything else keeps whatever the fold or the
-            // last push recorded — a local write must never be able to claim this device has seen the
-            // server's copy of a stage it has not read. See {@link DwDraftStage.serverLoadedAt}.
+            /*
+              A stage first written while the workshop has NO server record is reconciled by
+              definition: there is nothing up there for it to overwrite. Anything else keeps whatever
+              the fold or the last push recorded — a local write must never be able to claim this
+              device has seen the server's copy of a stage it has not read. See
+              {@link DwDraftStage.serverLoadedAt}.
+
+              AND THE CLAIM EXPIRES THE INSTANT THE CREATE LANDS, WHICH IS THE HALF THAT WAS MISSING.
+              "There is nothing up there" was true when this stamp was written and false by the time
+              the payload built from it went up: `POST /design-workshops` calls `seed_designer_prefill`,
+              which writes real `DwStageEntry` rows — `workshopSetup` in stage 1 (designerName,
+              designerInstitution) and `workshopPlan` in stage 3 (designerProfile, a REQUIRED rich-text
+              field, and designerExperience). `runSync` then pushed those stages with `neverRead` false,
+              so no `merge`, and `save_stage` wrote the browser's bucket over each singleton row
+              wholesale with no `RecordRevision`: four seeded values gone in place, `designerName` also
+              nulled on the promoted column, and stage 3 silently reverted from complete to incomplete
+              for a biography the designer had never seen and could not know to retype.
+
+              The stamp is therefore CLEARED for every stage inside the same `mutate` that writes
+              `remoteId` — see the create arm of {@link runSync}. Do not "simplify" that away by
+              deleting this arm instead: a pre-create stage genuinely has nothing above it, and leaving
+              it null would make every offline-created workshop withhold sweeps it has honestly earned
+              and print a "you deleted rows this browser may not send" sentence about rows that exist
+              nowhere but here.
+            */
             serverLoadedAt: previous.serverLoadedAt ?? (draft.remoteId === null ? now : null),
             // A fresh edit clears the last refusal: the designer may have just fixed exactly what the
             // server complained about, and a stale red message on a corrected stage is worse than none.
@@ -1247,6 +1502,9 @@ export async function markStagePushed(
           ...stage,
           ...unsentAfterPush(stage, { dirtyAt: options.sinceDirtyAt, removedFrom: options.sinceRemovedFrom }),
           lastPushedAt: now,
+          // Discharged by the save it warned about — the same rule and the same reason as the sync
+          // pass's acknowledgement; see the note there.
+          foldNote: null,
           /*
             THE SERVER HAS TAKEN THIS DEVICE'S COPY — BUT THAT ONLY MEANS THE TWO AGREE WHEN THE PUSH
             WAS NOT A MERGE.
@@ -1619,10 +1877,33 @@ export type RegistrySource = "network" | "memory" | "cache";
  * `useMemo` in the feature rebuilding still hold when the answer came off disk.
  */
 export async function loadRegistry(): Promise<{ registry: DwRegistry; source: RegistrySource; storedAt?: number }> {
+  /*
+    ASKED BEFORE THE FETCH, WHICH IS THE ONLY MOMENT AT WHICH THE ANSWER IS KNOWABLE.
+
+    `RegistrySource` has declared a "memory" state since it was written and nothing ever produced it
+    — a grep for the string across `lib`, `app` and `components` returned the type alias and nothing
+    else. So `loadRegistry` reported "network" for every resolved call, including the ones that never
+    touched the network: `fetchStageRegistry` returns the module-level cache immediately whenever it
+    holds anything and `loadRegistry` never passes `{refresh: true}` (nothing in the frontend does).
+    A tab open since before a deploy therefore drew the pre-deploy field list and reported it as
+    freshly fetched, and so did a tab whose first read fell back to IndexedDB — `adoptStageRegistry`
+    seeds the same module cache on the catch path below, so a disk copy of arbitrary age is served as
+    "network" for the rest of the tab's life. That is the enabling condition for the unknown-singleton
+    data loss {@link DwDraftStage.unknownSingleton} describes, and the one banner that would warn
+    about it is gated on `source === "cache"`.
+
+    `peekStageRegistry()` is checked FIRST because it is the discriminator: `fetchStageRegistry`
+    returns the previously cached OBJECT even after a real round trip when the version is unchanged
+    (deliberately — identity is what stops every `useMemo` in the feature rebuilding), so comparing
+    identities afterwards cannot tell a served cache from a revalidated one. What CAN be said with
+    certainty is that a non-null cache before the call means no request was made, because that is the
+    function's own first line.
+  */
+  const memoised = peekStageRegistry();
   try {
     const registry = await fetchStageRegistry();
     void cacheRegistry(registry);
-    return { registry, source: "network" };
+    return { registry, source: memoised ? "memory" : "network" };
   } catch (error) {
     const fallback = await cachedRegistry();
     if (!fallback) throw error;
@@ -1663,6 +1944,45 @@ export function splitSingletons(spec: DwStage, singleton: DwEntryData): Record<s
     out[entity.key] = known;
   }
   return out;
+}
+
+/**
+ * The other half of {@link splitSingletons}: every key it did NOT take.
+ *
+ * THE TWO ARE DELIBERATELY A PAIR AND MUST BE CALLED TOGETHER at all three read paths (the fold,
+ * the list adopt, the stage adopt). `splitSingletons` is subtractive by design — it copies across
+ * only the keys this build's registry declares — and for as long as nothing collected the remainder,
+ * that subtraction was a silent delete of somebody else's answer two saves later. The whole argument
+ * is at {@link DwDraftStage.unknownSingleton}; this function is the one line that makes it possible.
+ *
+ * FILED UNDER THE STAGE'S SINGLETON ENTITY, not under a flat bucket, so a registry that one day
+ * declares a second singleton cannot have one entity's leftovers merged into the other's row. The
+ * wire flattens the singletons into one map (`_stages_payload` does, and `stage_schema` validates
+ * that a stage declares at most one), so with today's registry there is exactly one place for them
+ * to go — and a stage that declares NO singleton gets an empty result, correctly: `buildStageEntries`
+ * sends no singleton entry for such a stage, so `save_stage` never touches the row and nothing can
+ * be lost by omission.
+ */
+export function unknownSingletonKeys(spec: DwStage, singleton: DwEntryData): Record<string, DwEntryData> {
+  const singletons = spec.entities.filter((entity) => entity.cardinality === "SINGLETON");
+  if (!singletons.length) return {};
+  const declared = new Set<string>();
+  for (const entity of singletons) for (const field of entity.fields) declared.add(field.key);
+  const leftover: DwEntryData = {};
+  for (const [key, value] of Object.entries(singleton)) {
+    // The underscore keys are the protocol's own (`_entryId`, `_ordinal`, `_clientKey`) and are
+    // lifted out of `data` by `entryDataOf` on the way back up. Carrying them here would post the
+    // server's own bookkeeping back to it as though it were an answer, and `StageSaveIn` 422s a
+    // reserved key — which would refuse the whole stage over a field nobody typed.
+    if (key.startsWith("_")) continue;
+    if (declared.has(key)) continue;
+    leftover[key] = value;
+  }
+  if (!Object.keys(leftover).length) return {};
+  // One entity, because `stage_schema.py` refuses a spec declaring two. Named rather than assumed:
+  // the day that changes, this line is the one that has to be revisited, and filing under the first
+  // declared singleton is the same choice the wire's flattening already makes.
+  return { [singletons[0].key]: leftover };
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -1758,6 +2078,25 @@ export function foldStageInto(
     singletons[entityKey] = merged;
   }
 
+  /*
+    THE KEYS THIS BUILD'S REGISTRY DOES NOT DECLARE ARE FOLDED TOO, under the same "add what this
+    browser has never seen" rule the loop above applies to the declared ones — the fold's whole
+    contract is that the draft comes out a SUPERSET of the server's copy, and a key silently dropped
+    here is the one thing that could make that false while `serverLoadedAt` is stamped as though it
+    were true. That combination is what deletes another user's answer on the very next save.
+
+    Not counted in `added`: they are keys this build cannot draw, so announcing "1 answer appeared"
+    about a box that will not appear is a sentence the designer cannot check. They travel back up
+    with the next save and the server either keeps them or reports them in `droppedKeys`.
+  */
+  const unknownSingleton: Record<string, DwEntryData> = { ...(current.unknownSingleton ?? {}) };
+  for (const [entityKey, values] of Object.entries(unknownSingletonKeys(spec, incoming.singleton ?? {}))) {
+    const held = unknownSingleton[entityKey] ?? {};
+    const merged: DwEntryData = { ...held };
+    for (const [key, value] of Object.entries(values)) if (!(key in merged)) merged[key] = value;
+    unknownSingleton[entityKey] = merged;
+  }
+
   const addedCustom: string[] = [];
   const custom: DwEntryData = { ...(current.custom ?? {}) };
   for (const [key, value] of Object.entries(incoming.custom ?? {})) {
@@ -1832,6 +2171,7 @@ export function foldStageInto(
     stage: {
       ...current,
       singletons,
+      unknownSingleton,
       collections,
       custom,
       completeness: incoming.completeness ?? current.completeness,
@@ -2158,6 +2498,10 @@ export async function adoptServerDetail(detail: DwDetail, spec: DwRegistry): Pro
         stages[stageSpec.key] = {
           ...current,
           singletons: {},
+          // Cleared with the rest and for the same reason: this branch IS the server's copy, and it
+          // is empty. A leftover key kept here would read as downloaded-and-current and the next
+          // push would put it back into a row the repository no longer has.
+          unknownSingleton: {},
           collections: {},
           removedFrom: [],
           // Cleared with the rest, and for the same reason: this branch IS the server's copy of the
@@ -2173,6 +2517,10 @@ export async function adoptServerDetail(detail: DwDetail, spec: DwRegistry): Pro
       stages[stageSpec.key] = {
         ...current,
         singletons: splitSingletons(stageSpec, incoming.singleton ?? {}),
+        // REPLACED, not merged, on a clean adopt — this branch IS the server's copy of the stage,
+        // and a leftover key the repository no longer holds must not read as current and be posted
+        // back. The pairing with `splitSingletons` is the rule: see {@link unknownSingletonKeys}.
+        unknownSingleton: unknownSingletonKeys(stageSpec, incoming.singleton ?? {}),
         collections: withClientKeys(incoming.collections ?? {}),
         removedFrom: [],
         // The third sibling key of the stage bucket, taken as the server sent it. `?? {}` because
@@ -2363,6 +2711,11 @@ export async function adoptServerStage(
         [spec.key]: {
           ...current,
           singletons: splitSingletons(spec, incoming.singleton ?? {}),
+          // Paired with the line above, always — see {@link unknownSingletonKeys}. This was the arm
+          // the finding was reported against: it filters the singleton and keeps `collections` and
+          // `custom` verbatim, so a key this build does not declare was the ONE thing a read could
+          // silently destroy.
+          unknownSingleton: unknownSingletonKeys(spec, incoming.singleton ?? {}),
           collections: withClientKeys(incoming.collections ?? {}),
           removedFrom: [],
           custom: incoming.custom ?? {},
@@ -2553,6 +2906,22 @@ export async function pendingWork(): Promise<DwDraftPending[]> {
     for (const stage of Object.values(draft.stages)) {
       if (stage.failure?.permanent) failures.push({ scope: stage.stageKey, message: stage.failure.message });
     }
+    /*
+      A REFUSED PHOTOGRAPH IS LISTED LIKE A REFUSED STAGE, which it was not until now.
+
+      `failures` is the only list a designer reads to find out what still needs a person, and it is
+      also what makes the banner offer "Try again" at all (that button is gated on
+      `state.refusals.length`). A file the server had permanently rejected appeared in NEITHER: it
+      was counted in `mediaCount` as though it were queued, and the stage it blocked printed "It
+      sends itself as soon as they upload". So the one item that could not send itself was the one
+      item the app promised would.
+
+      Scoped by the file's NAME rather than by its id: the designer has to be able to find the
+      photograph, and a `newClientKey()` names nothing they have ever seen.
+    */
+    for (const row of media) {
+      if (row.failure?.permanent) failures.push({ scope: row.name, message: row.failure.message });
+    }
     const needsCreate = draft.remoteId === null;
     const needsHeader = draft.headerDirtyAt !== null;
     if (!needsCreate && !needsHeader && !stageKeys.length && !media.length && !failures.length) continue;
@@ -2613,7 +2982,22 @@ export function buildStageEntries(
 
   for (const entity of spec.entities) {
     if (entity.cardinality === "SINGLETON") {
-      const values = stage?.singletons[entity.key] ?? data.singleton;
+      /*
+        THE KEYS THIS BUILD CANNOT DRAW GO BACK UP WITH THE ONES IT CAN, and the order of the spread
+        is load-bearing: what the designer holds must win over what was carried, so a leftover key
+        can never overwrite an answer this build understands.
+
+        Sending them at all is the whole of the fix for "a stale registry deletes another user's
+        answer". The payload's `data` REPLACES the singleton row wholesale (`save_stage` writes
+        `_json(item.data)` over the column, no `RecordRevision`), so a key omitted from it is a key
+        deleted — and `droppedKeys` cannot report the loss, because the server derives that list from
+        the keys the CLIENT SENT. Carry them and the outcome is honest either way: a server whose
+        registry is the newer one keeps them, and a server that no longer declares them names them in
+        `droppedKeys` and the drift banner fires. See {@link DwDraftStage.unknownSingleton}.
+      */
+      const carried = stage?.unknownSingleton?.[entity.key] ?? {};
+      const held = stage?.singletons[entity.key] ?? data.singleton;
+      const values: DwEntryData = Object.keys(carried).length ? { ...carried, ...held } : held;
       /*
         AN EMPTY SINGLETON IS NOT SENT FOR A STAGE THIS DEVICE HAS NEVER READ.
 
@@ -3018,20 +3402,82 @@ export type DwSyncResult = {
 
 let syncing: Promise<DwSyncResult> | null = null;
 
+/** The Web Lock the pass is held under. One name, one holder, across every tab of this origin. */
+const SYNC_LOCK = "dw-draft-sync";
+
 /**
  * Send everything this device is holding, oldest edit first.
  *
- * Concurrent calls — the `online` event and a "Sync now" click landing together — share one pass;
- * running two would create one workshop twice, which is precisely what `_clientKey` cannot protect
- * against because the workshop header has no client key of its own (it is protected instead by
- * `remoteId` being written to disk before anything else moves).
+ * ── TWO GUARDS, AND THE MODULE-LEVEL ONE WAS ONLY EVER HALF THE ANSWER ───────────────────────────
+ *
+ * `syncing` shares one pass between concurrent callers — the `online` event and a "Sync now" click
+ * landing together — and it is kept, because it is free and it answers the common case. What it
+ * cannot do is span a REALM: `DesignWorkshopDraftBanner` is mounted in the protected layout, so
+ * every open protected tab has its own module instance, its own `syncing`, its own `online`
+ * listener and its own drain-on-mount effect. A repo-wide grep found no `navigator.locks` and no
+ * `BroadcastChannel` anywhere in `app/`, `components/` or `lib/`, so there was no cross-tab
+ * coordination of any kind.
+ *
+ * WHAT THAT COST, IN THE ORDINARY PAIRING OF A LIST TAB AND A STAGE TAB. The create is a
+ * check-then-act across a network round trip — `if (!draft.remoteId)` is read, `POST
+ * /design-workshops` is awaited, `remoteId` is written back — and no IndexedDB transaction can
+ * serialise a decision taken outside one. The laptop joins the office wifi, `online` fires in both
+ * tabs in the same task, both read `remoteId === null`, both POST. Two government records appear
+ * under one title; whichever `mutate` lands second owns the id, so every stage and every photograph
+ * goes to one of them and the other is left an empty orphan in the ministry's index.
+ * `createDesignWorkshop` carries no client key and the create route de-duplicates nothing, so
+ * neither end can catch it.
+ *
+ * THE MEDIA LOOP IS THE WIDER WINDOW AND NEEDS NO COINCIDENCE AT ALL. Its skip test is
+ * `remoteMediaId || !blob`, and `remoteMediaId` is written only after the bytes land — so a tab ten
+ * minutes into uploading a fortnight of photographs is overlapped by any second tab whose mount
+ * effect drains, and both upload the same bytes: two `DwMedia` rows for one loom, and double the
+ * data on a metered rural connection. That is why the lease wraps the WHOLE pass and not just the
+ * create.
+ *
+ * `ifAvailable: true`, NEVER A QUEUED WAIT. A second tab that queued would run the identical pass
+ * the moment the first finished — the duplicate work, merely deferred — and a tab that closed
+ * mid-pass would leave the other blocked on a lock it can no longer see. Declining is correct: the
+ * holder is already sending everything this device holds, including whatever the caller was asking
+ * about, so the caller is told what remains and nothing else.
+ *
+ * WHERE WEB LOCKS DO NOT EXIST the pass runs exactly as it did before. The API needs a secure
+ * context, and a developer on plain http, or an older browser, must not lose the ability to sync at
+ * all to gain protection against a race — the fallback is today's behaviour, which is the behaviour
+ * every field laptop has been running.
  */
 export function syncDesignWorkshopDrafts(): Promise<DwSyncResult> {
   if (syncing) return syncing;
-  syncing = runSync().finally(() => {
+  syncing = runSyncUnderLease().finally(() => {
     syncing = null;
   });
   return syncing;
+}
+
+/** What a pass that never ran reports: nothing moved, nothing failed, and this is what is still owed. */
+async function declinedResult(): Promise<DwSyncResult> {
+  return {
+    workshopsCreated: 0,
+    stagesSent: 0,
+    mediaUploaded: 0,
+    failed: 0,
+    // Counted honestly rather than reported as zero: another tab is working through exactly this
+    // list, and telling the caller "nothing is outstanding" would let the banner disappear while a
+    // fortnight of fieldwork was still in flight.
+    pending: (await pendingWork()).length,
+    // NOT `stoppedOffline`. The connection is fine; the work is being done by somebody else. Saying
+    // "still no connection" here would send a designer looking for signal they already have.
+    stoppedOffline: false
+  };
+}
+
+async function runSyncUnderLease(): Promise<DwSyncResult> {
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  if (!locks?.request) return runSync();
+  const held = await locks.request(SYNC_LOCK, { ifAvailable: true }, async (lock) =>
+    lock ? runSync() : null
+  );
+  return held ?? declinedResult();
 }
 
 /**
@@ -3045,6 +3491,71 @@ function failure(
   skewRun: string | null = null
 ): DwDraftFailure {
   return { message, permanent, skewRun, at: Date.now(), attempts };
+}
+
+/**
+ * Every stage of a just-created workshop, with its claim to have read the server withdrawn.
+ *
+ * PURE AND EXPORTED BECAUSE THE DECISION IS THE DEFECT AND THE TRANSACTION IS NOT. The whole
+ * argument — that `POST /design-workshops` seeds real `DwStageEntry` rows this browser has never
+ * read, so the free `serverLoadedAt` stamp `putDraftStage` grants while `remoteId` is null expires
+ * the instant the create lands — is written at its call site in {@link runSync}. Kept here so it can
+ * be asserted without IndexedDB, a live API and a Postgres row, which is how the original stamp
+ * survived review.
+ */
+export function stagesUnreadAfterCreate(
+  stages: Record<string, DwDraftStage>
+): Record<string, DwDraftStage> {
+  return Object.fromEntries(
+    Object.entries(stages).map(([key, stage]) => [key, { ...stage, serverLoadedAt: null, removedFrom: [] }])
+  );
+}
+
+/**
+ * Does an error thrown by a stage PUT describe the WHOLE WORKSHOP rather than that one stage?
+ *
+ * Rethrown to the pass-level catch when it does. The set is: anything the server did not answer at
+ * all (a dropped connection), 408 and 429 (the request never completed / the server asking for
+ * time), and 409/404 — both of which mean the workshop itself is no longer writable by this account.
+ * See the call site for why 404 had to join a list that named only 409, and what stamping
+ * twenty-two innocent stages with "correct the answer that caused it" cost.
+ */
+export function stageRefusalIsPassLevel(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  return error.status === 408 || error.status === 429 || error.status === 409 || error.status === 404;
+}
+
+/**
+ * The triage one refused photograph gets, decided from the error alone.
+ *
+ * Pure and exported for the reason {@link stagesUnreadAfterCreate} is: the media arm's entire defect
+ * was that it had NO triage — its only skip test was `remoteMediaId || !blob`, neither of which a
+ * refusal sets — so the rule that replaces it is the thing worth pinning, not the `put` that stores
+ * it. `attempts` is passed in rather than read here because it belongs to the row, and this function
+ * must not need one.
+ */
+export function mediaRefusal(name: string, cause: unknown, attempts: number): DwDraftFailure {
+  const answered = cause instanceof ApiError;
+  const message =
+    typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "The server refused this file.";
+  const schemaRefusal = isSchemaRefusal(cause);
+  // 408 and 429 stay on the "waiting will help" side, the same way the pass-level catch treats them:
+  // the first means the request never completed, the second is the server asking for time. Anything
+  // else the server ANSWERED is permanent until a person changes something about the file.
+  const backOff = answered && (cause.status === 408 || cause.status === 429);
+  return failure(
+    schemaRefusal
+      ? `The repository could not read what this copy of the app sent for “${name}”: ${message} Nothing is ` +
+        "wrong with the file and nothing has been thrown away — this app and the repository are out of step, and it " +
+        "will be sent by itself the next time you open the app after either has been updated."
+      : `The repository refused the file “${name}”: ${message} It is still on this device, and the stage it ` +
+        "belongs to is waiting for it, but it will keep being refused until somebody changes something about the " +
+        "file — this is not a connection problem. Remove it from the stage, or attach it again in a format the " +
+        "repository accepts, and then use Try again.",
+    !backOff,
+    attempts,
+    schemaRefusal ? APP_RUN_ID : null
+  );
 }
 
 async function runSync(): Promise<DwSyncResult> {
@@ -3095,18 +3606,79 @@ async function runSync(): Promise<DwSyncResult> {
         // pass that dies during the media must come back to the media, never to the create — the
         // resumability rule `lib/offline.ts` documents, and the reason a bad signal used to
         // duplicate a record once per sync pass for as long as it stayed bad.
-        draft =
-          (await mutate(draft.localId, (current) => ({
+        const recorded = await mutate(draft.localId, (current) => ({
+          ...current,
+          remoteId: created.id,
+          headerDirtyAt: null,
+          // The CREATE carried the whole header, so every recorded edit is discharged. Cleared with
+          // the timestamp for the reason the PATCH arm gives: a list left behind would make the next
+          // unrelated edit send fields nobody touched.
+          headerDirtyKeys: [],
+          header: { ...current.header, status: String(created.status) },
+          /*
+            EVERY STAGE LOSES ITS `serverLoadedAt`, AND THE PENDING SWEEPS GO WITH IT.
+
+            `putDraftStage` stamps `serverLoadedAt` on any stage written while `remoteId` is null, on
+            the true premise that a workshop the server has never heard of has nothing up there to
+            overwrite. The create is exactly the moment that premise expires: `POST /design-workshops`
+            runs `seed_designer_prefill`, which writes `workshopSetup` (designerName,
+            designerInstitution) into stage 1 and `workshopPlan` (designerProfile — REQUIRED rich text
+            — and designerExperience) into stage 3. Those rows are on the server and this browser has
+            never read them, which is the precise definition of never-read; leaving the stamp made the
+            very next PUT omit `merge`, and `save_stage` replaced each singleton row's `data`
+            wholesale, destroying all four values in place with no `RecordRevision` and nulling the
+            promoted `designerName` column. Stage 3 then read as incomplete for a biography the
+            designer had never seen. With the stamp cleared the first post-create save carries
+            `merge: true` on all three arms and `{**previous, **clean}` keeps them.
+
+            `removedFrom` IS CLEARED IN THE SAME BREATH, and that is not a shortcut — it is the fact
+            that makes clearing the stamp free of a false alarm. `seed_designer_prefill` skips every
+            entity whose cardinality is not SINGLETON, so a workshop the server has just created holds
+            NO collection row anywhere; a deletion recorded here before the create was a deletion of a
+            row that has only ever existed on this device, and there is nothing above for a sweep to
+            reach. Left standing, it would make {@link stageSweep} report `withheld` — "you deleted
+            rows this browser may not send" — about rows that exist nowhere but here, which is how a
+            designer learns to stop reading this app's warnings.
+          */
+          stages: stagesUnreadAfterCreate(current.stages),
+          failure: null
+        }));
+        /*
+          THE WRITE-BACK IS CHECKED, BECAUSE AN UNRECORDED SERVER ID CREATES THE WORKSHOP AGAIN.
+
+          `mutate` answers `null` when the transaction failed — a `QuotaExceededError` on a laptop
+          holding a fortnight of photograph blobs is the realistic one — and the old `?? draft` kept
+          the OLD object, whose `remoteId` is still null, then incremented `workshopsCreated` and fell
+          straight through `if (!remoteId) continue`. Nothing was recorded anywhere. The draft on disk
+          still said `needsCreate`, so the NEXT pass POSTed a second workshop, and the one after that a
+          third: unbounded duplicate government records under one title, every one of them empty,
+          under a toast reading "1 saved change sent", while the designer's actual stages and
+          photographs never moved. That is the exact non-resumability the write-back exists to
+          prevent, defeated by not checking whether it happened.
+
+          So the id is treated as lost work rather than as progress: it is recorded as a draft-level
+          failure in the designer's own terms, the draft is skipped, and `workshopsCreated` is NOT
+          incremented — the pass reports the truth and no second create can follow. The refusal is
+          `permanent`, which puts it in the banner's list with a "Try again": there is nothing the
+          network can do about a full disk, and a person freeing space is exactly the decision that
+          button is for.
+        */
+        if (!recorded?.remoteId) {
+          await mutate(draft.localId, (current) => ({
             ...current,
-            remoteId: created.id,
-            headerDirtyAt: null,
-            // The CREATE carried the whole header, so every recorded edit is discharged. Cleared with
-            // the timestamp for the reason the PATCH arm gives: a list left behind would make the next
-            // unrelated edit send fields nobody touched.
-            headerDirtyKeys: [],
-            header: { ...current.header, status: String(created.status) },
-            failure: null
-          }))) ?? draft;
+            failure: failure(
+              "This workshop was created on the server, but this browser could not record its id — its storage refused the " +
+                "write, which usually means the disk or the browser's quota is full. Nothing has been thrown away and " +
+                "nothing further will be sent for it until this is cleared, so that a second copy of the workshop is not " +
+                "created. Free some space on this device, then use Try again.",
+              true,
+              (current.failure?.attempts ?? 0) + 1
+            )
+          }));
+          result.failed += 1;
+          continue;
+        }
+        draft = recorded;
         result.workshopsCreated += 1;
       } else if (item.needsHeader) {
         /*
@@ -3159,8 +3731,43 @@ async function runSync(): Promise<DwSyncResult> {
 
       /* 2. The photographs, before the stages that reference them. ---------------------------- */
       const blocked = new Set<string>();
+      /*
+        WHICH STAGES ARE WAITING ON A FILE THE SERVER HAS REFUSED, collected AS THE LOOP GOES.
+
+        Built here rather than re-derived in the stage loop, and that is not tidiness — this file
+        already argues (see the repair branch below) that `draftMedia` deserialises the blob of every
+        unconfirmed photograph the draft holds, and that paying a fortnight of photographs for one
+        answer, on every pass, on the laptop least able to afford it, is the cost the `MEDIA_BY_DRAFT`
+        index was created to avoid. A per-held-back-stage lookup would have been a fourth such walk.
+        The loop below is already holding every row; it just has to say so.
+      */
+      const refusedByStage = new Map<string, string[]>();
+      const noteRefused = (stageKey: string | null, name: string) => {
+        if (!stageKey) return;
+        refusedByStage.set(stageKey, [...(refusedByStage.get(stageKey) ?? []), name]);
+      };
       for (const media of await draftMedia(draft.localId)) {
         if (media.remoteMediaId || !media.blob) continue;
+        /*
+          THE SAME GATE THE STAGE ARM AND THE WORKSHOP ARM HAVE HAD ALL ALONG.
+
+          This loop's only skip test was `remoteMediaId || !blob`, and a refusal sets neither — so a
+          file the server will never accept (a 415 on a video container, a 413 over the size limit)
+          was re-uploaded in full on every pass, for ever, on the metered rural connection this whole
+          feature exists for, while the stage referencing it was held back behind a sentence
+          promising it would send itself. `blocksRetry` is the rule the other two arms already use:
+          a permanent refusal is skipped, and a SCHEMA refusal is re-attempted once per app run so
+          the app can recover from a skew after the skew has gone. See {@link DwDraftMedia.failure}.
+        */
+        if (blocksRetry(media.failure)) {
+          // Counted as blocking its stage, so the stage is not sent with the reference missing —
+          // `save_stage` writes the cleaned entry wholesale, so an omitted media key deletes
+          // whatever the server already holds under it. The sentence the stage gets below now says
+          // which of the two situations it is in.
+          if (media.stageKey) blocked.add(media.stageKey);
+          if (media.failure?.permanent) noteRefused(media.stageKey, media.name);
+          continue;
+        }
         const file = new File([media.blob], media.name, { type: media.mimeType });
         /*
           ONE FILE PER CALL, WHICH IS WHY THIS CATCHES AT ALL.
@@ -3187,11 +3794,9 @@ async function runSync(): Promise<DwSyncResult> {
           }));
         } catch (error) {
           if (isUnreachable(error)) throw error;
-          await noteMediaFailure(
-            media.id,
-            error instanceof Error ? error.message : "The server refused this file."
-          );
+          await noteMediaFailure(media.id, error);
           if (media.stageKey) blocked.add(media.stageKey);
+          if (mediaRefusal(media.name, error, 0).permanent) noteRefused(media.stageKey, media.name);
           result.failed += 1;
           continue;
         }
@@ -3206,6 +3811,9 @@ async function runSync(): Promise<DwSyncResult> {
         // and a silent fall-through would leave the bytes with no record of why they stayed.
         await noteMediaFailure(media.id, failed[0]?.error ?? "The server refused this file.");
         if (media.stageKey) blocked.add(media.stageKey);
+        // A per-file reason from a partly-landed batch is an answer the server gave, so it is
+        // permanent by the same rule `mediaRefusal` applies to a thrown one.
+        noteRefused(media.stageKey, media.name);
         result.failed += 1;
       }
 
@@ -3258,15 +3866,34 @@ async function runSync(): Promise<DwSyncResult> {
           // `save_stage` writes the cleaned entry wholesale — so an omitted key deletes whatever the
           // server already holds under it. A stage waiting on one photograph is a delay; a stage
           // that silently erased last week's photo id is a hole in the report nobody will notice.
+          /*
+            AND THE SENTENCE NOW SAYS WHICH OF THE TWO SITUATIONS IT IS. "It sends itself as soon as
+            they upload" is true of a file waiting for a wire and is a lie about a file the server has
+            REFUSED — and it was printed over both, so a stage stranded behind a rejected video read
+            as a stage that was merely early. Worse, the failure was recorded `permanent: false`,
+            which is what `DraftSyncBanner` keys the "Try again" button off: the one case that needed
+            a person was the one case offered no control.
+          */
+          const refusedNames = refusedByStage.get(stageKey) ?? [];
           await noteStageFailure(
             draft.localId,
             stageKey,
-            failure(
-              `${outstanding.length} attached file${outstanding.length === 1 ? " is" : "s are"} still on this device, so this ` +
-                "stage has not been sent yet. It sends itself as soon as they upload — nothing has been thrown away.",
-              false,
-              (stage.failure?.attempts ?? 0) + 1
-            )
+            refusedNames.length
+              ? failure(
+                  `This stage has not been sent because the repository refused ${refusedNames.length === 1 ? "a file" : "files"} ` +
+                    `attached to it (${refusedNames.join(", ")}), and sending the stage without ${refusedNames.length === 1 ? "it" : "them"} ` +
+                    "would delete whatever the repository already holds in that field. Nothing has been thrown away. Open the " +
+                    `stage and either remove ${refusedNames.length === 1 ? "the file" : "those files"} or attach ` +
+                    `${refusedNames.length === 1 ? "it" : "them"} again in a format the repository accepts, then use Try again.`,
+                  true,
+                  (stage.failure?.attempts ?? 0) + 1
+                )
+              : failure(
+                  `${outstanding.length} attached file${outstanding.length === 1 ? " is" : "s are"} still on this device, so this ` +
+                    "stage has not been sent yet. It sends itself as soon as they upload — nothing has been thrown away.",
+                  false,
+                  (stage.failure?.attempts ?? 0) + 1
+                )
           );
           blocked.add(stageKey);
           continue;
@@ -3404,7 +4031,30 @@ async function runSync(): Promise<DwSyncResult> {
             deleted — a whole-workshop condition with its own sentence below).
           */
           const answered = error instanceof ApiError;
-          if (!answered || error.status === 408 || error.status === 429 || error.status === 409) throw error;
+          /*
+            404 JOINS THE RETHROWN SET, BECAUSE THE 409 THIS LINE WAS WRITTEN FOR IS UNREACHABLE FOR
+            THE ONLY PERSON WHO CAN HIT THE CONDITION.
+
+            `load_workshop_or_404` raises 404 for a soft-deleted workshop at its FIRST check — "if
+            record.deletedAt is not None and not admin" — before the `for_edit` branch that would
+            raise the 409. `save_stage_data` admits designers, and a designer is the only user whose
+            stages sit in this store, so the workshop-level sentence below ("this workshop has been
+            deleted on the server … ask an admin to restore it") could never be shown to them. The
+            same 404 also covers a `DesignWorkshopViewer` grant that has been revoked, deliberately,
+            so as not to confirm the id exists.
+
+            What the stage arm did with it instead was stamp every dirty stage `permanent: true,
+            skewRun: null` under "it will keep being refused until the answer that caused it is
+            corrected" — sending the designer to audit answers that nothing objected to, one red line
+            per stage, with `blocksRetry` holding all of them shut afterwards. Rethrowing puts the
+            condition where it belongs: it is a WHOLE-WORKSHOP fact, not twenty-two independent
+            refusals of twenty-two innocent stages.
+          */
+          // `!answered ||` is redundant with the helper, which answers true for anything that is not
+          // an `ApiError` — and it is kept because it is what narrows `error` for the rest of this
+          // block. TypeScript's aliased-condition narrowing follows the const; it cannot follow into
+          // a function, and without this the `error.message` below is `unknown`.
+          if (!answered || stageRefusalIsPassLevel(error)) throw error;
           /*
             A SCHEMA REFUSAL IS NOT THE DESIGNER'S FAULT, AND MUST NOT BE REPORTED AS ONE.
 
@@ -3486,6 +4136,13 @@ async function runSync(): Promise<DwSyncResult> {
                 // through a different door.
                 ...unsentAfterPush(target, { dirtyAt: stage.dirtyAt, removedFrom: sweep.emptiedEntities }),
                 lastPushedAt: now,
+                // THE FOLD'S WARNING IS DISCHARGED BY THE SAVE IT WARNED ABOUT. `foldNote` is written
+                // in the future tense — "the next save will delete N rows on the server" — so once
+                // that save has been accepted the sentence is no longer a warning but a false one.
+                // Cleared here and at {@link markStagePushed}, which are the only two places a push is
+                // acknowledged; a note left standing would be re-drawn by the banner for the rest of
+                // the workshop, and a warning that never goes away is one people stop reading.
+                foldNote: null,
                 completeness: saved.completeness ?? target.completeness,
                 failure: rejected
                   ? failure(
@@ -3566,11 +4223,23 @@ async function runSync(): Promise<DwSyncResult> {
       await mutate(draft.localId, (current) => ({
         ...current,
         failure: failure(
-          status === 409
-            ? // A 409 here is `save_stage` refusing to write into a workshop somebody deleted — not
-              // an echo of our own create. Nothing has been sent and nothing has been thrown away.
-              "This workshop has been deleted on the server, so nothing more can be sent to it. Everything you captured is " +
-                "still on this device. Ask an admin to restore it, then sync again."
+          status === 409 || status === 404
+            ? /*
+                 THE TWO READINGS OF ONE ANSWER, SAID IN ONE SENTENCE THAT IS TRUE OF BOTH.
+
+                 A 409 is `save_stage` refusing to write into a workshop somebody deleted — not an
+                 echo of our own create. A 404 is the SAME workshop as seen by a designer rather than
+                 an admin (`load_workshop_or_404` takes its non-admin deleted branch first), and it is
+                 also what a revoked `DesignWorkshopViewer` grant answers, deliberately, so as not to
+                 confirm the id exists. The client cannot tell those two apart and must not pretend
+                 to: what it can say honestly is that the workshop is no longer reachable by this
+                 account, that nothing has been thrown away, and which two people can fix it.
+
+                 Nothing has been sent either way.
+               */
+              "This workshop is no longer available to you on the server: it may have been deleted, or your access to it " +
+                "withdrawn. Nothing more can be sent to it, and everything you captured is still on this device. Ask an " +
+                "admin to restore it or to restore your access, then use Try again."
             : schemaRefusal
               ? `The repository could not read what this copy of the app sent for this workshop: ${error.message} Nothing ` +
                 "you typed is wrong and nothing has been thrown away — this app and the repository are out of step. " +
@@ -3611,14 +4280,45 @@ async function noteStageFailure(localDraftId: string, stageKey: string, next: Dw
   });
 }
 
-async function noteMediaFailure(localMediaId: string, message: string): Promise<void> {
+/**
+ * Record why one photograph did not go up, triaged exactly as a stage's refusal is.
+ *
+ * TAKES THE ERROR, NOT A SENTENCE, and that is the whole change. It used to take a `string`, which
+ * meant the one fact worth keeping — did the SERVER answer, and if so was it a dialect mismatch
+ * rather than a bad file — had already been thrown away by the caller before this function could
+ * see it. The split is the same one the stage arm makes twenty lines up and is deliberately not a
+ * second policy: `isUnreachable` has already been asked by the caller (a connection that dropped
+ * re-throws and stops the pass), so anything reaching here is an answer, and `isSchemaRefusal`
+ * separates "this app and the repository are out of step" from "this file cannot be accepted".
+ *
+ * A string is still accepted for the one caller that has no error object — the partial-batch
+ * fall-through, where `uploadMediaBatch` reports a per-file reason and nothing threw.
+ */
+async function noteMediaFailure(localMediaId: string, cause: unknown): Promise<void> {
+  const message =
+    typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "The server refused this file.";
   await transact([STORE_MEDIA], "readwrite", async (stores) => {
     const media = await req<DwDraftMedia | undefined>(
       stores[STORE_MEDIA].get(localMediaId) as IDBRequest<DwDraftMedia | undefined>
     );
     if (!media) return;
-    // Note the failure; do NOT touch `blob`. See the header.
-    await req(stores[STORE_MEDIA].put({ ...media, attempts: media.attempts + 1, lastError: message }));
+    const attempts = media.attempts + 1;
+    // Note the failure; do NOT touch `blob`. See the header — the bytes are the only copy of a loom
+    // photographed once, in a courtyard, on a day nobody is going back to, and a file the server
+    // refuses is exactly the case where somebody may yet want to re-attach or convert it.
+    await req(
+      stores[STORE_MEDIA].put({
+        ...media,
+        attempts,
+        lastError: message,
+        failure: mediaRefusal(media.name, cause, attempts)
+      })
+    );
+  }).catch(() => {
+    // A media store that refuses the note leaves the file exactly where it was and re-attempts next
+    // pass, which is the behaviour that shipped. Marked so the banner can say the device is refusing
+    // writes rather than leaving the designer to wonder why nothing changes.
+    noteStoreFailure("write");
   });
 }
 
@@ -3635,11 +4335,37 @@ async function noteMediaFailure(localMediaId: string, message: string): Promise<
  * cleared by pressing it. This button stays for the refusals a person genuinely decides about.
  */
 export async function retryDraft(id: string): Promise<void> {
-  await mutate(id, (draft) => ({
+  const cleared = await mutate(id, (draft) => ({
     ...draft,
     failure: null,
     stages: Object.fromEntries(
       Object.entries(draft.stages).map(([key, stage]) => [key, { ...stage, failure: null }])
     )
   }));
+  /*
+    THE PHOTOGRAPHS TOO, WHICH THIS BUTTON COULD NOT REACH.
+
+    It cleared draft and stage failures only, so once a refused file had earned a `blocksRetry` gate
+    of its own there was nothing on any screen that could lift it: the banner would go on printing
+    "the repository refused the file …, use Try again" over a button that did not touch it. A control
+    that names an action it does not perform is worse than no control.
+
+    A separate transaction, deliberately, and it does not undo the clear above if it fails: the two
+    stores are independent and a media store that refuses a write must not put the stage refusals
+    back. Written after the draft, so a pass that starts between the two finds the stage still
+    blocked rather than sending it with a reference the media loop is about to fail again.
+  */
+  if (!cleared) return;
+  await transact([STORE_MEDIA], "readwrite", async (stores) => {
+    const store = stores[STORE_MEDIA];
+    const rows = await req<DwDraftMedia[]>(
+      store.index(MEDIA_BY_DRAFT).getAll(cleared.localId) as IDBRequest<DwDraftMedia[]>
+    );
+    for (const row of rows) {
+      if (!row.failure) continue;
+      await req(store.put({ ...row, failure: null }));
+    }
+  }).catch(() => {
+    noteStoreFailure("write");
+  });
 }

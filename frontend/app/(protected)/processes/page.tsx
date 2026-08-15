@@ -65,20 +65,42 @@ function ProcessesPageInner() {
   const [funnel, setFunnel] = useState<FunnelValue>(EMPTY_FUNNEL);
   const [funnelReady, setFunnelReady] = useState(false);
 
+  /**
+   * Which fetch is the current one — the counter /artisans, /questionnaires and /design-workshops
+   * already carry. The search box debounces the APPLIED TERM, not the request, and the pager, the
+   * funnel and the post-save `load()` calls all fire the same fetch, so several are routinely in
+   * flight together and an abandoned question's answer can land LAST and win.
+   *
+   * Worse than a stale table here, because `<Pagination>` is rendered with `page={data.page}` — the
+   * ANSWERED page — while the refetch effect depends on `page`, the REQUESTED one. Let page 1's
+   * slow answer land after page 2's fast one and `data.page` is 1 while `page` is 2; Next then
+   * calls `setPage(data.page + 1)` = `setPage(2)`, React bails on the identical scalar, nothing
+   * re-renders and nothing refetches — the button is dead until Previous is pressed. Audit
+   * 2026-08-15 filed that against this file, /products, /tools and /media.
+   *
+   * Counted rather than aborted because `listResource` takes no `AbortSignal`; ignoring the late
+   * answer is the part that matters. Note this page also calls `load(pageToLoad)` directly after a
+   * save or delete — those are ordinary generations too, and the guard is what stops a slow list
+   * refresh from overwriting the fresher one the user's next click asked for.
+   */
+  const currentLoad = useRef(0);
+
   async function load(pageToLoad = page) {
+    const generation = (currentLoad.current += 1);
     try {
-      setData(
-        await listResource<ProcessRecord>("/processes", {
-          search: applied || undefined,
-          workshopId: funnel.workshopId || undefined,
-          craftId: funnel.craftId || undefined,
-          artisanId: funnel.artisanId || undefined,
-          page: pageToLoad,
-          pageSize: 20
-        })
-      );
+      const result = await listResource<ProcessRecord>("/processes", {
+        search: applied || undefined,
+        workshopId: funnel.workshopId || undefined,
+        craftId: funnel.craftId || undefined,
+        artisanId: funnel.artisanId || undefined,
+        page: pageToLoad,
+        pageSize: 20
+      });
+      if (generation !== currentLoad.current) return;
+      setData(result);
       setError(null);
     } catch (err) {
+      if (generation !== currentLoad.current) return;
       setError(err instanceof Error ? err.message : "Unable to load processes");
     }
   }

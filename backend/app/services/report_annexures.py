@@ -516,6 +516,23 @@ def transcript_annexure_blocks(
     return scratch.build().blocks
 
 
+# ``MediaFile.transcriptStatus`` values, split by what the designer can do about them. These are
+# NOT job statuses — the two vocabularies are different, and RATE_LIMITED never reaches this column
+# because a throttled run writes the clip back to QUEUED for the worker to finish later.
+#
+# A SECOND COPY OF A RULE IS HOW MOST OF THIS REPOSITORY'S DEFECTS AROSE, SO SAY WHY THIS ONE EXISTS.
+# The authority for "which statuses will be re-attempted" is
+# ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES`` — but ``workshop_transcripts`` imports
+# :class:`TranscriptItem` FROM this module, so importing it back is a cycle. The copy is five tokens,
+# and ``test_the_annexure_warning_reads_the_same_status_vocabulary_as_the_enqueuer`` compares both
+# sets below against that module's own, so the two cannot silently diverge: a status added there
+# without a decision here fails a test rather than mis-wording a warning.
+_IN_FLIGHT_STATUSES = frozenset({"QUEUED", "PROCESSING"})
+#: Terminal on the clip and NOT settled, so the next save of the clip's stage re-queues it — see
+#: ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES``, which deliberately contains neither.
+_STALLED_STATUSES = frozenset({"FAILED", "UNAVAILABLE"})
+
+
 def annexure_warnings(items: tuple[TranscriptItem, ...] | list[TranscriptItem]) -> list[str]:
     """What the designer should be told about the transcripts they asked to append.
 
@@ -523,14 +540,56 @@ def annexure_warnings(items: tuple[TranscriptItem, ...] | list[TranscriptItem]) 
     annexure — and silence is exactly wrong here: the designer toggled "include transcripts",
     counted the recordings they made, and would otherwise have to notice the shortfall themselves
     in a 60-page document. These reach the ``X-Report-Warnings`` header beside the download.
+
+    **"NO TRANSCRIPT YET" IS A PROMISE, AND FOR HALF OF THESE CLIPS IT WAS A FALSE ONE.** This
+    function used to count only QUEUED/PROCESSING as pending and fold everything else into one
+    sentence reading "N recording(s) have no transcript **yet**" — so a clip whose transcription had
+    FAILED, or whose provider is not configured at all (UNAVAILABLE), or whose artisan REFUSED
+    consent to transcription (``media_queue._record_transcription_refused`` writes FAILED with the
+    refusal in ``transcriptError``) was reported to the designer as a transcript on its way. The
+    designer's only rational response to that sentence is to wait, and waiting is the one thing that
+    never helps: nothing re-attempts a stalled clip until its stage is saved again.
+
+    That wording became measurably more wrong the day the queue started writing the clip's terminal
+    state. Before it, an exhausted transcription job left the column at QUEUED — wrongly, but at
+    least inside the "still being transcribed" count. Now ``_handle_job_failure`` writes FAILED, so
+    exactly the clips that most need the designer to act are the ones that fell into the silent half
+    of this sentence.
+
+    So the two classes are counted and worded separately, and the stalled clause says what to DO.
+    Saving the stage again is a real recovery and the only one a designer can reach without an
+    admin: FAILED and UNAVAILABLE are deliberately absent from
+    ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES`` precisely so the next
+    ``enqueue_stage_transcriptions`` picks the clip up. Do not "simplify" the two counts back into
+    one number — the whole point is that one of them is waiting and the other is not.
+
+    A clip in neither class (an empty status on a recording nothing has looked at yet) is still in
+    the leading count and gets no clause of its own: there is nothing true to say about it beyond
+    that it is not in the file.
     """
     missing = [item for item in items if not item.has_text]
     if not missing:
         return []
-    pending = sum(1 for item in missing if str(item.status).upper() in {"QUEUED", "PROCESSING"})
-    detail = f" ({pending} still being transcribed)" if pending else ""
+    statuses = [str(item.status or "").upper() for item in missing]
+    pending = sum(1 for status in statuses if status in _IN_FLIGHT_STATUSES)
+    stalled = sum(1 for status in statuses if status in _STALLED_STATUSES)
+    clauses: list[str] = []
+    if pending:
+        clauses.append(f"{pending} still being transcribed")
+    if stalled:
+        # "will not arrive on their own" rather than "failed": UNAVAILABLE is not a failure of the
+        # recording, it is a deployment with no transcription provider configured, and telling a
+        # designer their audio failed when the server was never able to try is how a working
+        # recording gets deleted and made again.
+        clauses.append(
+            f"{stalled} will not arrive on their own — saving the stage they are attached to "
+            f"re-attempts them"
+        )
+    detail = f" ({'; '.join(clauses)})" if clauses else ""
+    # "have no transcript" and no longer "have no transcript YET": the leading sentence covers both
+    # classes, and the word that promised arrival is now only in the clause that can keep it.
     message = (
-        f"{len(missing)} recording(s) have no transcript yet and were left out of the "
+        f"{len(missing)} recording(s) have no transcript and were left out of the "
         f"transcript annexure{detail}."
     )
     return [message]

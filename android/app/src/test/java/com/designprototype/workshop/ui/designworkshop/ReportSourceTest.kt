@@ -18,6 +18,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -254,6 +255,63 @@ class ReportSourceTest {
             source.draft!!.stages.getValue("WORKSHOP_PLAN_PARTICIPANTS_OPENING").rowsFor("participant").size,
         )
         assertTrue(source.filledFromServer.contains("WORKSHOP_PLAN_PARTICIPANTS_OPENING"))
+    }
+
+    @Test
+    fun `a stage whose only local content is untransmittable provenance is not the device's stage`() {
+        /*
+          THE SHELL THAT IS NOT QUITE EMPTY, and the one the previous test could not catch.
+
+          `DwRecordingPlaceCard` is offered on all 22 stages and writes `_recordingPlace` straight
+          into `StageDraft.values`. It can never travel — `WorkshopSync.wireData` strips every
+          `_`-prefixed key by design — and it can never print, because `renderEntity` walks
+          `entity.liveFields` and an underscore key is not a registry field. So it is capture effort
+          that no surface consumes, and `values.isNotEmpty()` counted it as work.
+
+          The path: the designer opens stage 3 in a courtyard where the server read fails, the screen
+          seeds a blank state, they answer only "where are you?" and leave. Days later they build the
+          report with signal. Before this fix the merge said "the device's stage", returned before
+          reading the server's copy, and the file went to a visiting officer with none of the twenty
+          participants in it — while the built-from line counted the stage as kept from the device.
+        */
+        val provenanceOnly = StageDraft(
+            stageId = "WORKSHOP_PLAN_PARTICIPANTS_OPENING",
+            title = "Participants",
+            values = mapOf(
+                DW_RECORDING_PLACE_KEY to JsonPrimitive("Barpali, Bargarh") as JsonElement,
+            ),
+        )
+        val source = sourceFor(localDraft("WORKSHOP_PLAN_PARTICIPANTS_OPENING" to provenanceOnly))
+
+        assertEquals(
+            "the server's twenty participants must reach the document",
+            20,
+            source.draft!!.stages.getValue("WORKSHOP_PLAN_PARTICIPANTS_OPENING").rowsFor("participant").size,
+        )
+        assertTrue(source.filledFromServer.contains("WORKSHOP_PLAN_PARTICIPANTS_OPENING"))
+        assertFalse(source.keptFromDevice.contains("WORKSHOP_PLAN_PARTICIPANTS_OPENING"))
+    }
+
+    @Test
+    fun `one real answer beside the provenance still makes the stage the device's`() {
+        // The other side of the same rule, so the fix cannot be read as "underscore keys are
+        // ignored, therefore so is the stage". A designer who answered anything at all owns the
+        // stage, and the server's copy must not be read over their work.
+        val realWork = StageDraft(
+            stageId = "WORKSHOP_PLAN_PARTICIPANTS_OPENING",
+            title = "Participants",
+            values = mapOf(
+                DW_RECORDING_PLACE_KEY to JsonPrimitive("Barpali, Bargarh") as JsonElement,
+                "openingNote" to JsonPrimitive("Nine weavers attended the opening.") as JsonElement,
+            ),
+        )
+        val source = sourceFor(localDraft("WORKSHOP_PLAN_PARTICIPANTS_OPENING" to realWork))
+
+        assertTrue(source.keptFromDevice.contains("WORKSHOP_PLAN_PARTICIPANTS_OPENING"))
+        assertEquals(
+            0,
+            source.draft!!.stages.getValue("WORKSHOP_PLAN_PARTICIPANTS_OPENING").rowsFor("participant").size,
+        )
     }
 
     @Test

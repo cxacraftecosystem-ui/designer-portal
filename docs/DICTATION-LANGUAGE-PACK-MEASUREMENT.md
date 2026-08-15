@@ -1,6 +1,7 @@
 # What the handset will actually admit to downloading
 
-Measured on the fleet's own phone by `android/app/src/androidTest/.../DwLanguagePackProbeTest`.
+Measured on the fleet's own phone by
+`android/app/src/androidTest/java/com/designprototype/workshop/DwLanguagePackProbeTest.kt`.
 Raw logcat, not inference. The complaint that started it: **the language-pack list offers a download
 for Hindi and English and for none of the other seventeen.**
 
@@ -197,3 +198,33 @@ reading the "Offline dictation" card draws:
 
 Both of those numbers are now pinned by tests against `galaxyM32Today`
 (`DwLanguagePackTest`), which had **no coverage of the row filter at all** before this date.
+
+---
+
+## How this document is kept true
+
+**The readings are not maintained. The code derived from them is.** That split is the whole
+maintenance story, and this file is already built around it: two dated readings of one handset, kept
+side by side rather than one overwriting the other, precisely because the earlier one is the only
+state in which any of the nineteen languages was downloadable and it is what `DwPackState` was
+derived from.
+
+**Never edit a reading.** If the phone changes, re-run the probe and append a third dated section, as
+2026-08-13 was appended to 2026-08-09. A measurement record that gets updated in place stops being
+evidence and becomes an opinion with a timestamp.
+
+| Claim class | Kept true by |
+|---|---|
+| Both readings | **Nothing. They are dated transcripts.** Re-run `android/app/src/androidTest/java/com/designprototype/workshop/DwLanguagePackProbeTest.kt` on the SM-M325F — it needs a device, so it is not in CI and never will be. |
+| That the readings still describe *some* real handset's answer | They describe **one** handset (SM-M325F, Android 13, `en-GB`, Google TTS recognition service). Nothing here generalises to the fleet, and the fleet has Android 8 and 9 handsets that cannot be asked the question at all. |
+| The behaviour derived from the readings — `dwPackState`, `dwPackOffer`, `dwMayAsk`, `dwPackRowWorthShowing` | **`DwLanguagePackTest` in `android/app/src/test/java/com/designprototype/workshop/data/`**, against the two fixtures `galaxyM32BeforeTheDownloads` and `galaxyM32Today`, which are these readings turned into data. This is the mechanical half: change the logic and a fixture disagrees in `:app:testDebugUnitTest`, on any machine, with no phone. |
+| The "19 rows / 2 rows" table at the foot | The same tests. They were added on 2026-08-13 because the row filter had **no coverage at all** before that date — the section above says so, and it is the reason to distrust any similar count in this file that is not named as pinned. |
+| The fixtures still matching the readings | **A human read, and it is the seam most likely to drift.** A fixture is a transcription of a logcat block; if somebody edits a fixture to make a test pass, the fixture stops describing the phone and every conclusion in this document is quietly detached from hardware. Diff a fixture against the reading it came from before changing it. |
+
+**Review triggers:** any change to `android/app/src/main/java/com/designprototype/workshop/data/DwLanguagePacks.kt`,
+to the probe test, or to either fixture in `DwLanguagePackTest`.
+
+**Known unverified:** everything about handsets that are not this one. The probe answers what one
+Galaxy M32 admits to; the seventeen languages it will not offer are *unoffered on this phone*, which
+is not the same statement as *unsupported*, and this document is careful about the difference in
+several places. Keep it careful.

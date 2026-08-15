@@ -55,6 +55,21 @@ import kotlinx.serialization.json.JsonPrimitive
  *    would sweep nothing. The record would travel and mean nothing, which is what three comments in
  *    this repository claimed was not happening.
  *
+ * ── NOR A SINGLE ROW THE DESIGNER DELETED OUT OF A COLLECTION THAT STILL HOLDS OTHERS ────────────
+ *
+ * [StageDraft.deletedRowKeys] is the same record one level down, and it is here for the same reason:
+ * deleting one process step out of three is ALSO invisible in a payload, because entries are built
+ * from `rowsFor(key)` and that list simply no longer contains it. The record was added (and is read
+ * by `StageScreen.onRowsChange`, by `statusOf`'s `unsentDeletions` and by [dwOwedDeletions]) — and
+ * this function, the one reader whose job is to decide which of the server's rows come back, did not
+ * consult it. So the fold re-added the deleted row, `heldKeys` then named it in the next payload, and
+ * `persistLocally`'s row filter dropped the key from `deletedRowKeys` because the row was in the draft
+ * again: the deletion was reversed AND its record erased, by the one action the status screen tells
+ * the designer to take ("Open the stage once with a connection"). That is the identical failure the
+ * emptied-collection branch below was written to stop, arriving through the sibling field, and the two
+ * halves must stay symmetrical — a rule stated once for `emptiedEntities` and not for `deletedRowKeys`
+ * is how this defect existed at all.
+ *
  * SO THE DESIGNER'S EXPLICIT ACTION WINS OVER AN INFERENCE, and the collateral is stated rather than
  * hidden: a row another device added into that entity since the deletion is swept with the rest. It is
  * SOFT-deleted server-side and recoverable by its client key, whereas the loss in the other direction
@@ -100,13 +115,29 @@ data class DwStageFold(
      * decided to delete is a sentence nobody finishes.
      */
     val sweptRows: Map<String, Int> = emptyMap(),
+    /**
+     * Rows the server holds that the designer deleted INDIVIDUALLY on this phone — see
+     * [StageDraft.deletedRowKeys] — which this fold declined to add back. By entity key.
+     *
+     * ITS OWN COUNTER AND NOT [sweptRows], because the two are different sentences to the designer.
+     * A swept row is COLLATERAL: somebody else's row, in a collection this designer emptied, that
+     * they have never been shown and are about to remove. A declined row is THEIR OWN deletion,
+     * holding: nothing is being lost that they did not choose. Folding the two into one figure would
+     * make the ordinary case (delete a row, reopen the stage with signal) raise the alarming sentence
+     * written for the collateral case, and a warning that fires on the normal path is a warning
+     * nobody reads by the time it matters.
+     */
+    val declinedRows: Map<String, Int> = emptyMap(),
 ) {
     val addedRowCount: Int get() = addedRows.values.sum()
 
     val sweptRowCount: Int get() = sweptRows.values.sum()
 
+    val declinedRowCount: Int get() = declinedRows.values.sum()
+
     val isNothingNew: Boolean
-        get() = added.isEmpty() && addedRows.isEmpty() && addedCustom.isEmpty() && sweptRows.isEmpty()
+        get() = added.isEmpty() && addedRows.isEmpty() && addedCustom.isEmpty() &&
+            sweptRows.isEmpty() && declinedRows.isEmpty()
 
     /**
      * What to tell the designer, or null when the fold changed nothing they can see.
@@ -169,6 +200,22 @@ data class DwStageFold(
                     append("the repository records a deletion rather than erasing the row, so ")
                     append(if (rows == 1) "it" else "they")
                     append(" can be brought back by whoever runs it.")
+                }
+                if (declinedRows.isNotEmpty()) {
+                    // REASSURANCE, NOT AN ALARM — see [declinedRows] for why it is not the sentence
+                    // above. The designer deleted these rows themselves and the server still had them
+                    // because the deletion has not travelled yet; all this says is that the read did
+                    // not undo it, which is the question a designer who reopens the stage is actually
+                    // asking when they count the rows on screen.
+                    val rows = declinedRowCount
+                    if (isNotEmpty()) append(" ")
+                    append("The $rows row${if (rows == 1) "" else "s"} you deleted in ")
+                    append(declinedRows.keys.joinToString(", "))
+                    append(" ${if (rows == 1) "has" else "have"} NOT come back: the server still ")
+                    append("holds ${if (rows == 1) "it" else "them"} because that deletion has not ")
+                    append("been sent yet, and the next save from this phone removes ")
+                    append(if (rows == 1) "it" else "them")
+                    append(" there.")
                 }
             }.trim()
         }
@@ -265,7 +312,15 @@ fun dwFoldServerStage(
     // asked once per entity in a loop that also runs for every stage on the workshop list's status
     // pass.
     val emptied = base.emptiedEntities.toSet()
+    // AND THE SAME RECORD ONE LEVEL DOWN, read here for the reason the header gives at length: a row
+    // deleted out of a collection that still holds others leaves nothing in the payload either, so
+    // [StageDraft.deletedRowKeys] is the only place that deletion exists until it is acknowledged. A
+    // set of `dwRowId(entityKey, rowId)` strings, which is exactly the shape the append loop below
+    // computes for each of the server's rows — the two must keep using `dwRowId` rather than
+    // formatting the key by hand, or a separator change silently stops honouring every deletion.
+    val deleted = base.deletedRowKeys.toSet()
     val sweptRows = LinkedHashMap<String, Int>()
+    val declinedRows = LinkedHashMap<String, Int>()
     val addedRows = LinkedHashMap<String, Int>()
     val rows = ArrayList(base.rows)
     val heldKeys = base.rows.mapTo(HashSet()) { it.id }
@@ -304,16 +359,44 @@ fun dwFoldServerStage(
             return@forEach
         }
         var appended = 0
+        var declined = 0
         serverRows.forEachIndexed { index, row ->
             val clientKey = (row["_clientKey"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
             val entryId = (row["_entryId"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
             val identity = clientKey ?: entryId ?: "server-$index"
             if (dwRowId(entityKey, identity) in heldKeys) return@forEachIndexed
             if (entryId != null && entryId in heldEntryIds) return@forEachIndexed
+            /*
+              THE DESIGNER DELETED THIS ROW, SO IT STAYS DELETED — the sibling of the emptied branch
+              above, and the whole point of reading `deletedRowKeys` at all. Without this test the
+              fold re-added the row, the next payload named it, and `persistLocally`'s row filter then
+              dropped the key from `deletedRowKeys` "because the row is back in the draft" — deletion
+              reversed and its only record erased, in one online open of the stage.
+
+              ALL THREE IDENTITIES ARE ASKED, not just `identity`, because the draft and the server
+              may file one row under different halves of the same pair: the row was deleted while it
+              was held under its `_clientKey`, and the server's copy of it may carry both keys (it
+              mints an `_entryId` for every row it stores). Testing only `clientKey ?: entryId` would
+              miss a row deleted while it was held under its `_entryId` on a draft seeded before a
+              client key existed for it. `deletedRowKeys` is small — one entry per row the designer
+              deleted and has not yet had acknowledged — so three set lookups cost nothing.
+
+              NEVER "REPAIR" THIS BY DROPPING THE KEY WHEN THE ROW COMES BACK: the row coming back is
+              the server telling us it has not been deleted THERE yet, which is precisely when the
+              record is still owed.
+            */
+            val deletedHere = dwRowId(entityKey, identity) in deleted ||
+                (clientKey != null && dwRowId(entityKey, clientKey) in deleted) ||
+                (entryId != null && dwRowId(entityKey, entryId) in deleted)
+            if (deletedHere) {
+                declined++
+                return@forEachIndexed
+            }
             rows += DraftRow(id = dwRowId(entityKey, identity), values = row.toMap())
             appended++
         }
         if (appended > 0) addedRows[entityKey] = appended
+        if (declined > 0) declinedRows[entityKey] = declined
     }
 
     return DwStageFold(
@@ -350,10 +433,18 @@ fun dwFoldServerStage(
             // on any screen saying so. `recordStageSent` is what clears it, scoped to the keys the
             // acknowledged payload actually carried.
             emptiedEntities = base.emptiedEntities,
+            // CARRIED FOR THE SAME REASON AND WITH THE SAME FORCE as `emptiedEntities` above. The row
+            // loop declined to add these rows back, so the next payload does not name them and
+            // `replaceCollections` removes them server-side; clearing the list here would leave the
+            // rows alive on the server with no record anywhere that anybody asked for them to go.
+            // `recordStageSent` is the one place a deletion is cleared, and only for what an
+            // acknowledged payload actually carried.
+            deletedRowKeys = base.deletedRowKeys,
         ),
         added = added,
         addedRows = addedRows,
         addedCustom = addedCustom,
         sweptRows = sweptRows,
+        declinedRows = declinedRows,
     )
 }

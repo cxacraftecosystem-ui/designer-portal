@@ -347,6 +347,69 @@ class ReportSourceShippedRegistryTest {
     }
 
     @Test
+    fun `an underscore-only stage is filled in from the server and keeps its provenance`() {
+        /*
+          THE ASSERTION THAT REPLACES THE `__unsynced` FIXTURE, made head-on instead of by accident.
+
+          This file used to stand for "one stage the device holds work for" with a stage whose only
+          value was a double-underscore marker, and that fixture went green for the wrong reason: the
+          merge counted ANY key as work. It is the wrong rule. `WorkshopSync.wireData` strips every
+          `_`-prefixed key out of a PUT and `renderEntity` walks `liveFields`, so an underscore key
+          can neither travel nor print — and a stage the document cannot print a syllable of was
+          being allowed to keep the server's whole copy of that stage out of the file. That is the
+          reported defect (a .docx of ten paragraphs over a 270-row workshop) arriving one stage at a
+          time, which is worse, because the file then looks complete.
+
+          The realistic shape is not a marker: `DwRecordingPlaceCard` is offered on all 22 stages, so
+          a designer who opens stage 3 with no signal, answers only "where are you?" and leaves has
+          made exactly this stage. It must cost the report nothing — and it must not cost the
+          designer their answer either.
+        */
+        val provenanceOnly = StageDraft(
+            stageId = "WORKSHOP_PLAN_PARTICIPANTS_OPENING",
+            values = mapOf(DW_RECORDING_PLACE_KEY to JsonPrimitive("Barpali, Bargarh")),
+        )
+        val onDevice = WorkshopDraft(
+            workshopId = WORKSHOP_ID,
+            remoteId = WORKSHOP_ID,
+            stages = mapOf("WORKSHOP_PLAN_PARTICIPANTS_OPENING" to provenanceOnly),
+        )
+        val source = sourceFor(onDevice)
+        val stage = source.draft!!.stages.getValue("WORKSHOP_PLAN_PARTICIPANTS_OPENING")
+
+        // 1. The server's copy is adopted, and the built-from line says so rather than claiming the
+        //    stage for a device that holds nothing printable of it.
+        assertEquals(
+            "the server's participants must reach the merged stage",
+            4,
+            stage.rows.count { it.id.substringBefore('#') == "participant" },
+        )
+        assertTrue(source.filledFromServer.contains("WORKSHOP_PLAN_PARTICIPANTS_OPENING"))
+        assertFalse(source.keptFromDevice.contains("WORKSHOP_PLAN_PARTICIPANTS_OPENING"))
+
+        // 2. …and the designer's own answer is carried across the fill-in rather than deleted by it.
+        //    "Not work" is a merge decision; erasing the answer would be a different act. See
+        //    [DwLocationField], which documents this key as surviving in the draft the report is
+        //    generated from.
+        assertEquals(
+            "the recording place must survive the stage being filled in",
+            JsonPrimitive("Barpali, Bargarh"),
+            stage.values[DW_RECORDING_PLACE_KEY],
+        )
+
+        // 3. Measured where the defect was reported — in the file. A stage held only as provenance
+        //    must suppress not one paragraph of the document a device with no draft at all produces.
+        val whole = paragraphs(documentXml(document(sourceFor(local = null).draft)))
+        val withProvenance = paragraphs(documentXml(document(source.draft)))
+        assertEquals(
+            "an underscore-only stage must cost the file nothing " +
+                "($withProvenance paragraphs against $whole)",
+            whole,
+            withProvenance,
+        )
+    }
+
+    @Test
     fun `a collection emptied on this device is not read back in from the server`() {
         // DELETING IS FIELDWORK TOO. Eight of the twenty-two stages hold nothing but collections, so
         // deleting the last cost sheet leaves stage 17 with no values and no rows — the exact shape
@@ -379,12 +442,20 @@ class ReportSourceShippedRegistryTest {
     fun `a stage emptied entirely on this device stays empty and is counted as neither side's`() {
         // Stage 11 has one collection and no singleton, so emptying it empties the stage. Nothing
         // must come back, and the built-from line must not claim a stage the file does not contain.
+        //
+        // THE RECORDING PLACE IS IN THIS FIXTURE ON PURPOSE, and it is the same key the test above
+        // turns on. `stageDraftFromRemote` carries this device's `_`-prefixed answers across the
+        // fill-in, so the stage that comes back out of it is no longer value-less — and the
+        // "is there anything here?" test that follows it therefore has to be [holdsWork] and not a
+        // hand-written `values.isEmpty()`, or this emptied stage is reported to the designer as
+        // "downloaded from the server just now" while the document contains nothing of it.
         val onDevice = WorkshopDraft(
             workshopId = WORKSHOP_ID,
             remoteId = WORKSHOP_ID,
             stages = mapOf(
                 "SKETCH_DEVELOPMENT" to StageDraft(
                     stageId = "SKETCH_DEVELOPMENT",
+                    values = mapOf(DW_RECORDING_PLACE_KEY to JsonPrimitive("Barpali, Bargarh")),
                     emptiedEntities = listOf("sketch"),
                 )
             ),
@@ -464,9 +535,24 @@ class ReportSourceShippedRegistryTest {
             workshopId = WORKSHOP_ID,
             remoteId = WORKSHOP_ID,
             stages = mapOf(
-                "SKETCH_DEVELOPMENT" to StageDraft(
-                    stageId = "SKETCH_DEVELOPMENT",
-                    values = mapOf("__unsynced" to JsonPrimitive("local")),
+                // A KEY OF THE SHIPPED REGISTRY, NOT `__unsynced` AND NOT AN INVENTED ONE. This
+                // fixture used a double-underscore marker to stand for "one stage the device holds
+                // work for", which stopped being true when `reportSourceFor` learned that an
+                // `_`-prefixed key is not work: `wireData` strips every one of them from the payload
+                // and `renderEntity` walks `liveFields`, so a stage whose only content is an
+                // underscore key can neither travel nor print, and treating it as the device's kept
+                // the server's whole copy of that stage out of the report. The marker was an
+                // accidental instance of exactly that defect — asserted head-on, against this same
+                // 22-stage registry, in `an underscore-only stage is filled in from the server` below.
+                //
+                // `craftName` is a real STAGE 1 field with `reportRole: COVER_FIELD`, so the "1
+                // stage(s) saved on this device" this test counts is a stage that genuinely reaches
+                // the page. A stand-in key that no entity declares would satisfy the predicate and
+                // still print nothing, which is how a built-from line starts counting stages the
+                // document does not contain.
+                "WORKSHOP_SETUP" to StageDraft(
+                    stageId = "WORKSHOP_SETUP",
+                    values = mapOf("craftName" to JsonPrimitive("typed in the courtyard")),
                 )
             ),
         )

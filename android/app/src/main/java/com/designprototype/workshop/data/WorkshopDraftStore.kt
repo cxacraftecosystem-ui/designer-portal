@@ -24,6 +24,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
@@ -622,8 +624,23 @@ object WorkshopDraftStore {
      * (rather than merely adding one) would be impossible without a throwaway mirror of every past
      * version of the model.
      */
-    private fun readLocked(context: Context, workshopId: String): WorkshopDraft? {
-        val file = draftFile(context, workshopId)
+    private fun readLocked(context: Context, workshopId: String): WorkshopDraft? =
+        readDraftIn(workshopDir(context, workshopId), workshopId)
+
+    /**
+     * [readLocked] with the workshop's DIRECTORY named outright instead of a [Context].
+     *
+     * The Context-taking wrapper above is what production calls; this is the whole of the file work,
+     * and it is split out so a JVM unit test can put a real draft.json on a real filesystem and read
+     * it back. This module's unit tests have no Android framework in them (no Robolectric on the
+     * classpath, `testOptions.unitTests.isReturnDefaultValues` for the stubs), so a test cannot
+     * manufacture a Context — and the two behaviours that most need proving here, quarantining damage
+     * and refusing to overwrite a draft from a newer build, are both statements about bytes on disk.
+     * Before this seam existed they could only be checked on a device, which is why they were not
+     * checked at all. Folding it back into the Context call would take the proof away again.
+     */
+    internal fun readDraftIn(dir: File, workshopId: String): WorkshopDraft? {
+        val file = File(dir, "draft.json")
         if (!file.exists()) return null
 
         val text = runCatching { file.readText() }.getOrElse { error ->
@@ -667,6 +684,14 @@ object WorkshopDraftStore {
      * all-defaulted model degrade it to what that build understands. Anything else means the older
      * build refuses the newer draft, and the designer is told their fieldwork is corrupt because
      * their colleague's phone updated first.
+     *
+     * "LEFT ALONE" IS ABOUT READING, AND IT USED TO BE ONLY HALF TRUE. The degraded copy is what the
+     * screen shows, but every save re-encoded it and forced `schemaVersion` back down to this build's
+     * constant — so the v3 document became a v2 one with v3's fields gone, stamped as this build's own
+     * work, and no later rung could tell. The write side now refuses that: see the future-version
+     * check in [writeLocked] and the argument in [quarantineFutureDraft]. Do not "simplify" the two
+     * by making this ladder reject a future document instead; that reinstates exactly the refusal the
+     * paragraph above rules out.
      */
     private fun migrate(root: JsonObject, fromVersion: Int): JsonObject {
         var document = root
@@ -733,6 +758,81 @@ object WorkshopDraftStore {
         )
     }
 
+    /**
+     * Set aside a draft written by a LATER build than this one, before this build overwrites it.
+     *
+     * ── THE DEFECT THIS CLOSES ────────────────────────────────────────────────────────────────────
+     *
+     * [migrate]'s ladder only climbs, so an older build decodes a v3 document by falling through to a
+     * plain decode: `ignoreUnknownKeys` drops every field v3 added and the all-defaulted model fills
+     * the gaps. That is the right READ — refusing would tell a designer their fortnight is corrupt
+     * because a colleague's phone updated first. The write is where it went wrong. [save], [update]
+     * and [updateBookkeeping] all re-encode the whole model and force `schemaVersion` down to this
+     * build's constant, so the first debounced stage save turned that v3 document into a well-formed
+     * v2 with v3's fields gone — and stamped it as this build's own work, so no future migration rung
+     * could ever tell that anything had been dropped. `StageDraft.values` and `custom` are
+     * `Map<String, JsonElement>`, so unknown ANSWERS survive; the model's own fields do not.
+     *
+     * ── HOW A PHONE GETS INTO THAT STATE, WHICH IS WHY THIS IS A DOZEN LINES AND NOT A REDESIGN ───
+     *
+     * Not through the ordinary routes, and that was checked rather than assumed. The in-app updater
+     * fetches the highest versionCode and Android refuses to install a lower one over an installed
+     * app; uninstall-then-install wipes `filesDir` and takes the drafts with it; and the manifest sets
+     * `allowBackup` without `restoreAnyVersion`, whose default is false, so an auto-backup taken on a
+     * newer build is not restored onto an older one. What remains is an operator-driven downgrade —
+     * `adb install -d`, or an MDM push that keeps app data — on a fleet that side-loads its own APKs.
+     * Rare, but the loss is total and silent, and the never-destroy rule this file is built on does
+     * not have an exception for "rare".
+     *
+     * ── WHY QUARANTINE AND NOT A MERGE ────────────────────────────────────────────────────────────
+     *
+     * Keeping the parsed `JsonObject` from [readLocked] and encoding the model over it would preserve
+     * the unknown fields and the higher version — genuinely forward-compatible round trips — and it is
+     * the right answer the day that becomes a requirement. It is not the right answer today: it makes
+     * every save a two-document merge, and a merge whose correctness nothing on this fleet exercises.
+     * Setting the bytes aside costs one rename, destroys nothing, and is the same move the parser
+     * failures above make. The save then proceeds onto a clean file, so the designer keeps working —
+     * WHEN the rename actually happened, and only then. If it did not, there is nowhere for the newer
+     * build's fields to be except the file itself, and the save is refused instead; see the returned
+     * Boolean below and the throw in [writeDraftIn].
+     *
+     * The name is deliberately NOT `draft.corrupt-` — this file is not corrupt, it is from the future,
+     * and an operator triaging a support request needs to know it can be restored by reinstalling the
+     * newer build rather than repaired by hand.
+     *
+     * RETURNS WHETHER THE NEWER BYTES ARE ACTUALLY SAFE, and the caller must obey it. This used to
+     * return Unit: it computed `moved`, used it to choose between two sentences — one of which told
+     * the designer the draft "could not be set aside" and that they should not save any more work —
+     * and then the same call went on to overwrite the file anyway. The warning was accurate about the
+     * danger and powerless to prevent it, which is worse than no warning: it is advice the code
+     * itself ignores, given to somebody who has no way to act on it in the two milliseconds before
+     * the save lands. See [writeDraftIn] for the refusal that now backs it up.
+     */
+    /**
+     * Where a draft from the future is kept: beside the original, named for the format it came from
+     * and timestamped so a second downgrade cannot clobber the evidence from the first.
+     */
+    private fun futureDraftSibling(target: File, onDiskVersion: Int): File =
+        File(target.parentFile, "draft.newer-v$onDiskVersion-${System.currentTimeMillis()}.json")
+
+    private fun quarantineFutureDraft(file: File, workshopId: String, onDiskVersion: Int, kept: File): Boolean {
+        val moved = runCatching { file.renameTo(kept) }.getOrDefault(false)
+        alert.set(
+            if (moved) {
+                "The saved draft for workshop $workshopId was written by a newer version of this app " +
+                    "(draft format $onDiskVersion; this version understands $WORKSHOP_DRAFT_SCHEMA_VERSION). " +
+                    "Nothing has been deleted — the newer file has been kept as ${kept.name} and every photo " +
+                    "and recording is still in this workshop's media folder. Install the newer version again " +
+                    "to get everything it recorded back."
+            } else {
+                "The saved draft for workshop $workshopId was written by a newer version of this app and " +
+                    "could not be set aside, so this save has been refused — nothing has been " +
+                    "overwritten. Install the newer version again to keep working on this workshop."
+            }
+        )
+        return moved
+    }
+
     // ── Writing ──────────────────────────────────────────────────────────────────────────────────
 
     /**
@@ -753,9 +853,66 @@ object WorkshopDraftStore {
      *
      * A failure anywhere deletes the temp file and rethrows. The previous draft is still on disk and
      * still complete, so a failed save costs the designer their last edit, never their fortnight.
+     *
+     * [onDisk] is whatever [readLocked] returned in this same critical section — every caller has one
+     * to hand, and passing it explicitly rather than re-reading the file keeps a save to one parse.
+     * Null means "nothing was there", which is the first save of a workshop. It exists solely for the
+     * future-version check below; see [quarantineFutureDraft] for the argument.
      */
-    private fun writeLocked(context: Context, draft: WorkshopDraft) {
-        val target = draftFile(context, draft.workshopId)
+    private fun writeLocked(context: Context, draft: WorkshopDraft, onDisk: WorkshopDraft?) =
+        writeDraftIn(workshopDir(context, draft.workshopId), draft, onDisk)
+
+    /**
+     * [writeLocked] against a named directory — the same test seam as [readDraftIn], for the same reason.
+     *
+     * [keptFile] names the file a future draft is set aside as, and it exists for one branch: the one
+     * where the set-aside CANNOT be performed, which is the branch that used to overwrite the newer
+     * document anyway. That branch is a statement about a rename that fails, and the portable way to
+     * stage a rename failure on both the Windows host that runs these tests and a Linux CI box is to
+     * hand it a destination it cannot have (an existing non-empty directory) — "make the directory
+     * read-only" is a POSIX-only trick and would prove nothing here. Production never passes it.
+     */
+    internal fun writeDraftIn(
+        dir: File,
+        draft: WorkshopDraft,
+        onDisk: WorkshopDraft?,
+        keptFile: (target: File, onDiskVersion: Int) -> File = ::futureDraftSibling
+    ) {
+        val target = File(dir, "draft.json")
+        // A DOCUMENT FROM THE FUTURE IS NEVER OVERWRITTEN IN PLACE. `migrate` deliberately lets an
+        // older build READ a newer draft degraded; without this, that same build then wrote it back
+        // as its own version with the newer build's fields gone and nothing able to notice. The
+        // decoded copy still carries the on-disk number — the ladder only climbs, so it is not
+        // rewritten on the way in — which is what makes the test one field and not a second read.
+        //
+        // AND THE REFUSAL IS REAL. This was a bare call to `quarantineFutureDraft` whose result was
+        // dropped on the floor: when the rename failed the store said "could not be set aside — do
+        // not save any more work" and then, in the next four lines, saved. Half a door. The whole
+        // point of the guard is that the newer build's fields exist in exactly one place; if they
+        // cannot be moved somewhere safe, the only way to keep them is not to write. Throwing costs
+        // the designer the edit they just made — one debounce, or one field — and it is the same
+        // trade `writeLocked` already makes when the temp file cannot be opened, whose KDoc says it
+        // outright: "a failed save costs the designer their last edit, never their fortnight". The
+        // sentence is a whole one because it reaches the designer verbatim (StageScreen's save
+        // handler shows `error.message`), so it must say what happened, that nothing was lost, and
+        // the one action that gets their work back.
+        if (onDisk != null && onDisk.schemaVersion > WORKSHOP_DRAFT_SCHEMA_VERSION) {
+            val moved = quarantineFutureDraft(
+                target,
+                draft.workshopId,
+                onDisk.schemaVersion,
+                keptFile(target, onDisk.schemaVersion)
+            )
+            if (!moved) {
+                throw IOException(
+                    "This workshop's draft was written by a newer version of this app (draft format " +
+                        "${onDisk.schemaVersion}; this version understands $WORKSHOP_DRAFT_SCHEMA_VERSION) " +
+                        "and could not be set aside, so this save has been refused rather than overwrite " +
+                        "it. Nothing has been lost. Install the newer version again to keep working on " +
+                        "this workshop."
+                )
+            }
+        }
         val temp = File(target.parentFile, "${target.name}.writing")
         val bytes = json.encodeToString(WorkshopDraft.serializer(), draft).toByteArray()
         try {
@@ -764,7 +921,15 @@ object WorkshopDraftStore {
                 out.flush()
                 out.fd.sync()
             }
-            if (!temp.renameTo(target)) throw IOException("Unable to replace ${target.name}")
+            // `Files.move(REPLACE_EXISTING)` rather than `File.renameTo`. On the device the two are the
+            // same call — both reach `rename(2)`, which replaces the destination atomically, and point
+            // 3 above is unchanged. They differ on the host that runs this module's unit tests:
+            // `File.renameTo` maps to `MoveFileExW` WITHOUT the replace flag there, so it returns false
+            // whenever the target already exists. Measured on this machine, JDK 17.0.2 — renaming over
+            // an existing file returned false and left the old contents in place. A draft is replaced
+            // on every debounce and created once, so under `renameTo` no host-side test could exercise
+            // a second save at all; that is why the future-version rule below went untested for so long.
+            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         } catch (e: Throwable) {
             runCatching { temp.delete() }
             throw e
@@ -808,7 +973,7 @@ object WorkshopDraftStore {
                     ?: now,
                 updatedAt = now
             )
-            writeLocked(context, stamped)
+            writeLocked(context, stamped, existing)
             stamped
         }
     }
@@ -838,7 +1003,7 @@ object WorkshopDraftStore {
                 createdAt = current.createdAt.takeIf { it.isNotBlank() } ?: now,
                 updatedAt = now
             )
-            writeLocked(context, next)
+            writeLocked(context, next, current)
             next
         }
     }
@@ -869,7 +1034,7 @@ object WorkshopDraftStore {
                 createdAt = current.createdAt,
                 updatedAt = current.updatedAt
             )
-            writeLocked(context, next)
+            writeLocked(context, next, current)
             next
         }
     }
@@ -1154,9 +1319,37 @@ object WorkshopDraftStore {
      * a sync, a parse failure or a cleanup pass. The descriptor goes first and the file second: a
      * kill in between leaves an unreferenced file (wasted space) rather than a referenced missing one
      * (a hole in the report).
+     *
+     * ── IT DELETES ONE NAMED FILE, NEVER "EVERY FILE NO DESCRIPTOR CLAIMS" ───────────────────────
+     *
+     * It used to list `media/` and delete every file the post-removal draft did not name, which is a
+     * whole-directory sweep decided against a SNAPSHOT — and [importMedia] deliberately copies the
+     * bytes with this store's lock NOT held (its step 1 of 3), registering the descriptor only
+     * afterwards. So two windows existed, and both are ordinary inside one stage screen: attach
+     * multi-selects five photographs and imports them in one coroutine, each copy suspending on
+     * `Dispatchers.IO` for the seconds a multi-megabyte file takes, which frees the same scope to run
+     * a detach when the designer taps the X on a photograph attached earlier. The sweep then deleted
+     * the file the import was mid-copy (the unlink succeeds while the writer's fd is open, so the copy
+     * "succeeds" and `fd.sync()` returns) and any file whose descriptor was registered after this
+     * function's own `update` returned. The draft was left holding a caption and a stage assignment
+     * for bytes that no longer had a directory entry — and `uploadPending` then told the designer the
+     * file "is no longer in this workshop's media folder on this device … Nothing has been deleted by
+     * the app", which was false and pointed the investigation away from us.
+     *
+     * The path is captured INSIDE the transform, under the store's lock, so it is the path of the
+     * descriptor that was actually removed by this call and not of whatever the directory happened to
+     * hold a moment later. Bytes that genuinely have no descriptor are now left alone: they are
+     * wasted space, which is recoverable, and the alternative cost them a photograph. If reclaiming
+     * them is ever wanted it belongs in a start-up sweep that re-reads the draft under the lock at the
+     * moment it decides — `sweepStagedObjects` is the shape of it — and never in a detach.
      */
     suspend fun removeMedia(context: Context, workshopId: String, mediaId: String) {
+        var removedPath: String? = null
         val doomed = update(context, workshopId) { draft ->
+            // Captured here and nowhere else: this lambda runs under the store's lock, against the
+            // document that is actually on disk. Reading the descriptor before or after the `update`
+            // would reintroduce exactly the race this function was rewritten to close.
+            removedPath = draft.media.firstOrNull { it.id == mediaId }?.relativePath
             draft.copy(
                 media = draft.media.filterNot { it.id == mediaId },
                 stages = draft.stages.mapValues { (_, stage) ->
@@ -1165,15 +1358,34 @@ object WorkshopDraftStore {
             )
         }
         withContext(Dispatchers.IO) {
-            val stillReferenced = doomed.media.any { it.id == mediaId }
-            if (!stillReferenced) {
-                runCatching { File(workshopDir(context, workshopId), "media").listFiles() }
-                    .getOrNull()
-                    .orEmpty()
-                    .filter { file -> doomed.media.none { it.relativePath == "media/${file.name}" } }
-                    .forEach { file -> runCatching { file.delete() } }
-            }
+            val path = detachedFileToDelete(removedPath, doomed.media) ?: return@withContext
+            val file = mediaFile(context, workshopId, path)
+            // `isFile` for the reason `statusOf` gives: a blank or odd relative path resolves to the
+            // workshop directory itself, and `delete()` on a directory is not something this function
+            // is ever allowed to attempt.
+            if (file.isFile) runCatching { file.delete() }
         }
+    }
+
+    /**
+     * The ONE file a detach may delete, or null for "delete nothing".
+     *
+     * Pure, and separate from [removeMedia], so the rule can be pinned by a test with no filesystem —
+     * `DwDetachDeletesOneFileTest`. The rule is the whole fix: a detach deletes the bytes of the
+     * descriptor it removed and NOTHING else. What it must never go back to is "every file under
+     * `media/` that the post-removal draft does not name", which is a directory sweep decided against
+     * a snapshot while [importMedia] is copying bytes with this store's lock deliberately not held.
+     *
+     * Three refusals, each of which was a way the sweep destroyed a photograph or could:
+     *  * no descriptor was removed (already detached, or an unknown id) — nothing is ours to delete;
+     *  * the descriptor carried no path — a blank one resolves to the workshop DIRECTORY;
+     *  * a surviving descriptor still names the same file — the same id can be detached twice and two
+     *    descriptors can in principle share a path, and the bytes are still owed to somebody.
+     */
+    internal fun detachedFileToDelete(removedPath: String?, survivors: List<DraftMedia>): String? {
+        val path = removedPath?.takeIf { it.isNotBlank() } ?: return null
+        if (survivors.any { it.relativePath == path }) return null
+        return path
     }
 
     /**

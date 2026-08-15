@@ -15,6 +15,13 @@ from app.core.deps import (
     require_admin,
     require_professor,
     role_rank,
+    # The ROLE, spelled the one way. ``target_user.role`` is a Prisma enum member on a live row and
+    # a plain string on anything hand-built, and the peer guard in
+    # :func:`assert_can_manage_target` compares it against a literal — an equality test that
+    # silently answers False for the enum, i.e. lets the refusal through, which is the direction
+    # that loses an account. ``role_value`` collapses both spellings; do not inline
+    # ``target_user.role`` here.
+    role_value,
 )
 from app.core.security import hash_password
 from app.schemas.users import UserCreate, UserUpdate
@@ -48,10 +55,50 @@ def assert_role(role: str | None, current_user: Any) -> None:
         )
 
 
+#: Refusing a master admin an action on ANOTHER master admin. Named so the two routes and the test
+#: assert the same sentence, and phrased to say what the reader can actually do about it.
+_MASTER_PEER_DETAIL = (
+    "Master admin accounts are peers: no master admin may change or remove another. "
+    "Demote the account from an environment with database access, or leave it in place."
+)
+
+
 def assert_can_manage_target(current_user: Any, target_user: Any) -> None:
-    """Only the master admin may manage peers; everyone else manages strictly lower tiers.
-    This blocks one admin from silently rewriting another admin's account."""
+    """Nobody manages a peer, INCLUDING the master admin; everyone else manages strictly lower
+    tiers. This blocks one admin from silently rewriting another admin's account.
+
+    **THE MASTER-ADMIN CLAUSE USED TO BE ``if is_master_admin(current_user): return`` WITH NO PEER
+    TEST**, and that made this the stricter of two mirrors' looser half. ``canManageUser`` in
+    ``frontend/lib/permissions.ts`` returns ``target.role !== "MASTER_ADMIN" || target.id ===
+    user?.id``, and ``docs/PERMISSIONS.md`` §2 states that rule as the system's — so both browsers
+    render a second master-admin row with no controls on it while ``PATCH /users/{id}`` and
+    ``DELETE /users/{id}`` accepted exactly that target. An operator who promoted a deputy for a
+    handover read "protected" off the screen and could still demote or delete them with one curl.
+    Worse, the only peer protection that existed keyed on ``MASTER_ADMIN_EMAIL``
+    (:func:`assert_not_demoting_master`), so protection followed one address in the environment
+    rather than the privilege — the deputy could demote or delete every master admin except the
+    configured one.
+
+    The mirrors are made to agree here, on the SERVER side, because this direction can only refuse:
+    the browsers already offered nothing on these rows, so no shipped flow loses a control, and a
+    guard that turns out to be too strict is reverted without having deleted anybody's account.
+
+    **THE COST, SAID OUT LOUD: promoting somebody to MASTER_ADMIN is now a one-way door through the
+    API.** They cannot be demoted by a peer (this guard) and cannot demote themselves
+    (``update_user`` refuses privilege changes on one's own row), which is the same standing the
+    configured master-admin address has always had. If a reversible deputy is wanted, the answer is
+    a lower tier, not a hole in this rule.
+    """
     if is_master_admin(current_user):
+        # The self-exception mirrors ``canManageUser``'s ``target.id === user?.id``. Both callers
+        # already branch on self before reaching here — ``update_user`` down the identity-only
+        # path, ``delete_user`` with its 422 — so this arm is unreachable today and is written
+        # anyway, because a predicate that answers a different question from the one the UI asks
+        # is how these two got out of step in the first place.
+        if role_value(target_user) == "MASTER_ADMIN" and target_user.id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail=_MASTER_PEER_DETAIL
+            )
         return
     if role_rank(target_user) >= role_rank(current_user):
         raise HTTPException(

@@ -81,6 +81,29 @@ from app.services.workshop_access import (
 # count low for large videos while staying small enough to retry a single part cheaply.
 MULTIPART_PART_SIZE = 16 * 1024 * 1024
 
+#: ``MediaProcessingJobStatus``, mirrored from prisma/schema.prisma:126-132 the same way
+#: ``records.RECORD_STATUSES`` and ``records.MEDIA_TYPES`` mirror their enums — as a frozenset, so a
+#: route can validate a filter without the generated client being present.
+#:
+#: THIS FILE VALIDATES AGAINST TWO DIFFERENT STATUS ENUMS AND THEY SHARE NO VALUE. ``MediaFile.status``
+#: is a ``RecordStatus`` (DRAFT/PENDING/APPROVED/REJECTED/NEEDS_REVISION) and is filtered with
+#: ``RECORD_STATUSES`` in ``list_media``; ``MediaProcessingJob.status`` is the queue's own lifecycle
+#: and is filtered with THIS set in ``list_media_processing_jobs``. ``GET /media/jobs`` was passing
+#: ``RECORD_STATUSES``, and because the intersection of the two enums is EMPTY the route could not
+#: answer a single filter value any client is able to send: every one of the six pills in
+#: ``frontend/components/media/MediaJobsPanel.tsx`` 422'd with "status must be one of APPROVED,
+#: DRAFT, NEEDS_REVISION, PENDING, REJECTED" — a list naming a column the caller never mentioned.
+#: Even the "All" pill failed, because the panel always issues a second ``statusFilter=FAILED``
+#: request alongside it to count failures. The whole processing-queue surface was dead on the wire.
+#:
+#: DO NOT "TIDY" THE TWO CALL SITES INTO ONE CONSTANT. Their similarity is the trap: the two columns
+#: are on different tables, mean different things, and a value that is valid for one is a 500 from
+#: Prisma on the other (``enum_filter_or_422`` exists to turn exactly that 500 into a 422).
+#:
+#: Kept here rather than beside ``RECORD_STATUSES`` in ``services/records.py`` only because this
+#: route is the sole caller; move it there the day a second module needs it, not before.
+MEDIA_PROCESSING_JOB_STATUSES = frozenset({"QUEUED", "PROCESSING", "COMPLETED", "FAILED", "CANCELLED"})
+
 router = APIRouter(prefix="/media", tags=["media"])
 
 # "the caller did not say which uploaders' URLs may travel". Distinct from None, which MEANS "all of
@@ -128,10 +151,18 @@ async def _public(rows: Any, viewer: Any = None, *, media_urls: Any = _UNSET_URL
     THE ``url`` IS NOT ALWAYS PRESENT, and this is the one file where that matters most. Reading the
     repository is open to every signed-in account, but a ``MediaFile.url`` is a fetchable object URL —
     it IS the file — so it travels only to callers who may take that uploader's data. Every row still
-    travels: name, type, caption, transcript, parent record, uploader. ``media_url_owners`` resolves
+    travels: name, type, caption, duration, parent record, uploader. ``media_url_owners`` resolves
     the grant set (one query, and only below professor) so a grantee who may download a researcher's
     data can also play their recordings. Callers that pass no ``viewer`` get the cheap safe default and
     no URLs at all, which is correct for every internal use of this helper.
+
+    ``transcriptText`` TRAVELS UNDER THE SAME RULE, and this docstring used to promise the opposite —
+    it listed "transcript" among the fields that always travel, and ``GET /media`` and
+    ``GET /media/{id}`` duly served the verbatim text of every artisan interview in the repository to
+    a CROWDSOURCE_VOLUNTEER, which made the per-clip transcript gate on the design-workshop surface
+    decoration. The predicate now lives in exactly one place, ``records._MEDIA_TAKEABLE_KEYS``; do not
+    re-open it here. The surface a co-designer needs is
+    ``GET /design-workshops/{id}/transcripts``, which uses the wider ``owned_or_granted_where``.
 
     ``media_urls`` is for the one caller that has an uploader ID but no user object —
     ``_finish_pending_media``, which is handing somebody back the file they have just uploaded.
@@ -639,6 +670,101 @@ ORPHAN_FK_FIELDS = {
     "questionnaireinterview": "questionnaireInterviewId",
 }
 
+# THE OTHER HALF OF THE ORPHAN QUESTION, AND ITS ABSENCE MADE THE RECOVERY SCREEN LIE.
+# ``ORPHAN_FK_FIELDS`` asks "tagged with a type and an id, but the typed FK is NULL". That question
+# cannot be asked at all of a link that has no typed FK: a media row attached to a Process, a
+# ProcessStep, a DesignWorkshop or another media file carries ONLY ``linkedRecordType`` /
+# ``linkedRecordId`` (processes.py says so out loud: "Media is linked purely through
+# linkedRecordType/linkedRecordId … so no MediaFile foreign keys are needed"). There is no ``fk`` to
+# be null, so no condition in ``list_orphan_media`` could ever match one, and
+# ``POST /media/{id}/relink`` answered 400 "Unsupported record type for re-linking" — the recovery
+# feature reported the repository as clean while refusing to recover the very rows it was built for.
+#
+# THE ORDINARY TRIGGER IS AN EDIT, NOT A DELETE. ``processes._sync_steps`` hard-deletes every
+# ProcessStep the form did not re-send, so a researcher who opens a process, removes one duplicated
+# step and saves has just orphaned that step's photographs — no delete of anything else required. The
+# same shape follows a Process delete, a ProductDocumentation delete cascading into both
+# (schema.prisma:1210, :1232) and a DesignWorkshop delete against the tag both clients write.
+#
+# BOTH SPELLINGS OF THE WORKSHOP TAG ARE HERE ON PURPOSE. ``dictation_consent.MEDIA_TAG`` is the
+# camelCase ``designWorkshop`` the clients send, but the relink route lowercases whatever it is given
+# before storing it, so rows written by a recovery carry ``designworkshop``. Matching one and not the
+# other would leave half the orphans invisible again, which is the defect this constant exists to end.
+ORPHAN_TAG_TYPES: dict[str, str] = {
+    "process": "process",
+    "processstep": "processstep",
+    "designWorkshop": "designworkshop",
+    "designworkshop": "designworkshop",
+    # A misc file linked to another misc file. Both spellings the pickers write, matching
+    # ``_relink_delegate`` and ``_tagged_parent``, which already treat the two as one type.
+    "media": "media",
+    "misc": "media",
+}
+
+
+def _orphan_tag_delegate(kind: str) -> Any:
+    """The delegate whose live ids decide whether a TAG-ONLY link still points at something."""
+    return {
+        "process": db.process,
+        "processstep": db.processstep,
+        "designworkshop": db.designworkshop,
+        "media": db.mediafile,
+    }.get(kind)
+
+
+async def _tag_only_orphans() -> list[Any]:
+    """Media whose only link is a string tag naming a record that no longer exists.
+
+    ONE QUERY PER TAGGED TYPE, NOT ONE PER ROW. The tagged rows are read once, grouped by the type
+    they name, and each group is answered with a single ``id: {"in": [...]}`` read against the live
+    table; whatever is missing from the answer is an orphan. The naive shape — a ``find_unique`` per
+    media row — is the sort of loop that turns an admin screen into a minute-long request the first
+    time a deployment accumulates a few thousand tagged uploads.
+
+    THE LOOKUP IS BOUNDED BY THE TAGS, NOT BY THE MEDIA TABLE. Only the five ``ORPHAN_TAG_TYPES``
+    spellings are read, so a repository whose media is overwhelmingly FK-linked pays almost nothing
+    here; the FK half of the question is still answered by the cheap ``fk: None`` predicates, which is
+    why this runs alongside them rather than replacing them.
+
+    THE RELATIONS ARE LOADED LAST, ON THE ORPHANS ONLY. The survey read deliberately omits
+    ``INCLUDE``: it has to visit every tagged row to find the few whose parent is gone, and joining
+    seven relations onto every process photograph in the repository to discard almost all of them is
+    the expensive way to ask a cheap question. The extra query costs one round trip and is skipped
+    entirely — the common, healthy case — when nothing turned out to be an orphan.
+    """
+    tagged = await db.mediafile.find_many(
+        where={
+            "linkedRecordType": {"in": list(ORPHAN_TAG_TYPES)},
+            "linkedRecordId": {"not": None},
+        },
+    )
+    if not tagged:
+        return []
+    by_kind: dict[str, set[str]] = {}
+    for row in tagged:
+        kind = ORPHAN_TAG_TYPES[(row.linkedRecordType or "")]
+        by_kind.setdefault(kind, set()).add(row.linkedRecordId)
+    live: dict[str, set[str]] = {}
+    for kind, ids in by_kind.items():
+        delegate = _orphan_tag_delegate(kind)
+        if delegate is None:  # pragma: no cover - the two dicts are written together
+            live[kind] = ids
+            continue
+        rows = await delegate.find_many(where={"id": {"in": sorted(ids)}})
+        live[kind] = {r.id for r in rows}
+    orphan_ids = [
+        row.id
+        for row in tagged
+        if row.linkedRecordId not in live.get(ORPHAN_TAG_TYPES[(row.linkedRecordType or "")], set())
+    ]
+    if not orphan_ids:
+        return []
+    return await db.mediafile.find_many(
+        where={"id": {"in": orphan_ids}},
+        include=INCLUDE,
+        order={"createdAt": "desc"},
+    )
+
 
 async def _tagged_parent(record_type: str | None, record_id: str | None) -> Any:
     """The record a STRING-TAGGED upload hangs off, for workshop inheritance only. Never raises.
@@ -733,6 +859,19 @@ def _relink_delegate(record_type: str) -> Any:
         "tool": db.tooldocumentation,
         "questionnaire": db.questionnaireinterview,
         "questionnaireinterview": db.questionnaireinterview,
+        # PROCESS AND PROCESS STEP, WHICH THIS MAP REFUSED UNTIL 2026-08-15. They were absent because
+        # they have no typed FK on MediaFile, and their absence turned the ordinary consequence of
+        # editing a process — ``_sync_steps`` hard-deleting a dropped step — into an unrecoverable
+        # loss: the step's photographs were invisible to ``/media/orphans`` (now fixed above) and a
+        # 400 to this route even when an admin found their ids by hand. Having no FK is precisely why
+        # re-linking them is SAFE and cheap: ``media_relation_data`` contributes nothing for these
+        # types, so only the tag pair is rewritten, which is exactly how the client attached them in
+        # the first place. Neither model carries a ``workshopId``, so ``inherit_parent_workshop``
+        # finds nothing to inherit and — because it never writes a NULL over a real id — leaves the
+        # workshop the file already had. That is the right answer here: a photograph moved from a
+        # dead step to a live one has not changed workshops.
+        "process": db.process,
+        "processstep": db.processstep,
         # Miscellaneous media can be linked to another miscellaneous media item (no typed FK; the
         # generic linkedRecordType/linkedRecordId tags carry the association).
         "media": db.mediafile,
@@ -749,7 +888,13 @@ async def list_orphan_media(current_user: Any = Depends(require_admin)) -> list[
     The caller is bound rather than discarded so the URLs come back: this is a recovery screen, an
     orphan's only remaining handle IS its file, and ``_public`` withholds the URL from a caller it was
     not given. An admin outranks the entitlement, so nothing here is widened — it is simply not
-    accidentally narrowed."""
+    accidentally narrowed.
+
+    TWO QUESTIONS, BECAUSE THERE ARE TWO KINDS OF LINK. A typed FK that has been SET NULL is found by
+    the ``fk: None`` predicates below. A tag-only link — process, process step, design workshop, misc
+    — has no FK to be null and is found by :func:`_tag_only_orphans`, which resolves the tag. Asking
+    only the first question is what let a deleted process step's photographs sit in the repository
+    while this screen reported it clean; see ``ORPHAN_TAG_TYPES``."""
     conditions = [
         {"linkedRecordType": rec_type, "linkedRecordId": {"not": None}, fk: None}
         for rec_type, fk in ORPHAN_FK_FIELDS.items()
@@ -759,7 +904,13 @@ async def list_orphan_media(current_user: Any = Depends(require_admin)) -> list[
         include=INCLUDE,
         order={"createdAt": "desc"},
     )
-    return await _public(rows, current_user)
+    # De-duplicated by id even though the two questions are disjoint by construction (a type is
+    # either in ORPHAN_FK_FIELDS or in ORPHAN_TAG_TYPES, never both): if a future link type is ever
+    # added to both dicts, the recovery screen must show it once, not twice.
+    seen = {row.id for row in rows}
+    combined = [*rows, *(row for row in await _tag_only_orphans() if row.id not in seen)]
+    combined.sort(key=lambda row: row.createdAt, reverse=True)
+    return await _public(combined, current_user)
 
 
 @router.post("/{media_id}/relink")
@@ -904,7 +1055,12 @@ async def list_media_processing_jobs(
     page, page_size, skip = normalize_pagination(page, pageSize)
     where: dict[str, Any] = {} if is_admin(current_user) else {"requestedById": current_user.id}
     if statusFilter:
-        where["status"] = enum_filter_or_422(statusFilter, RECORD_STATUSES)
+        # MediaProcessingJob.status, NOT MediaFile.status — see MEDIA_PROCESSING_JOB_STATUSES above
+        # for why passing RECORD_STATUSES here (as this line did) 422'd every request the panel makes.
+        # ``field="statusFilter"`` names the query parameter the client actually sent, matching the
+        # mediaType filter in ``list_media``; the default "status" would name a key that appears
+        # nowhere in the request the caller can see.
+        where["status"] = enum_filter_or_422(statusFilter, MEDIA_PROCESSING_JOB_STATUSES, field="statusFilter")
     total = await db.mediaprocessingjob.count(where=where)
     jobs = await db.mediaprocessingjob.find_many(
         where=where,
@@ -921,7 +1077,16 @@ async def process_media_processing_jobs(
     limit: int | None = Query(default=None, ge=1, le=25),
     _: Any = Depends(require_admin),
 ) -> dict[str, int]:
-    return await process_next_media_jobs(limit=limit, worker_id="manual-api")
+    """The media-jobs panel's "Run queue now" button.
+
+    ``recover=False`` because this runs in the WEB process and the queue drain runs in its own
+    systemd unit, so the stale-lock recovery would be judging locks held by a process it cannot see:
+    a provider call hung past the 30-minute cutoff would be reset to QUEUED here and immediately
+    re-sent while the queue process is still awaiting the first answer. See
+    ``media_queue.process_next_media_jobs`` for the full argument; recovery still happens on every
+    pass of the queue process itself.
+    """
+    return await process_next_media_jobs(limit=limit, worker_id="manual-api", recover=False)
 
 
 @router.post("/jobs/{job_id}/retry")

@@ -85,6 +85,7 @@ import com.designprototype.workshop.data.dwFoldServerStage
 import com.designprototype.workshop.data.dwHoldingsFrom
 import com.designprototype.workshop.data.dwRestoreStageRefusals
 import com.designprototype.workshop.data.dwRowId
+import com.designprototype.workshop.data.entityKey
 import com.designprototype.workshop.data.dwTier3ConsentOf
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.liveFields
@@ -94,8 +95,10 @@ import com.designprototype.workshop.data.singleton
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
@@ -262,6 +265,39 @@ private class PendingWrite {
 
     /** Hand the write over, ONCE. Taking it discharges it, so a second dispose cannot re-send it. */
     fun take(): Outstanding? = outstanding.also { clear() }
+
+    /**
+     * Re-point an outstanding write at the deletion records the DRAFT now holds, leaving everything
+     * else about it alone.
+     *
+     * ── WHY AN OUTSTANDING WRITE HAS TO BE CORRECTED AND NOT JUST THE SCREEN ─────────────────────
+     *
+     * A push the server acknowledged causes `recordStageSent` to drop the acknowledged deletion keys
+     * from the draft, and the screen adopts that (see the `StagePush.Sent` branch). But the keystroke
+     * that arrives during the push has ALREADY snapshotted the pre-acknowledgement `emptied` /
+     * `deletedRows` into this holder — that is what [record] does, on the same line as the edit — and
+     * the dispose writes this holder, not the screen. So a designer who types one more character and
+     * presses Back inside the 800ms window would have `persistLocally` union the acknowledged key
+     * straight back onto disk: the resurrected deletion, arriving by the one path that skips the
+     * debounce entirely. Refreshing the screen's two fields and not this one closes three quarters of
+     * the defect and leaves the quarter that happens when somebody is in a hurry.
+     *
+     * The revision is deliberately untouched: this is the same edit it always was, corrected, not a
+     * newer one — bumping it here would make [StageScreen]'s `pending.revision == at` discharge check
+     * disagree with the write that is actually outstanding.
+     */
+    fun adoptDeletionRecord(emptied: Set<String>, deletedRows: Set<String>) {
+        val current = outstanding ?: return
+        outstanding = Outstanding(
+            workshopId = current.workshopId,
+            stage = current.stage,
+            state = current.state,
+            seen = current.seen,
+            emptied = emptied,
+            deletedRows = deletedRows,
+            syncable = current.syncable,
+        )
+    }
 }
 
 @Composable
@@ -512,12 +548,6 @@ fun StageScreen(
             // signal is the single most expensive mistake this screen could make. The server is read
             // only to seed a stage this device has never opened.
             val remoteId = serverId
-            // `custom` counted with the other two: eight of the twenty-two stages declare no
-            // singleton at all, so a stage whose only answers are the designer's own is ordinary.
-            // Left out, this branch would fall through to the server read and adopt the office's copy
-            // over answers typed in a courtyard this morning.
-            val holdsWork = local != null &&
-                (local.values.isNotEmpty() || local.rows.isNotEmpty() || local.custom.isNotEmpty())
             /*
               ASKED BEFORE THE REQUEST, NOT DISCOVERED BY MAKING IT, and it is the difference between
               a stage that opens and a stage that appears to have hung.
@@ -537,96 +567,132 @@ fun StageScreen(
               the form quick.
             */
             val canReach = remoteId != null && ConnectivityObserver.isOnline(appContext)
-            val loaded = if (holdsWork && (local!!.stageSeen || !canReach)) {
-                // Nothing to learn, or nothing to learn it from. The draft is shown as it is.
-                StageLoad(
-                    fromDraft(spec, local),
-                    seen = local.stageSeen,
-                    // A read that was never ATTEMPTED leaves the designer in exactly the position a
-                    // read that FAILED does — the stage is unread, so a clearance made here will not
-                    // propagate yet — and they are owed the same sentence. Reported only where there
-                    // was something to read: a workshop that exists on this phone alone has no server
-                    // copy to be missing, and warning about one would be a false alarm on every stage
-                    // of every workshop captured in a courtyard.
-                    downloadFailed = !local.stageSeen && remoteId != null,
-                    heldWorkAlready = true,
-                )
-            } else if (holdsWork) {
-                /*
-                  A STAGE THAT HOLDS WORK AND HAS NEVER BEEN READ IS READ NOW, AND THE ANSWER IS
-                  FOLDED RATHER THAN ADOPTED.
+            /*
+              WHICH OF THE FOUR READS THIS OPEN IS, DECIDED ONCE, OUTSIDE COMPOSITION AND UNIT-TESTED.
 
-                  This branch did not exist. The rule was "the local draft wins whenever it holds
-                  anything", which is right about whose VALUES survive and was, by accident, also the
-                  rule for whether the request happened at all — so a stage opened once without signal
-                  and typed into was never read again for the life of the draft, and could therefore
-                  never become authoritative again. That did not show while `recordStageSent` handed
-                  authority out after any successful save; with that gone (see [StageDraft.stageSeen])
-                  it would have made `replaceCollections` unreachable for ever, on every handset, so
-                  no clearance and no row deletion would ever have reached the repository again.
-
-                  THE LOCAL COPY STILL WINS EVERY KEY IT HOLDS. [dwFoldServerStage] only ADDS what the
-                  server has and this device does not, which is what makes the resulting claim honest:
-                  after the fold, "delete what I do not name" cannot name anything the designer has
-                  not been shown. What appeared is announced rather than slipped in — see `foldNotice`.
-                */
-                val remote = runCatching { repository.designWorkshopStage(remoteId!!, stageKey) }
-                    .getOrNull()
-                if (remote == null) {
+              It was a chain of `if`s over an inline `holdsWork`, and the routing — not the bodies —
+              was where the deletion was lost: see [dwStageReadPlan], which is that chain, moved
+              somewhere a test can reach it and taught the one term it was missing.
+            */
+            val plan = dwStageReadPlan(local, remoteExists = remoteId != null, canReach = canReach)
+            val loaded = when (plan) {
+                DwStageRead.DRAFT_AS_IS -> {
+                    // Nothing to learn, or nothing to learn it from. The draft is shown as it is.
+                    // `held` rather than `local!!` three times: this arm is reachable only for a draft
+                    // [dwStageReadPlan] has already found something in, so the assertion belongs at
+                    // the top of the arm where it is read as the routing's guarantee, not sprinkled
+                    // through a constructor call where the next reader has to re-derive it.
+                    val held = local!!
                     StageLoad(
-                        fromDraft(spec, local!!),
-                        seen = false,
-                        downloadFailed = true,
+                        fromDraft(spec, held),
+                        seen = held.stageSeen,
+                        // A read that was never ATTEMPTED leaves the designer in exactly the position
+                        // a read that FAILED does — the stage is unread, so a clearance made here will
+                        // not propagate yet — and they are owed the same sentence. Reported only where
+                        // there was something to read: a workshop that exists on this phone alone has
+                        // no server copy to be missing, and warning about one would be a false alarm on
+                        // every stage of every workshop captured in a courtyard.
+                        downloadFailed = !held.stageSeen && remoteId != null,
                         heldWorkAlready = true,
                     )
-                } else {
-                    // Held so a refusal restored off disk can be measured against this read instead of
-                    // paying for a second identical one — see [readBucket].
-                    readBucket = remote
-                    val fold = dwFoldServerStage(spec, local, remote, stageKey)
-                    // Written to disk HERE, and only in this branch. The fold is the one read whose
-                    // result must survive the screen: it is what the next save's authority rests on,
-                    // and a fold held only in composition would be re-fetched on every open and lost
-                    // entirely to a designer who read the stage and then went back out of signal.
-                    // `updateBookkeeping` rather than `update`, so re-reading a stage does not
-                    // reorder the workshop list or stale every generated report — see its KDoc.
-                    WorkshopDraftStore.updateBookkeeping(appContext, workshopId) { draft ->
-                        draft.copy(stages = draft.stages + (stageKey to fold.draft))
+                }
+                DwStageRead.FOLD_SERVER_COPY -> {
+                    /*
+                      A STAGE THAT HOLDS WORK AND HAS NEVER BEEN READ IS READ NOW, AND THE ANSWER IS
+                      FOLDED RATHER THAN ADOPTED.
+
+                      This branch did not exist. The rule was "the local draft wins whenever it holds
+                      anything", which is right about whose VALUES survive and was, by accident, also
+                      the rule for whether the request happened at all — so a stage opened once without
+                      signal and typed into was never read again for the life of the draft, and could
+                      therefore never become authoritative again. That did not show while
+                      `recordStageSent` handed authority out after any successful save; with that gone
+                      (see [StageDraft.stageSeen]) it would have made `replaceCollections` unreachable
+                      for ever, on every handset, so no clearance and no row deletion would ever have
+                      reached the repository again.
+
+                      THE LOCAL COPY STILL WINS EVERY KEY IT HOLDS. [dwFoldServerStage] only ADDS what
+                      the server has and this device does not, which is what makes the resulting claim
+                      honest: after the fold, "delete what I do not name" cannot name anything the
+                      designer has not been shown. What appeared is announced rather than slipped in —
+                      see `foldNotice`.
+
+                      AND IT IS ALSO THE ARM A DELETION-ONLY DRAFT TAKES, which is why the routing
+                      above counts `emptiedEntities` as something held. This is the only reader that
+                      declines to fold an emptied collection's rows back in and the only one that
+                      counts them in `sweptRows` so the notice can say so; the seed arm below would
+                      have put them back on screen in silence.
+                    */
+                    val remote = runCatching { repository.designWorkshopStage(remoteId!!, stageKey) }
+                        .getOrNull()
+                    if (remote == null) {
+                        StageLoad(
+                            fromDraft(spec, local!!),
+                            seen = false,
+                            downloadFailed = true,
+                            heldWorkAlready = true,
+                        )
+                    } else {
+                        // Held so a refusal restored off disk can be measured against this read
+                        // instead of paying for a second identical one — see [readBucket].
+                        readBucket = remote
+                        val fold = dwFoldServerStage(spec, local, remote, stageKey)
+                        // Written to disk HERE, and only in this branch. The fold is the one read
+                        // whose result must survive the screen: it is what the next save's authority
+                        // rests on, and a fold held only in composition would be re-fetched on every
+                        // open and lost entirely to a designer who read the stage and then went back
+                        // out of signal. `updateBookkeeping` rather than `update`, so re-reading a
+                        // stage does not reorder the workshop list or stale every generated report —
+                        // see its KDoc.
+                        WorkshopDraftStore.updateBookkeeping(appContext, workshopId) { draft ->
+                            draft.copy(stages = draft.stages + (stageKey to fold.draft))
+                        }
+                        StageLoad(
+                            fromDraft(spec, fold.draft),
+                            seen = true,
+                            downloadFailed = false,
+                            heldWorkAlready = true,
+                            foldNotice = fold.notice,
+                        )
                     }
-                    StageLoad(
-                        fromDraft(spec, fold.draft),
-                        seen = true,
-                        downloadFailed = false,
-                        heldWorkAlready = true,
-                        foldNotice = fold.notice,
-                    )
                 }
-            } else if (remoteId != null) {
-                val remote = runCatching { repository.designWorkshopStage(remoteId, stageKey) }.getOrNull()
-                if (remote != null) {
-                    readBucket = remote
-                    // The draft now starts from everything the server had, which is exactly the
-                    // condition that entitles a later save to say "these are now exactly the rows".
-                    StageLoad(fromRemote(spec, remote), seen = true, downloadFailed = false)
-                } else {
-                    // ── THE READ FAILED, AND THAT IS NOT THE SAME THING AS AN EMPTY STAGE ────────
-                    //
-                    // This used to seed `StageState()` and say nothing, which is how a stage holding
-                    // a fortnight of work — a 5-field singleton, 6 process steps, 5 tools, 4 raw
-                    // materials — opened as a blank screen in a courtyard with no signal. One typed
-                    // field then produced a payload with that field, zero rows for every collection
-                    // and `replaceCollections = true`, and the server swept the lot.
-                    //
-                    // The blank screen still appears, because a designer with no signal must still be
-                    // able to capture. What changes is that it is ANNOUNCED, and that the draft is
-                    // marked as NOT SEEN, so no save built from it can claim to be the whole truth of
-                    // the stage. The work syncs; nothing it has not seen is destroyed.
-                    StageLoad(StageState(), seen = false, downloadFailed = true)
+                DwStageRead.SEED_FROM_SERVER -> {
+                    val remote =
+                        runCatching { repository.designWorkshopStage(remoteId!!, stageKey) }.getOrNull()
+                    if (remote != null) {
+                        readBucket = remote
+                        // The draft now starts from everything the server had, which is exactly the
+                        // condition that entitles a later save to say "these are now exactly the rows".
+                        //
+                        // AND THE DRAFT REALLY DOES HOLD NOTHING, which is the whole licence for
+                        // adopting the server's bucket verbatim. [fromRemote] has no term for
+                        // [StageDraft.emptiedEntities] and must not need one: [dwStageReadPlan] routes
+                        // a draft holding a deletion record to the fold above, which is the one reader
+                        // that declines to bring emptied rows back. Widen this arm and the deletion is
+                        // not merely ignored, it is ERASED — the rows come back on screen with no
+                        // notice, and `persistLocally`'s filter drops the record on the first
+                        // debounced save after.
+                        StageLoad(fromRemote(spec, remote), seen = true, downloadFailed = false)
+                    } else {
+                        // ── THE READ FAILED, AND THAT IS NOT THE SAME THING AS AN EMPTY STAGE ──────
+                        //
+                        // This used to seed `StageState()` and say nothing, which is how a stage
+                        // holding a fortnight of work — a 5-field singleton, 6 process steps, 5 tools,
+                        // 4 raw materials — opened as a blank screen in a courtyard with no signal.
+                        // One typed field then produced a payload with that field, zero rows for every
+                        // collection and `replaceCollections = true`, and the server swept the lot.
+                        //
+                        // The blank screen still appears, because a designer with no signal must still
+                        // be able to capture. What changes is that it is ANNOUNCED, and that the draft
+                        // is marked as NOT SEEN, so no save built from it can claim to be the whole
+                        // truth of the stage. The work syncs; nothing it has not seen is destroyed.
+                        StageLoad(StageState(), seen = false, downloadFailed = true)
+                    }
                 }
-            } else {
-                // No server record at all. There is nothing on the server this draft could be missing,
-                // so the device genuinely is the whole truth of this stage.
-                StageLoad(StageState(), seen = true, downloadFailed = false)
+                DwStageRead.SEED_BLANK ->
+                    // No server record at all. There is nothing on the server this draft could be
+                    // missing, so the device genuinely is the whole truth of this stage.
+                    StageLoad(StageState(), seen = true, downloadFailed = false)
             }
             /*
               THE CARD THE APP TOLD THE DESIGNER TO COME BACK FOR, PUT BACK ON THE SCREEN.
@@ -770,9 +836,32 @@ fun StageScreen(
         val at = revision
         val snapshot = state
 
+        // The two deletion records EXACTLY AS THEY ARE HANDED TO THE WRITE, so the acknowledgement
+        // below can tell "the server accepted this key and `recordStageSent` dropped it" apart from
+        // "the designer deleted something else while the push was in flight". Read once, here,
+        // because `emptied`/`deletedRows` are composition state that a row deletion can change under
+        // this coroutine at any suspension point — and re-reading them after the push is what would
+        // make the difference below meaningless.
+        val emptiedSent = emptied
+        val deletedRowsSent = deletedRows
+
         // The device first and unconditionally. Nothing below this line may prevent it.
-        runCatching { persistLocally(appContext, workshopId, spec, snapshot, seen, emptied, deletedRows) }
+        runCatching {
+            persistLocally(appContext, workshopId, spec, snapshot, seen, emptiedSent, deletedRowsSent)
+        }
             .onFailure { error ->
+                // A CANCELLATION IS NOT A FAILED WRITE, and `runCatching` catches `Throwable`, which
+                // includes it. This whole function runs inside `LaunchedEffect(revision)` and Compose
+                // cancels that on the next keystroke, while `persistLocally` is suspended on
+                // `Dispatchers.IO` and on the store's process-wide mutex behind a neighbouring
+                // stage's save or a media import — so cancellation lands INSIDE the write routinely,
+                // not exotically. Swallowed, the cancelled coroutine ran on and wrote
+                // `saveState = PENDING` and an error over the state the newly-launched effect had
+                // already set, so the status line could read the wrong thing until the next debounce
+                // 800ms later. This is the rule this file already states at the `catch` further down
+                // ("a `runCatching` here would eat the cancellation"); it was stated in one place and
+                // not the other, which is how the two disagreed.
+                if (error is CancellationException) throw error
                 saveState = SaveState.PENDING
                 onError(error.message ?: "Could not write this stage to the device.")
                 return
@@ -798,9 +887,69 @@ fun StageScreen(
         if (syncId == null) return
         when (val push = runCatching {
             WorkshopSyncEngine.pushStage(appContext, repository, workshopId, spec)
-        }.getOrElse { StagePush.NotSent }) {
+        }.getOrElse {
+            // Rethrown for the same reason as the local write above: a cancelled push is not a push
+            // that did not go, and treating it as `NotSent` here assigns `ON_DEVICE`/`syncNote = null`
+            // over whatever the effect that replaced this one has already decided.
+            if (it is CancellationException) throw it
+            StagePush.NotSent
+        }) {
             is StagePush.Sent -> {
                 saveState = SaveState.SYNCED
+                /*
+                  THE TWO DELETION RECORDS, RE-READ FROM DISK BECAUSE THE SERVER HAS JUST
+                  ACKNOWLEDGED SOME OF THEM AND THIS SCREEN'S COPY HAS NOT HEARD.
+
+                  `emptied` and `deletedRows` are seeded from the draft once, at load, and thereafter
+                  only ever GAIN keys (`onRowsChange`). `recordStageSent` — inside the push that has
+                  just returned — removes from the draft exactly the keys the acknowledged payload
+                  carried, deliberately scoped to those. Nothing told the composition, so the RAM copy
+                  was still authoritative for the next write, and `persistLocally` unions it back onto
+                  disk: the key resurrected, the next differing payload asserted the sweep a second
+                  time, and rows the office had entered on the web in the meantime — in a collection
+                  this handset once emptied — were soft-deleted by an auto-save nobody asked for. The
+                  handset never re-reads a stage it has already seen, so nothing else would ever have
+                  corrected it.
+
+                  READ FROM THE STORE RATHER THAN SUBTRACTING WHAT WE THINK WAS SENT. The payload was
+                  built inside the engine (`buildStageBody` intersects the list with the entities the
+                  registry declares) and only `recordStageSent` knows what the server accepted, so a
+                  second opinion computed here is precisely the duplicated rule that produced this
+                  defect. The draft is the one source of truth; this is a re-read of it.
+
+                  BOTH FIELDS TOGETHER, always: they are one fact to the designer, and refreshing one
+                  while the other keeps a stale key would leave the status screen reporting an unsent
+                  deletion that no payload will ever carry again.
+
+                  THE ARITHMETIC AND THE UNCANCELLABILITY ARE BOTH IN [dwAdoptDeletionRecordAfterPush]
+                  — extracted rather than left inline for the reason its KDoc opens with: the version
+                  that shipped here was a plain load-and-assign inside a coroutine the next keystroke
+                  cancels, its test exercised [dwDeletionRecordOnDisk] instead, and a two-line
+                  projection cannot fail whether or not this ever runs. `DwStageWriteBackTest` now
+                  cancels the calling job mid-load and asserts the adoption happened anyway.
+
+                  What this callback still owns is WHERE the answer lands, and it lands in two places.
+                */
+                dwAdoptDeletionRecordAfterPush(
+                    sentEmptied = emptiedSent,
+                    sentDeletedRows = deletedRowsSent,
+                    // Read INSIDE the block, after the load, because a row deletion can be recorded
+                    // while it is in flight — see the KDoc's second half.
+                    screenEmptied = { emptied },
+                    screenDeletedRows = { deletedRows },
+                    loadStage = {
+                        WorkshopDraftStore.load(appContext, workshopId)?.stages?.get(spec.key)
+                    },
+                ) { nextEmptied, nextDeletedRows ->
+                    emptied = nextEmptied
+                    deletedRows = nextDeletedRows
+                    // AND THE WRITE THAT IS ALREADY OUTSTANDING, which is a snapshot of the two
+                    // fields above taken on the keystroke that cancelled this coroutine. The
+                    // dispose writes that snapshot and not the screen, so leaving it stale keeps
+                    // the resurrection alive on the "type one more character and press Back"
+                    // path. See [PendingWrite.adoptDeletionRecord].
+                    pending.adoptDeletionRecord(nextEmptied, nextDeletedRows)
+                }
                 syncNote = if (push.result.droppedKeys.isEmpty()) {
                     null
                 } else {
@@ -1068,10 +1217,15 @@ fun StageScreen(
                 // the import — a photograph that was taken, was on screen, and is gone by morning.
                 //
                 // `captures/` is a sibling of `media/` rather than the same directory, and the
-                // separation is load-bearing: `removeMedia` reclaims space by deleting every file
-                // under `media/` that no descriptor references, and a capture still on its way
-                // through the camera has no descriptor yet. Sharing the directory would let one
-                // attachment being deleted take an unrelated photograph with it.
+                // separation is kept even though the hazard it was written against is gone:
+                // `removeMedia` used to reclaim space by deleting every file under `media/` that no
+                // descriptor referenced, and a capture still on its way through the camera has no
+                // descriptor yet. That sweep has since been narrowed to the one file the detached
+                // descriptor named (see its KDoc — it was deleting photographs another import was
+                // mid-copy), so this directory is no longer the thing standing between a camera
+                // intent and a deletion. It stays because `media/` is the set of files the report
+                // writer and the uploader walk, and a half-written camera output has no business in
+                // that set until the import has copied and measured it.
                 val dir = java.io.File(
                     WorkshopDraftStore.workshopDir(appContext, workshopId), "captures"
                 ).apply { mkdirs() }
@@ -1579,6 +1733,39 @@ private fun EntitySection(
      */
     val fieldsByKey = remember(entity) { entity.liveFields.associateBy { it.key } }
 
+    /*
+      THE MARKS ACTUALLY DRAWN: WHAT THIS DEVICE CAN WORK OUT FOR ITSELF, UNDER WHAT THE SERVER SAID.
+
+      [DwValues.validate] is declared as the handset's copy of the server's `validate_entry`, with a
+      KDoc arguing that the whole reason [DwValues] exists is "to say the same 'no' the server would
+      say, at the moment the value is typed". It had NO CALLER anywhere in `android/app/src` outside
+      one unit test. The only validation the form ran was `ScalarInput.commit`'s per-keystroke
+      `coerce`, which never asks about requiredness and never sees a value written by a reference
+      hydration or by the photo-measure panel.
+
+      What that cost, concretely: the server applies `_check_conditional` on every save, ungated —
+      "Reason for the override is required once Designs count override or Prototypes count override is
+      filled in." A designer types the override figure at stage 20 in a courtyard, leaves the reason
+      blank (the registry marks it `required: false`, so completeness and readiness say nothing), and
+      meets the refusal a fortnight later as a card about a stage they finished in another district.
+
+      `enforceRequired = false`, DELIBERATELY, and it is not a weakening. With it on, every empty
+      required box on a 40-field stage turns red the moment the screen opens, which is the wall of red
+      `coerce`'s own KDoc refuses; the conditional rule is NOT gated on it (see `checkConditional`),
+      precisely because it fires only on a figure the designer has just typed. So this draws the
+      conditional mark and any malformed stored value, and nothing else.
+
+      THE SERVER'S REFUSALS WIN EVERY KEY THEY NAME — `+ errors` last. A local mark is a prediction;
+      a refusal is something the repository has already done, and replacing "the repository would not
+      store this" with a guess would be a downgrade.
+
+      Memoised on the values, because this walks every live field of the entity and coerces the
+      text-shaped ones; recomposition happens on every keystroke.
+    */
+    val marks = remember(entity, values, errors) {
+        DwValues.validate(entity, values, enforceRequired = false) + errors
+    }
+
     /**
      * "2 of 3 views captured — no back view", for the one entity in the registry that really has
      * named view slots (stage 6's `existingProduct`). Every other entity gets nothing at all: asking
@@ -1641,7 +1828,7 @@ private fun EntitySection(
                 value = values[field.key],
                 onChange = { next -> onValueChange(field.key, next) },
                 modifier = if (field.key == focusFieldKey) anchor else Modifier,
-                error = errors[field.key],
+                error = marks[field.key],
                 media = media,
                 caption = captionByTarget[field.key],
                 captionValue = captionByTarget[field.key]?.let { values[it.key] },
@@ -1668,7 +1855,7 @@ private fun EntitySection(
                         value = values[field.key],
                         onChange = { next -> onValueChange(field.key, next) },
                         modifier = if (field.key == focusFieldKey) anchor else Modifier,
-                        error = errors[field.key],
+                        error = marks[field.key],
                         media = media,
                         caption = captionByTarget[field.key],
                         captionValue = captionByTarget[field.key]?.let { values[it.key] },
@@ -1976,6 +2163,109 @@ private fun Map<String, JsonElement>.putAll(patch: Map<String, JsonElement?>): M
     return next
 }
 
+/** The four ways a stage can be opened. See [dwStageReadPlan]. */
+internal enum class DwStageRead {
+    /** Show what is on disk. There is nothing to learn, or no connection to learn it over. */
+    DRAFT_AS_IS,
+
+    /** Read the server's copy and FOLD it into what is on disk — [dwFoldServerStage]. */
+    FOLD_SERVER_COPY,
+
+    /** This device holds nothing for the stage, so the server's copy is adopted verbatim. */
+    SEED_FROM_SERVER,
+
+    /** No server record at all, so this device is the whole truth and the stage starts blank. */
+    SEED_BLANK,
+}
+
+/**
+ * Which of the four reads an open of this stage is — decided from three facts and nothing else.
+ *
+ * ── WHY IT IS A FUNCTION AND NOT A CHAIN OF `if`s INSIDE THE LOAD ────────────────────────────────
+ *
+ * Because the routing, not any of the four bodies, is where a designer's deletion was silently
+ * reversed — and a chain of `if`s inside a `LaunchedEffect` inside a composable is not reachable by
+ * any test on this machine (the JVM suite has no Robolectric and no Context). This is that chain,
+ * moved somewhere `DwEmptiedStageSurvivesTheOpenTest` can put a draft in front of it and read the
+ * answer back.
+ *
+ * ── THE DEFECT: "HOLDS WORK" HAD NO TERM FOR A DELETION ──────────────────────────────────────────
+ *
+ * The test used to be `local.values.isNotEmpty() || local.rows.isNotEmpty() || local.custom.isNotEmpty()`
+ * — so a stage whose ENTIRE content was one collection (eight of the twenty-two stages declare no
+ * singleton at all, so a collection-only stage is ordinary) "held no work" the instant the designer
+ * deleted its rows, and the open fell through to [DwStageRead.SEED_FROM_SERVER]. That arm adopts the
+ * server's bucket verbatim through `fromRemote`, which has no notion of [StageDraft.emptiedEntities]:
+ * the six deleted rows came back on screen with no notice at all, and the first debounced save after
+ * that erased the record of the deletion, because `persistLocally` keeps an emptied key only while the
+ * collection is still empty. `stageSeen` was then true, so the next payload re-asserted all six rows
+ * under `replaceCollections` — the deletion undone, and no trace anywhere that it was ever made.
+ *
+ * The path is not exotic; it is the one the app itself prescribes. `statusOf` prints "Open the stage
+ * once with a connection and it goes up on the save straight after" over exactly this stage, and
+ * following that instruction was what destroyed the record.
+ *
+ * ── SO A DELETION RECORD IS WORK, AND THE FOLD IS THE ONE READER ALLOWED TO SEE IT ───────────────
+ *
+ * Counting `emptiedEntities`/`deletedRowKeys` as something held routes the stage to
+ * [DwStageRead.FOLD_SERVER_COPY], where [dwFoldServerStage] already does the right thing and has done
+ * since it was written: it declines to add rows back for an emptied entity, carries `emptiedEntities`
+ * forward untouched, earns `stageSeen`, and counts what the next save will sweep in `sweptRows` so the
+ * screen can SAY so. Reusing that is strictly better than teaching `fromRemote` the same rule, which
+ * would be a second copy of the one decision in this lane whose mistake is unrecoverable.
+ *
+ * A deletion made with no connection lands on [DwStageRead.DRAFT_AS_IS] instead (`canReach` is false),
+ * which is also right: the draft is shown as it is, the deleted rows stay deleted on screen, and the
+ * "not read from the server yet" note the arm already sets tells the designer that emptying a box here
+ * does not empty it there until the stage has been read once.
+ *
+ * `remoteExists` and `canReach` are passed rather than measured so this stays pure: `canReach` costs a
+ * `ConnectivityObserver` lookup and is decided before the request precisely so a courtyard does not pay
+ * `ApiClient`'s 30-second connect timeout in front of a form.
+ */
+internal fun dwStageReadPlan(
+    local: StageDraft?,
+    remoteExists: Boolean,
+    canReach: Boolean,
+): DwStageRead {
+    // `custom` counted with `values` and `rows`: eight of the twenty-two stages declare no singleton
+    // at all, so a stage whose only answers are the designer's own is ordinary. Left out, such a
+    // stage falls to the seed arm and adopts the office's copy over answers typed in a courtyard this
+    // morning.
+    //
+    // AND THE TWO DELETION RECORDS COUNTED BESIDE THEM — see the KDoc. An emptied collection leaves a
+    // draft that holds nothing but is emphatically not a draft with nothing in it: it holds an
+    // instruction, it is the only place that instruction exists, and the seed arm would overwrite it.
+    //
+    // ── DO NOT REPLACE THIS WITH `StageDraft.holdsAnswers()`, WHICH ASKS A DIFFERENT QUESTION ─────
+    //
+    // That predicate — used by `dwStageSaysNothing`, `dwStrandedStages` and `ReportSource.holdsWork` —
+    // ignores `_`-prefixed singleton keys, correctly, because nothing under one can reach the wire or
+    // the document. This test is not about what can TRAVEL; it is about what would be LOST, and the
+    // difference is a real answer on the device. `DwRecordingPlaceCard` writes the designer's location
+    // into `values["_recordingPlace"]` on all twenty-two stages, and a draft holding only that would,
+    // under `holdsAnswers`, route to [DwStageRead.SEED_FROM_SERVER] — which adopts the server's bucket
+    // verbatim through [fromRemote], after which `persistLocally` writes `values` WHOLESALE and the
+    // recording place is gone from the device with nothing said. Counting it here costs one fold that
+    // adds the server's keys to a draft that had none of them, which is the same content the seed arm
+    // would have produced and loses nothing. `DwProvenanceIsNotWorkTest`'s last case pins this
+    // asymmetry deliberately, so a tidy-up that unifies the three tests fails on a desktop JVM.
+    val holds = local != null && (
+        local.values.isNotEmpty() ||
+            local.rows.isNotEmpty() ||
+            local.custom.isNotEmpty() ||
+            local.emptiedEntities.isNotEmpty() ||
+            local.deletedRowKeys.isNotEmpty()
+        )
+    return when {
+        // Nothing to learn (already read), or nothing to learn it from (no connection, or no record).
+        holds && (local!!.stageSeen || !canReach) -> DwStageRead.DRAFT_AS_IS
+        holds -> DwStageRead.FOLD_SERVER_COPY
+        remoteExists -> DwStageRead.SEED_FROM_SERVER
+        else -> DwStageRead.SEED_BLANK
+    }
+}
+
 /**
  * What opening a stage produced: the values to show, and the two facts about PROVENANCE that decide
  * what a later save is entitled to claim.
@@ -1998,6 +2288,12 @@ private data class StageLoad(
      * never filled in and starts again over a fortnight that is safe on the server. A screen showing
      * their own work is not frightening at all; what the designer needs to know there is narrower and
      * duller, namely that a clearance will not propagate until the read lands.
+     *
+     * A DRAFT HOLDING ONLY A DELETION COUNTS AS HELD WORK, because the duller sentence is exactly the
+     * one it is owed: the screen is showing what the designer did (a collection they emptied is
+     * empty), nothing is hidden from them, and the single consequence is that the deletion does not
+     * reach the server until this stage has been read once. The frightening sentence would be a lie
+     * there — nothing is missing from the screen. See [dwStageReadPlan].
      */
     val heldWorkAlready: Boolean = false,
     /** What [dwFoldServerStage] added, when a read landed on a stage that already held work. */
@@ -2039,6 +2335,22 @@ private fun fromDraft(stage: StageDto, draft: StageDraft): StageState = StageSta
     }
 )
 
+/**
+ * The server's bucket, adopted verbatim, for a stage this device holds NOTHING for.
+ *
+ * IT HAS NO TERM FOR [StageDraft.emptiedEntities] AND MUST NOT NEED ONE, and that is a statement about
+ * its caller rather than about deletions. It used to be reachable for a draft holding a deletion
+ * record — a collection-only stage the designer emptied holds no values, no rows and no custom answers,
+ * so the old "holds work" test routed it here — and adopting the bucket then put the deleted rows back
+ * on screen with nothing said, after which the first debounced save dropped the record and the next
+ * payload re-asserted every one of them. [dwStageReadPlan] now sends any draft holding a deletion to
+ * [dwFoldServerStage], which is the one reader that declines to re-add an emptied collection's rows and
+ * the one that counts them so the screen can announce the sweep.
+ *
+ * So the invariant to keep is the ROUTING one: if a future edit widens the arm that calls this, it must
+ * teach this function the rule first, or it silently reverses deletions again — the failure with no
+ * trace on the phone, no `deletedAt` on the server and no client key for anybody to recover from.
+ */
 private fun fromRemote(stage: StageDto, bucket: StageBucketDto): StageState = StageState(
     singleton = bucket.singleton.toMap(),
     custom = bucket.custom.toMap(),
@@ -2062,6 +2374,124 @@ private fun fromRemote(stage: StageDto, bucket: StageBucketDto): StageState = St
         }
     }
 )
+
+/**
+ * The rows to WRITE BACK for a stage: everything the form is holding, plus every row on disk this
+ * registry cannot draw.
+ *
+ * ── THE SECOND HALF IS NOT TIDINESS; WITHOUT IT THE SAVE DELETES ROWS ────────────────────────────
+ *
+ * `drawn` is built by walking `stage.collections`, and so is `fromDraft`, so a row filed under an
+ * entity the loaded registry does not declare is never read into the form and — before this function
+ * existed — was never written back either. One debounced save on any unrelated field and those rows
+ * were gone from disk: never drawn, never counted, never warned about, and unrecoverable on the
+ * device.
+ *
+ * `StageDraft.values` and `StageDraft.custom` are written WHOLESALE by `persistLocally` precisely so
+ * unknown keys survive (it says so on both), and `dwFoldServerStage` starts from `ArrayList(base.rows)`
+ * so a fold preserves undeclared rows. The row write was the one place in the feature that did not
+ * honour the rule — an asymmetry, not a policy, which is exactly how it went unnoticed.
+ *
+ * IT IS REACHABLE WITHOUT ANY SERVER MISCHIEF. `StageSchemaStore.readCacheFile` deletes a registry
+ * cache it cannot decode and falls back to the bundled asset, and `store` writes whatever registry is
+ * fetched — including an older one after a rollback. Either leaves a handset whose registry has LOST
+ * an entity that drafts on it already hold rows for.
+ *
+ * Nothing undeclared can reach the wire from here: `buildStageBody` walks `spec.collections` too. The
+ * cost is a few objects in a JSON array on disk; the alternative was losing rows a designer typed.
+ */
+internal fun dwStageRowsToStore(
+    stage: StageDto,
+    drawn: List<DraftRow>,
+    existing: StageDraft?,
+): List<DraftRow> = drawn + existing?.rows.orEmpty().filterNot { row ->
+    stage.collections.any { it.key == row.entityKey() }
+}
+
+/**
+ * The two deletion records as the DRAFT now holds them, for the screen to adopt after a push the
+ * server acknowledged. Null when there is no such stage on disk, which means "leave the screen alone".
+ *
+ * ── WHY THE SCREEN MUST RE-READ RATHER THAN KEEP ITS OWN COPY ────────────────────────────────────
+ *
+ * `emptied` and `deletedRows` are seeded from the draft once, at load, and thereafter only ever GAIN
+ * keys. `recordStageSent` removes from the draft exactly the keys the acknowledged payload carried —
+ * deliberately scoped to those — and nothing told the composition, so the screen's copy stayed
+ * authoritative for the next write and `persistLocally` unioned the acknowledged key straight back
+ * onto disk. The next differing payload then asserted the sweep a second time, and rows the office had
+ * entered on the web in the meantime, in a collection this handset had once emptied, were soft-deleted
+ * by an auto-save nobody asked for. The handset never re-reads a stage it has already seen, so nothing
+ * else would have corrected it.
+ *
+ * BOTH FIELDS TOGETHER, ALWAYS. They are one fact to a designer, and refreshing one while the other
+ * keeps a stale key leaves the status screen claiming an unsent deletion no payload will ever carry.
+ */
+internal fun dwDeletionRecordOnDisk(saved: StageDraft?): Pair<Set<String>, Set<String>>? =
+    saved?.let { it.emptiedEntities.toSet() to it.deletedRowKeys.toSet() }
+
+/**
+ * Adopt the draft's deletion records after a push the server acknowledged — uncancellably, and
+ * without discarding a deletion made while the push was in flight.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT FOUR LINES IN THE `Sent` BRANCH ───────────────────────────────
+ *
+ * Because the four lines shipped broken and their test could not tell. The re-read that closes the
+ * resurrected-deletion defect (see [dwDeletionRecordOnDisk] for the defect itself) was written inline
+ * in `saveAndSync`, which runs inside `LaunchedEffect(revision)` — the debounce, whose entire design
+ * is that THE NEXT KEYSTROKE CANCELS IT. Between `pushStage` returning and a draft read landing there
+ * is a suspension point, so on the handset of a designer who keeps typing — the ordinary case, the
+ * case the debounce is for — the read was cancelled and the screen kept its pre-acknowledgement copy.
+ * `persistLocally` unions that copy onto disk, so the acknowledged key came back and the next
+ * differing payload asserted the sweep a second time. Meanwhile the test named for the refresh
+ * asserted [dwDeletionRecordOnDisk], a two-line projection that passes whether or not any of this
+ * runs. Pulled out here, the rule is reachable from `DwStageWriteBackTest`, which cancels the calling
+ * job while [loadStage] is suspended and asserts [adopt] was called anyway.
+ *
+ * [NonCancellable] is the same instrument `WorkshopSync` uses around its media bookkeeping, for the
+ * same reason: a record of what the SERVER HAS ALREADY ACCEPTED cannot lose a race with a teardown,
+ * because the server will not say it again. The body is a local draft read and two assignments —
+ * nothing here waits on a network, so nothing here can hang a screen that is being torn down.
+ *
+ * ── AND WHY IT IS NOT SIMPLY `= what the disk says` ──────────────────────────────────────────────
+ *
+ * Making the block uncancellable makes an edit racing it ORDINARY rather than exotic, and a straight
+ * adoption of the draft's answer would then DELETE A DELETION: a designer who empties another
+ * collection while the push is in flight has a key the screen holds and the draft has not been told
+ * about, and adopting wholesale drops it — trading a resurrected deletion for a lost one, which is
+ * the worse of the two because nothing later re-asserts it. So: what the disk holds, PLUS whatever
+ * the screen has recorded since the write was handed over ([sentEmptied]/[sentDeletedRows], captured
+ * at the `persistLocally` call).
+ *
+ * That is still a re-read and not a second opinion about what was sent — `buildStageBody` and
+ * `recordStageSent` remain the only things that know that, which is the rule the `Sent` branch states
+ * — the difference against what was sent is used only to date the SCREEN's copy, never the draft's.
+ *
+ * [screenEmptied] and [screenDeletedRows] are read lazily, after the load, for that same race.
+ * Passing them as values would reintroduce the lost deletion through the back door.
+ *
+ * Returns nothing and calls [adopt] instead, at most once and never when there is no such stage on
+ * disk — "leave the screen alone", as [dwDeletionRecordOnDisk] documents. It must stay a callback
+ * INSIDE the [NonCancellable] block: code placed after a `withContext(NonCancellable)` in a cancelled
+ * coroutine is not reliably reached, which would put the assignments back in the window this function
+ * exists to close.
+ */
+internal suspend fun dwAdoptDeletionRecordAfterPush(
+    sentEmptied: Set<String>,
+    sentDeletedRows: Set<String>,
+    screenEmptied: () -> Set<String>,
+    screenDeletedRows: () -> Set<String>,
+    loadStage: suspend () -> StageDraft?,
+    adopt: (Set<String>, Set<String>) -> Unit,
+) {
+    run {
+        dwDeletionRecordOnDisk(loadStage())?.let { (entities, rows) ->
+            adopt(
+                entities + (screenEmptied() - sentEmptied),
+                rows + (screenDeletedRows() - sentDeletedRows),
+            )
+        }
+    }
+}
 
 /**
  * Write the stage into the local draft, preserving everything on disk that this screen does not own.
@@ -2105,11 +2535,17 @@ private suspend fun persistLocally(
             // save after a screen whose download failed — a reading of the server's container that
             // an earlier session had actually made.
             customSeen = state.customSeen || existing?.customSeen == true,
-            rows = stage.collections.flatMap { entity ->
-                state.collections[entity.key].orEmpty().map { row ->
-                    DraftRow(id = dwRowId(entity.key, row.rowId), values = row.values)
-                }
-            },
+            // The rows on screen, plus the ones this registry can no longer draw — see
+            // [dwStageRowsToStore], which is where the whole argument for the second half is.
+            rows = dwStageRowsToStore(
+                stage,
+                drawn = stage.collections.flatMap { entity ->
+                    state.collections[entity.key].orEmpty().map { row ->
+                        DraftRow(id = dwRowId(entity.key, row.rowId), values = row.values)
+                    }
+                },
+                existing = existing,
+            ),
             // Owned by the media import path, never by this screen. Copying it through from disk is
             // what keeps a debounced text save from dropping a photo attached two seconds earlier.
             mediaIds = existing?.mediaIds.orEmpty(),
@@ -2132,6 +2568,27 @@ private suspend fun persistLocally(
             // to set the same fact after ANY successful save, which is the defect [StageDraft.stageSeen]
             // is named after. A save is not a reading.
             stageSeen = seen || existing?.stageSeen == true,
+            /*
+              OR-ED WITH DISK, THEN FILTERED AGAINST WHAT IS ON SCREEN — AND THE FILTER IS ONLY SAFE
+              BECAUSE OF WHAT THE LOAD IS NOW FORBIDDEN TO DO.
+
+              The filter's job is the honest one the row-level filter below spells out: a collection
+              that holds rows again is not emptied, and leaving the key would ask the server to delete
+              rows the very same payload names — which the sweep declines to do, so the count would
+              never fall to zero and the stage would claim an unsent deletion for ever.
+
+              ITS DANGER IS THAT IT CANNOT SEE WHERE THE ROWS CAME FROM. Rows the DESIGNER put back
+              should drop the key; rows the SERVER put back must not, because the record of the
+              deletion is then the only place the deletion exists — and this is exactly how the emptied
+              stage lost it: the open re-seeded the server's rows through `fromRemote`, the collection
+              read as non-empty here, and one debounced save erased the instruction. The fix is at the
+              source rather than here — [dwStageReadPlan] routes a draft holding this record to
+              [dwFoldServerStage], which never re-adds an emptied collection's rows — so by the time
+              this line runs, a non-empty collection means the designer, and only the designer.
+
+              `recordStageSent` is what clears an ACKNOWLEDGED deletion, scoped to the keys the
+              accepted payload actually carried. This line must never be made to do that job.
+            */
             emptiedEntities = (emptied + existing?.emptiedEntities.orEmpty())
                 .filter { key -> state.collections[key].orEmpty().isEmpty() }
                 .distinct(),

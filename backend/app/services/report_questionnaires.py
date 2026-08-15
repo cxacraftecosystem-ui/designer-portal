@@ -127,11 +127,36 @@ class QuestionnaireAnswer:
     def prints(self) -> bool:
         """Whether this row belongs in the document at all.
 
-        An answered question always prints. An unanswered one prints only when it was REQUIRED,
-        where the blank is itself the finding. An unanswered optional question prints nothing, so a
-        forty-question form answered on eight questions is eight rows rather than forty.
+        An answered question always prints. An unanswered one prints only when it was REQUIRED AND
+        STILL ASKED, where the blank is itself the finding. An unanswered optional question prints
+        nothing, so a forty-question form answered on eight questions is eight rows rather than
+        forty.
+
+        **THE ``not self.is_retired`` HALF IS LOAD-BEARING AND WAS MISSING.** ``prints`` used to be
+        ``has_answer or is_required``, which never consulted retirement — and nothing upstream clears
+        ``isRequired`` when a question is retired or superseded (``questionnaire_forms.supersede_question``
+        deliberately COPIES it onto the replacement and leaves it set on the original, and the plain
+        retire path writes only ``isActive``/``retiredAt``). So a required question that was reworded
+        stayed permanently ``is_required=True, has_answer=False, is_retired=True`` for every sitting
+        that never saw the old wording, and each of those sittings' tables carried an extra
+        "… (no longer asked) | Not recorded." row. Twenty sittings recorded after one rewording is
+        twenty rows asserting that a respondent left blank a question they were never shown, in a
+        document whose stated editorial rule (see ``NOT_RECORDED`` above) is that a blank means a gap
+        in the FIELDWORK. It also made ``_questionnaire_provenance`` read "8 question(s)" over eleven
+        rows, because ``question_count`` counts only live questions, and it spent the
+        ``MAX_ROWS_PER_SITTING`` budget on rows nobody asked for.
+
+        This is the rule its own loader already states — questionnaire_forms.report_items: "Retired
+        ones are printed where they carry an answer but are not counted here, because this number is
+        what a reader compares against the instrument, and the instrument no longer contains them" —
+        and it is exactly what the sibling module does for a designer's custom fields
+        (``report_custom_sections.CustomSectionItem.printed_fields``: ``not f.retired or _has_answer(...)``).
+        An answered retired question is untouched by this: ``has_answer`` short-circuits first, so it
+        still prints under the wording it was given, marked "(no longer asked)". Do not "simplify"
+        this back to two terms — the third one is the only thing standing between a reworded required
+        question and a false gap in every sitting recorded afterwards.
         """
-        return self.has_answer or self.is_required
+        return self.has_answer or (self.is_required and not self.is_retired)
 
     @property
     def section_label(self) -> str:

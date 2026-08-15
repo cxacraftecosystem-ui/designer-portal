@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 #: still hide whoever sorts 10001st. The ceiling was never the defect; having no way past it was.
 ELIGIBLE_VIEWER_LIMIT = 2000
 
-#: How many active roster rows :func:`_active_roster_emails` will read.
+#: How many active roster rows :func:`active_roster_emails` will read.
 #:
 #: **A DIFFERENT QUANTITY FROM ``ELIGIBLE_VIEWER_LIMIT``, and sharing that constant was a latent
 #: defect rather than a tidy reuse.** The roster read is not a page of results being shown to
@@ -221,7 +221,7 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
     trick, for the same reason, as the reference picker in ``services/design_workshops``, whose
     ``truncated`` this deliberately matches in name so both clients already know the word.
     """
-    admitted, roster_truncated = await _active_roster_emails()
+    admitted, roster_truncated = await active_roster_emails()
 
     clauses: list[dict[str, Any]] = [
         {
@@ -231,7 +231,7 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
                 # ago and later suspended must not lose the ability to administer anything.
                 {"role": {"in": ["ADMIN", "MASTER_ADMIN"]}},
                 # ``mode: "insensitive"`` because ``admitted`` is lower-cased and ``User.email`` is
-                # NOT — see :func:`_active_roster_emails`. Without it this comparison hides an
+                # NOT — see :func:`active_roster_emails`. Without it this comparison hides an
                 # eligible designer whose address happens to be stored shouting, while
                 # ``_designers_the_roster_still_admits`` on the write path normalises both sides and
                 # accepts them: the picker would refuse to offer an account the PUT would take,
@@ -281,8 +281,16 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
     }
 
 
-async def _active_roster_emails() -> tuple[list[str], bool]:
+async def active_roster_emails() -> tuple[list[str], bool]:
     """Every lower-cased email the roster currently admits, and whether that read was cut short.
+
+    PUBLIC, AND NAMED WITHOUT THE UNDERSCORE IT CARRIED, because it has a second caller now:
+    ``routes/designers.designer_directory`` folds the same admitted set into its own user query.
+    That endpoint used to read 500 users and drop the suspended ones in Python afterwards, which
+    spends the cap on rows it then discards — the same "filter after the take" defect this
+    function exists to keep out of ``eligible_viewers``. One implementation of "who does the
+    roster still admit", read the same way by both, is the point; a second copy would be free to
+    forget the lower-casing or the cap and nothing would say so.
 
     The whole active roster, because it IS the small table here — one row per empanelled designer —
     whereas ``User`` holds every account the repository has ever had. Reading it in full is one
@@ -307,9 +315,14 @@ async def _active_roster_emails() -> tuple[list[str], bool]:
         # ERROR, not warning, and louder than the picker's: the picker's truncation is a long list
         # the caller can narrow, this one is eligible designers absent from every search the caller
         # can type. It cannot be worked around from the client side.
+        # Named for the ROSTER READ and not for one of its callers. It said "eligible-viewers read
+        # only part of it" when the picker was the only caller; ``routes/designers`` now folds the
+        # same set into the directory query, and a log line naming the wrong endpoint sends whoever
+        # is holding the page at 3am to read the wrong module.
         logger.error(
-            "the active designer roster exceeds %s rows, so eligible-viewers read only part of it; "
-            "designers past that cut are missing from the picker for every search",
+            "the active designer roster exceeds %s rows, so only part of it was read; designers "
+            "past that cut are missing from the viewer picker AND the designer directory, for "
+            "every search either of them can make",
             ACTIVE_ROSTER_READ_LIMIT,
         )
     return sorted({normalise_email(row.email) for row in rows}), truncated

@@ -351,6 +351,99 @@ def test_a_recording_with_no_transcript_yet_is_left_out_and_warned_about():
     assert "still being transcribed" in warnings[0]
 
 
+def test_a_failed_recording_is_never_reported_as_one_still_on_its_way():
+    """The warning must not tell a designer to wait for a transcript that nothing will produce.
+
+    This is the annexure half of the stranded-transcription defect. The queue writes the clip
+    FAILED once the retry ladder is spent (and writes FAILED with the refusal sentence when an
+    artisan declines consent), and FAILED is deliberately absent from
+    ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES`` so that saving the stage re-attempts it.
+    Before this test, every one of those clips was folded into "N recording(s) have no transcript
+    YET" with no pending count and no clause — a sentence whose only rational response is to wait,
+    which is the one action that never recovers the clip.
+    """
+    stalled = build_transcript_item(
+        _media("aud-4", "", status="FAILED"),
+        ("SKETCH_REVIEW", "sketchReview", "voiceFeedback"),
+    )
+    warnings = annexure_warnings([*_items(), stalled])
+
+    assert len(warnings) == 1
+    message = warnings[0]
+    assert "1 recording(s) have no transcript and" in message
+    assert "yet" not in message, "the word that promises arrival must not cover a stalled clip"
+    assert "still being transcribed" not in message
+    assert "will not arrive on their own" in message
+    assert "saving the stage" in message
+
+
+def test_a_provider_that_was_never_configured_reads_as_stalled_and_not_as_pending():
+    """UNAVAILABLE is the deployment having no transcription provider, not the recording failing.
+
+    It is on the same side of the fence as FAILED — neither is settled, so the next stage save
+    re-attempts both — which is why the clause is worded "will not arrive on their own" rather than
+    "failed": telling a designer their audio failed when the server was never able to try is how a
+    perfectly good recording gets deleted and made again.
+    """
+    message = annexure_warnings([
+        build_transcript_item(
+            _media("aud-5", "", status="UNAVAILABLE"),
+            ("SKETCH_REVIEW", "sketchReview", "voiceFeedback"),
+        ),
+    ])[0]
+    assert "1 will not arrive on their own" in message
+    assert "still being transcribed" not in message
+
+
+def test_both_classes_are_counted_separately_in_one_sentence():
+    """One waiting clip and one stalled clip are two different instructions to the designer, so the
+    warning must not collapse them into a single number the way it used to."""
+    items = [
+        build_transcript_item(
+            _media("aud-6", "", status="QUEUED"),
+            ("SKETCH_REVIEW", "sketchReview", "voiceFeedback"),
+        ),
+        build_transcript_item(
+            _media("aud-7", "", status="FAILED"),
+            ("SKETCH_REVIEW", "sketchReview", "voiceFeedback"),
+        ),
+        # An empty status: nothing has looked at this clip yet. It is in the leading count and gets
+        # no clause, because there is nothing true to say about it beyond that it is not in the file.
+        build_transcript_item(
+            _media("aud-8", "", status=""),
+            ("SKETCH_REVIEW", "sketchReview", "voiceFeedback"),
+        ),
+    ]
+    message = annexure_warnings(items)[0]
+    assert message.startswith("3 recording(s) have no transcript")
+    assert "1 still being transcribed" in message
+    assert "1 will not arrive on their own" in message
+
+
+def test_the_annexure_warning_reads_the_same_status_vocabulary_as_the_enqueuer():
+    """The two status sets in ``report_annexures`` are a copy, and this is what keeps them honest.
+
+    ``workshop_transcripts`` imports ``TranscriptItem`` from ``report_annexures``, so the annexure
+    cannot import the enqueuer's sets back without a cycle — the five tokens are duplicated instead.
+    A status added to one module and not considered in the other is exactly how the warning came to
+    describe a stalled clip as a pending one, so pin the relationship rather than the literals: every
+    status the annexure calls in-flight must be one the enqueuer also calls in-flight, and every
+    status it calls stalled must be one the enqueuer will re-queue (i.e. NOT settled).
+    """
+    from app.services.report_annexures import _IN_FLIGHT_STATUSES, _STALLED_STATUSES
+    from app.services.workshop_transcripts import (
+        _IN_FLIGHT_TRANSCRIPT_STATUSES,
+        _SETTLED_TRANSCRIPT_STATUSES,
+    )
+
+    assert _IN_FLIGHT_STATUSES == _IN_FLIGHT_TRANSCRIPT_STATUSES
+    assert not (_STALLED_STATUSES & _SETTLED_TRANSCRIPT_STATUSES), (
+        "a status the enqueuer treats as settled will never be re-attempted, so the warning must "
+        "not promise that saving the stage picks it up"
+    )
+    assert not (_STALLED_STATUSES & _IN_FLIGHT_STATUSES)
+
+
 def test_no_transcripts_means_no_annexure_at_all():
     """The toggle is expressed as "were any attached", so a report generated without it has to be
     the report that was generated before this feature existed — not even a page break."""
