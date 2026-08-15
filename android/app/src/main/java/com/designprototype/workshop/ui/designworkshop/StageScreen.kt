@@ -53,11 +53,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import com.designprototype.workshop.data.AppScope
+import com.designprototype.workshop.data.CUSTOM_ENTITY_KEY
+import com.designprototype.workshop.data.ConnectivityObserver
 import com.designprototype.workshop.data.DW_ROW_KEY_SEPARATOR
 import com.designprototype.workshop.data.DraftMedia
 import com.designprototype.workshop.data.DraftRow
+import com.designprototype.workshop.data.DwCustomCache
+import com.designprototype.workshop.data.DwDictationRun
+import com.designprototype.workshop.data.DwTier3Consent
 import com.designprototype.workshop.data.DwImageQuality
 import com.designprototype.workshop.data.DwStageFocus
+import com.designprototype.workshop.data.DwStageRefusalReport
 import com.designprototype.workshop.data.DwTier
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.EntityDto
@@ -71,7 +77,15 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.WorkshopSyncEngine
 import com.designprototype.workshop.data.collections
 import com.designprototype.workshop.data.computeStageCompleteness
+import com.designprototype.workshop.data.customFieldsForStage
+import com.designprototype.workshop.data.dwCarryHoldings
+import com.designprototype.workshop.data.dwCustomDefinition
+import com.designprototype.workshop.data.dwDecodeStageRefusals
+import com.designprototype.workshop.data.dwFoldServerStage
+import com.designprototype.workshop.data.dwHoldingsFrom
+import com.designprototype.workshop.data.dwRestoreStageRefusals
 import com.designprototype.workshop.data.dwRowId
+import com.designprototype.workshop.data.dwTier3ConsentOf
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.liveFields
 import com.designprototype.workshop.data.rowTitleField
@@ -165,6 +179,31 @@ private data class CollectionRow(
 private data class StageState(
     val singleton: Map<String, JsonElement> = emptyMap(),
     val collections: Map<String, List<CollectionRow>> = emptyMap(),
+    /**
+     * Answers to the questions this workshop's DESIGNER added to this stage — [StageDraft.custom].
+     *
+     * A SIBLING OF [singleton] AND NEVER FOLDED INTO IT. That map is posted as the stage's singleton
+     * entity's `data`, where `validate_entry` iterates the registry entity's own fields and drops
+     * every key it does not know — so a custom answer smuggled through it would be thrown away and
+     * reported in `droppedKeys`, firing the registry-drift banner on every save of every workshop
+     * with a custom section.
+     *
+     * IT IS SEEDED FROM THE DRAFT WHETHER OR NOT A DEFINITION IS HELD, which is what makes writing it
+     * straight back in [persistLocally] lossless. A key this build cannot draw — a retired question, a
+     * v1.1 type, anything answered on the web while this phone held an older definition — travels
+     * through the screen untouched rather than being erased by a keystroke in an unrelated box.
+     */
+    val custom: Map<String, JsonElement> = emptyMap(),
+    /**
+     * Whether [custom] came from the SERVER's own container rather than from this device alone.
+     *
+     * Carried on the state and not read off the draft at save time because [persistLocally] rebuilds
+     * the whole record: the fact is established by the seed ([fromRemote] read the server's bucket)
+     * and has to survive until the record is written. See [StageDraft.customSeen] for what it costs
+     * to get this wrong — a phone that has never read the row telling the server the designer cleared
+     * every answer on it.
+     */
+    val customSeen: Boolean = false,
 )
 
 /** What the status line under the header is currently able to promise. */
@@ -188,8 +227,10 @@ private class PendingWrite {
         val workshopId: String,
         val stage: StageDto,
         val state: StageState,
-        val baseline: Boolean,
+        val seen: Boolean,
         val emptied: Set<String>,
+        /** See [StageDraft.deletedRowKeys]. */
+        val deletedRows: Set<String>,
         /** Whether there is a server record to offer it to — see `syncId` in [StageScreen]. */
         val syncable: Boolean,
     )
@@ -205,12 +246,13 @@ private class PendingWrite {
         workshopId: String,
         stage: StageDto,
         state: StageState,
-        baseline: Boolean,
+        seen: Boolean,
         emptied: Set<String>,
+        deletedRows: Set<String>,
         syncable: Boolean,
     ) {
         this.revision = revision
-        outstanding = Outstanding(workshopId, stage, state, baseline, emptied, syncable)
+        outstanding = Outstanding(workshopId, stage, state, seen, emptied, deletedRows, syncable)
     }
 
     fun clear() {
@@ -271,21 +313,107 @@ fun StageScreen(
      */
     var syncId by remember(workshopId) { mutableStateOf<String?>(null) }
     /**
-     * Whether this device holds the SERVER's copy of the stage — see [StageDraft.serverBaseline].
+     * Whether this device has READ the server's copy of the stage — see [StageDraft.stageSeen].
      *
      * Carried in screen state as well as on disk because [persistLocally] writes a whole [StageDraft]
      * and would otherwise reset it to the class default on the first keystroke, silently disclaiming
-     * an authority the screen had just earned by reading the server successfully.
+     * a reading the screen had just made.
      */
-    var baseline by remember(stageKey) { mutableStateOf(false) }
+    var seen by remember(stageKey) { mutableStateOf(false) }
     /**
      * Collections the designer has emptied in this session, unioned with whatever the draft already
      * recorded. See [StageDraft.emptiedEntities]: with no per-row delete endpoint this is the only
      * way deleting the LAST row of a collection ever reaches the server.
      */
     var emptied by remember(stageKey) { mutableStateOf<Set<String>>(emptySet()) }
+    /**
+     * Individual rows the designer has deleted in this session, unioned with whatever the draft
+     * already recorded — see [StageDraft.deletedRowKeys].
+     *
+     * THE SIBLING OF [emptied], FOR THE DELETION IT CANNOT SEE. `emptied` gains a key only when a
+     * collection goes from having rows to having none; deleting one row of three left no record
+     * anywhere, so nothing could count it and the workshop row said "Backed up to the server" while
+     * the row was still in the repository and still in the report.
+     */
+    var deletedRows by remember(stageKey) { mutableStateOf<Set<String>>(emptySet()) }
     /** Set when the stage could not be downloaded, so the blank screen below is explained. */
     var downloadNote by remember(stageKey) { mutableStateOf<String?>(null) }
+    /** The heading over [downloadNote]. Null keeps the "could not be downloaded" wording. */
+    var noteTitle by remember(stageKey) { mutableStateOf<String?>(null) }
+    /**
+     * What the repository refused inside a save it otherwise accepted, or null when it refused nothing.
+     *
+     * RESTORED FROM THE DRAFT ON EVERY OPEN, AND IT USED NOT TO BE. This slot held the card and the
+     * marks on the boxes for the life of the composition and no longer, and the comment here argued
+     * for that: the addressing "is only meaningful while that payload is the newest thing this screen
+     * has sent", and persisting it "would mean drawing a red mark on a box whose answer the designer
+     * corrected an hour ago."
+     *
+     * THE FIRST HALF WAS FALSE AND THE SECOND HALF HAS AN ANSWER. What outlived the screen was
+     * `recordStageSent`'s note, and that note says *"open the stage to see which answers, and what the
+     * repository holds."* So the app told the designer to do the one thing that destroyed the evidence:
+     * they arrived at a stage with nothing on it, while [StageSyncRecord.refusedFields] went on counting
+     * and the workshop went on saying answers were refused. And a corrected answer cannot leave a stale
+     * mark, because the save that carries the correction comes back with an empty error map and writes
+     * NULL over the stored record — one event clears the count and the addressing together. What is
+     * shown is dated ([DwStageRefusalReport.recordedAt]), so it reads as the last thing the repository
+     * actually said rather than as a claim about now.
+     *
+     * See [StageSyncRecord.refusal] for what is stored (the error map and the ordering of the entries
+     * that were sent, so the decode is re-run against the registry this build has) and what is
+     * deliberately not (what the repository HOLDS, which is measured by a read that may be a day old).
+     */
+    var refusals by remember(stageKey) { mutableStateOf<DwStageRefusalReport?>(null) }
+    /**
+     * The server's copy of this stage, IF this open already fetched it — so the fill below need not
+     * fetch it twice.
+     *
+     * A stored refusal restored off disk says [DW_UNRECORDED] under every key until a read answers it,
+     * and the load may already have made exactly that read for the fold. Spending a second request on
+     * a prepaid connection to ask the same question twice in one screen open is the cost
+     * [dwCarryHoldings] exists to avoid on the save path; this is the same cost on the load path.
+     */
+    var readBucket by remember(stageKey) { mutableStateOf<StageBucketDto?>(null) }
+    /**
+     * This workshop's own questions, as this device holds them. NULL IS A STATE — see [DwCustomCopy].
+     *
+     * Keyed on `workshopId` and not on `stageKey`, because a definition covers all 22 stages: keying
+     * it per stage would re-fetch and re-read it on every tab swipe of a pager that keeps a stage's
+     * neighbours composed.
+     */
+    var definition by remember(workshopId) { mutableStateOf<DwCustomCache?>(null) }
+    /**
+     * Which publication of this workshop's id and dictation consent is ours, so disposal clears only ours.
+     *
+     * A TOKEN AND NOT A FLAG, because a tabbed pager keeps a stage's NEIGHBOURS composed: two of these
+     * screens are alive at once, and the one that scrolls away disposes while the visible one is still
+     * being dictated into. A disposal that cleared unconditionally would withdraw the craft-aware rung
+     * from the screen the designer is actually looking at, silently, until they navigated away and back.
+     *
+     * DELIBERATELY NOT KEYED ON `workshopId, stageKey`, WHICH IT WAS AND WHICH MADE THE GUARD DEAD ON
+     * THE ONE TRANSITION IT IS FOR. Stage-to-stage navigation reuses this same composable with a new
+     * `stageKey`, so a keyed `remember` re-initialised this to 0 during the composition that ran BEFORE
+     * the old `DisposableEffect` was disposed — and `forgetWorkshopConsent(0)` matches nothing, because
+     * the counter only ever hands out values from 1 up. The previous stage's answer was therefore left
+     * published while the next stage's draft was still being read off disk: harmless within one workshop,
+     * which is the only shape this app can reach today, and exactly the fail-OPEN window a consent gate
+     * must not have on the day something navigates straight from one workshop's stage to another's. Held
+     * across key changes, the disposal reads the token that was actually published and clears it, and the
+     * gate is closed for the moment it takes the new stage to publish its own.
+     */
+    var consentPublication by remember { mutableStateOf(0L) }
+
+    /**
+     * The consent goes back to "nobody has said" when this stage leaves the tree.
+     *
+     * NOT AN OPTIONAL TIDY-UP. The published answer is read by every microphone in the process,
+     * including one drawn on a screen that has no workshop behind it at all, and an answer left behind
+     * by the last stage screen would clear a third-party send for a dictation that belongs to nothing.
+     * Fail closed on the way out as well as on the way in.
+     */
+    DisposableEffect(workshopId, stageKey) {
+        onDispose { DwDictationRun.forgetWorkshopConsent(consentPublication) }
+    }
 
     // ── Load ─────────────────────────────────────────────────────────────────────────────────────
     LaunchedEffect(workshopId, stageKey) {
@@ -297,7 +425,85 @@ fun StageScreen(
 
             val draft = WorkshopDraftStore.load(appContext, workshopId)
             mediaIndex = draft?.media.orEmpty().associateBy { it.id }
-            syncId = draft?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
+            // ONE EXPRESSION FOR THE SERVER'S ID, read once and used for all three things that need it:
+            // the stage PUT, the dictation ambient below, and the seed read further down. It was written
+            // out twice before, and a third copy — beside a consent gate that turns on it — is how two
+            // of them end up disagreeing about whether this workshop exists up there.
+            //
+            // AND A BLANK IS NOT AN ID, WHICH IS `WorkshopSync.remoteIdOf`'s RULE AND NOT A NEW ONE. Both
+            // halves are guarded because `""` is not null and would therefore read as a workshop that IS
+            // on the server: the stage PUT would go to `design-workshops//stages/…` and the dictation
+            // ambient would open rung 2 for a workshop nothing up there can load — spending a
+            // six-megabyte upload of an artisan's voice on an empty path segment. `DesignWorkshopDto.id`
+            // is defaulted to `""`, so a create answered by a captive portal rather than by this API
+            // leaves exactly that in a draft's `remoteId`; `WorkshopSync` refuses it in as many words and
+            // so does this. Null is the honest reading — as far as this phone can prove, the workshop has
+            // not been sent up — and it is the reading the ladder already has a sentence for.
+            val serverId = draft?.remoteId?.takeIf { it.isNotBlank() }
+                ?: workshopId.takeIf { it.isNotBlank() && !isLocalOnlyWorkshop(it) }
+            syncId = serverId
+            /*
+              WHICH WORKSHOP THIS IS AND WHETHER ITS RECORDINGS MAY LEAVE THE DEVICE, HANDED TO EVERY
+              MICROPHONE ON THIS STAGE — plan §6 answer 3, and the gate on rung 2 of the dictation ladder.
+
+              PUBLISHED FROM HERE BECAUSE THIS SCREEN HAS ALREADY PAID FOR THE DRAFT. The dictation
+              control cannot read it for itself: `conditionsNow()` runs on the tap, on the main thread,
+              and loading a draft there would be a whole-22-stage JSON parse per field taken under the
+              one store-wide mutex every stage auto-save also takes — hundreds of microphones
+              serialising behind the very auto-saves that protect the designer's text. And it cannot be
+              passed as a parameter either: `DwDictationButton` is drawn from `FieldRenderer` and from
+              `RichTextEditor`, and only one of those has a data layer, so a parameter would produce a
+              phone where server dictation works in a short prose field and silently does not in a long
+              one. That argument is already written down at [DwDictationRun.repository] and was settled
+              there.
+
+              A DRAFT THAT WOULD NOT LOAD PUBLISHES NOTHING, so the ambient stays NOT_RECORDED and rung
+              2 is withheld. That is the fail-closed direction: an unknown consent costs the craft-aware
+              rung, while a wrong guess costs a named artisan's recorded voice leaving the device.
+
+              AND THE SERVER'S ID GOES WITH IT, WHICH IS NEW AND IS WHAT MAKES THE GATE ENFORCEABLE.
+              Rung 2 now posts to `POST /design-workshops/{id}/dictate` — the only dictation route that
+              can read a workshop's `dictationConsent` column at all — so the control needs the id, and
+              `serverId` above is the one this screen already trusts for the stage PUT.
+
+              A LOCAL-ONLY WORKSHOP THEREFORE PUBLISHES A null ID, AND THAT COSTS IT RUNG 2. Said plainly
+              because it is a capability this screen used to have: a workshop captured in a courtyard and
+              not yet sent up has no record on the server, so the gated route could only answer 404 — and
+              only after a six-megabyte upload. The ladder withholds the rung with a sentence naming the
+              send instead ([dwDictationNothingLeftSentence]). The alternative was the old behaviour: post
+              to the id-less route, where no consent column is consulted at all, which is the door this
+              change shut.
+            */
+            val fromDraft = dwTier3ConsentOf(draft?.consent?.decision)
+            consentPublication = DwDictationRun.publishWorkshopConsent(
+                // THE DRAFT FIRST, AND THE SERVER'S ANSWER ONLY WHERE THE DRAFT HAS NONE. A workshop
+                // created in a browser has no draft here until a stage is saved, so its consent —
+                // already recorded, already GRANTED — would have nowhere on this device to live and this
+                // screen would withhold the rung one tap after the workshop's own screen said it was
+                // cleared. The fallback can only ever widen, never narrow: a REFUSED recorded on this
+                // handset is in the draft, so it wins. See [DwDictationRun.consentAnswerSeen].
+                consent = if (fromDraft == DwTier3Consent.NOT_RECORDED) {
+                    DwDictationRun.consentAnswerSeen(workshopId) ?: fromDraft
+                } else {
+                    fromDraft
+                },
+                serverWorkshopId = serverId,
+            )
+            /*
+              THE DEFINITION, REFRESHED WHERE THERE IS SIGNAL AND READ OFF DISK WHERE THERE IS NOT.
+
+              [dwCustomDefinition] never throws for a failed refresh — it falls back to whatever this
+              device already holds — because a designer in a courtyard must still get their stage. What
+              it will not do is invent an empty definition out of a failure: that is the difference
+              between "this workshop has no custom questions" and "this phone has not been told", and
+              the whole three-state design turns on the two staying apart.
+
+              Read for the SERVER's id and cached under the DRAFT's, which are not the same string for
+              a workshop created in a courtyard — see the function.
+            */
+            definition = runCatching {
+                repository.dwCustomDefinition(appContext, workshopId, serverId)
+            }.getOrNull()
             val local = draft?.stages?.get(stageKey)
 
             // THE LOCAL DRAFT WINS whenever it holds anything. The device is where the work is done
@@ -305,18 +511,103 @@ fun StageScreen(
             // typing with a two-day-old server snapshot because the screen happened to reopen with
             // signal is the single most expensive mistake this screen could make. The server is read
             // only to seed a stage this device has never opened.
-            val remoteId = draft?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
-            val loaded = if (local != null && (local.values.isNotEmpty() || local.rows.isNotEmpty())) {
-                // A draft that already holds work keeps whatever baseline it was written with. It is
-                // NOT promoted here: this branch does not read the server, so nothing has been
-                // learned about what the server holds.
-                StageLoad(fromDraft(spec, local), baseline = local.serverBaseline, downloadFailed = false)
+            val remoteId = serverId
+            // `custom` counted with the other two: eight of the twenty-two stages declare no
+            // singleton at all, so a stage whose only answers are the designer's own is ordinary.
+            // Left out, this branch would fall through to the server read and adopt the office's copy
+            // over answers typed in a courtyard this morning.
+            val holdsWork = local != null &&
+                (local.values.isNotEmpty() || local.rows.isNotEmpty() || local.custom.isNotEmpty())
+            /*
+              ASKED BEFORE THE REQUEST, NOT DISCOVERED BY MAKING IT, and it is the difference between
+              a stage that opens and a stage that appears to have hung.
+
+              `ApiClient` allows a 30-second connect timeout and a 60-second read — generous on
+              purpose, because mobile data drops connections and a sync that gave up in three seconds
+              would never finish an upload. That is the right budget for a background pass and the
+              wrong one to put in front of a form: a designer in a courtyard opening stage after stage
+              would watch a spinner for half a minute EACH TIME, for a request that was never going to
+              succeed. The empty-stage branch below has always paid that cost, for a stage where there
+              is genuinely nothing else to show; widening it to every stage that holds work would have
+              made the app unusable exactly where it is meant to be used.
+
+              A false negative here costs one deferred reading, which the next open retries. A false
+              positive costs the timeout. `isOnline` demands NET_CAPABILITY_VALIDATED, so a captive
+              portal that has not been signed into reads as offline — which is the answer that keeps
+              the form quick.
+            */
+            val canReach = remoteId != null && ConnectivityObserver.isOnline(appContext)
+            val loaded = if (holdsWork && (local!!.stageSeen || !canReach)) {
+                // Nothing to learn, or nothing to learn it from. The draft is shown as it is.
+                StageLoad(
+                    fromDraft(spec, local),
+                    seen = local.stageSeen,
+                    // A read that was never ATTEMPTED leaves the designer in exactly the position a
+                    // read that FAILED does — the stage is unread, so a clearance made here will not
+                    // propagate yet — and they are owed the same sentence. Reported only where there
+                    // was something to read: a workshop that exists on this phone alone has no server
+                    // copy to be missing, and warning about one would be a false alarm on every stage
+                    // of every workshop captured in a courtyard.
+                    downloadFailed = !local.stageSeen && remoteId != null,
+                    heldWorkAlready = true,
+                )
+            } else if (holdsWork) {
+                /*
+                  A STAGE THAT HOLDS WORK AND HAS NEVER BEEN READ IS READ NOW, AND THE ANSWER IS
+                  FOLDED RATHER THAN ADOPTED.
+
+                  This branch did not exist. The rule was "the local draft wins whenever it holds
+                  anything", which is right about whose VALUES survive and was, by accident, also the
+                  rule for whether the request happened at all — so a stage opened once without signal
+                  and typed into was never read again for the life of the draft, and could therefore
+                  never become authoritative again. That did not show while `recordStageSent` handed
+                  authority out after any successful save; with that gone (see [StageDraft.stageSeen])
+                  it would have made `replaceCollections` unreachable for ever, on every handset, so
+                  no clearance and no row deletion would ever have reached the repository again.
+
+                  THE LOCAL COPY STILL WINS EVERY KEY IT HOLDS. [dwFoldServerStage] only ADDS what the
+                  server has and this device does not, which is what makes the resulting claim honest:
+                  after the fold, "delete what I do not name" cannot name anything the designer has
+                  not been shown. What appeared is announced rather than slipped in — see `foldNotice`.
+                */
+                val remote = runCatching { repository.designWorkshopStage(remoteId!!, stageKey) }
+                    .getOrNull()
+                if (remote == null) {
+                    StageLoad(
+                        fromDraft(spec, local!!),
+                        seen = false,
+                        downloadFailed = true,
+                        heldWorkAlready = true,
+                    )
+                } else {
+                    // Held so a refusal restored off disk can be measured against this read instead of
+                    // paying for a second identical one — see [readBucket].
+                    readBucket = remote
+                    val fold = dwFoldServerStage(spec, local, remote, stageKey)
+                    // Written to disk HERE, and only in this branch. The fold is the one read whose
+                    // result must survive the screen: it is what the next save's authority rests on,
+                    // and a fold held only in composition would be re-fetched on every open and lost
+                    // entirely to a designer who read the stage and then went back out of signal.
+                    // `updateBookkeeping` rather than `update`, so re-reading a stage does not
+                    // reorder the workshop list or stale every generated report — see its KDoc.
+                    WorkshopDraftStore.updateBookkeeping(appContext, workshopId) { draft ->
+                        draft.copy(stages = draft.stages + (stageKey to fold.draft))
+                    }
+                    StageLoad(
+                        fromDraft(spec, fold.draft),
+                        seen = true,
+                        downloadFailed = false,
+                        heldWorkAlready = true,
+                        foldNotice = fold.notice,
+                    )
+                }
             } else if (remoteId != null) {
                 val remote = runCatching { repository.designWorkshopStage(remoteId, stageKey) }.getOrNull()
                 if (remote != null) {
+                    readBucket = remote
                     // The draft now starts from everything the server had, which is exactly the
                     // condition that entitles a later save to say "these are now exactly the rows".
-                    StageLoad(fromRemote(spec, remote), baseline = true, downloadFailed = false)
+                    StageLoad(fromRemote(spec, remote), seen = true, downloadFailed = false)
                 } else {
                     // ── THE READ FAILED, AND THAT IS NOT THE SAME THING AS AN EMPTY STAGE ────────
                     //
@@ -328,38 +619,126 @@ fun StageScreen(
                     //
                     // The blank screen still appears, because a designer with no signal must still be
                     // able to capture. What changes is that it is ANNOUNCED, and that the draft is
-                    // marked as having no server baseline, so no save built from it can claim to be
-                    // the whole truth of the stage. The work syncs; nothing it has not seen is
-                    // destroyed.
-                    StageLoad(StageState(), baseline = false, downloadFailed = true)
+                    // marked as NOT SEEN, so no save built from it can claim to be the whole truth of
+                    // the stage. The work syncs; nothing it has not seen is destroyed.
+                    StageLoad(StageState(), seen = false, downloadFailed = true)
                 }
             } else {
                 // No server record at all. There is nothing on the server this draft could be missing,
                 // so the device genuinely is the whole truth of this stage.
-                StageLoad(StageState(), baseline = true, downloadFailed = false)
+                StageLoad(StageState(), seen = true, downloadFailed = false)
             }
+            /*
+              THE CARD THE APP TOLD THE DESIGNER TO COME BACK FOR, PUT BACK ON THE SCREEN.
+
+              `recordStageSent` writes a note that says "open the stage to see which answers, and what
+              the repository holds", and until [StageSyncRecord.refusal] existed, following that
+              instruction was what destroyed the evidence: the card lived in composition state, so
+              leaving the stage erased it while the count that justified it stayed on the workshop.
+
+              RE-DECODED, NOT REDRAWN. What was stored is the server's error map and the ordering of the
+              entries that were sent, so the refusal is decoded here against the registry and the custom
+              definition THIS build actually holds — by the same function the save path uses, walking the
+              same addressing. A frozen copy of the card would have gone stale the moment either moved.
+
+              Every refusal comes back saying UNRECORDED, deliberately: what the repository holds was
+              measured by a read that may have happened on a connection that no longer exists, and
+              quoting a day-old value as "the repository still holds" is the one guess that would make
+              this surface a second way of lying. The fill below is what measures it again.
+            */
+            refusals = dwRestoreStageRefusals(
+                spec = spec,
+                record = draft?.sync?.stages?.get(stageKey)?.refusal,
+                customFields = customFieldsForStage(definition, spec.key),
+            )
             Triple(spec, loaded, local)
         }.onSuccess { (spec, loaded, local) ->
             stage = spec
             state = loaded.state
-            baseline = loaded.baseline
+            seen = loaded.seen
             // A gap the designer tapped may be behind "More detail", which is closed by default —
             // and a link that lands on a disclosure the field is hiding inside has not arrived
             // anywhere. Set here rather than as the initial `remember` value because the registry is
             // only known once the load has finished.
             showAdvanced = focusOpensAdvanced(spec, focus)
             saveState = SaveState.CLEAN
-            downloadNote = if (!loaded.downloadFailed) null else
-                "This stage could not be downloaded — there is no connection, or the request " +
-                    "failed. What you type here will be saved and sent, but anything already on " +
-                    "the server for this stage is NOT shown below and will not be replaced by it."
+            noteTitle = when {
+                loaded.foldNotice != null -> "This stage has been read from the server"
+                loaded.downloadFailed && loaded.heldWorkAlready ->
+                    "This stage has not been read from the server yet"
+                else -> null
+            }
+            downloadNote = when {
+                // What the fold added, and it is said BEFORE anything else because it is the only one
+                // of these notes that describes the screen having CHANGED under the designer.
+                loaded.foldNotice != null -> loaded.foldNotice
+                !loaded.downloadFailed -> null
+                // The frightening case: a blank screen that is not an empty stage.
+                !loaded.heldWorkAlready ->
+                    "This stage could not be downloaded — there is no connection, or the request " +
+                        "failed. What you type here will be saved and sent, but anything already on " +
+                        "the server for this stage is NOT shown below and will not be replaced by it."
+                // The duller case, and it needs its own words rather than the ones above: the work on
+                // screen IS this designer's, nothing is hidden from them, and the single consequence
+                // is the one they would otherwise discover from an officer — that emptying a box here
+                // does not empty it there until this stage has been read once with a connection.
+                else ->
+                    "This stage has not been read from the server on this device — there is no " +
+                        "connection, or the request failed. Everything you have typed is here and " +
+                        "will be sent. Until it has been read once, clearing an answer or deleting " +
+                        "a row here does NOT clear or delete it on the server: that is deliberate, " +
+                        "because this phone cannot yet tell an answer you removed from one it has " +
+                        "never seen. The deletion is remembered and goes up on the first save after " +
+                        "the stage has been read."
+            }
             // Whatever the draft last recorded the designer emptying, carried forward so a deletion
             // made offline yesterday still reaches the server today.
             emptied = local?.emptiedEntities.orEmpty().toSet()
+            // And the individual rows, for the same reason and with the same lifetime.
+            deletedRows = local?.deletedRowKeys.orEmpty().toSet()
         }.onFailure { error ->
             onError(error.message ?: "Unable to open this stage.")
         }
         loading = false
+    }
+
+    /*
+      AND WHAT THE REPOSITORY HOLDS UNDER A REFUSAL RESTORED OFF DISK — MEASURED, ONCE, AFTER THE FORM
+      IS ALREADY ON SCREEN.
+
+      A restored refusal says UNRECORDED under every key, which is honest and is not much use to the
+      designer who came here on the app's own instruction to find out what the repository holds. The one
+      honest source is a `GET .../stages/{key}`, so it is made — but NOT inside the load, and that is
+      deliberate. `ApiClient` allows a 30-second connect and a 60-second read, and paying that inside the
+      load would put a spinner in front of a form that is otherwise ready, on the connection least likely
+      to answer. Exactly the argument the load's own `canReach` check is there for.
+
+      IT COSTS AT MOST ONE REQUEST PER OPEN, and often none:
+
+       * `recordedAt != null` restricts it to a report restored off DISK. A refusal this composition just
+         earned is filled by the save path, which already has the response in hand.
+       * `readBucket` is the fold's read where the load already made one, so the frugal case pays nothing.
+       * a failed read leaves `needsRead` true and does not re-key this effect, so it is attempted once
+         and the card goes on saying UNRECORDED, which is true.
+       * offline, it is not attempted at all.
+
+      IT FILLS THE CARD AND NOTHING ELSE — no value is folded into the draft and no `stageSeen` is earned
+      off it, for the reason the save path's read gives: the designer is looking at their own text, and
+      replacing it with the repository's copy while they read a message about it would be the overwrite
+      this whole surface exists to prevent. It is a report, not a sync.
+    */
+    val restoredNeedsHoldings = !loading &&
+        refusals?.let { it.recordedAt != null && it.needsRead } == true
+    LaunchedEffect(workshopId, stageKey, restoredNeedsHoldings) {
+        if (!restoredNeedsHoldings) return@LaunchedEffect
+        val spec = stage ?: return@LaunchedEffect
+        val bucket = readBucket ?: run {
+            val id = syncId ?: return@LaunchedEffect
+            if (!ConnectivityObserver.isOnline(appContext)) return@LaunchedEffect
+            runCatching { repository.designWorkshopStage(id, spec.key) }.getOrNull()
+        } ?: return@LaunchedEffect
+        readBucket = bucket
+        refusals = refusals?.let { dwHoldingsFrom(it, bucket) }
     }
 
     // ── Saving ───────────────────────────────────────────────────────────────────────────────────
@@ -392,7 +771,7 @@ fun StageScreen(
         val snapshot = state
 
         // The device first and unconditionally. Nothing below this line may prevent it.
-        runCatching { persistLocally(appContext, workshopId, spec, snapshot, baseline, emptied) }
+        runCatching { persistLocally(appContext, workshopId, spec, snapshot, seen, emptied, deletedRows) }
             .onFailure { error ->
                 saveState = SaveState.PENDING
                 onError(error.message ?: "Could not write this stage to the device.")
@@ -431,6 +810,76 @@ fun StageScreen(
                     "The server did not recognise ${push.result.droppedKeys.size} field(s) and did " +
                         "not store them: ${push.result.droppedKeys.joinToString(", ").take(160)}. " +
                         "This phone is running a newer field registry than the server."
+                }
+                /*
+                  THE ANSWERS THE REPOSITORY REFUSED, DECODED AGAINST THE PAYLOAD THAT PRODUCED THEM.
+
+                  `push.entries` is that payload, in the order it was sent, and it has to be: a
+                  collection row's errors are keyed by the entry's INDEX IN THAT ARRAY. Rebuilding it
+                  here would be a second builder and a second ordering — the trap the web's
+                  `buildStageEntries` carries the same warning about.
+
+                  Assigned unconditionally, including to the empty report, so a save that fixes the
+                  refused answer CLEARS the card and the marks. A red box that outlives its correction
+                  is the same lie in the other direction.
+                */
+                val decoded = dwDecodeStageRefusals(
+                    spec = spec,
+                    entries = push.entries,
+                    errors = push.result.errors,
+                    customFields = customFieldsForStage(definition, spec.key),
+                ).copy(
+                    /*
+                      THE SAME RESPONSE'S `droppedCustomKeys`, WHICH THIS CARD WAS CONTRADICTING.
+
+                      The heading asserted "Everything else in this stage was saved" while the very
+                      response it was built from reported answers that were NOT stored — this
+                      workshop's own questions, retired or renamed on the web since this phone last
+                      read the sections. `recordStageSent` wrote a sentence about them onto the sync
+                      status and the stage the designer was then told to open said the opposite.
+
+                      Its own clause and not a refusal, because the remedy is not the same: a refused
+                      answer needs correcting, and this needs the phone's copy of the sections
+                      refreshed. Counting it with the refusals would send a designer to retype an
+                      answer nobody objected to. See [DwStageRefusalReport.droppedCustomKeys].
+
+                      Carried here rather than inside the decode because the decode is pure and takes
+                      the ERROR MAP; this is a different list off the same response, and a save that
+                      refused nothing at all can still carry it — which is why the card is now drawn
+                      for a report with no refusals in it.
+                    */
+                    droppedCustomKeys = push.result.droppedCustomKeys,
+                )
+                // Holdings already measured for a question that is still refused are carried over, so
+                // the read below happens on a CHANGE of refusal rather than on every debounced save.
+                // See [dwCarryHoldings] for what that costs a designer without it.
+                val carried = dwCarryHoldings(refusals, decoded)
+                refusals = if (carried.isEmpty) {
+                    null
+                } else if (!carried.needsRead) {
+                    carried
+                } else {
+                    /*
+                      AND ONE READ TO ANSWER "WHAT DOES IT HOLD NOW", WHICH THE SAVE RESPONSE CANNOT.
+
+                      Measured: `save_stage` returns no stored values at all, and the value it keeps
+                      under a refused key is the one it already had — which this device may never have
+                      seen. So the only honest source is a `GET .../stages/{key}`, and it is made HERE,
+                      once, on the rare path where something was actually refused, rather than as a
+                      standing cost on every save.
+
+                      IT FILLS THE CARD AND NOTHING ELSE. The values are not folded into the draft and
+                      no `stageSeen` is earned off the back of it: the designer is looking at their own
+                      unsaved text, and quietly replacing it with the repository's copy — while they
+                      are reading a message about it — would be the same overwrite this whole lane
+                      exists to prevent. It is a report, not a sync.
+
+                      If it fails, every refusal keeps saying UNRECORDED, which is true.
+                    */
+                    val bucket = syncId?.let { id ->
+                        runCatching { repository.designWorkshopStage(id, spec.key) }.getOrNull()
+                    }
+                    if (bucket == null) carried else dwHoldingsFrom(carried, bucket)
                 }
             }
             StagePush.AlreadySent -> {
@@ -501,8 +950,9 @@ fun StageScreen(
                         outstanding.workshopId,
                         outstanding.stage,
                         outstanding.state,
-                        outstanding.baseline,
+                        outstanding.seen,
                         outstanding.emptied,
+                        outstanding.deletedRows,
                     )
                 }.onSuccess {
                     // The other half of what the button promises. Never allowed to fail the local
@@ -533,8 +983,9 @@ fun StageScreen(
                 workshopId = workshopId,
                 stage = spec,
                 state = next,
-                baseline = baseline,
+                seen = seen,
                 emptied = emptied,
+                deletedRows = deletedRows,
                 syncable = syncId != null,
             )
         }
@@ -662,23 +1113,45 @@ fun StageScreen(
     }
 
     val spec = stage ?: return
-    val completeness = remember(spec, state) {
-        computeStageCompletenessFor(spec, state)
+    val completeness = remember(spec, state, definition) {
+        computeStageCompletenessFor(spec, state, definition)
     }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        StageHeader(spec, completeness.percent, saveState, syncNote, localOnly = syncId == null)
+        StageHeader(
+            spec,
+            completeness.percent,
+            saveState,
+            syncNote,
+            localOnly = syncId == null,
+            // What the save that produced [SaveState.SYNCED] did NOT store. See the SYNCED arm.
+            //
+            refused = refusals?.count ?: 0,
+            // AND WHAT THE SAME SAVE DID NOT STORE FOR THE OTHER REASON, which the count above does not
+            // cover: [DwStageRefusalReport.count] counts refusals and unplaced scopes only. A response
+            // that refused NOTHING and reported two of this workshop's own answers as not stored —
+            // measured on the running API, HTTP 200, `errors {}`,
+            // `droppedCustomKeys ['dyeVatCount','retiredQuestion']` — gave `count == 0`, and this line
+            // printed "saved and synced" directly above a card saying two answers had not been stored.
+            notStored = refusals?.droppedCustomKeys?.size ?: 0,
+        )
 
         // SAID OUT LOUD, because the alternative is a blank stage that looks exactly like an empty
         // one. A designer who opens stage 5 in a courtyard with no signal and is shown nothing
         // concludes the stage was never filled in, and starts filling it in again — over a fortnight
         // of process steps, tools and raw materials that are sitting safely on the server and are
         // simply not on this handset. The save built from that screen is deliberately non-authoritative
-        // (see [StageDraft.serverBaseline]) so nothing is destroyed, but silence would still have
-        // cost the designer the afternoon.
+        // (see [StageDraft.stageSeen]) so nothing is destroyed, but silence would still have cost the
+        // designer the afternoon.
+        //
+        // THE HEADING IS NOT A CONSTANT ANY MORE. Three different things reach this card — the
+        // download failed on a blank stage, it failed on a stage that holds work, and it SUCCEEDED
+        // and added answers this device had never seen — and a card headed "This stage could not be
+        // downloaded" above a sentence saying it had just been read is the kind of contradiction a
+        // designer stops reading the card over.
         downloadNote?.let { note ->
             ElevatedCard(
                 colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.warningContainer),
@@ -687,12 +1160,92 @@ fun StageScreen(
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        "This stage could not be downloaded",
+                        noteTitle ?: "This stage could not be downloaded",
                         color = MaterialTheme.field.onWarningContainer,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(note, color = MaterialTheme.field.onWarningContainer, fontSize = 11.sp)
+                }
+            }
+        }
+
+        /*
+          WHAT THE REPOSITORY REFUSED, ABOVE THE FORM AND NAMING EVERY QUESTION.
+
+          `StageSaveResultDto.errors` had been decoded off every save this app ever made and read by
+          nothing at all, so a refusal was indistinguishable from a success: the phone kept showing
+          the typed text, the repository kept the previous value, the stage reported itself synced.
+          This card and the marks on the boxes below are the whole of the remedy, and they are two
+          halves rather than one — the marks say WHICH box, the card says what the repository now
+          holds, which no box can, and reaches a designer who cannot see the marks at all.
+
+          `_custom` refusals and refusals for keys this build has no control for land here too, and
+          only here: there is no box to mark for a question this app cannot draw. See
+          [DwStageRefusalReport.unplaced].
+        */
+        refusals?.takeIf { !it.isEmpty }?.let { report ->
+            ElevatedCard(
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        // A report can now carry `droppedCustomKeys` and no refusals at all, and for
+                        // that one "not ACCEPTED" is the wrong word: nobody objected to the answer, the
+                        // sections simply no longer ask the question, so it was not stored.
+                        if (report.count > 0) "Some answers were not accepted"
+                        else "Some answers were not stored",
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        report.heading,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontSize = 11.sp
+                    )
+                    report.refusals.forEach { refusal ->
+                        Text(
+                            "• ${refusal.sentence}",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontSize = 11.sp
+                        )
+                    }
+                    report.unplaced.forEach { line ->
+                        /*
+                          SAID, NOT DROPPED. The repository objected to something this build cannot
+                          place on the form — a row index that does not match the payload we sent, an
+                          entity that is not the one sitting at that position, a scope whose payload
+                          is not a field map at all. Silence here would be the same defect as the one
+                          this card exists to fix, one level in.
+
+                          IT NO LONGER SENDS ANYBODY TO THE BROWSER, and that sentence was checked
+                          rather than assumed. The web's stage page re-keys `entity[i]` and hands the
+                          result to `EntityForm`, which reads `errorsByIndex?.[index]` inside
+                          `rows.map((row, index) => …)` — so it can only ever draw an index that IS a
+                          row on screen. Every member of THIS list is, by construction, one that is
+                          not: out of range, or filed against an entity the payload did not put
+                          there. The browser drops all of them in silence. Telling a designer to
+                          drive back and open the workshop on a laptop to see a message that is not
+                          drawn there either is a worse lie than the silence this card replaced, so
+                          the line now says what is actually true and who can act on it.
+                        */
+                        Text(
+                            "• $line — neither this app nor the browser can show which box that " +
+                                "is: the repository filed it against a position this stage did not " +
+                                "send. Nothing you typed has been lost. Send this line to whoever " +
+                                "runs the repository.",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
         }
@@ -721,6 +1274,8 @@ fun StageScreen(
                 values = state.singleton,
                 media = media,
                 services = services,
+                // Filed by the repository under the bare entity key for a singleton.
+                errors = refusals?.byAddress?.get(entity.key).orEmpty(),
                 // Only a singleton focus lands here — one naming a row belongs to a collection
                 // below, and handing it to this section would scroll to a field of the same key in
                 // the wrong entity.
@@ -741,6 +1296,26 @@ fun StageScreen(
             )
         }
 
+        // THE DESIGNER'S OWN QUESTIONS, BETWEEN THE STAGE'S OWN FIELDS AND ITS REPEATING ROWS.
+        //
+        // The position is the scorer's, not a layout preference: `computeStageCompleteness` counts
+        // custom fields between the singleton and the collections, and `missing` is printed in that
+        // order and truncated at three. A form that drew them last would send a designer following a
+        // "still missing" link to the bottom of a stage for the item their list printed first.
+        DwCustomSectionForm(
+            definition = definition,
+            stageKey = spec.key,
+            values = state.custom,
+            // `_custom` is not a registry entity, so its refusals arrive under the reserved key
+            // itself — see `save_stage`, which files them there precisely so both clients' existing
+            // per-entity rendering works on them unchanged.
+            errors = refusals?.byAddress?.get(CUSTOM_ENTITY_KEY).orEmpty(),
+            onValueChange = { key, value ->
+                edit { current -> current.copy(custom = current.custom.put(key, value)) }
+            },
+            services = services,
+        )
+
         spec.collections.forEach { entity ->
             CollectionSection(
                 entity = entity,
@@ -748,6 +1323,10 @@ fun StageScreen(
                 media = media,
                 services = services,
                 focus = focus?.takeIf { it.entityKey == entity.key },
+                errorsByRow = refusals?.refusals.orEmpty()
+                    .filter { it.entityKey == entity.key && it.rowIndex != null }
+                    .groupBy { it.rowIndex!! }
+                    .mapValues { (_, list) -> list.associate { it.fieldKey to it.message } },
                 onRowsChange = { rows ->
                     // RECORDED THE MOMENT THE LAST ROW GOES, and only then. An emptied collection
                     // contributes no entries to a stage payload, so without this the deletion is
@@ -755,12 +1334,37 @@ fun StageScreen(
                     // receives. The condition is "this screen was showing rows and now shows none",
                     // which is a thing the designer did, and not "the draft holds no rows", which is
                     // also true of a collection whose rows were entered on the web this morning.
-                    val had = state.collections[entity.key].orEmpty().isNotEmpty()
+                    val before = state.collections[entity.key].orEmpty()
+                    val had = before.isNotEmpty()
                     emptied = when {
                         rows.isEmpty() && had -> emptied + entity.key
                         rows.isNotEmpty() -> emptied - entity.key
                         else -> emptied
                     }
+                    /*
+                      AND THE ROWS THEMSELVES, WHICH `emptied` ABOVE CANNOT SEE — see
+                      [StageDraft.deletedRowKeys]. Deleting one row of three does not empty the
+                      collection, so the branch above records nothing, and before this list existed the
+                      deletion was written down nowhere at all: `unsentDeletions` could not count it and
+                      `isFullySynced` had no term for it, so the workshop row said "Backed up to the
+                      server" while the row was still in the repository and still in the report.
+
+                      COMPUTED FROM WHAT LEFT THE LIST, not from what the list now holds. The rows this
+                      screen was showing minus the rows it is about to show IS the designer's action;
+                      "the draft holds no row with this key" is also true of a row entered on the web
+                      this morning, and recording that would ask the server to delete it.
+
+                      A KEY IS DROPPED AGAIN THE MOMENT THE ROW COMES BACK. A row deleted and re-added
+                      before the next save owes nothing, and leaving the key behind would ask the
+                      server to delete a row the payload is about to name — which the sweep would
+                      refuse to do anyway, leaving a count that never falls to zero and a stage that
+                      says it owes a deletion for ever.
+                    */
+                    val nowHeld = rows.mapTo(HashSet()) { dwRowId(entity.key, it.rowId) }
+                    val gone = before
+                        .map { dwRowId(entity.key, it.rowId) }
+                        .filter { it !in nowHeld }
+                    deletedRows = (deletedRows + gone) - nowHeld
                     edit { current -> current.copy(collections = current.collections + (entity.key to rows)) }
                 }
             )
@@ -812,6 +1416,18 @@ private fun StageHeader(
     saveState: SaveState,
     syncNote: String?,
     localOnly: Boolean,
+    /** How many answers the save that reached [SaveState.SYNCED] came back refusing. */
+    refused: Int = 0,
+    /**
+     * How many answers that same save did not store for a DIFFERENT reason — this workshop's own
+     * sections no longer ask the question. See [DwStageRefusalReport.droppedCustomKeys].
+     *
+     * A SECOND NUMBER RATHER THAN ADDED TO THE FIRST, because "refused" is the wrong word for it and
+     * the remedy is not the same: nobody objected to the answer, so telling a designer it was refused
+     * sends them to correct something that was never wrong. It still cannot be left out of the line —
+     * without it a save that stored neither of two custom answers printed "saved and synced".
+     */
+    notStored: Int = 0,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -845,7 +1461,40 @@ private fun StageHeader(
                 } else {
                     "$percent% complete · saved on this device, not yet synced"
                 }
-                SaveState.SYNCED -> "$percent% complete · saved and synced"
+                /*
+                  "SAVED AND SYNCED" IS FALSE OF A SAVE THE REPOSITORY PARTLY REFUSED, and it was
+                  being printed for one — measured on the handset, this exact line read "0% complete
+                  · saved and synced" with the red card two lines beneath it saying the repository
+                  had refused two of the answers and kept what it already held. It is the same claim
+                  [WorkshopSyncStatus.isFullySynced] was corrected for one screen out; this line is
+                  the one a designer is looking at while they are still in the stage.
+
+                  It counts rather than pointing at the card alone, so the two cannot drift: the card
+                  can be scrolled past, and a number that disagrees with it would be worse than
+                  either.
+                */
+                SaveState.SYNCED -> when {
+                    refused > 0 -> "$percent% complete · saved, and $refused answer" +
+                        (if (refused == 1) " was" else "s were") +
+                        " refused — see below. Everything else is on the server." +
+                        // Both at once, and the second gets its own words because its remedy is a
+                        // refresh of the sections rather than a correction of the answer.
+                        if (notStored > 0) {
+                            " $notStored more " + (if (notStored == 1) "was" else "were") +
+                                " not stored — the sections no longer ask " +
+                                (if (notStored == 1) "it" else "them") + "."
+                        } else ""
+                    // NOBODY OBJECTED TO ANYTHING, AND THE SAVE IS STILL NOT CLEAN. Reached by a
+                    // response with an empty `errors` map and a non-empty `droppedCustomKeys` — HTTP
+                    // 200, measured on the running API — which used to print "saved and synced" over a
+                    // card saying two of this workshop's own answers had not been stored.
+                    notStored > 0 -> "$percent% complete · saved, and $notStored answer" +
+                        (if (notStored == 1) " was" else "s were") +
+                        " not stored because the sections no longer ask " +
+                        (if (notStored == 1) "it" else "them") +
+                        " — see below. Everything else is on the server."
+                    else -> "$percent% complete · saved and synced"
+                }
             },
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
@@ -888,6 +1537,15 @@ private fun EntitySection(
      * putting it on the cell.
      */
     focusFieldKey: String? = null,
+    /**
+     * The repository's per-field refusals for THIS record, by field key — see [DwStageRefusal].
+     *
+     * Drawn on the box rather than only in the card above the form, because a message several hundred
+     * pixels from the control it is about is a message a designer has to hunt for, and one a screen
+     * reader never associates with anything at all. `FieldRenderer` has taken an `error` since it was
+     * written; nothing had ever passed one.
+     */
+    errors: Map<String, String> = emptyMap(),
     showAdvanced: Boolean,
     onToggleAdvanced: () -> Unit,
     onValueChange: (String, JsonElement?) -> Unit,
@@ -983,6 +1641,7 @@ private fun EntitySection(
                 value = values[field.key],
                 onChange = { next -> onValueChange(field.key, next) },
                 modifier = if (field.key == focusFieldKey) anchor else Modifier,
+                error = errors[field.key],
                 media = media,
                 caption = captionByTarget[field.key],
                 captionValue = captionByTarget[field.key]?.let { values[it.key] },
@@ -1009,6 +1668,7 @@ private fun EntitySection(
                         value = values[field.key],
                         onChange = { next -> onValueChange(field.key, next) },
                         modifier = if (field.key == focusFieldKey) anchor else Modifier,
+                        error = errors[field.key],
                         media = media,
                         caption = captionByTarget[field.key],
                         captionValue = captionByTarget[field.key]?.let { values[it.key] },
@@ -1076,13 +1736,28 @@ private fun CollectionSection(
     services: DwFieldServices,
     /** A gap the designer tapped that lives in one of these rows — see [DwStageFocus]. */
     focus: DwStageFocus? = null,
+    /**
+     * Refusals for this collection, keyed by the row's position ON SCREEN.
+     *
+     * Not by the entry's index in the payload, which is what the repository keys them by — that
+     * translation has already happened in [dwDecodeStageRefusals], once, against the array that was
+     * actually sent. Doing it here would be the second ordering the web's `buildStageEntries` warns
+     * about, and it puts every message after the first collection on the wrong row.
+     */
+    errorsByRow: Map<Int, Map<String, String>> = emptyMap(),
     onRowsChange: (List<CollectionRow>) -> Unit,
 ) {
     // OPEN ON THE ROW THAT HOLDS IT. Rows are collapsed by default, so a link to "the material on
     // prototype 1" that landed on a closed list would have arrived at a heading. `rowKey` is the
     // row's `_clientKey`, which is exactly what `rowId` holds here — both are `DraftRow.id` past
     // its entity prefix (see `fromDraft` and `DwSubmissionReadiness.rowKeyOf`).
-    var expanded by remember(entity.key, focus) { mutableStateOf(focus?.rowKey) }
+    // Opened on the row the repository refused something in, when nothing more specific was asked
+    // for. A message on a box inside a COLLAPSED row is a message nobody sees — the card above the
+    // form names the row number, and a designer who has just read it should not then have to guess
+    // which of nine collapsed cards to tap.
+    var expanded by remember(entity.key, focus, errorsByRow) {
+        mutableStateOf(focus?.rowKey ?: errorsByRow.keys.minOrNull()?.let { rows.getOrNull(it)?.rowId })
+    }
     val titleField = remember(entity) { entity.rowTitleField }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -1130,6 +1805,7 @@ private fun CollectionSection(
                 media = media,
                 services = services,
                 focusFieldKey = focus?.takeIf { it.rowKey == row.rowId }?.fieldKey,
+                errors = errorsByRow[index].orEmpty(),
                 onToggle = { expanded = if (expanded == row.rowId) null else row.rowId },
                 onMove = { delta ->
                     val target = index + delta
@@ -1189,6 +1865,8 @@ private fun CollectionRowCard(
     services: DwFieldServices,
     /** The one field of THIS row a designer was sent to, or null. */
     focusFieldKey: String? = null,
+    /** The repository's per-field refusals for THIS row — see [DwStageRefusal]. */
+    errors: Map<String, String> = emptyMap(),
     onToggle: () -> Unit,
     onMove: (Int) -> Unit,
     onDelete: () -> Unit,
@@ -1237,6 +1915,7 @@ private fun CollectionRowCard(
                     media = media,
                     services = services,
                     focusFieldKey = focusFieldKey,
+                    errors = errors,
                     showAdvanced = showAdvanced,
                     onToggleAdvanced = { showAdvanced = !showAdvanced },
                     onValueChange = onValueChange,
@@ -1307,10 +1986,22 @@ private fun Map<String, JsonElement>.putAll(patch: Map<String, JsonElement?>): M
  */
 private data class StageLoad(
     val state: StageState,
-    /** True when this device holds the server's copy, or the server has no copy to hold. */
-    val baseline: Boolean,
+    /** True when this device has READ the server's copy, or the server has no copy to read. */
+    val seen: Boolean,
     /** True when a server read was attempted and failed — the screen says so. */
     val downloadFailed: Boolean,
+    /**
+     * True when this device already held work for the stage whose download failed.
+     *
+     * The two cases need different sentences and got the same one. A BLANK screen after a failed
+     * download is the frightening case the note was written for — a designer concludes the stage was
+     * never filled in and starts again over a fortnight that is safe on the server. A screen showing
+     * their own work is not frightening at all; what the designer needs to know there is narrower and
+     * duller, namely that a clearance will not propagate until the read lands.
+     */
+    val heldWorkAlready: Boolean = false,
+    /** What [dwFoldServerStage] added, when a read landed on a stage that already held work. */
+    val foldNotice: String? = null,
 )
 
 /**
@@ -1334,6 +2025,10 @@ private fun focusOpensAdvanced(stage: StageDto, focus: DwStageFocus?): Boolean {
 
 private fun fromDraft(stage: StageDto, draft: StageDraft): StageState = StageState(
     singleton = draft.values,
+    custom = draft.custom,
+    // Carried through rather than re-derived: this branch reads no server copy, so it can neither
+    // earn the fact nor honestly disclaim one the draft already recorded.
+    customSeen = draft.customSeen,
     collections = stage.collections.associate { entity ->
         entity.key to draft.rowsFor(entity.key).map { row ->
             CollectionRow(
@@ -1346,6 +2041,13 @@ private fun fromDraft(stage: StageDto, draft: StageDraft): StageState = StageSta
 
 private fun fromRemote(stage: StageDto, bucket: StageBucketDto): StageState = StageState(
     singleton = bucket.singleton.toMap(),
+    custom = bucket.custom.toMap(),
+    // THE ONE PLACE THIS FACT IS EARNED. The bucket came from a successful `GET .../stages/{key}`,
+    // whose third key IS the server's `_custom` row — so from here on this device knows what the row
+    // holds, including that it holds nothing, which is what makes a later clearance honest. An EMPTY
+    // `bucket.custom` is therefore still evidence and still sets it: "the row is empty" and "I have
+    // never seen the row" are the two states this flag exists to keep apart.
+    customSeen = true,
     collections = stage.collections.associate { entity ->
         entity.key to bucket.collections[entity.key].orEmpty().map { row ->
             CollectionRow(
@@ -1375,10 +2077,12 @@ private suspend fun persistLocally(
     workshopId: String,
     stage: StageDto,
     state: StageState,
-    /** See [StageDraft.serverBaseline]. Passed in, because this function rebuilds the whole record. */
-    baseline: Boolean,
+    /** See [StageDraft.stageSeen]. Passed in, because this function rebuilds the whole record. */
+    seen: Boolean,
     /** See [StageDraft.emptiedEntities]. */
     emptied: Set<String>,
+    /** See [StageDraft.deletedRowKeys]. */
+    deletedRows: Set<String>,
 ) {
     WorkshopDraftStore.update(context, workshopId) { draft ->
         val existing = draft.stages[stage.key]
@@ -1387,6 +2091,20 @@ private suspend fun persistLocally(
             title = stage.title,
             order = stage.number,
             values = state.singleton,
+            // WRITTEN WHOLESALE AND THAT IS SAFE ONLY BECAUSE THE SCREEN SEEDED IT FROM DISK.
+            // `fromDraft` copies the whole bucket in, drawn or not, so what goes back is what came
+            // out plus whatever the designer changed. A `custom = emptyMap()` here — which is what a
+            // plain `StageDraft(...)` gives you, and this function rebuilds the whole record — would
+            // wipe every custom answer on the stage the first time somebody typed one character into
+            // an ordinary field, with the save reporting success. That is exactly what the comment
+            // below says about the two fields under it, and this one fails the same way.
+            custom = state.custom,
+            // ONCE EARNED, NEVER GIVEN BACK BY A KEYSTROKE, for the reason the two fields at the
+            // bottom of this constructor are OR-ed with what is on disk: this function rebuilds the
+            // whole record, so a plain `state.customSeen` would disclaim — on the first debounced
+            // save after a screen whose download failed — a reading of the server's container that
+            // an earlier session had actually made.
+            customSeen = state.customSeen || existing?.customSeen == true,
             rows = stage.collections.flatMap { entity ->
                 state.collections[entity.key].orEmpty().map { row ->
                     DraftRow(id = dwRowId(entity.key, row.rowId), values = row.values)
@@ -1404,13 +2122,40 @@ private suspend fun persistLocally(
             notes = existing?.notes.orEmpty(),
             // ONCE EARNED, NEVER GIVEN BACK BY A KEYSTROKE. This function rebuilds the whole record,
             // so a plain `StageDraft(...)` would reset both of the fields below to their class
-            // defaults on every debounced save — quietly disclaiming a baseline the screen had just
-            // established by reading the server, and quietly discarding a deletion the designer made
-            // ten seconds ago. OR-ing with what is already on disk is what makes them cumulative
-            // rather than whatever the last frame happened to hold.
-            serverBaseline = baseline || existing?.serverBaseline == true,
+            // defaults on every debounced save — quietly disclaiming a reading the screen had just
+            // made of the server, and quietly discarding a deletion the designer made ten seconds
+            // ago. OR-ing with what is already on disk is what makes them cumulative rather than
+            // whatever the last frame happened to hold.
+            //
+            // OR-ED, NEVER ASSIGNED, AND NEVER SET BY A SAVE. This screen may only pass `true` here
+            // for a stage it has actually read (see the load's fold branch); `recordStageSent` used
+            // to set the same fact after ANY successful save, which is the defect [StageDraft.stageSeen]
+            // is named after. A save is not a reading.
+            stageSeen = seen || existing?.stageSeen == true,
             emptiedEntities = (emptied + existing?.emptiedEntities.orEmpty())
                 .filter { key -> state.collections[key].orEmpty().isEmpty() }
+                .distinct(),
+            /*
+              THE SAME RULE ONE LEVEL DOWN — OR-ED WITH DISK, THEN FILTERED AGAINST WHAT IS HELD.
+
+              OR-ed for the reason the two fields above are: this function rebuilds the whole record,
+              so a plain `deletedRows` would discard a deletion made in an earlier session on the
+              first debounced save of this one.
+
+              FILTERED because a key whose row is back in the draft is not owed. That is reachable
+              without any undo feature at all: delete a row, then let `dwFoldServerStage` fold the
+              server's copy of it back in on the next online open of a stage this device had emptied
+              and re-populated. Leaving the key would ask the server to delete a row the very next
+              payload names, which the sweep declines to do — so the count would never fall to zero
+              and the stage would claim an unsent deletion for ever.
+            */
+            deletedRowKeys = (deletedRows + existing?.deletedRowKeys.orEmpty())
+                .filterNot { key ->
+                    stage.collections.any { entity ->
+                        state.collections[entity.key].orEmpty()
+                            .any { row -> dwRowId(entity.key, row.rowId) == key }
+                    }
+                }
                 .distinct(),
         )
         draft.copy(stages = draft.stages + (stage.key to merged))
@@ -1428,9 +2173,23 @@ private suspend fun persistLocally(
 // send a stage whose photographs have not landed. Both callers go through
 // [WorkshopSyncEngine.pushStage].
 
-private fun computeStageCompletenessFor(stage: StageDto, state: StageState) =
+private fun computeStageCompletenessFor(
+    stage: StageDto,
+    state: StageState,
+    /**
+     * This workshop's custom definition, or null when this device holds none.
+     *
+     * PASSED RATHER THAN RESOLVED IN HERE, so the bar on screen counts exactly what the form on
+     * screen is drawing. A helper that reached for the store itself could be one refresh ahead of
+     * the composable that drew the boxes, and a progress bar that disagrees with the form above it
+     * is the one number a designer stops believing.
+     */
+    definition: DwCustomCache? = null,
+) =
     computeStageCompleteness(
         stage = stage,
         singleton = state.singleton,
         collections = state.collections.mapValues { (_, rows) -> rows.map { it.values } },
+        customFields = customFieldsForStage(definition, stage.key),
+        customValues = state.custom,
     )

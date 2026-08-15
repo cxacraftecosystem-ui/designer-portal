@@ -162,6 +162,56 @@ data class StageSyncRecord(
      */
     val skewRun: String? = null,
     val attempts: Int = 0,
+    /**
+     * How many ANSWERS the repository refused inside a save it otherwise accepted.
+     *
+     * A 200 that carries [StageSaveResultDto.errors] is not a failed save and must not be recorded as
+     * one: the other twenty fields landed, and marking the stage refused would stop the pass sending
+     * anything else on it. But it is not a clean save either — this device holds a value the
+     * repository does not, the payload's signature MATCHES so nothing will ever re-send it, and
+     * without this counter [WorkshopSyncStatus.isFullySynced] answered true and the list row said
+     * "Backed up to the server" over an edit that never landed. See [DwStageRefusal].
+     *
+     * Counted rather than listed here because the sentences are already in [failure]; two copies of
+     * one fact is two things to keep in step. Cleared by the next save of this stage that comes back
+     * clean, which is what correcting the answer produces.
+     */
+    val refusedFields: Int = 0,
+    /**
+     * Whether [failure] describes FILES STILL ON THIS DEVICE rather than anything the server said.
+     *
+     * It exists because `pushStages` clears a stale note when a stage's signature already matches,
+     * and it was clearing ANY note — so the one thing `recordStageSent` deliberately keeps (the
+     * dropped-key drift signal, and now the refusals) survived exactly as long as it took the 45-second
+     * fallback timer to come round, then vanished from the status screen with nothing having changed.
+     * The clear is for a hold-up that resolves itself when an upload lands; this is what says which
+     * notes those are.
+     */
+    val waitingOnFiles: Boolean = false,
+    /**
+     * ENOUGH TO REDRAW THE REFUSAL CARD AFTER THE SCREEN THAT DREW IT IS GONE — see
+     * [DwStageRefusalRecord].
+     *
+     * THE DEFECT THIS CLOSES IS THE APP'S OWN ADVICE. The card and the marks on the boxes lived only in
+     * `StageScreen`'s `remember(stageKey)` state, so leaving the stage and coming back erased every one
+     * of them — while the note [failure] carries, written by [recordStageSent] and the one thing that
+     * DID outlive the screen, says *"open the stage to see which answers, and what the repository
+     * holds."* A designer who followed the instruction the app itself gave them arrived at a stage with
+     * nothing on it: [refusedFields] still counted, so the workshop went on saying answers were
+     * refused, and the surface built to say WHICH was blank. The evidence survived exactly as long as
+     * the composition did, which is until the designer did what they were told.
+     *
+     * Written beside [refusedFields] and cleared by the same event, so the count and the addressing
+     * cannot disagree about whether there is anything to show. What it stores is the server's error map
+     * and the ORDERING of the entries that were sent — not the drawn card and not the entries
+     * themselves; the decode is re-run against the registry this build actually has. See
+     * [DwStageRefusalRecord] for why those two and nothing else, and why what the repository HOLDS is
+     * deliberately not among them.
+     *
+     * Additive and defaulted, the same rung [StageDraft.custom] and [StageDraft.customSeen] were added
+     * on: a draft written by an earlier build decodes with null and behaves exactly as it did.
+     */
+    val refusal: DwStageRefusalRecord? = null,
 )
 
 /** Everything the draft knows about its own journey to the server. See [WorkshopDraft.sync]. */
@@ -217,11 +267,58 @@ data class WorkshopSyncStatus(
     /** Files the server HAS acknowledged whose bytes are also still here — what "free up space" frees. */
     val releasableMedia: Int,
     val releasableBytes: Long,
+    /**
+     * Answers the repository REFUSED inside saves it otherwise accepted — see
+     * [StageSyncRecord.refusedFields].
+     *
+     * Counted apart from [failedStages] because they are not the same event and do not have the same
+     * remedy. A failed stage did not save; a refused answer saved everything around it and left the
+     * repository holding its previous value. Folding them together would either say a stage failed
+     * when it did not, or go on saying nothing at all — which is what this app did.
+     */
+    val refusedAnswers: Int = 0,
+    /**
+     * Stages holding a row deletion THAT PHYSICALLY CANNOT TRAVEL YET — see [StageDraft.emptiedEntities].
+     *
+     * ── THE DEFECT THIS CLOSES, WHICH IS THE SAME DEFECT AS [refusedAnswers] ONE FIELD ALONG ──────
+     *
+     * Deleting the last row of a collection is INVISIBLE in a stage payload: entries are built from
+     * `rowsFor(key)`, which is simply empty, so the deletion has to be stated separately. It is stated
+     * in `emptiedEntities` — and [buildStageBody] sends that list ONLY when the draft is authoritative,
+     * because asserting a deletion while disclaiming the knowledge that justifies one is the wrong half
+     * of the trade. Correct, and it leaves a hole: for an unauthoritative stage the deletion is recorded
+     * on this device, carried faithfully from save to save, and NAMED IN NO PAYLOAD.
+     *
+     * Nothing counted it. `statusOf` never read `emptiedEntities` and `isFullySynced` had no term for
+     * it, so the payload's signature matched, no stage was pending, and a workshop holding a deletion
+     * that cannot be sent scored fully synced with the list row reading "Backed up to the server". The
+     * designer deleted six process steps in a courtyard, was told their work was safe, and the six rows
+     * are still in the report.
+     *
+     * A COUNT OF STAGES, not of rows or of entity keys. The rows are gone from the draft — that is what
+     * the deletion means — so there is nothing left here to count, and the remedy is per stage anyway:
+     * one online open of the workshop reads the stage, [dwFoldServerStage] earns the authority, and the
+     * next save carries it. One sentence per stage, naming the stage, is what a designer can act on.
+     */
+    val unsentDeletions: Int = 0,
 ) {
-    /** Nothing outstanding at all: the record exists remotely and every stage and file has landed. */
+    /**
+     * Nothing outstanding at all: the record exists remotely and every stage and file has landed.
+     *
+     * [refusedAnswers] IS PART OF THIS, and leaving it out is how "a refusal looks like a success"
+     * survived. A partly-refused save records a signature that matches, so the stage is not pending
+     * and never will be; without this term the workshop scored fully synced and the list row said
+     * "Backed up to the server" over an answer the repository had declined to store.
+     *
+     * [unsentDeletions] IS PART OF IT FOR THE IDENTICAL REASON, and was found by looking for the same
+     * shape one field along: work this device is holding that no future payload will carry, so the
+     * signature matches for ever and nothing is pending. "Backed up" has to mean the repository holds
+     * what this phone holds, and a deletion the repository has not been told about is a way in which it
+     * does not.
+     */
     val isFullySynced: Boolean
         get() = remoteId != null && pendingStages == 0 && pendingMedia == 0 &&
-            failedStages == 0 && failedMedia == 0
+            failedStages == 0 && failedMedia == 0 && refusedAnswers == 0 && unsentDeletions == 0
 
     val hasFailures: Boolean get() = failedStages > 0 || failedMedia > 0
 
@@ -234,6 +331,27 @@ data class WorkshopSyncStatus(
                 if (failedStages > 0) add("$failedStages stage${plural(failedStages)} refused")
                 if (failedMedia > 0) add("$failedMedia file${plural(failedMedia)} refused")
             }.joinToString(", ")
+            // Said in its own words rather than through the "waiting to upload" branch below, which
+            // would be false: nothing is waiting, the save has already happened and the repository
+            // has already declined it. Nothing will change until the answer is corrected.
+            //
+            // AND THE SAME ARM CARRIES THE DELETIONS, for a plainer reason as well as that one. With
+            // nothing pending and nothing refused, an unsent deletion fell through to `else` — where
+            // every clause of the `buildList` is false, so the joined string is EMPTY and the row read
+            // " waiting to upload" with a leading space and no subject. A blank sentence over a
+            // workshop that is not backed up, in the one place a designer looks to decide whether they
+            // can leave.
+            pendingStages == 0 && pendingMedia == 0 && (refusedAnswers > 0 || unsentDeletions > 0) ->
+                buildList {
+                    if (refusedAnswers > 0) add("$refusedAnswers answer${plural(refusedAnswers)} refused")
+                    if (unsentDeletions > 0) {
+                        // STAGES, and the words say so. It counts stages holding a deletion, not rows
+                        // — the rows are gone from the draft, which is what the deletion means, so
+                        // there is nothing left to count — and "3 deleted rows" over three stages
+                        // holding six between them would be a number nobody could reconcile.
+                        add("$unsentDeletions stage${plural(unsentDeletions)} with a deletion not sent")
+                    }
+                }.joinToString(", ") + " — the rest is backed up"
             else -> buildList {
                 if (remoteId == null) add("not created on the server")
                 if (pendingStages > 0) add("$pendingStages stage${plural(pendingStages)}")
@@ -243,6 +361,172 @@ data class WorkshopSyncStatus(
 }
 
 private fun plural(count: Int): String = if (count == 1) "" else "s"
+
+/**
+ * THE DEVICE-WIDE BANNER'S TWO SENTENCES, DECIDED HERE AND NOT IN THE COMPOSABLE.
+ *
+ * ── THE DEFECT THIS CLOSES, MEASURED ON THE HANDSET ──────────────────────────────────────────────
+ *
+ * [WorkshopSyncStatus.summary] was taught to say "$n answers refused — the rest is backed up" rather
+ * than fall through to its "waiting to upload" arm, with the reason written on that branch: *nothing
+ * is waiting, the save has already happened and the repository has already declined it.* The banner
+ * above the same list went on saying the opposite. Its caller counted `failedStages + failedMedia`
+ * and never [WorkshopSyncStatus.refusedAnswers], so a workshop whose ONLY outstanding item was a
+ * refused answer contributed a workshop to the count and nothing to any of the numbers — and the
+ * headline fell through to its `ifBlank` default.
+ *
+ * Reproduced on SM-M325F / Android 13 against the live API: DESIGN_BRIEF saved with
+ * `intendedPriceLow = "1.2.3"` and `intendedPriceHigh = "-500"`, both refused, nothing else pending,
+ * the phone on Wi-Fi. The row read "2 answers refused — the rest is backed up"; ten pixels above it
+ * the banner read **"Waiting to upload / Across 1 workshop(s) on this device. Everything is saved
+ * here and editable offline; it uploads whenever there is a connection."** under a CLOUD-OFF icon.
+ * Every clause of that is false: nothing is waiting, there IS a connection, and no amount of signal
+ * will ever move those two answers. It is the same wrong story [isConnectionFailure] exists to stop
+ * telling — a designer sent out of a building to look for a bar of signal over an answer the
+ * repository has already considered and declined — told by the one surface that is drawn above
+ * every row, and it contradicted the row beneath it while the call site's own comment claimed the
+ * two "can never disagree about the same fact".
+ *
+ * ── WHY IT IS PURE ───────────────────────────────────────────────────────────────────────────────
+ *
+ * Because this is a decision — which of two incompatible stories to tell about the same phone — and
+ * decisions in this repository are checkable on a desktop JVM. The composable is left holding only
+ * the drawing. [bytesText] is passed in already formatted so this function needs nothing from the ui
+ * package; it is a label, never a number this reasons about.
+ */
+data class DwDeviceSyncBanner(
+    /** The counts, in the units a person can compare against what they captured. */
+    val headline: String,
+    /** What that means and what will happen next. */
+    val detail: String,
+    /**
+     * Whether ANYTHING here is genuinely waiting for a connection.
+     *
+     * False when the only outstanding items are ones a connection does not move by itself — a refused
+     * answer, or a deletion that needs a stage READ before it can be stated — and it decides the icon:
+     * a cloud with a line through it is a claim about the network, and drawing it over either of those
+     * is the claim this whole banner was making wrongly. Same rule, same reason, as
+     * [WorkshopSyncChip]'s.
+     */
+    val waiting: Boolean,
+)
+
+/**
+ * What the banner above the workshop list should say, or null when it should not be drawn at all.
+ *
+ * [workshops] is how many workshops have anything outstanding at all — refusals included, which is
+ * why a refusal-only device still gets a banner rather than silence.
+ */
+fun dwDeviceSyncBanner(
+    workshops: Int,
+    stages: Int,
+    files: Int,
+    bytesText: String,
+    failures: Int,
+    refusedAnswers: Int,
+    /**
+     * Stages holding a row deletion no payload can carry yet — see [WorkshopSyncStatus.unsentDeletions].
+     *
+     * THE FIFTH THING A ROW CAN BE OUTSTANDING FOR, AND IT ARRIVED THE SAME WAY THE FOURTH DID. Making
+     * it a term of [WorkshopSyncStatus.isFullySynced] is what puts such a workshop into the caller's
+     * `outstanding` list — and with no counter here it would have contributed a workshop to
+     * [workshops] and nothing to any number, so this banner would draw a workshop it cannot name and
+     * fall through to "Waiting to upload … it uploads whenever there is a connection". That is
+     * word-for-word the defect this function was written to end, one field along. Defaulted so the
+     * existing callers and their pinned sentences are unchanged.
+     */
+    unsentDeletions: Int = 0,
+): DwDeviceSyncBanner? {
+    if (workshops == 0 && failures == 0 && refusedAnswers == 0 && unsentDeletions == 0) return null
+    // FALSE IN EXACTLY TWO SITUATIONS, and they are the two things a connection alone does not fix:
+    // an answer the repository has already read and declined, and a deletion that needs this phone to
+    // READ a stage before it can be stated. Everything else on this banner — a stage whose payload has
+    // not been sent, a photograph whose bytes are only here, a workshop with no server record at all —
+    // really is waiting for a connection, and the cloud-off icon is honest over it.
+    //
+    // A DELETION SITS ON THIS SIDE OF THE LINE EVEN THOUGH ITS REMEDY NEEDS SIGNAL, and the distinction
+    // is what the icon actually claims: that the pass will carry it away by itself, the next time there
+    // is a bar. It will not. `pushStages` only ever PUSHES, so no background pass will ever read a
+    // stage, and the deletion sits there through a hundred passes on perfect Wi-Fi until a person opens
+    // the stage. An icon promising otherwise is the same sentence that sent a designer out of a
+    // building looking for signal.
+    val waiting = stages > 0 || files > 0 || (refusedAnswers == 0 && unsentDeletions == 0)
+    val headline = buildList {
+        if (stages > 0) add("$stages stage${plural(stages)}")
+        if (files > 0) add("$files file${plural(files)}, $bytesText")
+        if (failures > 0) add("$failures refused outright")
+        if (refusedAnswers > 0) add("$refusedAnswers answer${plural(refusedAnswers)} refused")
+        if (unsentDeletions > 0) {
+            add("$unsentDeletions stage${plural(unsentDeletions)} with a deletion not sent")
+        }
+    }.joinToString(" · ").ifBlank {
+        // Reached only when a workshop is outstanding for a reason none of the four counters names —
+        // it exists nowhere but this phone. That IS waiting for a connection, so the old default is
+        // still the true sentence for it, and it is now the ONLY thing that reaches it.
+        "Waiting to upload"
+    }
+    val across = "Across $workshops workshop${plural(workshops)} on this device."
+    val one = refusedAnswers == 1
+    val them = if (one) "it" else "them"
+    /*
+      THE DELETION'S OWN SENTENCE, AND WHAT MAKES IT DIFFERENT FROM EVERY OTHER CLAUSE HERE.
+
+      Every other thing on this banner is moved by a sync pass. This one is not moved by ANY number of
+      passes: `emptiedEntities` only travels on a payload that also claims `replaceCollections`, that
+      claim is [StageDraft.stageSeen], and `stageSeen` is earned by a `GET .../stages/{key}` that only
+      the stage SCREEN ever makes. So the instruction a designer needs is not "wait for signal" and not
+      "press sync" — it is "open the stage", and it is the only instruction on this surface that names a
+      screen. Saying anything vaguer leaves a deleted row alive on the server for ever while the phone
+      reports the workshop backed up, which is the defect being closed.
+    */
+    val dOne = unsentDeletions == 1
+    val deletionSentence = "$unsentDeletions stage${plural(unsentDeletions)} " +
+        (if (dOne) "holds a row deletion" else "hold row deletions") +
+        " that ${if (dOne) "has" else "have"} not reached the server, and a sync will NOT move " +
+        "${if (dOne) "it" else "them"}: this phone has to READ " +
+        "${if (dOne) "that stage" else "those stages"} once before it can tell the server what to " +
+        "delete. Open the workshop, then the stage, with a connection — the deletion goes up on the " +
+        "save straight after."
+    val detail = buildString {
+        append(
+            when {
+                // NOTHING IS WAITING. Said in its own words, because the sentence below is the one that
+                // sent a designer looking for signal over an answer no amount of signal will move.
+                refusedAnswers > 0 && !waiting -> "$across Everything else is on the server. " +
+                    (if (one) "That answer" else "Those answers") +
+                    " will NOT upload by ${if (one) "itself" else "themselves"} — the repository has " +
+                    "already read $them and declined, and kept what it already held. Open the " +
+                    "workshop, then the stage, to see which and correct $them."
+                // Both at once: the first half is true of the pending work and false of the refusals,
+                // so the refusals get their own clause rather than being covered by "it uploads when
+                // there is a connection".
+                refusedAnswers > 0 -> "$across Everything is saved here and editable offline; the " +
+                    "stages and files above upload whenever there is a connection. The " +
+                    "$refusedAnswers refused answer${plural(refusedAnswers)} will not — the " +
+                    "repository has already declined $them and needs $them corrected."
+                // The same two arms again for a device whose only stuck item is a deletion. They are
+                // arms and not an appended clause because the FIRST half differs: with nothing pending
+                // "everything else is on the server" is true and is the reassurance that stops a
+                // designer re-checking twenty stages.
+                unsentDeletions > 0 && !waiting ->
+                    "$across Everything else is on the server. $deletionSentence"
+                unsentDeletions > 0 -> "$across Everything is saved here and editable offline; the " +
+                    "stages and files above upload whenever there is a connection. $deletionSentence"
+                else -> "$across Everything is saved here and editable offline; it uploads whenever " +
+                    "there is a connection."
+            }
+        )
+        // BOTH KINDS OF STUCK WORK AT ONCE. The refusal arms above have already run and said nothing
+        // about the deletion, and the two have different remedies — correct an answer, versus open a
+        // stage — so neither can stand in for the other. Appended rather than given a fifth arm, so
+        // there is one copy of this sentence.
+        if (refusedAnswers > 0 && unsentDeletions > 0) {
+            append(" ")
+            append(deletionSentence)
+        }
+    }
+    return DwDeviceSyncBanner(headline = headline, detail = detail, waiting = waiting)
+}
 
 /** The whole device in one line, for a banner above the list. */
 data class SyncPassResult(
@@ -357,6 +641,25 @@ internal fun blocksRetry(permanent: Boolean, skewRun: String?): Boolean {
 private fun StageSyncRecord?.blocksRetry(): Boolean = blocksRetry(this?.permanent == true, this?.skewRun)
 
 /**
+ * What "Try again" leaves on ONE stage record — see the long note at the call site in `retryWorkshop`
+ * for why a server-reported note survives the button and a self-clearing one does not.
+ *
+ * `internal` and top-level ON PURPOSE, like [blocksRetry] above it. The rule used to live as an
+ * `if/else` inside a `mapValues` inside an `updateBookkeeping` inside a suspend function, so asking it
+ * one question needed a Context, a filesystem, a coroutine and a whole draft on disk — and so nothing
+ * asked it, which is how it came to key on the one field that is 0 in the case it most had to keep.
+ */
+internal fun retriedStageRecord(record: StageSyncRecord): StageSyncRecord =
+    if (record.refusedFields > 0 || record.refusal != null) {
+        record.copy(permanent = false, skewRun = null)
+    } else {
+        record.copy(
+            failure = null, failedAt = null, permanent = false, skewRun = null,
+            waitingOnFiles = false,
+        )
+    }
+
+/**
  * What to write on an item the server REFUSED, including the one fact the designer cannot infer.
  *
  * A bare 500 renders through [apiErrorMessage] as "HTTP 500 Internal Server Error", which reads like
@@ -454,6 +757,10 @@ object WorkshopSyncEngine {
         draft: WorkshopDraft,
     ): WorkshopSyncStatus = withContext(Dispatchers.Default) {
         val mediaById = draft.media.associateBy { it.id }
+        // Read from disk only — never fetched here. A status pass runs on a timer with no screen
+        // attached, and it must report what a push would ACTUALLY send, which is decided by the
+        // definition this device is holding right now.
+        val definition = DwCustomSectionStore.load(context, draft.workshopId)
         val problems = ArrayList<String>()
 
         draft.sync.createFailure?.let {
@@ -489,6 +796,8 @@ object WorkshopSyncEngine {
 
         var pendingStages = 0
         var failedStages = 0
+        var unsentDeletions = 0
+        val remoteId = remoteIdOf(draft)
         schema.stages.forEach { spec ->
             val stored = draft.stages[spec.key]
             val record = draft.sync.stages[spec.key]
@@ -497,24 +806,107 @@ object WorkshopSyncEngine {
                 problems += "Stage ${spec.number} (${spec.title}): ${record.failure.orEmpty()}"
                 return@forEach
             }
-            val empty = stored == null || (stored.values.isEmpty() && stored.rows.isEmpty())
+            /*
+              A DELETION THAT CANNOT TRAVEL, COUNTED — see [WorkshopSyncStatus.unsentDeletions].
+
+              Asked with the SAME two questions [buildStageBody] asks before it decides to send the
+              list, so this cannot drift from what a push would actually carry: intersected with the
+              entities this stage declares (a key left behind by a registry that has moved on is not a
+              deletion instruction for anything), and gated on the authority that is the only thing
+              standing in its way.
+
+              ASKED BEFORE THE `empty` RETURN BELOW, which is the whole point. A stage whose only
+              content WAS a collection is empty once its rows are deleted, so the early return — "this
+              stage holds nothing and has never been sent, there is nothing to say about it" — is
+              exactly the arm a deletion-only stage falls down, and it is why nothing counted this.
+
+              Gated on the workshop existing remotely because with no server record there is nothing
+              anywhere that could still hold the rows, and warning about one would fire on every stage
+              of every workshop captured in a courtyard. It CANNOT stick: one online open of the stage
+              reads it, [dwFoldServerStage] earns the authority, the next save carries the list and
+              `recordStageSent` clears the keys it carried.
+            */
+            if (remoteId != null && !isAuthoritative(stored, record)) {
+                val owed = stored?.emptiedEntities.orEmpty()
+                    .filter { key -> spec.collections.any { it.key == key } }
+                /*
+                  THE SURVIVING CASE OF THE DEFECT THIS COUNTER WAS WRITTEN FOR, ONE DOOR ALONG.
+
+                  `emptiedEntities` records a collection that went from having rows to having NONE.
+                  Deleting one row of three is not that, and it used to leave no record at all — so
+                  this walk had nothing to read, `isFullySynced` had no term for it, and the workshop
+                  row said "Backed up to the server" while the row was still in the repository and
+                  still in the report. [StageDraft.deletedRowKeys] is that record.
+
+                  INTERSECTED WITH THE DECLARED ENTITIES, exactly as `owed` is and for the same reason:
+                  a key left behind by a registry that has moved on is not a deletion instruction for
+                  anything, and counting it would make a stage permanently unsynced over an entity no
+                  build can draw.
+                */
+                val owedRows = stored?.deletedRowKeys.orEmpty()
+                    .filter { key ->
+                        val entity = key.substringBefore(DW_ROW_KEY_SEPARATOR, "")
+                        spec.collections.any { it.key == entity }
+                    }
+                if (owed.isNotEmpty() || owedRows.isNotEmpty()) {
+                    // ONE STAGE, COUNTED ONCE, however many ways it owes a deletion. The figure is a
+                    // count of STAGES held up — `WorkshopSyncStatus.unsentDeletions` is rendered as
+                    // "N stages", so incrementing per kind would report two stages where there is one.
+                    unsentDeletions++
+                    val what = buildString {
+                        if (owed.isNotEmpty()) {
+                            append("you deleted everything in ${owed.joinToString(", ")}")
+                        }
+                        if (owedRows.isNotEmpty()) {
+                            if (isNotEmpty()) append(", and ")
+                            else append("you deleted ")
+                            val n = owedRows.size
+                            append("$n row${plural(n)} from ")
+                            append(
+                                owedRows
+                                    .map { it.substringBefore(DW_ROW_KEY_SEPARATOR, "") }
+                                    .distinct()
+                                    .joinToString(", ")
+                            )
+                        }
+                    }
+                    problems += "Stage ${spec.number} (${spec.title}): $what on this phone, and that " +
+                        "deletion has NOT reached the server — this stage has not been read from this " +
+                        "device yet, so it cannot yet be told what to delete. Nothing else about this " +
+                        "stage is held up. Open the stage once with a connection and it goes up on the " +
+                        "save straight after."
+                }
+            }
+            // `custom` counted alongside `values` and `rows`, and it is not a tidy-up: EIGHT of the
+            // twenty-two stages declare no singleton entity at all, so "a stage whose only answers
+            // are custom" is the ordinary case for a designer extending sketch development or
+            // costing, not an edge case. Left out, such a stage is judged empty here, is never
+            // reported as pending, and — with the identical gate in `pushStages` — never syncs.
+            val empty = stored == null ||
+                (stored.values.isEmpty() && stored.rows.isEmpty() && stored.custom.isEmpty())
             if (empty && record?.signature.isNullOrBlank()) return@forEach
-            // Built with the same authority the push will use, so the signature compared below is the
-            // signature that would actually be sent. `replaceCollections` is part of the payload's
-            // meaning and part of its digest, so a status pass that guessed differently would report
-            // every stage as pending for ever.
-            val built = buildStageBody(spec, stored, mediaById, isAuthoritative(stored, record))
+            // Built with the same authority AND the same definition the push will use, so the
+            // signature compared below is the signature that would actually be sent. Both are part of
+            // the payload's meaning and therefore of its digest, so a status pass that guessed
+            // differently would report every stage as pending for ever.
+            val built = buildStageBody(
+                spec, stored, mediaById, isAuthoritative(stored, record),
+                customHeld = dwCustomHeldFor(definition, spec.key),
+            )
             if (built.unresolved.isNotEmpty()) {
                 pendingStages++
                 return@forEach
             }
             if (signatureOf(built.body) != record?.signature) pendingStages++
         }
-        // A non-permanent note (the server dropped a field it did not recognise, files still to
-        // upload) is worth showing but is not a failure, so it is listed after the refusals rather
-        // than counted with them.
+        // A non-permanent note (the server dropped a field it did not recognise, an answer it
+        // refused, files still to upload) is worth showing but is not a failed stage, so it is listed
+        // after the refusals rather than counted with them.
+        var refusedAnswers = 0
         draft.sync.stages.forEach { (key, record) ->
-            if (!record.permanent && record.failure != null) {
+            if (record.permanent) return@forEach
+            refusedAnswers += record.refusedFields
+            if (record.failure != null) {
                 val spec = schema.stages.firstOrNull { it.key == key }
                 problems += "Stage ${spec?.number ?: "?"} (${spec?.title ?: key}): ${record.failure}"
             }
@@ -522,7 +914,7 @@ object WorkshopSyncEngine {
 
         WorkshopSyncStatus(
             workshopId = draft.workshopId,
-            remoteId = remoteIdOf(draft),
+            remoteId = remoteId,
             pendingStages = pendingStages,
             pendingMedia = pendingMedia,
             pendingMediaBytes = pendingBytes,
@@ -533,6 +925,8 @@ object WorkshopSyncEngine {
             lastError = draft.sync.lastError,
             releasableMedia = releasable,
             releasableBytes = releasableBytes,
+            refusedAnswers = refusedAnswers,
+            unsentDeletions = unsentDeletions,
         )
     }
 
@@ -614,8 +1008,40 @@ object WorkshopSyncEngine {
                     createFailedAt = null,
                     createSkewRun = null,
                     lastError = null,
-                    stages = draft.sync.stages.mapValues {
-                        it.value.copy(failure = null, failedAt = null, permanent = false, skewRun = null)
+                    stages = draft.sync.stages.mapValues { (_, record) ->
+                        /*
+                          A REFUSED ANSWER IS NOT SOMETHING "TRY AGAIN" CAN CHANGE, so this leaves it
+                          exactly where it is. The button means "assume the world changed" — a quota
+                          was raised, the right account was signed in, an admin restored a workshop —
+                          and every one of those is a fact OUTSIDE the payload. A per-field refusal is
+                          inside it: the same bytes get the same answer, and the stage will not even
+                          be re-sent, because its signature already matches.
+
+                          Clearing it here would have wiped the sentence while [refusedFields] kept
+                          the workshop out of "backed up" — a status that says something is wrong and
+                          has lost the line saying what. The answer is corrected in the stage form,
+                          and the save that carries the correction is what clears this.
+
+                          AND THE TEST IS [refusal], NOT [refusedFields] ALONE, because the two do not
+                          agree on the case that matters most here. A save that reported ONLY
+                          `droppedCustomKeys` — the designer edited their own sections on the web and
+                          this phone still holds an answer to a question those sections no longer ask —
+                          writes the sentence, writes a non-null [refusal] carrying the dropped keys,
+                          and leaves `refusedFields` at 0, because nothing was REFUSED. Keyed on the
+                          count alone this fell down the `else` arm and deleted that sentence, which is
+                          the only line naming an answer the repository did not store. It is not a note
+                          "Try again" can act on either: the remedy is to open the workshop once with a
+                          connection so the definitions are re-read, which is what the sentence says.
+
+                          Worse than a lost sentence, because `statusOf` scores a dropped custom key as
+                          nothing at all: `failedStages` counts only `permanent` records and
+                          `refusedAnswers` sums only `refusedFields`, so with the sentence gone the row
+                          reads "Backed up to the server" over a question whose answer was never
+                          stored. That gap is pre-existing and deliberately left alone here (it needs a
+                          counter of its own on [WorkshopSyncStatus]); what is fixed is this button
+                          being the thing that closes the last window onto it.
+                        */
+                        retriedStageRecord(record)
                     },
                 ),
             )
@@ -941,20 +1367,31 @@ object WorkshopSyncEngine {
         tally: Tally,
     ): Boolean {
         val mediaById = draft.media.associateBy { it.id }
+        // Off disk, once per workshop rather than per stage. Never fetched here: a sync pass that
+        // reached the network for a definition would be deciding what to send on the strength of a
+        // request that may fail, and the honest input is what this device is holding.
+        val definition = DwCustomSectionStore.load(context, draft.workshopId)
         for (spec in schema.stages.sortedBy { it.number }) {
             val record = draft.sync.stages[spec.key]
             // The server's final answer; waiting on a person — unless it is waiting on an update.
             if (record.blocksRetry()) continue
 
             val stored = draft.stages[spec.key]
-            val empty = stored == null || (stored.values.isEmpty() && stored.rows.isEmpty())
+            // `custom` counted here too — see the identical gate in `statusOf`. A stage whose only
+            // content is a designer's own answers would otherwise be skipped for ever, and the
+            // designer would be told nothing at all: `statusOf` would not even count it as pending.
+            val empty = stored == null ||
+                (stored.values.isEmpty() && stored.rows.isEmpty() && stored.custom.isEmpty())
             // An empty stage that has never been sent has nothing to say. An empty stage that HAS
             // been sent is a stage the designer emptied, and it must still go — `replaceCollections`
             // is what carries a deletion, and skipping it would leave the deleted rows alive on the
             // server to reappear in the report.
             if (empty && record?.signature.isNullOrBlank()) continue
 
-            val built = buildStageBody(spec, stored, mediaById, isAuthoritative(stored, record))
+            val built = buildStageBody(
+                spec, stored, mediaById, isAuthoritative(stored, record),
+                customHeld = dwCustomHeldFor(definition, spec.key),
+            )
             if (built.unresolved.isNotEmpty()) {
                 // HELD BACK, NOT TRIMMED. `save_stage` writes the cleaned entry WHOLESALE, so a
                 // payload with the media key omitted does not merely fail to add the new photograph
@@ -975,6 +1412,8 @@ object WorkshopSyncEngine {
                             failure = note,
                             failedAt = Instant.now().toString(),
                             permanent = false,
+                            // What the clear below is allowed to sweep, and the only thing it is.
+                            waitingOnFiles = true,
                             // This is a hold-up, not a refusal, and it REPLACES whatever was recorded
                             // before — a leftover run stamp would describe a refusal that is no
                             // longer what is standing in the way.
@@ -988,11 +1427,23 @@ object WorkshopSyncEngine {
 
             val signature = signatureOf(built.body)
             if (signature == record?.signature) {
-                // Already up there, byte for byte. Clear a stale note (the files it was waiting on
-                // have since landed) so the designer is not shown a problem that no longer exists.
-                if (record.failure != null) {
+                /*
+                  Already up there, byte for byte. Clear a stale note — but ONLY the one this clear
+                  was written for: the files it was waiting on have since landed, so the hold-up is
+                  over and the designer must not be shown a problem that no longer exists.
+
+                  IT USED TO CLEAR ANY NOTE, AND THAT ERASED THE TWO IT MUST NOT. `recordStageSent`
+                  deliberately keeps a non-permanent note for the keys the server did not recognise —
+                  the only client/server registry-drift signal this repository has — and now also for
+                  the answers the server refused. Both are written against a payload whose signature
+                  MATCHES by construction, so this branch is reached on the very next pass and wiped
+                  them: 45 seconds after a save, with nothing having changed, the status screen lost
+                  the one line that said an answer had not landed. `waitingOnFiles` is what tells the
+                  two apart, and it is set by exactly one writer.
+                */
+                if (record.failure != null && record.waitingOnFiles) {
                     noteStage(context, draft.workshopId, spec.key) {
-                        it.copy(failure = null, failedAt = null)
+                        it.copy(failure = null, failedAt = null, waitingOnFiles = false)
                     }
                 }
                 continue
@@ -1043,7 +1494,7 @@ object WorkshopSyncEngine {
                 continue
             }
 
-            recordStageSent(context, draft.workshopId, spec.key, signature, result)
+            recordStageSent(context, draft.workshopId, spec.key, signature, built, result)
             tally.stages++
             bump()
         }
@@ -1077,6 +1528,9 @@ object WorkshopSyncEngine {
             stored,
             draft.media.associateBy { it.id },
             isAuthoritative(stored, draft.sync.stages[spec.key]),
+            customHeld = dwCustomHeldFor(
+                DwCustomSectionStore.load(context, workshopId), spec.key,
+            ),
         )
         // Held back rather than trimmed, for the reason spelled out in [pushStages]: a payload with
         // the media key missing does not merely omit the new photograph, it deletes the one the
@@ -1097,9 +1551,14 @@ object WorkshopSyncEngine {
             // is built around. The background pass is what triages, and it reads from the same disk.
             return StagePush.NotSent
         }
-        recordStageSent(context, workshopId, spec.key, signature, result)
+        recordStageSent(context, workshopId, spec.key, signature, built, result)
         bump()
-        return StagePush.Sent(result)
+        // The ENTRIES go back with the result, and that is not a convenience. `save_stage` keys a
+        // collection row's errors by the entry's INDEX IN THE ARRAY THAT WAS SENT, so the only thing
+        // that can decode them is the array itself. Re-deriving it on the screen would be a second
+        // builder and a second ordering, and the first message after the first collection would land
+        // on the wrong row — which is precisely the note `buildStageEntries` carries on the web.
+        return StagePush.Sent(result, built.body.entries)
     }
 }
 
@@ -1115,8 +1574,16 @@ sealed interface StagePush {
     /** On the server, byte for byte, already. Nothing to do and nothing wrong. */
     data object AlreadySent : StagePush
 
-    /** It went up just now. [result] carries anything the server dropped. */
-    data class Sent(val result: StageSaveResultDto) : StagePush
+    /**
+     * It went up just now. [result] carries anything the server dropped OR REFUSED.
+     *
+     * [entries] is the payload that was accepted, in the order it was sent, because that order is the
+     * only key to [StageSaveResultDto.errors] — see [dwDecodeStageRefusals].
+     */
+    data class Sent(
+        val result: StageSaveResultDto,
+        val entries: List<StageEntryBody> = emptyList(),
+    ) : StagePush
 
     /** Waiting on [files] attachments that are still only on this device. */
     data class HeldBack(val files: Int) : StagePush
@@ -1183,10 +1650,10 @@ internal data class BuiltStage(val body: StageSaveBody, val unresolved: List<Str
  * were now exactly the rows. A stage holding a fortnight of process steps, tools and raw materials
  * was swept by a save that had never seen any of them.
  *
- * So authority is passed in by the caller, from [StageDraft.serverBaseline] and from whether the
- * server has already acknowledged a payload built from THIS draft — the two ways a phone can honestly
- * know what the server holds. Everything else sends `replaceCollections = false`, which merges: the
- * designer's work still lands, in full, and nothing they have not seen is destroyed.
+ * So authority is passed in by the caller, from [StageDraft.stageSeen] — the ONE way a phone can
+ * honestly know what the server holds, which is to have read it. Everything else sends
+ * `replaceCollections = false`, which merges: the designer's work still lands, in full, and nothing
+ * they have not seen is destroyed.
  *
  * `emptiedEntities` is the other half. With the sweep scoped to what the payload names, a collection
  * whose last row was deleted is invisible — it contributes no entries — so the deletion has to be
@@ -1202,6 +1669,11 @@ internal fun buildStageBody(
      * copy of this stage, or the server's copy came from it.
      */
     authoritative: Boolean,
+    /**
+     * Whether this device holds this workshop's custom definition, and whether that definition asks
+     * anything at all on this stage. See the `_custom` arm below — it is the whole of the safety.
+     */
+    customHeld: Boolean = false,
 ): BuiltStage {
     val unresolved = LinkedHashSet<String>()
     val entries = ArrayList<StageEntryBody>()
@@ -1234,9 +1706,127 @@ internal fun buildStageBody(
                     wireData(entity, row.values, mediaById, unresolved) +
                         ("_clientKey" to JsonPrimitive(row.id.substringAfter(DW_ROW_KEY_SEPARATOR)))
                 ),
+                // A ROW IS NOT SAFER THAN A SINGLETON, AND THIS ARM WAS THE ONE THAT WENT ON
+                // REPLACING WHOLESALE.
+                //
+                // `authoritative` was spent on `replaceCollections`/`emptiedEntities` — WHICH ROWS
+                // SURVIVE — and on the singleton's own `merge`. Nothing ever asked it about the
+                // CONTENTS of a row that does survive, so every collection entry left here with
+                // `merge` at its default of false, which is a claim to be sending every key there
+                // IS. `save_stage` then writes the row's `data` wholesale (design_workshops.py, the
+                // `updates.append` arm), records no `RecordRevision`, and answers `saved=1
+                // errors={} removed=0`.
+                //
+                // The walk needs no failed download and no sweep. The phone CREATES the row in a
+                // courtyard — `{stepNumber, name}`, `_clientKey` minted here — and syncs it. The
+                // office opens the same row on the web and fills in `localName`, `description`,
+                // `timeTaken`, `performedBy`, `problems`. The designer corrects the step's name on
+                // the phone, which has still never read this stage, and the next save deletes all
+                // five. Reproduced on the running API against a live Postgres row: before
+                // `{"name": "Warping", "problems": …, "localName": "Tana", "timeTaken": 6.5,
+                // "stepNumber": 1, "description": …, "performedBy": …}`, after
+                // `{"name": "Warping (revised)", "stepNumber": 1}`.
+                //
+                // The same three words as the singleton one loop up, for the same reason and with
+                // the same cost: a designer who clears one CELL of a row on a stage this device has
+                // never read does not clear it on the server until the stage has been read once.
+                // That cost is not new and is not silent — it is exactly what `StageScreen`'s own
+                // download note already promises ("clearing an answer or deleting a row here does
+                // NOT clear or delete it on the server"), a promise this arm was the reason the app
+                // could not keep. A row this device HAS read still replaces, because for it an
+                // absent key is a real deletion.
+                merge = !authoritative,
             )
         }
     }
+    /*
+      THE DESIGNER'S OWN ANSWERS, IN A RESERVED ENTRY OF THEIR OWN, AFTER THE REGISTRY'S ENTITIES.
+
+      `_custom` is not a registry entity and never will be — it is a `DwStageEntry` row of its own,
+      one per (workshop, stage) — so it cannot come out of either loop above, which walk `spec`. That
+      is also what makes it unreachable by the collection sweep: `emptiedEntities` is intersected with
+      `spec.collections` three lines down AND again with the registry's own collection keys
+      server-side, and `_custom` is in neither list.
+
+      `wireData` IS DELIBERATELY NOT USED. It keys media and rich-text translation off the ROW'S
+      REGISTRY ENTITY's fields, and there is no entity here; v1 declares no media type at all
+      (`custom_sections.V1_FIELD_TYPES`), so there is nothing to translate and calling it would only
+      invent an entity to look the fields up in. The `_`-prefixed strip is done by hand, for
+      `wireData`'s own reason: those keys are the protocol's, the server reports any key it does not
+      know in `droppedCustomKeys`, and passing them through would put a line in every response for
+      something working exactly as designed.
+
+      ── THE OMISSION RULE, WHICH IS THE WHOLE OF THE SAFETY ────────────────────────────────────────
+
+      `plan_custom_write` treats "no entry at all" and "an entry carrying `{}`" as two DIFFERENT
+      instructions: `sent=None` writes NO ROW, and `{}` is a designer clearing every answer and IS
+      written. So a phone holding nothing must send nothing. A `{ "_custom": {} }` from a handset that
+      simply never fetched the definition would read on the server as "the designer cleared every
+      custom answer" — and since a stage save replaces the row wholesale and writes no
+      `RecordRevision`, the office's answers would be gone in place, with the save reporting success.
+
+      Two clauses, and they are not the same clause:
+
+        * ANSWERED — anything in the bucket that `isFilled` — always goes, whether or not this device
+          holds the definition. The designer typed it; it must reach the server, and the server
+          validates it against ITS definition either way (an unrecognised key comes back in
+          `droppedCustomKeys` and nothing is destroyed). This is deliberately wider than "the
+          definition is held": a cache deleted by a decode failure must not strand a fortnight of
+          answers on the handset.
+        * EMPTY goes only when this device has READ THE SERVER'S OWN CONTAINER for this stage
+          ([StageDraft.customSeen]) AND is authoritative for the stage AND holds a definition that
+          asks something here. That is the "designer cleared the last answer" case, and it is the only
+          case in which an empty container is an instruction rather than an absence of one. Gating it
+          on the definition asking something on THIS stage is also what keeps the one-off re-push
+          bounded: without it, the release carrying this code would write an empty `_custom` row for
+          all 22 stages of every workshop that has a definition, including the twenty-one it says
+          nothing about.
+
+      ── AUTHORITY OVER THE STAGE IS NOT AUTHORITY OVER THIS ROW, AND CONFLATING THEM DESTROYED DATA ─
+
+      `customSeen` is the third clause and it is the one that was missing. When this was written
+      [isAuthoritative] was satisfied by `serverBaseline` OR by a signature — and `recordStageSent`
+      stamped BOTH after any successful save, including a merge save from a stage seeded blank because
+      its download failed. So a phone reached `authoritative = true` having never read this stage at
+      all, and — because the custom answers live in a row of their own that a payload carrying no
+      `_custom` entry does not touch — having never seen a single one of the designer's own answers.
+      Holding the DEFINITION says only which questions exist; it says nothing about which are answered.
+      Executed against the server's own planner:
+      `plan_custom_write([loomsWorking], sent={}, previous={'loomsWorking': 12}, merge=False)` returns
+      `data={}` — the office's 12 deleted, in place, with no `RecordRevision` and a successful save.
+      The walk that got there: office answers on the web, designer opens the stage in a courtyard
+      where the download fails, types one core field, the save lands on the drive home and stamps the
+      baseline, and the very next PASS — no further typing needed, because a merge body and a replace
+      body have different signatures — sends the clearance.
+
+      BOTH OF THOSE DOORS ARE NOW SHUT ONE LEVEL UP: authority is [StageDraft.stageSeen] alone, earned
+      by a read and never by a write. This clause is kept regardless, and not folded into it, because
+      it answers a DIFFERENT question about a DIFFERENT row: `stageSeen` says the stage was read, and
+      for every read this build makes that is the same request that returns `StageBucketDto.custom`,
+      so the two move together today. They are not the same fact, they were not always set by the same
+      code, and a draft written by a build between the two carries one without the other — so the row
+      that can be destroyed by omission asks about itself.
+
+      `merge = !customAuthority`, and it is the SAME argument as the singleton arm's one door along:
+      a draft that has never seen the server's copy of this container sends "these are the keys I
+      HAVE", `plan_custom_write` shallow-merges them over `previous` (`custom_sections.py:1011-1012`),
+      and the seven answers the office typed on the web survive the one answer this phone recorded in
+      a courtyard. A REPLACE is claimed only where the phone has actually read the row, which is the
+      only evidence a client can have about a row it did not write. `merge` is omitted from the wire
+      when false because `ApiClient.retrofit` leaves `encodeDefaults` off — see [StageEntryBody.merge],
+      which is also why a server predating the field does not 422 every save.
+    */
+    val custom = stored?.custom.orEmpty().filterKeys { !it.startsWith("_") }
+    val customAnswered = custom.values.any { DwValues.isFilled(it) }
+    val customAuthority = authoritative && stored?.customSeen == true
+    if (customAnswered || (customAuthority && customHeld)) {
+        entries += StageEntryBody(
+            entityKey = CUSTOM_ENTITY_KEY,
+            data = JsonObject(custom),
+            merge = !customAuthority,
+        )
+    }
+
     // Intersected with the entities this stage actually declares, so a key left behind by a registry
     // that has since moved on cannot be sent as a deletion instruction for something else.
     val collectionKeys = spec.collections.map { it.key }.toSet()
@@ -1257,30 +1847,69 @@ internal fun buildStageBody(
 }
 
 /**
- * Whether the draft may claim `replaceCollections` for this stage.
+ * Whether this device holds a DEFINITION that asks anything at all on this stage.
  *
- * TWO WAYS A PHONE CAN HONESTLY KNOW WHAT THE SERVER HOLDS, and no third:
+ * True only when this device has actually read the definition ([DwCustomCopy.UNKNOWN] is refused) AND
+ * that definition asks something on this stage. Both halves are load-bearing and they fail
+ * differently: without the first, a phone that never fetched anything would tell the server "the
+ * designer cleared every custom answer" on the first save of any stage; without the second, the
+ * release carrying this code would write an empty `_custom` row for all 22 stages of every workshop
+ * that has a definition, re-pushing twenty-one stages that have nothing to say.
  *
- *  * [StageDraft.serverBaseline] — the draft was seeded from a successful read of the server's copy,
- *    or the workshop has no server record at all so there is nothing to be missing; or
- *  * the server has already acknowledged a payload built from this very draft, recorded as a
- *    signature. From that moment the server's copy of the stage IS this draft's, and a row that has
- *    since disappeared from the draft has genuinely been deleted here.
+ * **IT IS TWO OF THE THREE GATES ON AN EMPTY CONTAINER AND NEVER ALL OF THEM.** Holding the
+ * definition says which questions EXIST; it says nothing whatever about which are ANSWERED, and the
+ * answers live in a row this device may never have read. The third gate is [StageDraft.customSeen],
+ * asked in [buildStageBody] beside this one — see the argument written out there, and the walk that
+ * deleted the office's answers without it.
  *
- * A stage that satisfies neither is one this device has never seen the server's version of. It still
- * syncs — every value the designer typed is sent — it simply does not also assert that everything it
- * lacks should be destroyed.
- *
- * THAT LAST SENTENCE WAS FALSE FOR A SINGLETON UNTIL `StageEntryBody.merge` EXISTED, and it is worth
- * recording why rather than quietly correcting it. The authority this function grants was spent only
- * on `replaceCollections` and `emptiedEntities`, and the server applies both to COLLECTIONS; a
- * singleton's `data` was replaced wholesale on every write, by any client, authoritative or not. So a
- * draft that had never read the stage did assert exactly that everything it lacked should be
- * destroyed — silently, in place, with no RecordRevision behind it. The flag is now also driven from
- * here (see the singleton arm of `buildStage`), which is what finally makes the sentence true.
+ * It asks [customFieldsForStage] and therefore counts RETIRED fields as "asks something", which is
+ * correct: a retired field is retired precisely because it has an answer, so a stage carrying one is
+ * a stage whose container the server is still holding.
  */
+internal fun dwCustomHeldFor(definition: DwCustomCache?, stageKey: String): Boolean =
+    definition.isHeld && customFieldsForStage(definition, stageKey).isNotEmpty()
+
+/**
+ * Whether the draft may claim `replaceCollections`, and send its singleton as a replacement.
+ *
+ * ONE WAY A PHONE CAN HONESTLY KNOW WHAT THE SERVER HOLDS, AND NO SECOND: it has READ it.
+ * [StageDraft.stageSeen] is that read and nothing else sets it — not a save, not a successful sync,
+ * not a signature. A stage that has not been read still syncs in full; every value the designer typed
+ * is sent. It simply does not ALSO assert that everything it lacks should be destroyed.
+ *
+ * ── THE SECOND CLAUSE THIS FUNCTION USED TO HAVE, AND WHY DELETING IT IS NOT A NARROWING ─────────
+ *
+ * It also granted authority when "the server has already acknowledged a payload built from this very
+ * draft, recorded as a signature. From that moment the server's copy of the stage IS this draft's."
+ * That sentence is true of a payload that claimed to be the WHOLE truth of the stage — and a payload
+ * can only make that claim if the draft was ALREADY authoritative when it was built. So the clause
+ * could only ever add authority in the one case where the payload was a MERGE, which is exactly the
+ * case in which its premise is false: after a merge the server holds `previous ∪ sent`, a SUPERSET of
+ * this draft, and `previous` is the part this device has never seen.
+ *
+ * The clause was therefore redundant where it was right and wrong where it did anything, which is why
+ * it is gone rather than narrowed. Together with `recordStageSent` no longer stamping the draft, that
+ * closes the walk this defect was found by: office types a core field on the web → designer opens the
+ * stage in a courtyard → the download fails → a blank stage is seeded → one field is typed → the save
+ * lands on the drive home with `merge = true`, correctly, AND STAMPED THE BASELINE → from that moment
+ * the stage was "authoritative", so the very next payload — with no further typing at all, on the next
+ * background pass, because the signature no longer matched — went up as a full replacement holding
+ * only that one field, and `save_stage` replaced the singleton's `data` wholesale with no
+ * `RecordRevision` behind it.
+ *
+ * THE SIGNATURE STILL DOES ITS OWN JOB, which is not this one. It answers "have these exact bytes
+ * already been accepted", so a merge-acknowledged stage is not re-sent on every pass; it just no
+ * longer doubles as evidence about what the repository contains. A merge-acknowledged save earns
+ * exactly that and nothing more.
+ *
+ * `record` is still taken so every caller keeps passing the pair and a future reader sees at the call
+ * site that the signature was considered and rejected — it is deliberately unread. See the KDoc on
+ * [StageDraft.stageSeen] for what this costs a draft written before the rename, and `dwFoldServerStage`
+ * for how one online open of the stage pays it back.
+ */
+@Suppress("UNUSED_PARAMETER")
 internal fun isAuthoritative(stored: StageDraft?, record: StageSyncRecord?): Boolean =
-    stored?.serverBaseline == true || !record?.signature.isNullOrBlank()
+    stored?.stageSeen == true
 
 /**
  * One record's values as they go on the wire: protocol keys stripped, media references translated.
@@ -1414,8 +2043,15 @@ private fun swapMediaRefs(
  * SHA-256 of the encoded body rather than a cheaper hash, because a collision here does not mean a
  * wasted request — it means a stage that CHANGED is judged already sent, and a designer's corrections
  * sit on the phone for ever while the UI says everything is safe. That is worth a few microseconds.
+ *
+ * `internal` RATHER THAN PRIVATE SO A TEST CAN REPRODUCE THE CONDITION THE DEFECTS NEED. "The recorded
+ * signature already matches, so nothing is pending and nothing will ever be re-sent" is the premise
+ * both [StageSyncRecord.refusedFields] and [WorkshopSyncStatus.unsentDeletions] exist for, and a test
+ * that cannot construct a matching signature cannot set that premise up — it would assert the
+ * arithmetic while the stage sat in the `pending` arm, which is not where either defect lives. Same
+ * visibility, and the same reason, as [buildStageBody] and [isAuthoritative] beside it.
  */
-private fun signatureOf(body: StageSaveBody): String {
+internal fun signatureOf(body: StageSaveBody): String {
     val encoded = signatureJson.encodeToString(StageSaveBody.serializer(), body)
     return MessageDigest.getInstance("SHA-256")
         .digest(encoded.toByteArray())
@@ -1481,42 +2117,211 @@ private suspend fun recordStageSent(
     workshopId: String,
     stageKey: String,
     signature: String,
+    /** The payload that was accepted. Its own bytes decide what this acknowledgement may claim. */
+    built: BuiltStage,
     result: StageSaveResultDto,
 ) {
     val dropped = result.droppedKeys.takeIf { it.isNotEmpty() }
+    /*
+      CUSTOM DRIFT GETS ITS OWN SENTENCE AND IS NEVER FOLDED INTO THE ONE ABOVE — plan §4.
+
+      They are different facts with different remedies. `droppedKeys` means this build's FIELD
+      REGISTRY is ahead of the server's, which nobody in a cluster can do anything about and which is
+      worth reporting once. `droppedCustomKeys` means the DESIGNER edited their own sections on the
+      web and this phone is still holding the previous definition — which they can fix themselves, in
+      one tap, by opening the workshop with a bar of signal. Printing the registry sentence for that
+      would send them to report a bug that does not exist, and doing it on every save of every
+      workshop that has a custom section is how the one signal that matters gets ignored.
+
+      Both can be true at once, so both are said, joined rather than one winning.
+    */
+    val droppedCustom = result.droppedCustomKeys.takeIf { it.isNotEmpty() }
+    val notes = listOfNotNull(
+        dropped?.let { keys ->
+            "the server did not recognise ${keys.size} field${plural(keys.size)} and did not store " +
+                "them (${keys.joinToString(", ").take(160)}). This phone is running a newer field " +
+                "registry than the server."
+        },
+        droppedCustom?.let { keys ->
+            "this workshop's own sections no longer ask ${keys.size} " +
+                "question${plural(keys.size)} this phone still holds an answer for, so " +
+                (if (keys.size == 1) "it was" else "they were") +
+                " not stored (${keys.joinToString(", ").take(160)}). The sections have been edited " +
+                "since this phone last read them — open this workshop once with a connection."
+        },
+    ).takeIf { it.isNotEmpty() }?.joinToString(" ")
+
+    /*
+      A 200 THAT REFUSED SOME OF THE ANSWERS IS NOT A CLEAN SAVE, AND WAS BEING RECORDED AS ONE.
+
+      `StageSaveResultDto.errors` was decoded off every save this app has ever made and read by
+      nothing. `save_stage` writes every other field on the entry and puts the PREVIOUSLY STORED value
+      back under a refused key, so the repository is left holding the old answer while this phone goes
+      on showing the typed one — and because the payload's signature matches, nothing will ever send
+      it again. The stage then scored `isFullySynced` and the list row said "Backed up to the server".
+
+      Counted here, so the status is honest, and turned into sentences a designer can act on by
+      [dwDecodeStageRefusals] on the screen that has the payload to decode them against. The count is
+      what this file needs; the addressing is what the form needs, and neither is a copy of the other.
+    */
+    val refused = result.errors.values.sumOf { entry ->
+        (entry as? JsonObject)?.size ?: 1
+    }
+    val refusalNote = refused.takeIf { it > 0 }?.let { count ->
+        "the repository refused $count of the answers in this stage and kept what it already held " +
+            "for ${if (count == 1) "it" else "them"}. Everything else on the stage was saved, and " +
+            "nothing you typed has been thrown away — open the stage to see which answers, and what " +
+            "the repository holds."
+    }
+    /*
+      THE SWEEP TRIPWIRE. `StageSaveResultDto.removed` was decoded off every stage save this app has
+      ever made and read by NOTHING — the same silence that let `errors` hide a refused answer, one
+      field along, and the same remedy.
+
+      THAT SILENCE IS HOW THE `replaceCollections` BLOCKER SURVIVED. The API answered `removed: 3` to
+      a payload that had asked for no sweep at all — three rows this phone had never downloaded,
+      soft-deleted on a stage it had correctly judged it had no authority over — and no surface on the
+      phone repeated the number. The defect was found by reading the wire, not by using the app.
+
+      ASKED ONLY OF A PAYLOAD THAT DISCLAIMED THE SWEEP, which is what makes it a tripwire rather than
+      noise. When `replaceCollections` is true this device has read the stage and a deletion is what it
+      MEANT; the count is then expected and unpredictable from here, because the phone cannot know how
+      many rows the server holds. When it is false the payload made no claim about which rows survive,
+      so a non-zero `removed` is the server deleting something nobody on this device asked it to — and
+      there is no legitimate reason for that number to be anything but zero.
+
+      It reports rather than repairs, deliberately: the rows are already gone by the time this runs,
+      and inventing a recovery from a count with no keys in it would be a guess written into a
+      repository. What it buys is that the next occurrence is visible on the handset the day it
+      happens, instead of surviving another build.
+    */
+    val sweptNote = result.removed
+        .takeIf { it > 0 && !built.body.replaceCollections }
+        ?.let { count ->
+            "the server deleted $count row${plural(count)} from this stage that this device did not " +
+                "ask it to delete. This save claimed no authority over which rows exist, so it should " +
+                "have deleted none. Nothing you typed was lost, but rows entered elsewhere may have " +
+                "been — open this workshop with a connection and check this stage against the server."
+        }
+
+    val allNotes = listOfNotNull(notes, refusalNote, sweptNote)
+        .takeIf { it.isNotEmpty() }?.joinToString(" ")
+
     noteStage(context, workshopId, stageKey) {
         it.copy(
             signature = signature,
             syncedAt = Instant.now().toString(),
-            failure = dropped?.let { keys ->
-                "the server did not recognise ${keys.size} field${plural(keys.size)} and did not store " +
-                    "them (${keys.joinToString(", ").take(160)}). This phone is running a newer field " +
-                    "registry than the server."
-            },
-            failedAt = if (dropped == null) null else Instant.now().toString(),
+            failure = allNotes,
+            failedAt = if (allNotes == null) null else Instant.now().toString(),
             permanent = false,
             // The stage is on the server, so whatever skew once refused it is over. Cleared rather
             // than left standing: a record that still names an app run reads as unfinished business.
             skewRun = null,
+            refusedFields = refused,
+            /*
+              AND THE ADDRESSING, SO THE STAGE THE NOTE ABOVE SENDS THE DESIGNER TO CAN ANSWER THEM.
+
+              The sentence in `refusalNote` ends "open the stage to see which answers, and what the
+              repository holds" — and until this field existed, opening the stage showed nothing at all,
+              because the card lived in composition state that the act of leaving destroyed. Written
+              here, from the payload that was actually accepted, because this is the one place that
+              holds both halves at once: the response's error map and the body whose entry ORDER those
+              error keys index into.
+
+              NULL WHEN THERE IS NOTHING TO SHOW, and that is what makes a correction clear the card:
+              the save carrying the corrected answer comes back with an empty error map and writes null
+              over whatever was here. Exactly like [refusedFields] going to 0 beside it — one event,
+              both facts, so a red mark on a box can never outlive the count that justifies it.
+
+              `droppedCustomKeys` rides along because the card makes a claim about it: its heading said
+              "Everything else in this stage was saved" while this same response reported answers that
+              were not stored either. See [DwStageRefusalReport.droppedCustomKeys].
+            */
+            refusal = DwStageRefusalRecord(
+                errors = result.errors,
+                sent = built.body.entries.map(::dwSentEntryOf),
+                at = Instant.now().toString(),
+                droppedCustomKeys = result.droppedCustomKeys,
+            ).takeIf { !it.isEmpty },
+            // These notes are the SERVER's, not "files are still on this device", so the stale-note
+            // clear in `pushStages` must not sweep them away on the next pass. See [waitingOnFiles].
+            waitingOnFiles = false,
         )
     }
 
-    // THE SERVER NOW HOLDS THIS DRAFT'S VERSION OF THE STAGE, which settles both of the facts that
-    // decide what the NEXT payload may claim:
-    //
-    //  * the deletions this draft was still asserting have been carried out, so `emptiedEntities` is
-    //    cleared. Left standing it would be re-asserted on every subsequent save — and would then
-    //    delete a row entered on the web in the meantime, which is the very loss this field exists to
-    //    prevent, arriving by the other door.
-    //  * the draft and the server agree, so the draft is a baseline from here on even if it was
-    //    seeded blank after a failed download. It has earned the authority it was refused.
-    //
-    // Bookkeeping, not an edit: no value the designer typed is touched.
+    /*
+      WHAT AN ACKNOWLEDGEMENT ACTUALLY EARNS, WHICH IS LESS THAN THIS USED TO CLAIM.
+
+      It used to do two things unconditionally: clear `emptiedEntities`, and set `serverBaseline = true`
+      with the comment "the draft and the server agree, so the draft is a baseline from here on even
+      if it was seeded blank after a failed download. It has earned the authority it was refused."
+
+      THE SECOND SENTENCE IS FALSE FOR A MERGE SAVE and was the defect. `merge = true` asks the server
+      to KEEP the keys this payload does not carry, so what the repository holds afterwards is
+      `previous ∪ sent` — a SUPERSET of this draft, whose `previous` half this device has never seen.
+      Stamping there told the next save "you have read the server's copy", and the next save then sent
+      the singleton as a full replacement holding only the fields this handset happened to have. It
+      needed no further typing: the signature of a merge body differs from the signature of a replace
+      body, so the very next background pass rebuilt the stage as a replacement and sent it.
+
+      So authority is not written here at all any more — [StageDraft.stageSeen] is earned by a read and
+      by nothing else, and the walk above now ends with the second save merging exactly like the first.
+
+      THE FIRST — clearing the deletions — IS KEPT BUT SCOPED TO WHAT THE PAYLOAD ACTUALLY CARRIED.
+      `buildStageBody` sends `emptiedEntities` only when the draft is authoritative, so an
+      unauthoritative save carried NONE of them; clearing them anyway discarded the one record that a
+      designer had deleted the last row of a collection, and the rows stayed alive on the server for
+      ever with nothing on any screen saying so. That was survivable while every save promoted the
+      draft to a baseline one line below (the next save would carry them); with that promotion gone it
+      would be a permanent, silent loss, so the two changes have to land together. Only the keys this
+      body named are cleared, and anything the designer emptied since is kept for the next save — which
+      is the rule `unsentAfterPush` states for the same field on the web.
+
+      Bookkeeping, not an edit: no value the designer typed is touched.
+    */
+    val acknowledgedDeletions = built.body.emptiedEntities
+    /*
+      AND THE INDIVIDUAL ROWS, CLEARED ON THE SAME EVIDENCE AND SCOPED THE SAME WAY — see
+      [StageDraft.deletedRowKeys].
+
+      WHAT DISCHARGES A ROW DELETION IS THE SWEEP, so this asks the payload's own two facts rather
+      than the response's. `replaceCollections` is the claim that the named entities are now exactly
+      these rows; when the server accepted a body carrying it, every row of those entities that the
+      payload did NOT name has been deleted — which is precisely what a partial deletion is. The
+      entities covered are the ones the payload NAMES, because the sweep is scoped to them.
+
+      GATED ON `replaceCollections`, WITHOUT WHICH NOTHING WAS SWEPT AT ALL. An unauthoritative save
+      merges: it carries no claim about which rows exist, so the deleted row is still alive on the
+      server and the key is still owed. Clearing it here would be the same permanent, silent loss
+      that clearing `emptiedEntities` unconditionally used to be, one level down — the record would be
+      gone, `statusOf` would stop counting it, and the row would print in the report for ever.
+    */
+    val sweptEntities: Set<String> =
+        if (built.body.replaceCollections) {
+            built.body.entries.mapTo(HashSet()) { it.entityKey } + acknowledgedDeletions
+        } else {
+            emptySet()
+        }
+    if (acknowledgedDeletions.isEmpty() && sweptEntities.isEmpty()) return
     WorkshopDraftStore.updateBookkeeping(context, workshopId) { draft ->
         val stage = draft.stages[stageKey] ?: return@updateBookkeeping draft
-        if (stage.emptiedEntities.isEmpty() && stage.serverBaseline) return@updateBookkeeping draft
+        val remaining = stage.emptiedEntities.filterNot { it in acknowledgedDeletions }
+        val remainingRows = stage.deletedRowKeys.filterNot { key ->
+            key.substringBefore(DW_ROW_KEY_SEPARATOR, "") in sweptEntities
+        }
+        if (
+            remaining.size == stage.emptiedEntities.size &&
+            remainingRows.size == stage.deletedRowKeys.size
+        ) {
+            return@updateBookkeeping draft
+        }
         draft.copy(
-            stages = draft.stages + (stageKey to stage.copy(emptiedEntities = emptyList(), serverBaseline = true))
+            stages = draft.stages + (
+                stageKey to stage.copy(
+                    emptiedEntities = remaining,
+                    deletedRowKeys = remainingRows,
+                )
+            )
         )
     }
 }

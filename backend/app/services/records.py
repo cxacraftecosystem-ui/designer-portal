@@ -414,20 +414,70 @@ async def attach_location(data: dict[str, Any]) -> dict[str, Any]:
 _UNSEARCHABLE = {c: None for c in range(32) if c not in (9, 10, 13)}
 
 
-def contains(value: str) -> dict[str, Any]:
-    """A case-insensitive `contains` filter, with the bytes Postgres cannot store stripped out.
+#: The LIKE metacharacters, and the escape that neutralises them. **THE BACKSLASH MUST BE FIRST.**
+#: Escaping ``%`` before ``\`` would turn a typed backslash into an escape for the escape and change
+#: what the next character means — the classic ordering bug in every escaping routine ever written.
+_LIKE_METACHARACTERS = ("\\", "%", "_")
 
-    Every text search in the app funnels through here (57 call sites), which is why the sanitising
-    lives here rather than in each route: a single NUL byte pasted into any search box — /search,
-    artisans, crafts, tools, products, media, processes, questionnaires, users — returned a 500 from
-    every one of them. Stripping is the right response rather than rejecting: a researcher who
-    pasted a name out of a PDF and picked up a stray control character wants their search to run,
-    not a validation error about a byte they cannot see.
+
+def contains(value: str) -> dict[str, Any]:
+    """A case-insensitive `contains` filter: control bytes stripped, LIKE metacharacters escaped.
+
+    Every text search in the app funnels through here (67 call sites), which is why both of the
+    treatments below live here rather than in each route.
+
+    ── THE BYTES POSTGRES CANNOT STORE ─────────────────────────────────────────────────────────────
+    A single NUL byte pasted into any search box — /search, artisans, crafts, tools, products, media,
+    processes, questionnaires, users — returned a 500 from every one of them. Stripping is the right
+    response rather than rejecting: a researcher who pasted a name out of a PDF and picked up a stray
+    control character wants their search to run, not a validation error about a byte they cannot see.
 
     Tab, newline and carriage return are deliberately kept — Postgres stores them happily and they
     can legitimately appear in a pasted multi-line name.
+
+    ── AND THE PATTERN SYNTAX, WHICH LEAKED FOR THE LIFE OF EVERY SEARCH BOX ────────────────────────
+    Prisma's ``contains`` compiles to ``ILIKE '%' || term || '%'`` and the term was interpolated
+    unescaped, so ``%`` and ``_`` were HONOURED as wildcards rather than matched as characters.
+    Measured live against this database, admin token, before the escape was added:
+
+    ==========================================  ======  ================================
+    request                                     rows    correct answer
+    ==========================================  ======  ================================
+    ``eligible-viewers?search=zzzznomatch``     0       0
+    ``eligible-viewers?search=_``               2000    0 — no name or email holds one
+    ``eligible-viewers?search=%``               2000    0
+    ``eligible-viewers?search=_designer``       635     0 — ``_`` matched any character
+    ``artisans?search=_``                       731     every artisan
+    ``artisans?search=%``                       731     every artisan
+    ==========================================  ======  ================================
+
+    **THIS WAS NEVER SQL INJECTION.** Prisma parameterises and the values arrive bound; what leaked
+    was pattern syntax, not SQL. What it cost was the opposite of what a search box is for: an admin
+    pasting a colleague's full address — ``first_last@org`` — to narrow a list they had just been
+    told was truncated got a WIDER result than they typed, because ``_`` matched any character.
+
+    THE ESCAPE IS HONOURED THROUGH A BOUND PARAMETER, and that was checked rather than assumed —
+    Postgres' default LIKE escape is the backslash and no ``ESCAPE`` clause is needed. Measured on
+    this database:
+
+    ==========  ===================================================================
+    pattern     matches
+    ==========  ===================================================================
+    ``_``       ``first_last@org``, ``firstXlast@org``, ``plain@org``, ``100% …``
+    ``\\_``      ``first_last@org`` and nothing else
+    ``%``       everything
+    ``\\%``      ``100% cotton`` and nothing else
+    ``\\\\``     ``back\\slash`` and nothing else
+    ==========  ===================================================================
+
+    THE SIBLING BELOW DELIBERATELY DOES NOT DO THIS. :func:`plain` compares EQUAL, and an ``=``
+    comparison has no pattern syntax in it — escaping there would stop ``?state=A_P`` from matching
+    the row that literally is ``A_P``, turning a fix into a new defect.
     """
-    return {"contains": value.translate(_UNSEARCHABLE), "mode": "insensitive"}
+    escaped = value.translate(_UNSEARCHABLE)
+    for character in _LIKE_METACHARACTERS:
+        escaped = escaped.replace(character, "\\" + character)
+    return {"contains": escaped, "mode": "insensitive"}
 
 
 def plain(value: str) -> str:

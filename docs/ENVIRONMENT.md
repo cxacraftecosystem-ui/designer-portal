@@ -130,6 +130,12 @@ Emitted by `app.main.SecurityHeadersMiddleware`. Defaults are correct for local 
 | `AWS_S3_PUBLIC_BASE_URL` | No | unset | No | Base URL used to build readable media links. On AWS use the dual-stack host: `https://fieldrepo-media-626159998512.s3.dualstack.ap-south-1.amazonaws.com`. |
 | `AWS_S3_SSE_ALGORITHM` | No | `AES256` | No | Server-side encryption requested on uploads the **API** starts (multipart create). `aws:kms` needs a key policy granting the media IAM user. Set it **empty** for local MinIO without a KMS backend, which rejects the header outright. Presigned single PUTs cannot carry it — the bucket's default-encryption setting covers those. |
 
+### Offline speech model artifacts
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `ASR_MODEL_DIR` | No | **unset** | No | Directory the API reads ASR model files out of, one subdirectory per artifact id. Unset means `/api/asr-models` reports every artifact as unpublished and the byte routes answer **503** — a deployment that has not been given the bytes must say so, never serve a short body. A blank value counts as unset, so `ASR_MODEL_DIR=""` cannot resolve to the process's working directory. A filesystem path rather than an object-storage key **on purpose**: the SHA-256 this endpoint publishes is computed from the file on each change, so there is no stored copy of it to drift, and that is only affordable against a local read. The bytes are not in git (365 MB) — the operator step that places them, and the Kubernetes shapes for it, are in [ASR-MODEL-HOSTING.md](ASR-MODEL-HOSTING.md) §3. |
+
 ### Web origins and CORS
 
 | Variable | Required | Default | Secret | Notes |
@@ -335,6 +341,50 @@ from your shell — use an IAM admin user's key pair, never root keys. `terrafor
 | A provider key was added in the Settings hub and nothing changed | It should take effect immediately with no restart. If it did not, the value is in `.env` rather than `ManagedSecret`, and `.env` is only the fallback — but `.env` needs a restart because `get_settings()` is `@lru_cache`d (rule 2) |
 | `/docs` 404s after a deploy | Correct. `BACKEND_EXPOSE_DOCS` defaults to `false`; set it `true` locally |
 | A demoted user still has their old privileges | For at most `AUTH_USER_CACHE_TTL_SECONDS` (5 s), and only if the demotion happened in a *different* process — `psql`, the seed script. A demotion through the API invalidates immediately. `AUTH_USER_CACHE_ENABLED=false` removes the window entirely |
+| `prisma generate` dies with `UnicodeEncodeError: 'charmap' codec can't encode characters in position …` | **Set `PYTHONUTF8=1`.** See below — this one is worth its own section, because the failure names neither the file nor the cause |
+| `prisma generate` dies with `Error: spawn prisma-client-py ENOENT` | The venv's `Scripts` directory is not on `PATH`. The Node CLI spawns the Python generator as a sibling executable, so `python -m prisma` alone is not enough: prepend `backend/.venv/Scripts` to `PATH` for the call |
+| A route 500s with `Field does not exist in enclosing type` or `db.<model>` raises `AttributeError` | The generated client is behind `schema.prisma`. Regenerate — and if that fails, it is one of the two rows above |
+
+---
+
+## Regenerating the Prisma client on Windows
+
+**`PYTHONUTF8=1` IS REQUIRED, AND WITHOUT IT REGENERATION IS NOT MERELY AWKWARD — IT IS IMPOSSIBLE.**
+
+```bash
+cd backend
+PATH="$PWD/.venv/Scripts:$PATH" PYTHONUTF8=1 .venv/Scripts/python.exe -m prisma generate --schema prisma/schema.prisma
+```
+
+`prisma/generator/generator.py` writes the packaged schema with `pathlib.write_text()` and no
+`encoding=`, so it encodes at the **locale default** — cp1252 on a standard Windows install.
+`prisma/schema.prisma` contains `─` (U+2500) and `▶` (U+25B6) in its comment banners, and cp1252 can
+encode neither. Every run dies with a character offset and no mention of the schema, the encoding or
+the characters involved.
+
+**Why this is written down rather than left to be rediscovered.** It cost this repository a
+**CRITICAL** finding. The client froze at its last successful generation while `schema.prisma` went
+on being edited; four models and three columns drifted out of the client; eleven endpoints were dead
+on the wire and the AI-verb daily cap could not count at all — and none of it was visible, because a
+suite of 2000+ tests that never drives those endpoints against a database stayed green throughout.
+A build step that fails only on some machines, for a reason its error message does not name, drifts
+silently until something downstream is already broken.
+
+Two things that follow:
+
+* **Do not "fix" the schema by removing the box-drawing characters.** They are in comments that
+  explain the model, the next non-ASCII character to arrive would reintroduce this, and the actual
+  defect is the missing `encoding=` upstream. `PYTHONUTF8=1` addresses the cause for every character,
+  not just the two that happen to be there today.
+* **Regenerate with no test run in flight.** It rewrites files inside `site-packages/prisma/` that a
+  running `pytest` is importing, which produces an inexplicable red build in somebody else's lane.
+
+**Check it worked** rather than trusting the exit code — compare the schema's models against the
+client's classes; they must be equal in number and name:
+
+```bash
+python -c "import re; s=set(re.findall(r'^model (\w+)', open('prisma/schema.prisma',encoding='utf-8').read(), re.M)); c=set(re.findall(r'^class (\w+)\(', open('.venv/Lib/site-packages/prisma/models.py',encoding='utf-8').read(), re.M)); print(len(s), len(c), sorted(s-c))"
+```
 
 ---
 

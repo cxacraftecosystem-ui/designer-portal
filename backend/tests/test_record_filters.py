@@ -236,3 +236,95 @@ def test_no_route_still_puts_a_raw_filter_string_into_an_enum_column():
         "these assign an unvalidated query string to an enum column, which is a 500:\n"
         + "\n".join(offenders)
     )
+
+
+# --------------------------------------------------------------------------------------
+# The pattern syntax that leaked out of every search box in the application
+#
+# Prisma's `contains` compiles to `ILIKE '%' || term || '%'` and the term was interpolated
+# unescaped, so `%` and `_` were HONOURED as wildcards rather than matched as characters.
+# Measured live against the running API before the escape was added:
+#
+#   eligible-viewers?search=zzzznomatch ->    0 rows   correct
+#   eligible-viewers?search=_           -> 2000 rows   should be 0 — no name or email holds one
+#   eligible-viewers?search=%           -> 2000 rows   should be 0
+#   eligible-viewers?search=_designer   ->  635 rows   should be 0 — `_` matched any character
+#   artisans?search=zzzznomatch         ->    0 rows   correct
+#   artisans?search=_                   ->  731 rows   every artisan
+#   artisans?search=%                   ->  731 rows   every artisan
+#
+# NOT SQL INJECTION: Prisma parameterises and the values arrive bound. What leaked was pattern
+# syntax. What it COST is the opposite of what a search box is for — an admin pasting a colleague's
+# full address `first_last@org` to narrow a list they had just been told was truncated got a WIDER
+# result than they typed, because `_` matched any character.
+# --------------------------------------------------------------------------------------
+
+
+def test_a_wildcard_typed_into_a_search_box_is_matched_rather_than_honoured():
+    from app.services.records import contains
+
+    # The two metacharacters, escaped so Postgres compares them as characters.
+    # RAW STRINGS THROUGHOUT: `"\_"` is not an escape Python knows, so it silently keeps the
+    # backslash AND warns — an assertion that happens to be right for a reason that will stop being
+    # true. `r"\_"` says the two characters out loud.
+    assert contains("_")["contains"] == r"\_"
+    assert contains("%")["contains"] == r"\%"
+    assert contains("_designer")["contains"] == r"\_designer"
+    assert contains("first_last@org")["contains"] == r"first\_last@org"
+    assert contains("100%")["contains"] == r"100\%"
+
+    # An ordinary term is untouched, which is the case that must not regress: every one of the 67
+    # call sites is overwhelmingly this.
+    assert contains("bagru")["contains"] == "bagru"
+    assert contains("Ramesh Kumar")["contains"] == "Ramesh Kumar"
+
+
+def test_the_backslash_is_escaped_first_or_the_escape_escapes_itself():
+    r"""THE ORDERING BUG THIS GUARDS AGAINST, which is the classic one in every escaping routine.
+
+    Escape `%` before `\` and a typed backslash becomes an escape for the escape. A designer typing
+    the two characters `\%` would be sent `\` + `\%` under the WRONG order — that is a literal
+    backslash followed by an UNESCAPED `%`, so the wildcard is back, by way of the fix.
+    """
+    from app.services.records import contains
+
+    # One typed backslash -> one escaped backslash.
+    assert contains("\\")["contains"] == r"\\"
+    # A typed backslash AND a typed percent -> both escaped, backslash first: `\\` then `\%`.
+    assert contains(r"\%")["contains"] == r"\\\%"
+    # Spelled out once without any escaping at all, so the expectation cannot be read two ways.
+    backslash = chr(92)
+    assert contains(backslash + "%")["contains"] == backslash * 2 + backslash + "%"
+
+
+def test_the_control_byte_strip_still_runs_and_composes_with_the_escape():
+    """Both treatments, on one value. The NUL goes, and what is left is escaped."""
+    from app.services.records import contains
+
+    assert contains("bag\x00ru")["contains"] == "bagru"
+    assert contains("first_last\x00@org")["contains"] == r"first\_last@org"
+    # Tab/newline/CR are deliberately kept and are not LIKE metacharacters, so they pass through.
+    assert contains("two\nlines")["contains"] == "two\nlines"
+
+
+def test_an_equality_filter_is_deliberately_NOT_escaped():
+    """`plain` compares EQUAL, and an `=` comparison has no pattern syntax in it.
+
+    Escaping here would be a new defect wearing the fix's clothes: `?state=A_P` would stop matching
+    the row that literally IS `A_P`. The two helpers sit next to each other and treat the same
+    character differently ON PURPOSE, which is why this asserts it rather than leaving it to be
+    "tidied up" by the next reader.
+    """
+    from app.services.records import plain
+
+    assert plain("A_P") == "A_P"
+    assert plain("100%") == "100%"
+    assert plain("back" + chr(92) + "slash") == "back" + chr(92) + "slash"
+    # It still strips the byte Postgres cannot store, which is the job it does have.
+    assert plain("A\x00P") == "AP"
+
+
+def test_the_search_route_carries_the_escape_all_the_way_into_the_where():
+    """The funnel is only a funnel if the routes actually go through it."""
+    wheres = asyncio.run(build_record_wheres(ADMIN, q="first_last@org"))
+    assert wheres["artisans"]["OR"][0]["name"]["contains"] == r"first\_last@org"

@@ -16,24 +16,24 @@ API lags the tree by however many commits have not been deployed; see
 
 | | Count |
 |---|---|
-| Prisma models | **44** |
-| Prisma enums | **16** |
-| `@@index` declarations | 111 |
-| `@@unique` declarations | 11 |
+| Prisma models | **51** |
+| Prisma enums | **20** |
+| `@@index` declarations | 127 |
+| `@@unique` declarations | 14 |
 
-Models: `User`, `AssignedTask`, `Feedback`, `UserPreference`, `AppRelease`, `Craft`, `Location`, `Artisan`, `Workshop`, `WorkshopArtisan`, `WorkshopCraft`, `ProductDocumentation`, `ToolDocumentation`, `ToolArtisan`, `MediaFile`, `MediaProcessingJob`, `QuestionnaireSection`, `QuestionnaireSectionStatus`, `QuestionnaireQuestion`, `QuestionnaireInterview`, `QuestionnaireInterviewArtisan`, `QuestionnaireResponse`, `Questionnaire`, `QuestionnaireFormSection`, `QuestionnaireFormQuestion`, `QuestionnaireFormEntry`, `QuestionnaireFormAnswer`, `Process`, `ProcessStep`, `ReviewLog`, `AppSetting`, `WorkshopAssignment`, `ManagedSecret`, `SecretTestResult`, `DataAccessGrant`, `DataAccessScopeItem`, `EntryComment`, `RecordRevision`, `DesignWorkshop`, `DesignWorkshopViewer`, `DwStageEntry`, `DwReportExport`, `DesignerRoster`, `DesignerProfile`.
+Models: `User`, `AssignedTask`, `Feedback`, `UserPreference`, `AppRelease`, `Craft`, `Location`, `Artisan`, `Workshop`, `WorkshopArtisan`, `WorkshopCraft`, `ProductDocumentation`, `ToolDocumentation`, `ToolArtisan`, `MediaFile`, `MediaProcessingJob`, `QuestionnaireSection`, `QuestionnaireSectionStatus`, `QuestionnaireQuestion`, `QuestionnaireInterview`, `QuestionnaireInterviewArtisan`, `QuestionnaireResponse`, `Questionnaire`, `QuestionnaireFormSection`, `QuestionnaireFormQuestion`, `QuestionnaireFormEntry`, `QuestionnaireFormAnswer`, `Process`, `ProcessStep`, `ReviewLog`, `AppSetting`, `WorkshopAssignment`, `ManagedSecret`, `SecretTestResult`, `DataAccessGrant`, `DataAccessScopeItem`, `EntryComment`, `RecordRevision`, `DesignWorkshop`, `DesignWorkshopViewer`, `DwStageEntry`, `DwCustomSection`, `DwCustomField`, `DwReportExport`, `DwAiLayer`, `DwAiLayerDecision`, `DwWorkshopConsentDecision`, `DwDictationDailyUsage`, `DwAiVerbDailyUsage`, `DesignerRoster`, `DesignerProfile`.
 
-Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, `ProductType`, `MarketDemand`, `MakerType`, `TraditionType`, `ReviewRecordType`, `MediaProcessingJobType`, `MediaProcessingJobStatus`, `ProcessStepType`, `DataAccessTier`, `DataAccessStatus`, `DesignWorkshopStatus`.
+Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, `ProductType`, `MarketDemand`, `MakerType`, `TraditionType`, `ReviewRecordType`, `MediaProcessingJobType`, `MediaProcessingJobStatus`, `ProcessStepType`, `DataAccessTier`, `DataAccessStatus`, `DesignWorkshopStatus`, `DwDictationConsent`, `DwAiLayerKind`, `DwAiTier`, `DwAiDecision`.
 
 ## API surface
 
-**217 operations** in the working tree — 102 GET, 62 POST, 22 DELETE,
-19 PATCH, 12 PUT. 2 of them (`/health`, `/health/ready`) are declared
+**237 operations** in the working tree — 110 GET, 72 POST, 23 DELETE,
+19 PATCH, 13 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
 |---|---|
-| `design_workshops.py` | 22 |
+| `design_workshops.py` | 39 |
 | `media.py` | 20 |
 | `questionnaire.py` | 20 |
 | `workshops.py` | 19 |
@@ -54,6 +54,7 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `users.py` | 5 |
 | `auth.py` | 4 |
 | `app_release.py` | 3 |
+| `asr_models.py` | 3 |
 | `design_workshop_viewers.py` | 3 |
 | `export.py` | 3 |
 | `feedback.py` | 3 |
@@ -107,24 +108,30 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 61 | 1251 `def test_` | `python -m pytest -q` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 54 | 312 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit | present | — | `:app:testDebugUnitTest` reports NO-SOURCE |
-| Android instrumented | **none** — the `src/androidTest` source set does not exist | — | not run in CI |
+| Backend unit (`backend/tests/`) | 77 | 1965 `def test_` | `python -m pytest -q` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 75 | 516 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 91 | 1156 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
 parametrised cases expand. Neither the backend suite nor the e2e suite is a CI gate today — see
 [CI.md](CI.md) and [QA_AUDIT.md](QA_AUDIT.md).
 
+**THIS TABLE USED TO SAY `:app:testDebugUnitTest` REPORTS NO-SOURCE, AND IT WAS FALSE.** The string
+was a hard-coded literal in the generator, and the counter beside it only read a flat directory —
+which finds nothing in `src/test/java/com/…`, so the emptiness it reported was its own. The suite
+runs: **1156 tests, 0 failures** on 2026-08-15. A generated fact is only as true as its generator,
+and this one asserted an absence it had never looked for.
+
 ## Code volume
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 0 | 0 | 141 | 58,986 |
-| `frontend/app` | 0 | 0 | 54 | 22,246 |
-| `frontend/components` | 0 | 0 | 165 | 46,556 |
-| `frontend/lib` | 0 | 0 | 35 | 19,764 |
-| `android/app/src/main/java` | 0 | 0 | 83 | 75,231 |
+| `backend/app` | 142 | 66,391 | 154 | 76,077 |
+| `frontend/app` | 57 | 23,206 | 59 | 23,382 |
+| `frontend/components` | 168 | 48,552 | 171 | 51,347 |
+| `frontend/lib` | 39 | 22,927 | 41 | 25,156 |
+| `android/app/src/main/java` | 113 | 103,127 | 138 | 119,772 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
