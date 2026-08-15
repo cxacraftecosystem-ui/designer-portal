@@ -1,10 +1,12 @@
 package com.designprototype.workshop.data
 
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * "Reason for the override" is required once either override count is filled in — on the phone too.
@@ -136,6 +138,112 @@ class DwConditionalRequirementTest {
         )
         assertTrue(errors.getValue("countOverrideReason").contains("not a valid amount"))
         assertFalse(errors.getValue("countOverrideReason").contains("is required once"))
+    }
+
+    // ── THE RULE HAS TO EXIST *AND* BE CALLED ────────────────────────────────────────────────────
+    //
+    // Everything above is run against `outcomes` as this file declares it. That proves the port is
+    // faithful and proves nothing at all about whether a designer ever meets it, and the two failures
+    // it cannot see are exactly the two that were found:
+    //
+    //   1. the entity this file hand-builds drifts from the one the APK ships — `checkConditional`
+    //      bails with `entity.field(dependent) ?: return`, silently, and every test above still
+    //      passes;
+    //   2. nothing in production calls [DwValues.validate] at all. That was true when the port landed:
+    //      the rule was ported, tested and unreachable, which is the same as not having it. A ported
+    //      rule with no caller is a rule that does not exist.
+    //
+    // The two tests below are the ones that fail in either case.
+
+    /** The module root differs between the IDE and Gradle; same walk-up the shipped-registry tests use. */
+    private fun repoFile(vararg relative: String): File {
+        var dir: File? = File(".").absoluteFile
+        while (dir != null) {
+            for (path in relative) {
+                val candidate = File(dir, path)
+                if (candidate.isFile) return candidate
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("none of ${relative.toList()} found from ${File(".").absolutePath}")
+    }
+
+    private fun asset(name: String): File = repoFile(
+        "src/main/assets/$name",
+        "app/src/main/assets/$name",
+        "android/app/src/main/assets/$name",
+    )
+
+    private fun source(name: String): File = repoFile(
+        "src/main/java/com/designprototype/workshop/$name",
+        "app/src/main/java/com/designprototype/workshop/$name",
+        "android/app/src/main/java/com/designprototype/workshop/$name",
+    )
+
+    @Test
+    fun `the entity the APK ships fires the rule, with its own labels in the sentence`() {
+        val schema: SchemaResponse = Json { ignoreUnknownKeys = true; isLenient = true }
+            .decodeFromString(SchemaResponse.serializer(), asset("design-workshop-schema.json").readText())
+
+        val shipped = schema.stages
+            .flatMap { it.entities }
+            .firstOrNull { it.key == "outcomes" }
+        assertTrue(
+            "the registry the APK ships no longer declares the `outcomes` entity the rule is keyed " +
+                "by — CONDITIONALLY_REQUIRED is keyed by entity key and would now match nothing",
+            shipped != null,
+        )
+        val entity = shipped!!
+
+        val errors = DwValues.validate(
+            entity,
+            mapOf("designsCountOverride" to JsonPrimitive(24)),
+            // The production call's own argument — see `marks` in StageScreen.kt.
+            enforceRequired = false,
+        )
+
+        // Built from the SHIPPED labels rather than repeated from this file, so a renamed label in the
+        // asset moves the expectation with it and a renamed KEY fails outright — which is the drift
+        // `checkConditional`'s `?: return` would otherwise swallow in silence.
+        val labelOf = { key: String ->
+            entity.field(key)?.label
+                ?: throw AssertionError("the shipped `outcomes` entity no longer declares `$key`")
+        }
+        assertEquals(
+            "${labelOf("countOverrideReason")} is required once ${labelOf("designsCountOverride")} " +
+                "or ${labelOf("prototypesCountOverride")} is filled in.",
+            errors["countOverrideReason"],
+        )
+    }
+
+    @Test
+    fun `the stage form calls the validator, and draws what it says on the box`() {
+        /*
+          THE CALLER GUARD. When the rule was ported, `DwValues.validate` had no caller anywhere in
+          `android/app/src` outside this file — so the refusal it exists to show offline was still
+          only ever met a fortnight later, as a sync card about a stage finished in another district.
+          It is now called once, in `EntitySection`, and the result is drawn on the box itself.
+
+          Asserted on the source because there is no other way to reach it from a JVM unit test:
+          `EntitySection` is a private @Composable. The same argument DwTier2GateTest makes for
+          scanning DwTier2ModelUi.kt — when the whole of a protection is the presence or absence of
+          one call, the presence or absence of that call is the thing to assert.
+        */
+        val screen = source("ui/designworkshop/StageScreen.kt").readText()
+
+        assertTrue(
+            "StageScreen.kt no longer calls DwValues.validate. The handset's copy of the server's " +
+                "`validate_entry` is then dead code again, and stage 18's override reason is refused " +
+                "for the first time on a sync card a fortnight later. Wire it back into the marks " +
+                "`EntitySection` draws, not into a new second validator.",
+            Regex("""DwValues\.validate\(""").containsMatchIn(screen),
+        )
+        assertTrue(
+            "StageScreen.kt computes validation marks and no longer hands them to a field as " +
+                "`error = marks[...]`. A mark nothing draws is the same as no mark: the designer " +
+                "meets the refusal only after a sync.",
+            Regex("""error\s*=\s*marks\[""").containsMatchIn(screen),
+        )
     }
 
     /** Every other entity in the registry is untouched by the table. */

@@ -2483,7 +2483,7 @@ internal suspend fun dwAdoptDeletionRecordAfterPush(
     loadStage: suspend () -> StageDraft?,
     adopt: (Set<String>, Set<String>) -> Unit,
 ) {
-    run {
+    withContext(NonCancellable) {
         dwDeletionRecordOnDisk(loadStage())?.let { (entities, rows) ->
             adopt(
                 entities + (screenEmptied() - sentEmptied),

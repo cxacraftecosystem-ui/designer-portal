@@ -188,20 +188,49 @@ def test_a_refused_step_deletion_writes_no_revision_for_the_field_it_also_carrie
 
 def test_a_refused_step_deletion_names_nobody_as_an_editor(env):
     """The same refusal read from the other end: not merely "no notes revision", but no revision
-    AUTHORED BY the account that was turned away, whatever fields it carried. Written separately
-    because the harm is the attribution — an admin reading the history would see the stranger's name
-    against an edit to a record they were refused."""
+    AUTHORED BY the account that was turned away. Written separately because the harm is the
+    attribution — an admin reading the history would see the stranger's name against an edit to a
+    record they were refused.
+
+    THIS PAYLOAD MUST CARRY ONLY FIELDS THE STRANGER IS ALLOWED TO FILL, AND THAT IS THE WHOLE
+    CRAFT OF THE TEST. It was first written with ``"name": "Renamed by somebody with no right to"``
+    in it, and passed against the UNFIXED ordering — which makes it worth spelling out, because it
+    is the exact way a guard test rots into a tautology. ``name`` is populated on every process
+    ``_process`` creates, so ``assert_can_contribute_fields`` raised 403 for the LOCKED FIELD
+    (deps.py: "Only the original contributor or an admin can change or clear populated field(s)")
+    while still inside ``guard_record_edit`` and BEFORE it reaches ``record_revision``. The 403 the
+    test asserted was real, the empty ledger it asserted was real, and neither had anything to do
+    with the relation guard or with where it sits: the request never got as far as the code under
+    test. Bite-checked 2026-08-16 by moving the relation guard back below ``guard_record_edit`` —
+    the version below FAILS with a revision authored by ``stranger_id``, the ``name``-carrying
+    version PASSED.
+
+    So: ``notes`` only, and ``notes`` is empty on this row by construction (``notes=None`` above).
+    An empty field is one an ordinary contributor MAY fill — that is the contribution model this
+    repository is built on — so the field guard passes, ``record_revision`` is reached, and the
+    ONLY thing left that can refuse is ``assert_can_contribute_relation`` on the emptied step list.
+    That is precisely the window the flaw lived in. If you ever add a field to this payload, check
+    first that it is empty on the created row, or you will silently disarm this test again.
+    """
     process = _process(env, notes=None)
 
     refused = env["client"].patch(f"/api/processes/{process['id']}", json={
-        "name": "Renamed by somebody with no right to",
-        "notes": "And a note with it.",
+        "notes": "A note carried in alongside a step deletion the caller may not make.",
         "steps": [],
     }, headers=env["stranger"])
     assert refused.status_code == 403, refused.text
+    # The refusal is the RELATION guard's, not the field guard's — otherwise the request stopped
+    # short of the reordering and this test is measuring nothing. Pinned, because the difference is
+    # invisible from the status code alone and is what the paragraph above is about.
+    assert "steps" in refused.text, (
+        f"expected the relation guard to be what refused; got {refused.text}"
+    )
 
     authors = {row["editedById"] for row in _revisions(env, process["id"])}
     assert env["stranger_id"] not in authors, "a refused caller is recorded as having edited"
+    # ...and the steps the caller tried to delete are all still there, so the 403 was total.
+    detail = env["client"].get(f"/api/processes/{process['id']}", headers=env["owner"]).json()
+    assert [s["name"] for s in detail["steps"]] == [s["name"] for s in THREE_STEPS]
 
 
 def test_a_refused_locked_field_edit_leaves_no_revision_either(env):

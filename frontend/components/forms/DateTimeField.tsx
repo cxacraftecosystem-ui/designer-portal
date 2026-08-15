@@ -201,7 +201,7 @@ export type DateRefusal = { date: Date; bound: "min" | "max" };
 export function refusalStands(held: DateRefusal | null, text: string): boolean {
   if (!held) return false;
   const typed = parseTypedDate(text);
-  return typed === undefined || typed.getTime() === held.date.getTime() || true;
+  return typed !== undefined && typed.getTime() === held.date.getTime();
 }
 
 /** Accepts `9:30`, `09:30`, `0930`, `9.30`, `9 pm`, `9:30pm`. Returns the `HH:mm` wire value. */

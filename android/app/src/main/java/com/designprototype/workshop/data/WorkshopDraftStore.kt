@@ -759,6 +759,13 @@ object WorkshopDraftStore {
     }
 
     /**
+     * Where a draft from the future is kept: beside the original, named for the format it came from
+     * and timestamped so a second downgrade cannot clobber the evidence from the first.
+     */
+    private fun futureDraftSibling(target: File, onDiskVersion: Int): File =
+        File(target.parentFile, "draft.newer-v$onDiskVersion-${System.currentTimeMillis()}.json")
+
+    /**
      * Set aside a draft written by a LATER build than this one, before this build overwrites it.
      *
      * ── THE DEFECT THIS CLOSES ────────────────────────────────────────────────────────────────────
@@ -808,13 +815,6 @@ object WorkshopDraftStore {
      * itself ignores, given to somebody who has no way to act on it in the two milliseconds before
      * the save lands. See [writeDraftIn] for the refusal that now backs it up.
      */
-    /**
-     * Where a draft from the future is kept: beside the original, named for the format it came from
-     * and timestamped so a second downgrade cannot clobber the evidence from the first.
-     */
-    private fun futureDraftSibling(target: File, onDiskVersion: Int): File =
-        File(target.parentFile, "draft.newer-v$onDiskVersion-${System.currentTimeMillis()}.json")
-
     private fun quarantineFutureDraft(file: File, workshopId: String, onDiskVersion: Int, kept: File): Boolean {
         val moved = runCatching { file.renameTo(kept) }.getOrDefault(false)
         alert.set(
