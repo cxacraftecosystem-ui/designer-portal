@@ -106,6 +106,14 @@ import {
   type DwSummary,
   type DwValue
 } from "@/lib/designWorkshops";
+import {
+  CUSTOM_ENTITY_KEY,
+  adoptCustomDefinition,
+  customFieldsForStage,
+  fetchCustomDefinition,
+  type DwCustomDefinition,
+  type DwCustomField
+} from "@/lib/customSections";
 import { uploadMediaBatch } from "@/lib/media";
 // The one rule for "did anything reach the server" lives in the outbox and is imported rather than
 // restated. Two answers to that question is two different ideas of what "offline" means, and the
@@ -248,6 +256,35 @@ export type DwDraftStage = {
    * accepted — a deletion made offline on Monday must still sweep when the signal returns on Friday.
    */
   removedFrom: string[];
+  /**
+   * Answers to this workshop's designer-defined questions for this stage. Mirrors the server's
+   * `_custom` row one for one: flat, keyed by the designer's own field keys.
+   *
+   * A SIBLING OF `singletons`, NEVER NESTED INSIDE ONE. `splitSingletons` copies across only the keys
+   * the registry declares and drops everything else on the floor, so a custom answer smuggled through
+   * it would either vanish before the request or be posted inside a core entry, dropped server-side,
+   * and returned in `droppedKeys` — firing the registry-drift banner on every save of every workshop
+   * that has a custom section and destroying the one drift signal this repository has.
+   *
+   * **OPTIONAL, AND EVERY READ MUST DEFAULT IT.** No migration rung is spent on it (see
+   * {@link migrateDraft}), so a stage record written by a build before this one has no such key at
+   * all — and `?? emptyStage(...)` does not help there, because that fallback only fires when the
+   * whole stage is missing. `stage.custom ?? {}` at every read is the rule.
+   */
+  custom?: DwEntryData;
+  /**
+   * What the last {@link foldStageInto} added to this stage, or removed the possibility of, in words.
+   *
+   * Null when the last read changed nothing this designer can see, which is the ordinary case — so an
+   * unchanged re-read does not re-announce itself on every open. Written only by
+   * {@link adoptServerStage}'s dirty branch, because that is the only path that folds.
+   *
+   * **OPTIONAL, AND EVERY READ MUST DEFAULT IT.** No migration rung is spent on it — the same rule
+   * and the same reason as `custom` above: a stage record written by a build before this one has no
+   * such key, and `?? emptyStage(...)` does not help, because that fallback only fires when the whole
+   * stage record is missing.
+   */
+  foldNote?: string | null;
   updatedAt: number;
   /** When this stage was last edited locally. Null means "identical to what the server last sent". */
   dirtyAt: number | null;
@@ -286,11 +323,84 @@ export type DwDraft = {
   header: DwDraftHeader;
   /** When the header was last edited locally. Null means "as the server last sent it". */
   headerDirtyAt: number | null;
+  /**
+   * WHICH header fields were edited locally — so a PATCH carries those and nothing else.
+   *
+   * ── THE DOOR THIS SHUTS ──────────────────────────────────────────────────────────────────────
+   *
+   * The sync pass's header PATCH sent **every** field off the local copy: `title`, `craftName`,
+   * `notes`, the dates, all of them. `ensureDraft` seeds a header of empty strings and nulls for a
+   * workshop this browser has merely OPENED, and what kept that harmless was `headerDirtyAt: null`
+   * and the fact that nothing called {@link patchDraftHeader}. The first UI to call it on a workshop
+   * this browser had not read in full would have nulled the office's `notes` and overwritten its
+   * title with `""`, under a 200, with no screen saying anything.
+   *
+   * A door shut only by having no caller is not shut. This is the stage form's own `serverLoadedAt`
+   * argument applied to the header: send what this browser actually holds a read value for, which
+   * for a header means the fields somebody typed into HERE.
+   *
+   * Optional for the reason {@link DwDraftStage.custom} is: no schema rung is spent, so a draft
+   * written by an older build does not carry it. An absent or empty list means "no record of which
+   * fields were touched", and the pass then falls back to the whole header — which is exactly the
+   * behaviour that shipped, unchanged, and is unreachable in practice because
+   * {@link patchDraftHeader} is the only thing that can arm a PATCH and it always records its keys.
+   */
+  headerDirtyKeys?: string[];
   stages: Record<string, DwDraftStage>;
   createdAt: number;
   updatedAt: number;
   /** The registry version this draft was last written against — the same digest `DwDetail` carries. */
   registryVersion: string;
+  /**
+   * The digest of the custom definition this draft was last written against. A SECOND FIELD, and it
+   * mirrors {@link DwDraft.registryVersion} rather than joining it.
+   *
+   * **IT MUST NOT BE FOLDED INTO `registryVersion`.** That string has exactly one functional read —
+   * `stageSpecFor` passes it to `cachedRegistry(version)` as a KEY into the registry object store, so
+   * that a stage captured before a deploy is still sent under the field list it was captured with. A
+   * composite value would match no cached registry at all and every stage would fall back to
+   * "whatever this browser happens to hold", silently, for every workshop.
+   *
+   * Its own functional read is the same idea one door along: it is what lets this client notice that
+   * the definition it holds is not the one the server just validated a save against, and say so
+   * instead of quietly showing a designer a question that no longer exists or hiding one that does.
+   *
+   * Optional for the reason {@link DwDraftStage.custom} is: no rung is spent, so a draft written by
+   * an older build does not carry it, and `?? ""` at every read is the rule.
+   */
+  customSchemaVersion?: string;
+  /**
+   * This workshop's custom definition, exactly as `definition_payload` returned it. Null = never read.
+   *
+   * **ON THE DRAFT RECORD, AND DELIBERATELY NOT IN A FOURTH IndexedDB OBJECT STORE.** Three reasons,
+   * in ascending order of severity, and the first two are why the obvious answer is the wrong one:
+   *
+   *  1. Forgetting the {@link DB_VERSION} bump fails on the EXISTING feature rather than on this one.
+   *     `indexedDB.open(DB_NAME, 1)` against a browser already at 1 never fires `onupgradeneeded`, so
+   *     the store is simply absent; `transact()` then names it in `db.transaction(names, mode)` with
+   *     no try, and the `NotFoundError` is swallowed differently at each call site — `refreshDrafts`
+   *     sets `cache = []` and every draft vanishes from the list, `loadDraft` returns null, and
+   *     `mutate` returns null so every write silently no-ops.
+   *  2. Bumping it is worse. `openDb` registers three handlers and neither `onblocked` nor
+   *     `onversionchange` is one of them, so a v1→v2 open requested while another tab holds the
+   *     database at v1 fires `blocked` and NEVER RESOLVES: `dbPromise` stays pending for ever, with no
+   *     error and no timeout. This module's own concurrency note contemplates two tabs, which is the
+   *     ordinary case — the workshop open in one and the stage list in another.
+   *  3. The draft record is already per workshop, which is exactly a definition's scope, and adding a
+   *     field to it is free: `migrateDraft` only climbs and leaves a document from the future alone,
+   *     and `mutate` writes back a spread, so a key an older build has never heard of is preserved
+   *     rather than dropped.
+   *
+   * A copy is kept at all for one reason: the definition decides whether a custom section can be
+   * DRAWN with no connection. Without it a designer standing in a cluster sees a stage that asks
+   * nothing of them, which is indistinguishable from a workshop that has no custom questions.
+   *
+   * OPTIONAL AND NULLABLE, AND THE TWO MEAN THE SAME THING ON PURPOSE: absent is a document written
+   * by a build before this feature, null is this build saying it has not read one. Both resolve to
+   * "unknown", which is the only honest floor — resolving either to an EMPTY definition would make a
+   * stage form assert that the workshop asks nothing of its own on the strength of a missing key.
+   */
+  customDefinition?: DwCustomDefinition | null;
   /** So a shared field laptop never shows one designer another's unsent work. */
   ownerUserId: string | null;
   lastSyncedAt: number | null;
@@ -705,6 +815,7 @@ export function emptyStage(stageKey: string): DwDraftStage {
     singletons: {},
     collections: {},
     removedFrom: [],
+    custom: {},
     updatedAt: 0,
     dirtyAt: null,
     lastPushedAt: null,
@@ -732,6 +843,25 @@ export function stageHoldsSomething(stage: DwDraftStage | undefined): boolean {
     for (const value of Object.values(data)) if (isFilled(value)) return true;
   }
   for (const rows of Object.values(stage.collections ?? {})) if (rows.length) return true;
+  /*
+    THE CUSTOM ANSWERS COUNT, AND OMITTING THEM WOULD HAVE STRANDED EVERY CUSTOM-ONLY STAGE.
+
+    This function is not only a readout — the sync pass gates on it twice, and both gates CLEAR the
+    dirty flag on a stage it says holds nothing: once for the never-read artefact and once for a
+    reconciled stage that builds no entries. A stage whose only content is a designer's own answers
+    would have hit both, had its `dirtyAt` reset, and never been sent — with nothing on screen saying
+    so, because a cleared flag reads as "sent".
+
+    THAT IS THE ORDINARY CASE, NOT AN EDGE ONE. Eight of the twenty-two stages declare no singleton
+    entity at all (existing products, both sketch stages, all three prototype stages, final
+    documentation, costing), so "a stage whose only answers are custom" is exactly what a designer
+    extending stage 11 or 13 produces.
+
+    Judged KEY BY KEY through `isFilled` and never on the container: a dict with keys is truthy even
+    when every answer inside it is blank, so testing the bucket as a whole would report a stage as
+    holding work because a form had been rendered on it.
+  */
+  for (const value of Object.values(stage.custom ?? {})) if (isFilled(value)) return true;
   return false;
 }
 
@@ -816,6 +946,12 @@ export async function createLocalDraft(
     createdAt: now,
     updatedAt: now,
     registryVersion: options?.registryVersion ?? "",
+    // A workshop that exists only on this device cannot have a definition: the route that authors one
+    // is a server write, and there is no workshop on the server yet to attach it to. Null rather than
+    // an empty definition, because "never read" and "read, and there are none" are different facts
+    // and the screen says different things about them.
+    customSchemaVersion: "",
+    customDefinition: null,
     // Stamped from the session unless the caller names an owner. An unowned draft is what let one
     // designer's workshop be drained under the next designer to sign in on the same laptop.
     ownerUserId: options?.ownerUserId ?? sessionUserId,
@@ -853,6 +989,11 @@ export async function ensureDraft(
     createdAt: now,
     updatedAt: now,
     registryVersion: "",
+    // Null, not empty: this draft has been SEEDED for a workshop the server owns and has read nothing
+    // of it yet. An empty definition here would assert "this workshop asks no questions of its own"
+    // on the strength of a record that was created by opening a page.
+    customSchemaVersion: "",
+    customDefinition: null,
     // The local copy belongs to whoever made it, which for a workshop the server already owns is
     // the session that opened it — not the workshop's creator. Two designers sharing a laptop get
     // one local copy each, and neither drains the other's.
@@ -865,12 +1006,25 @@ export async function ensureDraft(
   return draft;
 }
 
-/** Edit the header locally. Marks it unsent; the sync pass turns it into a create or a PATCH. */
+/**
+ * Edit the header locally. Marks it unsent; the sync pass turns it into a create or a PATCH.
+ *
+ * IT RECORDS *WHICH* FIELDS IT TOUCHED, and that is not bookkeeping — see
+ * {@link DwDraft.headerDirtyKeys}. The PATCH this arms used to send the whole local header, so
+ * calling this on a workshop seeded by `ensureDraft` (a header of empty strings and nulls, because
+ * the browser has only OPENED the workshop) would have nulled the office's notes and blanked its
+ * title under a 200. Naming the edited keys is what keeps a PATCH to what somebody actually typed.
+ */
 export async function patchDraftHeader(id: string, patch: Partial<DwDraftHeader>): Promise<DwDraft | null> {
+  // `definedOnly` for the same reason `createLocalDraft` uses it: a key present with `undefined` is a
+  // box that was left blank, not an instruction to clear the server's value — and recording it as
+  // edited would put it in the PATCH as `undefined`, which is the very overwrite this exists to stop.
+  const touched = definedOnly(patch);
   return mutate(id, (draft) => ({
     ...draft,
-    header: { ...draft.header, ...patch },
-    headerDirtyAt: Date.now()
+    header: { ...draft.header, ...touched },
+    headerDirtyAt: Date.now(),
+    headerDirtyKeys: Array.from(new Set([...(draft.headerDirtyKeys ?? []), ...Object.keys(touched)]))
   }));
 }
 
@@ -885,7 +1039,21 @@ export async function patchDraftHeader(id: string, patch: Partial<DwDraftHeader>
 export async function putDraftStage(
   id: string,
   stageKey: string,
-  data: { singletons: Record<string, DwEntryData>; collections: Record<string, DwRow[]>; removedFrom?: string[] }
+  data: {
+    singletons: Record<string, DwEntryData>;
+    collections: Record<string, DwRow[]>;
+    removedFrom?: string[];
+    /**
+     * The designer's own answers, when the caller is editing them.
+     *
+     * OMITTED MEANS "I HAVE NOTHING TO SAY ABOUT THESE", NOT "CLEAR THEM". The `...previous` spread
+     * below is what keeps that promise: a write from a screen that does not edit custom answers — the
+     * photo intake, a media confirmation — leaves the bucket exactly as it stands. Passing `{}` is a
+     * designer clearing every custom answer and IS written, which is the same distinction the server
+     * draws between no `_custom` entry and an empty one.
+     */
+    custom?: DwEntryData;
+  }
 ): Promise<DwDraft | null> {
   // A REFERENCE THAT HAS SINCE BEEN CONFIRMED IS SUBSTITUTED ON THE WAY IN, and this is not
   // belt-and-braces. A stage form holds its values in React state; the sync pass can upload one of
@@ -930,6 +1098,11 @@ export async function putDraftStage(
             // has to reach the server, and the next autosave from a form that has forgotten about it
             // would otherwise disarm the sweep and leave the row alive for ever.
             removedFrom: Array.from(new Set([...previous.removedFrom, ...(data.removedFrom ?? [])])),
+            // REPLACED WHEN THE CALLER SENT ONE, KEPT WHEN IT DID NOT — see the note on the parameter.
+            // Not merged into the previous bucket, because a designer clearing one answer has to be
+            // able to clear it: a merge would make every custom answer permanently un-erasable, which
+            // is the same defect a `{**previous, **sent}` merge on every save would be server-side.
+            custom: data.custom ?? previous.custom ?? {},
             updatedAt: now,
             dirtyAt: now,
             // A stage first written while the workshop has NO server record is reconciled by
@@ -1030,6 +1203,36 @@ export async function markStagePushed(
     completeness?: DwStageCompleteness | null;
     sinceDirtyAt: number | null;
     sinceRemovedFrom: readonly string[];
+    /**
+     * Did any entry in the pushed payload carry `merge: true`?
+     *
+     * **THIS EXISTS BECAUSE STAMPING `serverLoadedAt` AFTER A MERGE PUSH DESTROYS THE ANSWERS THE
+     * MERGE HAD JUST PRESERVED.** A merge push says "I am sending every key I HAVE, not every key
+     * there IS", and the server answers by writing the UNION of its row and this payload. So after
+     * it the server's row is a **superset** of what this browser holds — the two do NOT agree, which
+     * is precisely the opposite of what the old unconditional stamp asserted in a comment.
+     *
+     * The sequence it cost, end to end. A designer opens a stage on a laptop with no signal; the
+     * fetch throws, the form seeds from the local draft, `serverLoadedAt` stays null and an amber
+     * banner promises that *nothing you leave blank will overwrite an answer recorded elsewhere*.
+     * They answer one field. Back on signal they save: the entry goes up `merge: true`, the server
+     * correctly writes `{the office's answers} ∪ {theirs}` — and the stamp lands. Still on the same
+     * page they correct that one field and save again. `neverRead` is now false, `merge` is omitted,
+     * and the server replaces the row with this browser's bucket alone. **Every answer the office
+     * typed is gone, in place, with no `RecordRevision` to recover it**, `droppedKeys` is empty
+     * because no key was unknown, and the screen says "Stage saved".
+     *
+     * It is not a new defect and it is not confined to the custom container: the identical stamp and
+     * the singleton `merge: true` are both at `HEAD`, so this is the shipped app, and the singleton
+     * arm carries the seven-fields-of-stage-4 erasure this file already documents as having happened
+     * once. The custom container merely inherits it.
+     *
+     * THE SYNC PASS WAS ALREADY RIGHT, WHICH IS THE EVIDENCE THAT THIS STAMP WAS THE ODD ONE OUT: it
+     * spreads only `unsentAfterPush`, `lastPushedAt`, `completeness` and `failure`, and never touches
+     * `serverLoadedAt` at all. Two acknowledgement sites disagreeing about one field is what a defect
+     * of this shape looks like from the outside.
+     */
+    mergedEntries?: boolean;
   }
 ): Promise<DwDraft | null> {
   return mutate(id, (draft) => {
@@ -1044,9 +1247,23 @@ export async function markStagePushed(
           ...stage,
           ...unsentAfterPush(stage, { dirtyAt: options.sinceDirtyAt, removedFrom: options.sinceRemovedFrom }),
           lastPushedAt: now,
-          // The server has just taken this device's copy, so the two agree — from here on this
-          // stage may be re-sent without any risk of overwriting an answer this browser never read.
-          serverLoadedAt: stage.serverLoadedAt ?? now,
+          /*
+            THE SERVER HAS TAKEN THIS DEVICE'S COPY — BUT THAT ONLY MEANS THE TWO AGREE WHEN THE PUSH
+            WAS NOT A MERGE.
+
+            A plain push replaces the row with what was sent, so afterwards the server's row IS this
+            browser's copy and the stage may be re-sent freely. A MERGE push is the opposite: it asks
+            the server to keep the keys this browser never had, so the row that results is a SUPERSET
+            of what was sent. Stamping here would tell the next save "you have read the server's copy"
+            when it has not — and the next save would then omit `merge` and delete every key it never
+            saw. See `mergedEntries` above for the whole sequence and for why this is the shipped
+            app's defect rather than this feature's.
+
+            Left null after a merge, the stage simply keeps merging on subsequent saves until an actual
+            read lands. That is the fail-safe direction: merging twice preserves data that did not need
+            preserving, whereas replacing once destroys data that did.
+          */
+          serverLoadedAt: options.mergedEntries ? stage.serverLoadedAt : (stage.serverLoadedAt ?? now),
           completeness: options.completeness ?? stage.completeness,
           failure: null
         }
@@ -1311,6 +1528,12 @@ export function unresolvedMediaRefs(stage: DwDraftStage): string[] {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * The registry object this tab has already confirmed is byte-identical to what IndexedDB holds.
+ * Compared by IDENTITY, never by version — see {@link cacheRegistry}.
+ */
+let confirmedStored: DwRegistry | null = null;
+
+/**
  * Keep the registry this build just fetched, keyed by the version string the schema endpoint
  * returned.
  *
@@ -1319,25 +1542,55 @@ export function unresolvedMediaRefs(stage: DwDraftStage): string[] {
  * `schemaVersion` names the one it was written against. Keeping the last {@link REGISTRY_KEEP} means
  * a tab that comes back after a deploy — or after a rollback — can still render the form a stage was
  * captured with, instead of showing a designer a field list that never applied to their record.
+ *
+ * The version is the KEY, not a proof of equal content — see the long note inside on why storing a
+ * row per version does not license skipping the write when a row already exists.
  */
 export async function cacheRegistry(registry: DwRegistry): Promise<void> {
+  // Already confirmed stored, THIS OBJECT, in this tab. `fetchStageRegistry` returns one stable
+  // identity per tab per version, so this reference check is what keeps the common case — a
+  // designer walking between two stages — at zero IndexedDB reads and zero structured clones.
+  if (confirmedStored === registry) return;
   await transact([STORE_REGISTRY], "readwrite", async (stores) => {
     const store = stores[STORE_REGISTRY];
-    // A registry this browser already holds is not rewritten. `version` is a content digest, so an
-    // equal version IS the same document — and re-serialising 496 field descriptors into IndexedDB
-    // on every navigation between two stages is hundreds of kilobytes of structured clone per click
-    // on the cheapest laptop in the room, for a file that has not changed.
     const held = await req<RegistryRecord | undefined>(
       store.get(registry.version) as IDBRequest<RegistryRecord | undefined>
     );
-    if (held) return;
+    // AN EQUAL VERSION IS NOT AN EQUAL DOCUMENT, AND ASSUMING IT WAS SHIPPED A DEFECT.
+    //
+    // This branch used to be `if (held) return;`, justified as "`version` is a content digest, so
+    // an equal version IS the same document". It is not one. `registry_version()` digests key,
+    // type, tier, required, enum name, deprecated, derivation and hydration — and says in its own
+    // docstring that it is DELIBERATELY insensitive to labels and help text, so that retitling a
+    // field does not invalidate every cached draft on every phone. `fetchStageRegistry`'s comment
+    // has this right; this one did not, and the two disagreed in the same feature.
+    //
+    // What that cost: when the 22 stages' `notes` were rewritten to stop quoting the source
+    // document's reviewer at designers, the digest did not move — correctly, since no key changed.
+    // A browser holding the old record would therefore have kept serving the reviewer quotes out
+    // of IndexedDB forever, and would have shown them again the moment it went offline. Android
+    // never had this bug: `StageSchemaStore.store` rewrites its cache file on every fetch for
+    // exactly this reason, and says so.
+    //
+    // So compare the CONTENT. It costs one stringify of a payload that has just crossed the
+    // network, at most once per tab, and only when this browser already holds the version.
+    if (held && JSON.stringify(held.registry) === JSON.stringify(registry)) return;
     await req(store.put({ version: registry.version, registry, storedAt: Date.now() } satisfies RegistryRecord));
     const all = await req<RegistryRecord[]>(store.getAll() as IDBRequest<RegistryRecord[]>);
     const stale = all.sort((a, b) => b.storedAt - a.storedAt).slice(REGISTRY_KEEP);
     for (const row of stale) await req(store.delete(row.version));
-  }).catch(() => {
-    // A registry that could not be cached costs an offline form, not a save. Never fatal.
-  });
+  })
+    .then(() => {
+      // ONLY once the transaction has COMMITTED. Setting this inside the transaction would be
+      // wrong in the one case it matters: an IndexedDB transaction can abort after its individual
+      // requests have succeeded, rolling the write back — and this tab would then spend the rest
+      // of its life skipping a write that never landed.
+      confirmedStored = registry;
+    })
+    .catch(() => {
+      // A registry that could not be cached costs an offline form, not a save. Never fatal — and
+      // `confirmedStored` stays as it was, so the next navigation retries.
+    });
 }
 
 /** The cached registry for one version, or the most recently seen one when `version` is omitted. */
@@ -1412,6 +1665,267 @@ export function splitSingletons(spec: DwStage, singleton: DwEntryData): Record<s
   return out;
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * Folding the server's copy into a draft that holds work
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** What {@link foldStageInto} changed, so the screen can say so rather than change under a thumb. */
+export type DwStageFold = {
+  /** The stage to keep: local values untouched, the server's unseen ones added, authority earned. */
+  stage: DwDraftStage;
+  /** Core singleton field keys that came from the server and were not in this browser. */
+  added: string[];
+  /** Rows that came from the server and were not in this browser, by entity key. */
+  addedRows: Record<string, number>;
+  /** Custom field keys that came from the server and were not in this browser. */
+  addedCustom: string[];
+  /**
+   * Rows the server holds in a collection the designer EMPTIED here, which this fold declined to add
+   * back and the next save will therefore sweep. By entity key.
+   */
+  sweptRows: Record<string, number>;
+};
+
+/**
+ * Read the server's copy of a stage INTO a draft that already holds work, without losing either.
+ *
+ * ── WHY THIS EXISTS: ON THE WEB, A WITHHELD DELETION HAD NO WAY BACK ─────────────────────────────
+ *
+ * `serverLoadedAt` is the browser's authority to say "these are now exactly the rows", and it was set
+ * by ONE thing: {@link adoptServerStage} on a stage whose `dirtyAt` was null. A stage holding an
+ * unsent deletion is always dirty — `removedFrom` and `dirtyAt` are kept and cleared together by
+ * {@link unsentAfterPush} — so the adopt was refused, the stage stayed dirty, and the deletion was
+ * owed FOR EVER. The row the designer deleted stayed alive in the repository and printed in the .docx.
+ *
+ * That was the cost of correctly refusing to sweep without authority, and this is the other half of
+ * it: what comes back is FOLDED rather than adopted, which earns the authority without overwriting
+ * anything the designer typed. Android has had this since `dwFoldServerStage`; **this is deliberately
+ * the same function, rule for rule**, because two surfaces that fold differently produce two copies of
+ * one workshop that disagree about the fieldwork with nothing in either saying so.
+ *
+ * ── THE FOLD IS "ADD WHAT THIS BROWSER HAS NEVER SEEN", AND NOTHING ELSE ─────────────────────────
+ *
+ * Every key and every row already in the draft is kept exactly as it is, values and all. Three
+ * consequences, all intended:
+ *
+ *  * nothing the designer typed is overwritten, which is the local-wins rule kept intact;
+ *  * after the fold the draft is a superset of the server's copy, which is what makes the authority
+ *    honest — "delete what I do not name" can no longer name anything the designer has not been shown;
+ *  * a value the designer CLEARED here comes back, because on a stage this browser had never read the
+ *    clearance never reached the server, so the server does still hold it and showing it is the truth.
+ *    It can be cleared again, and this time it propagates, because the fold earned the authority.
+ *
+ * ── AND ONE THING THAT DOES NOT COME BACK: A COLLECTION THE DESIGNER EMPTIED ─────────────────────
+ *
+ * A row in an entity named by `removedFrom` is NOT folded back in, for the reason
+ * {@link DwStageFold.sweptRows} states: a cleared value leaves no record, an emptied collection
+ * leaves one, and folding the server's rows back over that record would REVERSE the deletion — the
+ * next payload would name every row again and the sweep would sweep nothing. The designer's explicit
+ * action wins over an inference, and the collateral is counted rather than hidden.
+ *
+ * PURE, and that is the point: its mistake would be an overwrite of a designer's own text, so it is
+ * decided with no store, no fetch and no React anywhere near it, and pinned by
+ * `e2e/stage-fold-unit.spec.ts`.
+ */
+export function foldStageInto(
+  spec: DwStage,
+  current: DwDraftStage,
+  incoming: DwStageData
+): DwStageFold {
+  /*
+    `containsKey`, NOT "is filled", and it is the same argument `dwFoldServerStage` spells out. The
+    stage form REMOVES a key whose value went blank rather than storing "", so a field cleared this
+    morning is absent here and indistinguishable from one never typed — this loop re-fills it from the
+    server, which is the documented behaviour and not a clearance being ignored. What the `in` test is
+    actually for is every other way an empty string reaches this draft (a server that holds "", a
+    rich-text control that wrote an empty document, a draft written by an older build): for those,
+    "has this browser ever had an opinion about this key" is the right question, an empty string IS an
+    opinion, and overwriting it with the server's paragraph would undo an edit rather than reveal one.
+  */
+  const added: string[] = [];
+  const singletons: Record<string, DwEntryData> = { ...current.singletons };
+  const fromServer = splitSingletons(spec, incoming.singleton ?? {});
+  for (const [entityKey, values] of Object.entries(fromServer)) {
+    const held = current.singletons[entityKey] ?? {};
+    const merged: DwEntryData = { ...held };
+    for (const [key, value] of Object.entries(values)) {
+      if (key in merged) continue;
+      merged[key] = value;
+      // The underscore keys are the protocol's own and are never shown to anybody, so they fold
+      // silently rather than being counted as an answer that "appeared".
+      if (!key.startsWith("_")) added.push(key);
+    }
+    singletons[entityKey] = merged;
+  }
+
+  const addedCustom: string[] = [];
+  const custom: DwEntryData = { ...(current.custom ?? {}) };
+  for (const [key, value] of Object.entries(incoming.custom ?? {})) {
+    if (key in custom) continue;
+    custom[key] = value;
+    if (!key.startsWith("_")) addedCustom.push(key);
+  }
+
+  /*
+    MATCHED ON THE ROW'S OWN KEY, which is the same identity `save_stage` matches on: `_clientKey`
+    first, then the server's `_entryId`. A row this browser created, synced and is holding is therefore
+    recognised in the server's answer and is NOT added a second time — without that, one fold would
+    double every row of every costing table this browser had ever sent.
+
+    Appended AFTER the local rows rather than interleaved by ordinal. The server's ordinals describe
+    the server's list; this browser's describe a list the designer has been looking at and reordering,
+    and splicing one into the other would reshuffle rows under a cursor.
+  */
+  const emptied = new Set(current.removedFrom ?? []);
+  const declared = new Set(
+    spec.entities.filter((entity) => entity.cardinality !== "SINGLETON").map((entity) => entity.key)
+  );
+  const collections: Record<string, DwRow[]> = { ...current.collections };
+  const addedRows: Record<string, number> = {};
+  const sweptRows: Record<string, number> = {};
+
+  for (const [entityKey, serverRows] of Object.entries(incoming.collections ?? {})) {
+    // Only entities this build's registry declares for this stage. A row under a key the registry has
+    // since dropped cannot be drawn, cannot be edited, and would be sent straight back up as an entity
+    // the server reports in `droppedKeys` — a browser reporting registry drift to itself.
+    if (!declared.has(entityKey)) continue;
+
+    const held = current.collections[entityKey] ?? [];
+    const heldClientKeys = new Set(
+      held.map((row) => row._clientKey).filter((key): key is string => !!key && key.length > 0)
+    );
+    const heldEntryIds = new Set(
+      held.map((row) => row._entryId).filter((id): id is string => !!id && id.length > 0)
+    );
+    const isUnseen = (row: DwRow) =>
+      !(row._clientKey && heldClientKeys.has(row._clientKey)) &&
+      !(row._entryId && heldEntryIds.has(row._entryId));
+
+    if (emptied.has(entityKey)) {
+      /*
+        THE DESIGNER DELETED THIS COLLECTION, SO IT STAYS DELETED. Counted, not silently dropped — and
+        counted as WHAT THE NEXT SAVE WILL ACTUALLY REMOVE, which is not the number of rows the server
+        sent. The sweep deletes the rows the payload does not NAME, and the payload names every row
+        this draft still holds; so a server row whose client key or entry id is already here survives
+        the save, and claiming it was about to be deleted would be a false alarm. That is reachable in
+        the ordinary way: empty a collection, then start it again with a fresh row before the stage is
+        next read.
+      */
+      const unseen = serverRows.filter(isUnseen).length;
+      if (unseen > 0) sweptRows[entityKey] = unseen;
+      continue;
+    }
+
+    const appended = serverRows.filter(isUnseen);
+    if (appended.length > 0) {
+      collections[entityKey] = [
+        ...held,
+        // Minted here for the same reason {@link withClientKeys} mints it on the adopt path: a row with
+        // no key of its own cannot be matched by a replayed save and would be inserted a second time.
+        ...appended.map((row) => (row._clientKey ? row : { ...row, _clientKey: newClientKey() }))
+      ];
+      addedRows[entityKey] = appended.length;
+    }
+  }
+
+  return {
+    stage: {
+      ...current,
+      singletons,
+      collections,
+      custom,
+      completeness: incoming.completeness ?? current.completeness,
+      /*
+        THE FACT THIS WHOLE FUNCTION EXISTS TO EARN. After the fold this draft holds everything the
+        server holds, so "delete what I do not name" can no longer name anything the designer has not
+        been shown, and the very next save is entitled to carry the deletion that has been owed.
+      */
+      serverLoadedAt: Date.now(),
+      /*
+        `dirtyAt` AND `removedFrom` ARE CARRIED THROUGH UNTOUCHED, and the two halves have to stay
+        together. The row loop above declines to add the server's rows back for the emptied entities,
+        so the next payload does not name them and `replaceCollections` sweeps them; clearing
+        `removedFrom` here instead would drop the instruction and leave those rows alive on the server
+        for ever with nothing on any screen saying so. {@link unsentAfterPush} is what clears it, judged
+        against the list the acknowledged payload actually carried.
+
+        And `dirtyAt` is NOT bumped to now: the rows that arrived are the server's, not an edit the
+        designer made, and marking them as one would date this browser's work by a download.
+      */
+      updatedAt: Date.now()
+    },
+    added,
+    addedRows,
+    addedCustom,
+    sweptRows
+  };
+}
+
+/** True when the fold changed nothing the designer can see. */
+export function foldChangedNothing(fold: DwStageFold): boolean {
+  return (
+    fold.added.length === 0 &&
+    Object.keys(fold.addedRows).length === 0 &&
+    fold.addedCustom.length === 0 &&
+    Object.keys(fold.sweptRows).length === 0
+  );
+}
+
+/**
+ * What to tell the designer, or null when the fold changed nothing they can see.
+ *
+ * TWO SENTENCES AND NOT ONE, because they point in opposite directions — the same split
+ * `DwStageFold.notice` makes on the handset, and the wording is kept close to it deliberately so a
+ * designer who uses both surfaces is not told the same event in two different vocabularies. What was
+ * ADDED is reassurance. What will be SWEPT is the half they may want to act on before the next save
+ * carries it, so it is said last and is not folded into the same list.
+ *
+ * Counts rather than naming everything: a sentence that lists forty keys is a sentence nobody
+ * finishes. The first few keys ARE named, because "3 answers appeared" with no hint of which three is
+ * not something anybody can check.
+ */
+export function foldNotice(fold: DwStageFold): string | null {
+  if (foldChangedNothing(fold)) return null;
+  const parts: string[] = [];
+  const list = (keys: string[]) =>
+    `${keys.slice(0, 4).join(", ")}${keys.length > 4 ? ", …" : ""}`;
+
+  if (fold.added.length > 0) {
+    parts.push(`${fold.added.length} answer${fold.added.length === 1 ? "" : "s"} (${list(fold.added)})`);
+  }
+  const rowCount = Object.values(fold.addedRows).reduce((sum, n) => sum + n, 0);
+  if (rowCount > 0) {
+    parts.push(`${rowCount} row${rowCount === 1 ? "" : "s"} in ${Object.keys(fold.addedRows).join(", ")}`);
+  }
+  if (fold.addedCustom.length > 0) {
+    parts.push(
+      `${fold.addedCustom.length} of this workshop's own question${fold.addedCustom.length === 1 ? "" : "s"} (${list(fold.addedCustom)})`
+    );
+  }
+
+  let out = "This stage has now been read from the server. ";
+  if (parts.length > 0) {
+    out += `${parts.join("; ")} were already there and not in this browser, and have been added below. `;
+    out += "Nothing you had typed here was changed. ";
+  }
+  const swept = Object.values(fold.sweptRows).reduce((sum, n) => sum + n, 0);
+  if (swept > 0) {
+    const them = swept === 1 ? "it" : "them";
+    out += `You had deleted everything in ${Object.keys(fold.sweptRows).join(", ")} in this browser, so `;
+    out += `${swept} row${swept === 1 ? "" : "s"} the server still holds ${swept === 1 ? "there has" : "there have"} `;
+    out += `NOT been added back, and the next save will delete ${them} on the server — including anything `;
+    out += "added there by somebody else since you deleted. Your deletion stands, which is what you asked for. ";
+    // The remedy has to be one the designer can actually carry out, and "add the rows back here" is
+    // not: these are rows this browser has never shown them, so they cannot retype what they have not
+    // seen. What is true is that the deletion is RECORDED rather than erased, so the sentence names
+    // the fact that makes it fixable by somebody instead of an action that would fail.
+    out += `If you did not mean to delete ${them}, say so before this stage is submitted: the repository `;
+    out += `records a deletion rather than erasing the row, so ${swept === 1 ? "it" : "they"} can be `;
+    out += "brought back by whoever runs it.";
+  }
+  return out.trim();
+}
+
 /**
  * Score one stage from what is on this device, with no server and no network.
  *
@@ -1427,9 +1941,21 @@ export function splitSingletons(spec: DwStage, singleton: DwEntryData): Record<s
  * figure that lies exactly when it matters. `isFilled` is already character-for-character the
  * server's `_is_filled`, so the two ends cannot disagree about whether a box has an answer in it.
  */
-export function localStageCompleteness(spec: DwStage, stage: DwDraftStage | undefined): DwStageCompleteness {
+export function localStageCompleteness(
+  spec: DwStage,
+  stage: DwDraftStage | undefined,
+  /**
+   * This stage's designer-defined fields, retired ones included — {@link customFieldsFor} resolves
+   * them off the draft.
+   *
+   * DEFAULTED TO EMPTY, WHICH IS THE HONEST DEFAULT AND NOT A CONVENIENCE. A caller that has no
+   * definition to hand scores the stage exactly as it did before this feature existed: the registry's
+   * own fields and nothing more. It cannot invent a lower total, and it cannot invent a higher one.
+   */
+  customFields: readonly DwCustomField[] = []
+): DwStageCompleteness {
   const data = stageDataOf(stage);
-  return scoreStageData(spec, data.singleton, data.collections);
+  return scoreStageData(spec, data.singleton, data.collections, customFields, stage?.custom ?? {});
 }
 
 /**
@@ -1455,7 +1981,19 @@ export function localStageCompleteness(spec: DwStage, stage: DwDraftStage | unde
 export function scoreStageData(
   spec: DwStage,
   singleton: DwEntryData,
-  collections: Record<string, DwRow[]>
+  collections: Record<string, DwRow[]>,
+  /**
+   * The designer's own questions for this stage, and their answers. THIS IS THE ONE PLACE THEY ARE
+   * SCORED — the stage bar, the workshop index, the readiness screen, the strict local pass and the
+   * report's outstanding column all read this function rather than counting for themselves.
+   *
+   * Mirrors `stage_completeness(..., custom_fields=, custom_values=)` on the server argument for
+   * argument, and Android's `computeStageCompleteness` in the same order, because a required custom
+   * question that counted on one surface and not on another is a stage that reads 100% on the form and
+   * 422s on submit.
+   */
+  customFields: readonly DwCustomField[] = [],
+  customValues: DwEntryData = {}
 ): DwStageCompleteness {
   const data = { singleton, collections };
   let requiredTotal = 0;
@@ -1480,11 +2018,59 @@ export function scoreStageData(
   };
 
   const collectionCounts: Record<string, number> = {};
+
+  /*
+    THE DESIGNER'S OWN QUESTIONS ARE SCORED BETWEEN THE STAGE'S SINGLETON AND ITS COLLECTIONS, which is
+    why this loop is split in two rather than left as one walk over `spec.entities`.
+
+    BETWEEN, AND NOT AFTER, AND THE ORDER IS NOT COSMETIC. `missing` is printed in order and truncated
+    — the stage bar prints it in full, the report's Outstanding column and the phone's report screen
+    take the first three — so whatever this list puts first is what a designer and a ministry officer
+    actually read. Between the stage's own fields and its repeating rows is the order the questions
+    appear on the form.
+
+    FILED UNDER THE BARE LABEL, like a singleton field and unlike a collection field, which files
+    `"${entity.title}: ${label}"`. That is what makes a duplicate label a definition-time refusal
+    rather than a document disagreeing with itself: two required questions filing the same string
+    collapse into one row through the de-duplication below while `requiredTotal` still counts two.
+
+    A RETIRED FIELD IS SKIPPED, exactly as `field.deprecated` is skipped above and for its reason: it
+    is no longer asked, so counting it would make a stage permanently incomplete because of a question
+    the designer corrected.
+
+    SCORED KEY BY KEY, AND THE CONTAINER IS NEVER TESTED AS A WHOLE. `isFilled` returns true for any
+    object with keys, so a bucket holding twenty blank answers is truthy: a stage would report itself
+    complete on the strength of the bucket existing.
+  */
+  /*
+    TWO PASSES OVER `spec.entities` RATHER THAN ONE, so that the custom questions can sit between the
+    singleton and the collections whatever order the registry declares its entities in. The server's
+    scorer takes `spec.singleton` first, then the custom fields, then `spec.collections` — it never
+    walks the declaration list — so a single interleaved walk here could only agree with it by accident
+    on a stage whose singleton happens to be declared first. Every singleton is scored, not just the
+    first: this store keeps them keyed per entity precisely because the registry may one day declare a
+    second one, and the flattening on the wire would silently keep only the last.
+  */
   for (const entity of spec.entities) {
-    if (entity.cardinality === "SINGLETON") {
-      score(entity, data.singleton, "");
-      continue;
+    if (entity.cardinality !== "SINGLETON") continue;
+    score(entity, data.singleton, "");
+  }
+
+  for (const field of customFields) {
+    if (field.retired) continue;
+    const filled = isFilled(customValues[field.key]);
+    if (field.required) {
+      requiredTotal += 1;
+      if (filled) requiredFilled += 1;
+      else missing.push(field.label);
+    } else {
+      optionalTotal += 1;
+      if (filled) optionalFilled += 1;
     }
+  }
+
+  for (const entity of spec.entities) {
+    if (entity.cardinality === "SINGLETON") continue;
     const rows = data.collections[entity.key] ?? [];
     collectionCounts[entity.key] = rows.length;
     for (const row of rows) score(entity, row, `${entity.title}: `);
@@ -1506,10 +2092,21 @@ export function scoreStageData(
   };
 }
 
-/** Every stage of a draft scored locally, keyed the way `DwDetail.completeness` is. */
+/**
+ * Every stage of a draft scored locally, keyed the way `DwDetail.completeness` is.
+ *
+ * THE SIGNATURE DELIBERATELY DID NOT CHANGE when the scorer learned about custom questions, and that
+ * is what taught all of its readers at once. The definition lives on the DRAFT — which this function
+ * already had — so the workshop index, the readiness screen and its `stageAddresses` walk all count
+ * the designer's own required questions without a line changing at any of them. Threading a fourth
+ * argument through instead would have meant three call sites each deciding for themselves whether to
+ * pass it, and the one that forgot would be a second arithmetic on the same screen.
+ */
 export function localCompleteness(registry: DwRegistry, draft: DwDraft): Record<string, DwStageCompleteness> {
   const out: Record<string, DwStageCompleteness> = {};
-  for (const spec of registry.stages) out[spec.key] = localStageCompleteness(spec, draft.stages[spec.key]);
+  for (const spec of registry.stages) {
+    out[spec.key] = localStageCompleteness(spec, draft.stages[spec.key], customFieldsFor(draft, spec.key));
+  }
   return out;
 }
 
@@ -1563,6 +2160,10 @@ export async function adoptServerDetail(detail: DwDetail, spec: DwRegistry): Pro
           singletons: {},
           collections: {},
           removedFrom: [],
+          // Cleared with the rest, and for the same reason: this branch IS the server's copy of the
+          // stage, and a `_custom` row the repository no longer has must not read as downloaded and
+          // current — the next push would put it back.
+          custom: {},
           updatedAt: Date.now(),
           serverLoadedAt: Date.now(),
           completeness: serverScore ?? current.completeness
@@ -1574,6 +2175,10 @@ export async function adoptServerDetail(detail: DwDetail, spec: DwRegistry): Pro
         singletons: splitSingletons(stageSpec, incoming.singleton ?? {}),
         collections: withClientKeys(incoming.collections ?? {}),
         removedFrom: [],
+        // The third sibling key of the stage bucket, taken as the server sent it. `?? {}` because
+        // `_stages_payload` omits nothing but a server predating the feature sends no such key, and
+        // reading that as "no custom answers" is correct — there cannot be any.
+        custom: incoming.custom ?? {},
         updatedAt: Date.now(),
         dirtyAt: null,
         lastPushedAt: current.lastPushedAt,
@@ -1588,9 +2193,125 @@ export async function adoptServerDetail(detail: DwDetail, spec: DwRegistry): Pro
       header: draft.headerDirtyAt !== null ? draft.header : headerOf(detail),
       stages,
       registryVersion: detail.schemaVersion || draft.registryVersion,
+      /*
+        `customSchemaVersion` IS DELIBERATELY NOT WRITTEN HERE, EVEN THOUGH THIS PAYLOAD CARRIES ONE.
+
+        The two digests look symmetrical and are not. `registryVersion` names a document in the registry
+        OBJECT STORE, which holds three of them, so adopting the server's value is how a later read finds
+        the right one. `customSchemaVersion` names the ONE definition stored on this same record, so it
+        must always describe THAT — and {@link cacheCustomDefinition} therefore writes the two together
+        and is the only thing that writes either.
+
+        Adopting the server's digest here instead was the first version and it inverted the field's whole
+        purpose: `GET /{id}` answers with the digest of the definition the SERVER holds, so a designer who
+        edited the definition in another tab left this record holding Monday's sections stamped with
+        Tuesday's digest. Every staleness comparison then read "current" and the form went on offering a
+        question that had been retired, which is precisely the failure the digest exists to catch. The
+        server's value is still used — it is read straight off the payload by the screen that needs it, and
+        compared against what this record holds — but it is never stored as though it described this copy.
+      */
       lastSyncedAt: Date.now()
     };
   });
+}
+
+/**
+ * Keep a workshop's custom definition on its draft record, with the digest it arrived under.
+ *
+ * NEVER FATAL, exactly like {@link cacheRegistry}: a definition that could not be stored costs an
+ * offline form, not a save. The one thing it must not do is fail a designer's edit — so a rejected
+ * write is swallowed and the in-memory copy still serves this tab.
+ *
+ * IT WRITES THE DIGEST FROM THE DEFINITION ITSELF, not from a separate argument, so the two cannot
+ * come apart. A draft holding Monday's sections under Tuesday's digest would compare as current and
+ * offer a question that no longer exists.
+ */
+export async function cacheCustomDefinition(
+  id: string,
+  definition: DwCustomDefinition
+): Promise<DwDraft | null> {
+  return mutate(id, (draft) => {
+    // An equal digest IS the same document — `customSchemaVersion` is a content digest, exactly as
+    // `registry_version` is — so re-serialising the sections into IndexedDB on every stage open is
+    // work for a file that has not changed.
+    if (draft.customDefinition && draft.customSchemaVersion === definition.customSchemaVersion) return draft;
+    return { ...draft, customDefinition: definition, customSchemaVersion: definition.customSchemaVersion };
+  });
+}
+
+/**
+ * Where a definition came from, and the third value is the one that matters.
+ *
+ * "network" and "cache" are the registry's two rungs. **"unknown" is a third state this feature needs
+ * and the registry does not**, and it is not a failure code: the registry has a bundled floor on the
+ * handset and a cached one here, so "there is no field list at all" is close to unreachable — whereas
+ * a per-workshop definition has no floor by construction. An APK cannot bundle a workshop that did not
+ * exist when it was built, and nor can this browser.
+ *
+ * So "I hold nothing" and "there is nothing to hold" genuinely look alike from inside a tab with no
+ * signal, and collapsing them is the failure Android's `DwQuestionnaireCopy` needed three states to
+ * avoid: warning on both puts an apology on the majority of workshops, which is how a designer learns
+ * to stop reading warnings. "unknown" says only that this browser does not know, and the screen says
+ * that in a sentence instead of drawing a form that asks nothing.
+ */
+export type CustomDefinitionSource = "network" | "cache" | "unknown";
+
+/**
+ * This workshop's definition, offline first, in the shape {@link loadRegistry} established.
+ *
+ * Ask the network and keep what comes back; if the network cannot answer, fall back to the copy on the
+ * draft record and SAY SO, because a form drawn from a definition that may be a week old is worth
+ * having and a designer is entitled to know which one they are looking at. When neither answers, the
+ * honest report is "unknown" — never an empty definition, which would assert that this workshop asks
+ * nothing of its own.
+ *
+ * THE CACHE WRITE IS FIRED AND NOT AWAITED, and its failure is swallowed inside
+ * {@link cacheCustomDefinition}: a definition that could not be stored costs an offline form, not a
+ * save, and a designer must never lose an answer to a housekeeping write.
+ */
+export async function loadCustomDefinition(
+  draft: DwDraft
+): Promise<{ definition: DwCustomDefinition | null; source: CustomDefinitionSource }> {
+  const held = draft.customDefinition ?? null;
+  if (!draft.remoteId) {
+    /*
+      A WORKSHOP THE SERVER HAS NEVER HEARD OF CANNOT HAVE A DEFINITION, and this is the one place where
+      asserting emptiness is a FACT rather than a default. The authoring route is a server write against a
+      workshop the server knows; there is no other way a definition comes into existence, so a workshop
+      that has never been created up there has none, necessarily, and this browser can establish that with
+      certainty rather than by assumption.
+
+      REPORTED AS "cache" AND NOT AS "unknown", and the difference is a sentence on twenty-two stages. A
+      designer who created this workshop in a courtyard on Monday would otherwise be told, on every stage
+      for the whole fortnight, that this browser has not read the workshop's own questions and should open
+      the stage with a connection — an apology for a state that is not a gap, on exactly the workflow this
+      whole feature was written for. That is how a designer learns to stop reading warnings.
+    */
+    return { definition: held ?? { customSchemaVersion: "", sections: [], fetchedAt: "" }, source: "cache" };
+  }
+  try {
+    const definition = await fetchCustomDefinition(draft.remoteId);
+    void cacheCustomDefinition(draft.localId, definition);
+    return { definition, source: "network" };
+  } catch {
+    if (!held) return { definition: null, source: "unknown" };
+    // Adopted into the in-memory cache so every other reader in this tab sees the SAME object and does
+    // not re-issue the request that just failed — and so the identity contract that stops every
+    // `useMemo` in the feature rebuilding still holds when the answer came off disk.
+    return { definition: adoptCustomDefinition(draft.remoteId, held), source: "cache" };
+  }
+}
+
+/**
+ * The custom questions of one stage, resolved from what this device holds.
+ *
+ * THE MIRROR OF `stageSpecFor`, ONE DOOR ALONG, and the same property is what it buys: a stage is
+ * scored and sent under the definition this device was holding when the answers were captured, not
+ * under one that may have moved since. The digest beside it is what lets a reader notice the
+ * difference rather than average the two.
+ */
+export function customFieldsFor(draft: DwDraft | null | undefined, stageKey: string): DwCustomField[] {
+  return customFieldsForStage(draft?.customDefinition ?? null, stageKey);
 }
 
 /** The same fold for one stage, for the stage page's own read. */
@@ -1602,10 +2323,37 @@ export async function adoptServerStage(
   return mutate(workshopId, (draft) => {
     const current = draft.stages[spec.key] ?? emptyStage(spec.key);
     if (current.dirtyAt !== null) {
-      // Deliberately NOT marked as loaded — see the twin branch in {@link adoptServerDetail}.
+      /*
+        FOLDED, NOT ADOPTED — AND NOT REFUSED, WHICH IS WHAT IT USED TO BE.
+
+        This branch returned the draft with only `completeness` updated and, deliberately, without
+        marking the stage as loaded. That was right about the values (a download must not overwrite
+        work in progress) and wrong about the consequence: `serverLoadedAt` is the only authority this
+        browser has to say "these are now exactly the rows", a stage holding an unsent deletion is
+        always dirty, and so a withheld deletion could never earn the authority that would let it
+        travel. The row the designer deleted stayed alive in the repository and printed in the .docx,
+        for ever, while `pendingWork` and the banner went on correctly reporting work that was owed.
+
+        {@link foldStageInto} adds only what this browser has never seen, keeps every local value and
+        every local row exactly as it is, honours `removedFrom` by declining to add those rows back,
+        and stamps `serverLoadedAt`. The next save is then entitled to carry the deletion. It is the
+        same function `dwFoldServerStage` is on the handset, rule for rule.
+      */
+      const folded = foldStageInto(spec, current, incoming);
+      const note = foldNotice(folded);
       return {
         ...draft,
-        stages: { ...draft.stages, [spec.key]: { ...current, completeness: incoming.completeness ?? current.completeness } }
+        stages: {
+          ...draft.stages,
+          [spec.key]: {
+            ...folded.stage,
+            // Kept on the record rather than raised as a toast, because the read that produced it may
+            // have happened while the designer was on another screen: a sentence about six rows that
+            // appeared is worth nothing if it is shown to an empty tab. Null when the fold changed
+            // nothing visible, so an unchanged re-read does not re-announce itself.
+            foldNote: note
+          }
+        }
       };
     }
     return {
@@ -1617,6 +2365,7 @@ export async function adoptServerStage(
           singletons: splitSingletons(spec, incoming.singleton ?? {}),
           collections: withClientKeys(incoming.collections ?? {}),
           removedFrom: [],
+          custom: incoming.custom ?? {},
           updatedAt: Date.now(),
           dirtyAt: null,
           serverLoadedAt: Date.now(),
@@ -1624,6 +2373,10 @@ export async function adoptServerStage(
           failure: null
         }
       }
+      // No `customSchemaVersion` here either — see {@link adoptServerDetail}. `GET /stages/{key}` does
+      // carry the server's digest, and the stage form reads it STRAIGHT OFF THAT PAYLOAD to compare
+      // against what this record holds. What it must not do is overwrite the digest that describes the
+      // sections stored here, which is the only thing that can tell the two apart.
     };
   });
 }
@@ -1709,6 +2462,13 @@ export async function adoptServerSummaries(rows: DwSummary[]): Promise<void> {
           createdAt: now,
           updatedAt: now,
           registryVersion: "",
+          // Named explicitly even though both are optional, because this is a hand-enumerated literal
+          // and this file already records what those cost: the offline create path re-listed nine of a
+          // header's ten fields and the tenth — the link to the workshop record — was silently never
+          // copied, typechecked and all. The workshop LIST is not told about definitions, so "not read"
+          // is the truth here rather than a placeholder.
+          customSchemaVersion: "",
+          customDefinition: null,
           // WHOEVER CACHED IT, not whoever created it on the server. This field answers "may this
           // session send this local copy", and a row cached under its remote creator's id would be
           // invisible offline to the designer who is actually sitting here — while still being
@@ -1822,10 +2582,34 @@ export async function pendingWork(): Promise<DwDraftPending[]> {
 export function buildStageEntries(
   spec: DwStage,
   stage: DwDraftStage | undefined
-): { entries: DwSaveEntry[]; rowKeys: Array<{ entityKey: string; rowIndex: number } | null> } {
+): {
+  entries: DwSaveEntry[];
+  rowKeys: Array<{ entityKey: string; rowIndex: number } | null>;
+  /**
+   * Whether any entry above carried `merge: true`.
+   *
+   * Returned rather than re-derived by the caller, because the caller would have to re-implement the
+   * never-read rule to work it out and the two copies would drift. It is read by exactly one thing —
+   * `markStagePushed`'s `mergedEntries` — and what it is for is written up there: a merge push leaves
+   * the server holding a SUPERSET of this browser's copy, so acknowledging it as "we have now read
+   * the server" is what makes the NEXT save delete everything this browser never saw.
+   */
+  merged: boolean;
+} {
   const entries: DwSaveEntry[] = [];
   const rowKeys: Array<{ entityKey: string; rowIndex: number } | null> = [];
   const data = stageDataOf(stage);
+  /*
+    ONE never-read TEST FOR ALL THREE ARMS, DECIDED ONCE HERE.
+
+    It used to be computed twice — inside the singleton branch and again above `_custom` — and the
+    collection loop sitting between them computed it not at all, which is exactly how that loop came
+    to be the only arm sending a wholesale replace. A stage is read or unread as a WHOLE (it is one
+    `serverLoadedAt` on one `DwDraftStage`), so a per-arm re-derivation was never expressing anything
+    the stage-level fact did not already say, and having three arms read one const is what stops a
+    fourth from being added without it.
+  */
+  const neverRead = (stage?.serverLoadedAt ?? null) === null;
 
   for (const entity of spec.entities) {
     if (entity.cardinality === "SINGLETON") {
@@ -1855,7 +2639,6 @@ export function buildStageEntries(
         blank would overwrite an answer recorded elsewhere. `merge` is that promise, kept on the
         server: keys this browser never had are preserved, keys it did have still win.
       */
-      const neverRead = (stage?.serverLoadedAt ?? null) === null;
       const answered = Object.values(values).some((value) => isFilled(value));
       if (!neverRead || answered) {
         /*
@@ -1892,12 +2675,329 @@ export function buildStageEntries(
         // carrying its old ordinal after a reorder is sorted straight back to where it came from the
         // next time the stage is loaded, and the reorder looks like it did not take.
         ordinal: rowIndex,
-        data: entryDataOf(row)
+        data: entryDataOf(row),
+        /*
+          A COLLECTION ROW ON A NEVER-READ STAGE IS A MERGE FOR THE SAME REASON A SINGLETON IS, AND
+          THIS ARM WAS THE ONE THAT DID NOT SAY SO.
+
+          The claim this loop was written under — that `merge` is a "singleton primitive" because a
+          collection row is addressed by `_entryId`/`_clientKey` and swept by `replaceCollections`,
+          so "keep the keys I did not send" has no meaning for one — confuses WHICH ROW is being
+          written with WHAT IS WRITTEN INTO IT. Addressing decides which row `save_stage` updates;
+          it says nothing about the row's `data`, and that `data` is replaced WHOLESALE (see the
+          `updates.append` in `save_stage`, which writes `_json(item.data)` over the column). The
+          sweep is a different mechanism again: it soft-deletes rows the payload did not name, and
+          is armed only by `replaceCollections`/`emptiedEntities`. Neither one preserves a key.
+
+          The server has never had the rule this loop assumed. `if entry.merge and previous:` in
+          `save_stage` is NOT gated on cardinality, and `previous` is filled for ANY row it matched
+          — by `_entryId` or by `_clientKey`, which is exactly how a collection row is matched. The
+          request schema agrees in words: `StageEntryIn.merge` is documented as keys "already stored
+          under this ROW", and `DwSaveEntry.merge` here says "the server's copy of the ROW".
+
+          AND IT IS REACHABLE, not theoretical. `markStagePushed` deliberately does NOT stamp
+          `serverLoadedAt` after a merge push, so a browser stays never-read across many saves by
+          design — it goes on holding rows it created offline, each carrying the `_clientKey` the
+          server has since matched and stored. Reproduced against the live API and Postgres before
+          this line existed: the office wrote six fields into one `tool` row, a never-read browser
+          holding only `name` in that row sent `{"name":"Pit loom","_clientKey":…}`, the server
+          answered `HTTP 200 saved=1 updated=1 removed=0 errors={}`, and the row in Postgres became
+          `{"name": "Pit loom"}` — five fields gone in place, with 0 `RecordRevision` rows to
+          recover them from. The same walk with this flag preserves all six.
+
+          `merge` OMITTED RATHER THAN SENT AS `false`, which is the singleton arm's compatibility
+          argument verbatim: `APIModel` is `extra="forbid"`, so an API that predates the field
+          answers 422 to every entry carrying it, and sending it only on the never-downloaded saves
+          keeps that skew off every ordinary save. The spread is what expresses the absence — a
+          plain `merge: neverRead` would put `false` on the wire on every read stage's every row.
+        */
+        ...(neverRead ? { merge: true } : {})
       });
       rowKeys.push({ entityKey: entity.key, rowIndex });
     });
   }
-  return { entries, rowKeys };
+
+  /*
+    THE DESIGNER'S OWN ANSWERS, IN A RESERVED ENTRY OF THEIR OWN, AFTER THE REGISTRY'S ENTITIES.
+
+    `_custom` is not a registry entity and never will be — it is a `DwStageEntry` row of its own, one
+    per (workshop, stage) — so it cannot come out of the loop above, which walks `spec.entities`. That
+    is also what makes it unreachable by the collection sweep: `emptiedEntities` is intersected with
+    the registry's own collection keys server-side, and `_custom` is not one of them.
+
+    THE OMISSION RULE, WHICH IS THE WHOLE OF THE SAFETY. `plan_custom_write` treats "no entry at all"
+    and "an entry carrying `{}`" as two different instructions: the first writes NO ROW, and the second
+    is a designer clearing every answer and IS written. So a browser holding nothing must send nothing.
+    A `{ entityKey: "_custom", data: {} }` from a browser that simply never fetched the definition
+    would read on the server as "the designer cleared every custom answer" — and since a stage save
+    replaces the row wholesale and writes no `RecordRevision`, the office's answers would be gone in
+    place.
+
+    `merge: true` ON THE NEVER-READ BRANCH ONLY, and `merge` OMITTED rather than sent as `false`
+    otherwise. Both halves are the singleton arm's argument above, verbatim, and both are load-bearing:
+    the flag is what keeps the promise the amber banner makes on a stage this browser has not
+    downloaded ("nothing you leave blank will overwrite an answer recorded elsewhere"), and its
+    ABSENCE is what stops an API that predates the field 422ing every save instead of only the
+    never-downloaded ones. `e2e/stage-entry-merge-unit.spec.ts` pins "no entry ever carries
+    merge:false" over every shape at once, and this arm must not be the one that breaks it.
+
+    `rowKeys.push(null)` BESIDE IT, OR EVERY LATER ERROR LANDS ON THE WRONG ROW. `save_stage` keys its
+    per-field errors by an entry's INDEX IN THE ARRAY THAT WAS SENT, and the stage page decodes them
+    through this array — so an entry pushed without its `rowKeys` companion shifts every collection
+    row after it by one and puts a message on a box that is fine. A singleton-shaped entry files its
+    errors under the bare key, which for this one is the literal `_custom`.
+  */
+  const custom = stage?.custom ?? {};
+  const answered = Object.values(custom).some((value) => isFilled(value));
+  if (Object.keys(custom).length && (!neverRead || answered)) {
+    entries.push(
+      neverRead
+        ? { entityKey: CUSTOM_ENTITY_KEY, data: custom, merge: true }
+        : { entityKey: CUSTOM_ENTITY_KEY, data: custom }
+    );
+    rowKeys.push(null);
+  }
+
+  // Read off the entries themselves rather than tracked in a flag beside the loops: a flag set at one
+  // of the THREE `merge: true` sites (singleton, collection row, `_custom`) and forgotten at another
+  // would be silently wrong in exactly the direction that loses data, and this cannot be. The count
+  // went from two to three when the collection loop was given the flag it had always been missing —
+  // and because this line derives the answer, that arm needed no change here to be accounted for.
+  return { entries, rowKeys, merged: entries.some((entry) => entry.merge === true) };
+}
+
+/**
+ * Whether this save may tell the server "these are now exactly the rows", and which collections it
+ * may say it emptied.
+ *
+ * ── THE FOURTH DOOR, AND IT DELETED WHOLE ROWS RATHER THAN KEYS ──────────────────────────────────
+ *
+ * {@link buildStageEntries} asks the never-read question three times — singleton, collection row,
+ * `_custom` — and every one of those arms protects the CONTENTS of a row the server keeps. Nothing
+ * asked it about WHICH ROWS SURVIVE, which is a different mechanism with a different switch: the
+ * sweep. `save_stage` soft-deletes every live row of every entity in
+ * `(touched_entities | emptiedEntities) & collection_keys` that the payload did not name, and
+ * `touched_entities` is filled from the entries actually sent — so the sweep reaches entities the
+ * designer never touched, merely because this browser happened to hold one row in them.
+ *
+ * Both send sites armed it with `stage.removedFrom.length > 0` and nothing else, and `removedFrom`
+ * grows on ANY row deletion (`patchCollection` compares row counts). `merge: true` is no defence:
+ * it preserves keys inside a row the server matched, and says nothing about a row the payload never
+ * named. REPRODUCED against the running API and Postgres, one row deleted on a never-read browser:
+ *
+ *   PUT … {entries: [1 processStep row, 1 tool row, both merge:true],
+ *          replaceCollections: true, emptiedEntities: ["tool"]}
+ *   -> HTTP 200 saved=2 created=2 updated=0 removed=5 errors={}
+ *
+ * Five rows the office had written — three `tool` and, because the payload named one row in it, two
+ * `processStep` the designer had not deleted anything from — soft-deleted in one 200, with the page
+ * reporting "Stage saved — 2 added, 0 updated, 5 removed" and no row on screen to attach that 5 to.
+ *
+ * ── SO THE SWEEP IS EARNED, EXACTLY AS IT IS ON THE HANDSET ──────────────────────────────────────
+ *
+ * `buildStageBody` on Android sends `replaceCollections = authoritative` and
+ * `emptiedEntities = if (authoritative) emptied else emptyList()`, where authority is
+ * `StageDraft.stageSeen` — a stage this device has READ. {@link DwDraftStage.serverLoadedAt} is this
+ * store's word for the same fact, and it is the only thing either client has that can tell "the
+ * designer deleted this" from "this browser never downloaded it".
+ *
+ * `emptiedEntities` IS ALSO INTERSECTED WITH THE STAGE'S OWN COLLECTIONS, which the handset does one
+ * line further down for the same reason: a key left behind by a registry that has since moved on is
+ * not a deletion instruction for anything, and `StageSaveIn` 422s the whole save for a reserved
+ * `_`-prefixed key — which would refuse a stage's every answer over a bookkeeping artefact.
+ *
+ * ── WHAT WITHHOLDING IT COSTS, WHICH IS REAL AND MUST NOT BE SILENT ──────────────────────────────
+ *
+ * A deletion that cannot be stated does not travel: the row stays alive in the repository and prints
+ * in the .docx. That is the trade Android makes too, and it is the better half of it — the deletion
+ * is recorded on this device, is carried forward save after save, and is undone by nobody; whereas
+ * the rows the sweep took were other people's work, gone in place, with nothing on any screen to say
+ * so. What it must never be is quiet: the caller is handed {@link DwStageSweep.withheld} to say it in
+ * words, `removedFrom` is kept by {@link unsentAfterPush} (which is judged against the list the
+ * payload ACTUALLY carried, so a withheld deletion is never marked as sent), and `pendingWork` and
+ * `DraftSyncBanner` both count a stage holding `removedFrom` as work that has not landed.
+ */
+export function stageSweep(
+  spec: DwStage | null | undefined,
+  stage: DwDraftStage | undefined
+): DwStageSweep {
+  const removed = stage?.removedFrom ?? [];
+  const collectionKeys = new Set(
+    (spec?.entities ?? []).filter((entity) => entity.cardinality === "COLLECTION").map((entity) => entity.key)
+  );
+  // Intersected whether or not the sweep is claimed, so `withheld` names only entities this stage
+  // could actually have swept — a designer must not be told a deletion is being held back for an
+  // entity no save of this stage would ever have carried.
+  const owed = spec ? removed.filter((key) => collectionKeys.has(key)) : removed.filter((key) => !key.startsWith("_"));
+  // The same one question `buildStageEntries` decides once for all three of its arms, asked here for
+  // the mechanism those arms do not cover. A stage is read or unread as a WHOLE.
+  const neverRead = (stage?.serverLoadedAt ?? null) === null;
+  if (neverRead) return { replaceCollections: false, emptiedEntities: [], withheld: owed };
+  return { replaceCollections: owed.length > 0, emptiedEntities: owed, withheld: [] };
+}
+
+/** What {@link stageSweep} decided, and what that decision is holding back. */
+export type DwStageSweep = {
+  /** `true` means "these are now exactly the rows", and the server may delete the rest. */
+  replaceCollections: boolean;
+  /** Collections this save states it has emptied. Read by the server only under the flag above. */
+  emptiedEntities: string[];
+  /**
+   * Collections holding a deletion this save is NOT entitled to state, in the designer's terms.
+   *
+   * Non-empty only on a stage this browser has never read. It is the sentence the stage page owes the
+   * designer — a deletion nobody can see waiting is a deletion the designer believes has happened.
+   */
+  withheld: string[];
+};
+
+/** One collection row's address on screen, as {@link buildStageEntries} recorded it. */
+export type DwRowKey = { entityKey: string; rowIndex: number } | null;
+
+/**
+ * `save_stage`'s error map, re-addressed from "the array I sent" to "the boxes on screen".
+ *
+ * THE DECODE HALF OF THE CONTRACT {@link buildStageEntries} ENCODES, and it lives beside it for that
+ * reason: the server keys its per-field errors by an entry's INDEX IN THE ARRAY THAT WAS SENT, so the
+ * only thing that can read them is the `rowKeys` companion built by the same pass over the same stage.
+ * Kept in the component that rendered them, the two halves of one index contract sat 900 lines and one
+ * module apart, and the decode could not be tested without a browser and a server — which is how it
+ * carried a silent drop for as long as it did.
+ *
+ * `unplaced` IS THE HONESTY VALVE, and it is `DwStageRefusalReport.unplaced` on the handset: a scope
+ * this array cannot account for is REPORTED rather than dropped, because the alternative is a refusal
+ * that exists on the server and nowhere else. Naming the wrong row was never the alternative — a
+ * message on a box that is fine sends a designer to correct an answer nobody objected to.
+ */
+export function placeStageErrors(
+  errors: Record<string, Record<string, string>> | null | undefined,
+  rowKeys: DwRowKey[]
+): { decoded: Record<string, Record<string, string>>; unplaced: string[] } {
+  const decoded: Record<string, Record<string, string>> = {};
+  const unplaced: string[] = [];
+  for (const [key, fields] of Object.entries(errors ?? {})) {
+    const named = Object.entries(fields ?? {});
+    if (!named.length) {
+      // A scope refused with no field map at all: there is no box to mark, and the server still
+      // refused something. Same sentence as the handset's, for the same reason.
+      unplaced.push(`${key}: refused, with no reason given`);
+      continue;
+    }
+    const match = /^(.+)\[(\d+)\]$/.exec(key);
+    if (!match) {
+      // A bare key: the stage's singleton, or the reserved `_custom` container. Both are drawn from
+      // `errors[key]` directly and need no re-addressing.
+      decoded[key] = fields;
+      continue;
+    }
+    const entityKey = match[1];
+    const origin = rowKeys[Number(match[2])];
+    /*
+      THE ENTITY IS CHECKED, NOT JUST THE PRESENCE OF AN ENTRY.
+
+      The index is a position in an array holding EVERY entity's entries, so index 4 can perfectly well
+      be occupied by a different entity than the scope key names. Trusting presence alone would draw a
+      refusal for `tool[4]` onto a `rawMaterial` row — a red mark on an answer nobody objected to, which
+      is worse than admitting the refusal cannot be placed. A singleton's `rowKeys` slot is `null`, so
+      this also rejects a bracketed scope that resolves to a singleton entry.
+    */
+    if (!origin || origin.entityKey !== entityKey) {
+      for (const [field, message] of named) unplaced.push(`${key}.${field}: ${message}`);
+      continue;
+    }
+    decoded[`${origin.entityKey}[${origin.rowIndex}]`] = fields;
+  }
+  return { decoded, unplaced };
+}
+
+/**
+ * Refusals that no box on the stage form will draw, as `scope.field: message` lines.
+ *
+ * THE SECOND HALF OF {@link placeStageErrors}'S HONESTY, and the half that catches the reachable case.
+ * `placeStageErrors` decides placement against the array that was SENT, at the moment of the save. This
+ * decides it against the rows that are on screen NOW — and those are two different questions, because
+ * the decoded errors are state that survives until the next save while the rows underneath them are
+ * edited freely in between:
+ *
+ *   • delete the row a refusal was drawn on, and `CollectionTable` — which looks its errors up BY ROW —
+ *     simply never reads that entry again. The message vanishes and the server still holds the refusal;
+ *   • delete a row ABOVE it, and every index below shifts by one, so the surviving message would be
+ *     drawn against a DIFFERENT row's boxes: a red mark on an answer nobody objected to;
+ *   • a scope naming an entity this stage does not declare, or a bare key that is neither the singleton
+ *     nor `_custom`, has no box at all.
+ *
+ * All four are the same failure and get the same answer: if it cannot be placed against the current
+ * rows, it is said out loud instead. Pure, and exported, because the alternative is a `useMemo` in a
+ * component that no test can reach without a browser and a refused save — which is precisely the
+ * condition under which the original silent drop survived review.
+ *
+ * The predicate is the COMPLEMENT of the one `collectionErrors` marks with, so every refusal is either
+ * on a box or in the banner and a change to one cannot open a gap in the other.
+ */
+export function strandedRefusals(
+  errors: Record<string, Record<string, string>> | null | undefined,
+  entities: ReadonlyArray<{ key: string; cardinality: string }>,
+  collections: Record<string, unknown[]>
+): string[] {
+  const spec = new Map(entities.map((entity) => [entity.key, entity.cardinality]));
+  const lines: string[] = [];
+  for (const [key, fields] of Object.entries(errors ?? {})) {
+    const match = /^(.+)\[(\d+)\]$/.exec(key);
+    const drawn = match
+      ? spec.get(match[1]) === "COLLECTION" && Number(match[2]) < (collections[match[1]] ?? []).length
+      : // `_custom` is always drawn — the block is rendered in one of its three positions on every
+        // stage, including a stage that declares no entity at all.
+        key === CUSTOM_ENTITY_KEY || spec.get(key) === "SINGLETON";
+    if (drawn) continue;
+    for (const [field, message] of Object.entries(fields ?? {})) lines.push(`${key}.${field}: ${message}`);
+  }
+  return lines;
+}
+
+/**
+ * How many ANSWERS one save came back refusing — not how many scopes they were grouped under.
+ *
+ * `save_stage` keys its errors by scope (`entity`, `entity[3]`, `_custom`) and the value under each is a
+ * map of FIELD to message, so counting keys counted the boxes' containers: three refused answers in one
+ * row reported "1 answer", and the designer who opened the stage found three marked boxes. The number
+ * disagreed with the screen it was sending them to, and with the handset, which has always summed the
+ * field maps (`result.errors.values.sumOf { (entry as? JsonObject)?.size ?: 1 }`).
+ *
+ * `|| 1` is that `?: 1`: a scope refused with an empty field map contributes ONE rather than nothing, so
+ * a response shaped that way can never sum to zero and be recorded as a clean save.
+ */
+export function countRefusedAnswers(errors: Record<string, Record<string, string>> | null | undefined): number {
+  return Object.values(errors ?? {}).reduce((total, fields) => total + (Object.keys(fields ?? {}).length || 1), 0);
+}
+
+/**
+ * The refusal count to SHOW, given what the server sent and what this build can count for itself.
+ *
+ * The server computes `refusedAnswers` so that a laptop and a handset cannot print different numbers
+ * off one response body — see {@link DwSaveResult.refusedAnswers}. Its reading is also the safer one:
+ * `countRefusedAnswers` walks the map with `Object.keys`, which on a scope whose value arrived as a
+ * bare string returns that string's INDICES, so the sentence would carry a character count. The
+ * server's `refused_answer_count` guards that case explicitly and returns 1.
+ *
+ * SO WHY NOT SIMPLY READ THE FIELD. Because the two disagree in the other direction as well, and
+ * that direction loses data rather than exaggerating it: for a scope refused with an EMPTY field map
+ * the server sums 0, while `countRefusedAnswers`' `|| 1` deliberately contributes 1 so a response
+ * shaped that way cannot total zero and be filed as a clean save. Reading the field alone would
+ * report "nothing refused" about a response that plainly refused something — which is the one
+ * direction this repository has already decided must never be wrong (see the header of
+ * `e2e/stage-refusal-placement-unit.spec.ts`: the form and the pass were both wrong by
+ * under-reporting, and that is what made it a defect rather than a discrepancy).
+ *
+ * Hence: take the server's number, EXCEPT where it would say nothing was refused about a response
+ * this build can see refused something. `undefined` is a deployment older than the field.
+ */
+export function refusedAnswersToShow(
+  serverCount: number | undefined,
+  errors: Record<string, Record<string, string>> | null | undefined
+): number {
+  const local = countRefusedAnswers(errors);
+  if (typeof serverCount !== "number") return local;
+  return serverCount > 0 || local === 0 ? serverCount : local;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -2000,12 +3100,33 @@ async function runSync(): Promise<DwSyncResult> {
             ...current,
             remoteId: created.id,
             headerDirtyAt: null,
+            // The CREATE carried the whole header, so every recorded edit is discharged. Cleared with
+            // the timestamp for the reason the PATCH arm gives: a list left behind would make the next
+            // unrelated edit send fields nobody touched.
+            headerDirtyKeys: [],
             header: { ...current.header, status: String(created.status) },
             failure: null
           }))) ?? draft;
         result.workshopsCreated += 1;
       } else if (item.needsHeader) {
-        await patchDesignWorkshop(draft.remoteId, {
+        /*
+          ONLY THE FIELDS SOMEBODY TYPED INTO — see {@link DwDraft.headerDirtyKeys}.
+
+          This used to send the whole local header on every PATCH. `ensureDraft` seeds a header of
+          empty strings and nulls for a workshop this browser has merely OPENED, so the first caller
+          of `patchDraftHeader` on such a draft would have nulled the office's `notes` and overwritten
+          its title with `""` — under a 200, with nothing on any screen. What kept it harmless was
+          having no caller, which is not the same as being shut.
+
+          THE FALLBACK IS TODAY'S BEHAVIOUR, DELIBERATELY. A draft written by a build before this
+          field existed carries no list, and sending the whole header is what such a draft has always
+          done; changing it to "send nothing" would silently drop an edit somebody made. It is
+          unreachable in practice — `patchDraftHeader` is the only thing that can arm this branch, and
+          it always records its keys — and it is left rather than asserted because a sync pass is the
+          wrong place to throw.
+        */
+        const edited = draft.headerDirtyKeys?.length ? new Set(draft.headerDirtyKeys) : null;
+        const whole = {
           title: draft.header.title,
           templateId: draft.header.templateId,
           craftName: draft.header.craftName,
@@ -2016,8 +3137,21 @@ async function runSync(): Promise<DwSyncResult> {
           endDate: draft.header.endDate,
           workshopId: draft.header.workshopId,
           notes: draft.header.notes
-        });
-        draft = (await mutate(draft.localId, (current) => ({ ...current, headerDirtyAt: null }))) ?? draft;
+        };
+        await patchDesignWorkshop(
+          draft.remoteId,
+          edited
+            ? Object.fromEntries(Object.entries(whole).filter(([key]) => edited.has(key)))
+            : whole
+        );
+        draft =
+          (await mutate(draft.localId, (current) => ({
+            ...current,
+            headerDirtyAt: null,
+            // Cleared WITH the timestamp, never apart from it: a list left behind would make the next
+            // unrelated edit send fields nobody touched this time.
+            headerDirtyKeys: []
+          }))) ?? draft;
       }
 
       const remoteId = draft.remoteId;
@@ -2214,18 +3348,42 @@ async function runSync(): Promise<DwSyncResult> {
           continue;
         }
 
+        /*
+          ARMED BY A DELETION *AND* BY THE ONE THING THAT MAKES A DELETION SAYABLE, WHICH IS A READ.
+
+          This was `replaceCollections: stage.removedFrom.length > 0` with `emptiedEntities:
+          stage.removedFrom` beside it, and the comment here said the flag "is dangerous otherwise: it
+          would sweep any row a second editor added" — which is precisely what it did, on every
+          never-downloaded stage, measured at `removed=5` for one deleted row. {@link stageSweep}
+          carries the whole argument and is shared with the stage page's own save so the two cannot
+          drift; a payload built by one and acknowledged by the other is what put this defect's
+          neighbour on the wire.
+        */
+        const sweep = stageSweep(spec, stage);
+        /*
+          NOTHING TO SAY AND NOTHING TO SEND, RATHER THAN AN EMPTY PUT EVERY PASS.
+
+          `stageHoldsSomething` above counts a pending removal as content, which is right — it must
+          keep its dirty flag. But when the sweep is withheld, an entry-less payload carries NO part of
+          that removal, so sending it would be a round trip that changes nothing, on every pass, for as
+          long as the stage stays unread. Counted as pending — which it is — and left exactly as it is
+          on disk, so the deletion is still owed and still listed.
+        */
+        if (!entries.length && !sweep.emptiedEntities.length) {
+          result.pending += 1;
+          continue;
+        }
+
         let saved;
         try {
           saved = await saveDesignWorkshopStage(remoteId, stageKey, {
             entries,
-            // Armed only by a deletion, and by a deletion that has not yet been acknowledged. True
-            // means "these are now exactly the rows", which is the only way a removal can reach the
-            // server and is dangerous otherwise: it would sweep any row a second editor added.
-            replaceCollections: stage.removedFrom.length > 0,
+            replaceCollections: sweep.replaceCollections,
             // WITHOUT THIS, DELETING THE LAST ROW OF A COLLECTION NEVER REACHES THE SERVER. The
             // sweep only considers entities the payload named, and an emptied collection sends no
-            // entries at all, so it names itself nowhere. `removedFrom` is exactly that list.
-            emptiedEntities: stage.removedFrom,
+            // entries at all, so it names itself nowhere. `removedFrom` is exactly that list — minus
+            // what this browser has not earned the right to say.
+            emptiedEntities: sweep.emptiedEntities,
             submit: false
           });
         } catch (error) {
@@ -2298,7 +3456,13 @@ async function runSync(): Promise<DwSyncResult> {
           continue;
         }
 
-        const rejected = Object.keys(saved.errors ?? {}).length;
+        // ANSWERS, NOT SCOPES — see {@link countRefusedAnswers} for what this counted before and why
+        // the number a designer is shown has to be the number of marked boxes they will find.
+        //
+        // The server's own count is preferred so the two surfaces cannot disagree, with this build's
+        // count as both the fallback for an older deployment and the floor that stops a refused
+        // response reading as a clean save. {@link refusedAnswersToShow} argues both halves.
+        const rejected = refusedAnswersToShow(saved.refusedAnswers, saved.errors);
         await mutate(draft.localId, (current) => {
           const now = Date.now();
           const target = current.stages[stageKey];
@@ -2313,13 +3477,47 @@ async function runSync(): Promise<DwSyncResult> {
                 // has now accepted; `target` is whatever the designer has since typed or deleted.
                 // Answering both fields against the payload rather than clearing them is the whole
                 // guard — see {@link unsentAfterPush}.
-                ...unsentAfterPush(target, { dirtyAt: stage.dirtyAt, removedFrom: stage.removedFrom }),
+                //
+                // `sweep.emptiedEntities` AND NOT `stage.removedFrom`, which is the same distinction
+                // one door along: what was SENT, not what was HELD. A deletion {@link stageSweep}
+                // withheld was never named in this payload, so acknowledging it here would mark it as
+                // sent, clear it, and leave the row alive in the repository for ever with nothing on
+                // any screen saying so — the exact failure `unsentAfterPush` was written for, arriving
+                // through a different door.
+                ...unsentAfterPush(target, { dirtyAt: stage.dirtyAt, removedFrom: sweep.emptiedEntities }),
                 lastPushedAt: now,
                 completeness: saved.completeness ?? target.completeness,
                 failure: rejected
                   ? failure(
-                      `The server refused ${rejected} answer${rejected === 1 ? "" : "s"} in this stage. Everything else was ` +
-                        "saved; open the stage to see which fields are marked.",
+                      `The server refused ${rejected} answer${rejected === 1 ? "" : "s"} in this stage and kept what it ` +
+                        `already held for ${rejected === 1 ? "it" : "them"}. Everything else was saved and nothing you ` +
+                        "typed has been thrown away — open the stage to see which answers, and what the repository holds.",
+                      /*
+                        `permanent: true` IS DELIBERATE HERE, AND IT IS NOT WHAT THE HANDSET WRITES.
+
+                        Android records a per-field refusal as `permanent = false`. Copying that here would be
+                        wrong, because the field does not mean the same thing on the two surfaces. On Android
+                        `permanent` is read by `blocksRetry` and nothing else — the refusal's VISIBILITY rides on
+                        separate columns (`failure`, `refusedFields`, `refusedScopes`), which are written whatever
+                        `permanent` says. In this store `permanent` does double duty: `pendingWork` lists a stage's
+                        refusal ONLY `if (stage.failure?.permanent)`, and `failures.length` is also one of the
+                        things that keeps the draft in the pending list at all. Setting it false would delete this
+                        refusal from the one list a designer reads to find out what still needs them — a save the
+                        server partly refused would go quiet, which is the defect this lane exists to close, not
+                        one to introduce.
+
+                        The v3 migration rung says the same thing in the same words and is the reason it can be
+                        stated so flatly: "a v2 `failure` says `permanent: true` for a rejected field (the
+                        designer's to fix, so it must go on sticking) and for a schema refusal (nobody's to fix,
+                        and it must NOT)". This is the first of those two, so it sticks.
+
+                        AND IT COSTS NO RETRY. `blocksRetry` only ever skips a stage the pass would otherwise
+                        send, and `unsentAfterPush` has already set `dirtyAt: null` for this one — the PUT
+                        succeeded. The designer's correction reaches the server regardless: `putDraftStage`
+                        writes `failure: null` on any edit, and the stage page saves directly rather than through
+                        this pass. So the two surfaces differ in what they RECORD and agree on what HAPPENS —
+                        the refusal keeps being shown, and neither app spins on it.
+                      */
                       true,
                       (target.failure?.attempts ?? 0) + 1
                     )

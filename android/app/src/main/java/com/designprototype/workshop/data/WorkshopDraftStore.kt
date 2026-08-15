@@ -82,8 +82,11 @@ import java.util.concurrent.atomic.AtomicReference
  * "nothing has been synced yet". A rung is owed only to a field that MOVES, is RENAMED or changes
  * MEANING — and spending a version number on an addition trains the next reader to skip the ladder
  * for the change that genuinely needs one.
+ *
+ * v2 IS A RENAME THAT DELIBERATELY DOES NOT CARRY ITS OLD VALUE ACROSS — `serverBaseline` became
+ * [StageDraft.stageSeen]. See the rung in [WorkshopDraftStore.migrate] and the KDoc on that field.
  */
-const val WORKSHOP_DRAFT_SCHEMA_VERSION: Int = 1
+const val WORKSHOP_DRAFT_SCHEMA_VERSION: Int = 2
 
 /**
  * One durable captured file, described well enough to render it without touching the bytes again.
@@ -223,6 +226,64 @@ data class StageDraft(
     /** Position in the 22-stage sequence. Stored, not inferred from map order — see [WorkshopDraft.stages]. */
     val order: Int = 0,
     val values: Map<String, JsonElement> = emptyMap(),
+    /**
+     * Answers to the questions THIS WORKSHOP'S DESIGNER added to this stage. Mirrors the server's
+     * `_custom` row one for one: flat, keyed by their own field keys.
+     *
+     * **A SIBLING OF [values] AND NEVER NESTED INSIDE IT**, and the two wrong homes fail in opposite
+     * directions. A plain key placed in [values] is posted inside the core singleton entry, dropped
+     * by `validate_entry` (which builds its result by iterating the registry entity's own fields and
+     * never reads a key it does not know), returned in `droppedKeys` — and would therefore fire "this
+     * phone is running a newer field registry than the server" on every save of every workshop that
+     * has a custom section, destroying the one registry-drift signal this repository has. An
+     * `_`-prefixed key in [values] never leaves the phone at all, because `wireData` strips them; that
+     * escape hatch exists and is used deliberately for `_recordingPlace`, and using it here would mean
+     * a designer's answers that sync nowhere.
+     *
+     * NO [WORKSHOP_DRAFT_SCHEMA_VERSION] RUNG IS OWED, by that constant's own rule: this is purely
+     * additive and defaulted, which is the case `ignoreUnknownKeys` plus an all-defaulted model
+     * already handle losslessly in both directions. Spending a version number on an addition trains
+     * the next reader to skip the ladder for the change that genuinely needs one.
+     *
+     * `JsonElement` for the reason [values] is: the store carries whatever a type it has never heard
+     * of stores, so a v1.1 answer written by a newer build survives a round trip through this one
+     * untouched rather than being dropped on decode.
+     */
+    val custom: Map<String, JsonElement> = emptyMap(),
+    /**
+     * WHETHER THIS DEVICE HAS EVER READ THE SERVER'S `_custom` ROW FOR THIS STAGE — the one fact that
+     * decides whether [custom] may be sent as a REPLACEMENT rather than as a merge.
+     *
+     * [serverBaseline] cannot answer this and it is worth saying exactly why, because using it was the
+     * defect. `recordStageSent` promotes a draft to `serverBaseline = true` after ANY successful save,
+     * including a merge save from a stage that was seeded blank because its download failed — so a
+     * phone can hold authority over a stage while never having seen the designer's own answers on it
+     * at all. The custom answers live in a SEPARATE row that a save carrying no `_custom` entry does
+     * not touch, so authority earned on the core stage says nothing whatever about that row.
+     *
+     * What went wrong with `serverBaseline` in that position: the office answered "looms in working
+     * order" on the web; the designer opened the stage in a courtyard where the download failed, typed
+     * one core field, and the save landed on the drive home — stamping the baseline. The NEXT save
+     * then carried `{"_custom": {}}` with `merge` omitted, which `plan_custom_write` reads as "the
+     * designer cleared every custom answer" and writes, wholesale, with no `RecordRevision` behind it.
+     * The office's answer was gone in place and the save reported success.
+     *
+     * True in exactly one situation: the stage's [custom] bucket was seeded from a successful read of
+     * the server's own bucket (`StageBucketDto.custom`), which is the only evidence a phone can have
+     * about a row it did not write. Once earned it is never given back by a keystroke — see
+     * `persistLocally`, which ORs it with what is already on disk.
+     *
+     * DEFAULTS TO FALSE, which is the conservative answer and the right one for every draft already
+     * sitting on a handset: those were written by a build with no custom sections in it at all, so
+     * their empty bucket means "never read" and must never be sent as a clearance. The cost of being
+     * wrong in this direction is that a designer clearing their LAST custom answer on such a stage
+     * does not propagate until the phone next reads the stage; the cost in the other direction is the
+     * office's fieldwork.
+     *
+     * NO [WORKSHOP_DRAFT_SCHEMA_VERSION] RUNG IS OWED, by the same rule [custom] cites: additive and
+     * defaulted, lossless in both directions through `ignoreUnknownKeys` and an all-defaulted model.
+     */
+    val customSeen: Boolean = false,
     /** The repeating group, when the stage has one. Empty for a stage that is only scalars. */
     val rows: List<DraftRow> = emptyList(),
     /** Ids into [WorkshopDraft.media]. The bytes are owned by the draft, not by the stage. */
@@ -246,13 +307,13 @@ data class StageDraft(
     /** Free notes that belong to the stage rather than to any one field. */
     val notes: String = "",
     /**
-     * WHETHER THIS DEVICE HAS EVER HELD THE SERVER'S COPY OF THIS STAGE — the one fact that decides
-     * whether the phone may say "these are now exactly the rows".
+     * WHETHER THIS DEVICE HAS EVER READ THE SERVER'S COPY OF THIS STAGE — the one fact that decides
+     * whether the phone may say "these are now exactly the rows" and "these are now exactly the keys".
      *
      * True in exactly two situations, and they are the only two in which the claim is honest:
      *
-     *  * the stage was seeded from a SUCCESSFUL `GET .../stages/{key}`, so the draft started from
-     *    everything the server had; or
+     *  * the stage was seeded or FOLDED from a SUCCESSFUL `GET .../stages/{key}`, so this device has
+     *    seen everything the server had (`StageScreen.fromRemote` and [dwFoldServerStage]); or
      *  * the workshop has no server record at all, so there is nothing on the server this draft could
      *    be missing.
      *
@@ -261,15 +322,60 @@ data class StageDraft(
      * which point a BLANK stage was seeded with no message saying the download had failed. One typed
      * field then produced a payload with that field, zero rows for every collection, and
      * `replaceCollections = true`, and the sweep deleted a fortnight of process steps, tools and raw
-     * materials that the phone had never seen. Nothing on either surface reported it; the web form
-     * simply showed the rows gone next time it was opened.
+     * materials that the phone had never seen.
      *
-     * DEFAULTS TO FALSE, which is the conservative answer, and that is deliberate for the drafts
-     * already sitting on handsets: a stage whose provenance this build cannot know is one the phone
-     * must not claim authority over. The cost of being wrong in this direction is a row that lives a
-     * little longer on the server; the cost in the other direction is the fortnight.
+     * ── IT IS EARNED BY HAVING READ, NEVER BY HAVING WRITTEN, AND THAT IS THE RENAME ──────────────
+     *
+     * This field was `serverBaseline`, and it had a THIRD writer that the two bullets above do not
+     * mention: `recordStageSent` set it after ANY successful save, with the comment "the draft and
+     * the server agree". After a save whose entries carried `merge = true` that is FALSE — the server
+     * holds `previous ∪ sent` and this device has never seen `previous` — so the phone reached
+     * authority over a stage it had never read, and the NEXT payload went up as a full replacement
+     * containing only the fields this handset happened to hold. `save_stage` writes a singleton's
+     * `data` WHOLESALE and records no `RecordRevision`, so the office's fields were gone in place,
+     * with the save reporting success. Reproduced against the server's own planner:
+     * `plan_custom_write([loomsWorking], sent={}, previous={'loomsWorking': 12}, merge=False)` returns
+     * `data={}`.
+     *
+     * The rename is what makes that unrepeatable rather than merely fixed. A field called "baseline"
+     * invites "we have just baselined it"; a field called "seen" cannot be set by a write without the
+     * line reading as the lie it is. [customSeen] is the same word for the same reason, one row along.
+     *
+     * ── WHAT HAPPENS TO THE DRAFTS ALREADY ON HANDSETS, WHICH IS THE POINT OF THE RUNG ────────────
+     *
+     * A `serverBaseline = true` on disk cannot be attributed: it is indistinguishable between a stage
+     * the designer opened with signal and a stage stamped by the defect above. So v2 does not carry
+     * it across — every stage on every handset starts again as NOT SEEN and re-earns the fact the
+     * only way it can be earned, by a read. That is a bookkeeping change and not a data change: no
+     * answer, row, photograph or deletion the designer recorded is touched by it, and the claim it
+     * withdraws is one this build cannot show to be true.
+     *
+     * ITS COST, STATED RATHER THAN HIDDEN: until that read lands, a stage sends `merge` and
+     * `replaceCollections = false`, so a CLEARANCE does not propagate — a designer who deletes the
+     * last value of a field, or a row out of a collection, on a draft that predates this change will
+     * see it stay on the server until the stage has been read once with a connection. The deletion is
+     * not lost: [emptiedEntities] is kept rather than cleared by a save that did not carry it (see
+     * `recordStageSent`), and it goes up on the first save after the read — AND TAKES EFFECT THERE,
+     * which is a second fact and was not true when this was written. `dwFoldServerStage` used to fold
+     * the server's rows back into the draft for every entity, including the ones the designer had
+     * emptied; the next payload then NAMED all those rows again, so the list travelled exactly as this
+     * sentence promised and `replaceCollections` swept nothing. The fold now declines to re-add rows
+     * for an entity named here, which is what makes "it goes up" mean the deletion happens. The two
+     * halves have to stay together: skip the fold's restore without keeping this field and the
+     * instruction is lost; keep the field without skipping the restore and it travels and means
+     * nothing. Weighed against the other
+     * direction — deleting fieldwork the office typed, in place, with no revision to recover it — a
+     * row that lives a little longer on the server is the cheaper failure, and it is the same weighing
+     * [customSeen] records for the container beside this one.
+     *
+     * The read is attempted on EVERY open of a stage that has not been seen, not only on an empty one
+     * — see `StageScreen`'s load and [dwFoldServerStage] — so "until the stage is next read" means one
+     * online visit rather than never.
+     *
+     * DEFAULTS TO FALSE, which is the conservative answer and the one a draft written by any earlier
+     * build decodes to.
      */
-    val serverBaseline: Boolean = false,
+    val stageSeen: Boolean = false,
     /**
      * Collections the designer has EMPTIED on this device and the server has not been told about yet.
      *
@@ -286,7 +392,38 @@ data class StageDraft(
      * is a thing that happened here, and it is the only thing that justifies a deletion there.
      * Cleared once the server has acknowledged it — see `recordStageSent`.
      */
-    val emptiedEntities: List<String> = emptyList()
+    val emptiedEntities: List<String> = emptyList(),
+    /**
+     * Individual rows the designer has DELETED on this device and the server has not been told about
+     * yet, as [DraftRow.id] — `entityKey#clientKey`.
+     *
+     * ── THE HALF [emptiedEntities] CANNOT SEE ────────────────────────────────────────────────────
+     *
+     * That field gains a key only when a collection goes from having rows to having NONE. Deleting
+     * one row of three leaves it untouched, and before this list existed such a deletion left NO
+     * record anywhere: `unsentDeletions` could not count it and `isFullySynced` had no term for it.
+     *
+     * On a stage this phone HAS read that is harmless — the payload names the surviving rows,
+     * `replaceCollections` is claimed, and the sweep removes the row the payload no longer names. On
+     * a stage it has NOT read, the deletion cannot travel at all, **and the workshop row said "Backed
+     * up to the server" while the row was still in the repository and still in the report.** Nothing
+     * can count what was never written down, which is what this is.
+     *
+     * IT IS MADE MORE REACHABLE BY THE `replaceCollections` FIX, NOT LESS. Before that fix the flag
+     * was omitted and the server read the omission as true, so a partial deletion did travel — by
+     * accident, in the same request that deleted every row the phone had never downloaded. Trading a
+     * catastrophe for a silent no-op is the right trade and it is not the end of it.
+     *
+     * A RECORD OF AN ACTION, exactly as [emptiedEntities] is, and kept honest the same way: a key is
+     * dropped again the moment the draft holds that row once more, so a row deleted and re-added
+     * before the next save owes nothing. Cleared for the entities an acknowledged payload actually
+     * swept — see `recordStageSent`.
+     *
+     * ADDITIVE AND DEFAULTED, so it owes no rung of [WORKSHOP_DRAFT_SCHEMA_VERSION] by that
+     * constant's own rule: a draft written by any earlier build decodes with an empty list, which is
+     * the same thing it has always meant.
+     */
+    val deletedRowKeys: List<String> = emptyList()
 )
 
 /** The whole document. One of these per workshop, one file per document. */
@@ -329,7 +466,29 @@ data class WorkshopDraft(
      * reads as "nothing has been synced yet" and is pushed in full on the next pass — which, given
      * the server matches on `_clientKey`, updates rather than duplicates. See [DraftSyncState].
      */
-    val sync: DraftSyncState = DraftSyncState()
+    val sync: DraftSyncState = DraftSyncState(),
+    /**
+     * MAY THIS WORKSHOP'S RECORDINGS LEAVE THE DEVICE FOR A THIRD-PARTY TRANSCRIPTION SERVICE — with
+     * who answered and when. Plan §6 answer 3.
+     *
+     * IN THE DRAFT AND NOT IN A SERVER-BACKED CACHE, and the argument is at [DraftConsent] in full.
+     * The short of it: this is AUTHORED here, with the artisan standing in the courtyard and no
+     * signal, so a store that can only mirror the server cannot hold it; it is evidence about a named
+     * person, so this store's quarantine-never-delete discipline is the right one and
+     * `DwReferenceStore`'s delete-and-refetch is not; and it is the only store that works for a
+     * workshop with no server row at all, which is every workshop created in a courtyard.
+     *
+     * NO SCHEMA VERSION BUMP AND NO MIGRATION RUNG, by this file's own rule at
+     * [WORKSHOP_DRAFT_SCHEMA_VERSION]: the field is defaulted and so is every field inside it, which
+     * is the purely additive case that already round-trips losslessly through an older build.
+     *
+     * WHICH WRITER TO USE MATTERS. A designer recording an artisan's answer is an act they performed,
+     * so it goes through [WorkshopDraftStore.update] and stamps `updatedAt`; a consent LEARNED from the
+     * server on a later read is bookkeeping and goes through [WorkshopDraftStore.updateBookkeeping],
+     * which does not. Getting that backwards either hides a real edit from the workshop list's
+     * `updatedAt` sort or makes a background refresh look like fieldwork.
+     */
+    val consent: DraftConsent = DraftConsent()
 )
 
 /** Per-stage answered/required counts, for a progress list that has to be right offline. */
@@ -518,8 +677,29 @@ object WorkshopDraftStore {
                 // this store existed, or one whose version field was lost. Structurally it is v1, so
                 // the rung only stamps the version on.
                 0 -> document
+                /*
+                  v2: `StageDraft.serverBaseline` became [StageDraft.stageSeen], AND ITS VALUE IS
+                  DELIBERATELY NOT CARRIED ACROSS. This rung is a no-op ON PURPOSE, and the no-op is
+                  the decision rather than an omission — the old key is simply dropped by
+                  `ignoreUnknownKeys` and the new one defaults to false.
+
+                  WHY NOT `renameKey`. The two mean different things. `serverBaseline` was written by
+                  a successful read AND by `recordStageSent` after any successful save, including a
+                  save whose entries carried `merge = true` from a stage seeded blank by a failed
+                  download — so a `true` on disk is indistinguishable between "this device read the
+                  server's copy" and "this device wrote to the server once, having read nothing".
+                  Carrying it would carry the second, which is the authority that deletes the office's
+                  fieldwork on the next save. There is no third field on disk that separates them.
+
+                  IT IS A BOOKKEEPING CHANGE AND NOT A DATA CHANGE. No value, row, photograph,
+                  deletion or sync signature is touched; the only thing withdrawn is a CLAIM this
+                  build cannot show to be true, and it is withdrawn in the direction that destroys
+                  nothing. Every stage re-earns it on its next online open — see [StageDraft.stageSeen]
+                  for the cost of the interval and `dwFoldServerStage` for how the read heals it.
+                */
+                1 -> document
                 // Next rung goes here, e.g.
-                // 1 -> document.renameKey("summary", "overview")
+                // 2 -> document.renameKey("summary", "overview")
                 else -> return document
             }
             version++

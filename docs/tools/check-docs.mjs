@@ -118,8 +118,31 @@ function testFacts() {
     (f) => f.endsWith(".spec.ts"),
     /^\s*test\(/gm,
   );
-  const androidUnit = existsSync(join(REPO, "android", "app", "src", "test"));
-  const androidInstr = existsSync(join(REPO, "android", "app", "src", "androidTest"));
+  /* The Kotlin suites are NESTED — `src/test/java/com/designprototype/workshop/data/…` — so the flat
+     `count` above finds nothing in them. It reported zero files, which is why this table said
+     "reports NO-SOURCE" for years while `:app:testDebugUnitTest` was in fact running 1156 tests. */
+  const countDeep = (dir, re) => {
+    if (!existsSync(dir)) return { files: 0, cases: 0 };
+    let files = 0;
+    let cases = 0;
+    const walk = (at) => {
+      for (const entry of readdirSync(at, { withFileTypes: true })) {
+        const full = join(at, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith(".kt")) {
+          const hits = (read(full).match(re) || []).length;
+          if (hits > 0) files += 1;
+          cases += hits;
+        }
+      }
+    };
+    walk(dir);
+    return { files, cases };
+  };
+  // `@Test` on its own line, which is how every suite in this repo writes it. JUnit 4 (`org.junit`)
+  // and androidx both spell the annotation the same way, so one pattern covers both source sets.
+  const androidUnit = countDeep(join(REPO, "android", "app", "src", "test"), /^\s*@Test\b/gm);
+  const androidInstr = countDeep(join(REPO, "android", "app", "src", "androidTest"), /^\s*@Test\b/gm);
   return { backend, e2e, androidUnit, androidInstr };
 }
 
@@ -283,12 +306,18 @@ no key is skipped wherever it sits.
 |---|---|---|---|
 | Backend unit (\`backend/tests/\`) | ${tests.backend.files} | ${tests.backend.cases} \`def test_\` | \`python -m pytest -q\` from \`backend/\` |
 | Web end-to-end (\`frontend/e2e/\`) | ${tests.e2e.files} | ${tests.e2e.cases} \`test(\` | Playwright, \`frontend/playwright.config.ts\` |
-| Android unit | ${tests.androidUnit ? "present" : "**none** — the `src/test` source set does not exist"} | — | \`:app:testDebugUnitTest\` reports NO-SOURCE |
-| Android instrumented | ${tests.androidInstr ? "present" : "**none** — the `src/androidTest` source set does not exist"} | — | not run in CI |
+| Android unit (\`android/app/src/test/\`) | ${tests.androidUnit.files || "**none**"} | ${tests.androidUnit.cases} \`@Test\` | \`./gradlew :app:testDebugUnitTest\` from \`android/\` |
+| Android instrumented (\`android/app/src/androidTest/\`) | ${tests.androidInstr.files || "**none**"} | ${tests.androidInstr.cases} \`@Test\` | needs a device; not run in CI |
 
 The backend case count is \`def test_\` occurrences; pytest reports a larger number because
 parametrised cases expand. Neither the backend suite nor the e2e suite is a CI gate today — see
 [CI.md](CI.md) and [QA_AUDIT.md](QA_AUDIT.md).
+
+**THIS TABLE USED TO SAY \`:app:testDebugUnitTest\` REPORTS NO-SOURCE, AND IT WAS FALSE.** The string
+was a hard-coded literal in the generator, and the counter beside it only read a flat directory —
+which finds nothing in \`src/test/java/com/…\`, so the emptiness it reported was its own. The suite
+runs: **1156 tests, 0 failures** on 2026-08-15. A generated fact is only as true as its generator,
+and this one asserted an absence it had never looked for.
 
 ## Code volume
 
@@ -345,7 +374,22 @@ function checkRoleParity() {
 }
 
 /** 3. Every repository path mentioned in a doc exists. */
-const PATH_RE = /(?<![\w/.-])((?:backend|frontend|android|infra|docs|scripts|\.github)\/[\w./-]*[\w/])/g;
+// `()` and `[]` ARE PATH CHARACTERS IN THIS REPOSITORY, and leaving them out was not harmless. The
+// App Router spells a route group `app/(protected)/` and a dynamic segment `[id]`/`[stageKey]`, so a
+// class of `[\w./-]` cannot match ANY of the 53 pages under `frontend/app/(protected)/` — the
+// largest single area of the frontend was invisible to a tool whose whole job is checking that docs
+// still describe the code. Worse than invisible, in fact: see the fallback in `checkCitations`.
+//
+// THEY ARE ADMITTED AS WHOLE SEGMENTS AND NOT AS LOOSE CHARACTERS, which is the difference between
+// fixing this and breaking every link in README.md. Putting `[`, `]`, `(` and `)` into the character
+// class lets the match run straight through the `](` of a markdown link, so `[docs/](docs/README.md)`
+// becomes one path spelled `docs/](docs/README.md` — 25 confident, wrong failures in one file. A
+// segment is therefore `(name)`, `[name]` or `name`, and nothing else can appear between two slashes.
+const PATH_SEGMENT = String.raw`(?:\([\w.-]+\)|\[[\w.-]+\]|[\w.-]+)`;
+const PATH_RE = new RegExp(
+  String.raw`(?<![\w/.\-\])])((?:backend|frontend|android|infra|docs|scripts|\.github)(?:\/${PATH_SEGMENT})+\/?)`,
+  "g",
+);
 
 // A runbook writes commands as you would type them, from the directory the runbook told you to be
 // in, so `python scripts/seed_admin.py` after `cd backend` is correct prose and a wrong path. These
@@ -379,7 +423,21 @@ function checkPaths() {
 }
 
 /** 4. Line citations (`file.py:120` / `file.py:120-140`) land inside a file that is long enough. */
-const CITE_RE = /([\w./-]+\.(?:py|ts|tsx|kt|kts|mjs|sh|yaml|yml|prisma)):(\d+)(?:-(\d+))?/g;
+// Same segment rule as PATH_RE, for the same reason — a citation can sit inside a markdown link.
+const CITE_RE = new RegExp(
+  String.raw`(${PATH_SEGMENT}(?:\/${PATH_SEGMENT})*\.(?:py|ts|tsx|kt|kts|mjs|sh|yaml|yml|prisma)):(\d+)(?:-(\d+))?`,
+  "g",
+);
+
+// Basenames too common to resolve from a bare filename. The App Router gives every one of 53 routes
+// the SAME basename, so "find the first path in this document ending in page.tsx" answers with an
+// arbitrary one — which is how this checker came to report citations as "past end of file (29
+// lines)" against a file the citation had never named. A false FAIL is worse than a missed one: it
+// teaches the next reader that the checker is noise.
+const AMBIGUOUS_BASENAMES = new Set([
+  "page.tsx", "layout.tsx", "route.ts", "loading.tsx", "error.tsx", "not-found.tsx",
+  "__init__.py", "index.ts", "index.tsx",
+]);
 function checkCitations() {
   let checked = 0;
   const seen = new Map();
@@ -393,8 +451,19 @@ function checkCitations() {
       let full = PATH_ROOTS.map((r) => join(r, file)).find(existsSync) || null;
       if (!full) {
         const base = file.split("/").pop();
-        const guess = [...text.matchAll(PATH_RE)].map((x) => x[1]).find((p) => p.endsWith(base));
-        if (guess && existsSync(join(REPO, guess))) full = join(REPO, guess);
+        // Resolve a bare filename against the paths named elsewhere in the same document — but only
+        // when the answer is UNAMBIGUOUS. `find` used to take the first match, which for a basename
+        // every route shares is an arbitrary file, and the line number was then checked against it.
+        if (!AMBIGUOUS_BASENAMES.has(base)) {
+          const candidates = [
+            ...new Set(
+              [...text.matchAll(PATH_RE)].map((x) => x[1]).filter((p) => p.endsWith(base)),
+            ),
+          ];
+          if (candidates.length === 1 && existsSync(join(REPO, candidates[0]))) {
+            full = join(REPO, candidates[0]);
+          }
+        }
       }
       if (!full || !statSync(full).isFile()) continue; // path check already reported real misses
       checked += 1;
@@ -473,11 +542,25 @@ function checkMermaid() {
   note(`${blocks} mermaid blocks linted (structure only — parse them for certainty)`);
 }
 
+/** Blank out fenced blocks and inline code spans, keeping the byte count and the line structure.
+ *
+ *  ONLY THE LINK CHECK USES THIS, and the asymmetry is deliberate. A path or a citation is normally
+ *  written INSIDE backticks — stripping code there would blind every other check in this file. A
+ *  markdown link is the opposite: `](` inside a code span is never a link, and a regex quoted in
+ *  prose supplies one readily. `/^(\d{1,2})[/\-.](\d{4})$/` contains `](\d{4})`, which this checker
+ *  reported as a broken link to a file named `\d{4}` — a confident failure about a character class. */
+function blankCode(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, (b) => b.replace(/[^\n]/g, " "))
+    .replace(/~~~[\s\S]*?~~~/g, (b) => b.replace(/[^\n]/g, " "))
+    .replace(/`[^`\n]*`/g, (b) => " ".repeat(b.length));
+}
+
 /** 7. Relative markdown links between docs resolve. */
 function checkCrossLinks() {
   let checked = 0;
   for (const doc of docFiles()) {
-    const text = read(doc);
+    const text = blankCode(read(doc));
     const rel = doc.slice(REPO.length + 1).replace(/\\/g, "/");
     for (const m of text.matchAll(/\]\((?!https?:|#|mailto:)([^)#\s]+)/g)) {
       const target = resolve(dirname(doc), m[1]);
