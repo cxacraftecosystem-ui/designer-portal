@@ -63,6 +63,28 @@ enum class SpecialSection {
     ANNEXURE_TRANSCRIPTS,
 
     /**
+     * Every AI layer a person has ACCEPTED, printed at the back and named as a machine's work.
+     *
+     * NO TEMPLATE IN THIS CATALOGUE CARRIES IT, on this side or on the server's, and that is the
+     * design rather than an omission — see the Python `SpecialSection.ANNEXURE_AI_LAYERS`. The
+     * server splices the section in only when a report is explicitly asked for it, so it can only
+     * reach a document somebody deliberately requested. This handset never asks.
+     *
+     * DECLARED HERE ANYWAY, FOR TWO REASONS. The port is a by-value mirror of the server's
+     * catalogue and a member missing from this enum is a member `applyReportSettings` could not
+     * name if it ever had to. And the sentence in [UNSUPPORTED_SECTIONS] has to exist BEFORE the
+     * section can appear, not after: the failure this whole port exists to end is a section
+     * silently absent from the field copy, and a device that meets an unknown section for the first
+     * time in a courtyard has nothing honest to say about it.
+     *
+     * IT COULD NOT BE DRAWN HERE IN ANY CASE, and the reason is data rather than rendering: an AI
+     * layer is a row on the server carrying which model produced it and who accepted it, and
+     * nothing under `data/` holds one. That is the state [ANNEXURE_TRANSCRIPTS] was in for its
+     * whole first life, and the sentence written for it is the model followed here.
+     */
+    ANNEXURE_AI_LAYERS,
+
+    /**
      * Every sitting recorded against a questionnaire the designer built and attached to THIS
      * workshop.
      *

@@ -411,9 +411,13 @@ def test_the_annexure_reaches_a_built_report_and_not_only_its_own_block_builder(
     assert "Artisan’s spoken explanation" in headings, headings
 
     index = [b for b in document.blocks if isinstance(b, TableBlock)
-             and b.caption == "Recordings transcribed during this workshop."]
+             and b.caption.startswith("Recordings transcribed during this workshop.")]
     assert len(index) == 1, "the annexure's contents table did not reach the document"
     assert len(index[0].rows) == 2
+    # The caption now carries a second sentence about the ``Speakers`` column, and the match above is
+    # a prefix so that this test keeps asserting WHICH table it found rather than pinning the caution's
+    # wording — which belongs to the test that is about the caution.
+    assert "not a count of the people present" in index[0].caption
 
     body = " ".join(
         runs_text(b.runs) for b in document.blocks if isinstance(b, ParagraphBlock)
@@ -479,3 +483,78 @@ def test_only_audio_fields_are_followed():
     assert audio_references(rows) == {
         "aud-1": ("TRADITIONAL_PROCESS_BASELINE", "traditionalProcess", "artisanAudio")
     }
+
+
+# --------------------------------------------------------------------------------------
+# The speaker labels: a model's guess, printed into a document sent to a ministry
+#
+# `report_ai_layers` was given this caution and this annexure was left without it, which is the whole
+# defect. The transcript annexure is the LONGER of the two and the one that prints `**Speaker 1:**`
+# down page after page, so it was the worse of the two places to be missing it.
+# --------------------------------------------------------------------------------------
+
+
+def test_a_transcript_with_speaker_turns_carries_the_caution_above_its_text():
+    """ABOVE, and the placement is the assertion. ``report_ai_layers`` states the rule: "a caution
+    about who is speaking, printed after two pages of dialogue, arrives once the reader has already
+    assigned the lines." An eleven-minute interview puts three pages between the first line and the
+    end, so a note at the bottom qualifies nothing a reader has not already believed."""
+    from app.services.report_annexures import SPEAKER_NOTE
+
+    blocks = transcript_annexure_blocks(_items())
+    paragraphs = [runs_text(b.runs) for b in blocks if isinstance(b, ParagraphBlock)]
+
+    assert any(p == SPEAKER_NOTE for p in paragraphs), "the diarization caution never reached the page"
+    caution_at = next(i for i, p in enumerate(paragraphs) if p == SPEAKER_NOTE)
+    speech_at = next(i for i, p in enumerate(paragraphs) if "My father set the warp" in p)
+    assert caution_at < speech_at, "the caution printed after the dialogue it was meant to qualify"
+
+
+def test_the_caution_says_a_machine_decided_the_labels_and_names_the_two_ways_it_is_wrong():
+    """The content matters as much as the presence. A vague "machine-assisted" note is what the
+    annexure's general lead already says; what an officer needs is that the labels can MERGE two
+    people or SPLIT one, because that is the error which turns an interviewer's words into an
+    artisan's under a named person's acceptance."""
+    from app.services.report_annexures import SPEAKER_NOTE
+
+    assert "not by anybody who was present" in SPEAKER_NOTE
+    assert "merge two speakers into one or split one across two" in SPEAKER_NOTE
+    assert "is not a name" in SPEAKER_NOTE
+
+
+def test_a_recording_with_no_speaker_labels_gets_no_caution():
+    """A solo voice note names no speakers, and telling an officer that its absent labels were
+    guessed would be a false statement made in the name of honesty."""
+    from app.services.report_annexures import SPEAKER_NOTE, speaker_labels_are_guessed
+
+    solo = build_transcript_item(
+        _media("aud-solo", "The vat has to rest three days before it will take."),
+        ("WORKSHOP_OUTCOMES", "outcomes", "feedbackAudio"),
+    )
+    assert speaker_labels_are_guessed(solo) is False
+
+    blocks = transcript_annexure_blocks([solo])
+    paragraphs = [runs_text(b.runs) for b in blocks if isinstance(b, ParagraphBlock)]
+    assert not any(p == SPEAKER_NOTE for p in paragraphs)
+
+
+def test_the_lead_no_longer_promises_that_the_labels_are_roles():
+    """THE SENTENCE THAT WAS FALSE, and false in the direction that makes a reader trust the page
+    more. It read: "where the transcript names speakers, the names are those of the roles rather than
+    of the individuals" — which says somebody assigned roles. Nobody did: the labels are
+    ``**Speaker 1:**``, numbered by order of first speaking out of whatever the provider's diarizer
+    separated. A promise that they are roles converted a guess into a taxonomy."""
+    blocks = transcript_annexure_blocks(_items())
+    lead = " ".join(runs_text(b.runs) for b in blocks if isinstance(b, ParagraphBlock))
+    assert "roles rather than of the individuals" not in lead
+
+
+def test_the_speaker_count_column_says_whose_count_it_is():
+    """A column of bare numerals in a contents table is the shortest and most authoritative-looking
+    form of the same claim: "3" in a ministry document reads as three people established, not as
+    three voices a model thought it could tell apart. A reader takes a number out of a table without
+    reading the paragraphs below it, so the qualification has to be in the caption."""
+    blocks = transcript_annexure_blocks(_items())
+    index = next(b for b in blocks if isinstance(b, TableBlock))
+    assert "Speakers" in [c.header for c in index.columns]
+    assert "the transcribing machine separated" in index.caption

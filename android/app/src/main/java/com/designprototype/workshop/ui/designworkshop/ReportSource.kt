@@ -46,7 +46,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * The merged draft is built for one export and discarded. An export is not a sync: persisting the
  * server's copy from here would be a second, undeclared sync path — one that runs on a screen the
  * designer opened to print something, that has none of `WorkshopSyncEngine`'s ordering or media
- * bookkeeping, and that would rewrite `serverBaseline` on stages this screen knows nothing about.
+ * bookkeeping, and that would rewrite `stageSeen` on stages this screen knows nothing about.
  * The cost of not persisting is one HTTP read per visit to the report screen.
  */
 internal data class ReportSource(
@@ -114,18 +114,29 @@ internal fun reportSourceFor(
         // work for is the device's stage. `stored != null` alone is not enough — a stage row can be
         // left behind by a screen that was opened and closed without a keystroke, and treating that
         // shell as "work" is what would keep the server's twenty rows out of the report.
-        val touchedLocally = stored != null && (stored.values.isNotEmpty() || stored.rows.isNotEmpty())
+        // `custom` counted alongside the other two, for the reason `WorkshopSync.statusOf` counts
+        // it: eight of the twenty-two stages declare no singleton at all, so a stage whose only
+        // content is the designer's own answers is ordinary rather than exotic. Left out, this
+        // handset's custom answers would be judged "not work", the server's copy of that stage would
+        // be adopted over them, and a report generated on the phone would print the office's answers
+        // in place of the ones typed in the courtyard that morning.
+        val touchedLocally = stored != null &&
+            (stored.values.isNotEmpty() || stored.rows.isNotEmpty() || stored.custom.isNotEmpty())
         if (touchedLocally) {
             kept += stageKey
             return@forEach
         }
-        if (bucket.singleton.isEmpty() && bucket.collections.values.all { it.isEmpty() }) return@forEach
+        if (bucket.singleton.isEmpty() && bucket.collections.values.all { it.isEmpty() } &&
+            bucket.custom.isEmpty()
+        ) return@forEach
         val downloaded = stageDraftFromRemote(stageKey, bucket, specs[stageKey], stored)
         // Emptied on the phone and nowhere else yet, so what came back was a stage the designer has
         // already deleted the whole of. Counted as neither side's, because it is in the file as
         // neither — saying "downloaded from the server just now" over a stage that prints nothing is
         // how the built-from line stops being a count of the document.
-        if (downloaded.values.isEmpty() && downloaded.rows.isEmpty()) return@forEach
+        if (downloaded.values.isEmpty() && downloaded.rows.isEmpty() &&
+            downloaded.custom.isEmpty()
+        ) return@forEach
         merged[stageKey] = downloaded
         filled += stageKey
     }
@@ -134,7 +145,9 @@ internal fun reportSourceFor(
     // untouched, and they are the whole reason this is a merge.
     local?.stages.orEmpty().forEach { (stageKey, stored) ->
         if (stageKey in kept || stageKey in filled) return@forEach
-        if (stored.values.isNotEmpty() || stored.rows.isNotEmpty()) kept += stageKey
+        if (stored.values.isNotEmpty() || stored.rows.isNotEmpty() || stored.custom.isNotEmpty()) {
+            kept += stageKey
+        }
     }
 
     val draft = when {
@@ -230,6 +243,17 @@ private fun stageDraftFromRemote(
         title = spec?.title ?: existing?.title.orEmpty(),
         order = spec?.number ?: existing?.order ?: 0,
         values = bucket.singleton.toMap(),
+        // THE DESIGNER'S OWN ANSWERS, CARRIED. Without this line the offline export prints the
+        // server's core fields for a downloaded stage and silently nothing at all from its custom
+        // section — which is the exact shape of the divergence this whole lane exists to remove,
+        // arrived at from the report side.
+        custom = bucket.custom.toMap(),
+        // Read from the server's own bucket, so the fact is earned here exactly as it is in
+        // `StageScreen.fromRemote` — see [StageDraft.customSeen]. This draft is assembled for the
+        // document and is never written to disk, so nothing syncs off the back of it; it is set
+        // anyway, because the day something does persist this record the flag must already be true
+        // rather than quietly false on a stage whose container this device HAS read.
+        customSeen = true,
         rows = bucket.collections.entries
             .filter { (entityKey, _) -> entityKey !in emptied }
             .flatMap { (entityKey, rows) ->
@@ -246,7 +270,7 @@ private fun stageDraftFromRemote(
         // TRUE, AND HONESTLY SO: this stage was seeded from a successful read of the server's copy —
         // the same claim `StageScreen` makes on the same evidence. It is inert either way, because
         // nothing built here is ever written to disk or sent.
-        serverBaseline = true,
+        stageSeen = true,
         emptiedEntities = existing?.emptiedEntities.orEmpty(),
     )
 }

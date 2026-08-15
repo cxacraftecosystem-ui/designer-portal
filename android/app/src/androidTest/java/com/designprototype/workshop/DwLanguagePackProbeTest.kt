@@ -37,10 +37,37 @@ import java.util.concurrent.TimeUnit
  * So this asks both engines, each both ways, and prints what came back. Whichever cell of that
  * two-by-two holds more languages than the app currently sees is the fix.
  *
- * Run:
+ * ── HOW TO RUN IT WITHOUT SIGNING THE DESIGNER OUT ────────────────────────────────────────────
+ *
+ * **DO NOT USE `connectedDebugAndroidTest` ON A HANDSET SOMEBODY IS USING.** AGP UNINSTALLS the app
+ * after that task, which clears app data: the signed-in session, the field-repository token and any
+ * unsynced workshop drafts on the phone go with it. This probe reads the platform's speech service and
+ * needs nothing of the app's own state, so drive the already-installed test APK directly instead:
+ *
+ *   adb shell am instrument -w \
+ *     -e class com.designprototype.workshop.DwLanguagePackProbeTest \
+ *     com.designprototype.workshop.test/androidx.test.runner.AndroidJUnitRunner
+ *   adb logcat -d -s DWPACKPROBE
+ *
+ * (`adb install -r` the two APKs first if they are stale. On Windows `adb` is not on PATH:
+ * `C:/Users/hp/AppData/Local/Android/Sdk/platform-tools/adb.exe`.)
+ *
+ * The Gradle form, for a spare device with nothing on it worth keeping:
  *   ANDROID_SERIAL=<serial> ./gradlew :app:connectedDebugAndroidTest \
  *     -Pandroid.testInstrumentationRunnerArguments.class=com.designprototype.workshop.DwLanguagePackProbeTest
- *   adb -s <serial> logcat -d -s DWPACKPROBE:I
+ *
+ * ── WHAT IT ANSWERED, AND IT HAS NOW BEEN ASKED TWICE ─────────────────────────────────────────
+ *
+ * Both explanations above are wrong, and the same on both runs (2026-08-09 and 2026-08-13): pinning
+ * `EXTRA_LANGUAGE` returns the byte-identical device-wide list nineteen times, and the GENERAL engine
+ * answers `ERROR_CANNOT_CHECK_SUPPORT` (14) to all thirty-eight calls and cannot be asked at all. The
+ * seventeen are unreachable through packs on this handset because **there is nothing to download** —
+ * Google's on-device catalogue carries no Bengali, Marathi, Telugu, Tamil, Gujarati, Kannada,
+ * Malayalam, Punjabi, Odia, Assamese, Urdu, Sanskrit, Konkani, Nepali, Manipuri, Kashmiri or Sindhi.
+ *
+ * What DID change between the two runs is the phone: `hi-IN` and `en-IN` have been downloaded and have
+ * moved from `supported` to `installed`. Both readings are kept as fixtures in `DwLanguagePackTest`,
+ * and docs/DICTATION-LANGUAGE-PACK-MEASUREMENT.md holds the raw output of each.
  */
 @RunWith(AndroidJUnit4::class)
 class DwLanguagePackProbeTest {
@@ -58,7 +85,23 @@ class DwLanguagePackProbeTest {
         val errorCode: Int? = null,
         val timedOut: Boolean = false,
     ) {
-        /** What the app would call this language: the state its `dwPackState` would resolve to. */
+        /**
+         * What the app would call this language: the state its `dwPackState` would resolve to.
+         *
+         * ── IT WAS MEASURING A RULE THE APP HAD RETIRED. FIXED 2026-08-13 ─────────────────────
+         *
+         * This copy had no `NO_OFFLINE_PACK` arm, so it printed **UNSUPPORTED for seventeen of the
+         * nineteen** where the app itself shows *"No offline pack"*. That is not a cosmetic gap in a
+         * log: the probe's whole purpose is to say what a designer will see, its own comment below
+         * promises it is copied "so this measures behaviour", and `DwPackState.NO_OFFLINE_PACK` exists
+         * BECAUSE calling those seventeen unsupported was a shipped defect. A probe that reproduces the
+         * defect is a probe that would have been cited as evidence the defect was still there.
+         *
+         * The missing arm is the last two: an EMPTY `online` list is what an on-device recogniser
+         * returns by construction, so it is the absence of an answer about network support rather than
+         * a finding — and UNSUPPORTED, which claims nothing serves the language at all, may only be
+         * said when some engine actually answered about online support. See `dwPackState`.
+         */
         fun stateFor(tag: String): String = when {
             errorCode != null -> "ERROR($errorCode)"
             timedOut -> "TIMEOUT"
@@ -68,6 +111,7 @@ class DwLanguagePackProbeTest {
             covers(pending, tag) -> "DOWNLOADING"
             covers(supported, tag) -> "DOWNLOADABLE"
             covers(online, tag) -> "NETWORK_ONLY"
+            online.isEmpty() -> "NO_OFFLINE_PACK"
             else -> "UNSUPPORTED"
         }
 

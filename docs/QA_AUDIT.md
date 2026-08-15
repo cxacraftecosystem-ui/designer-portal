@@ -48,18 +48,39 @@ sends an HTTP request to a route.** The permission matrix is tested at the level
 `can_review_record(reviewer, role)`, not at the level of "does `POST /review/product/{id}/approve`
 actually 403". Both are worth having; only one of them is here.
 
-### 1.1 A trap in the pytest configuration
+### 1.1 A trap in the pytest configuration — CLOSED 2026-08-12, and this section was DANGEROUSLY WRONG
 
-`backend/pyproject.toml` sets `asyncio_mode = "auto"`, but **`pytest-asyncio` is not installed** —
-pytest reports `PytestConfigWarning: Unknown config option: asyncio_mode` on every run.
+> **What it used to say, and why it is quoted rather than deleted.** This section asserted that
+> `pytest-asyncio` **is not installed**, that pytest warns `Unknown config option: asyncio_mode` on
+> every run, and that "there are **zero** `async def test_` functions". It then offered a fix:
+> *"either add `pytest-asyncio` to the dev dependencies, or delete the `asyncio_mode` line."*
+>
+> **Every factual clause was false, and the second branch of that fix is destructive.** Measured on
+> 2026-08-12:
+>
+> - `grep -rn '^async def test_' backend/tests/` → **118**, not zero.
+> - `backend/.venv/Lib/site-packages/pytest_asyncio-1.4.0.dist-info/` exists — the plugin **is**
+>   installed, in the very interpreter §5 of this document tells you to use.
+> - A `--collect-only` run gathers the suite with **no** `Unknown config option` warning, which is
+>   itself proof the plugin is registered and the mode is live.
+>
+> So **deleting the `asyncio_mode` line would have silently stopped 118 tests from executing.**
+> pytest would still collect them, emit a warning, and report green. That is precisely the invisible
+> failure this section was written to prevent, prescribed as its own remedy, in the document a
+> maintainer consults *before* touching test configuration. It is kept here because a register that
+> quietly deletes its own bad advice teaches nobody, and because the shape of the error is worth
+> recognising: it was true when written, and the suite grew past it.
 
-Today this is harmless: there are **zero** `async def test_` functions, and the eight test files that
-exercise async code call `asyncio.run(...)` explicitly. But the first person to write a bare
-`async def test_something()` will get a test that **does not run**, behind a warning that already
-appears on every run and is therefore already being ignored.
+**THE NARROWER HAZARD WAS REAL, AND IS NOW FIXED.** `pytest-asyncio` was present in `.venv` as a
+transitive install but was **not declared** — `[project.optional-dependencies] dev` listed only
+`ruff`, `pytest` and `httpx`. So the suite ran on every machine anybody had actually used, while a
+clean `pip install -e '.[dev]'` on a fresh CI box or a new laptop produced an environment where those
+118 tests were collected, skipped behind a warning, and reported as a pass.
 
-**Fix:** either add `pytest-asyncio` to the dev dependencies, or delete the `asyncio_mode` line so the
-configuration stops promising something it does not deliver. Leaving it is the worst of the three.
+It is now declared, with the reasoning at the dependency itself
+(`backend/pyproject.toml`, `pytest-asyncio>=0.23`). **Do not delete `asyncio_mode = "auto"`**: it is
+what makes those 118 tests run, and it is inert without the plugin, which is why the two belong in the
+same commit and in the same paragraph.
 
 ### 1.2 Web end-to-end
 

@@ -23,10 +23,8 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -48,18 +46,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.designprototype.workshop.data.ConnectivityObserver
-import com.designprototype.workshop.data.DW_PACK_CANNOT_ASK_SENTENCE
-import com.designprototype.workshop.data.DW_PACK_NO_CONNECTION_SENTENCE
 import com.designprototype.workshop.data.DW_PACK_NO_PROGRESS_ON_13
-import com.designprototype.workshop.data.DW_PACK_OFFER_BLURB
 import com.designprototype.workshop.data.DW_PACK_REQUEST_IS_A_REQUEST
 import com.designprototype.workshop.data.DwConnection
+// Only for `forgetRefusal` — see the note in `refreshNow`. This screen is the one place that learns,
+// from the engine that owns the packs, that a remembered code 13 has been superseded.
+import com.designprototype.workshop.data.DwDictationRun
 import com.designprototype.workshop.data.DwPackOffer
 import com.designprototype.workshop.data.DwPackState
 import com.designprototype.workshop.data.DwRecognitionSupport
 import com.designprototype.workshop.data.dwDownloadCostSentence
 import com.designprototype.workshop.data.dwMayAsk
+import com.designprototype.workshop.data.dwPackEmptyListSentence
 import com.designprototype.workshop.data.dwPackOffer
+import com.designprototype.workshop.data.dwPackRows
 import com.designprototype.workshop.data.dwPackState
 import com.designprototype.workshop.data.dwPackStateLabel
 import com.designprototype.workshop.data.dwPackStateSentence
@@ -114,11 +114,12 @@ import kotlin.coroutines.resume
  *
  * ── AND IT NEVER BLOCKS GETTING TO WORK ───────────────────────────────────────────────────────
  *
- * The first-run surface is a dismissible CARD on the dashboard, not a dialog. A modal on first
- * launch that must be dismissed before anything can be recorded would be worse than not shipping
- * this at all. The one dialog in this file ([DwLanguagePackOfferDialog]) opens only in direct
- * response to a designer choosing a language whose pack is missing, and it never opens when the
- * pack is present or when the device cannot be asked.
+ * **THERE IS NO FIRST-RUN SURFACE AT ALL ANY MORE**, which is stronger than the dismissible card that
+ * used to be here — see the note where it stood. The one dialog in this file
+ * ([DwLanguagePackOfferDialog]) opens ONLY where a tap could actually fetch something: its call site
+ * in `DwDictationButton` is now gated on `dwPackOffer(...) == DOWNLOAD`, so on a handset with nothing
+ * downloadable it never opens, and a designer choosing a language is never handed a panel whose only
+ * control is "Close".
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -270,7 +271,12 @@ internal class DwLanguagePackController(
          * offer is skipped in silence on a phone that would have answered.
          */
         if (!platformCanAnswer) {
-            cannotAsk = DW_PACK_CANNOT_ASK_SENTENCE
+            // THE SHORT SENTENCE, WHICH IS THE SAME FACT IN 23 WORDS. This arm held
+            // `DW_PACK_CANNOT_ASK_SENTENCE` — 58 words that also explained which engine serves which
+            // language, an implementation detail nobody chooses (principle 2). The constant is deleted;
+            // `dwPackEmptyListSentence(canAsk = false)` is the tested statement of this state, and
+            // using it here means the list draws one sentence per state from one source.
+            cannotAsk = dwPackEmptyListSentence(canAsk = false)
             return
         }
         /*
@@ -329,6 +335,32 @@ internal class DwLanguagePackController(
             landed != null -> {
                 support = landed
                 cannotAsk = null
+                /*
+                  A PACK THAT HAS ARRIVED CANCELS THE REFUSAL THE ENGINE GAVE BEFORE IT DID.
+
+                  `DwDictationRun` remembers ERROR_LANGUAGE_UNAVAILABLE for the life of the process,
+                  and rightly — it is a measurement from the engine that owns the packs, it beats any
+                  list, and it is what stops every remaining field on a stage paying for the same
+                  doomed round trip. But it had no way to expire, so a download completing did not
+                  clear it: the row here said "Hindi is on this phone now, dictation works with no
+                  signal" while the microphone went on dropping rung 1 and, offline, told the
+                  designer this phone had no offline Hindi. Two accounts of one pack, one tap apart,
+                  and only a force-stop reconciled them.
+
+                  THIS IS THE ONE MOMENT NEWER EVIDENCE EXISTS. `landed` is a fresh answer from
+                  `checkRecognitionSupport` — the same engine, asked again, later — so a language it
+                  now lists as INSTALLED is a language whose refusal is out of date. Every other
+                  state is left alone: DOWNLOADABLE, DOWNLOADING and the rest all mean the pack is
+                  still not on the phone, which is exactly what the refusal already says.
+
+                  It covers both ways a fresh answer arrives, because both come through here: the
+                  `onSuccess` callback of a download calls `refresh()`, and so does "Check again".
+                */
+                DW_DICTATION_LANGUAGES.forEach { language ->
+                    if (dwPackState(language.tag, landed) == DwPackState.INSTALLED) {
+                        DwDictationRun.forgetRefusal(language.tag)
+                    }
+                }
             }
             // Failure and timeout both LEAVE `support` alone: a re-check that fails must not wipe a
             // good list and replace nineteen honest rows with nineteen "unknown"s.
@@ -524,32 +556,38 @@ internal fun rememberDwLanguagePacks(active: Boolean): DwLanguagePackController 
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The nineteen languages with their state, and one deliberate control that fetches the ticked ones.
+ * **THE LANGUAGES A DESIGNER CAN ACTUALLY MANAGE. Installed, installing, or one tap away — no others.**
  *
- * NOTHING IS TICKED TO BEGIN WITH, on any host. The first-run offer, the settings card and any
- * future caller all start from "you have asked for nothing", so the shortest path through this panel
- * spends no data at all.
+ * ── WHAT THIS LIST STOPPED DOING, AND WHY ─────────────────────────────────────────────────────
+ *
+ * It used to draw all nineteen. On the fleet's own handset that meant **seventeen rows with no
+ * control on them**, each carrying a paragraph whose content was that nothing could be done, and the
+ * card closed with a sentence naming a label — *"the ones marked **Not on this phone**"* — that
+ * appeared on **no row on that device**: `dwPackStateLabel(UNSUPPORTED)` is hardcoded there, and
+ * UNSUPPORTED is unreachable whenever the online list comes back empty, which it always does from an
+ * on-device recogniser. Two defects, one paragraph, both gone with the rows they described.
+ *
+ * The row decision is [dwPackRowWorthShowing], pure and tested, for the reason everything else in
+ * this feature is: a rule about what a designer sees is a rule that has to be checkable on a desktop.
+ *
+ * NOTHING IS TICKED TO BEGIN WITH, on any host — so the shortest path through this panel spends no
+ * data at all. That has not changed and must not.
  */
 @Composable
 internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: Modifier = Modifier) {
     var selected by remember { mutableStateOf(emptySet<String>()) }
     val states = dwPackStates(DW_DICTATION_LANGUAGES.map { it.tag }, controller.support)
+    val rows = remember(states) { dwPackRows(states) }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // ---- What we know, and how we know it -------------------------------------------------
-        controller.cannotAsk?.let { reason ->
-            Text(reason, color = MaterialTheme.field.muted, fontSize = 12.sp)
-        }
         if (controller.checking) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text("Asking this phone which packs it has…", color = MaterialTheme.field.muted, fontSize = 12.sp)
+                Text("Checking…", color = MaterialTheme.field.muted, fontSize = 12.sp)
             }
         }
 
         /*
-         * ---- The nineteen ----------------------------------------------------------------------
-         *
          * A row is tickable only where a download could actually be started for it, and "already
          * asked for in this sitting" counts as cannot: `controller.requests` holds one note per
          * language and the row shows it. Leaving such a row tickable would put a second Download
@@ -568,51 +606,78 @@ internal fun DwLanguagePackList(controller: DwLanguagePackController, modifier: 
                 refused = note?.failed == true,
             )
         }
-        DW_DICTATION_LANGUAGES.forEach { language ->
-            val state = states[language.tag] ?: DwPackState.UNKNOWN
+        /*
+         * ONE LINE, NEVER AN EMPTY BOX — AND NEVER SILENCE EITHER.
+         *
+         * ── THE DEFECT THIS RESTORES, 2026-08-13 ──────────────────────────────────────────────
+         *
+         * `controller.cannotAsk` was drawn at the head of this list in `main` ("What we know, and how
+         * we know it") and, after the trim, was drawn NOWHERE — while the controller's own docstring
+         * for it still said *"'we do not know' is a state a designer has to be able to READ. Silence
+         * would be indistinguishable from 'nothing is installed'."* Three readings paid for it:
+         *
+         *  - **No recogniser on the phone at all** (API 33+, `engine()` returns null) and **a check
+         *    that came back with an error code** both fell through to the empty-list line, which
+         *    blames the ANDROID VERSION. That is false on those handsets, and its advice — use the
+         *    phone's own speech settings — points at a service that is absent or did not answer.
+         *  - **A check that timed out over an already-good list** drew nothing whatever: the rows
+         *    stayed, the spinner vanished, and a designer who tapped "Check again" to see whether a
+         *    pack had arrived got a screen that had not changed and no way to tell why.
+         *
+         * So: the reason when there is one, the empty-list line when the platform answered and had
+         * nothing to offer, and NEITHER while a check is outstanding — the spinner above is already
+         * saying that, and a stale failure beside a live spinner reads as a fresh one.
+         */
+        val reason = controller.cannotAsk
+        if (!controller.checking) {
+            when {
+                reason != null -> Text(reason, color = MaterialTheme.field.muted, fontSize = 12.sp)
+                // `reason` is null here, which means the platform DID answer — so this is the "your
+                // phone's catalogue carries none of these" line and never the "cannot be asked" one.
+                // The other branch of that function is now composed by the controller, at the one
+                // place that knows this Android version cannot be asked at all.
+                rows.isEmpty() -> Text(
+                    dwPackEmptyListSentence(canAsk = true),
+                    color = MaterialTheme.field.muted,
+                    fontSize = 12.sp
+                )
+            }
+        }
+        rows.forEach { tag ->
+            val language = DW_DICTATION_LANGUAGES.first { it.tag == tag }
             DwLanguagePackRow(
                 label = language.label,
-                state = state,
+                state = states[tag] ?: DwPackState.UNKNOWN,
                 selectable = language in askable,
-                checked = language.tag in selected,
-                note = controller.requests[language.tag],
+                checked = tag in selected,
+                note = controller.requests[tag],
                 onCheckedChange = { ticked ->
-                    selected = if (ticked) selected + language.tag else selected - language.tag
+                    selected = if (ticked) selected + tag else selected - tag
                 },
             )
         }
 
-        // ---- What it costs, said BEFORE the button ---------------------------------------------
-        val downloadable = askable.size
         // The ticks that will ACTUALLY be sent, which is not the same set as `selected`. A tick
         // outlives its row's eligibility whenever a "Check again" finds the pack arrived, or a
         // request for it went out from the offer dialog while this list was on screen. Counting the
         // raw selection would leave an ENABLED "Download 1 pack" over a tap that sends nothing —
         // the dead control this file's own comments say is worse than an absent one.
         val ticked = askable.filter { it.tag in selected }
-        val missingButOffline = controller.connection == DwConnection.NONE &&
-            DW_DICTATION_LANGUAGES.any { states[it.tag] == DwPackState.DOWNLOADABLE }
-        // A list with no button under it must say WHY there is no button, or it reads as a list that
-        // failed to finish loading. Each arm covers one of the three ways that happens.
-        when {
-            missingButOffline -> Text(
-                DW_PACK_NO_CONNECTION_SENTENCE,
-                color = MaterialTheme.field.muted,
-                fontSize = 12.sp
-            )
-            downloadable > 0 -> {
-                Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, fontSize = 12.sp)
-                Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, fontSize = 12.sp)
-            }
-            controller.support != null -> Text(
-                "There is nothing to fetch. Every language marked “${dwPackStateLabel(DwPackState.INSTALLED)}” " +
-                    "is already on the phone, and the ones marked " +
-                    "“${dwPackStateLabel(DwPackState.UNSUPPORTED)}” have no offline pack this " +
-                    "recogniser can add.",
-                color = MaterialTheme.field.muted,
-                fontSize = 12.sp
-            )
+        /*
+         * THE COST IS STILL SAID BEFORE THE TAP, AND ONLY WHEN THERE IS A TAP TO MAKE.
+         *
+         * What went with the rest: `DW_PACK_NO_CONNECTION_SENTENCE`, a standing disclaimer that a
+         * language "will use the network while there is signal", printed to a designer who had not
+         * asked for anything. Principle 2 forbids exactly that — online is the ordinary case and
+         * needs no announcement; a missing connection is said AT THE MOMENT IT FAILS. And the
+         * three-arm `when` it sat in is gone with it: a list that shows only actionable rows does
+         * not need a paragraph explaining why some rows have no button.
+         */
+        if (askable.isNotEmpty()) {
+            Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, fontSize = 12.sp)
+            Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, fontSize = 12.sp)
         }
+        val downloadable = askable.size
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             /*
@@ -716,107 +781,71 @@ private fun DwLanguagePackRow(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Surface 1 — the first-run offer (a card, never a modal)
+// THE FIRST-RUN DASHBOARD CARD IS GONE. It used to live here, 45 lines of it.
+//
+// WHAT IT DID: on the very first launch, above the dashboard tiles, a card headed "Dictate with no
+// signal" with a blurb, a "Choose languages" button that expanded the list, and "Not now".
+//
+// WHY IT WENT, IN THE OWNER'S TERMS. Principle 3: show only what can be acted on. On the fleet's own
+// SM-M325F the list inside that card has ZERO actionable rows — two installed packs and no
+// downloadable ones — so the first thing a designer met after installing the app was a card offering
+// them something their phone cannot do. The card could not know that without binding a
+// SpeechRecognizer on the cold-start frame, which is the one thing this file has always refused to
+// do (see rememberDwLanguagePacks).
+//
+// SO THE OFFER IS NOT CONDITIONAL, IT IS ABSENT, and nothing is lost: this card's own last line
+// always said the list lives permanently in Settings, and it now lives one tap in, under
+// Settings > Speech & AI. A designer who wants an offline pack goes and gets one; a designer who
+// does not is no longer stopped on the way to the stage they came to fill in.
 // ---------------------------------------------------------------------------------------------
-
-private const val DW_PACK_PREFS = "dictation_language_packs"
-private const val DW_PACK_OFFER_SEEN = "first_run_offer_seen"
-
-/** True once the designer has dismissed or opened the first-run offer on this device. */
-internal fun dwPackOfferSeen(context: Context): Boolean =
-    context.getSharedPreferences(DW_PACK_PREFS, Context.MODE_PRIVATE).getBoolean(DW_PACK_OFFER_SEEN, false)
-
-internal fun dwMarkPackOfferSeen(context: Context) {
-    context.getSharedPreferences(DW_PACK_PREFS, Context.MODE_PRIVATE)
-        .edit().putBoolean(DW_PACK_OFFER_SEEN, true).apply()
-}
-
-/**
- * The offer a designer meets once, on the dashboard, after installing the app.
- *
- * A CARD AND NOT A DIALOG. A modal on first launch that has to be dismissed before anything can be
- * recorded is the one shape of this feature that would be worse than not shipping it: the first
- * thing this app does in a courtyard would be to stand between a designer and the stage they came to
- * fill in. This sits above the dashboard tiles, is dismissed by a button that says "Not now", and
- * costs a designer who taps past it exactly nothing — the same list lives permanently in Settings.
- *
- * COLLAPSED IT ASKS THE PHONE NOTHING. Binding the recogniser to check nineteen languages happens
- * only when "Choose languages" is tapped, so a cold start on a 6 GB handset does not pay for an
- * offer the designer may be about to dismiss.
- */
-@Composable
-internal fun DwLanguagePackOfferCard(onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    var expanded by remember { mutableStateOf(false) }
-    val controller = rememberDwLanguagePacks(active = expanded)
-
-    ElevatedCard(
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                "Dictate with no signal",
-                display = true,
-                fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(DW_PACK_OFFER_BLURB, color = MaterialTheme.field.body, fontSize = 13.sp)
-            if (expanded) {
-                DwLanguagePackList(controller)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                if (!expanded) {
-                    Button(
-                        onClick = {
-                            expanded = true
-                            // Opening it counts as having been offered: the card must not come back
-                            // tomorrow to a designer who has already read it and chosen nothing.
-                            dwMarkPackOfferSeen(context)
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("Choose languages") }
-                }
-                OutlinedButton(
-                    onClick = { dwMarkPackOfferSeen(context); onDismiss() },
-                    modifier = Modifier.weight(1f)
-                ) { Text(if (expanded) "Done" else "Not now") }
-            }
-            Text(
-                "You can change this at any time under Settings › Appearance & accessibility.",
-                color = MaterialTheme.field.muted,
-                fontSize = 11.sp
-            )
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------------------------
 // Surface 2 — Settings, where the list lives permanently
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The settings body: the nineteen, their state, and the control that fetches the missing ones.
+ * The settings body: **the packs a designer can manage**, and the control that fetches the missing
+ * ones.
+ *
+ * NOT "the nineteen", which is what this line said until 2026-08-13 and had not been true since
+ * [dwPackRowWorthShowing] landed. It draws INSTALLED, DOWNLOADING and DOWNLOADABLE rows and no
+ * others; on the attached SM-M325F that is two rows out of nineteen, and on a handset that can offer
+ * none it is one line from [dwPackEmptyListSentence]. The stale version mattered because it is the
+ * docstring somebody checking "does the settings list still show every language" would read instead
+ * of the code.
  *
  * Draws no card of its own — the caller drops it inside its screen's existing card shape, so it sits
  * with the appearance and accessibility cards rather than inventing a second card style beside them.
  *
  * `active = true` unconditionally, because reaching this composable at all means the designer has
  * navigated to Settings to look at exactly this list. The binding lasts as long as the screen.
+ *
+ * ── WHY THE CONTROLLER CAN NOW BE PASSED IN, AND WHY THE DEFAULT STAYS ────────────────────────
+ *
+ * Since 2026-08-12 a second card on the same screen needs this same answer: the model card composes
+ * what Android's packs cover with what this app's own models cover, per language
+ * (`data/DwModelLanguages.kt`), and it cannot do that without the platform's own reading. Two
+ * controllers would mean two `SpeechRecognizer` bindings taking two readings of one phone moments
+ * apart — the two-accounts-of-one-fact failure this repository has already shipped once, when
+ * `DwDictationRun` remembered a refusal for a pack that had since arrived and the settings list and
+ * the microphone disagreed one tap apart. So Settings creates one and hands it to both cards, the
+ * same shape it already uses for `rememberDwAsrRuntime`.
+ *
+ * THE DEFAULT IS KEPT so that any surface wanting only this list still gets a working card from one
+ * call — the hoist is a requirement of the screen that shows two, not of everybody.
  */
 @Composable
-internal fun DwLanguagePackSettings(modifier: Modifier = Modifier) {
-    val controller = rememberDwLanguagePacks(active = true)
+internal fun DwLanguagePackSettings(
+    controller: DwLanguagePackController = rememberDwLanguagePacks(active = true),
+    modifier: Modifier = Modifier,
+) {
+    /*
+     * THE FOUR-CLAUSE PARAGRAPH THAT USED TO OPEN THIS CARD IS GONE. It explained the ladder ("the
+     * phone's own recogniser when the language is on the phone, and a server when it is not"), which
+     * is an implementation detail a designer never chooses; it explained what a pack buys, which the
+     * rows now say in two words each; and it explained that packs are per-handset, which changes
+     * nothing anybody does. What is left is the list, which is the thing they came for.
+     */
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(
-            "Dictation uses the phone's own recogniser when the language is on the phone, and a " +
-                "server when it is not. A pack here is what makes it work in a courtyard with no " +
-                "signal. This is a setting of THIS PHONE, not of your account — packs live on the " +
-                "handset and do not follow you to another one.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.field.muted
-        )
         DwLanguagePackList(controller)
     }
 }
@@ -876,16 +905,18 @@ internal fun DwLanguagePackOfferDialog(
                     }
                 } else {
                     Text(dwPackStateSentence(label, state), color = MaterialTheme.field.body, fontSize = 13.sp)
-                    when (offer) {
-                        DwPackOffer.DOWNLOAD -> {
-                            Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, fontSize = 12.sp)
-                            Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, fontSize = 12.sp)
-                        }
-                        DwPackOffer.NO_CONNECTION ->
-                            Text(DW_PACK_NO_CONNECTION_SENTENCE, color = MaterialTheme.field.muted, fontSize = 12.sp)
-                        // INSTALLED / IN_PROGRESS / UNAVAILABLE / UNKNOWN all have their whole answer
-                        // in the state sentence above; a second line would only restate it.
-                        else -> Unit
+                    /*
+                     * ONLY THE ARM THAT SPENDS MONEY SAYS ANYTHING MORE.
+                     *
+                     * `DwPackOffer.NO_CONNECTION` used to print DW_PACK_NO_CONNECTION_SENTENCE here —
+                     * a standing "dictation will use the network engine while there is signal"
+                     * disclaimer. That is principle 2's forbidden case in its purest form, and this
+                     * dialog is now reached only when a download IS possible (see the call site in
+                     * `DwDictationButton`), so the arm was also unreachable in practice.
+                     */
+                    if (offer == DwPackOffer.DOWNLOAD) {
+                        Text(dwDownloadCostSentence(controller.connection), color = MaterialTheme.field.muted, fontSize = 12.sp)
+                        Text(DW_PACK_REQUEST_IS_A_REQUEST, color = MaterialTheme.field.muted, fontSize = 12.sp)
                     }
                 }
                 note?.let {

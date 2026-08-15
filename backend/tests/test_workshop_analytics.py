@@ -14,6 +14,7 @@ unrelated reason; these two cannot.
 """
 
 import asyncio
+import re
 import sys
 from types import SimpleNamespace
 from typing import Any
@@ -639,6 +640,72 @@ def test_the_questions_that_cannot_be_answered_are_named_in_the_payload():
     questions = [entry["question"] for entry in payload["notComputed"]]
     assert "Prototypes produced against prototypes planned" in questions
     assert all(entry["reason"] for entry in payload["notComputed"])
+
+
+#: The same rule as ``_BUILD_TIME_COMMENTARY`` in ``test_stage_schema.py``, restated rather than
+#: imported: a test module that imports another test module breaks the moment either is run alone.
+#: Kept short on purpose — it is the vocabulary of a sentence about the SPECIFICATION, not about the
+#: archive.
+_BUILD_TIME_COMMENTARY = (
+    "reviewer", "annotator", "source document", "phase 2", "phase 3", "phase 4",
+    "plug in", "plug-in", "for now", "we may consider", "deferred to", "at the request of",
+)
+
+
+def test_the_refusals_and_cautions_never_quote_whoever_asked_for_the_feature():
+    """``cautions``, ``notes`` and every ``notComputed`` reason are prose on the admin page.
+
+    THE DEFECT THIS GUARDS, which was found in this module and not in the stage registry. The
+    stage-12 refusal above used to read "…is declared `optional_stage=True` and the reviewer's own
+    note proposes deleting it" — the same build-time commentary that
+    ``test_no_client_facing_registry_string_carries_build_time_commentary`` was written to keep off
+    a designer's stage screen, reaching an administrator's screen through a channel that test does
+    not look at. ``analytics/page.tsx`` renders all three lists verbatim.
+
+    A refusal may say what the registry does and does not record. It may not say who wanted the
+    field, which phase it was put off to, or whose plug-in was going to supply it: the reader is
+    being told why a number is absent, and a colleague's opinion is not the reason.
+    """
+    payload = archive_findings_payload(
+        analyse_archive(adopted_archive(6, per_workshop=2, adopted=1), workshops_in_archive=5607)
+    )
+    prose = (
+        [("caution", text) for text in payload["cautions"]]
+        + [("note", text) for text in payload["notes"]]
+        + [(f"notComputed[{entry['question']}]", entry["reason"])
+           for entry in payload["notComputed"]]
+    )
+    assert prose, "nothing was checked — the payload carried no cautions, notes or refusals"
+    offenders = [
+        (where, term, text)
+        for where, text in prose
+        for term in _BUILD_TIME_COMMENTARY
+        if term in text.casefold()
+    ]
+    assert not offenders, (
+        "build-time commentary is reaching the admin analytics page:\n"
+        + "\n".join(f"  {where}: …{term}… in {text!r}" for where, term, text in offenders)
+    )
+
+    # THE SECOND HALF OF "PROSE", AND IT CAUGHT TWO STRINGS THE COMMENTARY RULE ABOVE CANNOT.
+    #
+    # Removing the reviewer from the stage-12 refusal left it reading "is declared
+    # `optional_stage=True`", and the stage-22 refusal named "`revenue`, `unitsSold` and
+    # `ordersReceived`". No term above matches either: they are not about who asked for the feature,
+    # they are the SOURCE quoted at a reader who cannot open it. `entry.reason` is rendered as JSX
+    # text in `admin/analytics/page.tsx`, so the backticks and the attribute name arrive on screen
+    # exactly as written — the same shape as the ``autoDetected`` that was sitting in stage 21's
+    # note. A refusal names the label the reader can see; the sibling refusal's “Expected
+    # deliverables” is the pattern.
+    markup = [
+        (where, text)
+        for where, text in prose
+        if "`" in text or re.search(r"(?<![A-Za-z0-9`])[a-z]{3,}_[a-z_]{3,}(?![A-Za-z0-9])", text)
+    ]
+    assert not markup, (
+        "a backtick or a source identifier is reaching the admin analytics page — name the label "
+        "the reader sees instead:\n" + "\n".join(f"  {where}: {text!r}" for where, text in markup)
+    )
 
 
 def test_no_planned_prototype_count_exists_in_the_registry():

@@ -122,6 +122,7 @@ gate list; each row names the function in `deps.py` that decides it.
 | Delete **media you uploaded** | route-local | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Grant / decide **workshop access** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
 | **Run a design & prototype workshop** | `can_run_design_workshops` | ⬜ | ⬜ | ⬜ | **✅** | **⬜²** | ✅ | ✅ |
+| **Download the offline speech model** | `can_run_design_workshops` | ⬜ | ⬜ | ⬜ | **✅** | **⬜²** | ✅ | ✅ |
 | Decide a design workshop's **viewers** (§4.4) | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
 | Assign **tasks** to other users | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
 | Rank the **transcription providers** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
@@ -133,9 +134,13 @@ gate list; each row names the function in `deps.py` that decides it.
 them, via `can_edit_others_record`. On a peer's or a superior's record they are refused like anyone
 else. "grant" = refused by rank, allowed if the matching `can*` column is set.
 
-² **Not a threshold.** `can_run_design_workshops` is a SET — see §1. This is the only ⬜ in the table
-that a *higher* rank does not clear, and the only row where reading down a column tells you the wrong
-thing.
+² **Not a threshold.** `can_run_design_workshops` is a SET — see §1. These are the only ⬜s in the
+table that a *higher* rank does not clear, and the only rows where reading down a column tells you the
+wrong thing. The speech-model row reuses that predicate rather than inventing one: the model is a
+workshop capture aid, and a laxer gate would make the offline half of dictation reachable by accounts
+the online half is not. It is entitlement only — the artifact is **not** behind the daily dictation cap
+or the Tier 3 consent gate, because neither applies to a file travelling *to* the phone
+(`docs/ASR-MODEL-HOSTING.md` §2.6).
 
 ³ Subject to the roster: a `DESIGNER` whose `DesignerRoster` row is inactive is refused at sign-in
 itself, before any gate in this table is reached. See §1.
@@ -440,11 +445,36 @@ fortnight's fieldwork with them, with no handover short of an admin editing the 
 | Writing its stages — `PUT …/stages/{stageKey}` goes through the same helper | **Re-granting.** Every route in `backend/app/api/routes/design_workshop_viewers.py` is `require_admin` |
 | Appearing in this account's workshop **list**, via `visible_to_clause` | Any of the six columns in §1.1, or any rank |
 | Reading a questionnaire attached to that workshop — see §4.4.4 | An **unattached** questionnaire, which stays its owner's alone |
+| **Recording the artisan's Tier-3 dictation consent** — `POST …/{id}/dictation-consent`, gated `_require_designer` + `load_workshop_or_404(for_edit=True)` | — |
+| **Registering, accepting, unaccepting and deleting AI layers** — the five `…/{id}/ai-layers` routes, same pair of gates | Reading the **text** of a layer whose recording this account may not read: that is gated per media file by `owned_or_granted_where(user, owner_field="uploadedById")`, which a workshop grant does **not** satisfy |
+| **Rewriting the workshop's custom-section definition** — `PUT …/{id}/custom-sections`, same pair of gates | — |
 
-The two refusals hold **because the routes that already own them were not widened**. Widening the
-LOAD is what widened read and stage-writes; delete and re-granting are gated somewhere else and were
-deliberately left there. That is the property to preserve when this is next touched: a new capability
-gated by "can you load this workshop" silently joins the first column.
+The two original refusals hold **because the routes that already own them were not widened**.
+Widening the LOAD is what widened read and stage-writes; delete and re-granting are gated somewhere
+else and were deliberately left there. That is the property to preserve when this is next touched: a
+new capability gated by "can you load this workshop" silently joins the first column.
+
+> **AND THAT SENTENCE CAME TRUE — THREE TIMES, ON 2026-08-12.** The last three rows above were added
+> that day, after an audit found this table describing a grant that had grown three capabilities
+> nobody had recorded. Every one of them gates on `_require_designer` followed by
+> `load_workshop_or_404(workshop_id, current_user, for_edit=True)`, and that helper admits a grantee
+> as its third clause — so all three joined the first column exactly as predicted, silently, in the
+> commits that built them.
+>
+> **TWO OF THE THREE ARE SIGNED ACTS, AND THAT IS WHY THIS MATTERS MORE THAN A DOCUMENTATION GAP.**
+> `DesignWorkshop.dictationConsentById` records who decided that a named artisan's recorded voice may
+> leave the device for a third-party transcription service. `DwAiLayer.acceptedById` records who put
+> their name to machine-written text that a report then prints as accepted, in a document submitted to
+> a ministry. A grant now delegates **both** — so an admin adding a colleague to a workshop is also
+> handing them the authority to release that artisan's voice and to stand behind a model's prose,
+> which is a delegation the granting admin has never been shown.
+>
+> **This is recorded rather than changed, deliberately.** Narrowing any of the three is a code change
+> — an extra predicate beside `_require_designer` — and it would have to answer a real question first:
+> a co-designer running the same fortnight in the same courtyard is exactly the person who *should* be
+> able to record the artisan's answer, which is the whole reason `DesignWorkshopViewer` exists. What
+> is wrong is not necessarily the gate; it is that the gate was never written down. If a later change
+> does narrow one, this table and that code must move in the same commit.
 
 `load_workshop_or_404` checks the grant **last**, only after `createdById` and `is_admin` have both
 failed, so the ordinary read — a designer opening their own workshop — costs exactly what it did
@@ -611,6 +641,7 @@ mechanical standing behind it.
 | The late-submission gate (§3.3) | `backend/app/services/workshop_access.py` — `enforce_workshop_submission`, `stamp_workshop_submission`, `pin_pending_if_late`. The four numbered properties are each a docstring paragraph there. |
 | Design-workshop viewer grants (§4.4) | `backend/app/services/design_workshop_viewers.py` and `backend/app/api/routes/design_workshop_viewers.py`; the "three ways in" are the three clauses of `load_workshop_or_404` in `backend/app/services/design_workshops.py`, and the model's own reasoning is on `DesignWorkshopViewer` in `backend/prisma/schema.prisma`. `backend/tests/test_design_workshop_viewers.py` asserts the two refusals — delete and re-granting — rather than the routes that happen to enforce them today |
 | The questionnaire visibility that follows (§4.4.4) | `_works_on_this_questionnaires_workshop` and `_visible_questionnaire_where` in `backend/app/api/routes/questionnaire_forms.py`. The three boundaries are each pinned by a test; the `/options` asymmetry is not, and is the row of §4.4.4 most likely to change |
+| The offline speech-model download row | `_require_entitlement` in `backend/app/api/routes/asr_models.py`, and `backend/tests/test_asr_model_download.py`, which parametrises all seven roles and asserts PROFESSOR is **refused** on the manifest, the bytes and the HEAD. A separate test in that file reads the route's own import lines and asserts the dictation cap and consent gate are absent, which is the half of the rule a role matrix cannot express |
 | The route-guard table (§5) | `ROUTE_GUARDS` is a single literal array; diff it against the table. |
 
 **Review triggers** — this document needs a human read whenever any of these change:

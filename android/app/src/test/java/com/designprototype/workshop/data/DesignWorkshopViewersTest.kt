@@ -1,7 +1,9 @@
 package com.designprototype.workshop.data
 
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -43,6 +45,17 @@ class DesignWorkshopViewersTest {
     private fun granted(id: String, name: String = id, role: String = "DESIGNER") =
         DwViewerDto(userId = id, name = name, email = "$id@example.org", role = role)
 
+    /** Configured exactly as `ApiClient` configures the converter Retrofit actually uses. */
+    private val json = Json {
+        ignoreUnknownKeys = true
+        explicitNulls = false
+        isLenient = true
+        coerceInputValues = true
+    }
+
+    private fun decode(raw: String) =
+        json.decodeFromString(DwEligibleViewerListDto.serializer(), raw)
+
     // ── The picker's options ─────────────────────────────────────────────────────────────────────
 
     @Test
@@ -54,6 +67,7 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible(creator), eligible("u-b")),
             viewers = listOf(granted(creator), granted("u-b")),
             creatorId = creator,
+            eligibleListComplete = true,
         )
 
         assertEquals(listOf("u-b"), choices.map { it.userId })
@@ -69,6 +83,8 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible("u-active")),
             viewers = listOf(granted("u-suspended")),
             creatorId = creator,
+            // THE WHOLE eligible set — which is what makes the mark below a fact rather than a guess.
+            eligibleListComplete = true,
         )
 
         assertEquals(listOf("u-active", "u-suspended"), choices.map { it.userId })
@@ -98,6 +114,9 @@ class DesignWorkshopViewersTest {
             eligible = emptyList(),
             viewers = listOf(granted("u-a"), granted("u-b")),
             creatorId = creator,
+            // The load's own claim, and the reason it must not be made after a failure: an empty
+            // COMPLETE list is a legal answer from a repository whose designers are all suspended.
+            eligibleListComplete = true,
         )
 
         assertEquals(listOf("u-a", "u-b"), choices.map { it.userId })
@@ -114,6 +133,7 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible("u-a"), eligible("u-b")),
             viewers = listOf(granted("u-b")),
             creatorId = creator,
+            eligibleListComplete = true,
         )
 
         assertEquals(listOf("u-a", "u-b"), choices.map { it.userId })
@@ -129,6 +149,7 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible(""), eligible("u-a")),
             viewers = listOf(granted("")),
             creatorId = creator,
+            eligibleListComplete = true,
         )
 
         assertEquals(listOf("u-a"), choices.map { it.userId })
@@ -143,9 +164,198 @@ class DesignWorkshopViewersTest {
             eligible = listOf(eligible("u-z", name = "Zoya"), eligible("u-a", name = "Aarav")),
             viewers = emptyList(),
             creatorId = creator,
+            eligibleListComplete = true,
         )
 
         assertEquals(listOf("u-z", "u-a"), choices.map { it.userId })
+    }
+
+    // ── Reaching past the server's ceiling ───────────────────────────────────────────────────────
+    //
+    // `eligible_viewers` serves at most `ELIGIBLE_VIEWER_LIMIT` = 2000 accounts, ordered by name.
+    // MEASURED ON THE LIVE DATABASE: 2543 accounts are eligible — 1344 admins, who are not
+    // roster-gated at all, plus the 1282 designers the roster admits — and the answer stops at the
+    // name "Sync Test" with 398 eligible accounts sorting past it. Every one of them was absent from
+    // this picker with nothing on screen to say so, and absent is indistinguishable from ineligible.
+    // The tests below cover the three ways the fix for that could itself go wrong.
+
+    @Test
+    fun `the wire says when the list was cut, and a server that says nothing cuts nothing`() {
+        // Decoded with the converter configured exactly as `ApiClient` configures Retrofit's, because
+        // the leniency is the load-bearing part: `ignoreUnknownKeys = true` is why the server could
+        // start sending `truncated` without blanking the picker on every phone already in the field.
+        // A strict decoder — and this app has those too — would have thrown on the unknown key.
+        val cut = decode(LIVE_CAPPED_PAGE)
+        assertTrue("the cut has to reach the client, or only a server log knows", cut.truncated)
+        assertEquals(2, cut.users.size)
+
+        val whole = decode(LIVE_SEARCH_HIT)
+        assertFalse(whole.truncated)
+        assertEquals("Unrelated Designer Nabakalebara8a886916", whole.users.single().name)
+
+        // AN OLDER SERVER, which this repository really does ship: the app and the API go out
+        // separately, so a handset updated first will decode an answer with no `truncated` at all.
+        // It must say nothing about truncation rather than default to crying it.
+        assertFalse(decode("""{"users":[]}""").truncated)
+    }
+
+    @Test
+    fun `the sentence under the search box is one of four, and silence is one of them`() {
+        // A COMPLETE LIST HAS NOTHING TO EXPLAIN. Silence is the common answer and the correct one; a
+        // standing note about pagination on every visit is padding on a screen that has twice been
+        // asked for less of it.
+        assertNull(
+            dwViewerOfferNotice(
+                DwEligibleViewers(users = listOf(eligible("u-a")), truncated = false, search = null)
+            )
+        )
+        assertNull(
+            dwViewerOfferNotice(
+                DwEligibleViewers(users = listOf(eligible("u-a")), truncated = false, search = "Aarav")
+            )
+        )
+
+        // Cut, and nothing typed: there are people past the ceiling and typing reaches them.
+        assertEquals(
+            "Too many accounts to show them all — search a name or email to reach the rest.",
+            dwViewerOfferNotice(
+                DwEligibleViewers(users = listOf(eligible("u-a")), truncated = true, search = null)
+            )
+        )
+        // Cut under a term: the term is too broad, and narrowing it is advice that works.
+        assertEquals(
+            "Too many matches to show them all — narrow the search.",
+            dwViewerOfferNotice(
+                DwEligibleViewers(users = listOf(eligible("u-a")), truncated = true, search = "a")
+            )
+        )
+        // Nothing matched, and the answer was whole — which is NOT "nobody is eligible".
+        assertEquals(
+            "No eligible account matches that search.",
+            dwViewerOfferNotice(
+                DwEligibleViewers(users = emptyList(), truncated = false, search = "Meher")
+            )
+        )
+    }
+
+    @Test
+    fun `an answer that is cut and empty does not tell an admin to narrow an empty list`() {
+        // THE STATE NO LIVE DATABASE CAN PRODUCE, and the reason this decision left the composable.
+        // `truncated` covers two different cuts and only one of them can be narrowed by typing: when
+        // the ACTIVE-ROSTER read is what was cut, eligible designers are missing from every possible
+        // search and the answer can come back truncated with no users in it at all. The three-state
+        // spelling answered that with "Too many matches to show them all — narrow the search." over an
+        // empty picker — advice that cannot work — and it also shadowed "No eligible account matches
+        // that search.", so "hidden from you" and "nobody matched" became one sentence again, which is
+        // the defect this whole screen was fixed for.
+        val expected =
+            "Some eligible accounts could not be listed, and no search can reach them — the server log says why."
+
+        val searched = dwViewerOfferNotice(
+            DwEligibleViewers(users = emptyList(), truncated = true, search = "Meher")
+        )
+        val unsearched = dwViewerOfferNotice(
+            DwEligibleViewers(users = emptyList(), truncated = true, search = null)
+        )
+
+        assertEquals(expected, searched)
+        // The same fact whether or not anything was typed: the accounts are unreachable either way, so
+        // "search a name or email to reach the rest" would be just as untrue as "narrow the search".
+        assertEquals(expected, unsearched)
+        assertFalse("narrowing an empty answer cannot help", searched!!.contains("narrow"))
+        assertFalse("and neither can typing", unsearched!!.contains("search a name"))
+    }
+
+    @Test
+    fun `a search the server would refuse never leaves the phone`() {
+        // Nothing typed is NOT a search. `?search=` and no parameter at all mean the same thing to the
+        // server (verified live: both answer the full capped list), so sending an empty term would be
+        // a pointless request on a field connection.
+        assertNull(dwViewerSearchTerm(null))
+        assertNull(dwViewerSearchTerm(""))
+        assertNull(dwViewerSearchTerm("   "))
+        // PYTHON'S WHITESPACE, not Kotlin's. `Char.isWhitespace` is deliberately false for the
+        // no-break space, which is what a name pasted out of a PDF leaves behind; the server strips it
+        // and would answer with everybody, leaving the phone showing a full list under a search box
+        // that appears to have been ignored.
+        assertNull(dwViewerSearchTerm(" "))
+        assertNull(dwViewerSearchTerm("  "))
+
+        assertEquals("Nabakalebara8a", dwViewerSearchTerm("  Nabakalebara8a  "))
+
+        // The endpoint is `Query(None, max_length=120)` and answers 422 above that (verified live:
+        // 120 characters is a 200, 121 is a `string_too_long`). A validation body has no business
+        // reaching an admin as a refusal about a person, so a paste is clamped instead.
+        val pasted = "a".repeat(400)
+        assertEquals(DW_VIEWER_SEARCH_MAX, dwViewerSearchTerm(pasted)!!.length)
+        // And never half a character: a clamp that split a surrogate pair would send the server a
+        // lone surrogate to ask questions about.
+        val emoji = "x".repeat(DW_VIEWER_SEARCH_MAX - 1) + "🙂"
+        val clamped = dwViewerSearchTerm(emoji)!!
+        assertEquals(DW_VIEWER_SEARCH_MAX - 1, clamped.length)
+        assertFalse("a lone high surrogate is not a term", clamped.last().isHighSurrogate())
+    }
+
+    @Test
+    fun `a colleague ticked under one search is still there after the next one`() {
+        // THE REVOCATION A SEARCH BOX CREATES IF NOBODY THINKS ABOUT IT. The PUT replaces the whole
+        // set, so an option that is not rendered is a row the next Save deletes. An admin searches
+        // "Nabakalebara", ticks the designer they were looking for, then types a second surname — and
+        // the first designer is no longer in the server's answer. Left out of the options they
+        // disappear from the picker, from the chips, from the "will be added on save" line, and then
+        // from the workshop, with nothing on screen having said anything.
+        val answer = listOf(eligible("u-second", name = "Second Surname"))
+        val ticked = eligible("u-first", name = "Unrelated Designer Nabakalebara8a886916")
+
+        val choices = dwViewerChoices(
+            eligible = answer,
+            viewers = emptyList(),
+            creatorId = creator,
+            // A search result is never the whole eligible set.
+            eligibleListComplete = false,
+            retained = listOf(ticked),
+        )
+
+        assertEquals(listOf("u-second", "u-first"), choices.map { it.userId })
+        // And NOT marked: they are missing from this answer because of the term that was typed, which
+        // says nothing whatever about the designer roster.
+        assertFalse(
+            "a colleague narrowed out by a search term has not been suspended from the roster",
+            choices.first { it.userId == "u-first" }.grantedButIneligible
+        )
+    }
+
+    @Test
+    fun `a list that was searched or cut does not call the whole team suspended`() {
+        // The mark is a claim about the DesignerRoster — "has access, no longer eligible" — and it is
+        // only supportable when the server was asked for everybody and answered with everybody. Over a
+        // search result every colleague who does not match the typed term looks suspended. Over a list
+        // cut at 2000 every colleague sorting past "Sync Test" looks suspended, which this screen has
+        // been doing on this database already, before any search box existed.
+        val team = listOf(granted("u-a"), granted("u-b"))
+        listOf(
+            DwEligibleViewers(users = emptyList(), truncated = true, search = null),
+            DwEligibleViewers(users = emptyList(), truncated = false, search = "nabakalebara"),
+            DwEligibleViewers(users = emptyList(), truncated = true, search = "sync"),
+        ).forEach { answer ->
+            assertFalse("$answer is not the whole eligible set", answer.complete)
+            val choices = dwViewerChoices(
+                eligible = answer.users,
+                viewers = team,
+                creatorId = creator,
+                eligibleListComplete = answer.complete,
+            )
+            // STILL OFFERED — that is what stops the revocation — and simply not labelled.
+            assertEquals(listOf("u-a", "u-b"), choices.map { it.userId })
+            assertTrue(choices.none { it.grantedButIneligible })
+        }
+
+        // The complete list still says it, because there it is the truth the mark exists for.
+        val known = DwEligibleViewers(users = emptyList(), truncated = false, search = null)
+        assertTrue(known.complete)
+        assertTrue(
+            dwViewerChoices(known.users, team, creator, known.complete).all { it.grantedButIneligible }
+        )
     }
 
     // ── The pending set ──────────────────────────────────────────────────────────────────────────
@@ -220,7 +430,7 @@ class DesignWorkshopViewersTest {
         // options list keeps the ineligible holder, `adopt` ticks them, and the payload therefore
         // still names them after the admin adds somebody else.
         val viewers = listOf(granted("u-suspended"))
-        val choices = dwViewerChoices(listOf(eligible("u-new")), viewers, creator)
+        val choices = dwViewerChoices(listOf(eligible("u-new")), viewers, creator, true)
         var selection = DwViewerSelection.adopt(viewers, creator)
 
         // Exactly what the multi-select hands back after one tap: every currently-ticked option plus
@@ -372,3 +582,31 @@ class DesignWorkshopViewersTest {
         assertTrue("the server's text is the only one that knows WHICH account", message.contains(detail))
     }
 }
+
+/**
+ * `GET /api/design-workshops/eligible-viewers` with no parameters, verbatim, against the live
+ * repository — 2000 users and `truncated: true`, with the user list cut to its first two entries here
+ * and nothing else altered.
+ *
+ * The `truncated` in it is the whole point of the capture: this exact request answered 2000 accounts
+ * out of the 2543 that are eligible, which is the defect, and the flag is the first thing on this wire
+ * capable of saying so.
+ */
+private const val LIVE_CAPPED_PAGE =
+    """{"users":[{"id":"cmsi52v3f0002zl5vhyrnf236","name":"Admin On The Roster",""" +
+        """"email":"roster-adminrostered-0723e25f@example.org","role":"ADMIN"},""" +
+        """{"id":"cmsi4tosp0002tah4y81t20xi","name":"Admin On The Roster",""" +
+        """"email":"roster-adminRostered-e8bc3cf0@example.org","role":"ADMIN"}],"truncated":true}"""
+
+/**
+ * The same endpoint with `?search=Nabakalebara8a`, verbatim and complete.
+ *
+ * That account is eligible (a DESIGNER with an active roster row) and sorts past the 2000th name, so
+ * it is ABSENT from [LIVE_CAPPED_PAGE]'s 2000 rows entirely — it cannot be reached by filtering
+ * anything this phone was given, only by asking the server. `truncated` is false because one match is
+ * a complete answer to that question.
+ */
+private const val LIVE_SEARCH_HIT =
+    """{"users":[{"id":"cmsqk1ma9000310owey7it64u",""" +
+        """"name":"Unrelated Designer Nabakalebara8a886916",""" +
+        """"email":"dwviewer-outsider-09404670@example.org","role":"DESIGNER"}],"truncated":false}"""

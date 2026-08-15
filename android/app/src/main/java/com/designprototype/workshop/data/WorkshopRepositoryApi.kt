@@ -817,6 +817,22 @@ interface WorkshopRepositoryApi {
         @Body body: StageSaveBody
     ): StageSaveResultDto
 
+    /**
+     * The questions THIS WORKSHOP'S DESIGNER added to it, and the digest of them.
+     *
+     * READ-ONLY ON THIS CLIENT, AND THE PUT IS DELIBERATELY NOT BOUND. Authoring a definition is a
+     * write to a server-owned contract with an ordering rule the phone cannot evaluate: a replace is
+     * not a delete, so what is absent is RETIRED if it has answers and REMOVED if it does not, and
+     * rewording an answered field SUPERSEDES it — decisions made against answer rows this handset
+     * does not hold. `WorkshopRepository`'s "Custom questionnaires" block already refuses exactly this
+     * class of offline write, in writing, for exactly this reason. The definition is authored in the
+     * browser, where a 422 from an `extra="forbid"` envelope is read by the person who caused it.
+     *
+     * Retired sections and fields are ALWAYS in the response — see [DwCustomSections]' header.
+     */
+    @GET("design-workshops/{id}/custom-sections")
+    suspend fun designWorkshopCustomSections(@Path("id") id: String): DwCustomDefinitionDto
+
     // The options behind one REF field's dropdown.
     //
     // `model` is the registry's `refModel`; `filterBy` is the value of the field named by
@@ -848,6 +864,80 @@ interface WorkshopRepositoryApi {
         @Part file: okhttp3.MultipartBody.Part
     ): DwIdentityOcrDto
 
+    // One dictated passage, written down by the SAME provider chain the workshop's own recordings go
+    // through — rung 2 of the dictation ladder (see [dwDictationLadder]).
+    //
+    // ONLINE ONLY, SYNCHRONOUS, AND IT STORES NOTHING. The route holds a worker for the whole
+    // provider round trip and returns the text; there is no job, no id and no queue behind it. So
+    // this call must never be handed to [OfflineOutbox] the way a record create is: the designer is
+    // standing in front of a field waiting for words to appear in it, and a transcript that turns up
+    // after the next sync is not a dictation. With no signal, rung 2 is simply unavailable.
+    //
+    // THE FORM FIELD IS `languageHint` BECAUSE THAT IS WHAT THE ROUTE DECLARES
+    // (the `dictate_for_workshop` signature in backend/app/api/routes/design_workshops.py, which
+    // declares the same two parts as its id-less sibling), checked against it
+    // rather than remembered. The web sends the same name (`frontend/lib/designWorkshops.ts` appends
+    // `languageHint`); a note here claiming it sends `language` was true of an older browser build and
+    // has been corrected on that side, so it is deleted rather than left to send the next reader
+    // looking for a mismatch that no longer exists.
+    //
+    // A 503 means the deployment has no transcription provider configured, not that the clip was
+    // bad. It is shown as "not configured" and remembered for the run — see [DwDictationRun].
+    //
+    // A 429 is either this designer's daily allowance being spent or the courtesy rate limiter in
+    // front of the whole API, told apart by the body and only one of them remembered — see
+    // [DwDictationCapRefused]. The CAP is enforced on both dictation routes, per DESIGNER, so nothing
+    // about the URL below changes it.
+    //
+    // THE WORKSHOP ID IS IN THE PATH BECAUSE IT IS THE ONLY THING THAT MAKES THE CONSENT GATE REAL, AND
+    // THIS COMMENT USED TO SAY THE OPPOSITE. It read: "`/dictate` remains an unconsented door, and
+    // closing it is a separate, dated change to both clients." This is that change, so the sentence is
+    // deleted rather than softened — leaving it would be a false claim about the app's own behaviour, of
+    // exactly the kind this repository files as a defect.
+    //
+    // WHAT MOVED AND WHAT DID NOT. The body is unchanged — the same `file`, the same `languageHint` —
+    // and the response carries the same keys; that is the server's own guarantee, written into
+    // `dictate_for_workshop`'s docstring ("the same multipart body … to this URL instead"). Only the URL
+    // moved. `POST /design-workshops/dictate` still exists up there and still takes no id, so it can
+    // consult no workshop's `dictationConsent` column and hands the clip straight to the provider chain;
+    // retiring it is the server's dated decision, and this client's part is simply not to use it. The
+    // browser posts to this same URL (`dictateAudio` in frontend/lib/designWorkshops.ts, whose
+    // `workshopId` is required for the reason given below), so the two surfaces are gated alike.
+    //
+    // A 409 IS THE GATE ITSELF: this workshop's consent is NOT_RECORDED or REFUSED. It carries a
+    // sentence naming the next move, and the next move is A PERSON DECIDING and never a retry — which is
+    // why the repository reads that sentence out rather than turning the code into one of its own. See
+    // [DwDictationConsentRefused].
+    //
+    // THE ID IS REQUIRED AND HAS NO DEFAULT, on purpose, and the web half made the same choice for the
+    // same reason: an optional id would make "the call site that forgot" indistinguishable from "the
+    // call site that meant it", and the forgotten one is the one that sends an artisan's recorded voice
+    // through the ungated door.
+    @Multipart
+    @POST("design-workshops/{id}/dictate")
+    suspend fun designWorkshopDictate(
+        @Path("id") id: String,
+        @Part file: okhttp3.MultipartBody.Part,
+        @Part("languageHint") languageHint: okhttp3.RequestBody
+    ): DwDictateDto
+
+    // One workshop's answer to "may its recordings and dictation leave the device for a third-party
+    // transcription service", with who recorded it and when — plan §6 answer 3.
+    //
+    // ITS OWN ROUTE RATHER THAN `PATCH /{id}`, which is the server's decision: that route's writable
+    // set is a hand-written tuple copied in a loop and it records neither the actor nor the moment,
+    // and those two facts are the entire content of a consent. Two writes happen behind this one call
+    // — the workshop's three columns and a row in its append-only decision log — because a consent can
+    // be WITHDRAWN, and "granted on the 3rd, withdrawn on the 9th" is only answerable from a log.
+    //
+    // GATED ON {DESIGNER, ADMIN, MASTER_ADMIN} server-side, the same set as running a workshop at all;
+    // the screen refuses the same set, in words rather than with a greyed button.
+    @POST("design-workshops/{id}/dictation-consent")
+    suspend fun recordDesignWorkshopDictationConsent(
+        @Path("id") id: String,
+        @Body body: DwConsentDecisionRequest
+    ): DwConsentDecisionDto
+
     // --- Who, besides its creator, may open one design workshop ---------------------------------
     //
     // ADMIN-ONLY, ALL THREE. Every route behind these is `Depends(require_admin)` — `is_admin`, so
@@ -863,8 +953,17 @@ interface WorkshopRepositoryApi {
     // (That same collision is why `api/router.py` must include the viewers router FIRST — a note
     // lives there; it is the server's problem, but this is where a phone would see it.)
 
+    // `search` MATCHES NAME OR EMAIL AND IS APPLIED BY THE SERVER, inside the same query as the
+    // eligibility rule. Null omits the parameter entirely, which is the whole (capped) list. It is not
+    // a convenience over a list this client already holds: the answer is capped at 2000 accounts and
+    // the cap is reached on a real repository, so an eligible colleague sorting past the cut cannot be
+    // reached any other way. Filtering the capped list on the phone would search only the part of the
+    // alphabet that fitted — the same defect wearing a search box. Over 120 characters the server
+    // answers 422; `dwViewerSearchTerm` is what keeps this side inside that.
     @GET("design-workshops/eligible-viewers")
-    suspend fun eligibleDesignWorkshopViewers(): DwEligibleViewerListDto
+    suspend fun eligibleDesignWorkshopViewers(
+        @Query("search") search: String? = null
+    ): DwEligibleViewerListDto
 
     @GET("design-workshops/{id}/viewers")
     suspend fun designWorkshopViewers(@Path("id") id: String): DwViewerListDto

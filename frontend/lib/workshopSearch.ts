@@ -69,8 +69,21 @@
  * them returns matches nobody can read; the fields that state a price in prose are RICH_TEXT and
  * are indexed. Deprecated fields are skipped because there is no control on any form to navigate
  * to — a result a designer cannot reach is not a result.
+ *
+ * THE DESIGNER'S OWN QUESTIONS ARE INDEXED TOO, and the ~496 figure above is therefore a floor rather
+ * than the total: a workshop may carry up to twelve sections of its own, and the answers to them live
+ * in each stage's `_custom` bucket. They are walked at the end of each stage, through the same
+ * `collect` and the same synthetic entity the stage form renders them under, so a custom answer is a
+ * result of exactly the same kind as a registry answer and its link lands on the same sort of box. A
+ * RETIRED custom question is skipped under the deprecated-field rule above, and for its reason: its
+ * answer is printed, but as text rather than as a control, so there is no anchor to arrive at.
  */
 
+// The designer's own questions reach this index through the SAME two functions the stage form and the
+// readiness walk use — `customStageBlocks` for what is asked and in what order, `customSectionEntity`
+// for the identity it is rendered under. A third opinion about either would be a hit whose link lands
+// on a stage with nothing highlighted.
+import { customSectionEntity, customStageBlocks } from "@/lib/customSections";
 import type { DwDraft, DwDraftStage } from "@/lib/designWorkshopStore";
 import {
   inputValue,
@@ -541,9 +554,59 @@ export function buildWorkshopSearchIndex(registry: DwRegistry, draft: DwDraft): 
         });
       }
     }
+    /*
+      THE DESIGNER'S OWN QUESTIONS, INDEXED LAST AND THROUGH THE SAME `collect` AS EVERYTHING ELSE.
+
+      WHAT WAS WRONG BEFORE, in the designer's words rather than in the code's: they record the dye bath
+      as "Indigo, unbleached" under a question they wrote themselves, and a fortnight later, with no
+      signal, they search "indigo" to find where they put it. The panel answers *"Nothing in this
+      workshop holds that word. Every answer saved on this device was searched — 1,393 of them."* The
+      answer is on the stage form, it is inside the percentage on the same screen, and it is in the
+      .docx. A search that misses is a search a designer stops trusting; a search that misses UNDER A
+      SENTENCE CLAIMING IT SEARCHED EVERYTHING is one that sends them back to opening stages one at a
+      time, which is the afternoon this whole feature exists to give back.
+
+      THE SYNTHETIC ENTITY IS BUILT THE WAY THE FORM BUILDS IT — `customSectionEntity`, not a shape
+      invented here — so the hit's `entityKey` is the string `CustomSectionsForm` renders the section
+      under and `readStageFocus` can resolve the link to a box that exists. Anything else lands on the
+      right stage with nothing highlighted, which reads exactly like a stale result.
+
+      ONE BUCKET, SEVERAL SECTIONS: `stage.custom` is flat and keyed by the designer's own field keys,
+      because the row it comes from is one per (workshop, stage). Field keys are unique across the whole
+      workshop — the server enforces it precisely so two sections cannot write into one key — so handing
+      the same bucket to each section's entity is safe, and `collect` only ever reads the keys of the
+      entity it was given.
+
+      RETIRED QUESTIONS ARE NOT INDEXED, and that is this module's existing rule rather than a new
+      exception: `collect` skips a DEPRECATED registry field because no form draws a control for it, and
+      `customSectionEntity` carries only live fields for the same reason. A retired custom answer IS
+      printed on the form, but by `RetiredAnswer`, which is deliberately text and not a control — so it
+      carries no `data-dw-field` wrapper and there is nothing for a hit to be scrolled to. Decision 4 in
+      the header: a result a designer cannot be taken to is not a result.
+
+      `stage.custom ?? {}` because the key is optional on a record written by a build before it existed.
+    */
+    const customValues = stored.custom ?? {};
+    for (const block of customStageBlocks(draft.customDefinition ?? null, stage.key)) {
+      order = collect(
+        registry,
+        models,
+        rows,
+        stage,
+        customSectionEntity(block.section),
+        customValues,
+        null,
+        null,
+        entries,
+        order
+      );
+    }
+
     // "A stage that has a draft record" and "a stage that has a word in it" are different facts, and
     // the panel prints the second: opening a stage banks an empty record, so counting stored stages
-    // would tell a designer the search covers 22 stages when nineteen of them hold nothing.
+    // would tell a designer the search covers 22 stages when nineteen of them hold nothing. Counted
+    // AFTER the custom walk, or a stage whose only answers are the designer's own would be missing from
+    // the coverage figure printed beside the claim that everything was searched.
     if (entries.length > before) stagesWithText.add(stage.key);
   }
 

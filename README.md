@@ -262,21 +262,21 @@ The Android app keeps the web OAuth client ID in `android/app/build.gradle.kts` 
 
 ## Roles And Permissions
 
-Six-tier role ladder, strictly ordered by privilege. Each tier inherits everything below it;
-per-user grantable booleans (`canManageQuestionnaire`, `canManageCrafts`, `canManageWorkshops`,
-`canReview`, `canViewProvenance`, `canDownloadDataset`) can additionally lift a single capability
-for a lower tier.
+Seven-tier role ladder, strictly ordered by privilege. Each tier inherits everything below it;
+per-user grantable booleans (`canManageQuestionnaire`, `canReview`, `canViewProvenance`,
+`canDownloadDataset`) can additionally lift a single capability for a lower tier.
 
 | Tier | Rank | Powers |
 | --- | --- | --- |
 | `MASTER_ADMIN` | 60 | Reserved for `MASTER_ADMIN_EMAIL`. Everything, plus the three nobody else has: provider key values, repository settings, OTA releases. The only account that may act on a peer. |
 | `ADMIN` | 50 | Create/delete accounts; **delete records**; grant workshop access; assign tasks; approve **late** submissions. |
 | `PROFESSOR` | 40 | Everything a researcher can do, plus craft/workshop/questionnaire management, dataset download, viewing and promoting users, and editing records created by anyone below them. No account creation, no deletes. |
+| `DESIGNER` | 35 | Run design & prototype workshops and sign the report: the 22 stages, the custom sections, the AI layers, the report exports. Everything a researcher can do. **NOT a rank threshold** — see the third rule below. |
 | `RESEARCHER` | 30 | **Create** and edit their own records, contribute to others' (fill-empty), run questionnaire interviews. |
 | `FIELD_CONTRIBUTOR` | 20 | Populate existing records — media, answers, comments — and review volunteers. **Cannot create records.** |
 | `CROWDSOURCE_VOLUNTEER` | 10 | Lowest tier and the default for new self-registered Google accounts (`DEFAULT_SIGNUP_ROLE`). Upload media, answer questionnaires, comment. |
 
-Two rules people get wrong:
+Three rules people get wrong:
 
 - **A Field Contributor cannot create records.** `can_create_records` requires Researcher. The two
   tiers below *populate* records rather than open them — that is the reason they exist.
@@ -284,6 +284,16 @@ Two rules people get wrong:
   own tier, but you can only manage (or review, or edit the records of) users **below** it. One admin
   can never rewrite another admin's account or approve their work; only the master admin manages
   peers.
+- **`DESIGNER` is a rank in the ladder, but running a design workshop is not a rank threshold.**
+  `can_run_design_workshops` is a **SET** — `{DESIGNER, ADMIN, MASTER_ADMIN}` — not a floor, so a
+  Professor at 40 outranks a designer at 35 and still cannot run a workshop. That is deliberate: the
+  ladder answers "how much may this account do to the repository", and running a workshop is a job
+  somebody was empanelled for, not a privilege earned by seniority. A DESIGNER account may also sign
+  in only while an ACTIVE row in `DesignerRoster` carries its email — two separate facts, `User.role`
+  saying what somebody may do and the roster saying whether the institution still recognises them.
+
+  Rank 35 sits in the gap the original tens deliberately left, so inserting the tier renumbered
+  nothing and every stored role kept its meaning.
 
 Live grantable capability booleans are `canManageQuestionnaire`, `canReview`, `canViewProvenance` and
 `canDownloadDataset`. `canManageCrafts` and `canManageWorkshops` still exist as columns but are

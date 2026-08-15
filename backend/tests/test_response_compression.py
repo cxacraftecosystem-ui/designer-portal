@@ -64,6 +64,19 @@ def client() -> TestClient:
     async def varied_route() -> JSONResponse:
         return JSONResponse({"prose": _BIG}, headers={"Vary": "Origin"})
 
+    # A PARTIAL RESPONSE WITH A COMPRESSIBLE TYPE. `text/plain` is on the allowlist, so this is the
+    # shape that would be gzipped with its byte offsets left describing bytes the client never gets.
+    # It became reachable when /api/asr-models/…/files/… started serving ranges.
+    @app.get("/partial", status_code=206)
+    async def partial_route() -> Response:
+        body = _BIG.encode()[:2048]
+        return Response(
+            content=body,
+            status_code=206,
+            media_type="text/plain",
+            headers={"Content-Range": f"bytes 0-{len(body) - 1}/{len(_BIG.encode())}"},
+        )
+
     # `raise_server_exceptions=False` is not needed; nothing here raises.
     return TestClient(app)
 
@@ -119,6 +132,29 @@ def test_a_bodiless_response_is_untouched(client):
     response = client.get("/nocontent", headers={"Accept-Encoding": "gzip"})
     assert response.status_code == 204
     assert "content-encoding" not in response.headers
+
+
+def test_a_partial_response_keeps_its_byte_offsets(client):
+    """A 206 MUST NOT be compressed, and this was a real gap rather than a hypothetical one.
+
+    The passthrough condition's own comment said *"a range response must keep its byte offsets"* while
+    the condition only listed 204 and 304 — so a range response with a type on the allowlist
+    (`text/plain` is on it) would have been gzipped with its `Content-Range` header untouched, telling
+    the client that bytes 0-2047 of the file are in a body that holds the gzip of them. A resumable
+    client appends that to a `.part` file and produces a corrupt bundle it can only discover by
+    hashing the whole thing at the end.
+
+    Unreachable until this API served a range at all; `/api/asr-models/{id}/files/{name}` is the first
+    route that does, which is why the gap is closed in the same change.
+    """
+    response = client.get("/partial", headers={"Accept-Encoding": "gzip"})
+    assert response.status_code == 206
+    assert "content-encoding" not in response.headers
+    assert response.content == _BIG.encode()[:2048]
+    start, _, total = response.headers["content-range"].removeprefix("bytes ").partition("/")
+    assert start == f"0-{len(response.content) - 1}"
+    assert int(response.headers["content-length"]) == len(response.content)
+    assert int(total) == len(_BIG.encode())
 
 
 def test_vary_is_added_so_a_shared_cache_cannot_cross_the_variants(client):

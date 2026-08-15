@@ -594,7 +594,30 @@ fun RichTextEditor(
                             commit(insertText(doc, range, joiner + phrase, marks), moveFocus = false)
                         }
                     },
-                    onError = { },
+                    /*
+                      THIS WAS `onError = { }` AND IT SWALLOWED EVERY SENTENCE THE CONTROL PRODUCES.
+
+                      The editor already takes an `onError` of its own and `FieldRenderer` already
+                      hands it the real one (`services?.onError`), so the discard was this one call
+                      site and nothing else — every failure a designer dictating into a narrative
+                      field could hit arrived here and stopped.
+
+                      It was survivable while the microphone had one rung. A `SpeechRecognizer`
+                      failure is loud in its own way: the panel closes with nothing added, and the
+                      designer taps again. Rung 2 is not like that. The clip is recorded, the panel
+                      says the words will arrive on Stop, the upload goes out, and the answer may be
+                      a 503, a refusal over the six-megabyte cap, a transcript with no words in it,
+                      or a dropped connection — four different next moves, each with its own
+                      sentence, all of them landing here and vanishing. The designer watches a
+                      passage they have just spoken produce nothing at all, with no account of why.
+
+                      Plan §1 names one of these explicitly: the 503 "must be shown as 'not
+                      configured', never as silence". On this surface it was silence. And these are
+                      the RICH_TEXT fields — the long narrative ones the report is actually built
+                      from, which is to say the fields where a designer most needs to dictate and
+                      where losing four minutes of speech costs the most.
+                    */
+                    onError = onError,
                 )
             }
             Spacer(Modifier.height(6.dp))

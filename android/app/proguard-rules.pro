@@ -87,6 +87,45 @@
     <init>();
 }
 
+# ── The sherpa-onnx speech engine, kept whole, BEFORE the first release build ───────────────────
+#
+# THIS RULE IS THE ONE `docs/ASR-RUNTIME-MEASUREMENT.md` §4 AND `docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md`
+# §8 BOTH ORDERED TO EXIST BEFORE A RELEASE BUILD IS EVER RUN, and it is added in the same pass that
+# put the AAR on the compile classpath, for the reason those documents give: R8 removed **all 123**
+# `com.k2fsa.sherpa.onnx` classes WHOLE when the AAR was on the classpath with nothing calling it —
+# zero kept with members trimmed, zero occurrences of `k2fsa` in `mapping.txt`. That was harmless
+# while nothing called the binding. It stops being harmless the moment something does, and the
+# failure it produces is the worst-shaped one this project has: a release build that fails at
+# `ClassNotFoundException` or `UnsatisfiedLinkError` exactly where the debug build transcribed
+# perfectly — in a courtyard, on a handset nobody can attach a debugger to.
+#
+# TWO SEPARATE THINGS HAVE TO BE KEPT AND R8 CAN INFER NEITHER.
+#
+#  1. THE CLASSES AND THEIR FIELDS. The JNI side does not call Kotlin getters — it reads the config
+#     objects' FIELDS by name through `GetFieldID`, and it stores the native handle back into
+#     `OfflineRecognizer.ptr` and `OfflineStream.ptr` the same way. A renamed or removed field is
+#     not a link error; it is a `NoSuchFieldError` or, worse, a silently misread config. `{ *; }`
+#     keeps members as well as the class, which a bare `-keep class` would not.
+#  2. THE NATIVE METHODS' NAMES. `libsherpa-onnx-jni.so` resolves its entry points by the mangled
+#     name `Java_com_k2fsa_sherpa_onnx_<Class>_<method>`, so the class name, the package and the
+#     method name are all load-bearing STRINGS on the C++ side. `-keepclasseswithmembernames` is the
+#     rule that says "you may remove this if it is unused, but you may not rename it".
+#
+# THE PACKAGE IS KEPT WHOLE RATHER THAN CLASS BY CLASS, deliberately. A narrower list would have to
+# be revised every time this app reaches one more part of the engine — and the failure mode of
+# forgetting is not a compile error but the courtyard crash above. The cost is bounded and measured:
+# that same §4 reading says the whole binding is a 238,043-byte `classes.jar` which cost **160 bytes
+# of dex** when R8 deleted all of it, so keeping every class of it back is worth tens of kilobytes
+# against a 26 MB APK. Native code is not shrunk by R8 at all, so none of the 39.8 MB is affected.
+#
+# HOW TO CHECK IT WORKED, and it must be checked rather than trusted: after `assembleRelease`,
+# `grep -c k2fsa app/build/outputs/mapping/release/mapping.txt` must now be non-zero — it was
+# exactly zero in both of the readings the two documents record.
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-keepclasseswithmembernames class com.k2fsa.sherpa.onnx.** {
+    native <methods>;
+}
+
 # ── What R8 removed, written down where a human can read it ─────────────────────────────────────
 #
 # Not diagnostics for their own sake: the ONLY way to check a shrunk build without a device is to

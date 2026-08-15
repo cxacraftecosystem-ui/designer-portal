@@ -42,6 +42,11 @@ import {
   type DwStage,
   type DwStageCompleteness
 } from "@/lib/designWorkshops";
+import {
+  customSectionEntityKey,
+  customStageBlocks,
+  type DwCustomStageBlock
+} from "@/lib/customSections";
 import { localCompleteness, stageDataOf, type DwDraft, type DwDraftStage } from "@/lib/designWorkshopStore";
 import { stageFieldHref } from "@/lib/workshopSearch";
 
@@ -172,7 +177,19 @@ function missingLabel(entity: DwEntity, field: DwField): string {
  * The FIRST offending row keeps the link. A designer sent to the first prototype missing its material
  * can work down the list from there; sending them to the last one would have them scroll back up.
  */
-function stageAddresses(spec: DwStage, stage: DwDraftStage | undefined): Map<string, ReadinessAddress> {
+function stageAddresses(
+  spec: DwStage,
+  stage: DwDraftStage | undefined,
+  /**
+   * This stage's designer-defined questions, still grouped by the section that asks them.
+   *
+   * PASSED IN RATHER THAN RESOLVED HERE, so this module keeps the property its header claims: it takes
+   * the registry and the draft and decides nothing about completeness. The caller already holds the
+   * draft the definition lives on. Grouped rather than flat because an address needs the section's
+   * rendering identity — see {@link customSectionEntityKey}.
+   */
+  customBlocks: readonly DwCustomStageBlock[] = []
+): Map<string, ReadinessAddress> {
   const data = stageDataOf(stage);
   const found = new Map<string, ReadinessAddress>();
 
@@ -182,6 +199,47 @@ function stageAddresses(spec: DwStage, stage: DwDraftStage | undefined): Map<str
     if (seen) seen.occurrences += 1;
     else found.set(label, address);
   };
+
+  /*
+    THE DESIGNER'S OWN QUESTIONS GET ADDRESSES TOO, AND THE COST OF OMITTING THEM IS A HIGHLIGHT RATHER
+    THAN AN ITEM. That asymmetry is this module's whole design and it is worth restating where a new
+    kind of field arrives: the BLOCKING SET is `DwStageCompleteness.missing` and nothing else, so a
+    required custom question appears on this screen the moment the scorer counts it, with or without
+    this walk. What the walk adds is somewhere to click — and a label it cannot place degrades to a
+    link to the stage, never to a dropped blocker.
+
+    NOTED FIRST, BEFORE THE ENTITIES, for the same reason the scorer counts them between the singleton
+    and the collections: `note` keeps the FIRST address it is given for a label, so if a custom question
+    and a collection column ever shared a bare label the first one noted wins the link. The scorer files
+    a collection field's label with its entity title prefixed, so the two cannot actually collide — this
+    ordering is what keeps that true if either rule is ever changed.
+
+    THE KEY IS THE BARE LABEL, matching `scoreStageData` exactly. `missingLabel` below is not used here
+    because it takes an entity, and a custom question has none: its label is filed bare, like a
+    singleton field's.
+  */
+  const values = stage?.custom ?? {};
+  for (const block of customBlocks) {
+    for (const field of block.fields) {
+      if (field.retired || !field.required) continue;
+      if (isFilled(values[field.key])) continue;
+      note(field.label, {
+        entityKey: customSectionEntityKey(block.section),
+        // The section's own heading, which is what the designer will see above the box when they get
+        // there. Not a phrase invented here: an item that names a place by a different word from the
+        // one on the destination screen costs the designer a second search once they arrive.
+        entityTitle: block.section.title,
+        fieldKey: field.key,
+        fieldLabel: field.label,
+        // No caption fields exist among the twelve v1 types, so the anchor is always the field itself.
+        anchorFieldKey: field.key,
+        rowKey: null,
+        rowTitle: null,
+        occurrences: 1,
+        rowCount: 1
+      });
+    }
+  }
 
   for (const entity of spec.entities) {
     if (entity.cardinality === "SINGLETON") {
@@ -356,7 +414,14 @@ export function workshopReadiness(registry: DwRegistry, draft: DwDraft, workshop
 
     if (score.missing.length) {
       blockedStages += 1;
-      const addresses = stageAddresses(spec, draft.stages[spec.key]);
+      const addresses = stageAddresses(
+        spec,
+        draft.stages[spec.key],
+        // Resolved from the draft, which is where the definition lives — the same copy
+        // `localCompleteness` scored above, so the labels this walk keys on are the labels that list
+        // holds.
+        customStageBlocks(draft.customDefinition ?? null, spec.key)
+      );
       for (const label of score.missing) {
         const address = addresses.get(label) ?? null;
         blocking.push({

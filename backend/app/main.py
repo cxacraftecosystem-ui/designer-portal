@@ -395,8 +395,18 @@ class SelectiveGZipMiddleware:
                 passthrough = (
                     media not in _COMPRESSIBLE_TYPES
                     or "content-encoding" in headers
-                    # 204/304 carry no body, and a range response must keep its byte offsets.
+                    # 204/304 carry no body.
                     or message["status"] in (204, 304)
+                    # A PARTIAL RESPONSE MUST KEEP ITS BYTE OFFSETS. This clause used to be part of
+                    # the comment above and not part of the condition: 206 was absent from the tuple,
+                    # so a range response with a compressible type — `text/plain` is on the allowlist
+                    # — would have been gzipped with its `Content-Range` header left intact,
+                    # describing offsets into bytes the client never receives. It was unreachable
+                    # while no route in this API served a range at all; `/api/asr-models/…/files/…`
+                    # is the first that does. Both the status and the header are checked so a 200
+                    # that carries `Content-Range` for any other reason is covered too.
+                    or message["status"] == 206
+                    or "content-range" in headers
                 )
                 if passthrough:
                     await send(message)

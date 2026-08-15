@@ -73,6 +73,21 @@ async def update_app_settings(
         ranked = freeze_unrankable(data["sttProviderOrder"], _rankable_ids(verified))
         # Scalar-list columns take an explicit {"set": [...]} on update, unlike create.
         data["sttProviderOrder"] = {"set": ranked}
+    # THE ONE FIELD WHERE AN EXPLICIT NULL IS AN INSTRUCTION, added around `exclude_none` rather than
+    # by changing it. For every other field on this body, absent and null both mean "leave it alone",
+    # which is right for a mode or a time that always has a value. The dictation cap's null IS the
+    # setting that means uncapped, so under `exclude_none` a master admin who capped at 40 in the
+    # morning could never lift the cap again — the request would be indistinguishable from one that
+    # never mentioned it. `model_fields_set` is the only thing that can tell those two apart.
+    if "dwDictationDailyCap" in payload.model_fields_set:
+        data["dwDictationDailyCap"] = payload.dwDictationDailyCap
+    # The AI-verb ceiling is read the same way and for the identical reason. TWO SEPARATE COLUMNS AND
+    # NOT ONE, argued in `services/ai_verb_cap.py`: the dictation cap's scope is fixed by a recorded
+    # decision to the transcription service alone, so a caption counted against it would make the
+    # sentence a designer reads in a courtyard false and would let desk work withdraw a control they
+    # need in the field.
+    if "dwAiVerbDailyCap" in payload.model_fields_set:
+        data["dwAiVerbDailyCap"] = payload.dwAiVerbDailyCap
     data["updatedById"] = current_user.id
     return await db.appsetting.update(where={"id": SINGLETON_ID}, data=data)
 

@@ -176,6 +176,7 @@ import com.designprototype.workshop.ui.AppPreferences
 import com.designprototype.workshop.ui.AppPreferencesStore
 import com.designprototype.workshop.ui.AppNavigationDrawerContent
 import com.designprototype.workshop.ui.AppearanceScreen
+import com.designprototype.workshop.ui.SpeechAndAiScreen
 import com.designprototype.workshop.ui.Body
 import com.designprototype.workshop.ui.NavDestination
 import com.designprototype.workshop.ui.ArtisanPhoneField
@@ -200,8 +201,6 @@ import com.designprototype.workshop.ui.designworkshop.DwIdentityCardControl
 import com.designprototype.workshop.ui.designworkshop.DwIdentityKind
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
-import com.designprototype.workshop.ui.designworkshop.DwLanguagePackOfferCard
-import com.designprototype.workshop.ui.designworkshop.dwPackOfferSeen
 import com.designprototype.workshop.ui.designworkshop.DesignerProfileScreen
 import com.designprototype.workshop.ui.designworkshop.DesignerRosterScreen
 import com.designprototype.workshop.ui.designworkshop.PhotoIntakeScreen
@@ -462,6 +461,18 @@ private sealed interface Screen {
      */
     /** This account's Appearance + Accessibility — /settings on the web. Open to every user. */
     data object Appearance : Screen
+    /**
+     * THIS PHONE's speech and AI settings, one level below [Appearance].
+     *
+     * A SEPARATE SCREEN AND NOT MORE CARDS ON THE ONE ABOVE, and the boundary carries a meaning that
+     * used to cost a paragraph: [Appearance] is the ACCOUNT's two settings and follows a designer to
+     * any handset they sign in on; everything here is bytes on THIS handset and follows nobody.
+     *
+     * It has NO `NavDestination` of its own — see the drawer mapping below, which keeps lighting the
+     * Settings row while this screen is open. A menu entry for a sub-screen would be the third answer
+     * to "where do settings live" that the comment above this block spent a paragraph deleting.
+     */
+    data object SpeechAndAi : Screen
     /**
      * The /data directory-tree browser. Its own Screen rather than a Create mode because it owns its
      * whole viewport: it draws its own top bar and lays out with a LazyColumn, which must never be
@@ -1177,21 +1188,23 @@ private fun HomeScreen(
     LaunchedEffect(Unit) { if (!walkthroughSeen(context)) showWalkthrough = true }
 
     /*
-     * The offline-dictation offer, shown ONCE on the dashboard after installing.
+     * ── THE TWO FIRST-RUN DASHBOARD CARDS ARE GONE, AND SO ARE THEIR FLAGS. ──────────────────────
      *
-     * A CARD ON THE DASHBOARD AND EMPHATICALLY NOT A DIALOG — unlike the walkthrough above, which
-     * has earned its modal by being the ten-step order of the whole documentation process. This one
-     * is a convenience about speech packs, and a modal that stood between a designer and the stage
-     * they came to fill in would make the feature worse than not shipping it. It renders inside the
-     * dashboard's own scroller, above the tiles, and "Not now" is a one-tap exit that costs nothing:
-     * the same list is permanent under Settings › Appearance & accessibility.
+     * `showPackOffer` and `showAsrOffer` stood here with forty lines of comment arguing which should
+     * appear on which run so the first launch was not a wall of downloads.
      *
-     * The flag is read on this device only (`dictation_language_packs` SharedPreferences), because
-     * an installed pack is a property of the handset and not of the account — the same designer on a
-     * second phone genuinely has not been offered anything yet.
+     * WHAT SETTLED IT WAS A MEASUREMENT, NOT A LAYOUT PREFERENCE. On the fleet's own SM-M325F the
+     * language-pack card's list has **zero actionable rows** — two packs installed, none downloadable
+     * — so the first thing a designer met after installing the app was a card headed "Dictate with no
+     * signal" offering something their phone cannot do. The card had no way to know that without
+     * binding a SpeechRecognizer on the cold-start frame, which `DwLanguagePackUi` has always
+     * refused. The engine card was worse: it offered a 24 MB download of something that is already
+     * inside the APK.
+     *
+     * NOTHING IS LOST. Both cards' own last lines always said the real home was Settings, and it is:
+     * Settings › Speech & AI, one row with a true state summary on it. The dashboard is now what a
+     * designer opens the app to see.
      */
-    var showPackOffer by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { if (!dwPackOfferSeen(context)) showPackOffer = true }
 
     // Surface a message, but swallow the noise from a coroutine being cancelled when a screen is
     // left during navigation (e.g. "The coroutine scope left the composition") — that is expected,
@@ -1389,6 +1402,9 @@ private fun HomeScreen(
             is Screen.ToolAssign -> Screen.Dashboard
             is Screen.Feedback -> Screen.Dashboard
             is Screen.Appearance -> Screen.Dashboard
+            // One level at a time, exactly as the tool screens below: back from the phone's speech
+            // settings lands on the settings screen that offered them, not on the dashboard.
+            is Screen.SpeechAndAi -> Screen.Appearance
             is Screen.DataBrowser -> Screen.Dashboard
             // One level at a time: from a tool back to the tool list, and only then out. This is
             // what lets the single header arrow replace the in-page "All admin tools" button — the
@@ -1445,6 +1461,9 @@ private fun HomeScreen(
         is Screen.ToolAssign -> "Assign tools to artisans"
         is Screen.Feedback -> "App feedback"
         is Screen.Appearance -> "Appearance & accessibility"
+        // Null: this screen owns its whole viewport and draws its own heading and back arrow, the
+        // same arrangement Appearance has. A shared header above it would state the section twice.
+        is Screen.SpeechAndAi -> null
         is Screen.DataBrowser -> "Data Browser"
         // Null on all six: each of these screens draws its own heading, carrying the workshop's own
         // title and its progress bar. A shared header above that would state the section twice and
@@ -1489,6 +1508,9 @@ private fun HomeScreen(
         is Screen.ToolAssign -> NavDestination.ASSIGN_TOOLS
         is Screen.Feedback -> NavDestination.GIVE_FEEDBACK
         is Screen.Appearance -> NavDestination.SETTINGS
+        // The SAME row as its parent, deliberately: a designer inside the phone's speech settings is
+        // inside Settings, and dimming the menu row they arrived through would read as having left.
+        is Screen.SpeechAndAi -> NavDestination.SETTINGS
         is Screen.DataBrowser -> NavDestination.VIEW_DATA
         is Screen.AdminHub -> NavDestination.SETTINGS_HUB
         // Every screen of the 22-stage record lights the one menu row that reaches it. Unlike the
@@ -1617,6 +1639,11 @@ private fun HomeScreen(
                         repository = repository,
                         current = preferences,
                         onChanged = onPreferencesChanged,
+                        onBack = { attemptExit { goBack() } },
+                        onOpenSpeechAndAi = { screen = Screen.SpeechAndAi }
+                    )
+
+                    is Screen.SpeechAndAi -> SpeechAndAiScreen(
                         onBack = { attemptExit { goBack() } }
                     )
 
@@ -1732,11 +1759,6 @@ private fun HomeScreen(
 
         when (val s = screen) {
             is Screen.Dashboard -> {
-                // Above the tiles, below the header: the first thing read on the first run, and gone
-                // for good after one tap on either of its buttons.
-                if (showPackOffer) {
-                    DwLanguagePackOfferCard(onDismiss = { showPackOffer = false })
-                }
                 carryForward?.let { prefill ->
                     CarryForwardPanel(
                         repository = repository,
@@ -2253,7 +2275,7 @@ private fun HomeScreen(
             )
 
             // Hosted above, outside this scrolling Column, because they own their whole viewport.
-            is Screen.Appearance, is Screen.DataBrowser -> Unit
+            is Screen.Appearance, is Screen.SpeechAndAi, is Screen.DataBrowser -> Unit
         }
 
         message?.let {
@@ -6323,7 +6345,7 @@ private fun ArtisanForm(
         // built from stands in — otherwise the baseline and the prefill would disagree for one frame
         // and an untouched form would come out of it reading as edited.
         craftId.exceptCarried(carry.offer?.context?.craftId ?: prefill?.craftId), newCraftName, status
-    ).joinToString(" ")
+    ).joinToString("\u0000")
     val initialSig = remember(editing) { formSignature() }
     val dirty = !saving && (
         formSignature() != initialSig ||

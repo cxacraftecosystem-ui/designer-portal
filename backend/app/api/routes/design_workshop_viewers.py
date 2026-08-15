@@ -20,7 +20,7 @@ the failure surfaces as "the picker is empty" instead of a passing suite.
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.db import db
 from app.core.deps import require_admin
@@ -49,15 +49,30 @@ async def _workshop_or_404(workshop_id: str) -> Any:
 
 
 @router.get("/eligible-viewers")
-async def list_eligible_viewers(_: Any = Depends(require_admin)) -> dict[str, Any]:
+async def list_eligible_viewers(
+    search: str | None = Query(None, max_length=120),
+    _: Any = Depends(require_admin),
+) -> dict[str, Any]:
     """The accounts that may be given access to a design workshop at all.
 
     Not the user directory narrowed by the client. The eligible set is a SET of roles and not a
     rank threshold, and it further excludes designers the roster no longer admits — a rule the
     client cannot see and would drift from within one release. The drift shows up as an admin
     granting access that the next sign-in refuses, with nothing on screen saying why.
+
+    ``search`` matches name OR email, case-insensitively, and is applied by the SERVER inside the
+    same query as the eligibility rule. It is not a convenience over a list the client already
+    holds: the answer is capped, and the cap is reached on a real repository, so before this
+    parameter existed an eligible colleague whose name sorted past the cut could not be reached from
+    either client at all — with nothing on screen distinguishing that from never having been
+    empanelled. A client that filtered the capped list on its own would search only the part of the
+    alphabet that fitted, which is the same bug wearing a search box.
+
+    ``truncated`` in the answer says the list was cut. Both clients must say so when it is true and
+    say nothing when it is false; that is the whole contract, and an empty list with no explanation
+    is this repository's most repeated bug class.
     """
-    return {"users": await eligible_viewers()}
+    return await eligible_viewers(search=search)
 
 
 @router.get("/{workshop_id}/viewers")

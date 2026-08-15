@@ -39,7 +39,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Mic, Square } from "lucide-react";
 
 import { Dropdown } from "@/components/ui/Dropdown";
-import { DW_DICTATE_PATH, dictateAudio, serverOffersRoute } from "@/lib/designWorkshops";
+import { ApiError } from "@/lib/api";
+import { DW_DICTATE_PATH, dictateAudio, dictationAnswerSentence, serverOffersRoute } from "@/lib/designWorkshops";
+import { isLocalWorkshopId } from "@/lib/designWorkshopStore";
 import { pickAudioRecorderMimeType, SPEECH_AUDIO_CONSTRAINTS } from "@/lib/media";
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -187,11 +189,23 @@ export function DictationButton({
   onCommit,
   disabled,
   /** Names the field in the button's accessible label, so a screen reader hears which box. */
-  fieldLabel
+  fieldLabel,
+  /**
+   * The workshop whose recorded consent governs a clip sent from this button.
+   *
+   * REQUIRED, and threaded from every call site rather than defaulted, because the alternative is a
+   * button that silently posts to the un-gated route. `POST /design-workshops/dictate` takes no
+   * workshop id and therefore consults no `dictationConsent` column: it hands the clip to
+   * ElevenLabs/Deepgram/Whisper exactly as it did before consent existed. A default here would make
+   * "the call site that forgot" indistinguishable from "the call site that meant it", on the one
+   * control whose whole subject is a named artisan's voice leaving the device.
+   */
+  workshopId
 }: {
   onCommit: (text: string) => void;
   disabled?: boolean;
   fieldLabel: string;
+  workshopId: string;
 }) {
   const [mode, setMode] = useState<Mode>("unknown");
   const [language, setLanguage] = useState("en-IN");
@@ -233,9 +247,44 @@ export function DictationButton({
       setMode("browser");
       return;
     }
+    /*
+      A WORKSHOP THAT EXISTS ONLY ON THIS LAPTOP HAS NO SERVER ROUTE TO OFFER, AND THE CLIP MUST NOT
+      BE RECORDED AT ALL.
+
+      The server rung posts to `/design-workshops/{id}/dictate`, and for an unsynced workshop the id
+      in the URL is the LOCAL draft id (`dwlocal-…`). `load_workshop_or_404` finds no row and answers
+      404 "Record not found" — **after** the designer has spoken forty words about the dye baths,
+      after the whole clip has been uploaded over mobile data, and with a sentence that names no next
+      move because it was written about a missing record rather than about an unsent workshop. The
+      passage is gone.
+
+      IT MUST BE DECIDED HERE, IN `mode`, RATHER THAN CAUGHT AT THE UPLOAD. Deciding late means the
+      microphone opens, the recorder runs, and the failure arrives at the one moment nothing can be
+      recovered — which is exactly the shape of defect this control's own header calls "a button that
+      appears and then does nothing when pressed". Deciding here means the button is simply not
+      drawn, for the same reason it is not drawn on a browser with no recogniser at all.
+
+      THE HANDSET ALREADY DOES THIS, and this is the browser catching up rather than a new idea:
+      `DwDictationLadder.kt` ANDs `workshopOnServer` into its server rung and withholds it with ZERO
+      bytes uploaded, naming the button that fixes it. The asymmetry was introduced when the web was
+      moved onto the consent-gated route — the required `workshopId` closed the ungated door and
+      opened this one, because a local id is a perfectly good string.
+
+      AND IT MUST NOT FALL BACK TO `DW_DICTATE_PATH`. That is the id-less route, which consults no
+      workshop's consent at all; reaching for it here would send an artisan's voice to a third-party
+      provider precisely when nobody has been able to ask about consent.
+    */
+    if (isLocalWorkshopId(workshopId)) {
+      setMode("none");
+      return;
+    }
     // No browser recogniser. Rather than hiding the feature outright, ask whether this deployment
     // offers the server route — the fallback exists precisely for Firefox, which is a normal
     // browser for a designer to be using and not an edge case worth writing off.
+    //
+    // The PROBE still asks the id-less path, deliberately: it is a question about the DEPLOYMENT
+    // ("is a transcription service configured here at all"), and the per-workshop URL cannot answer
+    // it — a 404 there would mean "this workshop is not on the server", which is a different fact.
     serverOffersRoute(DW_DICTATE_PATH)
       .then((offered) => {
         if (!cancelled) setMode(offered && typeof MediaRecorder !== "undefined" ? "server" : "none");
@@ -246,7 +295,10 @@ export function DictationButton({
     return () => {
       cancelled = true;
     };
-  }, []);
+    // `workshopId` IS IN THE DEPENDENCIES and the empty array it replaces was part of the defect:
+    // this screen keeps its component across the sync that gives a workshop its server id, so a mode
+    // decided once at mount would go on refusing a workshop that has since been sent up.
+  }, [workshopId]);
 
   const stopEverything = useCallback(() => {
     recognitionRef.current?.abort();
@@ -345,15 +397,38 @@ export function DictationButton({
         }
         setTranscribing(true);
         try {
-          const result = await dictateAudio(blob, languageRef.current);
+          const result = await dictateAudio(blob, languageRef.current, workshopId);
           const text = (result.text ?? "").trim();
           if (text) commitRef.current(text);
-          else setProblem(result.message || "The recording came back with no words in it. Try again, closer to the speaker.");
+          // NOT `result.message`, which is what this line used to be. The provider chain composes
+          // "Transcription rate-limited (HTTP 429); will retry automatically." — true of the
+          // transcription QUEUE and false of this endpoint, which is synchronous and stores
+          // nothing. Passing it through promised a designer a transcript that was never coming, for
+          // a recording that was already gone. `dictationAnswerSentence` owns all three answers, and
+          // Android has had the same function since its ladder was built.
+          else setProblem(dictationAnswerSentence(result));
         } catch (error) {
+          /*
+            THE SERVER'S OWN SENTENCE WINS, and for the consent and cap refusals it is the only thing
+            that can be right.
+
+            A 409 from the per-workshop route means the artisan's consent is NOT_RECORDED or REFUSED,
+            and a 429 means this designer's daily allowance for the transcription service is spent.
+            Both arrive as a FastAPI `detail` that already names the next move — and for consent that
+            move is a person deciding, never a retry, which is precisely what the old wording
+            ("The server could not transcribe that recording: …") got wrong: it framed a deliberate
+            refusal as a transcription failure and invited another tap that cannot succeed.
+
+            `ApiError.message` is `describeApiDetail`'s output, so a FastAPI detail arrives as a real
+            sentence rather than "[object Object]". Prefixing it would produce two sentences arguing
+            with each other, so where the server spoke, only the server speaks.
+          */
+          const detail = error instanceof ApiError ? error.message.trim() : "";
           setProblem(
-            error instanceof Error
-              ? `The server could not transcribe that recording: ${error.message}`
-              : "The server could not transcribe that recording."
+            detail ||
+              (error instanceof Error
+                ? `The server could not transcribe that recording: ${error.message}`
+                : "The server could not transcribe that recording.")
           );
         } finally {
           setTranscribing(false);

@@ -390,6 +390,27 @@ val UNSUPPORTED_SECTIONS: Map<SpecialSection, String> = mapOf(
             "in this file. This device has not yet read them: open the questionnaire on this phone " +
             "once while you have a connection and they are kept here for every export afterwards, " +
             "including offline ones. The office's copy of this report will carry them either way.",
+    // UNCONDITIONAL, unlike the two above, and that is the honest shape for this one.
+    //
+    // The other two are guarded because a device CAN close their gap — a transcript arrives from the
+    // server, a questionnaire list is read once with signal — so an unconditional sentence would be
+    // a false alarm on the majority of exports. There is no such path here. An AI layer is a row on
+    // the server carrying which model produced it and who accepted it, nothing under `data/` holds
+    // one, and no screen on this handset offers to fetch them. The gap is a property of the device,
+    // not of what this workshop happens to contain.
+    //
+    // IT IS ALSO A SENTENCE THAT WILL RARELY BE READ, because no template carries this section and
+    // the server splices it only into a report somebody deliberately asked for. That is the reason
+    // it is written now rather than when it is first needed: the state it describes — a section
+    // reaching this renderer that this renderer cannot draw — is one a designer would otherwise
+    // meet as a silent hole in a file handed to an officer, in a courtyard, with nothing on screen
+    // to explain it. Which is precisely the failure this map exists to prevent.
+    SpecialSection.ANNEXURE_AI_LAYERS to
+        "Machine-assisted text is not appended on this device. Where a transcript, a summary or a " +
+            "reading has been produced automatically and a person has accepted it, that record is " +
+            "held on the server together with which model produced it and who accepted it, and " +
+            "this phone keeps no copy. The office's copy of this report can carry it, named as " +
+            "machine-assisted; this file contains only what was typed and recorded here.",
 )
 
 /**

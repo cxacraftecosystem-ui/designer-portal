@@ -80,6 +80,53 @@ export type DwFieldType =
   | "EMAIL";
 
 /**
+ * The prefix that marks a type token this build must NOT draw a working control for.
+ *
+ * WHY THE UNION IS NOT ENOUGH, AND WHY THIS LIVES HERE RATHER THAN IN `lib/customSections.ts`.
+ * {@link DwFieldType} is closed and `FieldInput` switches over it with no `default`, which is what
+ * makes the compiler point at that file the day a twenty-third registry type is added. But a
+ * DESIGNER-DEFINED field's type is a string that arrived over the wire from a per-workshop
+ * definition, and two of its cases cannot be served by the union at all:
+ *
+ *  - a token this build has never heard of, because the server moved on while this tab did not; and
+ *  - a token this build knows PERFECTLY WELL and still must not draw — GEO, IMAGE, RICH_TEXT, REF.
+ *    v1 admits none of them for a custom question, because five separate walkers translate a local
+ *    media reference into a server id and every one of them enumerates the media fields OF THE ROW'S
+ *    REGISTRY ENTITY, so a custom photograph syncs as a `dwlocal:` reference resolving to nothing:
+ *    clean save, and the picture simply absent from the .docx.
+ *
+ * The second case is why "does `FieldInput` have a branch" is the wrong question and why a type
+ * outside the twelve is re-tokenised through {@link unsupportedFieldType} before it ever reaches the
+ * switch. The RAW TOKEN travels inside the new one so the read-only note can name it: a note that
+ * will not say what the type was is a note a designer cannot report.
+ *
+ * It is declared beside the union rather than in the feature module because both halves of the
+ * contract have to agree about one string — the writer of the token and the switch's `default:` arm
+ * that reads it — and a prefix restated in two files is the shape of the wrong-key defect this
+ * repository has already shipped twice.
+ */
+export const UNSUPPORTED_FIELD_TYPE_PREFIX = "UNSUPPORTED:";
+
+/**
+ * A type token that no `FieldInput` branch can match, carrying the real one for the note to print.
+ *
+ * Cast rather than widened, and the cast is the honest description of what is happening: this value
+ * is deliberately NOT a member of the union, so that the exhaustive switch falls through to its
+ * `default:` arm. Widening `DwFieldType` with `string` instead would silence the compiler at all 23
+ * existing branches and lose the guarantee the closed union exists for.
+ */
+export function unsupportedFieldType(raw: string): DwFieldType {
+  return `${UNSUPPORTED_FIELD_TYPE_PREFIX}${raw}` as DwFieldType;
+}
+
+/** The type as it should be NAMED to a designer: the raw token, with any marker prefix stripped. */
+export function fieldTypeName(type: string): string {
+  return type.startsWith(UNSUPPORTED_FIELD_TYPE_PREFIX)
+    ? type.slice(UNSUPPORTED_FIELD_TYPE_PREFIX.length)
+    : type;
+}
+
+/**
  * The three capture tiers from the source matrix.
  *
  * BASIC is the minimum a report needs and is the only tier a field may be `required` on — the
@@ -265,7 +312,30 @@ export type DwStageCompleteness = {
 export type DwStageData = {
   singleton: DwEntryData;
   collections: Record<string, DwRow[]>;
+  /**
+   * The answers to this workshop's own designer-defined questions for this stage.
+   *
+   * A THIRD SIBLING KEY AND NOT A NESTED OBJECT INSIDE `singleton`, because that is what
+   * `_stages_payload` sends: the `_custom` row is a `DwStageEntry` of its own, one per (workshop,
+   * stage), and the route gives it its own key precisely so it does not fall to the collection arm
+   * and come back as `collections["_custom"]` with `_entryId` and `_ordinal` injected into it — a
+   * phantom repeating entity on every stage that has custom answers.
+   *
+   * Optional because eight of the twenty-two stages send no such row for most workshops, and because
+   * a server that predates the feature sends none at all. Absent means "no custom answers here",
+   * never "the server forgot".
+   */
+  custom?: DwEntryData;
   completeness?: DwStageCompleteness | null;
+  /**
+   * The digest of the custom definition the score beside it was computed under.
+   *
+   * CARRIED BESIDE THE SCORE, and the pairing is the point rather than a convenience — the route's
+   * own comment says so. A client holding an older definition, or none, would otherwise show the
+   * server's higher `requiredTotal` for a stage it has never touched and its own lower one for a
+   * stage it has, which is two arithmetics in one list with nothing on screen to say why.
+   */
+  customSchemaVersion?: string;
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -308,12 +378,29 @@ export type DwDetail = DwSummary & {
   stages: Record<string, DwStageData>;
   completeness: Record<string, DwStageCompleteness>;
   schemaVersion: string;
+  /**
+   * The digest of THIS WORKSHOP'S designer-defined questions. A SECOND, SEPARATE STRING.
+   *
+   * **IT MUST NEVER BE FOLDED INTO `schemaVersion` OR INTO THE DRAFT'S `registryVersion`.** That
+   * string is a content digest of every key, type and tier of the 496-field registry, and
+   * `stageSpecFor` reads it as a KEY into the registry object store — so a composite value would miss
+   * every cached registry and every stage would render from "whatever this browser happens to hold"
+   * instead of from the field list it was captured with. It is also the reason the server keeps the
+   * two apart: a designer's custom field moving `registry_version()` would make every handset in the
+   * fleet treat its bundled 119 KB schema as stale the moment anyone anywhere added a question.
+   *
+   * Optional so a server that predates the feature reads as "" rather than as a type error at a
+   * boundary the compiler cannot police anyway.
+   */
+  customSchemaVersion?: string;
 };
 
 export type DwStagesPayload = {
   stages: Record<string, DwStageData>;
   completeness: Record<string, DwStageCompleteness>;
   schemaVersion: string;
+  /** See {@link DwDetail.customSchemaVersion} — a second string, never folded into the one above. */
+  customSchemaVersion?: string;
 };
 
 export type DwTemplate = { id: string; name: string; description: string };
@@ -395,6 +482,25 @@ export type DwSaveResult = {
    */
   errors: Record<string, Record<string, string>>;
   /**
+   * How many ANSWERS the save refused, counted by the server so both surfaces show one number.
+   *
+   * `errors` is two levels deep and carries no total, so a client computing its own headline picks
+   * whichever reading its author saw first — and the two clients picked one each. The web counted
+   * SCOPES and Android counted FIELDS, so one stage entry with three bad fields was "1 answer" on a
+   * laptop and "3 answers" on the phone, off the same response body, both saying *answer*. Fields is
+   * the right reading: an answer is what a designer typed into one box, a row is not an answer, and
+   * the remedy the sentence gives them — open the stage and look at the marked boxes — is per-field.
+   *
+   * PREFER THIS OVER COUNTING `errors` LOCALLY. `countRefusedAnswers` in `designWorkshopStore` is
+   * kept only as the fallback for a server that predates this field, and it is NOT equivalent: for a
+   * scope whose value is a bare string it returns `Object.keys(str).length` — a CHARACTER COUNT —
+   * where the server returns 1. See `refused_answer_count` in `services/design_workshops.py`, whose
+   * non-mapping guard exists for exactly that reason.
+   *
+   * Optional because a client can be newer than the deployment it is talking to.
+   */
+  refusedAnswers?: number;
+  /**
    * Field keys this build sent that the server's registry does not know, as "entity.field".
    *
    * This is how a server notices a client is running a newer registry than it is, and it is the
@@ -402,8 +508,29 @@ export type DwSaveResult = {
    * drop is a form that accepts an answer and discards it.
    */
   droppedKeys: string[];
+  /**
+   * Custom question keys this build sent that the workshop's DEFINITION does not carry.
+   *
+   * **ITS OWN FIELD, ITS OWN STATE AND ITS OWN SENTENCE — NEVER MERGED INTO `droppedKeys`.**
+   * `droppedKeys` is the only client/server registry-drift signal this repository has and both
+   * clients render it in those words: "this build is running ahead of the server's field list". A
+   * custom key the definition does not carry is a DIFFERENT fact with a different remedy — the
+   * definition was edited, not the app — and feeding it into that signal would fire the amber banner
+   * on every save of every workshop that has a custom section, training the people who read it to
+   * ignore the one message that matters.
+   *
+   * Optional: a server that predates the feature sends nothing, and reading that as an empty list is
+   * correct.
+   */
+  droppedCustomKeys?: string[];
   completeness: DwStageCompleteness | null;
   schemaVersion: string;
+  /**
+   * The digest of the definition this save was VALIDATED AGAINST, so a client can tell its cached
+   * copy is stale without a second request. "" for a workshop that has no definition, which is a
+   * different fact from "I hold nothing" and is why the server does not omit it.
+   */
+  customSchemaVersion?: string;
 };
 
 export type DwExport = {
@@ -557,6 +684,27 @@ export type DwReportBody = {
    * strip an annexure a designer had already asked for and saved.
    */
   includeTranscripts?: boolean | null;
+  /**
+   * Append an annexure carrying every AI layer a person has ACCEPTED, each named as machine-assisted
+   * text and each carrying the tier, the model and the person who accepted it.
+   *
+   * TWO-VALUED, NOT THREE, AND THAT IS THE DIFFERENCE FROM `includeTranscripts` ABOVE. The tri-state
+   * exists there to protect a saved answer: a template that has always printed transcripts must go
+   * on printing them for a workshop saved before the toggle existed, so `undefined` has to mean
+   * "leave the saved setting alone". There is no such history here. No template declares the
+   * section, there is no stage-20 answer behind it, and `apply_report_settings` splices it in only
+   * on an explicit `true` — so absent and `false` are the same instruction and there is nothing for
+   * a third value to preserve.
+   *
+   * IT IS ALSO THE HONEST DEFAULT. An annexure of model prose is not something that should happen
+   * TO a report. Plan §3 rule 4 exists so a reader can tell a machine's words from an author's, and
+   * a section that appeared without being asked for would put that decision nowhere.
+   *
+   * NOTHING UNACCEPTED IS EVER PRINTED, whatever this says — acceptance is checked again at the
+   * point of rendering. A report asked for the annexure with nothing accepted comes back unchanged,
+   * with a warning beside the download saying why.
+   */
+  includeAiLayers?: boolean;
   record?: boolean;
 };
 
@@ -1038,10 +1186,91 @@ export function serverOffersRoute(path: string): Promise<boolean> {
   return probe;
 }
 
+/**
+ * The id-less dictation route. **Used only to ask whether this deployment offers dictation at all.**
+ *
+ * It is deliberately NOT where a clip is sent any more — see {@link dictateAudio}. It survives as the
+ * probe target because `serverOffersRoute` asks a question about the DEPLOYMENT ("is there a
+ * transcription service configured here at all") rather than about a workshop, and asking it against
+ * a per-workshop URL would need a workshop id before the button has been drawn.
+ */
 export const DW_DICTATE_PATH = "/design-workshops/dictate";
+
+/**
+ * Where a clip is actually sent: the per-workshop route, **because it is the only one that can
+ * enforce the artisan's consent.**
+ *
+ * `POST /design-workshops/dictate` takes no workshop id, so it can consult no workshop's
+ * `dictationConsent` column — it hands the clip to the provider chain exactly as it did before the
+ * consent feature existed. The gate lives on `POST /design-workshops/{id}/dictate`, and a gate the
+ * clients do not post to gates nothing: the columns are written, the decision log is kept, and an
+ * artisan's recorded voice still reaches ElevenLabs. That is this repository's recurring defect —
+ * a feature complete everywhere except its call site — and it is why this constant exists.
+ *
+ * The body is unchanged: the same `file` and the same `languageHint`. Only the URL moved.
+ */
+export function dwDictatePathFor(workshopId: string): string {
+  return `/design-workshops/${encodeURIComponent(workshopId)}/dictate`;
+}
 export const DW_OCR_IDENTITY_PATH = "/design-workshops/ocr/identity";
 
-export type DwDictationResult = { text?: string | null; language?: string | null; message?: string | null };
+/**
+ * What `POST /design-workshops/dictate` actually returns — all five keys, and only those.
+ *
+ * THIS DECLARED A `language` KEY THE ROUTE HAS NEVER SENT. The echo is named `languageHint`, and the
+ * type carried neither `status` nor `provider` at all. It is the same defect the REQUEST half of
+ * `dictateAudio` below was just fixed for, on the same round trip, in the opposite direction — a
+ * client and a server agreeing about a name neither of them checks. It cost nothing only because
+ * nothing read the key; a caller that had tried would have found `undefined` and had no way to tell
+ * that from "the server did not say".
+ *
+ * `status` is the one that earns its place: without it the caller cannot tell EMPTY from
+ * RATE_LIMITED from FAILED, and those are three different next moves — see
+ * {@link dictationAnswerSentence}.
+ */
+export type DwDictationResult = {
+  /** COMPLETED | EMPTY | FAILED | RATE_LIMITED, as `ai.transcribe_audio_bytes` resolved the chain. */
+  status?: string | null;
+  text?: string | null;
+  /** Which provider in the chain answered. Diagnostic; never shown beside the words. */
+  provider?: string | null;
+  /** The tag we sent, echoed. It steers nothing today — see the note in `dictateAudio`. */
+  languageHint?: string | null;
+  message?: string | null;
+};
+
+/**
+ * What to tell a designer when the round trip worked and produced no usable words.
+ *
+ * **THE PROVIDER CHAIN'S OWN MESSAGE MUST NOT BE PASSED THROUGH, and that is the whole point.** For
+ * a throttled provider `ai.py` composes "Transcription rate-limited (HTTP 429); will retry
+ * automatically." — true of the transcription QUEUE, where a clip is requeued behind a growing
+ * cooldown without consuming an attempt, and FALSE HERE. This endpoint is synchronous and stores
+ * nothing: nothing retries a dictation, ever. A designer who reads that promise waits for words that
+ * are never coming, and the recording they made is already gone.
+ *
+ * The chain also folds a throttle into the error list and resolves to FAILED when another provider
+ * hard-failed as well, so the retry phrase can arrive under a status that is NOT RATE_LIMITED. That
+ * is why the phrase is matched as well as the status.
+ *
+ * Android has had this since its ladder was built (`dwDictationServerAnswerSentence` in
+ * DwDictationLadder.kt); the browser did not, and printed `result.message` verbatim. Two surfaces,
+ * one endpoint, one set of sentences.
+ */
+export function dictationAnswerSentence(result: DwDictationResult): string {
+  const status = (result.status ?? "").toUpperCase();
+  const message = (result.message ?? "").trim();
+  const promisesARetry = /will retry automatically/i.test(message);
+  if (status === "RATE_LIMITED" || promisesARetry) {
+    return "The transcription service is busy just now and could not take this recording. Wait a moment and dictate it again, or type the answer in — nothing is queued, so it will not arrive later.";
+  }
+  if (status === "FAILED") {
+    return "The server could not transcribe that recording. Try again, or type the answer in — and if it keeps failing, tell whoever runs the server.";
+  }
+  // EMPTY, or a status this build has not heard of. The round trip worked and there were no words in
+  // it, so the next move is about the microphone and the room rather than about the connection.
+  return "The recording came back with no words in it. Speak closer to the microphone, away from the loom if you can, and try again — or type the answer in.";
+}
 
 /**
  * Server-side dictation, for the browsers that have no `SpeechRecognition` of their own.
@@ -1052,14 +1281,43 @@ export type DwDictationResult = { text?: string | null; language?: string | null
  * is to produce a transcript at all, not to produce one live — an interim readout that cannot exist
  * is better admitted than faked.
  */
-export function dictateAudio(blob: Blob, language: string): Promise<DwDictationResult> {
+export function dictateAudio(
+  blob: Blob,
+  language: string,
+  /**
+   * The workshop whose consent governs this clip. **Required, and not optional.**
+   *
+   * Optional would have been the smaller diff and the wrong one: an omitted id would have to fall
+   * back to the id-less route, which enforces no consent — so every call site that forgot to pass it
+   * would silently send an artisan's voice to a third-party provider without the gate. Making it
+   * required moves that from a runtime possibility to a compile error.
+   */
+  workshopId: string
+): Promise<DwDictationResult> {
   const form = new FormData();
   // The extension is carried in the part name because the server picks its decoder from the MIME
   // type: Safari records `audio/mp4` and Chrome `audio/webm`, and a hardcoded ".webm" would lie
   // about the bytes for every iPhone in the field.
   form.append("file", blob, `dictation.${blob.type.includes("mp4") ? "m4a" : "webm"}`);
-  form.append("language", language);
-  return apiFetch<DwDictationResult>(DW_DICTATE_PATH, { method: "POST", body: form });
+  // `languageHint`, NOT `language`. The route declares `languageHint: str | None = Form(default=None)`
+  // and reads nothing else, so this part spent its whole life being discarded on arrival and the
+  // endpoint echoed `"languageHint": null` back to a caller that had just told it the language.
+  //
+  // IT COST NOTHING YET, WHICH IS WHY IT SURVIVED. Nothing downstream reads the hint today —
+  // `transcribe_audio_bytes` is called with the bytes, the filename and the MIME type only, and
+  // Deepgram is deliberately called with `language=multi` because a workshop is code-switched
+  // mid-sentence. So the bug had no symptom: no wrong transcript, no error, just a field that was
+  // never there. That is exactly the shape of defect this repository keeps finding late — a client
+  // and a server agreeing about a name neither of them checks — and the day the chain is taught to
+  // use the hint, the browser would have been the one surface silently not sending it.
+  //
+  // Found from the Android side, where the same part had to be named for the first time.
+  form.append("languageHint", language);
+  // THE PER-WORKSHOP URL, because it is the only one that can enforce the artisan's consent. See
+  // `dwDictatePathFor`. This used to post to `DW_DICTATE_PATH`, which takes no workshop id and so
+  // consults no consent column — the gate was built, the columns were written, and the clip went to
+  // the provider anyway.
+  return apiFetch<DwDictationResult>(dwDictatePathFor(workshopId), { method: "POST", body: form });
 }
 
 /** One number the server read off the card, after its own Verhoeff filtering. */

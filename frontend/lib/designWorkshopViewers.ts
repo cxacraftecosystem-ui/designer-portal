@@ -21,7 +21,7 @@
  * This module is the client half of the fix: an admin names the accounts that may see one
  * workshop, and the server widens `load_workshop_or_404` for exactly those accounts.
  *
- * THREE THINGS ABOUT THIS WIRE WILL TRIP A READER WHO ASSUMES THE REST OF THE REPOSITORY'S
+ * FOUR THINGS ABOUT THIS WIRE WILL TRIP A READER WHO ASSUMES THE REST OF THE REPOSITORY'S
  * CONVENTIONS.
  *
  * 1. **The PUT REPLACES the whole set.** There is no add endpoint and no remove endpoint: removing
@@ -45,6 +45,23 @@
  *    directory: the two would drift, and the drift shows up as an admin granting access that the
  *    next sign-in refuses, with nothing on screen saying why.
  *
+ * 4. **THE ELIGIBLE LIST IS CAPPED, THE CAP IS REACHED, AND ONLY THE SERVER CAN SEE PAST IT.**
+ *    `eligible-viewers` answers at most `ELIGIBLE_VIEWER_LIMIT` (2000) accounts ordered by name, and
+ *    that ceiling is not theoretical — measured on this repository, the eligible set is 1344 admins
+ *    plus the 1282 designers the roster admits, so the cut lands in the middle of the alphabet.
+ *    Every eligible account sorting past it was simply ABSENT from both pickers, and an admin
+ *    hunting for a colleague could not tell that from the colleague never having been empanelled.
+ *    Those two states must never look identical.
+ *
+ *    So the endpoint takes `search` and the answer carries `truncated`, and both halves are
+ *    obligations on the caller. **The search must be the SERVER'S** — see
+ *    {@link listEligibleDesignWorkshopViewers}. A caller that filtered the capped list in the
+ *    browser would search only the part of the alphabet that fitted: the same defect wearing a
+ *    search box, and harder to see, because an empty result reads as "no such person". And a
+ *    `truncated: true` answer must SAY SO on screen, in one sentence, while a `false` one says
+ *    nothing at all — a list that quietly stops is indistinguishable from a repository with nobody
+ *    in it, which is this codebase's most repeated bug class.
+ *
  * A 404 FROM THESE ROUTES MEANS THE DEPLOYMENT PREDATES THE FEATURE, and that is a real state
  * rather than a hypothetical: they are being built in parallel with this screen, and this repository
  * ships its two halves separately. `/design-workshops/eligible-viewers` is the honest probe —
@@ -53,7 +70,7 @@
  * workshop that genuinely is not there, and the panel says which rather than rendering a dead form.
  */
 
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import type { DwSummary } from "@/lib/designWorkshops";
 import type { UserRole, WorkshopType } from "@/lib/types";
 
@@ -95,7 +112,31 @@ export type DwEligibleViewer = {
   role: UserRole | string;
 };
 
-export type DwEligibleViewerList = { users: DwEligibleViewer[] };
+/**
+ * One page of eligible accounts, and whether it is the whole answer.
+ *
+ * `truncated` is the server's own word — the reference picker in `services/design_workshops` reports
+ * its cap under the same name, deliberately, so both clients already know it. It is true when EITHER
+ * the account list was cut at the ceiling OR the active-roster read was cut (which does not shorten
+ * a list, it removes an eligible designer from it entirely, so it counts as cut). There is no total
+ * count on purpose: producing one would cost a second full ILIKE scan to learn one boolean.
+ *
+ * Typed as required because the endpoint always sends it. `apiFetch` is a plain cast rather than a
+ * schema parse, so a deployment that predates the field puts `undefined` here at runtime — hence the
+ * `Boolean(...)` at the one place that reads it. That is the same split-deploy reality
+ * {@link viewerAdministrationMissing} exists for, and the safe default is the quiet one: an unknown
+ * flag says nothing on screen rather than crying truncation at a list that is complete.
+ */
+export type DwEligibleViewerList = { users: DwEligibleViewer[]; truncated: boolean };
+
+/**
+ * Longest `search` the endpoint accepts (`Query(None, max_length=120)`); past it the answer is a 422.
+ *
+ * Exported so the box the admin types into can cap itself at the server's own number, which makes
+ * the refusal unreachable rather than handled. A picker that answers a long paste with a red
+ * validation banner has taught the admin nothing they can act on.
+ */
+export const ELIGIBLE_VIEWER_SEARCH_MAX = 120;
 
 /** Everyone with a viewer row on this workshop. Admin and master admin only, server-side. */
 export function listDesignWorkshopViewers(workshopId: string) {
@@ -118,9 +159,76 @@ export function putDesignWorkshopViewers(workshopId: string, userIds: string[]) 
   });
 }
 
-/** The accounts that may be given a viewer row at all. Admin and master admin only, server-side. */
-export function listEligibleDesignWorkshopViewers() {
-  return apiFetch<DwEligibleViewerList>("/design-workshops/eligible-viewers");
+/**
+ * The accounts that may be given a viewer row at all. Admin and master admin only, server-side.
+ *
+ * `search` matches `name` OR `email`, case-insensitively, AND IS THE SERVER'S SEARCH — see point 4 in
+ * the file header for why that distinction is the whole feature and not a preference. It is folded
+ * into the same `WHERE` as the eligibility rule, so it reaches accounts past the 2000-row ceiling;
+ * narrowing the array this function returns would not, because that array is what the ceiling already
+ * cut. Omitted, blank and whitespace-only are one case — `buildQuery` drops an empty string exactly as
+ * it drops `undefined`, so the parameter simply is not sent and the answer is the whole (capped) list.
+ *
+ * The caller is expected to DEBOUNCE this. An `ILIKE '%term%'` over `User` is a scan no index can
+ * answer — the service says so itself — so every keystroke that escapes a debounce is a full scan of
+ * the largest table in the database.
+ *
+ * **THE ORDER IS THE SERVER'S AND MUST NOT BE RE-SORTED HERE.** It is `name` ascending and then `id`,
+ * a TOTAL order — the id is not decoration: 137 accounts on this database share the display name the
+ * 2000-row cut currently lands on, so without a tiebreaker which of them fell inside the ceiling was
+ * Postgres's arbitrary choice and could differ between two identical requests. Re-sorting in the
+ * browser would also disagree with Postgres's collation on exactly the names this repository is full
+ * of, and would then disagree with the handset, which declines to re-sort for the same reason.
+ */
+export function listEligibleDesignWorkshopViewers(search?: string) {
+  return apiFetch<DwEligibleViewerList>(
+    `/design-workshops/eligible-viewers${buildQuery({ search: search?.trim() ?? "" })}`
+  );
+}
+
+/**
+ * THE ONE SENTENCE UNDER THE SEARCH BOX, or "" when the screen must say nothing.
+ *
+ * Silence is the common answer and the correct one: a complete list has nothing to explain, and a
+ * standing note about pagination on every visit is the padding these screens have twice been asked
+ * for less of.
+ *
+ * **A FUNCTION, HERE, RATHER THAN A TERNARY IN THE PANEL** — for the reason
+ * `android/…/data/DesignWorkshopViewers.dwViewerOfferNotice` gives, which holds the same four states
+ * in the same order and the same words: one of them cannot be produced by any live database, so a
+ * decision buried in JSX is only ever exercised by somebody looking at a screen.
+ *
+ * **THE FOURTH STATE IS THE ONE THAT WAS WRONG.** `truncated` covers two different cuts — the account
+ * list stopping at the server's ceiling, and the ACTIVE-ROSTER read stopping at its own — and only the
+ * first can be narrowed by typing. When the roster read is what was cut, eligible designers are absent
+ * from every possible search and the answer can be `truncated` WITH NO USERS IN IT AT ALL; the earlier
+ * three-state spelling then told the admin to "narrow the search" over an empty picker, which is advice
+ * that cannot work, and it shadowed the more accurate "no eligible account matches that search". Those
+ * two states collapsing into one sentence is the defect this whole feature was fixed for, one layer
+ * down, so this case is tested first.
+ *
+ * @param truncated the server's `truncated` — coerced by the caller, since an older deployment omits it
+ * @param offered how many accounts the current answer holds
+ * @param searched was a term actually sent (a blank box sends nothing and is not a search)
+ */
+export function eligibleViewerNotice({
+  truncated,
+  offered,
+  searched
+}: {
+  truncated: boolean;
+  offered: number;
+  searched: boolean;
+}): string {
+  if (truncated && offered === 0) {
+    return "Some eligible accounts could not be listed, and no search can reach them — the server log says why.";
+  }
+  if (truncated && !searched) {
+    return "Too many accounts to show them all — search a name or email to reach the rest.";
+  }
+  if (truncated) return "Too many matches to show them all — narrow the search.";
+  if (searched && offered === 0) return "No eligible account matches that search.";
+  return "";
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

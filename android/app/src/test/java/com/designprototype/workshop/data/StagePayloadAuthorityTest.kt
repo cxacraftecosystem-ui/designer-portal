@@ -67,7 +67,7 @@ class StagePayloadAuthorityTest {
         stageId = spec.key,
         values = mapOf("currentProblems" to JsonPrimitive("The vat has gone cold.")),
         rows = emptyList(),
-        serverBaseline = false,
+        stageSeen = false,
     )
 
     private fun build(stored: StageDraft?, record: StageSyncRecord? = null) =
@@ -93,26 +93,44 @@ class StagePayloadAuthorityTest {
     fun `a stage read successfully from the server does claim authority`() {
         // The draft started from everything the server had, so "these are now exactly the rows" is a
         // true statement and a row deleted here is genuinely deleted.
-        val body = build(typedOneFieldOffline().copy(serverBaseline = true))
+        val body = build(typedOneFieldOffline().copy(stageSeen = true))
         assertTrue(body.replaceCollections)
     }
 
     @Test
-    fun `a stage the server has already acknowledged claims authority`() {
-        // From the moment the server accepted a payload built from this draft, the server's copy IS
-        // this draft's, whatever the draft's provenance was before that.
+    fun `a stage the server has merely ACKNOWLEDGED claims nothing`() {
+        /*
+          THE ASSERTION THAT WAS THE DEFECT, INVERTED. This test read "a stage the server has already
+          acknowledged claims authority", on the reasoning that "from the moment the server accepted a
+          payload built from this draft, the server's copy IS this draft's".
+
+          That sentence is true only of a payload that claimed to be the WHOLE truth of the stage —
+          and a payload can only make that claim if the draft was ALREADY authoritative when it was
+          built. So the clause could only ever ADD authority in the one case where its premise is
+          false: a MERGE, after which the server holds `previous ∪ sent` and `previous` is exactly the
+          part this device has never seen. Redundant where it was right; wrong where it did anything.
+        */
         val body = build(typedOneFieldOffline(), StageSyncRecord(signature = "abc123"))
-        assertTrue(body.replaceCollections)
+        assertFalse(
+            "a signature says these bytes landed, never that this draft is what the server holds",
+            body.replaceCollections
+        )
+        assertTrue("and the singleton must still go up as a merge", body.entries.single().merge)
     }
 
     @Test
-    fun `authority is exactly the two honest cases and nothing else`() {
-        val noBaseline = typedOneFieldOffline()
-        assertFalse(isAuthoritative(noBaseline, null))
-        assertFalse(isAuthoritative(noBaseline, StageSyncRecord(signature = "")))
+    fun `authority is having read, and nothing else is accepted as evidence of it`() {
+        val neverRead = typedOneFieldOffline()
+        assertFalse(isAuthoritative(neverRead, null))
+        assertFalse(isAuthoritative(neverRead, StageSyncRecord(signature = "")))
         assertFalse(isAuthoritative(null, null))
-        assertTrue(isAuthoritative(noBaseline.copy(serverBaseline = true), null))
-        assertTrue(isAuthoritative(noBaseline, StageSyncRecord(signature = "x")))
+        // The one honest case.
+        assertTrue(isAuthoritative(neverRead.copy(stageSeen = true), null))
+        // A recorded signature — however long, however recent — is not a reading of the stage.
+        assertFalse(isAuthoritative(neverRead, StageSyncRecord(signature = "x")))
+        assertFalse(
+            isAuthoritative(neverRead, StageSyncRecord(signature = "x", syncedAt = "2026-08-12T00:00:00Z"))
+        )
     }
 
     // ── emptiedEntities ──────────────────────────────────────────────────────────────────────────
@@ -126,7 +144,7 @@ class StagePayloadAuthorityTest {
             stageId = spec.key,
             values = mapOf("currentProblems" to JsonPrimitive("x")),
             rows = listOf(row("processStep", "s1", "Tying")),
-            serverBaseline = true,
+            stageSeen = true,
             emptiedEntities = listOf("tool"),
         )
         val body = build(draft)
@@ -155,7 +173,7 @@ class StagePayloadAuthorityTest {
         // it, and the server would read a key this stage does not declare.
         val draft = StageDraft(
             stageId = spec.key,
-            serverBaseline = true,
+            stageSeen = true,
             emptiedEntities = listOf("tool", "somethingTheRegistryDropped", "traditionalProcess"),
         )
         // The singleton is filtered out too: a singleton is never deleted by omission, and naming one
@@ -189,7 +207,7 @@ class StagePayloadAuthorityTest {
                 row("processStep", "s2", "Dyeing"),
                 row("tool", "t1", "Charkha"),
             ),
-            serverBaseline = true,
+            stageSeen = true,
         )
         val body = build(draft)
         assertTrue(body.replaceCollections)
@@ -208,7 +226,7 @@ class StagePayloadAuthorityTest {
         val draft = StageDraft(
             stageId = spec.key,
             rows = listOf(row("processStep", "s1", "Tying")),
-            serverBaseline = true,
+            stageSeen = true,
         )
         val entry = build(draft).entries.single { it.entityKey == "processStep" }
         assertEquals(JsonPrimitive("s1"), entry.data["_clientKey"])

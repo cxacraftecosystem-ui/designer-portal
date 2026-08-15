@@ -51,6 +51,7 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.WorkshopSyncEngine
 import com.designprototype.workshop.data.WorkshopSyncStatus
 import com.designprototype.workshop.data.apiErrorMessage
+import com.designprototype.workshop.data.DwCustomSectionStore
 import com.designprototype.workshop.data.computeWorkshopCompleteness
 import com.designprototype.workshop.data.isLocalOnlyWorkshop
 import com.designprototype.workshop.data.overallPercent
@@ -318,13 +319,60 @@ fun WorkshopListScreen(
         // Everything outstanding across the device, and one button to try it now. Counted from the
         // rows already on screen rather than from a second read of the disk, so the banner and the
         // per-row chips can never disagree about the same fact.
+        //
+        // THAT CLAIM WAS FALSE FOR ONE OF THE FOUR THINGS A ROW CAN BE OUTSTANDING FOR, and it was
+        // the one added last. `refusedAnswers` is a term of `isFullySynced`, so a refusal-only
+        // workshop reached `outstanding` — but the only counters handed down were the pending pair
+        // and `failedStages + failedMedia`, all zero for it. The banner therefore drew a workshop it
+        // could not name and fell through to "Waiting to upload … it uploads whenever there is a
+        // connection", directly above a row reading "2 answers refused — the rest is backed up".
+        // Measured on the handset; see [dwDeviceSyncBanner], which now decides both sentences.
         val outstanding = rows.mapNotNull { it.status }.filterNot { it.isFullySynced }
+        /*
+          WHAT A SYNC PASS CANNOT MOVE, READ BEFORE THE PASS RUNS.
+
+          [SyncPassResult.refused] counts items the server would not take AT ALL — a create, a file,
+          a stage that threw. An answer refused INSIDE a 200 never reaches it, and in the case that
+          matters most nothing is even attempted: the stage's signature already matches, so the pass
+          sends nothing, `didAnything` is false and `refused` is 0. The button below then fell to its
+          last arm and told the designer "Everything on this device is already on the server" over
+          answers that are on this device and are NOT on the server — the last sentence in a sequence
+          of three that all said the same untrue thing (see [dwDeviceSyncBanner] for the other two).
+          Counted from the rows for the same reason the banner is: one number, one story.
+        */
+        val refusedAnswersNow = outstanding.sumOf { it.refusedAnswers }
+        val refusedAnswersLine = if (refusedAnswersNow == 0) "" else {
+            " $refusedAnswersNow answer${if (refusedAnswersNow == 1) "" else "s"} " +
+                "${if (refusedAnswersNow == 1) "is" else "are"} still refused — a sync cannot move " +
+                "${if (refusedAnswersNow == 1) "it" else "them"}; open the workshop and correct " +
+                "${if (refusedAnswersNow == 1) "it" else "them"}."
+        }
+        /*
+          AND THE OTHER THING A SYNC PASS CANNOT MOVE, WHICH IS NOT AN ANSWER BUT A DELETION.
+
+          Same shape as the line above and found by looking for it: a stage holding `emptiedEntities`
+          it is not yet authoritative enough to send has a signature that already MATCHES, so the pass
+          sends nothing, `didAnything` is false, `refused` is 0 — and this button fell to its last arm
+          and said "Everything on this device is already on the server" over a row deletion that is on
+          this device and is NOT on the server. The remedy is different from the refusal's and has to be
+          said differently: not "correct it" but "open the stage", because what is missing is a READ.
+          See [WorkshopSyncStatus.unsentDeletions].
+        */
+        val deletionsNow = outstanding.sumOf { it.unsentDeletions }
+        val deletionsLine = if (deletionsNow == 0) "" else {
+            " $deletionsNow stage${if (deletionsNow == 1) "" else "s"} " +
+                "${if (deletionsNow == 1) "holds a row deletion" else "hold row deletions"} a sync " +
+                "cannot move — open the stage once with a connection so this phone can read it, and " +
+                "the deletion goes up on the save straight after."
+        }
         DeviceSyncBanner(
             workshops = outstanding.size,
             stages = outstanding.sumOf { it.pendingStages },
             files = outstanding.sumOf { it.pendingMedia },
             bytes = outstanding.sumOf { it.pendingMediaBytes },
             refusals = outstanding.sumOf { it.failedStages + it.failedMedia },
+            refusedAnswers = outstanding.sumOf { it.refusedAnswers },
+            unsentDeletions = outstanding.sumOf { it.unsentDeletions },
             busy = busy || sendingId != null,
             onSyncNow = {
                 busy = true
@@ -350,6 +398,14 @@ fun WorkshopListScreen(
                                 if (result.refused > 0) {
                                     append(" ${result.refused} item(s) were refused — open the workshop below to see why.")
                                 }
+                                // A stage that WAS sent and came back with some of its answers
+                                // declined is counted by neither `stagesSent` (it went) nor
+                                // `refused` (the request succeeded), so it said nothing here at all.
+                                append(refusedAnswersLine)
+                                // Counted by neither `stagesSent` nor `refused` either, and for a
+                                // blunter reason: the stage was never sent at all, because its
+                                // signature already matched.
+                                append(deletionsLine)
                             }
                         )
                         // ABOVE BOTH the offline line and the "already on the server" line, and each
@@ -376,6 +432,13 @@ fun WorkshopListScreen(
                         )
                         result.stoppedOffline -> onMessage(
                             "The connection dropped before anything could be sent. Nothing has been lost."
+                        )
+                        // NOT "everything is already on the server" WHEN IT IS NOT. This arm is
+                        // reached by exactly the phone the banner above was describing wrongly: a
+                        // clean pass with nothing to send, because the only outstanding thing is an
+                        // answer the repository has already read and declined. See `refusedAnswersNow`.
+                        refusedAnswersNow > 0 || deletionsNow > 0 -> onMessage(
+                            "There was nothing to send.$refusedAnswersLine$deletionsLine"
                         )
                         else -> onMessage("Everything on this device is already on the server.")
                     }
@@ -790,7 +853,14 @@ private suspend fun rowFor(
     schema: SchemaResponse,
     draft: WorkshopDraft?,
 ): WorkshopRow {
-    val stages = computeWorkshopCompleteness(schema, draft)
+    // OFF DISK ONLY. This runs once per row of the workshop list, so a network read here would be
+    // one request per workshop on a screen a designer opens forty times a day; and the list's job is
+    // to say what this device holds. A workshop whose definition has never been read scores exactly
+    // as it did before this feature existed, which is the honest answer for it — see
+    // [computeWorkshopCompleteness].
+    val stages = computeWorkshopCompleteness(
+        schema, draft, DwCustomSectionStore.load(context, localId),
+    )
     return WorkshopRow(
         localId = localId,
         remoteId = remoteId,

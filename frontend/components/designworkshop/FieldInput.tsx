@@ -60,6 +60,7 @@ import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { apiFetch } from "@/lib/api";
 import {
+  fieldTypeName,
   inputValue,
   listValue,
   type DwEntity,
@@ -368,7 +369,7 @@ export function FieldInput({
               address or a phone number produces "double you double you double you dot" and a
               designer who has to delete it — the button is a cost on those three, not a help. */}
           {field.type === "TEXT" ? (
-            <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} />
+            <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} workshopId={workshopId} />
           ) : null}
         </>
       );
@@ -389,7 +390,7 @@ export function FieldInput({
           {/* The narrative fields are the ones that come back empty from the field, because nobody
               types four hundred words on a handset while holding a swatch. This is the whole reason
               the dictation control exists. */}
-          <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} />
+          <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} workshopId={workshopId} />
         </>
       );
 
@@ -425,6 +426,9 @@ export function FieldInput({
           disabled={disabled}
           ariaLabelledBy={labelId}
           ariaLabel={field.label}
+          // Threaded so the editor's own dictation button posts to the per-workshop route, which is
+          // the only one that can enforce the artisan's consent.
+          workshopId={workshopId}
           maxLength={field.maxLength || undefined}
           // A BULLETS field IS a list — its help says "One deliverable per line" and the report
           // prints it as one — so the editor opens inside a numbered item rather than making the
@@ -810,6 +814,62 @@ export function FieldInput({
               />
             </div>
           ) : null}
+        </>
+      );
+    }
+
+    default: {
+      /*
+        A TYPE THIS BUILD HAS NO BRANCH FOR IS DRAWN READ-ONLY AND SAYS SO. IT IS NEVER A BLANK.
+
+        THE FAILURE THIS PREVENTS, VERIFIED RATHER THAN ASSUMED. The switch above is exhaustive over
+        `DwFieldType`, so TypeScript treats the end of this function as unreachable and reports
+        nothing — but the union is a COMPILE-time guarantee only, and this file's own header records
+        that JSON is `any` at the fetch boundary and the compiler cannot catch it. Without this arm an
+        unmatched type falls off the end and the component returns `undefined`, which React 19
+        (19.2.7 in this workspace) renders as nothing with NO dev-mode warning: the legacy "Nothing
+        was returned from render" guard is gone. `FieldGrid` still draws the cell around it
+        unconditionally, so what a designer sees is an empty grid cell where a question should be —
+        and no way to know a question was ever there.
+
+        WHO ACTUALLY REACHES IT. No registry field can: the union covers all 23 of them and the
+        compiler enforces it, which is the whole point of the missing `default` this arm now supplies.
+        What reaches it is a DESIGNER-DEFINED question whose type is outside the twelve v1 types —
+        `lib/customSections.ts` re-tokenises those through `unsupportedFieldType` precisely so they
+        arrive here rather than at a working control. That is deliberate for the ones this build DOES
+        know how to draw: a custom GEO or IMAGE would sync as a reference none of the five media
+        walkers can resolve, so the save reports success and the photograph is simply absent from the
+        .docx.
+
+        IT IS DISABLED, WHICH IS THE OPPOSITE CALL FROM THE REF FALLBACK ABOVE, AND BOTH ARE RIGHT. A
+        REF with no model can be answered by hand — a closed list with no members cannot be answered
+        at all, and on a required field that makes the stage permanently unsubmittable. An unknown
+        type cannot be answered by hand: nothing downstream could coerce, score or print what was
+        typed, so an editable box here would collect an answer into a shape no reader has. Android
+        makes the same call for the same reason, and its version of this bug was worse — `DwFieldType.of`
+        degrades an unknown token to TEXT, so the handset drew an ordinary editable box and the
+        designer typed into it.
+      */
+      const raw = fieldTypeName(String(field.type as string));
+      const noteId = `${controlId}-unsupported`;
+      return labelled(
+        <>
+          <input
+            id={controlId}
+            className="field-input"
+            type="text"
+            disabled
+            // The sentence is part of what this box MEANS, so it is named here alongside the
+            // registry's own hint rather than left as prose only a sighted reader can connect to the
+            // field — exactly as the REF fallback does it. A sentence that is not pointed at is
+            // invisible to the reader most likely to need it.
+            aria-describedby={[noteId, describedBy].filter(Boolean).join(" ")}
+            value={inputValue(value)}
+          />
+          <p id={noteId} className="text-xs leading-5 text-ink-500">
+            This question is a {raw}, which this version of the form cannot draw. Whatever is already
+            recorded against it is kept and is not changed by anything you do here.
+          </p>
         </>
       );
     }

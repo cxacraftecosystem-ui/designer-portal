@@ -344,6 +344,48 @@ dependencies {
      */
     implementation("com.google.mlkit:text-recognition:16.0.1")
 
+    /**
+     * THE OFFLINE SPEECH ENGINE — sherpa-onnx, vendored as a file because it is on no repository.
+     *
+     * ── WHERE IT COMES FROM, AND WHY IT IS A FILE IN `app/libs` ───────────────────────────────
+     *
+     * `sherpa-onnx-static-link-onnxruntime-1.13.5.aar`, 37,749,854 bytes, SHA-256
+     * `508b79be1aeef3cbb92b8d4325b9b1dad0fa9a4eb1991de0d3d1826b8a09c358`, downloaded from the
+     * `k2-fsa/sherpa-onnx` GitHub release `v1.13.5`. `docs/ASR-RUNTIME-MEASUREMENT.md` §1 proved
+     * through the Gradle resolver — not through a web search — that no spelling of these
+     * coordinates resolves from `google()` or `mavenCentral()`: six coordinates, six live 404s.
+     * The `flatDir` that reaches this file is declared in `settings.gradle.kts`, which explains why
+     * it has to live there.
+     *
+     * ── WHY THE STATIC-LINK VARIANT AND NOT THE DEFAULT ONE ───────────────────────────────────
+     *
+     * Recommendation 2 of that document, measured on eight real packaged APKs and NOT re-derived
+     * here: the ARM pair costs **+39,811,828 bytes** with this AAR against **+53,308,196** with
+     * `sherpa-onnx-1.13.5.aar`. The difference is 13,496,368 bytes and it is free — the static-link
+     * build has `libonnxruntime.so` linked into `libsherpa-onnx-jni.so` instead of beside it.
+     *
+     * ── AND THIS CONTRADICTS `docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md`, WHICH IS THE FINDING ────
+     *
+     * That document designed the engine as an **opt-in download**: fetch a zip of `.so` files into
+     * `filesDir`, verify each against a pinned digest, then load them. Its §8 step 2 says to load
+     * "over `DwAsrArtifact.libraries` in list order". **That cannot work with this binding, and the
+     * reason is a property of Android rather than of the design.** Every entry class in
+     * `com.k2fsa.sherpa.onnx` carries a static initialiser calling
+     * `System.loadLibrary("sherpa-onnx-jni")`, and `System.loadLibrary` resolves through
+     * `ClassLoader.findLibrary`, which searches only the APK's own native-library directories. A
+     * `.so` sitting in `filesDir` is invisible to it: `System.load(absolutePath)` loads the file
+     * into the process but records it under its PATH, so the later `loadLibrary` still throws
+     * `UnsatisfiedLinkError` before any of our code runs. Measured on the handset, not reasoned
+     * about — `DwAsrEngineProbeTest` prints the classloader's own search path.
+     *
+     * So the engine is IN THIS APK, at the cost that document weighed, and the download half of
+     * `DwAsrRuntime.kt` remains unreachable (`DW_ASR_ARTIFACTS` is still empty, deliberately: no
+     * server serves an engine zip and inventing a URL to fill the row is the one thing that file's
+     * constructors exist to prevent). Whoever wants the opt-in shape back must first answer a
+     * question nobody has: how a downloaded `.so` reaches this binding at all.
+     */
+    implementation(":sherpa-onnx-static-link-onnxruntime-1.13.5@aar")
+
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")

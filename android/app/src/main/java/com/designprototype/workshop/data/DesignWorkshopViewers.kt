@@ -38,7 +38,7 @@ import kotlinx.serialization.Serializable
  *    screen saying why. So the picker's options come off the wire, and the write is refused by the
  *    server a second time regardless — a picker is a suggestion, the write is the rule.
  *
- * ── THREE THINGS ABOUT THIS WIRE THAT WILL TRIP A READER ─────────────────────────────────────────
+ * ── FOUR THINGS ABOUT THIS WIRE THAT WILL TRIP A READER ──────────────────────────────────────────
  *
  * - **The PUT REPLACES the whole set.** There is no add route and no remove route; taking somebody
  *   off is sending the list WITHOUT them. So a caller that posts only what it just ticked has
@@ -54,6 +54,18 @@ import kotlinx.serialization.Serializable
  *   the route FastAPI matches it against `GET /design-workshops/{workshop_id}` and answers 404
  *   "Record not found". [dwViewerAdministrationMissing] exists to tell that apart, and is pinned to
  *   the id-less call because asking it of `/{id}/viewers` would be unanswerable.
+ * - **THE ELIGIBLE LIST IS CAPPED, THE CAP IS BEING HIT, AND `search` IS THE ONLY WAY PAST IT.**
+ *   The endpoint serves at most `ELIGIBLE_VIEWER_LIMIT` = 2000 accounts ordered by name, and this
+ *   repository holds 2543 eligible ones — 1344 admins, who are not roster-gated at all, plus the
+ *   1282 designers the roster admits. Measured on the live database: the answer stops at the name
+ *   "Sync Test" and 398 eligible accounts sort past it. So an account beyond the cut was simply
+ *   ABSENT from this picker, and absent looks exactly like ineligible — an admin hunting for a
+ *   colleague could not tell "not empanelled" from "sorts late in the alphabet". Those two states
+ *   must never look identical. The server therefore takes a `search` term (name OR email,
+ *   case-insensitive, folded into the SAME query as the eligibility rule) and answers with
+ *   [DwEligibleViewerListDto.truncated] when it had to cut. See [dwViewerSearchTerm] for the term
+ *   this client sends and [DwEligibleViewers.complete] for the one thing a CUT list makes
+ *   unknowable.
  *
  * ── AND IT NEEDS A CONNECTION, WHICH IN THIS APP IS WORTH SAYING OUT LOUD ─────────────────────────
  *
@@ -108,8 +120,132 @@ data class DwEligibleViewerDto(
     val role: String = "",
 )
 
+/**
+ * The picker's options as the server serves them, and whether it had to cut the list.
+ *
+ * **`truncated` IS THE FIELD THE OLD WIRE HAD NOWHERE TO PUT.** The endpoint has always capped its
+ * answer at 2000 accounts; what it could not do was say so, so a cut list arrived looking exactly
+ * like a complete one and the only record of the cut was a warning in a server log. It is `true`
+ * when the account list was cut OR when the active-roster read was cut — the second removes eligible
+ * designers from the answer without shortening it, which is why one flag covers both.
+ *
+ * **THE DECODER WAS CHECKED, NOT ASSUMED, because a strict one would turn this server improvement
+ * into a blank screen.** This DTO is decoded by the shared Retrofit `Json` in `data/ApiClient.kt`,
+ * which sets `ignoreUnknownKeys = true` — so the key was silently dropped by the shipped app rather
+ * than throwing `SerializationException` the day the backend started sending it. Kotlin decoders in
+ * this app are not uniformly lenient (`WorkshopSync.kt`'s signature `Json` sets no such flag), so
+ * "it is only an extra field" is not a safe assumption anywhere in this package.
+ *
+ * The default is `false` for the OTHER direction of skew: this app ships separately from the API, so
+ * a handset updated ahead of the server will decode an answer with no `truncated` at all. `false`
+ * makes that phone say nothing about truncation, which is what it did yesterday and is the only
+ * honest answer when the server has not been asked to have an opinion. (`coerceInputValues = true`
+ * covers an explicit `null` too, rather than throwing on a non-null field.)
+ */
 @Serializable
-data class DwEligibleViewerListDto(val users: List<DwEligibleViewerDto> = emptyList())
+data class DwEligibleViewerListDto(
+    val users: List<DwEligibleViewerDto> = emptyList(),
+    val truncated: Boolean = false,
+)
+
+/**
+ * One answer from the eligible-viewers endpoint, PAIRED WITH THE QUESTION IT ANSWERS.
+ *
+ * [search] travels with the users rather than being held beside them on the screen, and that is the
+ * point of the type: with a debounced search box there are always two terms in play — the one in the
+ * field and the one this list came back for — and a screen that read the field's text while
+ * rendering a list fetched for the previous keystroke would label the list with a search nobody ran.
+ * Every question this list can be asked ([complete], and "did anything match") is therefore answered
+ * from the answer itself.
+ */
+data class DwEligibleViewers(
+    val users: List<DwEligibleViewerDto> = emptyList(),
+    /** The server cut the answer; see [DwEligibleViewerListDto.truncated]. */
+    val truncated: Boolean = false,
+    /** The term this was fetched with, or null when the whole (capped) list was asked for. */
+    val search: String? = null,
+) {
+    /**
+     * Is this THE WHOLE ELIGIBLE SET — every account the server would offer, with nothing left out?
+     *
+     * **ONE THING ON THIS SCREEN DEPENDS ON IT, and it is a sentence that must never be printed on a
+     * guess.** `dwViewerChoices` marks a granted account the eligible list does not contain as "has
+     * access, no longer eligible" — a designer suspended from the roster since their grant. That
+     * inference is only valid over a COMPLETE list. Over a search result it is nonsense: every
+     * colleague who does not match the typed term would be labelled as suspended, which is the
+     * whole team on the screen where an admin decides whether to take somebody off. Over a
+     * TRUNCATED list it is just as wrong and has been wrong on this screen all along — a granted
+     * colleague sorting past the 2000th name was already being marked as no longer eligible when
+     * they were nothing of the sort. The flag that fixes the picker fixes that label too, because
+     * it is the first thing that made "the list was cut" knowable on this side.
+     */
+    val complete: Boolean get() = !truncated && search == null
+}
+
+/**
+ * THE ONE SENTENCE UNDER THE SEARCH BOX, or null when the screen must say nothing at all.
+ *
+ * Silence is a real answer and the common one: a complete list has nothing to explain, and a standing
+ * note about pagination on every visit is the padding this screen has twice been asked not to have.
+ *
+ * **IT LIVES HERE, IN THE DATA LAYER, BECAUSE IT IS A DECISION AND NOT A LAYOUT.** It was a `when`
+ * inside the composable, where nothing could test it: the four states below are reached from
+ * combinations of two flags and a list, one of which no live database can produce, and a screen-level
+ * `when` is only ever exercised by somebody looking at a phone. `WorkshopViewersScreen` renders what
+ * this returns.
+ *
+ * **THE FOURTH STATE IS THE ONE THAT WAS WRONG.** `truncated` covers two different cuts — the account
+ * list stopping at the ceiling, and the ACTIVE-ROSTER read stopping at its own — and only the first
+ * can be narrowed by typing. When the roster read is what was cut, eligible designers are absent from
+ * every possible search, and the answer can be `truncated` with NO USERS IN IT AT ALL; the old
+ * three-state spelling then said "Too many matches to show them all — narrow the search." over an
+ * empty picker, which is advice that cannot work, and it also shadowed the more accurate "no eligible
+ * account matches that search". "Hidden from you" and "nobody matched" collapsing into one sentence is
+ * the exact defect this screen was fixed for, one layer down. Ordered first, so it wins.
+ *
+ * The other three sentences are unchanged and are shared VERBATIM with
+ * `frontend/components/settings/DesignWorkshopViewersPanel.tsx`, which carries the same four states in
+ * the same order: a researcher moves between the two apps mid-workshop, and one shared vocabulary is
+ * why the server sends one flag instead of each client inventing its own wording.
+ */
+fun dwViewerOfferNotice(offer: DwEligibleViewers): String? = when {
+    offer.truncated && offer.users.isEmpty() ->
+        "Some eligible accounts could not be listed, and no search can reach them — the server log says why."
+    offer.truncated && offer.search == null ->
+        "Too many accounts to show them all — search a name or email to reach the rest."
+    offer.truncated -> "Too many matches to show them all — narrow the search."
+    offer.search != null && offer.users.isEmpty() -> "No eligible account matches that search."
+    else -> null
+}
+
+/**
+ * The `search` term to send, or null for "no search" — the whole (capped) list.
+ *
+ * **PYTHON'S `strip()`, DELIBERATELY, and the opposite choice from [dwPersonLabel] one screen over.**
+ * The server decides what counts as an empty search with `(search or "").strip()`, and Python calls
+ * the no-break space U+00A0 whitespace while `Char.isWhitespace` does not. Sending a lone U+00A0 —
+ * what a name pasted from a PDF leaves behind — would be a request the server treats as "no search",
+ * so this client would then be holding a search box with something in it beside a list of everybody:
+ * the picker looks like it ignored what was typed. [DwPy.strip] makes the two sides agree on
+ * emptiness. [dwPersonLabel] mirrors JAVASCRIPT there for the same kind of reason: nothing on the
+ * server computes a label, and nothing on the client decides this.
+ *
+ * Clamped to the server's own `Query(None, max_length=120)`. Over that the endpoint answers 422, and
+ * a validation body on a person-picker reaches an admin as "The repository would not accept this" —
+ * a refusal about a shape, on a screen about people, for a paste nobody meant as a search. No human
+ * name is 120 characters, so the first 120 are the search that was intended. The clamp will not
+ * split a surrogate pair: half an emoji is not a character the server can be asked about.
+ */
+fun dwViewerSearchTerm(typed: String?): String? {
+    val term = DwPy.strip(typed.orEmpty())
+    if (term.isEmpty()) return null
+    if (term.length <= DW_VIEWER_SEARCH_MAX) return term
+    val cut = term.take(DW_VIEWER_SEARCH_MAX)
+    return if (cut.last().isHighSurrogate()) cut.dropLast(1) else cut
+}
+
+/** The server's `max_length` on `search` — `Query(None, max_length=120)`. Over it, 422. */
+const val DW_VIEWER_SEARCH_MAX = 120
 
 /**
  * The body of `PUT /design-workshops/{id}/viewers`: the COMPLETE intended membership.
@@ -138,9 +274,10 @@ const val DW_VIEWER_LIMIT = 100
 /**
  * One row the picker offers, already resolved to the two lines a handset draws.
  *
- * @property grantedButIneligible this account HOLDS a row today and the server no longer offers it
- *   — a designer suspended from the roster since the grant. Rendered, ticked, and marked; see
- *   [dwViewerChoices] for why leaving it out would be a silent revocation.
+ * @property grantedButIneligible this account HOLDS a row today and the server, ASKED FOR THE WHOLE
+ *   ELIGIBLE SET, did not offer it — a designer suspended from the roster since the grant. Rendered,
+ *   ticked, and marked; see [dwViewerChoices] for why leaving it out would be a silent revocation,
+ *   and why it goes unmarked when the list was searched or cut instead of complete.
  */
 data class DwViewerChoice(
     val userId: String,
@@ -195,29 +332,48 @@ private fun dwJsTrim(text: String): String = text.trim { c ->
 }
 
 /**
- * Everyone the picker offers: the eligible accounts, plus anybody who already HOLDS a row and has
- * since dropped off that list. The creator is in neither — their access is not on offer here.
+ * Everyone the picker offers: the accounts this answer names, anybody an EARLIER answer named who is
+ * still ticked, plus anybody who already HOLDS a row. The creator is in none of the three — their
+ * access is not on offer here.
  *
- * **THE SECOND GROUP IS THE LOAD-BEARING ONE.** The PUT replaces the whole set, so an option that is
- * not rendered is a row the next Save silently deletes. A designer whose roster row was suspended
- * last month is precisely that person: the server stops OFFERING them while their existing row
- * stands, and dropping them from the options would revoke them as a side effect of adding somebody
- * unrelated — an admin ticking one new name and taking a colleague off the workshop without either
- * of them ever seeing it happen.
+ * **EVERY GROUP AFTER THE FIRST EXISTS TO STOP A SILENT REVOCATION.** The PUT replaces the whole set,
+ * so an option that is not rendered is a row the next Save deletes:
  *
- * Order is the server's for the eligible group (it sorts by name), then the extras. Not re-sorted
- * here: `sortedBy` on a Kotlin String orders by UTF-16 code unit, which disagrees with Postgres's
- * collation on exactly the names this repository is full of, and a picker whose order changes
- * between the phone and the browser is a picker two admins describe differently.
+ *  - [viewers] catches the designer whose roster row was suspended last month. The server stops
+ *    OFFERING them while their existing row stands, and dropping them from the options would revoke
+ *    them as a side effect of adding somebody unrelated — an admin ticking one new name and taking a
+ *    colleague off the workshop without either of them ever seeing it happen.
+ *  - [retained] catches the account a SEARCH has narrowed out from under a tick. Reaching past the
+ *    server's 2000-account ceiling means the eligible list on screen is now whatever the last search
+ *    returned, so ticking a colleague found under "Nabakalebara" and then typing a second surname
+ *    would drop the first from the options — and with it from the chips, from the "will be added"
+ *    line, and from any chance of the admin noticing before they saved. The screen holds every
+ *    account it has been shown and hands the still-ticked ones back here.
+ *
+ * @param eligibleListComplete this answer is the WHOLE eligible set — not a search result, not cut at
+ *   the ceiling. **NO DEFAULT, DELIBERATELY**, because it decides whether a granted account absent
+ *   from [eligible] is marked "has access, no longer eligible", and that mark is a claim about the
+ *   designer roster that only a complete list can support. Passing `true` for a narrowed list labels
+ *   every colleague who did not match the search term as suspended. See
+ *   [DwEligibleViewers.complete].
+ * @param retained accounts an earlier answer offered that this one does not. Never marked: they are
+ *   missing from [eligible] because of the search term, which says nothing about their eligibility.
+ *
+ * Order is the server's within each group (it sorts by name), groups in the order above. Not
+ * re-sorted here: `sortedBy` on a Kotlin String orders by UTF-16 code unit, which disagrees with
+ * Postgres's collation on exactly the names this repository is full of, and a picker whose order
+ * changes between the phone and the browser is a picker two admins describe differently.
  */
 fun dwViewerChoices(
     eligible: List<DwEligibleViewerDto>,
     viewers: List<DwViewerDto>,
     creatorId: String,
+    eligibleListComplete: Boolean,
+    retained: List<DwEligibleViewerDto> = emptyList(),
 ): List<DwViewerChoice> {
-    val choices = ArrayList<DwViewerChoice>(eligible.size + viewers.size)
+    val choices = ArrayList<DwViewerChoice>(eligible.size + retained.size + viewers.size)
     val seen = HashSet<String>()
-    eligible.forEach { person ->
+    (eligible + retained).forEach { person ->
         if (person.id.isBlank() || person.id == creatorId || !seen.add(person.id)) return@forEach
         choices += DwViewerChoice(
             userId = person.id,
@@ -233,7 +389,9 @@ fun dwViewerChoices(
             name = row.name,
             email = row.email,
             role = row.role,
-            grantedButIneligible = true,
+            // OFFERED EITHER WAY — that is what stops the revocation — but only MARKED when the
+            // absence proves something. Over a search result or a cut list it proves nothing.
+            grantedButIneligible = eligibleListComplete,
         )
     }
     return choices

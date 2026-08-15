@@ -55,21 +55,45 @@ from fastapi import HTTPException, status
 from app.core.db import db
 from app.core.deps import DESIGN_WORKSHOP_ROLES
 from app.services.designers import normalise_email
+from app.services.records import contains
 
 logger = logging.getLogger(__name__)
 
 #: How many accounts the picker will offer in one call.
 #:
-#: A CEILING, NOT A PAGE SIZE. The eligible set is the admins plus the designers the roster still
-#: admits — a few dozen accounts in a real deployment — so this is deliberately far above anything
-#: an institution will reach, and the endpoint carries no ``page`` because the client renders the
-#: whole list into one searchable dropdown. It exists because an unbounded ``find_many`` on a table
-#: that only ever grows is how a picker that worked for two years starts timing out, with no
-#: pagination on the far side to rescue it.
+#: A CEILING, NOT A PAGE SIZE. It exists because an unbounded ``find_many`` on a table that only
+#: ever grows is how a picker that worked for two years starts timing out.
 #:
-#: Reaching it is logged rather than passed over in silence (see :func:`eligible_viewers`): a
-#: truncated picker looks exactly like a colleague who was never empanelled.
+#: **IT IS REACHED, AND THE ASSUMPTION THAT IT WOULD NOT BE WAS WRONG.** This note used to read "a
+#: few dozen accounts in a real deployment … deliberately far above anything an institution will
+#: reach". Measured: 1344 admins and 1282 accounts the roster admits, so the eligible set passed
+#: 2000 and the cut fell in the middle of the alphabet. Ordered by name and truncated, every
+#: eligible account sorting past the cut was simply absent from both clients, and an admin looking
+#: for a colleague could not tell that from the colleague never having been empanelled. Those two
+#: states must never look identical.
+#:
+#: So the ceiling stays and the two things it was missing are now here: ``search`` reaches accounts
+#: beyond it (see :func:`eligible_viewers`) and ``truncated`` says on the wire that the list was
+#: cut. Raising this number would only move the cut — it would ship 10000 rows to a handset and
+#: still hide whoever sorts 10001st. The ceiling was never the defect; having no way past it was.
 ELIGIBLE_VIEWER_LIMIT = 2000
+
+#: How many active roster rows :func:`_active_roster_emails` will read.
+#:
+#: **A DIFFERENT QUANTITY FROM ``ELIGIBLE_VIEWER_LIMIT``, and sharing that constant was a latent
+#: defect rather than a tidy reuse.** The roster read is not a page of results being shown to
+#: anybody: its emails are folded into the user query's ``WHERE``, so a roster row that falls off
+#: the end does not truncate a list — it makes an eligible designer VANISH from the picker, as
+#: though they had never been empanelled. At 1282 active rows the shared 2000 was not being hit, so
+#: nothing was wrong yet and nothing would have said so: that read carried no warning at all.
+#:
+#: This is therefore a backstop against an unbounded read and not a working limit, set far above
+#: any plausible roster — a national programme that empanels this many designers has outgrown
+#: folding their addresses into one ``IN`` list, which is the honest thing for the log to say. It is
+#: NOT left uncapped: an uncapped read of a table that only grows has no failure signal at all, it
+#: merely gets slower until something times out. Hitting this is logged at ERROR and reported on the
+#: wire as ``truncated``, because a picker missing eligible people is exactly what that flag means.
+ACTIVE_ROSTER_READ_LIMIT = 50_000
 
 
 def _role(user: Any) -> str:
@@ -154,7 +178,7 @@ async def viewer_rows(workshop_id: str) -> list[dict[str, Any]]:
     return [viewer_payload(row) for row in rows]
 
 
-async def eligible_viewers() -> list[dict[str, Any]]:
+async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
     """The accounts that may be given a viewer row at all — see the module docstring.
 
     Four fields and no more. The caller is choosing a reader and has no business receiving the
@@ -168,43 +192,127 @@ async def eligible_viewers() -> list[dict[str, Any]]:
     a picker missing colleagues who are perfectly eligible, with the number of them varying by how
     many suspended designers happened to sort early. Folding the roster in means the cap applies to
     accounts that are already eligible, so it can only ever truncate a genuinely long tail.
+
+    **``search`` IS FOLDED INTO THE SAME WHERE, FOR THE SAME REASON, AND THE ARGUMENT ABOVE APPLIES
+    TO IT WITH THE FORCE OF A PROOF.** Searching after the ``take`` would search the first 2000
+    names of the alphabet and nothing else, so the parameter added to reach past the ceiling would
+    stop at exactly the ceiling — typing a late-sorting colleague's surname would return nothing
+    while the account sat eligible in the table. That is the bug this function is being fixed for,
+    reproduced one layer up and harder to see, because an empty result reads as "no such person".
+
+    It matches ``name`` OR ``email``, case-insensitively: an admin hunting for a colleague knows one
+    or the other and should not have to guess which field the picker indexes. Through
+    ``records.contains``, which strips the control bytes a ``text`` comparison cannot hold — the
+    same class of failure ``_UNSTORABLE_IN_AN_ID`` closes below, and ``?search=%00`` would otherwise
+    be a 500 from a query parameter.
+
+    **THE TWO ``OR``S ARE AND-COMPOSED, NEVER ASSIGNED TO THE SAME KEY** — the collision
+    :func:`visible_to_clause` warns about, and the consequence here is worse than a widened list.
+    Eligibility is an ``OR`` and so is the search; writing both to ``where["OR"]`` lets the later
+    one silently win, and if that is the search then the roles clause is GONE — the picker would
+    offer researchers, professors and suspended designers, which is a grant the next sign-in
+    refuses. A widened picker on this screen hands somebody a fortnight of another team's fieldwork.
+
+    Answers ``{"users": [...], "truncated": bool}``. ``truncated`` is the field the old code could
+    not write — its warning said outright that the wire had nowhere to say "there are more", which
+    is why a cut list was only ever visible in a log nobody reads. It is exact rather than guessed:
+    ``take`` is one more row than is returned, so a set of exactly ``ELIGIBLE_VIEWER_LIMIT`` reports
+    ``False`` honestly instead of crying truncation, and no second ``COUNT`` is paid — the same
+    trick, for the same reason, as the reference picker in ``services/design_workshops``, whose
+    ``truncated`` this deliberately matches in name so both clients already know the word.
     """
-    admitted = await _active_roster_emails()
-    users = await db.user.find_many(
-        where={
+    admitted, roster_truncated = await _active_roster_emails()
+
+    clauses: list[dict[str, Any]] = [
+        {
             "OR": [
                 # Admins are not roster-gated at all — deliberately, and for the same reason
                 # ``roster_allows`` is not consulted for them at sign-in: an admin empanelled years
                 # ago and later suspended must not lose the ability to administer anything.
                 {"role": {"in": ["ADMIN", "MASTER_ADMIN"]}},
-                {"AND": [{"role": "DESIGNER"}, {"email": {"in": admitted}}]},
+                # ``mode: "insensitive"`` because ``admitted`` is lower-cased and ``User.email`` is
+                # NOT — see :func:`_active_roster_emails`. Without it this comparison hides an
+                # eligible designer whose address happens to be stored shouting, while
+                # ``_designers_the_roster_still_admits`` on the write path normalises both sides and
+                # accepts them: the picker would refuse to offer an account the PUT would take,
+                # which is this module's own defect (absent reads as ineligible) one field along.
+                {"AND": [{"role": "DESIGNER"}, {"email": {"in": admitted, "mode": "insensitive"}}]},
             ]
-        },
-        order={"name": "asc"},
-        take=ELIGIBLE_VIEWER_LIMIT,
+        }
+    ]
+    term = (search or "").strip()
+    if term:
+        clauses.append({"OR": [{"name": contains(term)}, {"email": contains(term)}]})
+
+    users = await db.user.find_many(
+        where={"AND": clauses},
+        # ORDERED BY NAME, AND THEN BY ID SO THE ORDER IS TOTAL. Both halves are load-bearing.
+        #
+        # The name sort is what makes a picker readable and it is what both clients rely on:
+        # ``android/…/data/DesignWorkshopViewers.dwViewerChoices`` deliberately does NOT re-sort,
+        # because Kotlin's ``sortedBy`` compares UTF-16 code units and disagrees with Postgres's
+        # collation, so the server's order is the only order either screen has.
+        #
+        # The id is the TIEBREAKER, and without it a name is not a unique sort key: this table holds
+        # hundreds of accounts sharing one display name, so which of them fall inside
+        # ``ELIGIBLE_VIEWER_LIMIT`` would be Postgres's choice and could differ between two identical
+        # requests. That turns "who is hidden" into something that changes on refresh — the same
+        # invisible-colleague failure this function was fixed for, in a form no search term can be
+        # relied on to reach. ``tests/test_design_workshop_viewers`` pins both halves.
+        order=[{"name": "asc"}, {"id": "asc"}],
+        take=ELIGIBLE_VIEWER_LIMIT + 1,
     )
-    if len(users) == ELIGIBLE_VIEWER_LIMIT:
-        # Not silent. The wire shape this screen already consumes has nowhere to say "there are
-        # more", so the honest place to notice is the log — an empty-looking picker with no
-        # explanation anywhere is this codebase's most repeated bug class.
+    truncated = len(users) > ELIGIBLE_VIEWER_LIMIT
+    users = users[:ELIGIBLE_VIEWER_LIMIT]
+    if truncated:
+        # Still logged as well as reported. The log is what an operator reads when an admin says
+        # "I cannot find her" — it names the term that was too broad, which the response cannot.
         logger.warning(
-            "eligible-viewers hit its ceiling of %s accounts; the picker is truncated and the "
-            "endpoint needs a search parameter before it can be trusted here",
+            "eligible-viewers hit its ceiling of %s accounts (search=%r); the answer is truncated "
+            "and says so, and the caller can narrow it",
             ELIGIBLE_VIEWER_LIMIT,
+            term,
         )
-    return [{"id": u.id, "name": u.name, "email": u.email, "role": _role(u)} for u in users]
+    return {
+        "users": [{"id": u.id, "name": u.name, "email": u.email, "role": _role(u)} for u in users],
+        # OR-ed, not overwritten: a cut roster means eligible DESIGNERs are missing from this answer
+        # even when the list itself is short, which is precisely what this flag tells the client.
+        "truncated": truncated or roster_truncated,
+    }
 
 
-async def _active_roster_emails() -> list[str]:
-    """Every lower-cased email the roster currently admits.
+async def _active_roster_emails() -> tuple[list[str], bool]:
+    """Every lower-cased email the roster currently admits, and whether that read was cut short.
 
     The whole active roster, because it IS the small table here — one row per empanelled designer —
     whereas ``User`` holds every account the repository has ever had. Reading it in full is one
     query and lets the eligibility rule become part of the user query's WHERE rather than a pass
     over its results; see :func:`eligible_viewers` for why that ordering matters.
+
+    **WHY THIS RETURNS A FLAG, AND WHY THE CAP IS ITS OWN NUMBER.** This read used to borrow
+    ``ELIGIBLE_VIEWER_LIMIT`` and say nothing when it hit it — the picker's page size used as a
+    roster read cap, two different quantities that happened to share a constant. The failure that
+    hides behind that is silent in a way the picker's is not: these emails go into the user query's
+    ``WHERE``, so a dropped roster row does not shorten a list, it removes an eligible designer from
+    it with no log line anywhere and no test failing. See ``ACTIVE_ROSTER_READ_LIMIT``. The flag
+    goes back to the caller because that removal is invisible from the outside, and the one honest
+    thing to do with it is admit on the wire that the answer is incomplete.
     """
-    rows = await db.designerroster.find_many(where={"isActive": True}, take=ELIGIBLE_VIEWER_LIMIT)
-    return sorted({normalise_email(row.email) for row in rows})
+    rows = await db.designerroster.find_many(
+        where={"isActive": True}, take=ACTIVE_ROSTER_READ_LIMIT + 1
+    )
+    truncated = len(rows) > ACTIVE_ROSTER_READ_LIMIT
+    if truncated:
+        rows = rows[:ACTIVE_ROSTER_READ_LIMIT]
+        # ERROR, not warning, and louder than the picker's: the picker's truncation is a long list
+        # the caller can narrow, this one is eligible designers absent from every search the caller
+        # can type. It cannot be worked around from the client side.
+        logger.error(
+            "the active designer roster exceeds %s rows, so eligible-viewers read only part of it; "
+            "designers past that cut are missing from the picker for every search",
+            ACTIVE_ROSTER_READ_LIMIT,
+        )
+    return sorted({normalise_email(row.email) for row in rows}), truncated
 
 
 async def _designers_the_roster_still_admits(users: list[Any]) -> set[str]:

@@ -935,7 +935,7 @@ private suspend fun dwConfirmIntake(
                 }
 
                 // `copy` on whatever is already there, never a fresh [StageDraft]: rebuilding the
-                // record would reset `serverBaseline` and `emptiedEntities` to their class defaults
+                // record would reset `stageSeen` and `emptiedEntities` to their class defaults
                 // — quietly disclaiming a baseline a stage screen established by reading the server,
                 // and quietly discarding a deletion the designer made ten seconds ago. See the same
                 // note on `persistLocally` in StageScreen.kt.

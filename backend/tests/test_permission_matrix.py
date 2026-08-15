@@ -190,11 +190,27 @@ class _Api:
         self.tripwire.preload(name, delegate)
         return self
 
-    def call(self, method: str, path: str, body: dict[str, Any] | None = None) -> _Outcome:
+    def call(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        files: dict[str, Any] | None = None,
+    ) -> _Outcome:
+        """``files`` sends a real multipart body, for the endpoints that take an upload.
+
+        It is not decoration on those routes: FastAPI validates the declared form parts, so a JSON body
+        would 422 on the missing ``file`` and a test of the GATE would pass without the gate existing.
+        Both cannot be sent at once — a multipart request has no JSON body — so ``json`` is dropped
+        whenever parts are given.
+        """
+
         async def run() -> _Outcome:
             transport = httpx.ASGITransport(app=_APP)
             async with httpx.AsyncClient(transport=transport, base_url="http://matrix.test") as client:
-                response = await client.request(method, f"/api{path}", json=body)
+                response = await client.request(
+                    method, f"/api{path}", json=body if files is None else None, files=files
+                )
             payload = response.json() if response.content else {}
             detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
             return _Outcome(reached=False, status_code=response.status_code, detail=detail)
@@ -407,6 +423,68 @@ def test_a_volunteer_still_comments_on_an_existing_record(
     )
 
     assert outcome.reached, outcome
+
+
+# --- Handing a recording to a transcription provider ----------------------------------------------
+#
+# ``POST /media/transcribe`` takes a clip nobody has uploaded, hands it to ``ai.transcribe_audio_bytes``
+# and returns the words. It writes no MediaFile row, queues no job and leaves no record that it ran.
+#
+# IT WAS ``get_current_user`` — every signed-in account, down to the volunteer tier that cannot create
+# a single record — and that made it the widest of the three doors onto one provider chain. The other
+# two are the design-workshop dictation routes: the per-workshop one is gated on the artisan's recorded
+# ``dictationConsent``, and its id-less sibling was retired to a 410 for being a second way in that
+# could consult no consent at all. A designer refused by that 409 could re-post the identical clip here.
+#
+# The rule asserted below is the one the STORED-clip twin already had: ``POST /media/{id}/transcribe-now``
+# is admin-only. It does not make this route consent-aware — nothing could, since the request names no
+# workshop — but it removes every rank for whom the consent gate is a refusal that means something.
+
+TRANSCRIBE_CLIP = {"file": ("dictation.webm", b"\x00" * 32, "audio/webm")}
+BELOW_ADMIN = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "PROFESSOR")
+
+
+@pytest.fixture
+def transcriptions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Records every clip that reached the provider chain, and lets none of them get there.
+
+    The refusals have to be asserted against the CALL and not against the status code: with no API key
+    configured this endpoint answers 200 ``UNAVAILABLE`` to a caller it let through, so "not a 403"
+    would be indistinguishable from "the provider was never asked" on this machine and would differ on
+    a developer's machine that has a key in ``.env``.
+    """
+    sent: list[str] = []
+
+    async def _transcribe(file: Any, _settings: Any) -> dict[str, Any]:
+        sent.append(file.filename)
+        return {"available": True, "status": "COMPLETED", "text": "dabu resist printing"}
+
+    monkeypatch.setattr(media, "transcribe_audio", _transcribe)
+    return sent
+
+
+@pytest.mark.parametrize("role", BELOW_ADMIN)
+def test_no_rank_below_admin_hands_a_recording_to_the_transcription_provider(
+    api: _Api, transcriptions: list[str], role: str
+) -> None:
+    """DESIGNER is the row that matters: they are the account the consent 409 is written for."""
+    outcome = api.as_(_user(role)).call("POST", "/media/transcribe", files=TRANSCRIBE_CLIP)
+
+    assert outcome.refused, outcome
+    assert transcriptions == [], "an artisan's voice reached the provider chain past the gate"
+
+
+@pytest.mark.parametrize("role", ("ADMIN", "MASTER_ADMIN"))
+def test_an_admin_still_transcribes_a_clip_that_is_not_a_media_row(
+    api: _Api, transcriptions: list[str], role: str
+) -> None:
+    """The other half, and a regression guard rather than a new rule: ``scripts/live-smoke.ps1`` signs
+    in as MASTER_ADMIN and posts here, so narrowing this one tier further would break the live smoke
+    with no other caller left to notice."""
+    outcome = api.as_(_user(role)).call("POST", "/media/transcribe", files=TRANSCRIBE_CLIP)
+
+    assert outcome.status_code == 200, outcome
+    assert transcriptions == ["dictation.webm"]
 
 
 # --- "Below them", decided once ------------------------------------------------------------------

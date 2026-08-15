@@ -1102,6 +1102,18 @@ export type RichTextEditorProps = {
   /** The id of the element naming this editor — the `field-label` span, in a registry form. */
   ariaLabelledBy?: string;
   ariaLabel?: string;
+  /**
+   * The workshop whose recorded consent governs a clip dictated into this editor.
+   *
+   * THIS EDITOR HAS NO DATA LAYER AND DELIBERATELY WANTS NONE — it is a general-purpose control, used
+   * in previews as well as in registry forms. So the id is threaded as a prop rather than reached
+   * for. It is REQUIRED because the alternative is the dictation button falling back to the un-gated
+   * route: `POST /design-workshops/dictate` takes no workshop id, consults no `dictationConsent`
+   * column, and sends an artisan's voice to a third-party provider regardless of what was recorded.
+   * These are the RICH_TEXT fields — the long narrative ones a designer most needs to dictate into —
+   * so this is the surface where forgetting would cost the most.
+   */
+  workshopId: string;
   placeholder?: string;
   /** The registry's `maxLength`, shown beside the live count. Advisory — see the note on it below. */
   maxLength?: number;
@@ -1138,6 +1150,7 @@ export function RichTextEditor({
   disabled,
   ariaLabelledBy,
   ariaLabel,
+  workshopId,
   placeholder = "Write here. Select text to format it, or type “## ” for a heading and “1. ” for a numbered list.",
   maxLength,
   listKind,
@@ -2877,6 +2890,7 @@ export function RichTextEditor({
         {!disabled ? (
           <DictationButton
             fieldLabel={ariaLabel ?? "this field"}
+            workshopId={workshopId}
             onCommit={(text) => {
               const phrase = text.trim();
               if (!phrase) return;

@@ -30,7 +30,7 @@ are one feature and neither works alone — see the long note above ``REFERENCE_
 """
 
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field as dataclass_field, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -39,17 +39,23 @@ from fastapi import HTTPException, status
 
 from app.core.db import db
 from app.core.deps import is_admin
-from app.services import rich_text
+from app.services import custom_sections, dictation_consent, rich_text
 from app.services.address import DISTRICTS_BY_STATE
 from app.services.concurrency import gather_reads
 from app.services.design_workshop_viewers import has_viewer_grant
 from app.services.designers import prefill_from_profile
 from app.services.report_annexures import annexure_warnings, attach_transcripts
 from app.services.report_builder import ReferencedRecord, WorkshopData, build_report
-from app.services.report_questionnaires import attach_questionnaires, questionnaire_warnings
+from app.services.report_custom_sections import (
+    CustomReportField,
+    CustomSectionItem,
+    attach_custom_sections,
+    custom_sections_of,
+)
 from app.services.report_docx import render_docx
 from app.services.report_model import ImageRef, PageSize, ReportMeta
 from app.services.report_pdf import render_pdf
+from app.services.report_questionnaires import attach_questionnaires, questionnaire_warnings
 from app.services.report_templates import apply_report_settings, template as get_template
 from app.services.report_theme import resolve_accent, resolve_font, theme_from_accent
 from app.services.stage_schema import (
@@ -144,7 +150,13 @@ async def entry_rows(workshop_id: str, *, stage_key: str | None = None) -> list[
 
 
 def workshop_summary(record: Any) -> dict[str, Any]:
-    """The workshop header as the clients read it."""
+    """The workshop header as the clients read it.
+
+    A HAND-WRITTEN DICT AND NOT A DUMP OF THE ROW, which is why a new column reaches a client only by
+    being named here. That is deliberate — the row carries columns no client has any business reading —
+    and it is also the trap: a column added to ``schema.prisma`` and not to this dict is invisible on
+    every surface, and looks from the outside exactly like a column that is never written.
+    """
     return {
         "id": record.id,
         "title": record.title,
@@ -168,6 +180,12 @@ def workshop_summary(record: Any) -> dict[str, Any]:
         "createdAt": record.createdAt.isoformat() if record.createdAt else None,
         "updatedAt": record.updatedAt.isoformat() if record.updatedAt else None,
         "deletedAt": record.deletedAt.isoformat() if record.deletedAt else None,
+        # Tier 3 consent: may this workshop's recordings leave the device? Three keys — the answer, the
+        # moment the ARTISAN gave it, and who took it down. The acceptor's display NAME is deliberately
+        # not here: this dict is serialised once per row by the paged list, and resolving a name would
+        # put a query per workshop into it to print something the list does not show. The single-record
+        # read adds `dictationConsentByName`. See services/dictation_consent.py.
+        **dictation_consent.consent_keys(record),
     }
 
 
@@ -805,9 +823,63 @@ async def seed_designer_prefill(record: Any, user: Any) -> Any:
 # --------------------------------------------------------------------------------------
 
 
+def refused_answer_count(errors: Mapping[str, Any]) -> int:
+    """How many ANSWERS one save refused. The number both surfaces must show, computed once, here.
+
+    ── WHY THE SERVER COUNTS THIS AT ALL ──────────────────────────────────────────────────────────
+    ``errors`` is two levels deep — ``{scope: {field: message}}``, where a scope is ``entityKey`` for
+    a singleton, ``entityKey[i]`` for a collection row, or the reserved custom container. A nested map
+    with no total in it can be counted two ways, and the two clients picked one each:
+
+    * the web read ``Object.keys(saved.errors ?? {}).length`` — the number of SCOPES — and printed it
+      as "The server refused N answer(s)";
+    * Android built one ``DwStageRefusal`` per (scope, field) pair and printed ``refusals.size`` — the
+      number of FIELDS.
+
+    One stage entry with three bad fields is therefore "1 answer" on the web and "3 answers" on the
+    handset, off the same response body, and both sentences use the word *answer*. A designer working
+    across a laptop and a phone is told two different things about one save, and neither surface is
+    lying about what it counted.
+
+    **FIELDS IS THE RIGHT READING AND SCOPES IS NOT A DEFENSIBLE ONE.** An answer is what a designer
+    typed into one box; a scope is a row of the form, and a row is not an answer. The remedy the
+    sentence sends them to — "open the stage to see which fields are marked" — is per-field too, so
+    the count and the instruction disagreed on the web whenever any row held more than one bad value.
+
+    It is returned as ``refusedAnswers`` rather than left to be derived because the shape is what
+    invited the disagreement: a client that has to compute a headline number from a nested map will
+    compute whichever one its author read first, and no amount of documenting ``errors`` prevents
+    that. ``errors`` keeps its exact shape — both clients need it to mark the individual boxes, and
+    Android's ``unplaced`` valve depends on being able to see a scope it cannot place.
+
+    A NON-MAPPING VALUE COUNTS AS ONE, not as its length. Every writer of ``errors`` today puts a
+    ``dict[str, str]`` there, so the branch is unreachable; it exists because ``len()`` of a string
+    would silently return a character count, and "the server refused 47 answers" for one refused
+    field is the kind of number nobody can trace back to a bug.
+    """
+    return sum(
+        len(fields) if isinstance(fields, Mapping) else 1 for fields in errors.values()
+    )
+
+
 async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any) -> dict[str, Any]:
     """Write one stage, returning what was stored, what failed validation and what was dropped."""
-    # SOFT-DELETED ROWS ARE INCLUDED HERE, and that is the whole point of not filtering on
+    # THE DESIGNER'S OWN QUESTIONS, LOADED BEFORE ANYTHING IS VALIDATED, because the answers to them
+    # arrive in the same payload as the registry ones and are validated in the same pass.
+    #
+    # NOT `load_definition_or_empty`. A definition this server could not read would make every
+    # custom key in the payload an unknown key — dropped, reported as drift, and the designer's
+    # fieldwork gone with a 200 beside it. Failing the save is the honest outcome: the phone retries,
+    # and nothing is lost. The read paths make the opposite choice, deliberately, and say so.
+    #
+    # GATHERED WITH THE OTHER TWO READS RATHER THAN AWAITED IN FRONT OF THEM. The three are
+    # independent — the definition, this stage's rows, the workshop header — and the database is in
+    # another region: one round trip measured 756ms against tables whose server-side time is
+    # 0.04-0.24ms, so a third sequential read would have added most of a second to EVERY stage save
+    # on the fleet, including for the workshops with no custom section at all, which is nearly all of
+    # them. This is a write a designer is standing there waiting for. See `services/concurrency`.
+    #
+    # SOFT-DELETED ROWS ARE INCLUDED IN `existing`, and that is the whole point of not filtering on
     # deletedAt. The unique index is (designWorkshopId, entityKey, clientKey) and does NOT carry
     # deletedAt, so a soft-deleted row still occupies its client key. Matching only live rows
     # made the matcher blind to it and the save fell through to an INSERT, which the index
@@ -818,10 +890,14 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # correct behaviour is to RESURRECT the row the client is re-asserting, which is also what
     # keeps the sketch's id — and so the prototypes and reviews that reference it — intact.
     # Inserting a fresh row would have orphaned every one of those references.
-    existing = await db.dwstageentry.find_many(
-        where={"designWorkshopId": workshop_id, "stageKey": spec.key}
+    definition, existing, header_row = await gather_reads(
+        custom_sections.load_definition(workshop_id),
+        db.dwstageentry.find_many(
+            where={"designWorkshopId": workshop_id, "stageKey": spec.key}
+        ),
+        db.designworkshop.find_unique(where={"id": workshop_id}),
     )
-    header_row = await db.designworkshop.find_unique(where={"id": workshop_id})
+    custom_specs = definition.fields_for(spec.key)
     workshop_status = str(getattr(header_row, "status", "DRAFT") or "DRAFT")
     live = [row for row in existing if row.deletedAt is None]
     by_id = {row.id: row for row in live}
@@ -854,7 +930,58 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # plainly named one.
     pending: list[PendingEntry] = []
 
+    # THE RESERVED CONTAINER, HANDLED BEFORE THE ENTITY LOOP AND NOT INSIDE IT.
+    #
+    # `_custom` is not a registry entity and never will be — that is the whole design (see
+    # `services/custom_sections`): it is a `DwStageEntry` row of its own, one per (workshop, stage),
+    # whose `data` is the designer's answers keyed by their own field keys. Handling it here rather
+    # than teaching the loop below about it keeps three things true at once: `promoted_values` and
+    # `hydrate_entries` never see it, `dropped` never gains its entity key, and the collection sweep
+    # cannot reach it because `collection_keys` is derived from `spec.entities`.
+    #
+    # THE INVARIANT THAT MUST NOT BE WIDENED: the sweep is `(touched_entities | emptiedEntities) &
+    # collection_keys`, and `_custom` can never be in `collection_keys`. A later change that widened
+    # that set to "every entityKey the workshop has rows for" would soft-delete a workshop's entire
+    # custom record on the next save that did not mention it — the same shape as the incident
+    # recorded below, where four cost sheets, two buyer links and six prototypes went.
+    custom_entry = next(
+        (e for e in payload.entries if e.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None
+    )
+    custom_row = next(
+        (r for r in live if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None
+    ) or next(
+        (r for r in existing if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None
+    )
+    # EVERY DECISION ABOUT THE CONTAINER IS MADE IN ONE PURE CALL — what to store, what to refuse
+    # and what to report — so the combination of merge, rejected-value preservation and the submit
+    # gate is covered by plain pytest with no Postgres, which is where the subtlety actually lives.
+    custom_write = custom_sections.plan_custom_write(
+        custom_specs,
+        # None and {} are different instructions: no entry at all writes no row (which is what a
+        # client one release behind sends), while an empty container is a designer clearing every
+        # answer and IS written.
+        sent=None if custom_entry is None else (custom_entry.data or {}),
+        previous=dict(custom_row.data or {}) if custom_row is not None else {},
+        merge=bool(custom_entry is not None and custom_entry.merge),
+        submit=payload.submit,
+    )
+    custom_dropped = list(custom_write.dropped)
+    custom_to_store = custom_write.data
+
+    if custom_write.errors:
+        # Under the reserved key itself, which preserves the existing error shape — `entity.key` for
+        # a singleton, `f"{entity.key}[{index}]"` for a collection row — so both clients' existing
+        # error rendering works unchanged. There is no collision with a core field key because the
+        # bucket is separate.
+        errors[custom_sections.CUSTOM_ENTITY_KEY] = custom_write.errors
+
     for index, entry in enumerate(payload.entries):
+        if entry.entityKey == custom_sections.CUSTOM_ENTITY_KEY:
+            # Not appended to `dropped`: this is not an entity this build does not know, it is the
+            # reserved one, and reporting it as drift would fire "this phone is running a newer
+            # field registry than the server" on every save of every workshop that has a custom
+            # section — destroying the one drift signal this repository has.
+            continue
         entity = entities.get(entry.entityKey)
         if entity is None:
             # An entity this build does not know: recorded, not fatal. See the module docstring
@@ -987,6 +1114,38 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                 "createdById": user.id,
             })
 
+    # THE CUSTOM ROW'S OWN WRITE, built exactly like a singleton's and deliberately reusing all
+    # three of the rules the loop above applies — because the row's keys are TOP LEVEL, which is the
+    # single property that made this design cheaper than nesting the container inside a core entry:
+    #
+    #   * the rejected-value preservation loop works verbatim. Typing "65OO" over a saved "6500"
+    #     must not delete the good value, and the keys it indexes `previous` by are the same keys;
+    #   * the shallow `{**previous, **clean}` merge is already correct for a never-read client,
+    #     where a nested container would have needed a recursive merge written for one key;
+    #   * `MAX_FIELD_KEYS` already bounds it, where a nested object is one key and could have
+    #     carried ten thousand.
+    #
+    # A soft-deleted custom row is RESURRECTED rather than duplicated, exactly as a singleton is:
+    # the row is addressed by (workshop, stage, `_custom`) and there is only ever one of it. A
+    # payload that carried no custom entry writes nothing here at all — which is what makes a client
+    # one release behind harmless rather than destructive.
+    if custom_to_store is not None:
+        if custom_row is not None:
+            updates.append((
+                custom_row.id,
+                {"data": _json(custom_to_store), "ordinal": 0, "deletedAt": None},
+            ))
+        else:
+            creates.append({
+                "designWorkshopId": workshop_id,
+                "stageKey": spec.key,
+                "entityKey": custom_sections.CUSTOM_ENTITY_KEY,
+                "ordinal": 0,
+                "data": _json(custom_to_store),
+                "clientKey": None,
+                "createdById": user.id,
+            })
+
     # Rows the client no longer has, in the entities it actually sent. Restricting the sweep to
     # touched entities is what keeps a web form editing one collection from deleting another.
     removed: list[str] = []
@@ -1063,7 +1222,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         await tx.designworkshop.update(where={"id": workshop_id}, data=header)
 
     rows = await entry_rows(workshop_id, stage_key=spec.key)
-    completeness = workshop_completeness(rows).get(spec.key)
+    completeness = workshop_completeness(rows, definition=definition).get(spec.key)
     # AN AUDIO FIELD ON A STAGE IS A RECORDING, AND A RECORDING GETS TRANSCRIBED. This is the one
     # line that puts a workshop clip into exactly the pipeline an interview recording has always
     # used — the same job table, the same off-peak window, the same provider chain and backoff. It
@@ -1072,7 +1231,33 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # says "that file is the artisan's spoken explanation for stage 5". It is idempotent (a clip
     # that has a transcript, or a job already queued, is skipped) and it never raises, so a queue
     # that is unavailable cannot fail a designer's stage save. See services/workshop_transcripts.py.
-    queued = await enqueue_stage_transcriptions(rows, user.id, viewer=user)
+    #
+    # AND IT IS GATED ON THE ARTISAN'S CONSENT, which is what `design_workshop_id` is doing here. Until
+    # this argument existed, this line reported `transcriptionsQueued: 1` on a workshop whose
+    # `dictationConsent` was NOT_RECORDED — in the same minute that `POST /{id}/dictate` refused the
+    # same workshop with a 409 and the sentence "nobody has recorded yet whether recordings from this
+    # workshop may be sent". The id is right here in the path, so nothing needs resolving: it is handed
+    # down and `enqueue_media_processing_jobs` refuses any clip whose workshop has not answered GRANTED.
+    queued = await enqueue_stage_transcriptions(
+        rows, user.id, viewer=user, design_workshop_id=workshop_id
+    )
+    # WHY NOTHING WAS QUEUED, WHEN THE REASON IS A PERSON'S DECISION RATHER THAN A NIGHT NOT YET COME.
+    #
+    # `transcriptionsQueued: 0` is ambiguous by construction — it is also what a re-save of an
+    # already-queued stage reports, which is the common case and is fine. Silence is not fine when the
+    # cause is the consent gate: the recording sits on the transcripts screen with no text, and
+    # `report_annexures.missing_transcript_note` counts it among the clips that "have no transcript
+    # yet", so a designer waits for a night that never arrives and reports the feature as broken. It is
+    # not broken; nobody has asked the artisan. That is a sentence, and it belongs on the screen the
+    # designer is looking at when they attach the recording.
+    #
+    # ASKED ONLY WHEN THIS STAGE ACTUALLY HOLDS AUDIO, so no read is spent on the twenty stages that
+    # carry none, and no message is shown to a designer who was not trying to transcribe anything.
+    consent_note = ""
+    if audio_references(rows):
+        verdict = await dictation_consent.workshop_send_verdict(workshop_id, about=spec.key)
+        if not verdict.may_send:
+            consent_note = verdict.refusal or ""
     return {
         "stageKey": spec.key,
         "saved": len(creates) + len(updates),
@@ -1080,10 +1265,43 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         "updated": len(updates),
         "removed": len(removed),
         "errors": errors,
+        # THE HEADLINE NUMBER, COUNTED ONCE ON THE SERVER SO THE TWO SURFACES CANNOT DISAGREE ABOUT
+        # IT. `errors` is a nested map and both clients were deriving their own total from it — the
+        # web counting scopes, Android counting fields — so one refused stage entry with three bad
+        # values was "1 answer" on a laptop and "3 answers" on the phone. See `refused_answer_count`
+        # for why fields is the right reading. `errors` is unchanged and stays the authority on WHICH
+        # box is marked; this is only the total, which nothing else in the response carried.
+        "refusedAnswers": refused_answer_count(errors),
         "droppedKeys": sorted(set(dropped)),
+        # CUSTOM DRIFT GETS ITS OWN FIELD AND ITS OWN SENTENCE, AND NEVER `droppedKeys`.
+        #
+        # `droppedKeys` is the only client/server registry-drift signal this repository has, and both
+        # clients render it in exactly those words: "this phone is running a newer field registry
+        # than the server". A custom key the server's definition does not carry is a DIFFERENT fact
+        # with a different remedy — the definition was edited, not the app — and feeding it into that
+        # signal would fire the banner on every save of every workshop that has a custom section.
+        # The people who read that banner would learn to ignore it, which is precisely what the note
+        # above the dropped-key computation says must never happen.
+        #
+        # Safe on every client that has never heard of it: Android decodes with
+        # `ignoreUnknownKeys = true` and the web reads only the keys it names.
+        "droppedCustomKeys": sorted(set(custom_dropped)),
         "completeness": completeness,
         "transcriptionsQueued": len(queued),
+        # The gate's own sentence when this workshop's recordings may not be sent, and "" otherwise.
+        #
+        # A STRING AND NOT A BOOLEAN, for the reason `dictation_consent.gate_refusal` gives: the two
+        # states that refuse have different next moves — one is answered by asking the artisan, the
+        # other only by the artisan changing their mind — and a flag would collapse them into one
+        # message a client would have to invent. Empty rather than absent so a client can branch on
+        # truthiness, and additive so every shipped build ignores it (Android decodes with
+        # `ignoreUnknownKeys = true`; the web reads only the keys it names).
+        "transcriptionConsentRefusal": consent_note,
         "schemaVersion": registry_version(),
+        # The digest of the definition this save was validated against, so a client can tell its
+        # cached copy is stale without a second request. Empty for a workshop that has none, which
+        # is a different fact from "I hold nothing" and is why it is not omitted.
+        "customSchemaVersion": definition.version,
     }
 
 
@@ -1144,23 +1362,45 @@ def _coerce_promoted(promoted: dict[str, Any], touched_entities: set[str]) -> di
 # --------------------------------------------------------------------------------------
 
 
-def workshop_completeness(entries: list[Any]) -> dict[str, Any]:
-    """Score every stage from the entry rows, in one pass."""
+def workshop_completeness(
+    entries: list[Any], *, definition: Any = None
+) -> dict[str, Any]:
+    """Score every stage from the entry rows, in one pass.
+
+    ``definition`` is this workshop's custom sections, as ``custom_sections.load_definition``
+    returns them. **Optional, and its absence means "this workshop has no designer-defined fields"
+    rather than "do not count them"** — which is true of every workshop that has never had one, and
+    is what lets the five call sites be converted without a flag day. Every call site that can reach
+    the definition passes it; a caller that could not would silently report a stage as complete that
+    the submit gate then refuses, so there is deliberately no third state here to get wrong.
+    """
     singletons: dict[str, dict[str, Any]] = {}
     collections: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    # THE RESERVED ROW IS PICKED OUT HERE, and this is the third of the four places the design's
+    # price is paid. Without it the `_custom` row falls into the `else` branch below and is scored
+    # as a COLLECTION row of an entity the registry does not know — which is harmless in that the
+    # collection loop only walks `spec.collections`, and wrong in that the answers would then be
+    # counted by nothing at all.
+    custom_values: dict[str, dict[str, Any]] = {}
     cardinality = {e.key: e.cardinality for s in stages() for e in s.entities}
 
     for row in entries:
         data = dict(row.data or {})
-        if cardinality.get(row.entityKey) is Cardinality.SINGLETON:
+        if row.entityKey == custom_sections.CUSTOM_ENTITY_KEY:
+            custom_values[row.stageKey] = data
+        elif cardinality.get(row.entityKey) is Cardinality.SINGLETON:
             singletons[row.stageKey] = data
         else:
             collections.setdefault(row.stageKey, {}).setdefault(row.entityKey, []).append(data)
 
+    fields_by_stage = definition.fields_by_stage() if definition is not None else {}
+
     out: dict[str, Any] = {}
     for spec in stages():
         score = stage_completeness(
-            spec, singletons.get(spec.key, {}), collections.get(spec.key, {})
+            spec, singletons.get(spec.key, {}), collections.get(spec.key, {}),
+            custom_fields=fields_by_stage.get(spec.key, ()),
+            custom_values=custom_values.get(spec.key, {}),
         )
         out[spec.key] = {
             "stageKey": score.stage_key,
@@ -1205,6 +1445,16 @@ def assemble_workshop_data(record: Any, entries: list[Any]) -> WorkshopData:
         # beginning with `_`, so this cannot collide with captured data and is ignored by every
         # renderer that walks the field list.
         data["_entryId"] = row.id
+        if row.entityKey == custom_sections.CUSTOM_ENTITY_KEY:
+            # THE RESERVED ROW BELONGS IN NEITHER BUCKET, and this is the fourth of the four places
+            # the design's price is paid. Left to fall through it would land in `collections` as a
+            # collection of an entity the registry does not know — never printed, because
+            # `_render_stage` walks `spec.collections`, and never scored, because the completeness
+            # loop does the same, so a designer's answers would be silently absent from the document
+            # they were captured for. They reach the report on their own attribute instead, paired
+            # with the definition that says what each key was asking: see
+            # `attach_report_custom_sections`, which reads these same rows.
+            continue
         if cardinality.get(row.entityKey) is Cardinality.SINGLETON:
             singletons[row.stageKey] = data
         else:
@@ -1354,6 +1604,19 @@ async def attach_report_references(data: WorkshopData, entries: list[Any]) -> li
     """
     data.references = await load_report_references(entries)
     return [r.photo for r in data.references.values() if r.photo]
+
+
+def workshop_media_ids(entries: list[Any]) -> set[str]:
+    """Every media id this workshop's stage entries reference. The public name for :func:`_media_ids`.
+
+    **A NAME AND NOT A SECOND IMPLEMENTATION**, added when the AI verbs needed to answer "is this
+    photograph one of THIS workshop's" before spending provider credit on it. The route could not
+    import ``_media_ids`` — a leading underscore across a module boundary is a promise being broken —
+    and it must not walk the registry itself, because a second walker is a second thing to forget
+    when a media field is added. The plan's §4 records what five independent media walkers already
+    cost this repository; this is deliberately not a sixth.
+    """
+    return _media_ids(entries)
 
 
 def _media_ids(entries: list[Any]) -> set[str]:
@@ -1555,6 +1818,326 @@ async def attach_report_transcripts(
     return warnings + annexure_warnings(items)
 
 
+async def attach_report_ai_layers(
+    data: WorkshopData,
+    workshop_id: str,
+    *,
+    viewer: Any,
+    readable_media: Callable[[set[str]], Awaitable[set[str]]],
+    requested: bool = False,
+) -> list[str]:
+    """Load this workshop's ACCEPTED AI layers onto ``data``. Returns the warnings to show.
+
+    NOTHING IS LOADED UNLESS THE REPORT WAS ASKED FOR THE ANNEXURE, so a deployment that never turns
+    this on never pays a query for it — the same rule :func:`attach_report_transcripts` follows, and
+    for the same reason.
+
+    ── ``viewer`` IS NOT OPTIONAL, AND ITS ABSENCE WAS A LIVE DISCLOSURE DEFECT ──────────────────
+
+    A layer's text is a COPY OF A TRANSCRIPT, and a transcript is the CONTENT of a recording. Who may
+    read one is decided **per file** by ``owned_or_granted_where(user, owner_field="uploadedById")``
+    and NOT by who may open the workshop — and those two sets genuinely differ, because a
+    ``DesignWorkshopViewer`` grant carries read and stage writes and says nothing whatever about
+    media. ``ai_layers.accepted_layers`` states in capitals that its read is not entitlement-filtered
+    and that its caller must be.
+
+    This function had no ``viewer`` at all and copied ``row.text`` verbatim. So: designer A uploads
+    the interviews and accepts their layers; designer B holds only a viewer grant and no data-access
+    grant from A. On the AI-layers screen every row comes back ``textWithheld``. ``GET
+    /design-workshops/{id}/transcripts`` refuses B the same text. **And B could tick "Include
+    machine-assisted text", generate, and receive the complete transcripts in a .docx they keep — in
+    the very same file whose transcript annexure correctly omitted them and said so.**
+
+    ``readable_media`` is passed IN rather than imported because the predicate lives in the routes
+    module beside the endpoint that already applies it (``_readable_media_ids``); one definition,
+    two callers, and this service keeps its rule about not importing the API layer.
+
+    **PROVENANCE SURVIVES WITHHOLDING; ONLY THE CONTENT GOES.** That is the whole reason a withheld
+    layer is not simply dropped. Which tier and which model produced a passage, and who accepted it,
+    is exactly what a reviewer needs and is not the recording's content — and a layer silently absent
+    from an annexure is indistinguishable from a layer nobody ever made.
+
+    THE FILTER IS ``ai_layers.accepted_layers`` AND NOT A ``where`` WRITTEN HERE. That function is
+    the single definition of what "accepted" means, and it says why in its own docstring: the day
+    acceptance grows a condition — an expiry, a second signature, a withdrawal that must be honoured
+    mid-render — a report carrying its own copy of the rule would go on printing by the old one and
+    nothing would say so. **It is now actually called.** It was not, for a day: this function read
+    ``workshop_layers`` and re-derived acceptance from ``acceptedAt``, so five files described a
+    single definition that nothing used and the guarantee was documentation. The live set decides
+    what prints; the full set is still read, because the warnings need it.
+
+    THE WARNINGS ARE COMPUTED FROM EVERY LIVE LAYER, not from the accepted ones, which is why this
+    reads the workshop twice-over rather than only the accepted set. A layer left out for want of an
+    acceptance is the one omission that looks like a bug to the designer who turned the annexure on:
+    they read the summary on the acceptance screen an hour ago and it is missing from a sixty-page
+    document. That sentence is the whole reason this function is not three lines.
+
+    NO PROVENANCE IS INVENTED HERE. ``provider`` and ``modelId`` are NOT NULL columns that may hold
+    the literal ``UNRECORDED``, because the media queue has never persisted which of its four
+    providers produced a transcript; the renderer turns that into "the model was not recorded" and
+    this function passes it through untouched.
+    """
+    if not requested:
+        return []
+    from app.services.ai_layers import (
+        LayerRuleViolation,
+        accepted_layers,
+        chain_roots,
+        media_ids_to_check,
+        source_of,
+        workshop_layers,
+    )
+    from app.services.report_ai_layers import (
+        AiLayerItem,
+        annexure_warnings as ai_warnings,
+        attach_ai_layers,
+    )
+
+    try:
+        rows = await workshop_layers(workshop_id)
+        # THE SINGLE DEFINITION OF "ACCEPTED", ASKED RATHER THAN RE-DERIVED. Membership of this set
+        # is what decides whether a layer may print; `acceptedAt` on the row decides only what the
+        # warnings say about it.
+        printable = {
+            str(getattr(row, "id", "") or "")
+            for row in await accepted_layers(workshop_id)
+        }
+    except Exception:
+        # Blind, exactly as :func:`attach_report_questionnaires` is blind, and for its reason: one
+        # unreadable annexure must not take away a designer's ability to generate any report at all.
+        logger.exception("ai layers could not be loaded for workshop %s", workshop_id)
+        return [
+            "The machine-assisted text could not be read for this report, so the annexure is not "
+            "included. Everything else in this document is unaffected."
+        ]
+
+    # WHAT EACH LAYER ULTIMATELY STANDS ON, walked through the chain by `chain_roots`, because a
+    # SUMMARY three rungs up is still the content of the audio at the bottom of it.
+    #
+    # `chain_roots` AND NOT `media_roots`, and the difference is a defect this loader would otherwise
+    # have shipped the day the verbs landed. `media_roots` answers None for "no recording", which had
+    # one meaning — the chain is broken, so withhold — and now has two: a PROOFREAD or an EXPANDED of
+    # a designer's own note stands on words, not on a recording, and has no media entitlement to
+    # check. Read through the old function every one of those would be withheld from the designer who
+    # wrote the note, in their own report, with the annexure printing "the text of this passage is
+    # not printed in this copy" over a paragraph they typed themselves.
+    roots = chain_roots(rows)
+    wanted = media_ids_to_check(roots)
+    try:
+        readable = await readable_media(wanted) if wanted else set()
+    except Exception:
+        # FAIL CLOSED. An entitlement check that could not run is not permission — the content is
+        # withheld and the provenance still prints, which is the same answer a refused check gives.
+        logger.exception("media entitlement could not be resolved for workshop %s", workshop_id)
+        readable = set()
+
+    items: list[AiLayerItem] = []
+    withheld_count = 0
+    for row in rows:
+        layer_id = str(getattr(row, "id", "") or "")
+        source_kind = source_id = source_text = ""
+        try:
+            stored = source_of(row)
+            source_kind, source_id = stored.kind.value, stored.id
+            source_text = stored.text or ""
+        except LayerRuleViolation:
+            # A row whose source cannot be read still prints, with the origin left blank. Dropping
+            # it would be worse: it is accepted text that a person put their name to, and a reader
+            # who cannot trace it is better served than one who never learns it is there.
+            pass
+        # A layer whose root could not be established at all is withheld, not printed. That is the
+        # fail-closed direction, and `ChainRoot.withheld_from` is the single place the whole gate is
+        # decided so this loader and the list endpoint cannot answer it differently.
+        root = roots.get(layer_id)
+        text_withheld = root is None or root.withheld_from(readable)
+        if text_withheld:
+            withheld_count += 1
+        items.append(AiLayerItem(
+            layer_id=layer_id,
+            kind=str(getattr(row, "kind", "") or ""),
+            tier=str(getattr(row, "tier", "") or ""),
+            provider=str(getattr(row, "provider", "") or ""),
+            model_id=str(getattr(row, "modelId", "") or ""),
+            model_version=str(getattr(row, "modelVersion", "") or ""),
+            language=str(getattr(row, "language", "") or ""),
+            source_language=str(getattr(row, "sourceLanguage", "") or ""),
+            target_language=str(getattr(row, "targetLanguage", "") or ""),
+            produced_at=_iso_or_blank(getattr(row, "producedAt", None)),
+            # `printable`, not `acceptedAt is not None`. See the docstring.
+            accepted=layer_id in printable,
+            accepted_at=_iso_or_blank(getattr(row, "acceptedAt", None)),
+            accepted_by=_acceptor_name(row),
+            accepted_by_id=str(getattr(row, "acceptedById", "") or ""),
+            source_kind=source_kind,
+            source_id=source_id,
+            # THE NOTE A VERB WAS RUN OVER IS THE "MADE FROM" EVIDENCE FOR THAT LAYER, so it reaches
+            # the page as the source LABEL — there is no row for a reader to look up instead. It goes
+            # with the content when the text is withheld, for `layer_payload`'s reason: serving the
+            # passage while withholding the correction of it hands over the same words in a slightly
+            # worse spelling.
+            source_label="" if text_withheld else source_text,
+            text="" if text_withheld else str(getattr(row, "text", "") or ""),
+            text_withheld=text_withheld,
+        ))
+
+    attach_ai_layers(data, items)
+    warnings = ai_warnings(items)
+    # NAMED, NEVER SILENT — the same rule `attach_report_transcripts` follows one function above for
+    # exactly this case. A designer who cannot read a colleague's recordings should learn that from
+    # the generator, not by counting headings in a sixty-page document.
+    printable_withheld = sum(
+        1 for item in items if item.text_withheld and item.accepted
+    )
+    if printable_withheld:
+        warnings.append(
+            f"{printable_withheld} accepted machine-assisted passage(s) are named in the annexure "
+            "with their model and provenance, but their text is not printed: they stand on "
+            "recordings uploaded by another account. Ask whoever uploaded them for access to their "
+            "media, or ask them to generate this report."
+        )
+    return warnings
+
+
+def _acceptor_name(row: Any) -> str:
+    """The acceptor's display name when the row carried the relation, else "".
+
+    RESOLVED FROM AN INCLUDE, NOT FROM A SECOND QUERY PER LAYER. ``accepted_layers`` and
+    ``workshop_layers`` may or may not have been asked to include the relation; when they were not,
+    this returns "" and :attr:`AiLayerItem.acceptor` prints the account id **labelled as an account
+    id**. Both are honest; only a bare unlabelled cuid is not, and that is what the annexure printed
+    for a day beneath a lead paragraph promising a named person.
+    """
+    accepted_by = getattr(row, "acceptedBy", None)
+    if accepted_by is None:
+        return ""
+    for attribute in ("fullName", "name", "email"):
+        value = getattr(accepted_by, attribute, None)
+        if value and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _iso_or_blank(value: Any) -> str:
+    """A datetime as an ISO string, or "" when it was never recorded.
+
+    Blank rather than a fabricated ``now()``: ``producedAt`` is null precisely when nobody knows
+    when the model ran — a transcript produced last March and registered as a layer today would
+    otherwise carry today's date, which is the invented fact rule 2 exists to prevent.
+    """
+    if value is None:
+        return ""
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+async def attach_report_custom_sections(
+    data: WorkshopData, entries: list[Any], workshop_id: str
+) -> list[str]:
+    """Load this workshop's own sections and their answers onto ``data``. Returns the warnings.
+
+    THIS FUNCTION LOADS; IT DOES NOT PLACE. Where each section prints is decided by
+    ``report_templates.apply_report_settings``, which is the single arbiter of the running order and
+    was made one because three call sites used to decide for themselves and disagreed. It reads the
+    sections back off ``data`` through ``custom_sections_of`` — the same tuple attached here, so the
+    template and the renderer cannot be looking at two different definitions of one workshop.
+
+    NO TOGGLE TO CONSULT, and for ``attach_report_questionnaires``' reason rather than by omission:
+    a designer who added a question to this workshop and answered it has already opted in twice
+    over. There is nothing here that could happen TO a report — unlike a transcript, which the media
+    queue produces from a recording made for some other purpose, or an annexure of model prose.
+
+    THE ANSWERS ARE READ FROM ``entries`` AND NOT LOADED AGAIN. They are already in hand — the
+    ``_custom`` row of each stage is an ordinary ``DwStageEntry`` that ``entry_rows`` returned with
+    everything else — so the only query this function makes is for the DEFINITION, which is the half
+    that says what each stored key was asking.
+
+    A DEFINITION THAT COULD NOT BE READ COSTS THE SECTIONS AND NOT THE REPORT. That is the opposite
+    of the choice ``save_stage`` makes with the same loader, and the two are deliberately different:
+    a save that silently dropped a designer's answers as unknown keys would lose fieldwork, while a
+    report is the end of two weeks of it and must not be refused over an appendix. The designer is
+    told either way.
+    """
+    definition = await custom_sections.load_definition_or_empty(workshop_id)
+    if definition.is_empty:
+        return []
+
+    values_by_stage: dict[str, dict[str, Any]] = {
+        row.stageKey: dict(row.data or {})
+        for row in entries
+        if row.entityKey == custom_sections.CUSTOM_ENTITY_KEY
+    }
+
+    items: list[CustomSectionItem] = []
+    for section in definition.sections:
+        item = CustomSectionItem(
+            key=section.key,
+            title=section.title,
+            stage_key=section.stage_key,
+            description=section.description,
+            sort_order=section.sort_order,
+            fields=tuple(
+                CustomReportField(
+                    key=f.key,
+                    label=f.label,
+                    type=f.type.value,
+                    unit=f.unit,
+                    options=tuple((o.value, o.display) for o in f.options),
+                    required=f.required,
+                    # A RETIRED SECTION'S FIELDS ARE RETIRED, whatever their own flag says, and this
+                    # is not cosmetic. A section's flag and its fields' flags are two facts, and only
+                    # one of them answers "is this asked" for a field under a section nobody is being
+                    # asked — a row retired by hand, restored from a backup, or written by a build
+                    # before `plan_definition`'s section RETIRE carried a RETIRE plan for every live
+                    # field under it, which is what makes this belt and braces rather than the only
+                    # guard. The completeness annexure re-scores every stage through
+                    # `custom_scoring`, which reads exactly this flag. Passing the field's own flag
+                    # through made the annexure count a required question of a section nobody is
+                    # being asked, so a document printed "3 required fields outstanding" for a stage
+                    # the readiness screen and `workshop_completeness` both called complete: one
+                    # workshop, two
+                    # arithmetics, which is the defect this repository has already shipped once.
+                    # Marked here rather than in the loader because it is the REPORT's reading of a
+                    # retired section: the answers still print, under the wording they were given,
+                    # and the marker beside them says they are no longer asked.
+                    retired=f.retired or section.retired,
+                )
+                for f in section.fields
+            ),
+            values=values_by_stage.get(section.stage_key, {}),
+        )
+        if section.retired and not item.answered_count:
+            # A retired section nobody ever answered is not evidence of anything, and printing an
+            # empty heading for every block a designer thought better of would fill a submitted
+            # report with the history of its own form.
+            #
+            # ASKED THROUGH `answered_count` AND NOT THROUGH THE TRUTHINESS OF THE STORED VALUES.
+            # The first version tested `values.get(key)` directly, which reads a recorded ZERO as no
+            # answer — so a retired "How many looms?" answered "0", which is a finding and a
+            # perfectly ordinary one in a cluster where the looms have been sold, was dropped out of
+            # the document altogether. `answered_count` is `_has_answer`, which this module uses for
+            # every other decision about the same values.
+            continue
+        items.append(item)
+
+    attach_custom_sections(data, items)
+    warnings: list[str] = []
+    unanswered = [
+        item for item in items
+        if not item.answered_count and any(not f.retired for f in item.fields)
+    ]
+    if unanswered:
+        # NAMED RATHER THAN SILENT, for the reason the AI annexure's warning gives: a block the
+        # designer added themselves and then finds missing from a sixty-page document reads as a
+        # bug in the app. Saying which one, and that it is empty rather than lost, is the difference
+        # between "the feature is broken" and "we did not get to those questions".
+        warnings.append(
+            f"{len(unanswered)} of this workshop's own section(s) have no answers recorded and are "
+            f"not in this file: "
+            + ", ".join(sorted(item.title for item in unanswered)[:4])
+            + ("…" if len(unanswered) > 4 else "")
+        )
+    return warnings
+
+
 async def attach_report_questionnaires(data: WorkshopData, workshop_id: str) -> list[str]:
     """Load this workshop's own questionnaires onto ``data``. Returns the warnings to show.
 
@@ -1743,6 +2326,21 @@ def render_report(data: WorkshopData, template_id: str, resolver: Any, record: A
         settings,
         include_photographs=(getattr(options, "includePhotographs", None)
                              if options is not None else None),
+        # THE ONE SECTION THIS FUNCTION ADDS RATHER THAN REMOVES, and the only one driven by the
+        # request alone. It is not in any template and has no stage-20 answer behind it: an annexure
+        # of machine-written text is a decision made per document, by the person who is about to
+        # hand that document to somebody. See `SpecialSection.ANNEXURE_AI_LAYERS`.
+        include_ai_layers=(getattr(options, "includeAiLayers", None)
+                           if options is not None else None),
+        # THE DESIGNER'S OWN SECTIONS, READ BACK OFF THE DATA THEY WERE LOADED ONTO rather than
+        # loaded a second time. One definition reaches both the template and the renderer, so the
+        # section this places after stage 13 is the same section the builder then draws — two loads
+        # could straddle a definition edit and leave a heading with nothing under it.
+        #
+        # NO TOGGLE AND NO REQUEST FLAG. A workshop with no custom sections passes an empty tuple
+        # and gets the identity return, so every existing report — and every one of the 38 pinned
+        # `apply_report_settings` cases in the 485 KB Kotlin fixture — is untouched.
+        custom_sections=custom_sections_of(data),
     )
 
     document, warnings = build_report(data, template_id, resolver.ref, meta=meta, theme=theme,

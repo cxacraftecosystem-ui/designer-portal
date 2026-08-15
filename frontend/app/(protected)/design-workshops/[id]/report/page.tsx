@@ -117,6 +117,7 @@ import {
   type DwTemplate,
   type DwTranscriptList
 } from "@/lib/designWorkshops";
+import { listDesignWorkshopAiLayers } from "@/lib/aiLayers";
 import { loadDraft } from "@/lib/designWorkshopStore";
 import { ACCENT_PRESETS } from "@/lib/reportTheme";
 import { ApiError } from "@/lib/api";
@@ -180,6 +181,39 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   const [previewing, setPreviewing] = useState(true);
   const [transcripts, setTranscripts] = useState<DwTranscriptList | null>(null);
   const [transcriptOverride, setTranscriptOverride] = useState<TranscriptOverride>("");
+  /**
+   * Whether THIS file carries the annexure of accepted machine-assisted text.
+   *
+   * A PLAIN BOOLEAN, NOT A {@link TranscriptOverride}, and the asymmetry is the point. The
+   * transcript control is tri-state because it OVERRIDES a saved stage-20 answer and `undefined`
+   * has to mean "leave that answer alone". This one overrides nothing: no template declares the
+   * section, no stage-20 field backs it, and the server splices it in on an explicit `true` alone.
+   * A third value here would be a state that means the same as `false` and invite somebody to
+   * store it in stage 20 later, which is where the tri-state's real complexity comes from.
+   *
+   * ALWAYS OFF AT FIRST DRAW, AND DELIBERATELY NOT REMEMBERED. Putting a machine's words into a
+   * document that goes to a ministry officer is a decision, and a decision that persists silently
+   * across exports is one nobody makes twice — they make it once and then stop seeing it.
+   */
+  const [includeAiLayers, setIncludeAiLayers] = useState(false);
+  /**
+   * How many accepted layers the annexure would print, or null while unknown.
+   *
+   * WHY A COUNT AND NOT A PREVIEW. `TranscriptAnnexurePanel` beside this exists because "generating
+   * sixty pages to find out what is in it is not a preview", and the same argument applies here with
+   * one difference: a transcript annexure's contents are unread by anybody, while every layer this
+   * would print has ALREADY been read and signed for on the AI-layers screen. So the open question
+   * is not "what does it say" but "is there anything there at all" — which a number answers and a
+   * panel would only repeat.
+   *
+   * NULL IS AN HONEST STATE AND IS RENDERED AS ONE. The read can fail — offline, or a colleague with
+   * workshop access but not media access — and a zero would then say "nothing has been accepted",
+   * which is a claim, not an absence. It is fetched only when the box is ticked: a designer who
+   * never uses this must not pay a request for it on every visit to the report screen, which is the
+   * same rule the transcript list follows two effects below.
+   */
+  const [acceptedLayerCount, setAcceptedLayerCount] = useState<number | null>(null);
+  const [acceptedLayersUnknown, setAcceptedLayersUnknown] = useState(false);
   /**
    * The accent colour for the NEXT file, empty for "whatever stage 20 and the template say".
    *
@@ -380,6 +414,38 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     };
   }, [id, annexureWanted]);
 
+  /**
+   * How many accepted layers the machine-assisted annexure would carry — read only once the box is
+   * ticked, exactly as the transcript list above is read only once that annexure is in play.
+   *
+   * THE FAILURE IS NOT SILENT HERE, and that is the difference from the effect above. A transcript
+   * list that fails to load costs a supporting panel nobody asked for. This number stands next to a
+   * decision about whether model prose enters a submitted document, and a silent failure would
+   * leave the sentence beside the checkbox reading as though it had counted and found nothing. So a
+   * failed read is recorded as UNKNOWN and said in those words.
+   */
+  useEffect(() => {
+    if (!includeAiLayers) return;
+    let cancelled = false;
+    setAcceptedLayersUnknown(false);
+    void listDesignWorkshopAiLayers(id)
+      .then((next) => {
+        if (cancelled) return;
+        setAcceptedLayerCount(next.accepted);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // NOT setAcceptedLayerCount(0). Zero is a claim that nothing has been accepted; this is the
+        // absence of an answer, and the two send a designer to different places — one to the AI
+        // layers screen to accept something, the other to their connection.
+        setAcceptedLayerCount(null);
+        setAcceptedLayersUnknown(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, includeAiLayers]);
+
   const templateName = templates.find((template) => template.id === templateId)?.name ?? preview?.meta.templateName ?? "";
   const { headerText, footerText } = useMemo(
     () => runningFurniture(detail, settings, templateName),
@@ -448,7 +514,17 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         themeAccent: accentOverride || undefined,
         // `undefined` means "whatever stage 20 says"; sending `false` for it would strip an
         // annexure the designer had already asked for and saved.
-        includeTranscripts: transcriptOverride === "" ? undefined : transcriptOverride === "YES"
+        includeTranscripts: transcriptOverride === "" ? undefined : transcriptOverride === "YES",
+        // THE SWITCH THAT WAS MISSING, and its absence was the whole defect rather than a rough
+        // edge. `report_ai_layers` renders the annexure, `ReportBuilder.build` has the branch,
+        // `attach_report_ai_layers` loads it and `apply_report_settings` splices the section — and
+        // no client sent the flag, so `ReportGenerateIn.includeAiLayers` took its default of false
+        // on every report either app has ever produced. That is the shape this repository has
+        // already shipped once: the transcript annexure was a complete, tested module with no call
+        // site, and every report silently dropped it while three surfaces promised the office's
+        // copy would carry it. Sent unconditionally rather than only when true, so the request says
+        // what the designer chose rather than leaving the server to infer it from silence.
+        includeAiLayers
       });
       saveBlobToDisk(file.blob, file.fileName);
       // Shown whether or not there were any: "generated with no warnings" is information, and a
@@ -558,6 +634,84 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                 ? "This file only. The preview below is built from the saved setting, so the annexure may not appear in it."
                 : "This file only. The saved setting is untouched and the next report will follow it again."}
           </p>
+        </div>
+
+        {/*
+          THE MACHINE-ASSISTED-TEXT ANNEXURE. A checkbox rather than a dropdown, because unlike the
+          transcript control above it overrides no saved answer — there is no "leave stage 20 alone"
+          state for it to carry, so three options would be two that mean the same thing.
+
+          THE SENTENCE UNDER IT IS THE CONTROL. What is being agreed to is that prose a model wrote
+          enters a document somebody signs, and the one protection against that being done
+          absent-mindedly is that nothing unaccepted can print: a person has already read each
+          passage against its source and put their name to it on the AI-layers screen. Saying so
+          here is what makes this tick a confirmation rather than a preference.
+        */}
+        <div className="grid gap-3 md:grid-cols-[minmax(0,22rem)_1fr] md:items-start">
+          <label className="flex items-start gap-2.5 text-sm font-medium leading-6 text-ink-900">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border-line-300 text-purple-700"
+              checked={includeAiLayers}
+              onChange={(event) => setIncludeAiLayers(event.target.checked)}
+            />
+            <span>Include machine-assisted text</span>
+          </label>
+          <div className="grid gap-1.5 text-sm leading-6 text-ink-muted">
+            <p>
+              {includeAiLayers
+                ? "This file will carry an annexure of the transcripts, summaries and readings a person has accepted, each named as machine-assisted and each printed with the model that produced it and the person who accepted it. Nothing unaccepted is printed."
+                : "Off. Transcripts, summaries and readings produced automatically are left out of this file entirely. Accept them on the workshop's AI layers screen first; what is accepted there is what this can print."}
+            </p>
+            {/*
+              WHAT THE TICK WILL ACTUALLY DO, said before the sixty pages rather than after them.
+              Three states and not two: a number, an honest unknown, and nothing at all while the box
+              is unticked. The unknown matters more than the number — a read can fail because the
+              designer is offline or because they hold the workshop but not the recordings, and a
+              "0" in either case would tell them nobody has accepted anything, which is a claim
+              rather than an absence and sends them to the wrong screen.
+            */}
+            {includeAiLayers ? (
+              <p aria-live="polite" className="font-medium text-ink-700">
+                {acceptedLayersUnknown ? (
+                  <>
+                    This page could not read the workshop&rsquo;s layers just now, so it cannot say how many would be
+                    printed. The report will still carry whatever is accepted — open{" "}
+                    <Link href={`/design-workshops/${id}/ai-layers`} className="underline">
+                      AI layers
+                    </Link>{" "}
+                    to check.
+                  </>
+                ) : acceptedLayerCount === null ? (
+                  "Counting what has been accepted…"
+                ) : acceptedLayerCount === 0 ? (
+                  // SAYS "NO ANNEXURE" AND DOES NOT PROMISE A NOTE. An earlier draft of this line
+                  // said the file would come back "with a note beside the download saying why", and
+                  // that is only true when layers EXIST and are unaccepted — `annexure_warnings`
+                  // counts unaccepted and empty items, so a workshop with no layers at all hands it
+                  // an empty list and it returns nothing. Promising a note that does not arrive is
+                  // how a designer concludes the tick did nothing at all, which is the failure this
+                  // whole count exists to prevent. The count is already on screen and is the answer.
+                  <>
+                    Nothing has been accepted, so this file will carry no annexure — ticking the box changes nothing
+                    until something is. Accept what belongs in it on{" "}
+                    <Link href={`/design-workshops/${id}/ai-layers`} className="underline">
+                      AI layers
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  <>
+                    {acceptedLayerCount} accepted {acceptedLayerCount === 1 ? "layer" : "layers"} will be printed.{" "}
+                    <Link href={`/design-workshops/${id}/ai-layers`} className="underline">
+                      Read them first
+                    </Link>{" "}
+                    if you have not — the preview below does not show this annexure.
+                  </>
+                )}
+              </p>
+            ) : null}
+          </div>
         </div>
 
         {/* Between the two dropdowns and the download buttons, because it is the last decision
