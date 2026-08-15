@@ -214,14 +214,18 @@ device:**
    nothing whatever about the requesting device — `backend/app/api/routes/app_release.py:154`
    `download_latest_apk()`, over the row `_latest_release()` picks at line 59.
 3. The handset's own updater fetches that same single file —
-   `android/…/data/WorkshopRepository.kt:1504` `downloadApk()` — and hands it to the system
-   installer at `MainActivity.kt:2413`.
-4. The prompt it answers **has no "Later"** — `MainActivity.kt:2322`,
-   `onDismissRequest = { /* required update: cannot be dismissed */ }`.
+   `WorkshopRepository.downloadApk()`, in
+   `android/app/src/main/java/com/designprototype/workshop/data/WorkshopRepository.kt` — and hands it
+   to the system
+   installer in `MainActivity.kt` — grep `application/vnd.android.package-archive`, the install
+   intent's MIME type, which appears there once for this purpose.
+4. The prompt it answers **has no "Later"** — in `MainActivity.kt`,
+   `onDismissRequest = { /* required update: cannot be dismissed */ }`, whose comment is its own
+   search key.
 
 **An App Bundle buys nothing and breaks the publisher.** Nothing in that chain can consume an `.aab`.
-Worse, `publishAppUpdate` (`WorkshopRepository.kt:1391`) publishes a build by reading
-`File(context.applicationInfo.sourceDir)` at line 1395 — under a bundle install that path is the
+Worse, `publishAppUpdate` (in `WorkshopRepository.kt`) publishes a build by reading
+`File(context.applicationInfo.sourceDir)` — under a bundle install that path is the
 **base split alone**, with the ABI split's native library in a sibling file that this code never
 looks at. The master admin would upload a base APK with no model in it and every phone in the field
 would install it. Play's per-ABI delivery, which the OCR decision document names as the condition
@@ -427,3 +431,41 @@ handset's own log during a read:
 Remote version `0` — there is no Play Services module — and the `.fb` weights come out of the
 `assets/mlkit-google-ocr-models/` this document measured at 1,272,325 bytes. The bytes are doing the
 job they were bought for. The whole read took **under one second** on the M32, cold load included.
+
+---
+
+## How this document is kept true
+
+**It is a measurement record, and measurement records are not maintained — they are re-taken.** Every
+number here is bytes off a real `assembleRelease`, taken on a stated date on a stated machine, and
+the document is already organised as a stack of dated re-measurements for that reason: 6.09 MB was
+superseded by the bundled recogniser, and the section that supersedes it opens by saying the earlier
+figure *"had already gone stale, exactly as predicted"*. **Append a dated section; never edit a
+number in place.** An edited measurement is indistinguishable from a guess.
+
+The method matters as much as the results, and it is stated in the body so a re-run is comparable:
+
+- Build on an **idle machine with real free disk**. The first attempt was thrown away rather than
+  reported, because Gradle at 1.6 GB free prints `BUILD SUCCESSFUL` having compiled nothing. A wrong
+  number here is worse than no number, and that is the rule the whole file is written under.
+- Restore `android/app/build.gradle.kts` **from git**, not with an editor, between the two arms of a
+  before/after comparison, so it cannot be left half-flipped.
+- Read what R8 removed out of `build/outputs/mapping/release/r8-removed.txt`, and keep its two
+  meanings apart: a line ending in `:` is a class **kept** with members trimmed; a line with no colon
+  is a class removed **entirely**. Conflating them makes a safe result look alarming.
+- Measure the **packaged APK**, not an intermediate.
+
+| Claim class | Kept true by |
+|---|---|
+| Every byte count and percentage | A re-run of the build that produced it. Nothing re-runs automatically; R8 output is not a CI artifact here. |
+| "Nothing load-bearing was removed" | The `r8-removed.txt` greps quoted in that section — zero serializers or wire DTOs, `StageEntryBody` / `StageSaveBody` / `WorkshopRepositoryApi` all present. **Re-run these after any dependency change or keep-rule edit**, because this is the claim whose failure ships a release build that installs and then dies on a field handset. |
+| The keep rules themselves | `android/app/proguard-rules.pro`, plus the consumer rules the libraries carry. The section on the recogniser's boot path records that R8 *would* have deleted it — that is what these rules are for, and it is why "the build succeeded" is not evidence. |
+| The on-hardware confirmations (2026-08-08, 2026-08-09) | **Dated device runs on one SM-M325F.** The sections *What was NOT confirmed, and is not being claimed* and *Still owed before this merges* are the honest boundary of what a reader may take from them; do not narrow those lists without a device. |
+| The two levers measured but not taken (`armeabi-v7a`, `useLegacyPackaging`) | Recorded with their numbers precisely so nobody re-derives them. The `armeabi-v7a` refusal is waiting on a roster of what handsets are actually in the field — a fact this repository does not hold, so it cannot be closed here. |
+| Numbers quoted from this file elsewhere | [DECISION-identity-card-ocr-on-android.md](DECISION-identity-card-ocr-on-android.md) cites the ABI and packaging levers. This file owns them; that one quotes them. Change them here. |
+
+**Review triggers:** any dependency change, any edit to `android/app/build.gradle.kts` or
+`android/app/proguard-rules.pro`, and any release build whose size is going to be quoted to anybody.
+
+**Known unverified:** everything about handsets other than the SM-M325F, and every claim about how a
+shrunk build behaves in the field beyond the paths actually exercised on that device.

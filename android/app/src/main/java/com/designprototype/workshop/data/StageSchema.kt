@@ -1,6 +1,7 @@
 package com.designprototype.workshop.data
 
 import android.content.Context
+import com.designprototype.workshop.report.isEmptyDocument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -461,12 +462,33 @@ object DwValues {
      * and left, or cleared, holds `""`, and counting it as filled is how a stage reports itself 100%
      * complete with nothing in it. `false` and `0` ARE answers — "this cluster has no power supply"
      * is a finding, not a blank.
+     *
+     * A NARRATIVE IS JUDGED ON ITS TEXT, NOT ON THE PRESENCE OF ITS JSON. A rich-text document that
+     * has been opened and left alone is `{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}` — a non-empty
+     * JsonObject holding not one word. The plain `value.isNotEmpty()` below scored that as answered,
+     * while `_is_filled` (stage_schema.py) and the browser's `isFilled` (designWorkshops.ts) both
+     * branch on the `blocks` key and read the text, so a required introduction left blank made the
+     * phone's stage index say "complete" and the same workshop on a laptop say "outstanding". The
+     * phone was the OPTIMISTIC one, which is the wrong direction: it is the surface a designer uses
+     * to decide the fieldwork is done.
+     *
+     * The predicate is [com.designprototype.workshop.report.isEmptyDocument] and must stay that one
+     * rather than a second opinion written here — the handset's own report model already uses it to
+     * decide the same question about the same value, and two answers to "is this narrative empty?"
+     * inside one build is how the scorer and the document disagree about a stage.
+     *
+     * THE `blocks` TEST IS LOAD-BEARING; do not widen it to all objects. GEO stores `{lat,lon}` and
+     * the custom-answer container stores an arbitrary map, and `isEmptyDocument` parses either as a
+     * document with no blocks — i.e. as empty — so a fix that dropped the key check would stop
+     * counting every recorded coordinate on the device.
      */
     fun isFilled(value: JsonElement?): Boolean = when (value) {
         null, JsonNull -> false
         is JsonPrimitive -> value.content.isNotBlank()
         is JsonArray -> value.isNotEmpty()
-        is JsonObject -> value.isNotEmpty()
+        is JsonObject ->
+            if ("blocks" in value) !isEmptyDocument(value)
+            else value.isNotEmpty()
     }
 
     /**
@@ -525,12 +547,29 @@ object DwValues {
             // Non-finite is refused here for the reason set out on DECIMAL above, and this is the
             // arm where it did the quieter damage: "nan" stored as a string is a value every layer
             // downstream accepts and prints.
+            //
+            // HALF_EVEN THROUGH BigDecimal, NEVER `String.format("%.2f")`. This used to be the
+            // Formatter, and it disagreed with the server on ordinary typed amounts. Java's
+            // `Formatter` rounds the SHORTEST decimal representation of the double half AWAY from
+            // zero; Python's `f"{x:.2f}"` — which is what `coerce_value` does — rounds the exact
+            // binary value half to EVEN. Measured on this repo's JDK 17 against its own interpreter:
+            // 2.675 → "2.68" vs "2.67", 5.005 → "5.01" vs "5.00", 1.005 → "1.01" vs "1.00",
+            // 0.045 → "0.05" vs "0.04", 12.125 → "12.13" vs "12.12". The web's MONEY input sends the
+            // raw typed string and lets the server round it, so the browser gets the server's answer
+            // and the phone got a different one from the same three keystrokes — permanently, because
+            // the save accepts an already-formatted string verbatim rather than re-rounding it. Both
+            // then feed PRODUCT derivations, so the paisa scales with quantity.
+            //
+            // The input to BigDecimal must be the DOUBLE, not `BigDecimal(trimmed)`: the value that
+            // has to be rounded is the same binary double the server will parse out of the wire, not
+            // the decimal the designer typed. `DwDerived.formatted` has done it this way since it was
+            // written, for this exact reason — the two paths now agree with each other as well.
             DwFieldType.MONEY -> {
                 val parsed = trimmed.replace(",", "").replace("₹", "").toDoubleOrNull()
                     ?.takeIf { it.isFinite() }
                     ?: return Coerced(null, "${field.label} is not a valid amount")
                 rangeChecked(field, parsed)?.let { return Coerced(null, it) }
-                Coerced(JsonPrimitive(String.format(Locale.ROOT, "%.2f", parsed)), null)
+                Coerced(JsonPrimitive(BigDecimal(parsed).setScale(2, RoundingMode.HALF_EVEN).toPlainString()), null)
             }
 
             DwFieldType.BOOL -> when (trimmed.lowercase(Locale.ROOT)) {
@@ -632,7 +671,61 @@ object DwValues {
                 coerce(field, text(stored)).error?.let { errors[field.key] = it }
             }
         }
+        checkConditional(entity, data, errors)
         return errors
+    }
+
+    /**
+     * Fields that become required once another field on the SAME entity is filled in, as
+     * `entity key -> (the dependent field, the fields that trigger it)`.
+     *
+     * The phone's copy of `stage_schema._CONDITIONALLY_REQUIRED`, and it must stay a copy: the
+     * server applies this rule on every save of every entry, so a rule the handset does not know is
+     * a refusal the designer only meets when the phone next finds signal — a fortnight later, as a
+     * card about a stage they finished in another district. The whole reason [DwValues] exists is to
+     * say the same "no" the server would say, at the moment the value is typed.
+     *
+     * ONE ENTRY, AND DELIBERATELY A TABLE RATHER THAN A RULE ENGINE — matching the server's shape
+     * exactly, so the two can be diffed by eye. The registry declares fields; a requirement that
+     * depends on ANOTHER answer is the one thing a flat field list cannot express, and inventing a
+     * general conditional grammar here would put a second declaration of the rule on the device,
+     * which is the drift `DwDerived`'s KDoc argues against at length. Adding the next rule means
+     * adding one line here and one line in `_CONDITIONALLY_REQUIRED`, and nothing else.
+     */
+    private val CONDITIONALLY_REQUIRED: Map<String, Pair<String, List<String>>> = mapOf(
+        "outcomes" to ("countOverrideReason" to listOf("designsCountOverride", "prototypesCountOverride")),
+    )
+
+    /**
+     * Apply [CONDITIONALLY_REQUIRED], mirroring `stage_schema._check_conditional` line for line —
+     * including the wording of the message, so the inline mark the designer reads offline is the
+     * same sentence the refusal card would carry.
+     *
+     * NOT GATED ON `enforceRequired`, and that asymmetry is the point rather than an oversight. An
+     * ordinary required field may sit empty overnight — that is the normal state of a 40-field stage
+     * — but this one is only ever triggered by a figure the designer has JUST typed, and that figure
+     * overrides the record on the report's front page. A number that contradicts the record needs
+     * its reason in the same breath. `_check_conditional` is called outside the `enforce_required`
+     * branch on the server (stage_schema.py:1151) for exactly this reason; moving it under
+     * [enforceRequired] here would silently switch the rule off, because no client ever sets
+     * `submit` true (StageScreen's push hardcodes it false), so `enforceRequired` is never on.
+     */
+    private fun checkConditional(
+        entity: EntityDto,
+        data: Map<String, JsonElement>,
+        errors: MutableMap<String, String>,
+    ) {
+        val (dependent, triggers) = CONDITIONALLY_REQUIRED[entity.key] ?: return
+        // Already answered, or already carrying a problem of its own — the server bails on both, and
+        // stacking a second message onto a field that failed coercion would replace the specific
+        // complaint ("is not a valid amount") with a vaguer one.
+        if (isFilled(data[dependent]) || errors.containsKey(dependent)) return
+        if (triggers.none { isFilled(data[it]) }) return
+        // The dependent field may be absent from an older registry this build is still running on;
+        // an entity that cannot show the box must not be told to fill it in.
+        val spec = entity.field(dependent) ?: return
+        val labels = triggers.mapNotNull { entity.field(it)?.label }
+        errors[dependent] = "${spec.label} is required once ${labels.joinToString(" or ")} is filled in."
     }
 }
 
@@ -1536,3 +1629,51 @@ fun DraftRow.entityKey(): String = id.substringBefore(DW_ROW_KEY_SEPARATOR, "")
 /** This entity's rows, in stored order — which IS their ordinal. */
 fun StageDraft.rowsFor(entityKey: String): List<DraftRow> =
     rows.filter { it.entityKey() == entityKey }
+
+/**
+ * Whether this stage holds anything a PERSON answered — the question the sync walks are asking.
+ *
+ * ── AN UNDERSCORE KEY IS NOT AN ANSWER, AND ASKING `values.isNotEmpty()` COUNTED ONE ─────────────
+ *
+ * `DwRecordingPlaceCard` offers "where were you when this stage was filled in?" on all twenty-two
+ * stages and writes a whole location object into the singleton under `_recordingPlace`
+ * (ui/designworkshop/DwLocationField.kt). The underscore prefix is the sync protocol's own marker:
+ * `wireData` drops every `_`-prefixed key from the payload by construction, deliberately, because the
+ * server answers an unknown key with a `droppedKeys` entry and that would put a red line on every
+ * stage of every sync for a value that was never going to be stored.
+ *
+ * So a draft whose only content is a recording place holds nothing any payload can carry, and the two
+ * sync walks that asked `values.isNotEmpty()` were asking about the MAP rather than about the answers
+ * in it. [dwStageSaysNothing] therefore built a body for such a stage and spent a metered PUT carrying
+ * an empty singleton (creating a server-side stage record nobody had answered), and
+ * [dwStrandedStages] named it on the status screen as a stage this build cannot send — a sentence no
+ * action can ever discharge, against its own comment's rule that it must not fire "for no answers at
+ * all".
+ *
+ * ── WHY IT IS A FUNCTION RATHER THAN THE SAME LINE IN TWO MORE PLACES ────────────────────────────
+ *
+ * Six copies of this test exist in the app (the two callers here, `ReportSource.holdsWork`,
+ * `DwWorkshopCards.touchedLocally`, `StageIndexScreen`, and the stage read's own — see below), and
+ * every defect this lane has recorded about them came from the copies drifting apart. The costliest
+ * was `ReportSource.holdsWork`, where counting `_recordingPlace` as work made a stage "the device's"
+ * and kept the office's whole copy of it OUT of the delivered document; it learned this rule the
+ * expensive way and the sync lane had not. Asked once, the status a designer reads and the payload a
+ * pass sends cannot answer it differently.
+ *
+ * ── AND THE ONE CALLER THAT MUST NOT USE IT ──────────────────────────────────────────────────────
+ *
+ * `dwStageReadPlan` asks a genuinely different question — "would seeding this stage from the server
+ * LOSE something this device holds?" — and for that one an underscore key is emphatically something
+ * held: the seed arm adopts the server's bucket verbatim through `fromRemote` and the next
+ * `persistLocally` writes `values` wholesale, so routing a provenance-only draft there would delete
+ * the recording place off the device. That asymmetry is pinned by the last case in
+ * `DwProvenanceIsNotWorkTest`, so a later tidy-up that "unifies the work tests" fails on a desktop JVM
+ * rather than in a courtyard.
+ *
+ * ROWS AND CUSTOM ANSWERS ARE COUNTED WHOLE. A row's presence IS work — its `_clientKey`/`_entryId`
+ * live INSIDE the row, beside the designer's cells, not beside the row — and eight of the twenty-two
+ * stages declare no singleton at all, so a stage whose only answers are rows or the designer's own
+ * questions is the ordinary shape rather than an edge case.
+ */
+fun StageDraft.holdsAnswers(): Boolean =
+    values.keys.any { !it.startsWith("_") } || rows.isNotEmpty() || custom.isNotEmpty()

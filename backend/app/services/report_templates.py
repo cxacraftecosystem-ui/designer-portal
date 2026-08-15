@@ -522,6 +522,59 @@ def _asked(settings: Mapping[str, Any] | None, key: str) -> bool | None:
     return bool(raw)
 
 
+#: How each toggle is worded on the stage-20 form. Mirrors ``stage_definitions`` (the ``f(...)``
+#: labels for these three keys) so a warning can name the switch a designer actually flipped rather
+#: than the wire key they have never seen. Kept here beside the toggle map, and not read out of the
+#: registry, because this module is imported by the report pipeline and must stay free of the
+#: registry's import graph — see the ``Sequence[Any]`` argument in ``apply_report_settings``.
+_TOGGLE_LABELS: dict[str, str] = {
+    "includeTableOfContents": "Include a table of contents",
+    "includeMediaAnnexure": "Include the photographic annexure",
+    "includeCompletenessAnnexure": "Include the completeness annexure",
+}
+
+
+def inert_section_toggles(
+    template_: ReportTemplate, settings: Mapping[str, Any] | None
+) -> tuple[str, ...]:
+    """The stage-20 section toggles this template CANNOT honour, worded for a designer.
+
+    **THE THREE TOGGLES ARE REMOVAL-ONLY, DELIBERATELY, AND THAT IS THE HALF NOBODY WAS TOLD.**
+    ``apply_report_settings`` drops a section on an explicit ``false`` and does nothing at all on a
+    ``true`` — the semantics are written down three times over in the designer-facing Kotlin ledger
+    ("An explicit false removes the section; absent leaves the template alone") and the Android port
+    implements the same rule, so this is a stated limitation rather than a forgotten branch, and
+    "fixing" it by teaching only the Python half to INSERT would make one workshop's report differ
+    between the two surfaces — and would break the 485 KB by-value ``report_templates_pin.json``
+    comparison, which can only be regenerated inside the API container.
+
+    What was genuinely wrong is that the limitation was silent. Only DETAILED_TECHNICAL declares
+    ANNEXURE_MEDIA and COMPLETENESS at all, and COMPACT_SUMMARY and PHOTO_CATALOGUE carry no TOC, so
+    a designer on the default DCH_STANDARD who is asked for the completeness table switches
+    "Include the completeness annexure" on, generates, and gets a file without one — with nothing in
+    the response, the warning header or the document saying why. That is exactly the failure
+    ``apply_report_settings``' own docstring says it exists to end: "an absent feature is obvious and
+    a silent one is a bug the designer blames themselves for."
+
+    So the answer is a sentence rather than a section. Ask this with the BASE template — the one the
+    designer chose — because ``apply_report_settings`` can only take these three away and never adds
+    one, so a toggle the base template cannot satisfy is one the shaped template cannot satisfy
+    either. Returns whole sentences, one per inert toggle, ready to append to a report's warnings.
+    """
+    if not settings:
+        return ()
+    present = {s.special for s in template_.sections}
+    out: list[str] = []
+    for key, special in _SECTION_TOGGLES.items():
+        if _asked(settings, key) is True and special not in present:
+            out.append(
+                f"“{_TOGGLE_LABELS[key]}” is on, but the {template_.name} template does not carry "
+                f"that section and this switch can only leave one out — the file was generated "
+                f"without it. Choose a template that includes it, or turn the switch off."
+            )
+    return tuple(out)
+
+
 def apply_report_settings(
     template_: ReportTemplate,
     settings: Mapping[str, Any] | None,

@@ -290,7 +290,7 @@ fun FieldRenderer(
             // `value` is passed through untouched. It is `{"blocks":[…]}` for a field edited
             // since the promotion and a bare JSON string for one written before it; `fromJson`
             // inside the editor reads both, which is what keeps a season of prose intact.
-            DwFieldType.RICH_TEXT ->
+            DwFieldType.RICH_TEXT -> {
                 RichTextEditor(
                     value = value,
                     onChange = onChange,
@@ -311,6 +311,34 @@ fun FieldRenderer(
                     onMessage = { text -> services?.onMessage?.invoke(text) },
                     onError = { text -> services?.onError?.invoke(text) },
                 )
+                /*
+                  THE REFUSAL MARK, WHICH THIS ARM ALONE DID NOT DRAW.
+
+                  [FieldRenderer] takes an `error` and every other arm of this `when` either renders
+                  [InlineError] itself (TIME, ENUM, MULTI_ENUM, LONG_TEXT through `ScalarInput`) or
+                  hands it to a component that does (DateField, BoolField, TagsField, DwGeoField,
+                  ArtisanPhoneField, DwReferenceSelectField, MediaField). RICH_TEXT passed ten
+                  arguments to the editor and silently dropped the eleventh. `EntitySection` routes
+                  the refusal in and its KDoc argues the mark must be ON THE BOX rather than only in
+                  the card above the form — so the contract was stated and one arm broke it.
+
+                  NOT REACHABLE TODAY, AND FIXED ANYWAY. The only source of `errors` is a server
+                  refusal, and no server path can key one to a RICH_TEXT field from this client:
+                  `coerce_value`'s RICH_TEXT branch returns `to_json(from_json(raw)), None`,
+                  `rich_text.from_json` is documented "never raising" and has no length bound, and
+                  no client sends `submit`, so the "X is required" refusal cannot be produced either.
+                  What existed was a silently broken contract in the largest type in the registry,
+                  which goes live the moment any bound, conditional rule or required-enforcement
+                  reaches a narrative field — and it would go live SILENTLY, since nothing fails and
+                  the refusal card would still list the field while the box beside it stayed
+                  unmarked. One line now, or a field-day of confusion the week that rule lands.
+
+                  Inside the braces rather than after the `when`, because the `when` sits in the
+                  shared [Column] and a mark drawn for every arm would double up on the ten that
+                  already draw their own.
+                */
+                InlineError(error)
+            }
 
             DwFieldType.LONG_TEXT ->
                 ScalarInput(

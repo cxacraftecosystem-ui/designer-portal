@@ -7,6 +7,8 @@ free-text query, and that every active filter narrows rather than widens.
 
 import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -72,24 +74,116 @@ def test_a_free_text_query_is_the_only_thing_a_plain_search_adds():
         assert "AND" not in where, f"{bucket} carries an empty AND"
 
 
-def test_the_download_predicate_still_narrows_below_professor():
-    # Reading opened up; TAKING DATA OUT did not. This is the predicate every /export and /data query
-    # still rides, asserted directly because no read-side clause carries it any more.
-    from app.services.records import owned_or_granted_where
+def test_the_download_predicate_still_narrows_below_professor(monkeypatch):
+    """Reading opened up; TAKING DATA OUT did not. This is the predicate every /export and /data query
+    still rides, asserted directly because no read-side clause carries it any more.
 
-    records = asyncio.run(owned_or_granted_where(VOLUNTEER))
-    assert records["OR"][0] == {"createdById": "u1"}
-    assert records["OR"][1]["createdBy"]["is"]["dataAccessAsOwner"]["some"] == {
+    WHY THIS TEST NOW TAKES A DOUBLE, AND WHY IT MUST NOT SIMPLY STUB THE WHOLE FUNCTION.
+    ``owned_or_granted_where`` used to be a pure predicate builder — dictionary work over the user
+    object, no I/O — and this test called it with no connected Prisma client for exactly that reason.
+    A later fix widened the MEDIA variant with a third arm ("the recordings of a design workshop this
+    account may open"), and that arm HAS to read the workshop table first: ``MediaFile`` carries no
+    column pointing at ``DesignWorkshop``, only the ``linkedRecordType``/``linkedRecordId`` tag pair,
+    so there is no relation for Postgres to walk. The media variant is therefore a QUERY now, and this
+    test — untouched since the day it was written — started raising ``ClientNotConnectedError`` from
+    inside a filter builder, which is a confusing place to be handed a database error.
+
+    So the tag lookup is replaced with a double HERE, at the seam ``_design_workshop_media_branches``
+    already provides, and exercised for real in the test below. Stubbing at that seam is what lets
+    this test assert the two things the collision actually put at risk, neither of which a
+    "it did not raise" test would catch:
+
+      * the RECORD variant is still pure — it must not have grown a query, because it is called on
+        every /export CSV and every /data page for every account below professor, and a per-request
+        round trip bought nothing there (the ``calls`` spy is the assertion, not decoration);
+      * the media variant STILL CARRIES THE THIRD ARM. That arm is the whole of a closed defect: a
+        granted co-designer asking for a workshop's transcript preview got ``{"items": [], "total": 0}``
+        over six interviews sitting in the database, while the generator beside it said "6
+        recording(s) could not be included". Deleting the arm to make this file pure again would
+        reopen that, silently, and this assertion is what refuses.
+    """
+    from app.services import records
+
+    calls: list[str] = []
+    WORKSHOP_ARM = {"linkedRecordType": "designWorkshop", "linkedRecordId": {"in": ["dw-1"]}}
+
+    async def _fake_branches(user_id: str) -> list[dict[str, Any]]:
+        calls.append(user_id)
+        return [WORKSHOP_ARM]
+
+    monkeypatch.setattr(records, "_design_workshop_media_branches", _fake_branches)
+
+    record_where = asyncio.run(records.owned_or_granted_where(VOLUNTEER))
+    assert record_where["OR"][0] == {"createdById": "u1"}
+    assert record_where["OR"][1]["createdBy"]["is"]["dataAccessAsOwner"]["some"] == {
         "granteeId": "u1",
         "status": "GRANTED",
     }
+    # Two arms and no query: the record variant is the pure path and stays pure.
+    assert len(record_where["OR"]) == 2
+    assert calls == [], "the record variant paid for a workshop lookup it has no use for"
 
-    media = asyncio.run(owned_or_granted_where(VOLUNTEER, owner_field="uploadedById"))
+    media = asyncio.run(records.owned_or_granted_where(VOLUNTEER, owner_field="uploadedById"))
     assert media["OR"][0] == {"uploadedById": "u1"}
     assert "uploadedBy" in media["OR"][1]
+    assert media["OR"][2] == WORKSHOP_ARM, "the co-designer's recordings arm is gone"
+    assert calls == ["u1"]
 
-    # Professor and above take everything, as before.
-    assert asyncio.run(owned_or_granted_where(ADMIN)) == {}
+    # Professor and above take everything, as before — and pay for no lookup on the way there, which
+    # is the reason the rank test comes FIRST in the function rather than after the branch list.
+    assert asyncio.run(records.owned_or_granted_where(ADMIN)) == {}
+    assert asyncio.run(records.owned_or_granted_where(ADMIN, owner_field="uploadedById")) == {}
+    assert calls == ["u1"]
+
+
+def test_the_workshop_arm_is_the_tag_pair_and_is_absent_when_there_is_nothing_to_add(monkeypatch):
+    """The arm the test above doubles, exercised for real against a fake delegate.
+
+    This is the half that cannot be asserted through a stub, and it is where the widening either is
+    or is not correct: WHICH workshops (only ones this account may open, and not soft-deleted ones)
+    and WHAT clause (the tag pair both clients file design-workshop uploads under — not a FK, which
+    ``MediaFile`` does not have).
+
+    NO DATABASE, DELIBERATELY: this module's tests are dictionary work over rows, which is what makes
+    them second-long. ``records.db`` is replaced with a delegate that records the ``where`` it was
+    handed, so the query is asserted rather than executed.
+    """
+    from app.services import records
+    from app.services.design_workshop_viewers import visible_to_clause
+    from app.services.dictation_consent import MEDIA_TAG
+
+    class _DB:
+        def __init__(self, rows: list[Any]) -> None:
+            self.calls: list[dict[str, Any]] = []
+            self.designworkshop = self  # one delegate, standing in for db.designworkshop
+            self._rows = rows
+
+        async def find_many(self, **kwargs: Any) -> list[Any]:
+            self.calls.append(kwargs)
+            return self._rows
+
+    fake = _DB([SimpleNamespace(id="dw-1"), SimpleNamespace(id="dw-2")])
+    monkeypatch.setattr(records, "db", fake)
+
+    branches = asyncio.run(records._design_workshop_media_branches("u1"))
+    assert branches == [{"linkedRecordType": MEDIA_TAG, "linkedRecordId": {"in": ["dw-1", "dw-2"]}}]
+    # The scope is the LIST endpoint's own clause, imported rather than re-spelled, plus the
+    # soft-delete guard: a grant on a deleted workshop must not keep handing over its recordings.
+    assert fake.calls[0]["where"] == {"deletedAt": None, **visible_to_clause("u1")}
+    assert "viewers" in str(fake.calls[0]["where"]), "a co-designer is a viewer row, not the creator"
+
+    # An account on no workshop contributes NO arm. `{"linkedRecordId": {"in": []}}` would be a
+    # permanently false predicate shipped on every export query for every researcher in the
+    # repository, which is a cost with no case behind it.
+    empty = _DB([])
+    monkeypatch.setattr(records, "db", empty)
+    assert asyncio.run(records._design_workshop_media_branches("u1")) == []
+
+    # An anonymous/unidentified caller must not sweep the workshop table on the way to being refused.
+    unused = _DB([SimpleNamespace(id="dw-1")])
+    monkeypatch.setattr(records, "db", unused)
+    assert asyncio.run(records._design_workshop_media_branches("")) == []
+    assert unused.calls == []
 
 
 def test_mine_means_mine_at_every_rank():

@@ -56,3 +56,33 @@ the source you are reading. It is one command, and it has now saved that hour tw
 
 The same rule caught a third case in a different form: an Android build straddling a merge was
 discarded rather than trusted, because its inputs belonged to neither tree.
+
+---
+
+## How this document is kept true
+
+**Most of this file cannot rot, and that is deliberate.** Two of its three parts are history — an
+account of two hours lost on 2026-08-13 — and history is kept true by not editing it. The
+generalisation at the foot (*a defect reproduced against a running service is evidence about THAT
+BUILD, not about the code*) is a habit, not a fact about this repository, and nothing here can
+invalidate it.
+
+The part that **can** go wrong is the middle: the diagnosis procedure and the reason the image goes
+stale. Those describe live configuration, and a procedure that has quietly stopped working is worse
+than none, because it returns a confident all-clear.
+
+| Claim class | Kept true by |
+|---|---|
+| "`docker-compose.yml` builds `design-workshop-backend:local` from `backend/Dockerfile` and mounts NO source volume" | Reading `docker-compose.yml`. This is the premise of the whole document. **If a source volume is ever added, this file is not merely stale — it is actively misleading**, because the trap it describes stops existing and the ten-second check stops being necessary. Say so here rather than deleting the file; the incidents still happened. |
+| "Only `build` + `--force-recreate` replaces the image" | The same file, plus the compose version in use. |
+| The ten-second `docker exec … model_fields` check | **Run it.** It is one command and its own proof: if it errors for a reason other than the one being diagnosed, the procedure has drifted. It is written against `app.schemas.design_workshops.StageEntryIn`, so it also depends on that module path — a rename there breaks the check silently into a `ModuleNotFoundError` that reads like an unrelated problem. |
+| The two incidents, and the `AttributeError` transcript | **Frozen.** They are evidence that this happened twice in one day, which is the argument for the habit. Do not update them to match current code; if it happens a third time, add a third numbered case — the header already predicts that the third occurrence *"will look different again and cost the same hour"*. |
+| The Android postscript (a build straddling a merge, discarded rather than trusted) | The same rule in a second form, and the reason it is here rather than in an Android document. |
+
+**Review triggers:** any change to `docker-compose.yml` or `backend/Dockerfile`, particularly the
+addition of a bind mount; a rename of `app/schemas/design_workshops.py` or `StageEntryIn`.
+
+**What would make this document obsolete, and it is worth wanting:** a compose setup that cannot
+serve stale source — a mount in development, or a startup log line naming the build's git SHA so the
+question is answered before it is asked. Until then the habit is the mechanism, and the habit is only
+as good as the last person who read this page.

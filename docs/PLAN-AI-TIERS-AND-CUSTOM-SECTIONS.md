@@ -52,7 +52,9 @@ transcribed interview "are produced by the same provider chain with the same cra
 cannot drift apart."
 
 **Android's ladder has no second rung.** There is no `dictate` call anywhere in
-`android/.../data/*.kt`, no `MediaRecorder` upload in `DwDictation.kt`. It is `SpeechRecognizer`,
+`android/app/src/main/java/com/designprototype/workshop/data/*.kt`, no `MediaRecorder` upload in
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwDictation.kt`. It is
+`SpeechRecognizer`,
 and on error 13 it falls back to *Google's* network recogniser.
 
 ### Why this is worse than it looks
@@ -256,7 +258,8 @@ The risk is that it arrives as a 19-language download list that does not fit on 
 > OTHERWISE COST YOU AN AFTERNOON THAT HAS ALREADY BEEN SPENT.**
 >
 > Both halves of that sentence turned out to be wrong, and the search that established it is written
-> up in `android/…/data/DwAsrModel.kt` so nobody repeats it:
+> up in `android/app/src/main/java/com/designprototype/workshop/data/DwAsrModel.kt` so nobody
+> repeats it:
 >
 > - ~~**IndicConformer is not obtainable in a form this app may ship.**~~ **THIS BULLET IS FALSE AND WAS
 >   RETRACTED 2026-08-13 — see the correction block below.** The official `k2-fsa/sherpa-onnx`
@@ -474,7 +477,8 @@ all of them load-bearing:
   here used to end "scalars, enums, text, dates, numbers, media first", and media was wrong. There
   are **five** separate walkers that translate a local media reference into a server id, and every
   one of them enumerates the media-typed fields **of the row's registry entity** and reads them at
-  the **top level of the row**: the server's `_media_ids` (`services/design_workshops.py:1359-1393`),
+  the **top level of the row**: the server's `_media_ids` (in `backend/app/services/design_workshops.py`,
+  with `workshop_media_ids` as its public name),
   Android's `wireData` and the web's `unresolvedMediaRefs`, draft-resolve and `rewriteMediaRefs`.
   None of them can see a value that is not a registry field. A custom media answer would therefore
   sync as a `dwlocal:` reference that resolves to nothing: the save reports success, and the
@@ -647,3 +651,33 @@ reasoning is not written down gets re-opened from scratch.
 5. **Gemma model ids and real footprint on the M32** — STILL OPEN, and unmeasurable from this
    machine: it needs the handset. §2.1 says what to measure and the measurement document
    `docs/DEVICE-TIER-MEASUREMENT.md` carries the empty table with every cell marked unmeasured.
+
+---
+
+## How this document is kept true
+
+**A plan is true until it is executed, and then it is history.** This one is explicitly *"agreed in
+principle, not started"*, and the danger is not that it decays into misinformation about the code —
+it is that it is read as a description of the system when it is a description of an intention. Two
+of its sections have already been overtaken by measurement, and both say so in the body rather than
+being edited to match. That is the pattern to follow: **overtake a section with a dated block, do not
+rewrite it.**
+
+| Claim class | Kept true by |
+|---|---|
+| §0, *What is already built* | **The most perishable part of this file, and the part a reader most needs to be right**, because its whole purpose is "stop building what already exists". It is grounded in `backend/app/services/ai.py`, `backend/app/api/routes/media.py` and `backend/app/services/identity_ocr.py`. Re-read those before acting on any "already exists" claim here. |
+| The `file:line` citations throughout | **Do not trust them and do not add more.** They were accurate on 2026-08-09 against files that have moved since; `docs/tools/check-docs.mjs` only verifies that a cited line is *inside* the file, which a rotted citation usually still is. The symbol names beside them (`_next_gemini_start`, `refine_transcript_text`, `analyze_measurement_image`, `REFERENCE_HYDRATION`) are the durable half — grep for those. |
+| §1, "Android online must use the same service as the web" | A decision, not a description. Whether it has been acted on is settled by `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwDictation.kt` — if a `dictate` call appears there, this section is done and should be marked so. |
+| §2.1, the Tier 2 handset measurements | **Owned by [DEVICE-TIER-MEASUREMENT.md](DEVICE-TIER-MEASUREMENT.md)**, which carries the table with every unmeasured cell marked. This file states what to measure and why the table cannot be answered from a spec sheet; it must not grow its own numbers. |
+| §2.2, the ASR sequencing | Already overtaken once, by the block dated 2026-08-12, and one of its bullets retracted on 2026-08-13. Read the retractions before the bullets. |
+| §3, the layering law, and §4's five constraints | These are the parts most likely to have *become* code. `REFERENCE_HYDRATION`'s freeze rule and "every layer is a row, never an edit" are enforced in the service; the custom-sections design in §4 has an implementation (`android/app/src/main/java/com/designprototype/workshop/data/DwCustomSections.kt`, the custom-section endpoints in `backend/app/api/routes/design_workshops.py`, and `backend/tests/test_custom_sections.py` / `backend/tests/test_custom_sections_endpoints.py`). Where a constraint has shipped, the test that pins it is more authoritative than this paragraph. |
+| §5, the sequence, and §6, the open questions | Human bookkeeping. Question 5 (Gemma model ids and footprint on the M32) is marked STILL OPEN and unmeasurable from this machine; it closes on a handset, not here. |
+
+**Review triggers:** a step in §5 being started or abandoned; a measurement landing in
+`DEVICE-TIER-MEASUREMENT.md` that answers §2.1; anything in §0 being rebuilt, which is the failure
+this document exists to prevent.
+
+**The honest summary for a reader in a hurry:** everything here was true of the repository on
+2026-08-09, amended 2026-08-11 through 2026-08-13 where measurement contradicted it. Nothing in it is
+checked by a test, because a plan cannot be. Where it disagrees with the code, the code wins and this
+file needs a dated block saying so.

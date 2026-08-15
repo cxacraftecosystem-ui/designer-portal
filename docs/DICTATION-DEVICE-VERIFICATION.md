@@ -84,3 +84,33 @@ The message shown when both engines are exhausted **already existed** in the cod
 fix. It sat on the network-failure path — which a language error never takes — so it could not be
 reached by the case it was written for. Another instance of this repository's commonest defect
 (complete code with no route to it), this time in a string rather than a module.
+
+---
+
+## How this document is kept true
+
+**It is not, and it should not be.** This is a hardware verification record: one handset
+(Samsung SM-M325F, Android 13), one debug build, one afternoon, with the device's own logcat pasted
+in. Its value is entirely that it is a transcript of something that happened — and a transcript that
+somebody keeps editing to stay current is no longer evidence of anything.
+
+**So do not update the readings. Re-verify, and write a new dated section.** The two 2026-08-09
+logcat blocks are the point of the file; if the app's behaviour changes they become the record of
+what it used to do, which is exactly what you want when the next code-13 report arrives.
+
+What that leaves is a short list of things a reader might mistake for durable facts:
+
+| Claim | What it actually is |
+|---|---|
+| "The Hindi pack is genuinely not installed on this handset" | True of that phone on that day. It has since changed — Hindi and English (India) were downloaded, and the current reading of the same handset is in [DICTATION-LANGUAGE-PACK-MEASUREMENT.md](DICTATION-LANGUAGE-PACK-MEASUREMENT.md) under *Re-measured 2026-08-13*. Read that one for the phone as it is; read this one for the failure the fix was written against. |
+| "Below API 33 the answer is unknown" | A platform limitation, not a measurement, and durable while `minSdk` stays 26. |
+| The described behaviour — catch 13, fall back to the network recogniser, offer the pack | **This is the part that can silently rot**, because it describes live code rather than a log. It lives in `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwDictation.kt` (the `onError` arms), `android/app/src/main/java/com/designprototype/workshop/data/DwLanguagePacks.kt`, and `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwLanguagePackUi.kt` for the offer surfaces. `DwLanguagePackTest` in `android/app/src/test/java/com/designprototype/workshop/data/` pins the pack-state logic against captured device fixtures; **nothing pins the fallback itself**, which needs a recogniser and therefore a device. |
+| "Nothing downloads by itself, nothing is ticked to begin with" | A consent property, and the one worth re-reading `DwLanguagePackUi.kt` for after any change to that screen. A default that flips here costs a designer their data allowance without being asked. |
+
+**Review triggers:** the `onError` handling in `DwDictation.kt`, anything in `DwLanguagePacks.kt`, or
+a `minSdk` change.
+
+**Re-verification is a device job.** `adb logcat` on an SM-M325F with the dictation language set to a
+language whose pack is absent, which is the exact configuration reproduced above. There is no way to
+do it from this machine, and a claim in this file that was not read off a device does not belong in
+it.

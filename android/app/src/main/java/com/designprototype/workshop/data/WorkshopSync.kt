@@ -315,6 +315,9 @@ data class WorkshopSyncStatus(
      * signature matches for ever and nothing is pending. "Backed up" has to mean the repository holds
      * what this phone holds, and a deletion the repository has not been told about is a way in which it
      * does not.
+     *
+     * A STAGE THE REGISTRY NO LONGER DECLARES is held by the same term, through [pendingStages] — see
+     * [dwStrandedStages] for why it is counted there rather than given a counter of its own.
      */
     val isFullySynced: Boolean
         get() = remoteId != null && pendingStages == 0 && pendingMedia == 0 &&
@@ -707,6 +710,183 @@ internal fun skewSentence(what: String, said: String): String =
         "work is safe on this device, and it will be sent by itself the next time you open the app " +
         "after either has been updated; you do not have to do anything."
 
+/**
+ * What one stage still owes the server as a DELETION — nothing about values, rows or files.
+ *
+ * Both records are read together because they are one fact to a designer ("I deleted things here and
+ * the repository has not been told") and because every caller wants both: the counter that names the
+ * stage on the status screen, and the gate below that decides whether a push has anything to say.
+ */
+internal class DwOwedDeletions(
+    /** Collections emptied outright — see [StageDraft.emptiedEntities]. */
+    val entities: List<String>,
+    /** Individual rows removed from a collection that still holds others — see [StageDraft.deletedRowKeys]. */
+    val rows: List<String>,
+) {
+    val any: Boolean get() = entities.isNotEmpty() || rows.isNotEmpty()
+}
+
+/**
+ * The deletions a stage is holding, intersected with the entities that stage actually declares.
+ *
+ * INTERSECTED, in both halves, for the reason [buildStageBody] intersects the same list before it puts
+ * it on the wire: a key left behind by a registry that has since moved on is not a deletion instruction
+ * for anything. Counting one would hold a stage unsynced for ever over an entity no build can draw, and
+ * sending one would ask the server to sweep a collection this release does not know about.
+ *
+ * PURE, and extracted from the two walks that used to ask this inline, because those two walks have to
+ * agree: `statusOf` tells the designer whether their deletion is safe and `pushStages` decides whether
+ * it is ever sent. When they disagreed, the disagreement was silent and pointed the wrong way — see
+ * [dwStageSaysNothing].
+ */
+internal fun dwOwedDeletions(spec: StageDto, stored: StageDraft?): DwOwedDeletions {
+    val declared = spec.collections.mapTo(HashSet()) { it.key }
+    return DwOwedDeletions(
+        entities = stored?.emptiedEntities.orEmpty().filter { it in declared }.distinct(),
+        rows = stored?.deletedRowKeys.orEmpty()
+            .filter { it.substringBefore(DW_ROW_KEY_SEPARATOR, "") in declared }
+            .distinct(),
+    )
+}
+
+/**
+ * Whether a draft on this device was captured by an account OTHER than the one signed in now.
+ *
+ * PURE AND SEPARATE so the rule can be pinned by a test with no Context, no store and no network —
+ * `OwnerFilterWireTest`'s neighbour, `DwDraftOwnershipTest`. The rule itself is one line; what needs
+ * writing down is the two cases that must NOT stop a sync, because getting either wrong strands real
+ * fieldwork rather than merely leaking it:
+ *
+ *  * `ownerUserId == null` — the draft pre-dates the stamp, or was created by a path that does not
+ *    set it (a workshop opened from the server has its draft written by the stage screen). Refusing
+ *    those would be a silent, total sync stop on every handset upgraded into this build.
+ *  * `signedInUserId == null` — nobody is signed in, so there is nothing to compare against; the pass
+ *    cannot run at all in that state and the caller checks `hasToken` first anyway.
+ *
+ * See [WorkshopDraft.ownerUserId] for what the mismatch costs when it is not enforced: A's fortnight
+ * created on the server under B's credentials, with B as `createdById`.
+ */
+internal fun dwDraftIsForAnotherAccount(ownerUserId: String?, signedInUserId: String?): Boolean =
+    ownerUserId != null && signedInUserId != null && ownerUserId != signedInUserId
+
+/**
+ * The stages a draft holds that the resolved registry does not declare AND that hold work.
+ *
+ * ── THE DEFECT: BOTH PASSES WALK THE REGISTRY, SO NEITHER COULD SEE THIS ─────────────────────────
+ *
+ * `statusOf` and `pushStages` enumerate `schema.stages` and look each one up in the draft. There was
+ * no residual term for the other direction, `draft.stages.keys - schema.stages.keys`, so a stage the
+ * draft holds under a key this registry does not declare contributed nothing to `pendingStages`,
+ * nothing to `problems`, was never built and never sent — and `isFullySynced` was true over it, with
+ * the list row reading "Backed up to the server" about answers that could not leave the phone by any
+ * route.
+ *
+ * It cannot be conjured: every key in a draft was written by `persistLocally` from SOME resolved
+ * registry. It takes the server's stage list renaming or dropping a key that drafts on this handset
+ * already hold, or a registry cache this build cannot decode (`readCacheFile` deletes it and `load`
+ * falls back to the bundled asset) on a device that then stays offline. Narrow, and permanent while
+ * it lasts, which is the combination that makes it worth a line rather than a shrug.
+ *
+ * ONLY A STAGE THAT ACTUALLY HOLDS SOMETHING. An empty record under a retired key is a stage somebody
+ * opened once and never typed into; naming it would put a permanent sentence on the status screen of
+ * every handset that survived a registry change, for no answers at all.
+ *
+ * Extracted and pure for the reason [dwOwedDeletions] is: it is asked once rather than copied, and it
+ * can be pinned on a desktop JVM with no Context — `DwStrandedStageTest`.
+ */
+internal fun dwStrandedStages(schema: SchemaResponse, draft: WorkshopDraft): List<StageDraft> {
+    val declared = schema.stages.mapTo(HashSet()) { it.key }
+    return draft.stages.entries
+        .filter { (key, stored) ->
+            key !in declared &&
+                // Only a stage that actually holds something: an empty record under a retired key is
+                // a stage somebody opened once, and naming it would put a permanent sentence on the
+                // status screen of every handset that survived a registry change.
+                //
+                // [StageDraft.holdsAnswers] rather than the inline `values.isNotEmpty()` this used to
+                // be, and the difference is the whole of "for no answers at all": a stage whose only
+                // content is `_recordingPlace` holds a key no build can ever put on the wire, so the
+                // sentence this function writes about it could never be discharged by any action the
+                // designer took. That is worse than the permanent sentence the comment above already
+                // refuses, not better — it is the same sentence with no remedy at all.
+                stored.holdsAnswers()
+        }
+        .map { it.value }
+}
+
+/**
+ * Whether a stage has NOTHING for the server, asked once for the status pass and the push pass alike.
+ *
+ * ── THE DEFECT THIS FUNCTION IS NAMED AFTER: A DELETION IS NOT "NOTHING" ─────────────────────────
+ *
+ * `statusOf` and `pushStages` each carried their own copy of one test — "this stage holds no values, no
+ * rows and no custom answers, and the server has never acknowledged a payload for it, so there is
+ * nothing to say about it" — and neither copy consulted the deletion records. That is not a corner: a
+ * stage whose entire content WAS a collection (eight of the twenty-two declare no singleton at all)
+ * holds exactly nothing the moment the designer deletes its rows, so the deletion-only stage is
+ * precisely the arm that early-return swallows.
+ *
+ * The walk it cost: designer opens a costing stage in signal, gets six rows and types nothing, so no
+ * signature is ever recorded; that afternoon, out of signal, they delete all six; the save writes
+ * `rows = []`, `stageSeen = true`, `emptiedEntities = ["costLine"]` and the PUT throws, recording
+ * nothing. Every later pass then found the stage empty and unsent, `continue`d, counted no pending
+ * stage — and `isFullySynced` was true, so the list row read "Backed up to the server" while the six
+ * superseded rows stayed in the repository and printed in the .docx the ministry receives. The
+ * `unsentDeletions` counter did not see it either: it sits behind `!isAuthoritative`, and this stage IS
+ * authoritative — it was read that morning — which is exactly what makes the deletion SENDABLE.
+ *
+ * ── SO THE DELETION DEFEATS THE EARLY RETURN ONLY WHEN IT CAN ACTUALLY TRAVEL ────────────────────
+ *
+ * Three conditions, and all three are load-bearing:
+ *
+ *  * the workshop exists remotely, because with no server record there is nothing anywhere that could
+ *    still be holding the rows;
+ *  * the draft is authoritative, because [buildStageBody] puts `emptiedEntities` on the wire ONLY
+ *    alongside `replaceCollections`, so an unauthoritative payload carries no deletion at all. Letting
+ *    that stage through would build an empty merge body, PUT it, record its signature and change
+ *    nothing — while flatly contradicting the sentence `statusOf` prints beside it ("Nothing else about
+ *    this stage is held up"). The unauthoritative case is the one `unsentDeletions` counts, and it is
+ *    counted rather than pushed because a push cannot fix it; only opening the stage can;
+ *  * something is actually owed, so this cannot make every empty stage on the device pending.
+ *
+ * What the caller gets from a `false` here is a fall-through to the ordinary signature comparison,
+ * which already answers "different" for a stage whose recorded signature is absent — so the deletion is
+ * reported as PENDING, is built by `buildStageBody` with `replaceCollections = true` and the entity
+ * named, and `recordStageSent` clears the record scoped to what the acknowledged body carried.
+ */
+internal fun dwStageSaysNothing(
+    spec: StageDto,
+    stored: StageDraft?,
+    record: StageSyncRecord?,
+    workshopIsRemote: Boolean,
+): Boolean {
+    // `custom` counted alongside `values` and `rows`, and it is not a tidy-up: EIGHT of the twenty-two
+    // stages declare no singleton entity at all, so "a stage whose only answers are custom" is the
+    // ordinary case for a designer extending sketch development or costing, not an edge case. Left
+    // out, such a stage is judged empty, is never reported as pending, and never syncs.
+    //
+    // ASKED THROUGH [StageDraft.holdsAnswers], WHICH IS ALSO WHAT MAKES AN UNDERSCORE KEY NOT AN
+    // ANSWER. This was `stored.values.isEmpty() && …` inline, and `values` is where the recording
+    // place lands — a key `wireData` strips from every payload by construction. So a stage whose only
+    // content was "where were you when this was filled in?" was judged to have something to say, and
+    // the pass spent a metered PUT on a body carrying an empty singleton, no rows and no custom
+    // answers, creating a server-side stage record for a stage nobody had answered. Once per such
+    // stage, because the recorded signature then matches — a wasted request and a phantom record
+    // rather than a loop, which is why it survived this long.
+    val empty = stored == null || !stored.holdsAnswers()
+    if (!empty) return false
+    // An empty stage that HAS been sent is a stage the designer emptied, and it must still go —
+    // `replaceCollections` is what carries a deletion, and skipping it would leave the deleted rows
+    // alive on the server to reappear in the report.
+    if (!record?.signature.isNullOrBlank()) return false
+    // And an empty stage that has NEVER been sent still speaks if it is holding a deletion it is
+    // entitled to state. See the KDoc for why all three halves of this are required.
+    if (workshopIsRemote && isAuthoritative(stored, record) && dwOwedDeletions(spec, stored).any) {
+        return false
+    }
+    return true
+}
+
 // --------------------------------------------------------------------------------------
 // The engine
 // --------------------------------------------------------------------------------------
@@ -825,45 +1005,36 @@ object WorkshopSyncEngine {
               of every workshop captured in a courtyard. It CANNOT stick: one online open of the stage
               reads it, [dwFoldServerStage] earns the authority, the next save carries the list and
               `recordStageSent` clears the keys it carried.
+
+              ── AND THE OTHER SIDE OF `isAuthoritative`, WHICH THIS BLOCK IS NOT ────────────────────
+
+              Read into `owed` ABOVE the gate, and read again by [dwStageSaysNothing] below, because one
+              deletion record means two different things on the two sides of this `if` and the second of
+              them used to be lost completely. Unsendable, it is a PROBLEM, named here. SENDABLE — the
+              stage was read this morning, so the draft is authoritative and `buildStageBody` will put
+              `emptiedEntities` on the wire — it is not a problem at all, it is a PENDING STAGE, and
+              until [dwStageSaysNothing] existed the `empty` return below swallowed it: not counted
+              here, not counted there, `isFullySynced` true, "Backed up to the server" printed over six
+              rows the designer had deleted and no payload would ever remove.
             */
+            val owed = dwOwedDeletions(spec, stored)
             if (remoteId != null && !isAuthoritative(stored, record)) {
-                val owed = stored?.emptiedEntities.orEmpty()
-                    .filter { key -> spec.collections.any { it.key == key } }
-                /*
-                  THE SURVIVING CASE OF THE DEFECT THIS COUNTER WAS WRITTEN FOR, ONE DOOR ALONG.
-
-                  `emptiedEntities` records a collection that went from having rows to having NONE.
-                  Deleting one row of three is not that, and it used to leave no record at all — so
-                  this walk had nothing to read, `isFullySynced` had no term for it, and the workshop
-                  row said "Backed up to the server" while the row was still in the repository and
-                  still in the report. [StageDraft.deletedRowKeys] is that record.
-
-                  INTERSECTED WITH THE DECLARED ENTITIES, exactly as `owed` is and for the same reason:
-                  a key left behind by a registry that has moved on is not a deletion instruction for
-                  anything, and counting it would make a stage permanently unsynced over an entity no
-                  build can draw.
-                */
-                val owedRows = stored?.deletedRowKeys.orEmpty()
-                    .filter { key ->
-                        val entity = key.substringBefore(DW_ROW_KEY_SEPARATOR, "")
-                        spec.collections.any { it.key == entity }
-                    }
-                if (owed.isNotEmpty() || owedRows.isNotEmpty()) {
+                if (owed.any) {
                     // ONE STAGE, COUNTED ONCE, however many ways it owes a deletion. The figure is a
                     // count of STAGES held up — `WorkshopSyncStatus.unsentDeletions` is rendered as
                     // "N stages", so incrementing per kind would report two stages where there is one.
                     unsentDeletions++
                     val what = buildString {
-                        if (owed.isNotEmpty()) {
-                            append("you deleted everything in ${owed.joinToString(", ")}")
+                        if (owed.entities.isNotEmpty()) {
+                            append("you deleted everything in ${owed.entities.joinToString(", ")}")
                         }
-                        if (owedRows.isNotEmpty()) {
+                        if (owed.rows.isNotEmpty()) {
                             if (isNotEmpty()) append(", and ")
                             else append("you deleted ")
-                            val n = owedRows.size
+                            val n = owed.rows.size
                             append("$n row${plural(n)} from ")
                             append(
-                                owedRows
+                                owed.rows
                                     .map { it.substringBefore(DW_ROW_KEY_SEPARATOR, "") }
                                     .distinct()
                                     .joinToString(", ")
@@ -877,14 +1048,16 @@ object WorkshopSyncEngine {
                         "save straight after."
                 }
             }
-            // `custom` counted alongside `values` and `rows`, and it is not a tidy-up: EIGHT of the
-            // twenty-two stages declare no singleton entity at all, so "a stage whose only answers
-            // are custom" is the ordinary case for a designer extending sketch development or
-            // costing, not an edge case. Left out, such a stage is judged empty here, is never
-            // reported as pending, and — with the identical gate in `pushStages` — never syncs.
-            val empty = stored == null ||
-                (stored.values.isEmpty() && stored.rows.isEmpty() && stored.custom.isEmpty())
-            if (empty && record?.signature.isNullOrBlank()) return@forEach
+            // ONE FUNCTION, NOT TWO COPIES OF A TEST. This gate and the one in `pushStages` were
+            // written out twice, byte-identical — and stayed byte-identical right up to the point
+            // where being wrong mattered: neither copy read the deletion records, so a stage holding
+            // nothing but a SENDABLE deletion was skipped here (not pending) and skipped there (not
+            // sent), and the workshop scored "Backed up to the server" over rows still in the report.
+            // Sharing it is what makes "what the status pass says" and "what the push pass does" one
+            // decision. See [dwStageSaysNothing] for all of the argument.
+            if (dwStageSaysNothing(spec, stored, record, workshopIsRemote = remoteId != null)) {
+                return@forEach
+            }
             // Built with the same authority AND the same definition the push will use, so the
             // signature compared below is the signature that would actually be sent. Both are part of
             // the payload's meaning and therefore of its digest, so a status pass that guessed
@@ -899,6 +1072,45 @@ object WorkshopSyncEngine {
             }
             if (signatureOf(built.body) != record?.signature) pendingStages++
         }
+        /*
+          AND THE OTHER DIRECTION OF THE WALK ABOVE: WHAT THE DRAFT HOLDS THAT THE REGISTRY DOES NOT
+          DECLARE — see [dwStrandedStages].
+
+          The loop above enumerates `schema.stages` and looks each one up in the draft, and so does
+          `pushStages`. Neither had a residual term, so a stage key the draft holds and this registry
+          does not was invisible to both: never built, never pending, never a problem, `isFullySynced`
+          true and the row reading "Backed up to the server" over answers with no route off the phone.
+
+          COUNTED AS PENDING, and that is a considered choice rather than the lazy one. It is the same
+          treatment the `built.unresolved` case a few lines up already gets — a stage that cannot be
+          built right now but whose answers are still owed to the server — and it means every surface
+          that already speaks for a pending stage speaks for this one too, in words that are true for
+          the ordinary trigger: the registry cache was lost or damaged, so it fell back to the bundled
+          asset, and opening the app with a connection refetches the registry and the stage syncs on
+          the pass after. A counter of its own would have to be threaded through `dwDeviceSyncBanner`
+          and its caller as well, and until it was, this workshop would count towards the banner's
+          `workshops` and towards none of its numbers — the exact "Waiting to upload" fall-through
+          that function was written to end.
+
+          THE PROBLEM LINE IS WHERE THE HONEST QUALIFICATION LIVES, because the other trigger — the
+          server RENAMING or DROPPING a stage key — is not fixed by signal alone and the pending
+          sentence would be optimistic about it.
+
+          COUNTED HERE AND NOT ALSO IN `pushStages`. That pass can do nothing about it (there is no
+          spec to build a payload from) and two copies of one test is the shape of the defect
+          [dwStageSaysNothing] is named after; `syncOneWorkshop` consults this status before it decides
+          a workshop is finished, so one count here is load-bearing in both.
+        */
+        dwStrandedStages(schema, draft).forEach { stored ->
+            pendingStages++
+            problems += "“${stored.title.ifBlank { stored.stageId }}”: this phone's copy of the " +
+                "stage list no longer describes this stage, so the answers it holds cannot be sent " +
+                "— nothing has been thrown away. Open the app with a connection so it can fetch the " +
+                "current stage list; if the stage stays here after that, this workshop was built " +
+                "with a stage the repository has since retired and someone will have to move the " +
+                "answers by hand."
+        }
+
         // A non-permanent note (the server dropped a field it did not recognise, an answer it
         // refused, files still to upload) is worth showing but is not a failed stage, so it is listed
         // after the refusals rather than counted with them.
@@ -1099,6 +1311,46 @@ object WorkshopSyncEngine {
         tally: Tally,
     ): Boolean {
         var draft = WorkshopDraftStore.load(context, workshopId) ?: return true
+
+        /*
+          A DRAFT ANOTHER ACCOUNT CAPTURED IS NOT THIS ACCOUNT'S TO SEND — see [WorkshopDraft.ownerUserId].
+
+          The field was written by the create path and read by NOTHING, which made it a permission
+          boundary that was recorded to disk and then never enforced. Two designers share one field
+          handset (the case the field's own KDoc is written for): A captures a fortnight offline, signs
+          out; B signs in, and `MainActivity`'s sign-in effect calls `syncOutbox` within the second.
+          Every one of A's local-only workshops was then CREATED ON THE SERVER UNDER B'S TOKEN — B is
+          `createdById`, the records land in B's list, and A has to be granted access to their own
+          fieldwork. The `remoteId` written back into A's draft points at B's record.
+
+          NULL MEANS "PRE-DATES THE FIELD" AND IS ALLOWED THROUGH, deliberately. Drafts written before
+          the stamp existed, and drafts a stage screen created for a workshop opened from the server,
+          carry no owner; refusing those would strand real fieldwork behind a rule they could never
+          satisfy — a silent, total sync stop, which is worse than the leak this guards. Only a
+          POSITIVE mismatch stops the pass, and only when somebody is actually signed in.
+
+          IT SKIPS THE WORKSHOP RATHER THAN STOPPING THE PASS (`true`, not `false`): the connection is
+          fine and every other workshop on the device should still go. And it is said out loud on the
+          status line, because "did not sync" and "up to date" are otherwise the same silence.
+
+          THE OTHER HALF OF THIS FINDING IS NOT HERE: the workshop LIST still draws A's drafts to B,
+          because `WorkshopDraftStore.list` enumerates every directory and its caller does not filter.
+          Sending is the half that files research under the wrong account and is fixed here; the
+          display half needs the list screen, which this change deliberately does not touch.
+        */
+        if (dwDraftIsForAnotherAccount(draft.ownerUserId, repository.cachedUser()?.id)) {
+            val note = "This workshop was captured on this phone by a different account, so it is " +
+                "not sent while you are signed in. Sign in as the designer who recorded it and it " +
+                "goes up on the next pass. Nothing has been deleted."
+            // Written only when it CHANGES. This runs for every workshop on the device every
+            // forty-five seconds; stamping the same sentence each time would rewrite the JSON
+            // document of a draft that is deliberately going nowhere, on the flash storage the
+            // photographs need — the same argument the `isFullySynced` early exit below makes.
+            if (draft.sync.lastError != note) {
+                noteSync(context, workshopId) { it.copy(lastError = note) }
+            }
+            return true
+        }
 
         // NOTHING OUTSTANDING MEANS NOTHING WRITTEN, and this early exit is what makes it safe for
         // the 45-second fallback timer to call this for every workshop on the device for ever. A
@@ -1377,16 +1629,13 @@ object WorkshopSyncEngine {
             if (record.blocksRetry()) continue
 
             val stored = draft.stages[spec.key]
-            // `custom` counted here too — see the identical gate in `statusOf`. A stage whose only
-            // content is a designer's own answers would otherwise be skipped for ever, and the
-            // designer would be told nothing at all: `statusOf` would not even count it as pending.
-            val empty = stored == null ||
-                (stored.values.isEmpty() && stored.rows.isEmpty() && stored.custom.isEmpty())
-            // An empty stage that has never been sent has nothing to say. An empty stage that HAS
-            // been sent is a stage the designer emptied, and it must still go — `replaceCollections`
-            // is what carries a deletion, and skipping it would leave the deleted rows alive on the
-            // server to reappear in the report.
-            if (empty && record?.signature.isNullOrBlank()) continue
+            // THE SAME FUNCTION `statusOf` ASKS, and it is shared rather than copied because the two
+            // used to be copies and the copies were wrong together: an empty stage holding a deletion
+            // it was entitled to send was skipped here for ever, while `statusOf` — reading the
+            // identical inlined test — reported nothing pending and the row said "Backed up to the
+            // server". `workshopIsRemote = true` is not a guess: this function is only ever called
+            // with the id the server issued. See [dwStageSaysNothing].
+            if (dwStageSaysNothing(spec, stored, record, workshopIsRemote = true)) continue
 
             val built = buildStageBody(
                 spec, stored, mediaById, isAuthoritative(stored, record),

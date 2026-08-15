@@ -1199,6 +1199,31 @@ def test_the_list_route_withholds_the_text_of_a_recording_this_caller_may_not_re
     monkeypatch.setattr(routes.ai_layers, "workshop_layers", _layers)
     monkeypatch.setattr(routes, "db", SimpleNamespace(mediafile=_MediaTable()))
 
+    # THE ONE ARM OF THE PREDICATE THAT IS A QUERY, AND THE REASON IT IS STUBBED HERE.
+    # ``owned_or_granted_where`` was pure dictionary work when this test was written. It has since
+    # grown a third arm on the media variant — "the recordings of a design workshop this account may
+    # open" — which has to READ the workshop table, because ``MediaFile`` carries no column pointing
+    # at ``DesignWorkshop``, only the ``linkedRecordType``/``linkedRecordId`` tag pair. That arm
+    # reaches ``services.records.db``, which is a DIFFERENT reference from the ``routes.db`` replaced
+    # above (each module does ``from app.core.db import db`` and holds its own), so it went straight
+    # past the fake media table to the real client and raised ``ClientNotConnectedError`` — in a file
+    # whose header promises NO DATABASE AND NO NETWORK.
+    #
+    # STUBBED AT THE ARM, NOT AT THE PREDICATE, on purpose: the docstring above says
+    # ``owned_or_granted_where`` is not stubbed, and that is still true and still load-bearing — the
+    # real predicate runs, and the fake table honours the ids inside the AND-composition, which is
+    # what would catch a route that stopped composing. Only the workshop lookup is replaced, with the
+    # answer a real one would give for this caller: ``load_workshop_or_404`` is itself a stub here, so
+    # there are no ``DesignWorkshopViewer`` rows and no workshops this account may open. An empty list
+    # is what the live query returns for such an account, which is also why the helper returns a LIST
+    # — an ``IN []`` arm would be a permanently false predicate rather than no arm at all.
+    from app.services import records as records_service
+
+    async def _no_workshop_arm(_user_id: str) -> list:
+        return []
+
+    monkeypatch.setattr(records_service, "_design_workshop_media_branches", _no_workshop_arm)
+
     payload = asyncio.run(
         routes.list_ai_layers(
             "wsp_1",

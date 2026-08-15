@@ -37,9 +37,32 @@ _IDENTITY_KEYS = ("aadhaarNumber", "pehchanCardNumber")
 # have become an index of direct download links to every file in the repository — which is precisely
 # the half of the rule that is not open.
 #
-# So the ROW still travels for everybody: the filename, the type, the caption, the transcript, which
-# record it belongs to, who uploaded it. Only the URL is withheld, and only from callers who may not
-# take that uploader's data.
+# So the ROW still travels for everybody: the filename, the type, the caption, the duration, which
+# record it belongs to, who uploaded it. Only the bytes are withheld, and only from callers who may
+# not take that uploader's data.
+#
+# THE TRANSCRIPT IS BYTES, NOT A CAPTION, and this list said otherwise until 2026-08-15. The sentence
+# above used to read "the caption, THE TRANSCRIPT", and it was wrong in a way that made the narrowest
+# control in this repository decoration. ``MediaFile.transcriptText`` is the verbatim text of an
+# artisan interview — names, incomes, family circumstances, the testimony itself — and it is the
+# column the report's transcript annexure prints as the artisan's words. Withholding the recording
+# while shipping its full text protects nothing: a CROWDSOURCE_VOLUNTEER (rank 10, the authentication
+# floor) calling ``GET /api/media?mediaType=AUDIO&pageSize=100`` was handed every interview in the
+# repository as text, and the co-designer refused a colleague's clip by
+# ``workshop_transcripts.load_transcript_items`` — which calls that same read "a leak" — got it back
+# by lifting the media id out of the stage he can already edit and calling ``GET /api/media/{id}``.
+# Two live rules, and the permissive one won on every path a client had. Settled here on the
+# RESTRICTIVE side, because that is the side the documentation already tells a reviewer is held:
+# docs/PERMISSIONS.md §4.4.1's "does not confer" column says reading the text behind a recording this
+# account may not read "is gated per media file by ``owned_or_granted_where(uploadedById)``". One
+# request disproved that sentence; this makes it true again rather than deleting it.
+#
+# WHY THE SAME PREDICATE AND NOT A SECOND ONE. The transcript is derived from the file; anyone
+# entitled to the file can run the same provider over it. Giving the text its own gate would be a
+# third rule in a domain that has just been burned by having two — and the surface a co-designer
+# actually needs, ``GET /design-workshops/{id}/transcripts``, has its own WIDER predicate
+# (``owned_or_granted_where``, whose third clause admits a ``DesignWorkshopViewer``), so nothing that
+# was reachable through the feature built for it becomes unreachable here.
 #
 # ``objectKey`` IS IN THIS LIST, and it has to be. ``s3.public_url_for_key`` is deterministic — the URL
 # is the CDN host plus the key, and the host is public knowledge — so handing over the key hands over
@@ -49,14 +72,25 @@ _IDENTITY_KEYS = ("aadhaarNumber", "pehchanCardNumber")
 # by construction), so removing it from a read response costs no client anything.
 _MEDIA_URL_KEYS = ("url", "publicUrl", "objectKey")
 
+#: The transcript columns, withheld under the SAME entitlement as the URL — see the banner above.
+#: Kept as their own tuple rather than folded into ``_MEDIA_URL_KEYS`` so the name of each list still
+#: describes what is in it: one is "the ways to fetch the object", the other is "the object's content
+#: in text". They are dropped together by ``_MEDIA_TAKEABLE_KEYS`` and must stay that way.
+_TRANSCRIPT_KEYS = ("transcriptText", "transcriptSummary")
+
+#: Everything a media node carries that IS the recording rather than a description of it. This is the
+#: tuple ``_redact_sensitive`` actually pops; the two above exist to say why each member is in it.
+_MEDIA_TAKEABLE_KEYS = (*_MEDIA_URL_KEYS, *_TRANSCRIPT_KEYS)
+
 # How a node is recognised as a media file without the walk knowing what shape it is walking:
 # ``objectKey`` exists on MediaFile and on no other model, and a media node also carries its own
 # ``uploadedById``, so the entitlement decision can be made per node. Exactly the trick
 # ``_IDENTITY_KEYS`` uses with ``createdById``.
 _MEDIA_MARKER = "objectKey"
 
-#: Passed as ``media_urls`` to mean "every URL may travel" — a professor, an admin, or a caller
-#: holding the global dataset-download permission.
+#: Passed as ``media_urls`` to mean "every URL may travel" — a professor, an admin, or a surface that
+#: has already gated itself (``datasets.py`` behind ``require_dataset_admin``). NOT the holder of the
+#: grantable ``canDownloadDataset`` boolean: see ``media_url_owners`` for why that term was removed.
 ALL_MEDIA_URLS = None
 
 
@@ -99,8 +133,9 @@ def _redact_sensitive(
     * password hashes are dropped outright, however deeply nested;
     * identity numbers are masked unless ``unmasked`` (professor and above) or the node's own
       ``createdById`` is the viewer — entitlement follows the ARTISAN, not the payload;
-    * media URLs are dropped unless ``media_urls`` is ``None`` (all allowed) or contains the node's own
-      ``uploadedById`` — entitlement follows the FILE'S UPLOADER, for the same reason.
+    * media URLs AND transcript text (:data:`_MEDIA_TAKEABLE_KEYS`) are dropped unless ``media_urls``
+      is ``None`` (all allowed) or contains the node's own ``uploadedById`` — entitlement follows the
+      FILE'S UPLOADER, for the same reason.
 
     Both per-node tests read an owner column off the node being walked, which is what lets one pass
     over an arbitrary shape make a per-record decision without knowing what shape it is.
@@ -123,7 +158,7 @@ def _redact_sensitive(
             and _MEDIA_MARKER in value
             and value.get("uploadedById") not in media_urls
         ):
-            for key in _MEDIA_URL_KEYS:
+            for key in _MEDIA_TAKEABLE_KEYS:
                 value.pop(key, None)
         for nested in value.values():
             _redact_sensitive(nested, viewer_id, unmasked, media_urls)
@@ -156,9 +191,9 @@ def public_encode(obj: Any, viewer: Any = None, *, media_urls: Any = _UNSET) -> 
     ``media_urls`` follows the same defaulting discipline, and its default is deliberately the
     CHEAPEST SAFE answer rather than the most generous correct one:
 
-    * omitted — derived from ``viewer`` with no database access: every URL for professor-and-above and
-      for a holder of the global dataset-download permission, otherwise only the viewer's OWN uploads.
-      A grantee therefore does not see URLs on a route that has not thought about it.
+    * omitted — derived from ``viewer`` with no database access: every URL for professor-and-above,
+      otherwise only the viewer's OWN uploads. A grantee therefore does not see URLs on a route that
+      has not thought about it.
     * ``None`` (:data:`ALL_MEDIA_URLS`) — every URL. For an already-gated download surface.
     * a ``set`` of uploader ids — exactly those uploaders' URLs. Routes where a GRANTEE legitimately
       needs the file pass ``await media_url_owners(viewer)``, which adds the granted uploaders at the
@@ -167,7 +202,7 @@ def public_encode(obj: Any, viewer: Any = None, *, media_urls: Any = _UNSET) -> 
     Pass the current user from any route whose caller legitimately needs the real number — the
     artisan edit form is the reason that path exists.
     """
-    from app.core.deps import can_download_dataset, get_value, has_rank
+    from app.core.deps import get_value, has_rank
 
     encoded = jsonable_encoder(obj)
     if viewer is None:
@@ -178,7 +213,10 @@ def public_encode(obj: Any, viewer: Any = None, *, media_urls: Any = _UNSET) -> 
 
     viewer_id = get_value(viewer, "id")
     if media_urls is _UNSET:
-        if has_rank(viewer, "PROFESSOR") or can_download_dataset(viewer):
+        # RANK ONLY. ``can_download_dataset`` used to be OR-ed in here and in ``media_url_owners``,
+        # and it is the one predicate that must not appear in this decision — see that function's
+        # docstring for the measurement that killed it.
+        if has_rank(viewer, "PROFESSOR"):
             allowed = ALL_MEDIA_URLS
         else:
             allowed = {viewer_id} if viewer_id else set()
@@ -195,11 +233,32 @@ def public_encode(obj: Any, viewer: Any = None, *, media_urls: Any = _UNSET) -> 
 async def media_url_owners(viewer: Any) -> set[str] | None:
     """Whose media URLs ``viewer`` may be handed: ``None`` for all, else a set of uploader ids.
 
-    ``None`` for professor-and-above and for a holder of the global dataset-download permission, since
-    both may already download the whole repository. Otherwise the viewer's own uploads plus every
-    uploader who has GRANTED them a data-access grant — the same tiered grants
-    ``services/access.owner_download_scope`` enforces on the export paths, so a grantee who may
-    download a researcher's data can also play their recordings, and nobody else can.
+    ``None`` for professor-and-above. Otherwise the viewer's own uploads plus every uploader who has
+    GRANTED them a data-access grant — the same tiered grants ``services/access.owner_download_scope``
+    enforces on the export paths, so a grantee who may download a researcher's data can also play
+    their recordings, and nobody else can.
+
+    ``can_download_dataset`` IS DELIBERATELY NOT CONSULTED, AND IT USED TO BE. Both this function and
+    ``public_encode``'s default read ``has_rank(viewer, "PROFESSOR") or can_download_dataset(viewer)``,
+    under a docstring premise — "both may already download the whole repository" — that is FALSE for
+    exactly the account it was widening. ``can_download_dataset`` (deps.py) is
+    ``has_rank(user, "PROFESSOR") or bool(user.canDownloadDataset)``: a per-user grantable boolean that
+    a RESEARCHER can hold without ranking anywhere near Professor. The two download surfaces written
+    for that concern say so out loud and decide the opposite for the same account —
+    ``data_browser._scope_for`` ("``canDownloadDataset`` is a GRANTABLE boolean … the permission means
+    'download the data you can SEE'") and ``export.dataset_manifest``'s ``media_vis`` both narrow with
+    ``owned_or_granted_where(owner_field="uploadedById")``. So one boolean bought a below-Professor
+    account the ``url``, ``publicUrl`` and ``objectKey`` of EVERY file in the repository through
+    ``GET /media`` and ``GET /search``, while ``/data/media/{id}/download`` 404-ed and
+    ``/export/dataset`` omitted the same rows from the manifest. Those URLs carry no expiry and no
+    auth, so they outlive revocation of the permission, of the grant, and of the account.
+
+    Deleting the term costs the surfaces that legitimately need every URL nothing, because each of
+    them says so at its own gate rather than relying on this default: ``datasets.py`` passes
+    ``media_urls=ALL_MEDIA_URLS`` explicitly behind ``require_dataset_admin``, and
+    ``media.list_orphan_media`` binds an admin. If a future route needs the wide answer, pass
+    ``ALL_MEDIA_URLS`` at that route and be visible about it — do not put the boolean back here, where
+    it applies to every caller of a function that cannot see which surface it is serving.
 
     ONE query, and only for the ranks that need it. Pass the result to ``public_encode(media_urls=…)``
     from the routes where a grantee genuinely needs the file — the media list, search, and the
@@ -211,9 +270,9 @@ async def media_url_owners(viewer: Any) -> set[str] | None:
     ``visibility``'s own precedent for grant-gated reads and is still grant-gated.
     """
     from app.core.db import db
-    from app.core.deps import can_download_dataset, get_value, has_rank
+    from app.core.deps import get_value, has_rank
 
-    if has_rank(viewer, "PROFESSOR") or can_download_dataset(viewer):
+    if has_rank(viewer, "PROFESSOR"):
         return ALL_MEDIA_URLS
     viewer_id = get_value(viewer, "id")
     if not viewer_id:
@@ -602,6 +661,33 @@ async def owned_or_granted_where(user: Any, owner_field: str = "createdById") ->
     the caller anything, shipped as query parameters on every request. Expressed as a relation
     filter, Postgres answers the same question inside the query it was already running, against the
     ``granteeId`` index that exists for exactly this.
+
+    A THIRD CLAUSE, ON MEDIA ONLY: THE RECORDINGS OF A DESIGN WORKSHOP THIS ACCOUNT MAY OPEN.
+    A ``DesignWorkshopViewer`` row is the mechanism by which two designers run one workshop, and it
+    is neither of the two clauses above — the co-designer did not upload the clip and holds no
+    ``DataAccessGrant`` from whoever did. So the transcript preview, whose whole stated purpose is
+    that "a designer about to append transcripts to a report submitted to a ministry needs to see
+    what they are appending", answered a granted co-designer with ``{"items": [], "total": 0}``
+    over six interviews sitting in the database — an empty list that reads as "nothing exists" when
+    it means "withheld from you", landing on the exact feature the grant was built for. The
+    generator then told them "6 recording(s) could not be included", so the two screens contradict
+    each other and the preview is the one that lies. The CREATOR was refused the same way whenever
+    a colleague did the uploading, which is the ordinary division of labour on a field team.
+
+    Granting it is the coherent answer and not a widening of the boundary: the same account can
+    already open every stage of that workshop through ``load_workshop_or_404``, edit the stage that
+    names the clip, and read stage 8's ``surveyResponse``, which carries the same testimony as text.
+    Withholding only the audio protects nothing and costs the feature.
+
+    THE LINK IS A TAG, NOT A FOREIGN KEY, and that is why this clause costs a query the other two
+    do not. ``MediaFile`` has no column pointing at ``DesignWorkshop``; both clients file every
+    design-workshop upload under ``linkedRecordType="designWorkshop"`` with the workshop id in
+    ``linkedRecordId`` (see ``dictation_consent.MEDIA_TAG``, which reached the same conclusion for
+    the consent gate). There is no relation for Postgres to walk, so the ids have to be read first.
+    The cost is bounded by how many workshops one person is on — a handful, indexed by
+    ``DesignWorkshopViewer(userId)`` and ``DesignWorkshop(createdById)`` — and it is paid only
+    below professor and only on the media variant, which is to say on the transcript, annexure and
+    export paths, never on the record queries.
     """
     from app.core.deps import get_value, has_rank
 
@@ -611,16 +697,69 @@ async def owned_or_granted_where(user: Any, owner_field: str = "createdById") ->
     # ``createdById`` -> ``createdBy``, ``uploadedById`` -> ``uploadedBy``: the owner COLUMN and the
     # owner RELATION are named that way on every model this filter is applied to.
     owner_relation = owner_field.removesuffix("Id")
-    return {
-        "OR": [
-            {owner_field: uid},
-            {
-                owner_relation: {
-                    "is": {"dataAccessAsOwner": {"some": {"granteeId": uid, "status": "GRANTED"}}}
-                }
-            },
-        ]
-    }
+    branches: list[dict[str, Any]] = [
+        {owner_field: uid},
+        {
+            owner_relation: {
+                "is": {"dataAccessAsOwner": {"some": {"granteeId": uid, "status": "GRANTED"}}}
+            }
+        },
+    ]
+    # ONE VARIANT OF THIS FUNCTION IS A QUERY, THE OTHER IS NOT, AND THAT ASYMMETRY IS THE POINT.
+    # Everything above is dictionary work; this line makes the MEDIA variant read the workshop table
+    # (see the helper for why the tag pair leaves no alternative). Two consequences a caller has to
+    # know about, both learned the hard way when this arm landed:
+    #
+    #   * ``owner_field="uploadedById"`` may only be awaited where the Prisma client is connected.
+    #     ``tests/test_record_filters.py`` had called this builder with no client since the day it was
+    #     written — it was a pure predicate then — and started raising ``ClientNotConnectedError``
+    #     from inside a filter builder, which is a baffling place to be handed a database error. That
+    #     test now doubles ``_design_workshop_media_branches`` and asserts the arm is still here; if
+    #     you move this line, move the seam it stubs with it.
+    #   * the record variant must NOT grow a lookup to match. It rides every /export CSV and every
+    #     /data page for every account below professor, where a per-request round trip buys nothing:
+    #     ``MediaFile`` is the only model in this repository whose rows a design workshop reaches
+    #     without an owner column or a grant.
+    if owner_field == "uploadedById":
+        branches.extend(await _design_workshop_media_branches(uid))
+    return {"OR": branches}
+
+
+async def _design_workshop_media_branches(user_id: str) -> list[dict[str, Any]]:
+    """The "recordings of a workshop I may open" arm of the media filter, or nothing.
+
+    Split out of :func:`owned_or_granted_where` so the tag lookup can be read — and skipped — on
+    its own. Returns a LIST rather than a clause because an account on no design workshop
+    contributes no branch at all: an ``IN []`` arm would be a permanently false predicate shipped
+    on every export query for every researcher in the repository.
+
+    ``visible_to_clause`` is the same expression ``GET /design-workshops`` scopes its list with and
+    ``load_workshop_or_404`` admits on, imported rather than re-spelled: this predicate must mean
+    exactly "a workshop this account may open", and the day that widens again (it already widened
+    once, from creator-only) the audio must widen with it rather than needing a second edit
+    somebody has to notice. Imported inside the function because
+    ``services/design_workshop_viewers`` imports this module.
+
+    Failure here is NOT swallowed. This runs inside read predicates whose callers treat an empty
+    filter as "no narrowing", so returning [] on an error would be indistinguishable from "this
+    account is on no workshop" — a wrong, silent refusal on exactly the surface the grant exists
+    to serve. Let it raise; a 500 is recoverable and a lie is not.
+    """
+    from app.services.design_workshop_viewers import visible_to_clause
+    from app.services.dictation_consent import MEDIA_TAG
+
+    if not user_id:
+        return []
+    # ``deletedAt: None`` because a soft-deleted workshop is a 404 for everyone but an admin, and an
+    # admin is a professor-and-above who never reaches this branch. Leaving it out would let a
+    # grant on a deleted workshop keep handing over its recordings after the record itself is gone.
+    rows = await db.designworkshop.find_many(
+        where={"deletedAt": None, **visible_to_clause(user_id)}
+    )
+    ids = [row.id for row in rows]
+    if not ids:
+        return []
+    return [{"linkedRecordType": MEDIA_TAG, "linkedRecordId": {"in": ids}}]
 
 
 async def own_rows_where(user: Any, owner_field: str = "createdById") -> dict[str, Any]:

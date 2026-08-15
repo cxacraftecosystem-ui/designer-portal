@@ -255,11 +255,26 @@ class StageSaveIn(APIModel):
 
 
 class ReportGenerateIn(APIModel):
-    """Ask the server to render a report.
+    """Ask the server to render a report. **ONE FILE PER REQUEST.**
 
-    ``format`` is a list so the common case — "give me both, I am about to submit them" — is one
-    request and one consistent snapshot of the data, rather than two requests that could
-    straddle an edit.
+    ``formats`` IS A LIST THAT MUST HOLD EXACTLY ONE TOKEN, and the shape is kept — rather than
+    narrowed to a plain string — only because both shipped clients and every recorded export already
+    send an array. This docstring used to say the opposite, in the field's old name: that the list
+    existed so "give me both, I am about to submit them" was one request and one consistent
+    snapshot. **The route never honoured a word of it.** ``POST /{id}/report`` reads
+    ``payload.formats[0]``, renders once, sets one content-disposition, writes one ``DwReportExport``
+    row and returns one body — and because ``_known_formats`` sorts the set, ``["PDF", "DOCX"]``
+    normalised to ``["DOCX", "PDF"]`` and the PDF was ALWAYS the casualty. A caller following this
+    docstring got HTTP 200, a .docx indistinguishable from a single-format request, no mention of
+    the dropped format in the body or in ``x-report-warnings``, and an export ledger recording one
+    file for a request that asked for two.
+
+    So the contract is narrowed to what the code does, rather than half-supported: a second token is
+    a 422 naming the two requests to make. Honouring the old promise instead would mean a container
+    response (a zip, or two base64 blobs) and a second export row, which changes the content-type
+    contract for every existing caller — not something to do to rescue a sentence. Nothing shipped
+    is affected: the web sends ``formats: [format]``, Android renders on device, and every test in
+    this repository sends one element.
     """
 
     templateId: str | None = Field(default=None, max_length=48)
@@ -335,6 +350,19 @@ class ReportGenerateIn(APIModel):
         unknown = wanted - allowed
         if unknown:
             raise ValueError(f"unknown format(s): {', '.join(sorted(unknown))}")
+        if len(wanted) > 1:
+            # THE REFUSAL THAT REPLACES A SILENT DROP. The handler renders `formats[0]` and returns
+            # one body; before this line a two-format request 200'd with half the answer and nothing
+            # anywhere — not the response, not the warnings header, not the export ledger — recording
+            # that the second file had never been made. A 422 a client can act on is the honest
+            # answer to a request this endpoint cannot serve, and it names the remedy because a
+            # designer's integration script is the caller that will hit it.
+            raise ValueError(
+                "ask for one format per request: this endpoint returns a single file. Send "
+                "{\"formats\": [\"DOCX\"]} and {\"formats\": [\"PDF\"]} as two requests."
+            )
+        # Still `sorted(...)` over the set, on a one-element list, so the stored value is normalised
+        # (upper-cased, de-duplicated) exactly as it always was.
         self.formats = sorted(wanted)
         return self
 

@@ -40,6 +40,7 @@ import {
   loadCustomDefinition,
   loadDraft,
   loadRegistry,
+  type CustomDefinitionSource,
   type DwDraft
 } from "@/lib/designWorkshopStore";
 import { isUnreachable } from "@/lib/offline";
@@ -105,6 +106,21 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
   const [draft, setDraft] = useState<DwDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
+  /**
+   * How this browser came to hold — or fail to hold — the workshop's OWN questions.
+   *
+   * `null` while the load is still running; after that it is always one of the three states, because
+   * the load effect settles it in a `finally`. Audit 2026-08-15 (MAJOR): the source was read and
+   * thrown away, so a definition this browser could not read scored as a definition with nothing in
+   * it, and the screen whose entire purpose is answering "can I pack up?" answered yes on evidence it
+   * knew it did not have.
+   *
+   * "unknown" is the only value that changes what this page CLAIMS. "network" and "cache" both mean
+   * the questions were counted; which of the two it was is not something a designer has to act on.
+   */
+  const [definitionSource, setDefinitionSource] = useState<CustomDefinitionSource | null>(null);
+  /** True once the load has settled and the workshop's own questions could NOT be read. */
+  const uncountedQuestions = definitionSource === "unknown";
 
   /*
     The same load the stage index performs, and deliberately the same shape: local copy first so the
@@ -140,11 +156,22 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
 
       if (isLocalWorkshopId(id) && local && !local.remoteId) return;
 
+      /**
+       * The freshest draft this run has produced, readable from the `finally` below.
+       *
+       * Hoisted out of the `try` for one reason: the `finally` has to answer "did this screen manage
+       * to count the workshop's own questions?" on EVERY path, including the ones that threw before
+       * `merged` existed. Reading `local` alone there would ignore a definition the server's copy had
+       * just brought in.
+       */
+      let settled: DwDraft | null = local;
+
       try {
         const detail = await getDesignWorkshop(local?.remoteId ?? id);
         if (cancelled) return;
         const merged = await adoptServerDetail(detail, loadedRegistry);
         if (cancelled) return;
+        settled = merged ?? settled;
         /*
           THE WORKSHOP'S OWN QUESTIONS, READ FOR THE SAME REASON THE FIELD REGISTRY IS.
 
@@ -161,7 +188,26 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
         const target = merged ?? local;
         if (target) {
           void loadCustomDefinition(target).then(async (held) => {
-            if (cancelled || !held.definition) return;
+            if (cancelled) return;
+            /*
+              THE SOURCE IS KEPT, AND KEEPING IT IS THE FIX. Audit 2026-08-15 (MAJOR, frontend).
+
+              This used to read `if (cancelled || !held.definition) return;` — the three-state source
+              dropped on the floor beside a comment (above) that names the exact rule doing so
+              breaks. With `source: "unknown"` the draft's `customDefinition` stays null,
+              `customFieldsFor` resolves to `[]`, no required custom question is counted, `blocking`
+              is empty, `isSubmittable` is true, and this page renders "Every required field across
+              all 22 stages is filled in… Nothing on this workshop will be refused for a missing
+              Basic field" about a workshop whose submit the server is about to refuse.
+
+              "unknown" is not "there are none". `CustomDefinitionSource` exists precisely because a
+              per-workshop definition has no floor by construction — an empty answer and an unread
+              one look identical in the data and mean opposite things. The stage form already honours
+              all three states; this screen, whose entire purpose is answering "can I pack up?",
+              did not.
+            */
+            setDefinitionSource(held.source);
+            if (!held.definition) return;
             const refreshed = await loadDraft(target.localId);
             if (!cancelled && refreshed) setDraft(refreshed);
           });
@@ -178,6 +224,22 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
           return;
         }
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
+      } finally {
+        /*
+          THE WIDER DOOR INTO THE SAME FALSE GREEN, and it is the one the finder missed: when
+          `getDesignWorkshop` itself fails, the branches above RETURN and `loadCustomDefinition` is
+          never called at all. A draft holding a fortnight of answers that has never cached a
+          definition then scores the same false green — under an amber banner that positively
+          asserts "nothing on this page needs a server to be right".
+
+          Settled in a `finally` so every path leaves this screen with an honest answer about what it
+          was able to count. `held` on the draft is the offline truth: a definition read on a previous
+          connection is a legitimate "cache", and its absence is exactly the "unknown" this page must
+          declare rather than silently score as zero.
+        */
+        if (!cancelled) {
+          setDefinitionSource((current) => current ?? (settled?.customDefinition ? "cache" : "unknown"));
+        }
       }
     })();
     return () => {
@@ -225,8 +287,37 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
 
       {offline ? (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          There is no connection, so this is worked out from the copy saved in this browser. That is the same
-          arithmetic the repository does — nothing on this page needs a server to be right.
+          There is no connection, so this is worked out from the copy saved in this browser.
+          {/* THE PARITY CLAIM IS CONDITIONAL NOW, AND IT HAS TO BE. It used to assert flatly that
+              "nothing on this page needs a server to be right" — which is true of the field registry
+              and false of the workshop's own questions, since those live only on the server and in
+              whatever this browser has cached of them. Asserting parity while `uncountedQuestions`
+              is true is the same false green as the success block below, in a banner a designer is
+              more likely to believe precisely because it is explaining itself. */}
+          {uncountedQuestions
+            ? " The 22 stages' own field list is saved here, so that half is exact — but this workshop's own questions are not, and they are not counted below."
+            : " That is the same arithmetic the repository does — nothing on this page needs a server to be right."}
+        </div>
+      ) : null}
+
+      {uncountedQuestions ? (
+        /*
+          THE ONE THING THIS SCREEN COULD NOT COUNT, SAID BEFORE THE NUMBER IT AFFECTS.
+
+          `loadCustomDefinition` resolves to `source: "unknown"` when the definition could neither be
+          fetched nor found in this browser's cache — and "unknown" is NOT "there are none". A
+          designer-defined required question is in `DwStageCompleteness.missing` exactly like a
+          registry field, so a definition that could not be read makes every number on this page a
+          lower bound rather than an answer.
+
+          Drawn even when the connection is fine, because the two failures are independent: the
+          workshop read can succeed and the definition read still fail (a 500 on that route, or a
+          definition written by a build this browser cannot parse).
+        */
+        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
+          This browser could not read the questions this workshop adds of its own, so anything they ask is NOT counted
+          below. A required question among them would refuse a submit without ever appearing on this page. Open this
+          workshop again with a connection to read them.
         </div>
       ) : null}
 
@@ -266,13 +357,32 @@ export default function DesignWorkshopReadinessPage({ params }: { params: Promis
                sentence beside it is indistinguishable from a list that failed to load, and this
                screen exists precisely so a designer does not have to go and check by hand. */
             <section className="panel mb-5 grid gap-2 p-4">
+              {/* THE CLAIM IS DEGRADED, NOT DECORATED, WHEN THE QUESTIONS COULD NOT BE READ.
+                  "Nothing on this workshop will be refused" is a promise about the server's submit
+                  gate, and the gate counts the designer's own required questions. Making a promise
+                  the screen has no evidence for is precisely the failure this whole section exists
+                  to prevent, so the wording narrows to the half that WAS checked — and the amber
+                  line above names the half that was not. The tick stays green because everything
+                  this page could count is genuinely done. */}
               <p className="flex items-center gap-2 text-sm font-medium text-success-600">
                 <CheckCircle2 className="h-4 w-4" aria-hidden />
-                Every required field across all {readiness.stagesTotal} stages is filled in.
+                {uncountedQuestions
+                  ? `Every required field of the standard form, across all ${readiness.stagesTotal} stages, is filled in.`
+                  : `Every required field across all ${readiness.stagesTotal} stages is filled in.`}
               </p>
               <p className="text-sm leading-6 text-ink-700">
-                All {readiness.requiredTotal} of them. Nothing on this workshop will be refused for a missing Basic
-                field{readiness.checks.length ? ", though the report has something to say below." : "."}
+                {uncountedQuestions ? (
+                  <>
+                    All {readiness.requiredTotal} of them. This workshop&apos;s own questions could not be read here, so
+                    whether a submit would be refused for one of those is not something this page can answer
+                    {readiness.checks.length ? "; the report also has something to say below." : "."}
+                  </>
+                ) : (
+                  <>
+                    All {readiness.requiredTotal} of them. Nothing on this workshop will be refused for a missing Basic
+                    field{readiness.checks.length ? ", though the report has something to say below." : "."}
+                  </>
+                )}
               </p>
             </section>
           ) : (

@@ -85,3 +85,26 @@ TRANSCRIPTION_SERVICE.md
 
 # Transient git worktrees created for isolated parallel agents. Build state, never source.
 .claude/worktrees/
+
+# ── DOWNLOADED NATIVE ARTIFACTS ──────────────────────────────────────────────────────────────────
+#
+# `android/app/libs/sherpa-onnx-static-link-onnxruntime-1.13.5.aar` is 37 MB of downloaded release
+# asset, and on 2026-08-15 it was untracked, uncovered by this file, and one `git add -A` away from
+# entering the history permanently — where it could not be removed without rewriting every commit
+# after it.
+#
+# IT IS NOT MEANT TO BE COMMITTED, AND THAT IS A DESIGN DECISION RATHER THAN AN OVERSIGHT.
+# `docs/PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md` §5 records why: bundling the speech runtime takes the
+# ARM-pair APK from 26.2 MB to 79.6 MB — 3.03×, measured off eight packaged APKs — so the runtime is
+# an offer the designer accepts on a connection they choose, not weight every designer in the fleet
+# downloads on prepaid mobile data to serve the few who go to the field. An AAR in the repository is
+# the first step back toward bundling it by accident.
+#
+# The upstream artifact is not on `google()` or `mavenCentral()` under any spelling (twelve tried,
+# every one a 404), so it cannot be a build-time dependency either; it is fetched at runtime and its
+# SHA-256 is pinned in the APK and verified on disk before anything is loaded. See
+# `docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md`.
+#
+# Scoped to the directory rather than to `*.aar` everywhere, so a future AAR that genuinely SHOULD be
+# vendored has to be an explicit decision rather than something this rule silently swallows.
+android/app/libs/

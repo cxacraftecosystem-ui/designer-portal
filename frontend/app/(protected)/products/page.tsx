@@ -37,22 +37,43 @@ export default function ProductsPage() {
   const [collabId, setCollabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const skipFirstDebounce = useRef(true);
+  /**
+   * Which fetch is the current one — the same counter /artisans, /questionnaires and
+   * /design-workshops carry, and for the same reason. The search box debounces the APPLIED TERM,
+   * not the request, and the pager and the funnel fire the same effect, so two or three requests
+   * are routinely in flight together. Without this the answer to an abandoned question can land
+   * LAST and win.
+   *
+   * The failure is worse than a stale table, because `<Pagination>` below is driven by the ANSWER
+   * (`page={data.page}`) while the refetch effect is driven by STATE (`page`). Let request A (page
+   * 1) land after request B (page 2) and you get `data.page === 1` with `page === 2`; Next then
+   * computes `onPage(data.page + 1)` = `setPage(2)`, React bails on the identical scalar, no
+   * dependency changes, no request is issued — the Next button is simply dead until Previous is
+   * pressed. Audit 2026-08-15 filed that against this file, /tools, /processes and /media.
+   *
+   * Counted rather than aborted because `listResource` takes no `AbortSignal`; ignoring the late
+   * answer is the part that matters. If you add another `setData`/`setError` to `load()`, put the
+   * guard in front of it too — a single unguarded write restores the dead pager.
+   */
+  const currentLoad = useRef(0);
 
   async function load() {
+    const generation = (currentLoad.current += 1);
     try {
       // /products supports all three funnel params directly.
-      setData(
-        await listResource<ProductDocumentation>("/products", {
-          search: applied || undefined,
-          workshopId: funnel.workshopId || undefined,
-          craftId: funnel.craftId || undefined,
-          artisanId: funnel.artisanId || undefined,
-          page,
-          pageSize: 20
-        })
-      );
+      const result = await listResource<ProductDocumentation>("/products", {
+        search: applied || undefined,
+        workshopId: funnel.workshopId || undefined,
+        craftId: funnel.craftId || undefined,
+        artisanId: funnel.artisanId || undefined,
+        page,
+        pageSize: 20
+      });
+      if (generation !== currentLoad.current) return;
+      setData(result);
       setError(null);
     } catch (err) {
+      if (generation !== currentLoad.current) return;
       setError(err instanceof Error ? err.message : "Unable to load products");
     }
   }

@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
 import { Field } from "@/components/FormControls";
 import { LateSubmissionDialog } from "@/components/LateSubmissionDialog";
+import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { ComboBox } from "@/components/ui/Dropdown";
 import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -81,6 +84,17 @@ export type WorkshopSelection = {
   touched: boolean;
   workshops: Workshop[];
   loading: boolean;
+  /**
+   * What the picker is NOT showing, or null when it holds every workshop — see
+   * `components/data/cappedList`.
+   *
+   * `/workshops` clamps `pageSize` to 100 and this database holds 196 workshop rows (counted
+   * 2026-08-15), so the list below is one page ordered `createdAt desc` and re-sorted here by
+   * occurrence date. **The re-sort cannot recover what the server already cut**: it reorders the
+   * hundred that arrived. Rendered by <WorkshopSelect>; exposed on the selection so a form that
+   * draws its own workshop control cannot silently drop the sentence.
+   */
+  cut: ListCut | null;
   /** Pre-flight answer for the current selection; null while loading or when unavailable. */
   check: WorkshopSubmissionCheck | null;
   setWorkshopId: (workshopId: string) => void;
@@ -111,6 +125,7 @@ export function useWorkshopSelection({
   resetKey?: string | null;
 } = {}): WorkshopSelection {
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
+  const [cut, setCut] = useState<ListCut | null>(null);
   const [loading, setLoading] = useState(true);
   const [workshopId, setWorkshopIdState] = useState(initialWorkshopId ?? "");
   const [touched, setTouched] = useState(Boolean(initialWorkshopId));
@@ -126,9 +141,11 @@ export function useWorkshopSelection({
 
   useEffect(() => {
     let cancelled = false;
-    listResource<Workshop>("/workshops", { pageSize: 100 })
+    listResource<Workshop>("/workshops", { pageSize: LIST_PAGE_CEILING })
       .then((result) => {
-        if (!cancelled) setWorkshops(sortWorkshopsByOccurrence(result.items));
+        if (cancelled) return;
+        setWorkshops(sortWorkshopsByOccurrence(result.items));
+        setCut(listCut(result, "workshops"));
       })
       .catch(() => {
         if (!cancelled) setWorkshops([]);
@@ -230,11 +247,29 @@ export function useWorkshopSelection({
     return () => resolveRef.current?.(false);
   }, []);
 
+  /**
+   * THE RECORD'S OWN WORKSHOP IS ALWAYS AN OPTION, however old it is.
+   *
+   * The list is one page of 196 rows ordered by creation, so editing a record filed against a
+   * workshop from an earlier season drew a picker with the stored id as its value and no option
+   * matching it — the control read as blank, and the obvious repair for a blank workshop is to pick
+   * a different one, which re-files the record against the wrong fortnight. Merged and RE-SORTED, so
+   * the recovered row sits in occurrence order rather than at the end. See `useRecordOffPage`.
+   *
+   * Create forms never reach this: `workshopId` is "" until the default probe or the user picks.
+   */
+  const offPageWorkshop = useRecordOffPage<Workshop>("/workshops", workshopId, workshops);
+  const allWorkshops = useMemo(
+    () => (offPageWorkshop ? sortWorkshopsByOccurrence(mergeById(workshops, [offPageWorkshop])) : workshops),
+    [workshops, offPageWorkshop]
+  );
+
   return {
     workshopId,
     touched,
-    workshops,
+    workshops: allWorkshops,
     loading,
+    cut,
     check,
     setWorkshopId,
     confirmSubmission,
@@ -271,7 +306,7 @@ export function WorkshopSelect({
   onDirty?: () => void;
   saving?: boolean;
 }) {
-  const { workshopId, workshops, loading, check, setWorkshopId, dialog } = state;
+  const { workshopId, workshops, loading, cut, check, setWorkshopId, dialog } = state;
 
   const options = useMemo(
     () => [
@@ -302,6 +337,10 @@ export function WorkshopSelect({
           placeholder={loading ? "Loading workshops…" : "Select or type to search"}
         />
       </Field>
+      {/* The ComboBox's own search filters the array it was handed (see ui/SearchableSelect), so on a
+          cut list "type to search" reaches only the rows already loaded — which is exactly when a
+          researcher concludes the workshop was never recorded. Say so instead. */}
+      <CappedListNotice cuts={[cut]} />
       {blocked ? (
         <p className="text-xs font-medium text-error-600">
           You are not assigned to this workshop, so saving will be refused. Ask an admin to assign you to it, or pick

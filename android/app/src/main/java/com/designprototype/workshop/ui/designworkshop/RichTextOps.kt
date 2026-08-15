@@ -16,6 +16,8 @@ import com.designprototype.workshop.report.RichBlock
 import com.designprototype.workshop.report.RichDoc
 import com.designprototype.workshop.report.RichSpan
 import com.designprototype.workshop.report.cleanText
+import com.designprototype.workshop.report.toJson
+import kotlinx.serialization.json.JsonObject
 
 /**
  * The editing half of the rich-text model: every command is a pure function of a document and a
@@ -295,14 +297,84 @@ fun jsTrim(text: String): String {
 fun isJsBlank(text: String): Boolean = text.all { isJsSpace(it) }
 
 /**
- * Whether the document holds no text at all — the rule the server's `_is_filled` applies.
+ * Whether the document holds no CONTENT — the rule the server's `_is_filled` applies.
  *
  * A document of empty paragraphs is empty. An editor that was focused and left alone still holds
  * `{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}`, and counting that as a filled required field would
  * let a designer submit a report with a blank introduction while the completeness gate read 100%.
  * The Compose layer must emit `null` — not `{"blocks":[]}` — for a document this returns true for.
+ *
+ * ── AN IMAGE IS JUDGED ON ITS MEDIA ID, NEVER ON ITS TEXT. DO NOT "SIMPLIFY" THIS BACK ──────────
+ *
+ * This function used to read `doc.blocks.all { isJsBlank(it.text) }`, and that one missing arm cost
+ * the handset the whole inline-photograph feature, silently and behind a success message. An IMAGE
+ * block's [RichBlock.text] is its CAPTION (the concatenation of its spans), so a photograph nobody
+ * captioned has `text == ""` and the old predicate called the document empty. Two consequences,
+ * both of which a designer walks into on an ordinary path:
+ *
+ *  * **The photograph was never written.** A blank field's last emitted signature is "EMPTY"; the
+ *    designer taps Photograph, `insertImage` splices an IMAGE block with `spans = emptyList()`, the
+ *    new document also signs as "EMPTY", `emit` sees no change and never calls `onChange`. The
+ *    bytes were imported and a descriptor registered, the toast said "Photograph placed", and the
+ *    field value stayed null — so nothing in the report referenced the picture and it printed on no
+ *    page. See [emittedValue] and `RichTextEditor.emit`.
+ *  * **Clearing a caption deleted the picture.** A field whose only block is a captioned IMAGE went
+ *    from non-empty to "EMPTY" the moment the caption's last character was deleted, so the editor
+ *    published `onChange(null)` — which `StageScreen`'s `put` turns into `this - key`, removing the
+ *    field from the payload and dropping the stored document at the next save.
+ *
+ * The two predicates really did disagree about the same object, measured rather than reasoned: run
+ * against the release classes built before this fix, a `RichDoc` holding one `RichBlock(kind=IMAGE,
+ * media="media-42")` and nothing else reported `block.text == ""`, `block.isEmpty == false` and
+ * `isEmptyDoc(doc) == true`.
+ *
+ * The IMAGE arm is delegated to [RichBlock.isEmpty] (report/RichText.kt) rather than restated as
+ * `it.media.isEmpty()`, because that model property is the definition the completeness gate, the
+ * server's `RichBlock.is_empty` and `frontend/lib/richText.ts` all already use — writing the rule
+ * out a second time here is precisely how the two definitions drifted apart in the first place.
+ *
+ * The TEXT arm stays [isJsBlank] and must not be folded into `doc.isEmpty`, tempting as that reads:
+ * `RichBlock.isEmpty` uses Kotlin's `String.isBlank`, which is `Character.isWhitespace ||
+ * isSpaceChar` and therefore does NOT cover U+FEFF (category Cf, neither of those) — while
+ * `String.prototype.trim`, which the browser and the server apply, does. Measured on this tree:
+ * `Char(0xFEFF).toString().isBlank()` is false where `isJsBlank` of it is true, so swapping the arm
+ * would make a field holding one pasted byte-order mark count as filled on the handset and blank in
+ * the browser — and would break the U+00A0/U+FEFF cases already asserted in [richTextOpsSelfCheck]
+ * and in `RichTextEmitContractTest`.
  */
-fun isEmptyDoc(doc: RichDoc): Boolean = doc.blocks.all { isJsBlank(it.text) }
+fun isEmptyDoc(doc: RichDoc): Boolean =
+    doc.blocks.all { if (it.kind == BlockKind.IMAGE) it.isEmpty else isJsBlank(it.text) }
+
+/**
+ * What the editor publishes for [doc] — `null` for an empty document, its stored JSON otherwise.
+ *
+ * ONE DEFINITION, USED FOR BOTH DECISIONS THE EDITOR MAKES. `RichTextEditor.emit` has to answer two
+ * questions about every edit: "is this different from what I last published" (via [docSignature])
+ * and "what do I hand to `onChange`". They used to be two expressions over [isEmptyDoc] written a
+ * few lines apart, which is survivable — until the predicate itself is wrong, at which point the
+ * two answers disagree in the worst possible direction: the signature says "nothing changed, don't
+ * publish" for the very same document the value says is `null`, so a field can only ever LOSE
+ * content through that pair, never gain it. Deriving the signature from this function keeps them
+ * one decision.
+ *
+ * It lives here, beside [isEmptyDoc], and not in `RichTextEditor.kt`, for the reason the file
+ * header gives: this is a fact about what a document IS, it needs no Compose, and a rule that
+ * decides whether a designer's photograph is written must be assertable on a plain JVM.
+ */
+fun emittedValue(doc: RichDoc): JsonObject? = if (isEmptyDoc(doc)) null else toJson(doc)
+
+/**
+ * The canonical form under which two stored values are the same document — the editor's change
+ * detector, exposed here so it can be exercised without an emulator.
+ *
+ * `null`, an absent value, an empty object and a document of empty paragraphs are four spellings of
+ * "nothing has been written here", and they all sign as [EMPTY_DOC_SIGNATURE]. That word is not a
+ * document any [toJson] can produce (it is not JSON at all), so it can never collide with one.
+ */
+fun docSignature(doc: RichDoc): String = emittedValue(doc)?.toString() ?: EMPTY_DOC_SIGNATURE
+
+/** The signature every empty document shares. See [docSignature]. */
+const val EMPTY_DOC_SIGNATURE = "EMPTY"
 
 /**
  * A document with one empty paragraph in it: the smallest document that can be typed into.
@@ -1546,6 +1618,14 @@ fun richTextOpsSelfCheck(): List<String> {
     check("a no-break space is an empty document", isEmptyDoc(docOf(blockOf(nbsp))))
     check("a byte-order mark is an empty document", isEmptyDoc(docOf(blockOf(Char(0xFEFF).toString()))))
     check("real text is not an empty document", !isEmptyDoc(docOf(blockOf("x"))))
+    // The two arms of the IMAGE rule. A photograph with no caption IS content — judging it on its
+    // text is what made the Photograph button emit nothing at all — while an IMAGE that lost its id
+    // is not, because both parsers drop such a block on the next read.
+    val uncaptioned = docOf(RichBlock(kind = BlockKind.IMAGE, media = "media-42"))
+    check("a caption-less photograph is not an empty document", !isEmptyDoc(uncaptioned))
+    check("a caption-less photograph is published, not nulled", emittedValue(uncaptioned) != null)
+    check("an image with no media id is an empty document", isEmptyDoc(docOf(RichBlock(kind = BlockKind.IMAGE))))
+    check("an empty paragraph is still published as null", emittedValue(emptyDoc()) == null)
     check("jsTrim strips a no-break space", jsTrim(nbsp + "x" + nbsp) == "x")
     val numbered = docOf(
         blockOf("a", BlockKind.ORDERED_ITEM),

@@ -288,6 +288,61 @@ fun Throwable.signInErrorMessage(): String {
 /** Files in flight at once. Matches the web's UPLOAD_CONCURRENCY; see docs/MEDIA_PIPELINE.md. */
 private const val UPLOAD_CONCURRENCY = 3
 
+/**
+ * Which generation of REF-picker answer a workshop-owned cache file holds. See
+ * [dwReferenceCacheOwner]; generation 1 is every build that never sent `scope`.
+ */
+private const val DW_REFERENCE_CACHE_GENERATION = 2
+
+/**
+ * The owner half of a reference cache key — the workshop id, plus the generation of the ANSWER that
+ * is filed under it.
+ *
+ * WHY THE HANDSET CANNOT SIMPLY START SENDING `scope` AND BE DONE. [DwReferenceStore.cacheKey] files a
+ * WORKSHOP-scoped list under the workshop's own id and an ALL-scoped one under the literal "ALL".
+ * Every build before this one sent no `scope` at all, so every WORKSHOP-owned file already on a phone
+ * in the field holds an ALL-scoped answer — the first fifty rows of the whole table, name-ascending —
+ * under a key that promises this workshop's roster. Nothing in the file distinguishes it from a
+ * correctly narrowed one: [DwReferenceList] records the model, the filter and the fetch time, and not
+ * the scope. That stale copy is served FIRST, before the network is tried at all (step 1 of
+ * [WorkshopRepository.designWorkshopReferences]'s cache-first order), and on a phone with no signal it
+ * is served forever — which is the phone this fix exists for. The wire fix alone would therefore leave
+ * the defect standing on exactly the devices that already have the data.
+ *
+ * [DW_REFERENCE_CACHE_GENERATION] is appended to the owner so a pre-fix file can never be reached by
+ * exact key again. This is the "bump the file-name scheme" half of the remedy, done at the one place
+ * that composes the key rather than inside the store: `cacheKey` is a pure function of what it is
+ * given, it has exactly one caller, and a generation is a property of the ANSWER this repository
+ * fetched, not of the filing system that holds it.
+ *
+ * A BUMP ALONE RETIRES NOTHING, which is the thing to understand before touching either side of it.
+ * Making the exact key miss is only half a retirement: a miss is the exact condition that routes
+ * [WorkshopRepository.designWorkshopReferences] into [DwReferenceStore.anyForModel], and while that
+ * fallback merged on a model-only prefix it merged the retired file back in — same wrong list, one
+ * function later. The stamp does its job only because `anyForModel` now fences its merge to files
+ * that carry THIS owner segment, generation and all. Bumping the generation without that fence is a
+ * no-op that reads like a fix, which is worse than leaving it alone.
+ *
+ * ONLY WORKSHOP-SCOPED ENTRIES ARE RETIRED, which is the whole reason for doing it this way instead of
+ * wiping the directory. `cacheKey` ignores the workshop id entirely when the scope is ALL, so every
+ * ALL-scoped register a device holds — participants, sketches, prototypes, tool documentation, the
+ * ALL-scoped artisan list — keeps its file and keeps working offline. Deleting those to fix a
+ * WORKSHOP-scope bug would strip a phone of lists it had every right to keep, which is a smaller
+ * version of the harm this file refuses to cause elsewhere (see [DwReferenceStore.store]'s refusal to
+ * let an empty fetch overwrite a populated cache).
+ *
+ * If a future change alters what a stored list MEANS again — a different narrowing, a different server
+ * default — bump the generation rather than writing a migration. There is no way to tell a correctly
+ * narrowed list from a wrongly narrowed one after the fact, so the only honest move is to declare the
+ * old ones unreadable and let the next successful fetch write the truth.
+ *
+ * A blank id is returned unchanged. It is not an owner — it is a workshop that has never reached the
+ * server, whose fetch is refused a few lines later anyway — and stamping a generation onto nothing
+ * would only invent a second spelling of the store's "unnamed".
+ */
+internal fun dwReferenceCacheOwner(workshopId: String): String =
+    if (workshopId.isBlank()) workshopId else "$workshopId-$DW_REFERENCE_CACHE_GENERATION"
+
 class WorkshopRepository(
     private val api: WorkshopRepositoryApi,
     private val tokenStore: TokenStore
@@ -515,13 +570,31 @@ class WorkshopRepository(
         onList: (DwReferenceList, truncated: Boolean) -> Unit,
     ) {
         if (model.isBlank()) return
-        val key = DwReferenceStore.cacheKey(model, scope, workshopId.orEmpty(), filterValue)
+        // NOT the bare workshop id — see [dwReferenceCacheOwner]. Every WORKSHOP-owned file already on
+        // a handset was written from an un-narrowed answer, and is indistinguishable from a good one.
+        val owner = dwReferenceCacheOwner(workshopId.orEmpty())
+        val key = DwReferenceStore.cacheKey(model, scope, owner, filterValue)
 
-        // Exact key first; failing that, whatever this device holds for the model at all, narrowed
-        // here. A phone that once cached the whole product register can serve "this artisan's
-        // products" without ever having asked the server that narrower question.
+        // Exact key first; failing that, whatever this device holds for the model AND THIS OWNER,
+        // narrowed here. A phone that once cached the whole product register for this workshop can
+        // serve "this artisan's products" without ever having asked the server that narrower question.
+        //
+        // THE SECOND LINE IS NOT A LOOPHOLE IN THE FIRST, AND IT USED TO BE. `anyForModel` merged
+        // every file whose name began with the model — it was written to merge across FILTERS, but
+        // the key is `model__owner__filter`, so it merged across OWNERS as well. That made the
+        // generation stamp above inert: retiring a poisoned file makes the exact key MISS, and a
+        // miss is exactly what routes the lookup into this fallback, which then merged the retired
+        // file straight back in because it still began with "Artisan__". The un-narrowed list the
+        // wire fix exists to prevent was served anyway, offline, for ever.
+        //
+        // The fence now lives one level down, in `DwReferenceStore.anyForModel`, because that is
+        // where the file names are composed and where "same owner" can be decided from the same
+        // function `cacheKey` uses. It is NOT done by refusing the fallback for WORKSHOP scope from
+        // here: that would kill the cascade `productRef` depends on, which is WORKSHOP-scoped AND
+        // filtered and works offline precisely because of this merge. Read the block comment there
+        // before changing either half.
         val cached = DwReferenceStore.load(context, key)
-            ?: DwReferenceStore.anyForModel(context, model, scope, workshopId.orEmpty())
+            ?: DwReferenceStore.anyForModel(context, model, scope, owner)
                 ?.let { whole ->
                     whole.copy(filteredBy = filterValue, items = whole.narrowedTo(filterValue))
                 }
@@ -536,6 +609,22 @@ class WorkshopRepository(
             api.designWorkshopReferences(
                 id = target,
                 model = model,
+                // THE SCOPE TRAVELS. It used to stop here: this function has always taken a `scope`,
+                // and spent all of it on the cache key above, while the request went out without it.
+                // The route defaults an absent `scope` to ALL rather than deriving one (its own
+                // docstring says deriving it server-side was deliberately rejected, so that the form
+                // and the server cannot hold two ideas of how wide the list is), so "not sent" was
+                // read as "the client asked for everything". The four WORKSHOP-scoped REF fields on
+                // the phone were answered with the first fifty rows of the whole table — strangers in
+                // the artisan picker at stage 6, whose name, village and craft `hydrateFromReference`
+                // then wrote onto the row and the report printed.
+                //
+                // `takeIf { it.isNotBlank() }` and NOT `?: "ALL"`. A blank `refScope` means the
+                // registry did not say; asserting ALL here is precisely the client-invents-a-default
+                // failure the schema's own KDoc forbids. Blank must reach the wire as an omitted
+                // parameter, not as `scope=` — the empty string is a 422 from `reference_options`,
+                // which the `runCatching` below turns into a picker that silently stops refreshing.
+                scope = scope.takeIf { it.isNotBlank() },
                 filterBy = filterValue.takeIf { it.isNotBlank() },
                 search = null,
             )

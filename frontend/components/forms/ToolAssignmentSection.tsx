@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Field } from "@/components/FormControls";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
+import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { apiFetch, listResource } from "@/lib/api";
 import type { Artisan, Craft, ToolDocumentation } from "@/lib/types";
@@ -29,17 +31,45 @@ export function ToolAssignmentSection() {
   // forward prefill treats them differently — see useCarryContext. All three lists land together,
   // so one state covers every scope built from them.
   const [referenceState, setReferenceState] = useState<CarryScopeState>("pending");
+  /**
+   * WHAT EACH OF THE THREE DROPDOWNS IS NOT SHOWING — see `components/data/cappedList`.
+   *
+   * All three loads below ask for the ceiling `normalize_pagination` clamps to (100) and all three
+   * tables are past it: 177 tools, 178 crafts, 749 artisans, counted against this repository's
+   * Postgres on 2026-08-15. The artisan arm is the one that compounds — `artisansForCrafts` filters
+   * that hundred-row page by the ticked crafts, so an artisan of the right craft who was entered
+   * before the newest hundred is absent from a list headed "Artisans of selected crafts", and the
+   * panel's own `emptyLabel` then reads "No artisans for these crafts" over crafts that have plenty.
+   *
+   * THIS IS THE ONE SITE IN THIS PASS THAT IS NOT FULLY CLOSED, and the reason is a missing server
+   * parameter rather than a preference. `/artisans` takes a SINGULAR `craftId`; the product and tool
+   * forms use it and are therefore whole. This picker is a MULTI-select, so the equivalent request
+   * needs a plural `craftIds` (the shape `workshopIds` already has on the same route). Issuing one
+   * request per ticked craft is not a substitute — "Select all 178" would fire 178 of them. Until
+   * that parameter exists the cut is at least stated rather than silent, which is the difference
+   * between a short list and a list that lies.
+   */
+  const [cuts, setCuts] = useState<{ tools: ListCut | null; crafts: ListCut | null; artisans: ListCut | null }>({
+    tools: null,
+    crafts: null,
+    artisans: null
+  });
 
   useEffect(() => {
     (async () => {
       const [toolPage, craftPage, artisanPage] = await Promise.all([
-        listResource<ToolDocumentation>("/tools", { pageSize: 100 }),
-        listResource<Craft>("/crafts", { pageSize: 100 }),
-        listResource<Artisan>("/artisans", { pageSize: 100 })
+        listResource<ToolDocumentation>("/tools", { pageSize: LIST_PAGE_CEILING }),
+        listResource<Craft>("/crafts", { pageSize: LIST_PAGE_CEILING }),
+        listResource<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING })
       ]);
       setTools(toolPage.items);
       setCrafts(craftPage.items);
       setArtisans(artisanPage.items);
+      setCuts({
+        tools: listCut(toolPage, "tools"),
+        crafts: listCut(craftPage, "crafts"),
+        artisans: listCut(artisanPage, "artisans")
+      });
       setReferenceState("loaded");
     })().catch((err) => {
       setReferenceState("unavailable");
@@ -169,6 +199,7 @@ export function ToolAssignmentSection() {
             placeholder="Select a tool"
             options={tools.map((tool) => ({ value: tool.id, label: `${tool.toolkitName} — ${tool.craftName} · ${tool.artisanName}` }))}
           />
+          <CappedListNotice cuts={[cuts.tools]} />
         </Field>
         <Field label="Crafts">
           <MultiSelectDropdown
@@ -177,6 +208,7 @@ export function ToolAssignmentSection() {
             placeholder="Select crafts"
             options={crafts.map((craft) => ({ value: craft.id, label: craft.name }))}
           />
+          <CappedListNotice cuts={[cuts.crafts]} />
         </Field>
         <Field label="Artisans of selected crafts">
           <MultiSelectDropdown
@@ -197,6 +229,10 @@ export function ToolAssignmentSection() {
             disabled={craftIds.length === 0}
             options={artisansForCrafts.map((artisan) => ({ value: artisan.id, label: `${artisan.name} · ${artisan.place}` }))}
           />
+          {/* Rendered only once crafts are ticked: with none ticked the control says "Select crafts
+              first" and is disabled, and a truncation notice over a control nobody can open is
+              noise. */}
+          {craftIds.length ? <CappedListNotice cuts={[cuts.artisans]} /> : null}
         </Field>
       </div>
 

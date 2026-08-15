@@ -1,18 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Lock, Plus } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
+import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
+import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch, listResource } from "@/lib/api";
 import { handleFormEnter } from "@/lib/formNav";
 import { describePreProcess, describeProcessStep, renameMediaFile, uploadMediaFile } from "@/lib/media";
@@ -76,6 +80,40 @@ function stepTypeLabel(stepType: string): string {
 
 function makeKey(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * IS THERE WORK ON THIS FORM THAT NO SERVER HAS? — the question the leave guard, the Cancel button
+ * and `beforeunload` all ask, answered in one place so they cannot drift apart.
+ *
+ * Pulled out of the component on purpose. This repository has no React renderer in its
+ * devDependencies, so a rule left inline in a hook body can only ever be READ by a test; the part
+ * that was wrong is executable here instead (`discarded-work-unit.spec.ts`), exactly as
+ * `dateOutsideBounds` was pulled out of `DateTimeField` for the same reason.
+ *
+ * `committed` is the term this defect is about. The signature compares what is TYPED against what
+ * was typed at mount — it knows nothing about what has been stored — and this form's media uploads
+ * run after the record is written, so a failed upload returns with the process saved, the form still
+ * mounted and the signature still changed. Without `committed`, `dirty` stayed true over a record
+ * that already existed, and the guard's "Save" button re-ran `submit()`: a duplicate process on the
+ * create path, a re-upload of every attachment on the edit path. A guard that offers to re-apply a
+ * partially-applied write destroys work rather than protecting it, which is the opposite of the
+ * finding it was added for.
+ */
+export function hasUnsavedWork({
+  saving,
+  committed,
+  signature,
+  initialSignature
+}: {
+  /** A save is in flight; the dialog's own busy state covers this, and prompting mid-write is noise. */
+  saving: boolean;
+  /** `saveOrQueue` has returned — the write is in the database, or in the outbox that will replay it. */
+  committed: boolean;
+  signature: string;
+  initialSignature: string;
+}): boolean {
+  return !saving && !committed && signature !== initialSignature;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +300,18 @@ export function ProcessForm({
   // forward prefill treats them differently — see useCarryContext.
   const [artisanListState, setArtisanListState] = useState<CarryScopeState>("pending");
   const [artisanProducts, setArtisanProducts] = useState<ProductDocumentation[]>([]);
+  /**
+   * WHAT THE TWO PICKERS ARE NOT SHOWING — see `components/data/cappedList`.
+   *
+   * Both loads below ask for the ceiling `normalize_pagination` clamps to and both used to keep only
+   * `.items`. The artisan dropdown is the exposed one: it is NOT scoped by craft the way the product
+   * and tool forms' are, so it really is the newest hundred rows of a 749-row table (counted
+   * 2026-08-15), with no search box and no page two. The products load is per artisan and is
+   * therefore whole in practice — 878 products across 749 artisans — but it is reported the same
+   * way, because "in practice" is not a property of the code.
+   */
+  const [artisanCut, setArtisanCut] = useState<ListCut | null>(null);
+  const [productCut, setProductCut] = useState<ListCut | null>(null);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productLoadError, setProductLoadError] = useState<string | null>(null);
 
@@ -272,6 +322,25 @@ export function ProcessForm({
   const [stepsError, setStepsError] = useState<string | null>(null);
   const [preMediaError, setPreMediaError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  /**
+   * THE WRITE HAS LANDED — set the instant `saveOrQueue` returns, and never unset.
+   *
+   * "Unsaved work" and "a save that partly failed" are different states, and this form had only one
+   * flag for both. The media uploads run AFTER the record is written (they need its id, and the
+   * step ids the server minted), so a failed upload leaves the process saved, this form still on
+   * screen, and `signature !== initialSignature` still true — because the signature describes what
+   * was typed, not what was stored. `dirty` therefore stayed true over a record that was already in
+   * the database, and the leave guard offered the header arrow a "Save" button that re-runs
+   * `submit()`: a second POST (a duplicate process with duplicate step rows) when creating, and on
+   * an edit a re-PATCH that re-uploads every attachment, duplicating the ones that had just
+   * succeeded. Offering to re-apply a partially-applied write is worse than not guarding at all —
+   * the guard exists to protect work, and that button destroys some.
+   *
+   * It latches for the life of the form deliberately. Typing something else after a partial failure
+   * does not make a re-submit safe; the record is saved, and the error banner sends the researcher
+   * to re-open it, which is the one route that PATCHes the row that actually exists.
+   */
+  const [committed, setCommitted] = useState(false);
   const [uploadNote, setUploadNote] = useState<string | null>(null);
   const [addMenu, setAddMenu] = useState(false);
   const [guardOpen, setGuardOpen] = useState(false);
@@ -279,13 +348,28 @@ export function ProcessForm({
   const statusChoices = initial?.status && !STATUS_OPTIONS.includes(String(initial.status)) ? [String(initial.status), ...STATUS_OPTIONS] : STATUS_OPTIONS;
 
   useEffect(() => {
-    listResource<Artisan>("/artisans", { pageSize: 100 })
+    listResource<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING })
       .then((result) => {
         setArtisans(result.items);
+        setArtisanCut(listCut(result, "artisans"));
         setArtisanListState("loaded");
       })
       .catch(() => setArtisanListState("unavailable"));
   }, []);
+
+  /**
+   * THE PROCESS'S OWN ARTISAN IS ALWAYS AN OPTION, whichever page they are on.
+   *
+   * Without this, editing a process whose artisan is outside the newest hundred drew a REQUIRED
+   * dropdown with nothing selected in it — the stored link was intact and would have been saved
+   * untouched, but the form looked like it had lost the artisan, which invites the one action that
+   * really does change the record: picking somebody else. See `useRecordOffPage`.
+   */
+  const offPageArtisan = useRecordOffPage<Artisan>("/artisans", artisanId, artisans);
+  const artisanOptions = useMemo(
+    () => (offPageArtisan ? mergeById(artisans, [offPageArtisan]) : artisans),
+    [artisans, offPageArtisan]
+  );
 
   /**
    * The carried product, held until the artisan's product list arrives.
@@ -302,7 +386,7 @@ export function ProcessForm({
   // product they documented last, which is what this record is about.
   const carry = useCarryContext({
     enabled: !isEdit,
-    scopes: [carryScope("artisan", artisanListState, artisans)],
+    scopes: [carryScope("artisan", artisanListState, artisanOptions)],
     // No craft or tool field here, so neither is filled in nor claimed; both stay in the bag.
     applies: ["artisan", "product", "workshop"],
     onApply: (context) => {
@@ -333,11 +417,12 @@ export function ProcessForm({
     }
     setProductsLoading(true);
     setProductLoadError(null);
-    const artisanName = artisans.find((artisan) => artisan.id === artisanId)?.name?.trim();
-    listResource<ProductDocumentation>("/products", { artisanId, artisanName, pageSize: 100 })
+    const artisanName = artisanOptions.find((artisan) => artisan.id === artisanId)?.name?.trim();
+    listResource<ProductDocumentation>("/products", { artisanId, artisanName, pageSize: LIST_PAGE_CEILING })
       .then((result) => {
         if (cancelled) return;
         setArtisanProducts(result.items);
+        setProductCut(listCut(result, "products of this artisan"));
         setProductsLoading(false);
         // This list is both the dropdown's options and the only proof the carried product is still
         // this artisan's and still reachable, so the deferred half of the prefill resolves here.
@@ -366,7 +451,7 @@ export function ProcessForm({
     return () => {
       cancelled = true;
     };
-  }, [artisanId, artisans, pruneCarried]);
+  }, [artisanId, artisanOptions, pruneCarried]);
 
   // Unsaved-changes guard: signature of every user-editable field + pending file counts. The
   // workshop only counts once the USER has picked one — the create form's automatic most-recent
@@ -394,7 +479,29 @@ export function ProcessForm({
   });
   // Captured once on first render (state initializer), so it is safe to read while rendering.
   const [initialSignature] = useState(signature);
-  const dirty = !saving && signature !== initialSignature;
+  // `committed` is NOT redundant with `saving`: `saving` goes false in the `finally` of every save,
+  // including the partial-media-failure return that deliberately leaves this form on screen with the
+  // record already written. That window is exactly where the header arrow used to reach a dialog
+  // offering to save it again. See `hasUnsavedWork`.
+  const dirty = hasUnsavedWork({ saving, committed, signature, initialSignature });
+
+  /*
+    HANDS `dirty` TO THE ROUND BACK ARROW IN THE PAGE HEADER, which is the only back control this
+    page has and which, until this line existed, was the only control on it that discarded work
+    without asking.
+
+    The dialog below and its `requestCancel` were wired to the form's own Cancel button alone. So the
+    footer asked and the header did not: a researcher who had named a process, linked the artisan and
+    the product, added six steps with notes and attached media to each of them lost all of it to one
+    tap on the arrow — on a surface where /artisans/new, /products/new, /tools/new, /crafts,
+    /workshops and the designer profile have all taught them that arrow is safe, because those five
+    forms carry this same call.
+
+    `beforeunload` below is NOT a substitute and never was: it covers closing the tab and reloading,
+    and an in-app client-side navigation fires neither. If you are tempted to delete one of the two,
+    they guard different exits.
+  */
+  useLeaveGuard(dirty, () => setGuardOpen(true));
 
   useEffect(() => {
     if (!dirty) return;
@@ -423,6 +530,13 @@ export function ProcessForm({
   }
 
   async function submit(): Promise<void> {
+    // ONE WRITE PER MOUNT. `committed` is true only once `saveOrQueue` has returned, so this refuses
+    // exactly the re-submit described on its declaration — the footer button and the leave dialog's
+    // "Save" both land here, and after a partial media failure both were live over a record that
+    // already exists. There is no id to PATCH on the create path, so a second run would not "retry"
+    // anything: it would file a second process. Re-opening the saved record is the retry route, and
+    // the error banner below says so.
+    if (committed) return;
     setError(null);
     setNameError(null);
     setArtisanError(null);
@@ -539,9 +653,13 @@ export function ProcessForm({
           }))
         ]
       });
+      // THE WRITE IS APPLIED FROM HERE ON — online it is in the database, offline it is an outbox
+      // entry that will replay. Either way this form must never send it again; everything below
+      // (media, names, the carry bag) is follow-up work on a record that already exists.
+      setCommitted(true);
       // Bank the sitting the moment the record is accepted (queued counts — offline is the normal
       // case), so the next form opened from the dashboard already knows where the researcher is.
-      const savedArtisan = artisans.find((a) => a.id === artisanId);
+      const savedArtisan = artisanOptions.find((a) => a.id === artisanId);
       const savedProduct = artisanProducts.find((product) => product.id === productId);
       carry.remember({
         artisanId,
@@ -698,7 +816,7 @@ export function ProcessForm({
               if (picked !== artisanId) {
                 setArtisanId(picked);
                 setProductId("");
-                const artisan = artisans.find((a) => a.id === picked);
+                const artisan = artisanOptions.find((a) => a.id === picked);
                 // An explicit pick replaces the remembered context and retires the banner: from
                 // here on the artisan on screen is the researcher's own choice, not a suggestion.
                 if (artisan) {
@@ -708,13 +826,14 @@ export function ProcessForm({
             }}
           >
             <option value="">Select the artisan</option>
-            {artisans.map((artisan) => (
+            {artisanOptions.map((artisan) => (
               <option key={artisan.id} value={artisan.id}>
                 {artisan.name} · {artisan.place}
               </option>
             ))}
           </Select>
         </Field>
+        <CappedListNotice cuts={[artisanCut]} />
         {artisanError ? <p className="mt-1 text-xs text-error-600">{artisanError}</p> : null}
       </div>
 
@@ -732,7 +851,7 @@ export function ProcessForm({
               // banner must stop claiming it — and remembering then banks the one they chose. The
               // artisan above is still our suggestion, so the banner stays up saying so.
               pruneCarried("product");
-              const artisan = artisans.find((candidate) => candidate.id === artisanId);
+              const artisan = artisanOptions.find((candidate) => candidate.id === artisanId);
               carry.remember({
                 artisanId,
                 artisanName: artisan?.name ?? null,
@@ -757,9 +876,14 @@ export function ProcessForm({
         {!productsLoading && !productLoadError && artisanId && artisanProducts.length === 0 ? (
           <p className="mt-1 text-xs text-ink-500">No products found for this artisan yet. Create a product for them first, then return here.</p>
         ) : null}
-        {!productsLoading && !productLoadError && artisanId && artisanProducts.length > 0 ? (
+        {/* The count and the cut are one statement, never two: "12 product(s) available" printed
+            above "Showing 100 of 143" is the screen contradicting itself, and the count is the half
+            that is wrong. When the list is whole — which it is for every artisan on this database —
+            the count is exactly what it always was. */}
+        {!productsLoading && !productLoadError && artisanId && artisanProducts.length > 0 && !productCut ? (
           <p className="mt-1 text-xs text-ink-500">{artisanProducts.length} product(s) available for this artisan.</p>
         ) : null}
+        {!productsLoading && !productLoadError && artisanId ? <CappedListNotice cuts={[productCut]} /> : null}
         {productError ? <p className="mt-1 text-xs text-error-600">{productError}</p> : null}
       </div>
 
@@ -911,8 +1035,13 @@ export function ProcessForm({
         <button type="button" className="field-button-secondary" onClick={requestCancel}>
           Cancel
         </button>
-        <button className="field-button" disabled={saving} type="submit">
-          {saving ? "Saving..." : isEdit ? "Update process" : "Save process"}
+        {/* Closed once the write has landed, not merely while it is in flight. The only way this
+            form is still on screen with `committed` true is the partial-media-failure return above,
+            where the record IS saved and the error banner beside this button says to re-open it to
+            retry the files. Leaving the button live there would offer a duplicate record dressed up
+            as a retry — see `committed`. */}
+        <button className="field-button" disabled={saving || committed} type="submit">
+          {saving ? "Saving..." : committed ? "Saved" : isEdit ? "Update process" : "Save process"}
         </button>
       </div>
 

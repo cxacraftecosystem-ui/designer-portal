@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
+import { mergeById } from "@/components/data/cappedList";
+import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { Field, Select, TextArea, TextInput } from "@/components/FormControls";
-import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
+import { CarryContextBanner, carryScope, useCarryContext } from "@/components/forms/CarryContextBanner";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
+import { craftChangeClearsArtisan, useCraftAndArtisanOptions, useRecordOffPage } from "@/components/forms/recordPickers";
 import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
@@ -15,7 +18,7 @@ import { GridMeasurement, type GridFiles, type GridGroup } from "@/components/me
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
-import { apiFetch, listResource } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { appendRemarksWithExif, collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
@@ -94,8 +97,6 @@ export function ProductForm({
   const { user } = useAuth();
   const canSetStatus = hasRank(user, "PROFESSOR");
   const formRef = useRef<HTMLFormElement>(null);
-  const [artisans, setArtisans] = useState<Artisan[]>([]);
-  const [crafts, setCrafts] = useState<Craft[]>([]);
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -112,10 +113,42 @@ export function ProductForm({
   const [breadth, setBreadth] = useState(initial?.breadthInches != null ? String(initial.breadthInches) : "");
   const [height, setHeight] = useState(initial?.heightInches != null ? String(initial.heightInches) : "");
   const [gridFiles, setGridFiles] = useState<GridFiles>({});
-  // "Can I see this artisan?" and "is there any signal?" are different answers, and the carry-
-  // forward prefill treats them differently — see useCarryContext. Artisans and crafts arrive from
-  // the same request, so one state covers the scopes built from both.
-  const [referenceState, setReferenceState] = useState<CarryScopeState>("pending");
+  /**
+   * The craft and artisan dropdowns' contents, and what they are NOT showing.
+   *
+   * Shared with ToolForm, which asks the identical question — see `forms/recordPickers` for the
+   * three requests it makes and for the ceiling that made the third one necessary. `referenceState`
+   * still means what it did ("can I see this artisan?" and "is there any signal?" are different
+   * answers, and `useCarryContext` treats them differently); it is moved into the hook only because
+   * it is settled by the same load.
+   */
+  const {
+    artisans,
+    crafts,
+    referenceState,
+    craftCut,
+    craftArtisanCut,
+    artisansLoadedForCraft
+  } = useCraftAndArtisanOptions({ craftId, artisanId });
+  /**
+   * THIS PRODUCT'S OWN CRAFT IS ALWAYS AN OPTION, wherever it sorts.
+   *
+   * The hook above already does this for the ARTISAN and, until this line, for nobody else — so the
+   * defect `useRecordOffPage` was written to close was still fully present on the craft dropdown of
+   * this form and of ToolForm, on the same screen as the artisan dropdown that had been fixed.
+   * `/crafts` is clamped to 100 rows and ordered NAME ASCENDING (deliberately, see the ordering
+   * comment in `routes/crafts.py`), and this database holds 178 crafts (counted 2026-08-15), so the
+   * cut is stable and always falls in the same place: every product of a craft whose name sorts past
+   * it opened with its craft dropdown reading "Unlinked / type below" — beside a REQUIRED "Craft
+   * name" box holding the right name. The stored link was intact and would have been saved
+   * untouched, but the form said it was not, and the obvious repair for a craft that looks unlinked
+   * is to pick one, which is the single action that really does rewrite the link.
+   *
+   * Same hook as `ArtisanForm`, called the same way. Do not write a variant of it: three forms
+   * needed this rule, one got it, and that is precisely how the other two came to be missing it.
+   */
+  const offPageCraft = useRecordOffPage<Craft>("/crafts", craftId, crafts);
+  const craftOptions = useMemo(() => (offPageCraft ? mergeById(crafts, [offPageCraft]) : crafts), [crafts, offPageCraft]);
   const { dirty, markDirty, resetDirty } = useUnsavedChanges();
   const [backPromptOpen, setBackPromptOpen] = useState(false);
   // Hands the prompt to the round back control in the page header, which is now the only back
@@ -142,16 +175,6 @@ export function ProductForm({
     ? artisans.filter((artisan) => artisan.craftId === craftId || artisan.id === artisanId)
     : artisans;
 
-  useEffect(() => {
-    Promise.all([listResource<Artisan>("/artisans", { pageSize: 100 }), listResource<Craft>("/crafts", { pageSize: 100 })])
-      .then(([artisanResult, craftResult]) => {
-        setArtisans(artisanResult.items);
-        setCrafts(craftResult.items);
-        setReferenceState("loaded");
-      })
-      .catch(() => setReferenceState("unavailable"));
-  }, []);
-
   // Offer the sitting this researcher was last working in, however they got here — the query string
   // only survives a click straight through from the save screen (lib/carryContext). The PRODUCT in
   // the bag is this form's own subject and is never applied here; a tool or process in it belongs
@@ -160,7 +183,10 @@ export function ProductForm({
     enabled: !isEdit,
     // Both dropdowns are built from exactly these two lists, so "absent from the list" is both
     // "you can no longer reach it" and "this form could not show it" — one check answers both.
-    scopes: [carryScope("artisan", referenceState, artisans), carryScope("craft", referenceState, crafts)],
+    // `craftOptions`, not `crafts`: a carried craft that is merely off the picker's first page is
+    // reachable — the by-id lookup fetched it — and pruning it would drop a perfectly good link from
+    // the bag for the same "absent from page one" reason the artisan side already corrects.
+    scopes: [carryScope("artisan", referenceState, artisans), carryScope("craft", referenceState, craftOptions)],
     // This form has no product, tool or process field, so it neither fills those in nor lets the
     // banner claim it did — they stay in the bag for the forms that do.
     applies: ["craft", "artisan", "workshop"],
@@ -375,22 +401,28 @@ export function ProductForm({
               onChange={(event) => {
                 const next = event.target.value;
                 setCraftId(next);
-                const craft = crafts.find((c) => c.id === next);
+                const craft = craftOptions.find((c) => c.id === next);
                 if (craft) setCraftName(craft.name);
-                // Drop the artisan if it no longer belongs to the chosen craft.
-                if (next && artisanId && !artisans.some((a) => a.id === artisanId && a.craftId === next)) {
+                // Drop the artisan ONLY when this form actually knows they practise a different
+                // craft — never merely because it cannot see them. The distinction, and the silent
+                // link deletion that made it necessary, are argued in `forms/recordPickers`.
+                if (craftChangeClearsArtisan({ nextCraftId: next, artisanId, artisans })) {
                   setArtisanId("");
                 }
                 markDirty();
               }}
             >
+              {/* "Unlinked" must mean unlinked. It is the placeholder a browser falls back to when
+                  `value` matches no <option>, so it doubled as "linked to a craft that is not on
+                  page one" until `craftOptions` carried that craft — see `offPageCraft` above. */}
               <option value="">Unlinked / type below</option>
-              {crafts.map((craft) => (
+              {craftOptions.map((craft) => (
                 <option key={craft.id} value={craft.id}>
                   {craft.name}
                 </option>
               ))}
             </Select>
+            <CappedListNotice cuts={[craftCut]} />
           </Field>
           <Field label="Craft name" required>
             <TitleCasedInput name="craftName" required value={craftName} onChange={(event) => setCraftName(event.target.value)} />
@@ -424,9 +456,15 @@ export function ProductForm({
                 </option>
               ))}
             </Select>
-            {craftId && artisansForCraft.length === 0 ? (
+            {/* A claim about the REPOSITORY, so it waits for the repository's answer about THIS
+                craft. Printed off a stale roster it said "no artisans are linked to this craft yet"
+                over a craft with a dozen of them — the silent-emptiness failure in one sentence,
+                and the reason `artisansLoadedForCraft` records which craft the loaded rows are for
+                rather than a bare boolean. */}
+            {craftId && artisansLoadedForCraft === craftId && artisansForCraft.length === 0 ? (
               <p className="mt-1 text-xs text-ink-muted">No artisans are linked to this craft yet.</p>
             ) : null}
+            <CappedListNotice cuts={[craftId ? craftArtisanCut : null]} />
           </Field>
           <Field label="Artisan name" required>
             <TitleCasedInput name="artisanName" required value={artisanName} onChange={(event) => setArtisanName(event.target.value)} />

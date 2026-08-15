@@ -62,11 +62,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowDown, ArrowUp, Lock, Plus, Trash2 } from "lucide-react";
 
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { rowAction } from "@/components/RowActions";
 import { Dropdown } from "@/components/ui/Dropdown";
+import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
+import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import {
   MAX_CUSTOM_DESCRIPTION_CHARS,
   MAX_CUSTOM_FIELDS_PER_SECTION,
@@ -134,6 +137,7 @@ const BOUNDED_TYPES = new Set(["INT", "DECIMAL", "MONEY", "PERCENT"]);
 
 export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
   const confirm = useConfirm();
+  const router = useRouter();
 
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   /** What the server holds, kept beside the draft so every edit's cost can be worked out. */
@@ -283,7 +287,25 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
     return keys;
   }, [sections, stored]);
 
-  const problems = useMemo(() => customDefinitionProblems(sections), [sections]);
+  /*
+    THE REGISTRY IS PASSED, AND WITHOUT IT TWO SERVER RULES WERE UNCHECKED. Audit 2026-08-15 (MINOR).
+
+    `registry` has been in this component's state all along and was used only to build the stage
+    picker. Meanwhile `customDefinitionProblems` could not mirror the two stage-scoped collision
+    checks the server enforces — a custom key equal to a live field key of that stage, and a custom
+    label case-folding equal to a live label of that stage's singleton entity — because neither it
+    nor `fieldProblems` had ever been given a stage to check against. `problems` was therefore empty
+    for a colliding definition and the Save gate below was open, so a whole-set PUT was refused after
+    the fact, taking every unrelated edit in the same body with it.
+
+    `?? []` rather than skipping the memo: with no registry loaded the two checks simply do not run,
+    which is the honest degradation. A pre-flight validator may never refuse something the server
+    would accept, so absent evidence must mean silence and not a refusal.
+  */
+  const problems = useMemo(
+    () => customDefinitionProblems(sections, registry?.stages ?? []),
+    [sections, registry]
+  );
   const diff = useMemo(() => diffCustomDefinition(stored, sections, answered), [stored, sections, answered]);
   /** What the boxes held when this screen was last in step with the server. The Discard target. */
   const baseline = useMemo(() => editableSections(stored), [stored]);
@@ -309,6 +331,33 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
     [sections, baseline]
   );
   const nothingToDo = diffIsEmpty(diff);
+
+  /*
+    THE DEFINITION LIVES IN `sections` AND NOWHERE ELSE — no draft store, no localStorage, no
+    IndexedDB — so an unmount is a deletion. `dirty` above already knows, to the byte, that there is
+    work the server has not got; until these two blocks existed it was consulted by three cosmetic
+    things (the Save button's disabled state, Discard's, and the "Nothing has changed yet." caption)
+    and by no exit at all. A designer who authored three sections across stages 6, 11 and 17 and then
+    tapped the round back arrow to check what stage 11 already asks came back to the definition as it
+    was before she started.
+
+    `useLeaveGuard` covers the header's back arrow, which is the exit that was reported. `beforeunload`
+    covers closing the tab and reloading, which no interceptor can see. Neither covers the header's
+    own "All 22 stages" link, because that is rendered by the page above this component and a plain
+    `<Link>` is not a `BackButton` — see the follow-up noted with this fix.
+  */
+  const [leavePromptOpen, setLeavePromptOpen] = useState(false);
+  useLeaveGuard(dirty, () => setLeavePromptOpen(true));
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   const isAnswered = useCallback(
     (section: DwCustomSection, key: string) => Boolean(answered[section.stageKey]?.has(key)),
@@ -460,12 +509,19 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
     setSections((current) => current.filter((_, at) => at !== index));
   }
 
-  async function save() {
+  /**
+   * Returns whether the definition REACHED THE SERVER.
+   *
+   * The boolean exists for the unsaved-changes prompt, which has to decide whether leaving is now
+   * safe: a 422 or a 409 leaves the draft on screen (see the catch below) and leaving on the back of
+   * one would discard exactly the work the refusal is asking the designer to correct.
+   */
+  async function save(): Promise<boolean> {
     // The SERVER'S id, never the URL's — see {@link remoteId}. Null cannot be reached from the button
     // (the screen renders the local-only sentence instead of the boxes), and it is checked rather than
     // asserted because a PUT to `/design-workshops/local-…/custom-sections` is a 404 a designer can do
     // nothing about.
-    if (!remoteId) return;
+    if (!remoteId) return false;
     setBusy(true);
     setRefusals([]);
     setNotice(null);
@@ -494,11 +550,13 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
         result.removed ? `${result.removed} removed` : ""
       ].filter(Boolean);
       setNotice(parts.length ? `Saved — ${parts.join("; ")}.` : "Saved. Nothing in the definition changed.");
+      return true;
     } catch (err) {
       // NOTHING IS DISCARDED ON A REFUSAL. The draft stays exactly as the designer typed it, so the
       // refusal names something they can correct in the boxes still in front of them — throwing the
       // edits away and asking them to start again is how a designer stops using a feature.
       setRefusals(customSectionsProblem(err, "Unable to save these questions"));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1259,6 +1317,37 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
           {!dirty ? <span className="text-xs text-ink-500">Nothing has changed yet.</span> : null}
         </div>
       </section>
+
+      {/*
+        Save runs the same PUT the button runs, refusals and all, and leaves ONLY if the server took
+        it — a 409 from a stale digest or a 422 listing the rules the definition breaks keeps the
+        designer on the screen with the boxes and the messages together, which is the whole reason the
+        catch above does not clear the draft.
+
+        Discard puts the editable projection of what the server holds back before navigating, rather
+        than merely navigating: the component is about to unmount, but a `router.back()` into a cached
+        route can put this screen back in front of the designer, and it must not still be holding the
+        edits they just said to throw away.
+      */}
+      <UnsavedChangesDialog
+        open={leavePromptOpen}
+        saving={busy}
+        onKeepEditing={() => setLeavePromptOpen(false)}
+        onDiscard={() => {
+          setSections(baseline);
+          setNotice(null);
+          setRefusals([]);
+          setLeavePromptOpen(false);
+          router.back();
+        }}
+        onSave={() => {
+          void (async () => {
+            const saved = await save();
+            setLeavePromptOpen(false);
+            if (saved) router.back();
+          })();
+        }}
+      />
     </div>
   );
 }

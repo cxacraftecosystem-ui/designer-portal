@@ -255,7 +255,21 @@ export function MediaJobsPanel() {
       {error ? <div className="border-b border-line-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div> : null}
       {notice ? <div className="border-b border-line-200 bg-field-50 px-4 py-2 text-sm text-ink-700">{notice}</div> : null}
 
-      {items === null ? (
+      {items === null && error ? (
+        // A FIRST LOAD THAT FAILED IS NOT A LOAD STILL IN PROGRESS, and this panel spent its whole
+        // life claiming otherwise. `GET /media/jobs` validated statusFilter against the RECORD
+        // status enum (backend media.py), so both requests in `load`'s Promise.all 422'd on every
+        // open, `data` stayed null, and the branch below rendered "Loading processing jobs..."
+        // forever under a red error bar — two contradictory statements at once, one of them a lie
+        // that reads as a slow network and invites waiting rather than reporting.
+        //
+        // The server bug is fixed; this stays because the null-data-plus-error state is reachable
+        // from any transport failure (offline, 500, expired token), and the honest rendering of it
+        // is "we asked and did not get an answer", never a spinner-word. Deliberately no retry
+        // button: every filter pill re-issues the request, and so does the 15s poll once anything
+        // is in flight, so a dedicated control would be a fourth way to do the same thing.
+        <div className="p-4 text-sm text-ink-700">Could not load the processing queue — see the message above.</div>
+      ) : items === null ? (
         <div className="p-4 text-sm text-ink-700">Loading processing jobs...</div>
       ) : items.length === 0 ? (
         <div className="p-4">

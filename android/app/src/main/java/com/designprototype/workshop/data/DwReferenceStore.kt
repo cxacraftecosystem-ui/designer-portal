@@ -265,14 +265,32 @@ object DwReferenceStore {
         File(context.filesDir, "dw-references").apply { mkdirs() }
 
     /**
+     * WHO a cached list belongs to: the workshop for a WORKSHOP-scoped one, the whole device for
+     * everything else.
+     *
+     * Factored out of [cacheKey] because [anyForModel] has to answer the SAME question when it
+     * decides which files on disk it is allowed to merge. When the two computed it separately, the
+     * fallback merged across owners and undid the keying — see the block comment there.
+     */
+    private fun cacheOwner(scope: String, workshopId: String): String =
+        if (scope.equals("WORKSHOP", ignoreCase = true)) workshopId else "ALL"
+
+    /**
      * Which document a (model, scope, workshop, filter) request belongs to.
      *
      * WORKSHOP-scoped lists carry the workshop id; everything else carries `ALL` and is therefore
      * shared by every workshop on the handset — see the note at the top of this file for why that
      * sharing is what makes a brand-new offline workshop usable.
+     *
+     * The three segments are joined with `__` and every one of them is passed through [safeName],
+     * which can never emit `_` at either end, so `model__owner__filter` parses back unambiguously and
+     * a prefix ending in `__` matches WHOLE segments. [anyForModel] depends on that: if a future
+     * change lets a segment end in an underscore, or drops the separator to a single `_`, the
+     * owner-scoped prefix there silently starts matching a longer id that merely begins with a
+     * shorter one, and the cross-workshop leak it exists to prevent comes back.
      */
     fun cacheKey(model: String, scope: String, workshopId: String, filterValue: String): String {
-        val owner = if (scope.equals("WORKSHOP", ignoreCase = true)) workshopId else "ALL"
+        val owner = cacheOwner(scope, workshopId)
         val filter = filterValue.ifBlank { "_" }
         return listOf(model, owner, filter).joinToString("__") { safeName(it) }
     }
@@ -280,7 +298,7 @@ object DwReferenceStore {
     private fun safeName(raw: String): String =
         raw.trim().replace(Regex("[^A-Za-z0-9._-]+"), "_").trim('.', '_').take(80).ifBlank { "unnamed" }
 
-    private fun fileFor(context: Context, key: String): File = File(rootDir(context), "$key.json")
+    private fun fileFor(root: File, key: String): File = File(root, "$key.json")
 
     /**
      * The cached list for one key, or null when this device has never successfully fetched it.
@@ -289,11 +307,25 @@ object DwReferenceStore {
      * never seen this list"; an empty [DwReferenceList] is "the server told us there is nothing here",
      * which for a workshop whose roster has not been built yet is the correct and final answer.
      */
-    suspend fun load(context: Context, key: String): DwReferenceList? {
+    suspend fun load(context: Context, key: String): DwReferenceList? = load(rootDir(context), key)
+
+    /**
+     * The same read, against a directory rather than a Context.
+     *
+     * WHY THE OVERLOAD EXISTS. This module has no Robolectric on its unit-test classpath (see the
+     * note in `StagedJournalDamageTest`), so a JVM test cannot manufacture a Context and therefore
+     * could not reach a single line of the file layer. The rules that live here are not decorative —
+     * which files [anyForModel] may merge is the difference between a WORKSHOP-scoped picker showing
+     * this workshop's roster and it showing the whole table (docs/AUDIT-2026-08-15.md, the missing
+     * `scope` CRITICAL) — so they have to be reachable by a test that runs on the desktop in seconds.
+     * Splitting the directory out is the same move `StagedJournal` already made for the same reason.
+     * The Context overloads stay the only thing the app calls; nothing else may pass a root.
+     */
+    internal suspend fun load(root: File, key: String): DwReferenceList? {
         memory[key]?.let { return it }
         return withContext(Dispatchers.IO) {
             mutex.withLock {
-                val file = fileFor(context, key)
+                val file = fileFor(root, key)
                 if (!file.exists()) return@withLock null
                 val text = runCatching { file.readText() }.getOrNull()
                 if (text.isNullOrBlank()) return@withLock null
@@ -320,13 +352,17 @@ object DwReferenceStore {
      * into the returned value: the caller gets back what is actually cached, not what it just tried
      * to store.
      */
-    suspend fun store(context: Context, key: String, list: DwReferenceList): DwReferenceList {
-        val existing = load(context, key)
+    suspend fun store(context: Context, key: String, list: DwReferenceList): DwReferenceList =
+        store(rootDir(context), key, list)
+
+    /** The same write, against a directory rather than a Context. See [load] for why. */
+    internal suspend fun store(root: File, key: String, list: DwReferenceList): DwReferenceList {
+        val existing = load(root, key)
         if (list.items.isEmpty() && existing != null && existing.items.isNotEmpty()) return existing
         val stamped = list.copy(fetchedAt = Instant.now().toString())
         withContext(Dispatchers.IO) {
             mutex.withLock {
-                val file = fileFor(context, key)
+                val file = fileFor(root, key)
                 val temp = File(file.parentFile, "${file.name}.tmp")
                 runCatching {
                     // Write-then-rename, the same discipline draft.json uses. A process killed
@@ -359,19 +395,59 @@ object DwReferenceStore {
     }
 
     /**
-     * Everything cached for one model, whatever it was filtered by, merged and de-duplicated.
+     * Everything cached for one model AND ONE OWNER, whatever it was filtered by, merged and
+     * de-duplicated.
      *
      * Used when the picker has no cache under its exact key but the device does hold the whole model
      * from some earlier, unfiltered fetch. Narrowing that on the device (see
      * [DwReferenceList.narrowedTo]) is how a cascading product dropdown works on a phone that has
      * never once been asked for "the products of artisan a3f1" specifically.
+     *
+     * ── THE MERGE IS FENCED TO ONE OWNER, AND THAT FENCE IS LOAD-BEARING ──────────────────────────
+     *
+     * This used to merge every file whose name began with the model — `prefix = safeName(model) +
+     * "__"` — and the owner it is handed was spent only on the exact-key attempt above. Two defects
+     * lived in that one missing segment, and both of them end with a picker offering records it has
+     * no business offering while looking exactly like a correct list:
+     *
+     *  1. CROSS-WORKSHOP (docs/AUDIT-2026-08-15.md, "`anyForModel` merges every cached list for a
+     *     model across ALL workshops on the device"). Two clusters on one handset: workshop A's
+     *     `ProductDocumentation__A___.json` is on disk, workshop B opens the same field offline, the
+     *     exact key misses, and A's documented products are offered to B. `narrowedTo` does not save
+     *     it — that filters on the parent artisan id, which says nothing about which workshop.
+     *
+     *  2. THE UN-NARROWED LIST THAT PRE-DATES THE `scope` FIX (the CRITICAL in the same document, and
+     *     the reason this fence had to be built rather than merely wanted). Every build before that
+     *     fix sent no `scope`, so every WORKSHOP-owned file on a phone in the field holds the first
+     *     fifty rows of the whole table. [dwReferenceCacheOwner] retires those by stamping a
+     *     generation onto the owner segment — but a retired file is a file the EXACT KEY MISSES, and
+     *     an exact-key miss is precisely what sends the lookup here. With a model-only prefix the
+     *     poisoned file still began with `Artisan__`, so it was merged straight back in and the
+     *     generation bump bought nothing at all. The bump only works because this prefix now carries
+     *     the generation too.
+     *
+     * WHAT THIS DELIBERATELY DOES NOT DO is refuse the fallback for WORKSHOP-scoped fields. That was
+     * the other candidate fix and it would have broken `productRef`, which is WORKSHOP-scoped AND
+     * cascaded and works offline for exactly one reason: the whole-model list cached for THIS
+     * workshop is narrowed on the device. That file shares this owner segment, so it still merges.
+     * An ALL-scoped picker likewise still merges every `model__ALL__…` file on the device, which is
+     * what lets a brand-new offline workshop use the artisan register some earlier workshop
+     * downloaded (see the header). The fence separates owners; it does not close the door.
+     *
+     * The prefix ends with `__` so it matches a WHOLE segment: without that trailing separator an
+     * owner id would match every longer id it happens to begin with, and on a generation bump the
+     * gen-1 `…__ws__` file would match a `…__ws-2__` prefix's stem again. See [cacheKey].
      */
-    suspend fun anyForModel(context: Context, model: String, scope: String, workshopId: String): DwReferenceList? {
-        val whole = load(context, cacheKey(model, scope, workshopId, ""))
+    suspend fun anyForModel(context: Context, model: String, scope: String, workshopId: String): DwReferenceList? =
+        anyForModel(rootDir(context), model, scope, workshopId)
+
+    /** The same fallback, against a directory rather than a Context. See [load] for why. */
+    internal suspend fun anyForModel(root: File, model: String, scope: String, workshopId: String): DwReferenceList? {
+        val whole = load(root, cacheKey(model, scope, workshopId, ""))
         if (whole != null) return whole
-        val prefix = safeName(model) + "__"
+        val prefix = safeName(model) + "__" + safeName(cacheOwner(scope, workshopId)) + "__"
         val merged = withContext(Dispatchers.IO) {
-            runCatching { rootDir(context).listFiles() }.getOrNull().orEmpty()
+            runCatching { root.listFiles() }.getOrNull().orEmpty()
                 .filter { it.name.startsWith(prefix) }
                 .mapNotNull { file ->
                     runCatching {

@@ -38,6 +38,7 @@ from app.services.workshop_access import (
     link_workshop_artisan,
     pin_pending_if_late,
     stamp_workshop_submission,
+    sync_workshop_artisan,
 )
 
 router = APIRouter(prefix="/artisans", tags=["artisans"])
@@ -320,6 +321,10 @@ async def update_artisan(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     artisan = await require_record(db.artisan, artisan_id)
+    # Read BEFORE anything writes: the mirrored WorkshopArtisan row is keyed on the workshop the
+    # artisan is leaving, and after the update that value is gone. See the sync call at the end of
+    # this route for the unlink this pairs with.
+    previous_workshop_id = artisan.workshopId
     data = clean_data(payload.model_dump(exclude_unset=True))
     # A caller shown a masked number who saves without touching it means "leave it alone" — for the
     # Pehchan card as much as for the Aadhaar, since both are masked on the way out to them.
@@ -371,7 +376,14 @@ async def update_artisan(
         if field is None:
             raise
         raise await _identity_conflict(field, data[field], exclude_id=artisan_id) from exc
-    await link_workshop_artisan(updated.workshopId, updated.id)
+    # BIDIRECTIONAL, unlike the create path's one-way ``link_workshop_artisan``. An edit can REMOVE
+    # a workshop, and until this call the removal stopped at the column: the join row this mirror
+    # wrote the first time survived, so every query reading the roster kept the artisan in a
+    # workshop their own page reported them as having left. Passing the previous value is what
+    # makes the delete possible at all — ``updated.workshopId`` is null in exactly the case that
+    # needs cleaning up. See ``sync_workshop_artisan`` for what it deliberately does NOT try to
+    # tell apart.
+    await sync_workshop_artisan(previous_workshop_id, updated.workshopId, updated.id)
     return public_encode(updated, current_user)
 
 

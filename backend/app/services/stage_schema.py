@@ -178,6 +178,12 @@ class FieldSpec:
     ref_filter_by: str = ""
     ref_scope: str = ""
     max_length: int = 0
+    #: For a multi-valued type (IMAGE_LIST, TAGS, MULTI_ENUM): how many entries it may hold.
+    #: 0 means ``DEFAULT_MAX_ITEMS``, which is what every field in the registry uses today —
+    #: see that constant for why an unbounded array is a permanent write amplified on every
+    #: later read of the stage. On a scalar field it is inert; ``max_length`` is that field's
+    #: bound. On a multi field ``max_length`` bounds ONE ENTRY, not the joined string.
+    max_items: int = 0
     min_value: float | None = None
     max_value: float | None = None
     report_role: ReportRole = ReportRole.KEY_VALUE
@@ -934,6 +940,41 @@ _FALSE = {"false", "no", "n", "0", "off"}
 _MAX_ACCURACY_M = 20_037_508.0
 
 
+#: How many entries a multi-valued field may hold when its own ``FieldSpec`` declares no bound.
+#:
+#: EVERY MULTI-VALUED FIELD USED TO BE UNBOUNDED IN BOTH DIRECTIONS — no cap on the number of
+#: entries and no cap on the length of any one of them — because the ``is_multi`` branch of
+#: :func:`coerce_value` returns before the scalar-text branch where ``max_length`` is applied. The
+#: envelope bounds in ``schemas/design_workshops`` do not help: ``MAX_STAGE_ROWS`` counts rows and
+#: ``MAX_FIELD_KEYS`` counts keys per entry, and one KEY may hold an arbitrarily long array.
+#: MULTI_ENUM's allow-list does not help either, because duplicates of an allowed token pass the
+#: unknown-token check, so ``["COTTON"] * 1_000_000`` was accepted and stored. There is no
+#: request-size middleware in ``app/main.py``; only the compression middleware reads
+#: content-length.
+#:
+#: What that costs is not one bad save. An Android build with a bug in its gallery picker, or a
+#: retry loop that appends rather than replaces, writes tens of thousands of media ids into one
+#: ``stepPhotos`` array; the blob then lands in a jsonb column that ``GET /{id}/stages`` — the
+#: feature's most frequent read, made on every stage-index open by every designer who can see the
+#: workshop — serialises IN FULL, for ever, with no path that trims it and no error recording it.
+#:
+#: MEASURED RATHER THAN GUESSED, so the cap cannot refuse an honest answer: the registry declares
+#: 35 multi-valued fields (18 IMAGE_LIST, 12 TAGS, 5 MULTI_ENUM); the largest option list any
+#: MULTI_ENUM draws on is PRODUCT_CATEGORY at 15 entries, and the largest list in ``ENUMS`` at all
+#: is MATERIAL_FAMILY at 17. 200 is more than ten times the widest legitimate "select them all",
+#: and far past any gallery a designer photographs onto ONE row of a stage that already admits 500
+#: rows. A field that genuinely needs more says so with ``max_items`` on its own ``FieldSpec``.
+DEFAULT_MAX_ITEMS = 200
+
+#: How long ONE entry of a multi-valued field may be when the field declares no ``max_length``.
+#:
+#: The items are media ids (a cuid is 25 characters), enum tokens, and designer-typed tags. 300 is
+#: generous for all three and still refuses the megabyte string that reaches the same jsonb column
+#: and the same read amplification as an over-long array. Bounded per ITEM rather than over the
+#: joined length so the message can name the field and the designer can find the offending entry.
+DEFAULT_MAX_ITEM_CHARS = 300
+
+
 def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
     """Coerce one submitted value to its stored form. Returns ``(value, error)``.
 
@@ -969,6 +1010,29 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
             if not isinstance(raw, (list, tuple)):
                 return None, f"{spec.label} must be a list"
             items = [str(v).strip() for v in raw if str(v).strip()]
+            # BOTH BOUNDS ARE APPLIED HERE BECAUSE THIS BRANCH RETURNS, and that early return is
+            # the whole defect: it never reached the scalar-text branch below, where
+            # ``spec.max_length`` lives, so a declared bound on a multi field was a silent no-op
+            # and there was no item cap anywhere in the codebase. See DEFAULT_MAX_ITEMS above for
+            # what an unbounded array costs on every subsequent read of the stage.
+            #
+            # A REFUSAL, NOT A TRUNCATION. Silently keeping the first 200 of an array the client
+            # believes it stored is the shape of failure this module refuses everywhere else: the
+            # designer is told "Stage saved" and the photographs are gone. A refused field is
+            # reported per-field in ``errors``, keeps whatever the row already held (``save_stage``
+            # restores rejected keys from ``previous``), and does not cost the other twenty fields
+            # of the entry.
+            limit = spec.max_items or DEFAULT_MAX_ITEMS
+            if len(items) > limit:
+                return None, f"{spec.label} may hold at most {limit} entries"
+            # ``max_length`` PER ITEM, which is the only reading that makes sense for a list and
+            # is what a field declaring one would mean by it. No field declares one today, so the
+            # default below is what actually bounds every TAGS box in the registry.
+            item_limit = spec.max_length or DEFAULT_MAX_ITEM_CHARS
+            if any(len(v) > item_limit for v in items):
+                return None, (
+                    f"{spec.label}: one entry is longer than {item_limit} characters"
+                )
             if t is FieldType.MULTI_ENUM:
                 allowed = ENUMS.get(spec.enum, {})
                 unknown = [v for v in items if v not in allowed]
@@ -1434,6 +1498,13 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
         out["refFilterBy"] = f.ref_filter_by
     if f.max_length:
         out["maxLength"] = f.max_length
+    # Emitted on the same "only non-default keys" rule as everything around it, so no field in
+    # today's registry emits it and neither the bundled Android asset nor `registry_version()`
+    # moves for adding the line. It starts crossing the wire the day a field declares a bound,
+    # which is the day a client needs it to stop a designer filling a picker the server will
+    # then refuse. Both clients ignore keys they do not know.
+    if f.max_items:
+        out["maxItems"] = f.max_items
     if f.min_value is not None:
         out["minValue"] = f.min_value
     if f.max_value is not None:

@@ -13,9 +13,17 @@
  *   2. PATHS — "see backend/app/services/ai.py". Files move. Every `backend/…`, `frontend/…`,
  *      `android/…`, `infra/…`, `docs/…` or `scripts/…` path mentioned in a doc is resolved on disk.
  *   3. LINE CITATIONS — "media.py:198-264". These are the worst offenders, because they are wrong
- *      silently and look precise. A citation into a file that is now shorter than the line it names
- *      is definitely wrong; one that still fits is only possibly right, and is reported as a count
- *      so the number never grows unnoticed.
+ *      silently and look precise. Two tests, and the second is the one that earns its keep:
+ *        * BOUNDS. A citation into a file now shorter than the line it names is definitely wrong.
+ *          This is the cheap test and it almost never fires: a file that grows swallows the drift.
+ *        * DRIFT. Where the sentence names a symbol in backticks beside the pin, that symbol has to
+ *          be within ten lines of the cited span. Five citations had rotted onto unrelated code
+ *          while passing the bounds test — one of them 382 lines from the function it named — and
+ *          this file said of itself that they "are wrong silently and look precise" while checking
+ *          the one property that is almost never violated. See the long note above CITE_RE for the
+ *          three deliberate abstentions that keep it from crying wolf, and `selfTestDrift` for the
+ *          cases that hold it to its word on every run.
+ *      Citations are also reported as a per-document count, so the number never grows unnoticed.
  *
  * What it deliberately does NOT do: check that a sentence is true. Nothing can. The per-document
  * "How this document is kept true" section names the human check for the rest.
@@ -373,10 +381,63 @@ function checkRoleParity() {
   }
 }
 
+/**
+ * 2b. Every client route guard is listed in PERMISSIONS.md §5, and §5 invents none.
+ *
+ * WHY THIS IS MECHANICAL NOW. The maintenance table used to say "`ROUTE_GUARDS` is a single literal
+ * array; diff it against the table" — a human instruction, and by the time an audit counted them the
+ * table held 7 of the 14 rules. The omissions were not random: `/design-workshops`, `/questionnaires`
+ * and `/designers/profile` gate on a SET of roles rather than a rank threshold, so they are precisely
+ * the rules a reader cannot re-derive from §2's ladder — and §5 closes with "anything unlisted is
+ * open to any signed-in user", which made the omission an affirmatively false statement about the
+ * product's primary surface rather than merely an incomplete one.
+ *
+ * Both directions are failures. A missing row is the defect above. A row for a route that no longer
+ * has a guard is the same defect with the sign flipped: a reader who trusts it believes a page is
+ * gated when the URL is open, and the whole point of §5 is that a hidden nav entry is not a guard.
+ *
+ * Only the ROUTE LIST is checked. The gate names in the middle column are prose about a predicate's
+ * meaning and cannot be diffed; the maintenance table says so.
+ */
+function checkRouteGuardTable() {
+  const src = read(join(REPO, "frontend", "lib", "permissions.ts"));
+  const block = src.match(/export const ROUTE_GUARDS: RouteGuard\[\] = \[([\s\S]*?)\n\];/);
+  if (!block) return fail("frontend/lib/permissions.ts: ROUTE_GUARDS not found");
+  const declared = [...block[1].matchAll(/path:\s*"([^"]+)"/g)].map((m) => m[1]);
+  if (!declared.length) return fail("frontend/lib/permissions.ts: ROUTE_GUARDS declares no paths");
+
+  const doc = read(join(DOCS, "PERMISSIONS.md"));
+  // §5's table only — a route named in the prose of §4 must not be able to satisfy this check, or
+  // the failure it exists to catch (a rule nobody tabulated) passes the moment anyone mentions the
+  // path in a sentence.
+  const section = doc.slice(doc.indexOf("## 5. Route guards on the web client"), doc.indexOf("## 6."));
+  if (!section) return fail("docs/PERMISSIONS.md: section 5 not found");
+  const rows = section
+    .split("\n")
+    .filter((line) => line.startsWith("| `/"))
+    .join("\n");
+  const tabulated = new Set([...rows.matchAll(/`(\/[\w/-]+)`/g)].map((m) => m[1]));
+
+  for (const path of declared) {
+    if (!tabulated.has(path)) {
+      fail(`docs/PERMISSIONS.md §5: ROUTE_GUARDS declares ${path} and the table does not list it`);
+    }
+  }
+  for (const path of tabulated) {
+    // `/questionnaire` (singular) appears in the plural row's own warning label; it is deliberately
+    // NOT a guard, and saying so is the point of that row.
+    if (path === "/questionnaire") continue;
+    if (!declared.includes(path)) {
+      fail(`docs/PERMISSIONS.md §5: the table lists ${path}, which has no ROUTE_GUARDS rule`);
+    }
+  }
+  note(`${declared.length} client route guards listed in PERMISSIONS.md §5`);
+}
+
 /** 3. Every repository path mentioned in a doc exists. */
 // `()` and `[]` ARE PATH CHARACTERS IN THIS REPOSITORY, and leaving them out was not harmless. The
 // App Router spells a route group `app/(protected)/` and a dynamic segment `[id]`/`[stageKey]`, so a
-// class of `[\w./-]` cannot match ANY of the 53 pages under `frontend/app/(protected)/` — the
+// class of `[\w./-]` cannot match ANY of the pages under `frontend/app/(protected)/` — the
 // largest single area of the frontend was invisible to a tool whose whole job is checking that docs
 // still describe the code. Worse than invisible, in fact: see the fallback in `checkCitations`.
 //
@@ -422,15 +483,54 @@ function checkPaths() {
   note(`${checked} repository paths resolved`);
 }
 
-/** 4. Line citations (`file.py:120` / `file.py:120-140`) land inside a file that is long enough. */
+/** 4. Line citations (`file.py:120` / `file.py:120-140`): inside the file, AND still on the code the
+ *  sentence around them describes.
+ *
+ *  ── WHY THE BOUNDS TEST ALONE WAS THE WORST KIND OF GREEN ──────────────────────────────────────
+ *
+ *  This check used to assert one thing: that the cited line is not past the end of the file. Every
+ *  citation in the repository passed. Five of them had drifted onto code with nothing to do with the
+ *  sentence that cited them — `REFERENCE_MODELS` cited at `design_workshops.py:277`, which is a blank
+ *  line above `_joined`, while the table itself had moved to 335; `CustomSectionsIn` cited 28 lines
+ *  above the class; `publishAppUpdate` cited 382 lines above the function. A citation drifts by
+ *  exactly the amount of code inserted above it, which is a number that only ever grows, and a long
+ *  file swallows the whole drift without ever getting shorter. So the one condition the check tested
+ *  was the one condition that is almost never violated, and this file's own header calls line
+ *  citations "the worst offenders, because they are wrong silently and look precise".
+ *
+ *  ── WHAT THE DRIFT TEST DOES, AND WHY IT IS DELIBERATELY WEAK ──────────────────────────────────
+ *
+ *  Nothing here can read prose. What it can do is notice that documentation almost always writes the
+ *  citation next to the NAME of the thing being cited — "`REFERENCE_MODELS` (`design_workshops.py:277`)"
+ *  — and that name is a string that either is or is not near line 277 of that file. So: take the
+ *  backticked identifiers on the SAME line of the document, and require that at least one of them
+ *  occurs within CITATION_DRIFT_WINDOW lines of the cited span.
+ *
+ *  Three deliberate abstentions, each of which exists to stop a false FAIL. A checker that cries wolf
+ *  gets ignored wholesale, and this one is being repaired precisely because it was not believed:
+ *
+ *    * NO IDENTIFIER ON THE LINE → say nothing. Half the citations in this repository are bare, and
+ *      guessing at an anchor from the paragraph is how you invent a failure.
+ *    * THE IDENTIFIER APPEARS NOWHERE IN THE FILE → say nothing. The sentence is naming something
+ *      that lives somewhere else — a caller, a sibling module, a wire key — and its absence is not
+ *      evidence about the line number.
+ *    * ANY ONE anchor near the span passes the citation. Not all of them: a sentence naming four
+ *      symbols is describing a relationship between files, and only one end of it is the citation.
+ *
+ *  The failure is therefore always actionable and never a matter of opinion: it names the identifier,
+ *  the line cited, and the line that identifier is actually on. Fix whichever is wrong — and if the
+ *  citation is right and the anchor is genuinely 60 lines up (the middle of a long function), quote
+ *  something that IS on the cited lines. That is a better citation anyway. */
 // Same segment rule as PATH_RE, for the same reason — a citation can sit inside a markdown link.
 const CITE_RE = new RegExp(
   String.raw`(${PATH_SEGMENT}(?:\/${PATH_SEGMENT})*\.(?:py|ts|tsx|kt|kts|mjs|sh|yaml|yml|prisma)):(\d+)(?:-(\d+))?`,
   "g",
 );
 
-// Basenames too common to resolve from a bare filename. The App Router gives every one of 53 routes
-// the SAME basename, so "find the first path in this document ending in page.tsx" answers with an
+// Basenames too common to resolve from a bare filename. The App Router gives EVERY route under
+// `frontend/app/(protected)/` the SAME basename — dozens of them, and the number moves with every
+// page added, which is why it is not written here — so "find the first path ending in page.tsx"
+// answers with an
 // arbitrary one — which is how this checker came to report citations as "past end of file (29
 // lines)" against a file the citation had never named. A false FAIL is worse than a missed one: it
 // teaches the next reader that the checker is noise.
@@ -438,8 +538,153 @@ const AMBIGUOUS_BASENAMES = new Set([
   "page.tsx", "layout.tsx", "route.ts", "loading.tsx", "error.tsx", "not-found.tsx",
   "__init__.py", "index.ts", "index.tsx",
 ]);
+
+// How far from the cited span the named symbol may sit. Ten lines is a docstring or a decorator
+// stack — the distance between "the line I meant" and "the line I counted" — and it is deliberately
+// not larger: the drifts this catches are 28, 40, 58 and 382 lines, and widening the window to
+// forgive a citation into the middle of a long function would forgive those too.
+const CITATION_DRIFT_WINDOW = 10;
+
+// Words that occur in every file and therefore locate nothing. An anchor has to be able to be WRONG
+// to be worth testing; `data` matches something within ten lines of anywhere.
+const WEAK_ANCHORS = new Set([
+  "data", "true", "false", "null", "none", "type", "name", "list", "dict", "self",
+  "value", "text", "file", "line", "keys", "item", "items", "return", "async", "await",
+]);
+const ANCHOR_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?$/;
+const ANCHOR_IS_A_FILENAME = /\.(?:py|ts|tsx|kt|kts|mjs|js|sh|md|json|yaml|yml|prisma)$/;
+
+/** Backticked identifiers on one line of a document, expanded into the strings worth grepping for.
+ *
+ *  `StageEntryIn.data` is the case that shaped this. As written it appears nowhere in the Python —
+ *  the class is `StageEntryIn` and the field is declared as `data:` — so testing the dotted string
+ *  alone reported a correct citation as drift. The rule is therefore: the whole dotted name, plus its
+ *  last component, and when the last component is a word too common to locate anything (`.data`,
+ *  `.name`), its FIRST component instead, which is the type. */
+function citationAnchors(line) {
+  const out = new Set();
+  const usable = (t) => t.length >= 4 && !WEAK_ANCHORS.has(t.toLowerCase());
+  for (const m of line.matchAll(/`([^`\n]+)`/g)) {
+    const raw = m[1].replace(/\(\)$/, "");
+    if (!ANCHOR_RE.test(raw)) continue;      // paths, citations, expressions, prose — not a symbol
+    if (ANCHOR_IS_A_FILENAME.test(raw)) continue; // `identity_ocr.py` names the file, not a symbol in it
+    if (usable(raw)) out.add(raw);
+    if (raw.includes(".")) {
+      const parts = raw.split(".");
+      const last = parts[parts.length - 1];
+      if (usable(last)) out.add(last);
+      else if (usable(parts[0])) out.add(parts[0]);
+    }
+  }
+  return [...out];
+}
+
+// Documents whose line numbers are pinned to a tree that no longer exists, ON PURPOSE. Drift is not a
+// defect in these; correcting them would destroy the record. The bounds check still applies.
+//
+// AUDIT-2026-08-15.md is a dated register — "the working tree was audited, not HEAD", 126 defects
+// "each anchored to a line of real code" as that tree stood on the morning of 2026-08-15. Most of
+// those defects have since been fixed, in waves, and every fix moved the lines below it; how many of
+// its citations have come loose is therefore a number that grows all day, and quoting one here would
+// itself be stale by evening (this comment used to, and was). Re-pinning them would be a lie about
+// when the audit ran;
+// the entries name their symbols as well as their lines, and that is what a reader follows.
+//
+// ADDING A NAME HERE IS A DECISION SOMEBODY MAKES ON PURPOSE, with the reason written next to it. It
+// is not the place to put a document whose citations merely rotted — that is the failure, and the
+// fix for it is to name the symbol instead of the line.
+const DRIFT_EXEMPT = new Map([
+  ["AUDIT-2026-08-15.md", "a dated snapshot of the pre-fix tree; its line numbers are the record"],
+]);
+
+// A document that EXHIBITS a rotted citation — "`StageScreen.kt:1320-1325` had rotted onto unrelated
+// code" — is writing the citation as a specimen, not as a pointer, and is the one place where "this
+// number does not point at what the sentence says" is the intended reading. Mark that line with an
+// HTML comment (invisible when rendered) and the drift test steps over it:
+//
+//     (Both were cited by line number — `StageScreen.kt:1320-1325` — and both had rotted. <!-- rotted -->)
+//
+// ONLY for a pin the prose is holding up as broken. Using it to quiet a citation somebody still means
+// as a pointer converts a loud failure into a silent lie, which is the exact defect this check exists
+// to end — and the count below keeps every use of it visible in the run's output.
+const ROTTED_SPECIMEN = /<!--\s*rotted\b/;
+
+/** The whole drift decision, as a pure function so that `--self-test` below can hold it to account.
+ *
+ *  Returns `null` when the file contains none of the anchors — abstention 2, "the sentence is naming
+ *  something that lives elsewhere" — and otherwise the closest occurrence found, with `near` saying
+ *  whether it is close enough to the cited span to count as the thing cited.
+ *
+ *  ANY ONE anchor near the span settles it, so the search stops at the first near hit; otherwise it
+ *  keeps the occurrence closest to the start line, because that is the number a reader needs in the
+ *  failure message to repair the citation. */
+function citationDrift(src, start, end, anchors) {
+  let best = null;
+  for (const anchor of anchors) {
+    for (let j = 0; j < src.length; j += 1) {
+      if (!src[j].includes(anchor)) continue;
+      const at = j + 1;
+      if (at >= start - CITATION_DRIFT_WINDOW && at <= end + CITATION_DRIFT_WINDOW) {
+        return { anchor, at, near: true };
+      }
+      if (best === null || Math.abs(at - start) < Math.abs(best.at - start)) best = { anchor, at, near: false };
+    }
+  }
+  return best;
+}
+
+/** Does the drift test actually bite? Run on every invocation, because a check nobody tests is how
+ *  this file got into trouble in the first place.
+ *
+ *  The case that matters is the first one: it is `REFERENCE_MODELS` as `docs/REPORT-DATA-WIRING.md`
+ *  cited it — a citation 58 lines above the symbol, in a file long enough that the number is still
+ *  inside it. That is exactly the shape the OLD check called green, and the assertion below is
+ *  written to say so out loud: the bounds test passes AND the drift test fails on the same input. If
+ *  somebody widens the window, weakens the anchors or "simplifies" the search, one of these stops
+ *  holding and the docs run goes red with a line number in this file. */
+function selfTestDrift() {
+  const cases = [];
+  const ok = (what, cond) => { cases.push(what); if (!cond) fail(`check-docs self-test: ${what}`); };
+
+  // A 400-line file whose symbol sits at line 335, cited at 277 — REPORT-DATA-WIRING's own defect.
+  const long = Array.from({ length: 400 }, (_, i) =>
+    i + 1 === 335 ? "REFERENCE_MODELS: dict[str, ReferenceModel] = {" : "    # filler");
+  const rotted = citationDrift(long, 277, 277, ["REFERENCE_MODELS"]);
+  ok("a citation 58 lines above its symbol is inside the file (what the old check tested)", 277 <= long.length);
+  ok("...and is reported as drift (what the old check missed)", rotted && !rotted.near && rotted.at === 335);
+
+  // Same file, cited correctly, and cited at the far edge of the tolerance.
+  ok("a citation ON the symbol passes", citationDrift(long, 335, 335, ["REFERENCE_MODELS"]).near);
+  ok("a citation 10 lines above the symbol still passes", citationDrift(long, 325, 325, ["REFERENCE_MODELS"]).near);
+  ok("a citation 11 lines above the symbol does not", !citationDrift(long, 324, 324, ["REFERENCE_MODELS"]).near);
+
+  // Abstention 2: the sentence names something that lives in another file.
+  ok("a symbol absent from the file is not evidence", citationDrift(long, 12, 12, ["SomethingElse"]) === null);
+  // Any one anchor near the span settles it — a sentence spanning two files cites only one of them.
+  ok("one near anchor rescues a far one", citationDrift(long, 330, 330, ["Absent", "REFERENCE_MODELS"]).near);
+
+  // Anchor extraction, where the false positives would come from.
+  ok("a bare identifier is an anchor", citationAnchors("`REFERENCE_MODELS` (`x.py:1`)").includes("REFERENCE_MODELS"));
+  ok("`StageEntryIn.data` yields the type, since `.data` locates nothing",
+    citationAnchors("`StageEntryIn.data` (`x.py:1`)").includes("StageEntryIn"));
+  ok("`prototype.productRef` yields the field", citationAnchors("`prototype.productRef`").includes("productRef"));
+  ok("a filename is not a symbol", citationAnchors("`identity_ocr.py`").length === 0);
+  ok("a citation is not a symbol", citationAnchors("`report_builder.py:105`").length === 0);
+  ok("an expression is not a symbol", citationAnchors("`Field(default=True)`").length === 0);
+  ok("a word too common to locate anything is not an anchor", citationAnchors("`data` `name` `self`").length === 0);
+  ok("a line naming nothing abstains", citationAnchors("**Where.** `frontend/lib/store.ts:974`").length === 0);
+
+  // The specimen marker, which is the only sanctioned way to write a pin that is meant to be wrong.
+  ok("<!-- rotted --> is recognised", ROTTED_SPECIMEN.test("`StageScreen.kt:1320-1325` <!-- rotted -->"));
+  ok("an unmarked line is not", !ROTTED_SPECIMEN.test("`StageScreen.kt:1320-1325` had rotted"));
+
+  note(`${cases.length} self-test cases for the citation-drift check`);
+}
+
 function checkCitations() {
   let checked = 0;
+  let anchored = 0;
+  let specimens = 0;
   const seen = new Map();
   for (const doc of docFiles()) {
     const text = read(doc);
@@ -467,12 +712,35 @@ function checkCitations() {
       }
       if (!full || !statSync(full).isFile()) continue; // path check already reported real misses
       checked += 1;
-      const lines = read(full).split("\n").length;
-      if (end > lines) fail(`${rel}: citation ${file}:${startS}${endS ? "-" + endS : ""} is past end of file (${lines} lines)`);
+      const src = read(full).split("\n");
+      const lines = src.length;
+      const cite = `${file}:${startS}${endS ? "-" + endS : ""}`;
+      if (end > lines) fail(`${rel}: citation ${cite} is past end of file (${lines} lines)`);
       seen.set(rel, (seen.get(rel) || 0) + 1);
+
+      // ── and has it drifted? See the long note above CITE_RE for why this is the check that matters
+      if (end > lines || DRIFT_EXEMPT.has(rel.split("/").pop())) continue;
+      // The document line the citation sits on, which is where its anchors are.
+      const lineStart = text.lastIndexOf("\n", m.index) + 1;
+      const lineEnd = text.indexOf("\n", m.index);
+      const docLineNo = text.slice(0, lineStart).split("\n").length;
+      const docLine = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+      if (ROTTED_SPECIMEN.test(docLine)) { specimens += 1; continue; }
+      const anchors = citationAnchors(docLine);
+      if (!anchors.length) continue;                    // abstention 1: nothing named to look for
+      const verdict = citationDrift(src, Number(startS), end, anchors);
+      if (verdict === null) continue;                   // abstention 2, or the citation still points at it
+      anchored += 1;
+      if (verdict.near) continue;
+      fail(
+        `${rel}:${docLineNo}: citation ${cite} has drifted — the line names \`${verdict.anchor}\`, ` +
+        `which is at ${file.split("/").pop()}:${verdict.at}. Re-pin it, or name the symbol instead of the line.`,
+      );
     }
   }
   note(`${checked} line citations inside their file`);
+  note(`${anchored} of them also checked against a symbol named on the same line (the rest name none)`);
+  if (specimens) note(`${specimens} citation(s) marked <!-- rotted --> — quoted AS rot, drift not tested`);
   for (const [doc, n] of [...seen].sort((a, b) => b[1] - a[1])) {
     if (n >= 10) note(`  ${doc} pins ${n} line numbers — these rot silently; prefer symbol names`);
   }
@@ -482,12 +750,71 @@ function checkCitations() {
  *
  *  A document with no maintenance story does not meet the brief: nobody knows what to re-check when
  *  the code moves, so nobody does, and it decays into confident misinformation. REPO_FACTS.md is
- *  exempt because it is regenerated wholesale — the script IS its maintenance story.
+ *  exempt because it is regenerated wholesale — the script IS its maintenance story, and it is the
+ *  ONLY name in the set.
  *
- *  The five in PENDING were written by a different workstream and are not this one's to rewrite.
- *  They are reported as warnings rather than silently skipped, so the gap stays visible; move each
- *  name out of the set as its owner adds the section. */
+ *  THERE IS NO SECOND SET FOR "SOMEBODY ELSE'S DOCUMENT", and this comment used to say there was.
+ *  It described "the five in PENDING", a set that does not exist in this file and by then held six
+ *  names anyway — a stale comment, naming a phantom, carrying a wrong count, in the one file whose
+ *  entire job is stopping documents from doing exactly that. The demotion it was describing happens
+ *  once and centrally now, in OWNED_ELSEWHERE at the top of this file: a finding in a document
+ *  another workstream owns becomes a warning rather than a failure no matter WHICH check produced
+ *  it, so a missing maintenance section in one of those documents already reports as a warning and
+ *  needs nothing here. No count of them is written down — the run prints it, and a number in a
+ *  comment is a number nobody re-derives.
+ *
+ *  ADDING A NAME TO MAINTENANCE_EXEMPT IS NOT HOW YOU QUIET ONE OF THOSE. Exemption means "the
+ *  section would be meaningless here", which is true of exactly one generated file. A document that
+ *  merely lacks the section has a gap, and a visible gap is worth more than a green run; hiding it
+ *  here would also hide it from the document's owner, who is the only person who can close it. */
 const MAINTENANCE_EXEMPT = new Set(["REPO_FACTS.md"]);
+
+/** 5b. The three exemption lists still name documents that exist, and the maintenance exemption is
+ *  still a GENERATED file.
+ *
+ *  Every failure this catches is silent, which is why it is worth three lines of comparison. A name
+ *  in OWNED_ELSEWHERE that no longer matches a file stops fencing anything: rename or delete one of
+ *  those documents and its successor's findings go from warnings to failures with nothing anywhere
+ *  saying why the fence moved. DRIFT_EXEMPT is worse — the register it protects is a dated snapshot
+ *  whose line numbers ARE the record, so a name that has stopped matching hands the next reader a
+ *  page of drift failures and an invitation to "fix" them by re-pinning, destroying exactly what the
+ *  exemption existed to preserve. And MAINTENANCE_EXEMPT is defensible for one reason only, that the
+ *  file it names is machine-written and the script is its maintenance story; a hand-written document
+ *  in that set is not exempt, it is hidden.
+ *
+ *  THIS EXISTS BECAUSE THE COMMENT ABOVE MAINTENANCE_EXEMPT WENT STALE AND NOBODY NOTICED. It
+ *  described a set named `PENDING`, which this file does not define, and gave a count of five for a
+ *  fence that held six — in the file whose entire job is stopping documents from making confident
+ *  false statements about the code. A comment cannot be tested and does not get re-read. An
+ *  assertion that runs on every invocation cannot be not-read, so the rules the comments state are
+ *  written here as well, where breaking one turns the docs run red with a line number. */
+function selfTestExemptions() {
+  const present = new Set(docFiles().map((d) => d.split(/[\\/]/).pop()));
+  const named = [...OWNED_ELSEWHERE, ...DRIFT_EXEMPT.keys(), ...MAINTENANCE_EXEMPT];
+  const missing = named.filter((base) => !present.has(base));
+  for (const base of missing) {
+    fail(`check-docs: an exemption list names ${base}, which is not a document in docs/ — the fence is protecting nothing`);
+  }
+  // Not "size <= 1": the point is that the ONE name is the generated file, so that adding a second
+  // is a decision somebody has to come here and defend rather than a quiet way to silence a gap.
+  if (MAINTENANCE_EXEMPT.size !== 1 || !MAINTENANCE_EXEMPT.has("REPO_FACTS.md")) {
+    fail(
+      "check-docs: MAINTENANCE_EXEMPT is for generated files only. A hand-written document that lacks " +
+      "a maintenance section has a gap worth reporting — exempting it hides the gap from its owner.",
+    );
+  }
+  if (!read(FACTS_FILE).includes("GENERATED FILE")) {
+    fail("check-docs: REPO_FACTS.md is exempt from the maintenance-section rule for being generated, and it no longer says it is");
+  }
+  // Say what was actually true, not what was hoped for: a green-sounding note printed above its own
+  // FAIL is the tone that teaches a reader to skim the notes, and skimmed output is where the stale
+  // comment this check exists for survived a day.
+  note(
+    missing.length
+      ? `${named.length} exemption entries checked — ${missing.length} name no document (see FAIL below)`
+      : `${named.length} exemption entries, each naming a document that exists`,
+  );
+}
 
 function checkMaintenanceSections() {
   for (const doc of docFiles()) {
@@ -573,8 +900,11 @@ function checkCrossLinks() {
 
 /* ── run ────────────────────────────────────────────────────────────────────────────────────── */
 
+selfTestDrift();
+selfTestExemptions();
 checkFacts();
 checkRoleParity();
+checkRouteGuardTable();
 checkPaths();
 checkCitations();
 checkMaintenanceSections();

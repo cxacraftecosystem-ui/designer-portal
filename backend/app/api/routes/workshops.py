@@ -421,11 +421,11 @@ async def request_workshop_access(
       must never knock a working grant back to PENDING while an admin deliberates.
     * ``ALREADY_PENDING`` — a request is already in the queue; not duplicated, and the original
       timestamp and note are preserved so queue order reflects when they first asked.
-    * ``RE_REQUESTED`` — a DENIED or REVOKED row may be asked for again, and that is a NEW request:
-      the previous decision is cleared so a stale "denied by X" cannot be mistaken for this one's
-      outcome. ``assignedById`` is cleared with it — the row's history as an admin grant ended when it
-      was revoked, and leaving it set would let one approval silently re-close a workshop that had
-      reopened (see ``workshop_access`` on what makes a workshop curated).
+    * ``RE_REQUESTED`` — a DENIED or REVOKED row may be asked for again, and that is a NEW request.
+      ``assignedById`` IS cleared — the row's history as an admin grant ended when it was revoked, and
+      leaving it set would let one approval silently re-close a workshop that had reopened (see
+      ``workshop_access`` on what makes a workshop curated). ``decidedById`` / ``decidedAt`` /
+      ``decisionNote`` are NOT: see the block comment on the update below.
     * ``CREATED`` — a fresh PENDING row.
 
     A PENDING row confers nothing. It cannot lock other people out of an open workshop either.
@@ -484,6 +484,33 @@ async def request_workshop_access(
             ]
         )
     if to_rerequest:
+        # ── THE PREVIOUS DECISION SURVIVES THE RE-REQUEST ────────────────────────────────────────
+        # This update used to null ``decidedById``, ``decidedAt`` and ``decisionNote``. Those three
+        # columns are the ONLY record a workshop-access decision has — there is no history table
+        # beside WorkshopAssignment — so an admin's refusal and its reason were permanently destroyed
+        # by the very person it was made about, simply by asking again. Three places in this codebase
+        # promise the opposite: schema.prisma on ``WorkshopAssignment.status`` ("DENIED and REVOKED
+        # are kept rather than deleted so the decision stays auditable"), the ``workshop_access``
+        # module docstring, and docs/PERMISSIONS.md §"Workshop access". ``statusFilter=ALL`` on the
+        # admin queue is documented as "the full history for auditing" and no longer had it.
+        #
+        # The clearing was DELIBERATE, and the worry behind it was real but is already answered by a
+        # column we write two lines up: ``status`` is PENDING. Nobody can mistake a decision for THIS
+        # request's outcome when this request has visibly not been decided — and the admin queue is
+        # built that way already (``decidable = row.status === "PENDING"`` in
+        # WorkshopAccessQueuePanel renders the decide form for a pending row and the "Decided by …"
+        # line only for a settled one). What the admin gains is the thing that actually helps them
+        # decide: "denied by Priya on the 3rd — asked again on the 9th".
+        #
+        # ``createdAt`` IS refreshed, and that is the second half of this fix rather than a nicety.
+        # ``GET /workshops/access-requests`` orders ``createdAt: asc`` and calls itself "oldest
+        # first"; an untouched ``createdAt`` on a row this route's own docstring calls "a NEW request"
+        # sorted a re-request made this morning above requests that have genuinely been waiting a
+        # week, so the queue mis-ranked exactly the rows carrying the least urgency. With the decision
+        # columns kept, ``createdAt`` now also carries the meaning a ``reRequestedAt`` column would
+        # have carried, at no schema cost: decided-then vs asked-again-now is readable off the pair.
+        # If a dedicated ``reRequestedAt`` is ever added, this line is what it replaces — do not add
+        # it and leave ``createdAt`` frozen, or the queue order regresses to the defect above.
         await db.workshopassignment.update_many(
             where={"id": {"in": to_rerequest}},
             data={
@@ -492,9 +519,7 @@ async def request_workshop_access(
                 "requestedById": uid,
                 "requestNote": payload.note,
                 "assignedById": None,
-                "decidedById": None,
-                "decidedAt": None,
-                "decisionNote": None,
+                "createdAt": datetime.now(UTC),
             },
         )
     # Re-read by (workshop, user) rather than by id: a bulk insert hands back no ids, and this is the

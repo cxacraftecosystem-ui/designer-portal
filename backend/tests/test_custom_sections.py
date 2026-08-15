@@ -262,6 +262,33 @@ def test_the_digest_moves_when_an_option_is_added_and_when_one_is_relabelled():
     assert len(versions) == 3
 
 
+def test_the_digest_moves_when_a_section_is_retitled_or_reordered():
+    """The heading is the wording the answers under it were given under, exactly as a label is.
+
+    This loop iterated FIELDS only, so retitling "Loom shed" to "Weaver shed" — or dragging it above
+    another section, which changes nothing but ``sortOrder`` — digested byte-identically. That is not
+    a cosmetic miss on the web: ``fetchCustomDefinition``/``adoptCustomDefinition``
+    (frontend/lib/customSections.ts) DISCARD a freshly fetched definition and return the previously
+    cached object when the digest is equal, deliberately, for identity reasons. So every tab that had
+    already loaded the workshop went on printing "Loom shed", in the old order, over the same answers
+    the server's .docx printed "Weaver shed" over — with nothing on either surface saying they
+    disagreed.
+
+    Three distinct digests, not two assertions of inequality, because the failure mode is a
+    COLLISION: any implementation that folds all three into one string without a separator would pass
+    a pair of != checks and still be wrong.
+    """
+    titled = _section(_field())
+    retitled = _section(_field(), title="Weaver shed")
+    reordered = _section(_field(), sort_order=3)
+    versions = {
+        custom_schema_version([titled]),
+        custom_schema_version([retitled]),
+        custom_schema_version([reordered]),
+    }
+    assert len(versions) == 3
+
+
 def test_a_workshop_with_no_definition_has_an_empty_version_rather_than_a_digest_of_nothing():
     """"I hold nothing" and "there is nothing to hold" must not look identical to a phone.
 
@@ -1391,6 +1418,61 @@ async def test_a_retired_section_answered_zero_still_reaches_the_document(monkey
     blank = WorkshopData(workshop_id="w1", title="Ikat workshop")
     await attach_report_custom_sections(blank, [_Row(STAGE, CUSTOM_ENTITY_KEY, {})], "w1")
     assert custom_sections_of(blank) == ()
+
+
+async def test_the_warning_names_only_the_sections_the_document_really_leaves_out(monkeypatch):
+    """**THE REGRESSION: the warning fired for exactly the sections the renderer DOES print.**
+
+    Everything in ``items`` is attached and spliced into the template unconditionally; whether a
+    section prints is decided solely by ``append_custom_section``, which appends nothing when
+    ``has_content`` is false. ``has_content`` is true for an answered section OR one carrying a
+    live required field — deliberately, so an unanswered required question prints "Not recorded."
+    and its absence is visible in the document. The warning asked a DIFFERENT question, ``not
+    answered_count and any(not f.retired …)``, which is true for precisely that class.
+
+    So a designer who added "Dye bath log" with one required question and did not reach it got a
+    .docx containing the heading and "Dye source — Not recorded.", beside a sentence saying the
+    block was not in the file. They then either hunt for a bug that is not there, or submit the
+    document believing the ministry's copy does not carry the empty block. The warning exists to
+    tell "the feature is broken" apart from "we did not get to those questions"; as written it
+    manufactured the first.
+
+    Both directions are asserted, because a warning that never fires is the other way to pass.
+    """
+    from app.services import custom_sections as service
+    from app.services.design_workshops import attach_report_custom_sections
+    from app.services.report_builder import WorkshopData
+    from app.services.report_custom_sections import custom_section_of
+
+    printed = CustomSectionSpec(
+        key="dye", title="Dye bath log", stage_key=STAGE, id="sec1",
+        fields=(_field(key="dyeSource", label="Dye source", type=FieldType.TEXT,
+                       required=True, tier=Tier.BASIC, id="f1"),),
+    )
+    genuinely_absent = CustomSectionSpec(
+        key="notes", title="Shed notes", stage_key=STAGE, id="sec2",
+        fields=(_field(key="shedNote", label="Anything else?", type=FieldType.TEXT, id="f2"),),
+    )
+    monkeypatch.setattr(
+        service, "load_definition_or_empty",
+        lambda _id: _resolved(CustomDefinition(sections=(printed, genuinely_absent))),
+    )
+
+    data = WorkshopData(workshop_id="w1", title="Ikat workshop")
+    warnings = await attach_report_custom_sections(
+        data, [_Row(STAGE, CUSTOM_ENTITY_KEY, {})], "w1"
+    )
+
+    # The renderer's own answer, asked directly, so the test cannot drift from the rule it pins.
+    assert custom_section_of(data, "dye").has_content is True
+    assert custom_section_of(data, "notes").has_content is False
+
+    assert len(warnings) == 1
+    assert "Shed notes" in warnings[0], "the all-optional block really is absent from the file"
+    assert "Dye bath log" not in warnings[0], (
+        "this one prints its heading and 'Not recorded.' — saying it is missing sends the "
+        "designer looking for a bug that is not there"
+    )
 
 
 async def _resolved(value):

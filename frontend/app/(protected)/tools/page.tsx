@@ -48,21 +48,43 @@ export default function ToolsPage() {
     assignmentRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
+  /**
+   * Which fetch is the current one — the counter /artisans, /questionnaires and /design-workshops
+   * already carry. The search box debounces the APPLIED TERM, not the request, and the pager and
+   * the funnel fire the same effect, so several requests are routinely in flight together and the
+   * answer to an abandoned question can land LAST and win.
+   *
+   * The reason that is worse than a stale table here: `<Pagination>` is rendered with
+   * `page={data.page}` — the ANSWERED page — while the refetch effect depends on `page`, the
+   * REQUESTED one. Let page 1's slow answer land after page 2's fast one and `data.page` is 1 while
+   * `page` is 2; Next then calls `setPage(data.page + 1)` = `setPage(2)`, React bails on the
+   * identical scalar, no dependency changes, no request goes out, and the control is dead until
+   * Previous is pressed. Audit 2026-08-15 filed that against this file, /products, /processes and
+   * /media.
+   *
+   * Counted rather than aborted because `listResource` takes no `AbortSignal`; ignoring the late
+   * answer is the part that matters. Any new `setData`/`setError` in `load()` needs the same guard
+   * in front of it — one unguarded write brings the dead pager back.
+   */
+  const currentLoad = useRef(0);
+
   async function load() {
+    const generation = (currentLoad.current += 1);
     try {
       // /tools supports all three funnel params directly.
-      setData(
-        await listResource<ToolDocumentation>("/tools", {
-          search: applied || undefined,
-          workshopId: funnel.workshopId || undefined,
-          craftId: funnel.craftId || undefined,
-          artisanId: funnel.artisanId || undefined,
-          page,
-          pageSize: 20
-        })
-      );
+      const result = await listResource<ToolDocumentation>("/tools", {
+        search: applied || undefined,
+        workshopId: funnel.workshopId || undefined,
+        craftId: funnel.craftId || undefined,
+        artisanId: funnel.artisanId || undefined,
+        page,
+        pageSize: 20
+      });
+      if (generation !== currentLoad.current) return;
+      setData(result);
       setError(null);
     } catch (err) {
+      if (generation !== currentLoad.current) return;
       setError(err instanceof Error ? err.message : "Unable to load tools");
     }
   }

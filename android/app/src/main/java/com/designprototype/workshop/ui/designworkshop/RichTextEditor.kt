@@ -74,7 +74,6 @@ import com.designprototype.workshop.report.Mark
 import com.designprototype.workshop.report.RichBlock
 import com.designprototype.workshop.report.RichDoc
 import com.designprototype.workshop.report.fromJson
-import com.designprototype.workshop.report.toJson
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import kotlinx.serialization.json.JsonElement
@@ -260,8 +259,9 @@ private fun diffEdit(old: String, new: String): TextEdit? {
  *
  * An empty document has nowhere to put a caret, so a field rendered for one would draw no text
  * field at all and the designer would find a labelled blank they cannot click into. The block this
- * adds is never stored: `isEmptyDoc` judges on trimmed text, so a document of one empty paragraph
- * serialises to `null` exactly as the web's does.
+ * adds is never stored: `isEmptyDoc` judges a PARAGRAPH on its trimmed text, so a document of one
+ * empty paragraph serialises to `null` exactly as the web's does. (A photograph is judged on its
+ * media id instead — see `isEmptyDoc` — which is why this padding block cannot swallow one.)
  */
 private fun forEditing(doc: RichDoc): RichDoc =
     if (doc.blocks.isEmpty()) emptyDoc() else doc
@@ -304,9 +304,16 @@ private fun seedAsList(raw: JsonElement?, kind: BlockKind): RichDoc {
  * re-seeding moves the caret to the start of the document. The symptom in the field is a designer
  * losing their place every time the stage's debounced save completes, which is the single most
  * common way a home-grown editor becomes unusable for long-form writing.
+ *
+ * THE BODY LIVES IN `RichTextOps` NOW, and this is a two-line forwarder on purpose. It used to be
+ * `if (isEmptyDoc(doc)) "EMPTY" else toJson(doc).toString()` — the same pair of expressions [emit]
+ * writes out again three lines further down — and while `isEmptyDoc` was missing its IMAGE arm the
+ * two copies agreed with each other about the wrong answer: a caption-less photograph signed as
+ * "EMPTY", so the edit that placed it looked like no change at all and was never published. Both
+ * decisions now come from `emittedValue`, so they cannot drift apart again, and `docSignature` is
+ * reachable from a plain JVM test (`RichTextEmitContractTest`) instead of only from an emulator.
  */
-private fun signatureOf(doc: RichDoc): String =
-    if (isEmptyDoc(doc)) "EMPTY" else toJson(doc).toString()
+private fun signatureOf(doc: RichDoc): String = docSignature(doc)
 
 @Composable
 fun RichTextEditor(
@@ -376,11 +383,17 @@ fun RichTextEditor(
     val fieldValues = remember { mutableStateMapOf<Int, TextFieldValue>() }
     val focusRequesters = remember { mutableStateMapOf<Int, FocusRequester>() }
 
+    // WHAT IS PUBLISHED AND WHETHER TO PUBLISH IT ARE ONE DECISION, taken by `emittedValue`. The
+    // guard is not an optimisation — the value prop comes back through `LaunchedEffect(value)` after
+    // every debounced save, and re-seeding on this editor's own output moves the caret — but it is a
+    // guard that can only ever WITHHOLD an edit, so any document it wrongly calls unchanged is a
+    // document the designer loses. That is exactly what happened to a photograph placed in a blank
+    // field: signature "EMPTY" == "EMPTY", `return`, and the toast said it had been placed.
     fun emit(next: RichDoc) {
         val signature = signatureOf(next)
         if (signature == lastEmitted) return
         lastEmitted = signature
-        onChange(if (isEmptyDoc(next)) null else toJson(next))
+        onChange(emittedValue(next))
     }
 
     /**

@@ -452,6 +452,108 @@ function rowProgress(entity: DwEntity, row: DwRow): { filled: number; total: num
   };
 }
 
+/* ── Which removals are DELETIONS ─────────────────────────────────────────────
+ *
+ * WHAT THESE TWO FUNCTIONS ARE FOR, AND THE ROWS THAT WERE LOST WITHOUT THEM.
+ *
+ * The stage page arms the server's sweep from `removedFrom`: a save that names an entity there
+ * sends `replaceCollections: true` plus `emptiedEntities: [...]`, and `sweep_entities` on the API
+ * side then soft-deletes every row of that collection the payload does not carry. That is the ONLY
+ * way a deletion can reach the repository — there is no per-row delete endpoint — so `removedFrom`
+ * has to be exactly right in BOTH directions: a missing entry loses a real deletion, and a spurious
+ * entry destroys rows nobody deleted.
+ *
+ * `patchCollection` used to decide by COUNT alone — "the array came back shorter, so a row was
+ * deleted". That is true of the array and false of the repository. Press "Add prototype", look at
+ * the empty panel, realise it belongs on the next stage, press the bin: net change nothing, and the
+ * count test wrote `removedFrom: ['prototype']` for a row that had never been anywhere. That
+ * phantom is sticky — `putDraftStage` UNIONS `removedFrom` on the way in, precisely so a form
+ * cannot disarm a deletion the draft is still holding — so it cannot be withdrawn by anything the
+ * designer does afterwards.
+ *
+ * It used to be merely noisy, because a browser that had never read the stage was refused the
+ * authority to sweep. It is not noisy now: `foldStageInto` (designWorkshopStore.ts) EARNS that
+ * authority on the next online open, and on the way it reads `removedFrom` as an instruction —
+ * a collection named there is deliberately NOT folded back in, and its server rows are counted as
+ * `sweptRows`. So one phantom entry makes the fold withhold the office's rows AND stamp
+ * `serverLoadedAt`, and the next save deletes every one of them under an HTTP 200. Measured
+ * against the pre-fix code with the fixture in `e2e/design-workshop-phantom-deletion-unit.spec.ts`:
+ * six server rows withheld and swept for an Add-then-Delete that changed nothing.
+ *
+ * So the table now reports WHICH row went, and the page asks whether that row could possibly exist
+ * on the server. A row minted by `blankRow()` in this render has never been anywhere and its
+ * removal is not a deletion.
+ *
+ * DO NOT "SIMPLIFY" THIS BACK TO A COUNT, and do not make the fold or the withheld-rows sentence
+ * apply their own version of the test: `removedFrom` is the single input all three read, so the
+ * test belongs at the one place a removal is RECORDED.
+ */
+
+/** The `_clientKey`s of the rows the repository could be holding, by entity key. */
+export type ServerHeldRows = Record<string, Set<string>>;
+
+/** The three fields of a draft stage that say whether its rows have ever left this browser. */
+export type StageRowProvenance = {
+  serverLoadedAt: number | null;
+  lastPushedAt: number | null;
+  collections: Record<string, DwRow[]>;
+};
+
+/**
+ * Which of a stage's rows the repository could be holding — the page's answer to "is a removal a
+ * deletion".
+ *
+ * THE TEST IS PROVENANCE, NOT PRESENCE. A row sitting in the local draft proves nothing on its own:
+ * the autosave banks a freshly added row 800 ms after it is added, so "is it in the draft" would
+ * still call the Add-then-Delete phantom a deletion whenever the designer took longer than that to
+ * change their mind — which is most of the time, and is the exact sequence in the report. What the
+ * server could be holding is decided by whether this stage has ever been READ from it
+ * (`serverLoadedAt`) or ever been PUSHED to it (`lastPushedAt`). Neither: nothing in this stage has
+ * ever crossed the wire, so no removal out of it needs a sweep. Either: every row in it might be up
+ * there — a row created here and pushed keeps its `_clientKey` and comes back with no `_entryId`
+ * this page ever sees, so nothing finer than "this stage has been pushed" can be honest about it.
+ *
+ * ERRING TOWARDS RECORDING THE DELETION IS DELIBERATE and the asymmetry is not laziness. A
+ * `removedFrom` entry this save did not need costs one redundant `replaceCollections` over rows the
+ * payload carries anyway; a missing one loses a deletion the designer watched happen, permanently
+ * and silently. Every uncertain case below therefore resolves to "yes, it is a deletion".
+ *
+ * `carried` is unioned in so the answer can GROW: the push that lands mid-session puts the rows it
+ * carried up on the server, and a set rebuilt from scratch after it would forget everything the
+ * session had already established.
+ */
+export function rowsTheServerCouldHold(
+  stage: StageRowProvenance | null | undefined,
+  carried: ServerHeldRows = {}
+): ServerHeldRows {
+  const held: ServerHeldRows = {};
+  for (const [entityKey, keys] of Object.entries(carried)) held[entityKey] = new Set(keys);
+  if (!stage) return held;
+  if (stage.serverLoadedAt === null && stage.lastPushedAt === null) return held;
+  for (const [entityKey, rows] of Object.entries(stage.collections ?? {})) {
+    const set = held[entityKey] ?? new Set<string>();
+    for (const row of rows) if (row._clientKey) set.add(row._clientKey);
+    held[entityKey] = set;
+  }
+  return held;
+}
+
+/**
+ * Is this removal a deletion the repository has to be told about?
+ *
+ * Read the argument for the whole rule above. The three "assume the worst" arms exist because a
+ * wrongly withheld deletion is the more expensive mistake: an unreported row (a caller that shrank
+ * the array without saying which row went), a row the SERVER minted the id for, and a row with no
+ * `_clientKey` at all — for none of those can this function prove the row never existed upstream,
+ * so it does not pretend to.
+ */
+export function removalIsADeletion(removed: DwRow | undefined, held: ReadonlySet<string> | undefined): boolean {
+  if (!removed) return true;
+  if (removed._entryId) return true;
+  if (!removed._clientKey) return true;
+  return held?.has(removed._clientKey) ?? false;
+}
+
 export function CollectionTable({
   entity,
   rows,
@@ -465,7 +567,16 @@ export function CollectionTable({
 }: {
   entity: DwEntity;
   rows: DwRow[];
-  onRowsChange: (rows: DwRow[]) => void;
+  /**
+   * The new list — and, when this call is a REMOVAL, the row that went.
+   *
+   * The second argument is not decoration and it is not for undo. It is the only evidence the page
+   * has for deciding whether a shorter array means "delete rows on the server": see
+   * {@link removalIsADeletion}. Every other caller here (add, edit, reorder, bulk add) leaves it
+   * undefined, and the page treats undefined on a shrinking list as "assume a deletion", so a new
+   * removal path that forgets to report its row is safe rather than silently destructive.
+   */
+  onRowsChange: (rows: DwRow[], removed?: DwRow) => void;
   workshopId: string;
   /** Per-row field errors, indexed the same way `rows` is. */
   errorsByIndex?: Record<number, FieldErrors>;
@@ -572,7 +683,14 @@ export function CollectionTable({
 
   function removeRow(index: number) {
     const removed = rows[index];
-    onRowsChange(rows.filter((_, position) => position !== index));
+    // THE REMOVED ROW IS HANDED OVER, NOT JUST THE SHORTER LIST. The page cannot tell a deleted
+    // repository row from a blank one added and binned in the same breath by comparing lengths —
+    // and it used to try, which is how "Add prototype, change your mind, press the bin" armed a
+    // sweep that deleted every prototype the office had written. See {@link removalIsADeletion}.
+    onRowsChange(
+      rows.filter((_, position) => position !== index),
+      removed
+    );
     if (openKey && removed && keyOf(removed, index) === openKey) setOpenKey(null);
   }
 

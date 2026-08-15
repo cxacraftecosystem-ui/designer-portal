@@ -64,6 +64,12 @@ STRANGER_TRANSCRIPT = (
     "**Interviewee:** Before dawn, when the yarn is still cool.\n"
 )
 OWN_TRANSCRIPT = "**Interviewer:** MY-OWN-WORDS what dye is that?\n**Interviewee:** Indigo.\n"
+# The recording a co-designer is SUPPOSED to be able to see: made by their colleague, filed under
+# the workshop the two of them run together.
+TEAM_TRANSCRIPT = (
+    "**Interviewer:** OUR-SHARED-WORKSHOP how long is the pit loom?\n"
+    "**Interviewee:** Four hands and a span.\n"
+)
 
 
 @pytest.fixture(scope="module")
@@ -111,6 +117,16 @@ async def env():
             "email": f"ent-admin-{stamp}@example.org", "name": "Ent Admin",
             "role": "ADMIN", "passwordHash": hash_password("unused"),
         })
+        # A RESEARCHER (rank 30) HOLDING THE GRANTABLE DATASET-DOWNLOAD BOOLEAN. This is the account
+        # ``records.media_url_owners`` used to widen to every URL in the repository on the premise
+        # that they "may already download the whole repository" — a premise the two download
+        # surfaces contradict for this exact person. Below PROFESSOR on purpose; at Professor or
+        # above the rank arm answers first and the test would pass against the unfixed code.
+        downloader = await db.user.create(data={
+            "email": f"ent-downloader-{stamp}@example.org", "name": "Ent Downloader",
+            "role": "RESEARCHER", "passwordHash": hash_password("unused"),
+            "canDownloadDataset": True,
+        })
         own_photo = await _media(designer.id, stamp, "IMAGE", "my-loom.jpg",
                                  extraMetadata=Json({"width": 800, "height": 600}))
         foreign_photo = await _media(stranger.id, stamp, "IMAGE", "their-artisan.jpg",
@@ -120,6 +136,28 @@ async def env():
         foreign_audio = await _media(stranger.id, stamp, "AUDIO", "their-interview.m4a",
                                      transcriptStatus="COMPLETED",
                                      transcriptText=STRANGER_TRANSCRIPT)
+        # THE TEAM'S OWN WORKSHOP, made here rather than through the API because the grant that
+        # goes with it is a row an admin writes and the whole point is that the COLLEAGUE did not
+        # create the workshop and did not upload the recording. `linkedRecordType`/`linkedRecordId`
+        # are the tag both clients file every design-workshop upload under — see
+        # `dictation_consent.MEDIA_TAG` — and they are the only link between a MediaFile and a
+        # DesignWorkshop that exists, there being no foreign key.
+        colleague = await db.user.create(data={
+            "email": f"ent-colleague-{stamp}@example.org", "name": "Ent Colleague",
+            "role": "DESIGNER", "passwordHash": hash_password("unused"),
+        })
+        team_workshop = await db.designworkshop.create(data={
+            "title": f"Pit loom fortnight {stamp}", "createdById": designer.id,
+        })
+        await db.designworkshopviewer.create(data={
+            "designWorkshopId": team_workshop.id, "userId": colleague.id,
+            "grantedById": admin.id,
+        })
+        team_audio = await _media(designer.id, stamp, "AUDIO", "team-interview.m4a",
+                                  transcriptStatus="COMPLETED",
+                                  transcriptText=TEAM_TRANSCRIPT,
+                                  linkedRecordType="designWorkshop",
+                                  linkedRecordId=team_workshop.id)
     finally:
         await db.disconnect()
 
@@ -131,11 +169,17 @@ async def env():
             "client": client,
             "designer": create_access_token(subject=designer.id),
             "admin": create_access_token(subject=admin.id),
+            "colleague": create_access_token(subject=colleague.id),
+            "stranger": create_access_token(subject=stranger.id),
+            "downloader": create_access_token(subject=downloader.id),
+            "downloader_id": downloader.id,
             "designer_id": designer.id,
             "own_photo": own_photo.id,
             "foreign_photo": foreign_photo.id,
             "own_audio": own_audio.id,
             "foreign_audio": foreign_audio.id,
+            "team_workshop": team_workshop.id,
+            "team_audio": team_audio.id,
         }
 
 
@@ -164,6 +208,24 @@ def client(env):
 @pytest.fixture
 def admin_client(env):
     return _As(env["client"], env["admin"])
+
+
+@pytest.fixture
+def colleague_client(env):
+    """The co-designer: a DESIGNER holding a viewer grant on somebody else's workshop."""
+    return _As(env["client"], env["colleague"])
+
+
+@pytest.fixture
+def downloader_client(env):
+    """A RESEARCHER holding ``canDownloadDataset`` — below Professor, and that is the whole point."""
+    return _As(env["client"], env["downloader"])
+
+
+@pytest.fixture
+def stranger_client(env):
+    """A DESIGNER with no grant on the team's workshop — the control on the clause below."""
+    return _As(env["client"], env["stranger"])
 
 
 def _workshop(client) -> str:
@@ -291,6 +353,55 @@ def test_the_designers_own_recording_is_still_listed_and_still_comes_back(env, c
     assert "MY-OWN-WORDS" in stage.text
 
 
+def test_a_granted_co_designer_is_shown_the_workshops_own_recordings(
+    env, colleague_client
+):
+    """THE REGRESSION, and the mirror image of the leak above: a refusal aimed at the wrong person.
+
+    ``owned_or_granted_where`` admitted two things — your own uploads, and uploads by somebody who
+    has given you a DataAccessGrant. A ``DesignWorkshopViewer`` row is NEITHER, so the co-designer
+    the grant exists for was told the workshop had no recordings at all: ``{"items": [], "total":
+    0}`` over interviews their own colleague uploaded to their own workshop. That is an empty list
+    reading as "nothing exists" when it means "withheld from you", on the one screen whose stated
+    job is to show a designer what they are about to append to a document going to a ministry —
+    and the report generator, reading the same rows, would then tell them "1 recording(s) could not
+    be included", so the two screens contradicted each other.
+
+    The stage is saved BY THE COLLEAGUE, which is the shape of the real failure: the grant already
+    carried stage writes, so they could name the recording on the stage and then be refused the
+    transcript of the file they had just referenced.
+    """
+    _save(colleague_client, env["team_workshop"], AUDIO_STAGE, AUDIO_ENTITY,
+          {AUDIO_FIELD: env["team_audio"]})
+
+    response = colleague_client.get(
+        f"/api/design-workshops/{env['team_workshop']}/transcripts"
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 1
+    assert "OUR-SHARED-WORKSHOP" in response.text
+
+
+def test_a_designer_with_no_grant_is_still_refused_the_same_recording(
+    env, stranger_client
+):
+    """The control, and the reason the new clause is scoped to the TAG rather than to the caller.
+
+    The same recording, the same tag, a designer who is on no workshop it names. If this passes
+    while the test above passes, the widening is "the recordings of a workshop I may open" and not
+    "any recording anybody filed under any workshop" — which is the version of this fix that would
+    have handed every design workshop's audio to every designer in the repository.
+    """
+    workshop_id = _workshop(stranger_client)
+    _save(stranger_client, workshop_id, AUDIO_STAGE, AUDIO_ENTITY,
+          {AUDIO_FIELD: env["team_audio"]})
+
+    response = stranger_client.get(f"/api/design-workshops/{workshop_id}/transcripts")
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 0
+    assert "OUR-SHARED-WORKSHOP" not in response.text
+
+
 def test_the_report_path_refuses_a_strangers_recording_and_says_so(env, client):
     """The REPORT's own transcript load, not just the picker endpoint — and it must not be silent.
 
@@ -357,3 +468,100 @@ def test_the_field_is_still_ACCEPTED_so_installed_clients_keep_uploading(env, cl
         "url": "http://localhost:9010/design-workshop/" + key,
     })
     assert response.status_code == 201, response.text
+
+
+# --------------------------------------------------------------------------------------
+# 4. The media surface itself: the transcript column, and the dataset-download boolean
+# --------------------------------------------------------------------------------------
+#
+# Everything above tests the DESIGN-WORKSHOP surface. Both defects below are on ``GET /media`` and
+# ``GET /media/{id}``, which are the widest reads in the application, and each of them undid a
+# control the tests above prove holds.
+#
+# (a) ``transcriptText`` was in none of the three redaction lists, and ``records.py``'s own banner
+#     said so on purpose: "the ROW still travels for everybody: the filename, the type, the caption,
+#     THE TRANSCRIPT". So the co-designer refused a colleague's recording by
+#     ``load_transcript_items`` got it back by lifting the media id out of the stage he can already
+#     edit and calling ``GET /api/media/{id}`` — and a CROWDSOURCE_VOLUNTEER at the authentication
+#     floor could page the whole repository's interviews as text. Two live rules, and the
+#     permissive one won on every path a client had.
+#
+# (b) ``media_url_owners`` and ``public_encode``'s default both returned ALL_MEDIA_URLS for a holder
+#     of the grantable ``canDownloadDataset`` boolean. ``/data/media/{id}/download`` and
+#     ``/export/dataset`` refuse that same account the same files, saying why in a comment:
+#     "the permission means 'download the data you can SEE'". The URLs handed out carry no expiry
+#     and no auth, so they survive revocation of the permission, of the grant, and of the account.
+
+
+def _media_row(client, media_id: str) -> dict:
+    response = client.get(f"/api/media/{media_id}")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_strangers_transcript_is_withheld_by_the_media_detail_route(env, client):
+    """THE SECOND DOOR. The design-workshop gate is only worth having if this one is shut too."""
+    row = _media_row(client, env["foreign_audio"])
+    assert row["id"] == env["foreign_audio"], "the ROW still travels; only the bytes are withheld"
+    assert "transcriptText" not in row, row.get("transcriptText")
+    assert "transcriptSummary" not in row
+    assert "url" not in row
+
+
+def test_a_strangers_transcript_is_withheld_by_the_media_list_route(env, client):
+    """The list is the reachable version: one request, a hundred interviews a page."""
+    response = client.get("/api/media?mediaType=AUDIO&pageSize=100")
+    assert response.status_code == 200, response.text
+    assert "THE-STRANGERS-PRIVATE-WORDS" not in response.text
+    ids = {item["id"] for item in response.json()["items"]}
+    assert env["foreign_audio"] in ids, "the row must still be listed — this is a read-open repository"
+
+
+def test_the_uploaders_own_transcript_still_travels(env, client):
+    """The half a blanket refusal would break: a designer must still read their own recording."""
+    row = _media_row(client, env["own_audio"])
+    assert row["transcriptText"] == OWN_TRANSCRIPT
+
+
+def test_an_admin_still_reads_every_transcript(env, admin_client):
+    """Rank-aware, like every other arm of this predicate — ADMIN outranks PROFESSOR."""
+    row = _media_row(admin_client, env["foreign_audio"])
+    assert row["transcriptText"] == STRANGER_TRANSCRIPT
+
+
+def test_the_dataset_download_boolean_does_not_hand_over_every_url(env, downloader_client):
+    """THE WIDENING. One account-level boolean bypassed the per-uploader grant system for the URL of
+    every file in the repository, on the two widest read endpoints, while the two download endpoints
+    written for that exact concern refused the same account."""
+    row = _media_row(downloader_client, env["foreign_photo"])
+    assert "url" not in row, row.get("url")
+    assert "publicUrl" not in row
+    assert "objectKey" not in row, "objectKey IS the URL, one string concatenation later"
+
+
+def test_the_dataset_download_boolean_does_not_hand_over_every_transcript(env, downloader_client):
+    """Both keys move together, because both are the recording rather than a description of it."""
+    row = _media_row(downloader_client, env["foreign_audio"])
+    assert "transcriptText" not in row, row.get("transcriptText")
+
+
+def test_the_dataset_download_holder_keeps_their_own_uploads(env, downloader_client, client):
+    """The control. The fix must narrow the boolean's reach to the same set ``/export/dataset``
+    already puts in its manifest — own uploads plus granted owners — not to nothing at all."""
+    # Under their OWN prefix: ``/media/complete`` refuses a key outside ``media/<caller id>/``.
+    key = f"media/{env['downloader_id']}/{uuid.uuid4().hex}/theirs.jpg"
+    created = downloader_client.post("/api/media/complete", json={
+        "originalFilename": "theirs.jpg",
+        "mediaType": "IMAGE",
+        "mimeType": "image/jpeg",
+        "sizeBytes": 1,
+        "objectKey": key,
+    })
+    assert created.status_code == 201, created.text
+    own_id = created.json()["id"]
+
+    row = _media_row(downloader_client, own_id)
+    assert "objectKey" in row, "their own upload must still carry its handle"
+    # And the same row is still withheld from a DESIGNER who has been granted nothing by them,
+    # which is what proves the narrowing is per-uploader rather than per-role.
+    assert "objectKey" not in _media_row(client, own_id)

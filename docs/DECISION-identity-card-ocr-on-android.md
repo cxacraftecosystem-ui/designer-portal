@@ -691,7 +691,9 @@ running it, not read off the source):
 
 There is no `number` key. Both clients read one:
 
-- `DwIdentityOcrDto` (`android/…/data/DwReferenceStore.kt`) declared `number`, `documentType`,
+- `DwIdentityOcrDto`
+  (`android/app/src/main/java/com/designprototype/workshop/data/DwReferenceStore.kt`) declared
+  `number`, `documentType`,
   `name`, `confidence`, `message`. Its `Json` is configured `ignoreUnknownKeys = true`, so a perfect
   read decoded to `number = ""` and the panel said *"No number could be read from that photograph."*
 - `DwIdentityOcrResult` (`frontend/lib/designWorkshops.ts`) declared the same five, and
@@ -851,3 +853,30 @@ without replacing its whole update path. `GET /api/app/download` is one redirect
 `WorkshopRepository.publishAppUpdate` publishes by reading `applicationInfo.sourceDir` — the base
 split alone under a bundle install — and the update prompt the handset shows has no "Later" button.
 The condition should now read: revisit if the *delivery chain* is ever replaced.
+
+---
+
+## How this document is kept true
+
+**This is a decision record, and most of it is deliberately frozen.** The argument written on
+2026-08-08, the reversal on top of it, and the argument the reversal defeated are a history of what
+was weighed. **They are not to be updated to agree with the code** — the document says so in its own
+header, and a decision record that quietly rewrites its losing case is worse than no record. So the
+maintenance question is not "is this still what we do", it is narrower: *are the measured numbers
+still the numbers, and has a revisit condition fired?*
+
+| Claim class | Kept true by |
+|---|---|
+| The argument (everything before *What actually shipped*) | **Nothing, on purpose.** It is dated prose about a trade made on a date. Do not edit it; add a block if it is overturned again, exactly as the reversal at the top did. |
+| The APK sizes — 6,636,115 → 26,195,264 bytes, 3.95× | A real `./gradlew :app:assembleRelease` from `android/` and `ls -l` on the output, which is how they were produced. **These are the numbers most likely to be stale**, because every dependency change moves them and nothing warns you. Anything quoting a size should be re-measured before it is repeated, not copied from here. |
+| The ABI-filter and `useLegacyPackaging` levers | `docs/R8-MEASUREMENT.md` owns those measurements; this file quotes them. Change them there. |
+| What shipped (*What actually shipped*, *The VID defect*, *R8 would have deleted the recogniser's boot path*) | These describe live code and CAN rot. `android/app/src/main/java/com/designprototype/workshop/data/IdentityCardRecognizer.kt`, `android/app/src/main/java/com/designprototype/workshop/data/IdentityCardText.kt`, `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwIdentityOcr.kt`, the ML Kit keep rules in `android/app/proguard-rules.pro`, and `backend/app/services/identity_ocr.py` for the server's half. |
+| The on-hardware results (*IT HAS NOW BEEN RUN ON THE HANDSET — 2026-08-09*) | **A dated device reading, not maintained.** One SM-M325F, one afternoon. Re-run on the device rather than trusting it; the section *What is STILL not verified on hardware* is the list of what a re-run should attack first. |
+| The revisit condition | Already corrected once in this document (Play delivery is moot; the condition now reads *revisit if the delivery chain is ever replaced*). It fires on `GET /api/app/download` in `backend/app/api/routes/app_release.py` or `WorkshopRepository.publishAppUpdate` changing shape. |
+
+**Review triggers:** a change to the ML Kit dependency or its keep rules; a change to
+`backend/app/services/identity_ocr.py` (the VID defect is registered against the server, not the
+phone); a replacement of the APK delivery chain.
+
+**Known unverified, and stated in the body already:** ML Kit's phone-home behaviour, and every
+accuracy claim outside the cards actually photographed on 2026-08-09.

@@ -87,12 +87,49 @@ async def env():
             "transcriptStatus": "COMPLETED",
             "transcriptText": TRANSCRIPT,
         })
+        # A clip STRANDED by a job that died before the provider answered. ``transcriptStatus`` was
+        # written QUEUED by the enqueue (``media_queue`` :220) and never written again, because the
+        # only writer past that point is ``_apply_transcription_result`` and the job never reached
+        # it: ``get_object_bytes`` raised on an object key that no longer resolves, and
+        # ``_handle_job_failure`` updates the JOB row and nothing else. At exhausted attempts the
+        # job is FAILED and the column still says a transcript is on its way.
+        #
+        # BUILT HERE RATHER THAN BY DRAINING THE QUEUE, and that is not laziness: reproducing it
+        # through the worker needs three failed attempts spread across the retry ladder's 1-then-2
+        # minute ``runAfter`` backoff, and a TRANSCRIPTION job is only drained inside the off-peak
+        # window or on an idle server. The pairing itself is not contrived — it is exactly what
+        # ``_handle_job_failure`` leaves behind on every pre-answer exhaustion.
+        stranded = await db.mediafile.create(data={
+            "originalFilename": "warp-setting-interview.m4a",
+            "mediaType": "AUDIO",
+            "mimeType": "audio/mp4",
+            "sizeBytes": 512_000,
+            "bucket": "test-bucket",
+            "objectKey": f"media/{user.id}/{stamp}-stranded.m4a",
+            "uploadedById": user.id,
+            "transcriptStatus": "QUEUED",
+        })
+        await db.mediaprocessingjob.create(data={
+            "jobType": "TRANSCRIPTION",
+            "status": "FAILED",
+            "mediaFileId": stranded.id,
+            "requestedById": user.id,
+            "attempts": 3,
+            "maxAttempts": 3,
+            "error": "EndpointConnectionError: could not connect to object storage",
+        })
     finally:
         await db.disconnect()
 
     with TestClient(app) as client:
         client.headers.update({"Authorization": f"Bearer {create_access_token(subject=user.id)}"})
-        yield {"client": client, "fresh": fresh.id, "done": done.id, "user": user.id}
+        yield {
+            "client": client,
+            "fresh": fresh.id,
+            "done": done.id,
+            "stranded": stranded.id,
+            "user": user.id,
+        }
 
 
 @pytest.fixture
@@ -188,6 +225,58 @@ async def test_an_existing_transcript_is_never_re_transcribed(env, granted):
     overwrite their correction with the provider's guess."""
     client = env["client"]
     assert _save_audio(client, granted, env["done"]).json()["transcriptionsQueued"] == 0
+
+
+async def test_a_clip_whose_job_died_before_the_provider_answered_is_re_queued(env, granted):
+    """THE STRAND, AND THE ONLY RECOVERY A DESIGNER CAN REACH.
+
+    ``MediaFile.transcriptStatus`` is written QUEUED at enqueue time and is written again only by
+    ``_apply_transcription_result``, which runs only once a provider has ANSWERED. Every exception
+    before that — an object key that no longer resolves, object storage unreachable overnight, the
+    provider call itself — goes to ``_handle_job_failure``, which touches the JOB and not the clip.
+    So an exhausted job leaves FAILED beside a column that still reads QUEUED.
+
+    ``QUEUED`` used to sit in ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES``, so that clip was
+    skipped by every later save for ever; ``/media/complete`` would not rescue it either
+    (``_finish_pending_media`` re-enqueues only when ``processingJobs`` is EMPTY, and a FAILED job is
+    still a job); and ``report_annexures.annexure_warnings`` classified it as "still being
+    transcribed", so the one message the designer got told them to keep waiting. The only way out was
+    an admin finding the job in the queue panel and pressing Retry.
+
+    The fix reads QUEUED/PROCESSING as a CLAIM about the queue rather than as a fact, and checks the
+    queue — which this function was already reading anyway. Saving the stage is now the recovery.
+    """
+    client = env["client"]
+    before = client.get(f"/api/media/{env['stranded']}").json()
+    assert before["transcriptStatus"] == "QUEUED", "the premise: the column says one is on its way"
+    assert not any(j["status"] in ("QUEUED", "PROCESSING") for j in _jobs(before)), (
+        "the premise: and the queue table says there is not"
+    )
+
+    response = _save_audio(client, granted, env["stranded"])
+    assert response.status_code == 200, response.text
+    assert response.json()["transcriptionsQueued"] == 1, (
+        "a recording whose job died before the provider answered was stranded for ever"
+    )
+    after = client.get(f"/api/media/{env['stranded']}").json()
+    assert any(j["status"] == "QUEUED" for j in _jobs(after))
+
+
+async def test_a_queued_clip_that_really_does_have_a_live_job_is_still_left_alone(env, granted):
+    """THE OTHER HALF, AND IT IS WHY THE FIX IS A QUEUE READ AND NOT A SHORTER STATUS LIST.
+
+    Deleting QUEUED from the settled set would pass the test above and re-queue every clip the worker
+    has not got to yet — a second job racing the first to write one transcript column, and a second
+    provider bill for the same audio. Here the upload itself queued the clip, so the column's QUEUED
+    is backed by a real job and the save must queue nothing.
+    """
+    client = env["client"]
+    media = _upload_audio(
+        client, env["user"], tag=DW_TAG, tag_id=granted, requests=["TRANSCRIPTION"]
+    )
+    assert media["transcriptStatus"] == "QUEUED"
+    assert any(j["status"] == "QUEUED" for j in _jobs(media)), "the premise: a live job"
+    assert _save_audio(client, granted, media["id"]).json()["transcriptionsQueued"] == 0
 
 
 # --------------------------------------------------------------------------------------

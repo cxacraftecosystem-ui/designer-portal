@@ -30,7 +30,6 @@ export default function ArtisansPage() {
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
   const [funnel, setFunnel] = useState<FunnelValue>(EMPTY_FUNNEL);
-  const [funnelWorkshop, setFunnelWorkshop] = useState<FunnelWorkshop | null>(null);
   const [funnelReady, setFunnelReady] = useState(false);
   const [selectedArtisan, setSelectedArtisan] = useState<Artisan | null>(null);
   const [collabId, setCollabId] = useState<string | null>(null);
@@ -48,9 +47,30 @@ export default function ArtisansPage() {
   async function load() {
     const generation = (currentLoad.current += 1);
     try {
-      // /artisans supports craftId but not workshopId — the workshop filter narrows rows client-side below.
+      // Every funnel dropdown is sent to the SERVER, exactly as /products, /tools and /processes
+      // send theirs. This used to send only `search` and `craftId` under a comment claiming
+      // "/artisans supports craftId but not workshopId", and that claim was simply false:
+      // `list_artisans` has declared `workshopId` for as long as the others have, and its clause is
+      // BROADER than anything this page could do in the browser — it ORs the `Artisan.workshopId`
+      // column with the `WorkshopArtisan` join, while the client intersection that used to live
+      // below could only see the join rows the workshop row happened to carry.
+      //
+      // What the browser-side narrowing actually did, on a funnel that ALWAYS opens with a workshop
+      // selected (FunnelFilters defaults to the most recently held one): the server returned the 20
+      // newest-created artisans of the whole table — 431 measured on this database — and those 20
+      // were then intersected against one workshop's people. If that workshop's artisans were
+      // entered earlier, the intersection was empty and the page drew "No artisans found" while the
+      // `Pagination` beneath it, reading the UNFILTERED envelope, insisted on "Page 1 of 22 · 431
+      // records". And when a workshop carried no join rows at all the intersection was skipped
+      // entirely, so the same control answered with EVERY artisan in the repository. One filter,
+      // two opposite wrong answers, depending on which link path had been used.
+      //
+      // Do not put the client-side filter back. The narrowing has to be in the WHERE clause or
+      // `total`/`pages` describe a different set from the rows, which is what put a pager promising
+      // hundreds of records under an empty table.
       const result = await listResource<Artisan>("/artisans", {
         search: applied || undefined,
+        workshopId: funnel.workshopId || undefined,
         craftId: funnel.craftId || undefined,
         page,
         pageSize: 20
@@ -84,9 +104,11 @@ export default function ArtisansPage() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  function onFunnelChange(next: FunnelValue, workshop: FunnelWorkshop | null) {
+  // The selected workshop ROW is deliberately unused — it exists on this callback for pages that
+  // genuinely need the workshop's own fields, and reading its `artisans` to narrow the table here is
+  // the defect described at the request above.
+  function onFunnelChange(next: FunnelValue, _workshop: FunnelWorkshop | null) {
     setFunnel(next);
-    setFunnelWorkshop(workshop);
     setPage(1);
     setFunnelReady(true);
   }
@@ -119,12 +141,9 @@ export default function ArtisansPage() {
     return `${path}?${params.toString()}`;
   }
 
-  // The workshop filter is applied client-side (no workshopId param on /artisans): keep only the
-  // artisans linked to the selected workshop when that link data is available.
-  const workshopArtisanIds = funnelWorkshop?.artisans?.length
-    ? new Set(funnelWorkshop.artisans.map((link) => link.artisan.id))
-    : null;
-  const rows = data ? (workshopArtisanIds ? data.items.filter((artisan) => workshopArtisanIds.has(artisan.id)) : data.items) : [];
+  // The rows ARE the answer. Every filter on this screen is in the request above, so nothing is
+  // narrowed here and `data.total` / `data.pages` describe the same set the table draws.
+  const rows = data ? data.items : [];
 
   return (
     <>

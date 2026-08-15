@@ -51,6 +51,7 @@ from app.schemas.questionnaire import (
     QuestionnaireUpdate,
 )
 from app.services.design_workshop_viewers import has_viewer_grant
+from app.services.design_workshops import load_workshop_or_404
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.questionnaire_forms import (
     APP_ENTRY_SOURCE,
@@ -93,6 +94,17 @@ _XLSX_SUFFIXES = (".xlsx", ".xlsm", ".xltx")
 #   * owning this questionnaire (or admin) -> may change its questions.
 # The split is what lets a designer hand a colleague a form to fill in without also handing them
 # the ability to reword it halfway through the fieldwork.
+#
+# NEITHER OF THOSE TWO SAYS ANYTHING ABOUT THE WORKSHOP a questionnaire is attached to, and that is
+# the gap that let any designer post their form into a stranger's report annexure. That gap has TWO
+# doors and both are now gated by a third question, asked of design_workshops.py's own helper:
+#   * ATTACHING a form to a workshop        -> ``_require_attachable_workshop``
+#   * WRITING sittings and answers to a form ALREADY attached to one
+#                                           -> ``_require_recordable_questionnaire``
+# Closing only the first left the second wide open — the id of an attached form is enough to inject
+# an interview into somebody else's ministry submission — so if a third door ever appears (a route
+# that writes anything a workshop's report prints), it asks the same question through the same
+# helper rather than growing a fourth rule here.
 
 
 def _require_designer(user: Any) -> None:
@@ -181,6 +193,102 @@ def _require_owner(record: Any, user: Any) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the designer who created this questionnaire, or an admin, can change it.",
         )
+
+
+async def _require_attachable_workshop(workshop_id: str, user: Any) -> None:
+    """The workshop a questionnaire is about to be pointed at — or a 404, as if it did not exist.
+
+    ATTACHING IS A WRITE TO SOMEBODY ELSE'S RECORD, WHICH IS WHY THIS IS NOT ``require_record``.
+    All three routes that set ``Questionnaire.designWorkshopId`` (upload, create, patch) used to ask
+    only whether a workshop ROW EXISTS: ``require_record(db.designworkshop, id)`` is a bare
+    ``find_unique`` — no creator test, no ``DesignWorkshopViewer`` test, no admin test, not even a
+    ``deletedAt`` filter. ``_require_designer`` above admits EVERY designer account, and
+    ``_require_owner`` on the PATCH is ownership of the QUESTIONNAIRE, not of the workshop being
+    named. So one ordinary call — ``POST /api/questionnaires`` with
+    ``{"designWorkshopId": "<a workshop the caller is 404'd from>"}`` — returned 201, and the door
+    swung both ways:
+
+    * ``report_items`` (services/questionnaire_forms.py:292) selects on
+      ``{"designWorkshopId": ..., "isActive": True}`` with NO permission filter, on the stated
+      ground that "the attachment is what puts the questionnaire inside the workshop's own access
+      boundary" — an assumption only this function makes true. ``QUESTIONNAIRE_ANNEXURE`` is in
+      ALL SIX report templates (report_templates.py:354, 367, 400, 431, 448, 479 — that is every
+      entry of ``TEMPLATES``, counted 2026-08-15), so a stranger's sittings — respondent names,
+      interviewer notes, every recorded answer — printed as an annexure of another designer's
+      fieldwork in the .docx submitted to a ministry under that designer's name.
+      ``questionnaire_warnings`` fires only for an attached form with NO answers, so an ANSWERED
+      one went in silently, warning neither party.
+    * ``_works_on_this_questionnaires_workshop`` above then admits everybody on the target workshop
+      to the attached form, so the attacker's own respondents' names and answers were pushed into a
+      stranger's access boundary as well, readable through ``GET /questionnaires/{id}`` and
+      downloadable through ``/xlsx``. A mistyped or stale workshop id produced all of this by
+      accident.
+
+    ``load_workshop_or_404(..., for_edit=True)`` is deliberately the SAME helper ``save_stage_data``
+    and ``save_custom_sections`` use, and not a private near-copy of it. Attaching a questionnaire
+    changes what that workshop's report SAYS, so it has to be exactly as hard as editing one of its
+    stages — creator, admin, or grant-holder — and it must refuse a soft-deleted workshop (409)
+    instead of quietly filling the annexure of a record nobody can open. If a fourth attachment
+    route is ever added, it calls this; do not reach for ``require_record`` again because it is one
+    line shorter.
+
+    404 rather than 403, inherited from the helper and for the helper's reason: a 403 would confirm
+    that the id exists to precisely the caller being turned away.
+
+    DETACHING NEEDS NO CHECK, and none of the three callers makes one. Sending
+    ``designWorkshopId: null`` only ever removes a pointer; demanding rights over the workshop in
+    order to let go of it would strand a questionnaire on a workshop whose grant was withdrawn, with
+    its owner unable to take their own form back.
+    """
+    await load_workshop_or_404(workshop_id, user, for_edit=True)
+
+
+async def _require_recordable_questionnaire(record: Any, user: Any) -> None:
+    """The other half of ``_require_attachable_workshop``: WRITING to a form already attached.
+
+    THE ATTACH FIX CLOSED ONE OF TWO DOORS AND THIS IS THE SECOND ONE. Stopping a designer POINTING
+    a questionnaire at a stranger's workshop does nothing about a designer who already holds the id
+    of a form that is attached to one: ``POST /questionnaires/{id}/entries`` and
+    ``PUT /questionnaires/{id}/entries/{eid}/answers`` were gated by ``_require_questionnaire``
+    alone — role plus "the row exists" — so any DESIGNER account could add a sitting, with a
+    respondent's NAME on it, and a full set of answers, to another team's instrument. Those
+    sittings print: ``report_items`` selects on ``designWorkshopId`` with no permission filter and
+    ``QUESTIONNAIRE_ANNEXURE`` is in all six templates, so the fabricated interview goes into the
+    .docx another designer submits to a ministry under their own name. Exactly the consequence the
+    attach hole had, reached from the other side.
+
+    IT IS THE SAME CHECK, DELIBERATELY, and ``load_workshop_or_404(..., for_edit=True)`` is called
+    through the same helper the attach path uses rather than a second predicate written here.
+    Adding a sitting changes what that workshop's report SAYS, which is the argument
+    ``_require_attachable_workshop`` makes for attaching and ``save_stage_data`` makes for a stage
+    write; three ways of saying the same thing would be three things to keep in step. So: the
+    workshop's creator, an admin, or the holder of a ``DesignWorkshopViewer`` grant — and a
+    REVOKED grant now takes effect on writes exactly as it already does on reads
+    (``_works_on_this_questionnaires_workshop``), which was the point of the finding.
+
+    AN UNATTACHED QUESTIONNAIRE IS UNTOUCHED AND THAT IS NOT AN OVERSIGHT. ``create_entry``'s rule
+    — "a form only its author may answer is a form nobody uses" — is the product working as
+    designed: a designer hands a colleague a form, the colleague fills it in, and
+    ``read_questionnaire`` already shows that colleague their OWN sittings and nobody else's
+    (``only_entries_of``). Narrowing writes to the owner here would make that ``only_entries_of``
+    branch unreachable for the very people it exists for. The workshop is what introduces a second
+    party with a stake in the answers, so the workshop is what the gate asks about.
+
+    NO OWNER BYPASS, for ``_require_attachable_workshop``'s reason: owning the FORM has never said
+    anything about the workshop it points at. An owner who has lost their grant is not stranded —
+    detaching needs no check at all (see that helper's last paragraph), so they can take their own
+    questionnaire back and keep recording. Adding ``record.ownerId == user.id`` here would reopen
+    the hole for precisely the account the revocation was about.
+
+    404/409 rather than 403, inherited from the helper: a 403 would confirm the workshop id exists
+    to the caller being turned away, and a soft-deleted workshop gets the one sentence that names
+    the way out ("Restore it before editing") instead of silently collecting sittings for a record
+    nobody can open.
+    """
+    workshop_id = getattr(record, "designWorkshopId", None)
+    if not workshop_id:
+        return
+    await load_workshop_or_404(workshop_id, user, for_edit=True)
 
 
 async def _read_upload(file: UploadFile) -> bytes:
@@ -311,7 +419,10 @@ async def upload_questionnaire(
         ) from exc
 
     if designWorkshopId:
-        await require_record(db.designworkshop, designWorkshopId)
+        # Rights over the WORKSHOP, not merely its existence — see _require_attachable_workshop.
+        # The multipart door is the same door: a form field named designWorkshopId attaches the
+        # questionnaire just as completely as the JSON one on POST/PATCH below does.
+        await _require_attachable_workshop(designWorkshopId, current_user)
     questionnaire_id, report = await create_from_parsed(
         parsed,
         owner_id=current_user.id,
@@ -525,7 +636,10 @@ async def create_questionnaire(
     """Start a questionnaire by hand. The .xlsx upload is the other door into the same tables."""
     _require_designer(current_user)
     if payload.designWorkshopId:
-        await require_record(db.designworkshop, payload.designWorkshopId)
+        # Checked BEFORE the row is created, so a refused attachment leaves nothing behind. Creating
+        # the questionnaire first and attaching second would hand back a 404 with an orphan
+        # questionnaire already written, which reads to the designer as "it failed" and is not.
+        await _require_attachable_workshop(payload.designWorkshopId, current_user)
     record = await db.questionnaire.create(
         data={
             "title": payload.title.strip(),
@@ -580,7 +694,10 @@ async def update_questionnaire(
     if "designWorkshopId" in payload.model_fields_set:
         data["designWorkshopId"] = payload.designWorkshopId
         if payload.designWorkshopId:
-            await require_record(db.designworkshop, payload.designWorkshopId)
+            # `_require_owner` above answered a DIFFERENT question — who owns this QUESTIONNAIRE —
+            # and owning the form has never said anything about the workshop it is being pointed at.
+            # The `if` is the detach case passing through unchecked, on purpose; see the helper.
+            await _require_attachable_workshop(payload.designWorkshopId, current_user)
     if "title" in data:
         data["title"] = data["title"].strip()
     if data:
@@ -826,10 +943,17 @@ async def create_entry(
 ) -> dict[str, Any]:
     """Start a sitting: one filled-in copy of this questionnaire.
 
-    Not owner-gated. Recording answers is the whole point of attaching a questionnaire to a
-    workshop, and a form only its author may answer is a form nobody uses.
+    Not owner-gated, and that stays. Recording answers is the whole point of attaching a
+    questionnaire to a workshop, and a form only its author may answer is a form nobody uses.
+
+    WHAT IT IS GATED ON IS THE WORKSHOP, once the form is attached to one — see
+    ``_require_recordable_questionnaire``. "Not owner-gated" had been read as "not gated", so any
+    designer holding the id could push a sitting, respondent's name and all, into another team's
+    report annexure. The two sentences are not in tension: the owner still does not have to be the
+    one answering, the workshop's team does.
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
+    await _require_recordable_questionnaire(record, current_user)
     if not record.isActive:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -889,6 +1013,11 @@ async def record_answers(
     answers; ``@@unique([entryId, questionId])`` makes that true at the database as well.
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
+    # The workshop gate, before a single answer row is touched. ``rewriting=False`` below decides
+    # who may write to a SITTING; this decides who may write to this QUESTIONNAIRE at all, and the
+    # two are different questions — the permissive answer to the first was being read as an answer
+    # to the second, which is how a stranger's answers reached another workshop's annexure.
+    await _require_recordable_questionnaire(record, current_user)
     # ``rewriting=False``: recording answers against somebody else's sitting is DELIBERATE — two
     # people filling in different sections of one interview is the ordinary case, and a sitting
     # only its starter may answer is a sitting nobody finishes. The authorship rule that belongs

@@ -168,7 +168,12 @@ from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import contains, enum_filter_or_422, owned_or_granted_where, plain
 from app.services.report_docx import DOCX_MIME
 from app.services.report_pdf import PDF_MIME
-from app.services.report_templates import SpecialSection, template as get_template, template_choices
+from app.services.report_templates import (
+    SpecialSection,
+    inert_section_toggles,
+    template as get_template,
+    template_choices,
+)
 from app.services.s3 import get_object_bytes
 from app.services.stage_schema import (
     REF_SCOPE_ALL,
@@ -876,7 +881,38 @@ async def create_design_workshop(
     # into their fifth workshop of the year. Written as ordinary stage entries — the report reads
     # them with no special case at all — and copied rather than referenced, because a report is a
     # historical document. See ``seed_designer_prefill``.
-    record = await seed_designer_prefill(record, current_user)
+    #
+    # AND THIS FORM'S OWN ANSWERS GO WITH THEM, WHICH IS NOT A CONVENIENCE. Every key below is
+    # declared in `PROMOTED_COLUMNS` under `workshopSetup.*`, so the loop above wrote COLUMNS
+    # whose single writer is supposed to be the stage entry — and with no entry behind them, the
+    # first stage-1 save nulled all six (and the four beside them) under a 200 saying "Stage
+    # saved". `seed_designer_prefill` writes them as one `workshopSetup` singleton alongside the
+    # profile keys, which is why they are handed to it rather than created here: two creates for
+    # one singleton entity would be two rows where every matcher in `save_stage` expects one.
+    #
+    # DATES ARE PASSED AS THE RAW REQUEST STRINGS, not the `_parse_date` datetimes above: the
+    # registry's DATE type coerces and stores an ISO string, and `_coerce_promoted` is what turns
+    # it back into a column value on the stage-save path. A malformed date is dropped by
+    # `validate_entry` exactly as `_parse_date` drops it here, so the two halves agree.
+    #
+    # `title`/`workshopTitle` IS DELIBERATELY NOT SEEDED. It is the one promoted column
+    # `DesignWorkshop` declares NOT NULL and the one `_coerce_promoted` refuses to blank, so it
+    # was never at risk; seeding it would instead freeze the create-form title into stage 1 where
+    # a later PATCH of the workshop title could not reach it. Same for `notes` and `workshopId`,
+    # neither of which is a promoted column at all.
+    seeded = {
+        key: value
+        for key, value in (
+            ("craftName", payload.craftName),
+            ("clusterName", payload.clusterName),
+            ("state", payload.state),
+            ("district", payload.district),
+            ("startDate", payload.startDate),
+            ("endDate", payload.endDate),
+        )
+        if value
+    }
+    record = await seed_designer_prefill(record, current_user, extra=seeded)
     return workshop_summary(record)
 
 
@@ -1010,6 +1046,43 @@ async def get_stage(
     return payload
 
 
+def _submit_refusal_message(errors: Mapping[str, Any]) -> str:
+    """The sentence a ``submit=true`` refusal leads with, chosen from what actually failed.
+
+    ``errors`` mixes two kinds of refusal that the strict pass used to report with one hard-coded
+    sentence, "Some required fields are missing". ``validate_entry`` puts a missing Basic-tier
+    answer there — "Venue is required", or the conditional form "End date is required once Start
+    date is filled in." — and ``coerce_value`` puts an UNREADABLE one there too: "Cost per unit is
+    not a valid number", "Craft: 'IKKAT' is not a valid option", "Notes is longer than 400
+    characters". A submit whose only fault was a fat-fingered decimal was therefore reported as a
+    missing required field, and the designer went looking at the empty boxes rather than the
+    wrong one.
+
+    MATCHED ON "is required" RATHER THAN ON A FLAG, because there is no flag: `errors` is
+    `{scope: {field: message}}` and the message is the only thing that distinguishes the two.
+    That is a string test and it is admittedly fragile, so the two writers of the required form
+    are named above and both live in `stage_schema`/`custom_sections`; if either is reworded,
+    reword it here. It degrades safely in the direction that matters — an unrecognised message
+    reads as "could not be read", which sends the designer to the marked boxes, and `errors`
+    itself is what marks them.
+
+    A MIXED SAVE GETS BOTH HALVES rather than the first one found. Both are true and the remedies
+    differ, and picking one would put the designer back where the hard-coded sentence did.
+    """
+    messages = [
+        str(message)
+        for fields in errors.values()
+        for message in (fields.values() if isinstance(fields, Mapping) else [fields])
+    ]
+    required = any(" is required" in m for m in messages)
+    unreadable = any(" is required" not in m for m in messages)
+    if required and unreadable:
+        return "Some required fields are missing, and some answers could not be read"
+    if unreadable:
+        return "Some answers could not be read"
+    return "Some required fields are missing"
+
+
 @router.put("/{workshop_id}/stages/{stage_key}")
 async def save_stage_data(
     workshop_id: str, stage_key: str, payload: StageSaveIn,
@@ -1017,9 +1090,12 @@ async def save_stage_data(
 ) -> dict[str, Any]:
     """Save a whole stage in one write.
 
-    Returns the cleaned data as stored, any per-field validation errors, and the field keys
-    that were DROPPED because the registry does not know them — the last of which is how a
-    server notices that a phone is running ahead of it, rather than by rejecting the sync.
+    Returns HOW MUCH was written (``saved``/``created``/``updated``/``removed``), any per-field
+    validation errors, and the field keys that were DROPPED because the registry does not know
+    them — the last of which is how a server notices that a phone is running ahead of it, rather
+    than by rejecting the sync. It does NOT return the cleaned values themselves; this docstring
+    said it did for as long as ``save_stage`` built an echo block it never returned. See that
+    function's docstring for what was deleted and what a client should read instead.
 
     ``submit=true`` enforces the Basic-tier required fields and 422s if any is missing; the
     default leaves the stage a draft, because a stage half-filled overnight is the normal state
@@ -1033,9 +1109,29 @@ async def save_stage_data(
 
     result = await save_stage(workshop_id, spec, payload, current_user)
     if result["errors"] and payload.submit:
+        # THE WHOLE RESULT TRAVELS UNDER THE 422, AND NOT ONLY THE ERRORS.
+        #
+        # This refusal is raised AFTER `save_stage` has committed. Its transaction has already
+        # applied every update, every create, the `update_many` that soft-deletes the swept rows
+        # and the DRAFT→IN_PROGRESS header write — so a request answered 422 has mutated the
+        # record in every way a successful save would have. Returning `{message, errors}` alone
+        # threw away `removed`, `created`, `updated`, `droppedKeys`, `droppedCustomKeys`,
+        # `completeness`, `refusedAnswers` and `customSchemaVersion`, which left every client
+        # with the reasonable and WRONG reading that nothing was written: the deleted duplicate
+        # cost line had gone, the workshop had left DRAFT, and the designer was told only "Some
+        # required fields are missing". Spreading `result` costs nothing — it is the same dict
+        # the 200 path returns, all primitives, so it serialises identically — and lets a client
+        # say "the stage was written and 1 row removed, but it cannot be submitted yet".
+        #
+        # `message` is spread LAST so it wins if a future key of that name is ever added to the
+        # result, rather than the result silently overwriting the sentence a client renders.
+        #
+        # MOVING THE GATE IN FRONT OF THE TRANSACTION IS NOT THE FIX. It would cost the
+        # deliberate behaviour that a stage with one bad number still saves its other twenty
+        # fields, which is the rule `save_stage`'s validation loop is built around.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"message": "Some required fields are missing", "errors": result["errors"]},
+            detail={**result, "message": _submit_refusal_message(result["errors"])},
         )
     return result
 
@@ -2767,6 +2863,10 @@ async def generate_report(
     find a note about what was missing on the day.
     """
     record = await load_workshop_or_404(workshop_id, current_user)
+    # `[0]` IS THE WHOLE LIST, and that is now enforced rather than assumed: `ReportGenerateIn`
+    # refuses a body naming two formats with a 422 naming the two requests to make. It used to
+    # accept one — its docstring advertised "give me both" as the common case — and this line
+    # quietly threw the second away, always the PDF, because the validator returns the set sorted.
     fmt = payload.formats[0]
     # The template the file is actually built from is resolved ONCE, inside `_report_inputs`, and
     # used for the loads, the render AND the export row — a recorded export that names a different
@@ -2902,6 +3002,14 @@ async def report_history(
       built on those payloads would report the cost sheet unchanged on exactly the revision that
       changed it.
 
+    A third fact was added later, after the client had been caught deriving it: **which generation
+    each file is.** ``generation`` is the file's one-based place in the workshop's whole export
+    record, oldest first, and it is computed here because it cannot be computed there — the export
+    list is capped at the newest hundred, so a browser numbering the files it was sent restarts at 1
+    on whichever file happened to survive the cut and every "Generation N" on the screen is off by
+    the number of files dropped. See the count beside the query below for why it is anchored on the
+    oldest row returned rather than taken as a count of the whole table.
+
     **THIS ENDPOINT SERVES FACTS, NOT A DIFF**, and that is a deliberate split rather than an
     omission. The comparison itself — which stages moved between two files, which are provably
     untouched — is arithmetic over data the caller now holds, so it belongs on the device
@@ -2948,6 +3056,36 @@ async def report_history(
         take=_HISTORY_ENTRY_LIMIT + 1,
     )
     entries_truncated = len(entries) > _HISTORY_ENTRY_LIMIT
+    window = exports[:_HISTORY_EXPORT_LIMIT]
+    # THE GENERATION NUMBER IS THE FILE'S POSITION IN THE WHOLE RECORD, AND IT HAS TO BE COMPUTED
+    # HERE BECAUSE THE CLIENT CANNOT. `reportDiff.inGenerationOrder` used to derive it by sorting the
+    # window oldest-first and indexing into it, which is right up to the moment the hundred-file cap
+    # bites and then wrong by exactly the number of files cut: the query above is `generatedAt desc`
+    # with `take = limit + 1`, so what is dropped is always the OLDEST end. A workshop that
+    # regenerates on every edit passes a hundred exports, and from then on the card that says
+    # "Generation 3" and the diff header that says "generation 3 → generation 7" are naming
+    # positions inside a sliding window — numbers that are not the record's own, that change as more
+    # files are generated, and that a designer quotes into a covering email to a ministry.
+    #
+    # Counted from the OLD end (`lt` the oldest row we are actually returning) rather than as a
+    # count of the whole table, because this endpoint holds no transaction and the one mutation this
+    # table gets is an append: a report generated on another device between the find_many and the
+    # count would inflate a whole-table total and shift every number on the screen by one, whereas
+    # rows strictly older than our oldest row cannot appear after the fact. Skipped entirely when
+    # the window is empty — a workshop with no exports needs no query to know nobody generated one.
+    #
+    # `generatedAt` is written by the server on every path (`_parse_datetime(...) or now`), including
+    # the device-import route above, so the anchor is never None. Ties on the exact same timestamp
+    # are numbered in whatever order the sort returned them, which is the same arbitrary order the
+    # list itself is in — the numbering agrees with the screen, which is what it is for.
+    generations_below = 0
+    if window:
+        generations_below = await db.dwreportexport.count(
+            where={
+                "designWorkshopId": workshop_id,
+                "generatedAt": {"lt": window[-1].generatedAt},
+            }
+        )
 
     return {
         "workshopId": workshop_id,
@@ -2986,7 +3124,12 @@ async def report_history(
                 definition=await load_custom_definition_or_empty(workshop_id),
             )
         ),
-        "exports": [_export_payload(row) for row in exports[:_HISTORY_EXPORT_LIMIT]],
+        "exports": [
+            # `window` is newest-first, so the newest row is the highest number: the last of the
+            # `generations_below` files nobody can see, plus its own place in what we are sending.
+            _export_payload(row, generation=generations_below + len(window) - index)
+            for index, row in enumerate(window)
+        ],
         "exportsTruncated": len(exports) > _HISTORY_EXPORT_LIMIT,
         "entries": [
             {
@@ -3013,7 +3156,7 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _export_payload(row: Any) -> dict[str, Any]:
+def _export_payload(row: Any, *, generation: int) -> dict[str, Any]:
     """One recorded export, as the history screen reads it.
 
     A superset of what ``list_exports`` returns, and additive to it rather than a replacement: the
@@ -3021,10 +3164,20 @@ def _export_payload(row: Any) -> dict[str, Any]:
     ``generatedBy`` is ``SetNull``, so an export made by an account that has since been deleted
     names NOBODY — not the workshop's owner, who is the tempting default and would put a name
     against a file they never produced.
+
+    ``generation`` IS A REQUIRED ARGUMENT AND NOT A DEFAULT, deliberately. It is the file's place in
+    the workshop's whole export record, one-based and oldest-first, and it can only be known by the
+    caller that also knows how many older files the hundred-file cap left out — see the count in
+    ``report_history``. A default here would let a future second caller emit a payload whose
+    numbering silently restarted at 1, which is the exact defect the field was added to close: the
+    browser used to number the files by their position inside the truncated window, so once a
+    workshop passed a hundred exports every "Generation N" on the screen was off by the number of
+    files cut, and off by a different amount each time somebody generated another one.
     """
     author = getattr(row, "generatedBy", None)
     return {
         "id": row.id,
+        "generation": generation,
         "format": row.format,
         "templateId": row.templateId,
         "fileName": row.fileName,
@@ -3185,7 +3338,11 @@ async def _report_inputs(
     # and MAP is not one of the toggles it removes, so the base template is the right thing to ask.
     # (It does add exactly one section — ANNEXURE_AI_LAYERS, and only when the request asks — which
     # is why this sentence names MAP rather than claiming the function only ever removes.)
-    specials = {section.special for section in get_template(template_id).sections}
+    # Bound to a name rather than re-resolved, because the inert-toggle warning at the bottom of
+    # this function asks the SAME base template the same kind of question, and two `get_template`
+    # calls are two chances for a later edit to hand one of them a different id.
+    base_template = get_template(template_id)
+    specials = {section.special for section in base_template.sections}
     draws_map = SpecialSection.MAP in specials
     if draws_map:
         loads.append(attach_district_anchors(data))
@@ -3270,6 +3427,22 @@ async def _report_inputs(
             f"{len(resolver.withheld)} attached file(s) could not be included: they were "
             "uploaded by another account, or the file is gone."
         )
+    # AND THE THREE STAGE-20 SWITCHES THIS TEMPLATE CANNOT HONOUR. `apply_report_settings` can only
+    # REMOVE the table of contents, the photographic annexure and the completeness annexure — that is
+    # written down as the rule on both surfaces (ReportSettings.kt says it three times: "An explicit
+    # false removes the section; absent leaves the template alone") and the Android port implements
+    # the same one. What was missing was any way for a designer to learn it: only DETAILED_TECHNICAL
+    # declares ANNEXURE_MEDIA and COMPLETENESS, so switching "Include the completeness annexure" on
+    # while sitting on the default DCH_STANDARD produced a file without one and not a word anywhere
+    # about why. This is read off the SAME base template `specials` above is read off, and for the
+    # same reason — the shaped template cannot gain a section these toggles could have added.
+    #
+    # Here rather than inside `apply_report_settings` because that function returns a template and
+    # nothing else, and it is pinned by value against the Kotlin port; a warning is a sentence for a
+    # designer, and this is the function that already assembles every other one.
+    warnings.extend(
+        inert_section_toggles(base_template, data.singleton("REPORT_GENERATION"))
+    )
     return data, resolver, warnings, template_id
 
 

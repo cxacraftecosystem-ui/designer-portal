@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Send, Sparkles, X } from "lucide-react";
 
+import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { flagCutNotice } from "@/components/data/cappedList";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { DateField } from "@/components/forms/DateTimeField";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
@@ -63,12 +65,23 @@ export function AssignmentBuilder({
   loading,
   workshopId,
   workshopTitle,
+  pickerSearch,
   onAssigned
 }: {
   options: TaskOptions | null;
   loading: boolean;
   workshopId: string;
   workshopTitle: string | null;
+  /**
+   * The term the page last SENT to `GET /tasks/options`, for the truncation notices only.
+   *
+   * This component holds no search state and issues no request of its own — the workshop scope and
+   * the search term are both the page's, because one call fills every picker here. It is passed in
+   * so `flagCutNotice` can tell the two readings of a cut apart: a cut with no term means "search to
+   * reach the rest", and a cut WITH one means "narrow what you typed". Telling somebody to search
+   * when they already have is how a picker teaches a user that searching does not work.
+   */
+  pickerSearch: string;
   onAssigned: (result: TaskBatchResult) => void;
 }) {
   const [roleFilter, setRoleFilter] = useState<string>("");
@@ -221,6 +234,19 @@ export function AssignmentBuilder({
               emptyLabel={loading ? "Loading people..." : "Nobody ranked below you"}
               confirmLabel="Confirm people"
             />
+            {/*
+              THE SERIOUS HALF OF THE THREE CAPS. Audit 2026-08-15 (MAJOR). `task_options` serves at
+              most 500 accounts against 3632 measured on this repository (docs/OPEN_FINDINGS.md,
+              2026-08-13), so this picker is cut TODAY — and an assignee who cannot be found here is
+              indistinguishable from a colleague who has no account, which is the exact failure the
+              design-workshop viewer picker cost this repository once already.
+
+              Note what the two controls above do NOT rescue. "Filter by tier" counts what ARRIVED,
+              so its "Everyone below me (312)" is a count of the slice; and the box inside the
+              MultiSelectDropdown filters the array it was handed. Neither can see past the cut. Only
+              the page's search box can, because only that one goes into the WHERE.
+            */}
+            <CappedListNotice cuts={[flagCutNotice(options?.assigneesTruncated, "people", pickerSearch)]} />
           </FieldBlock>
         </div>
         {selectedAssignees.length ? (
@@ -328,6 +354,15 @@ export function AssignmentBuilder({
               emptyLabel={workshopId ? "No artisans linked to this workshop" : "No artisans yet"}
               confirmLabel="Confirm artisans"
             />
+            {/*
+              Milder than the assignee cut and still worth saying. Leaving this empty means "every
+              artisan in scope", so an artisan missing from the list is still COVERED by the task and
+              `_count_records` is not distorted — the loss is that a specific late-sorting artisan
+              cannot be named in a subset. 731 artisans measured against a 500 cap, so the unscoped
+              list is cut today; picking a workshop above usually takes it under the cap on its own,
+              which is why this sentence must not appear when it does not apply.
+            */}
+            <CappedListNotice cuts={[flagCutNotice(options?.artisansTruncated, "artisans", pickerSearch)]} />
           </FieldBlock>
           <Field label="Target count">
             <TextInput

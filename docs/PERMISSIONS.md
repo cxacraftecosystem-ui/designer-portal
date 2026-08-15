@@ -586,20 +586,46 @@ The client's half of gating is declared **once**, in `ROUTE_GUARDS` in `frontend
 and enforced by `AppShell` for the entire `(protected)` tree. A hidden nav entry is not a guard —
 every one of these routes is reachable by typing the URL.
 
+**All fourteen rules, in the order they are declared.** Every one of them, deliberately — see the
+note under the table about why a partial list here is worse than no list at all.
+
 | Route | Client gate | Backend dependency it mirrors |
 |---|---|---|
 | `/users` | `canManageUsers` | `require_professor` |
 | `/admin` | `isAdmin` | `require_admin` |
+| `/admin/analytics` | `isAdmin` — a **designer is refused**, because this aggregates clusters and workshops beyond their own | `require_admin` |
+| `/admin/designers` | `canManageDesignerRoster` | `require_designer_roster_manager` |
 | `/settings/api-keys` | `isAdmin` (key **values** are master-admin inside the page) | `require_admin` / `require_master_admin` |
 | `/settings/tasks` | `canAssignTasks` | `require_admin` |
 | `/review` | `canReview` | `require_reviewer` |
 | `/data` | `canDownloadDataset` | `require_dataset_downloader` |
+| `/design-workshops` | `canRunDesignWorkshops` — a **set**, not a rank threshold: Designer, Admin, Master Admin, so a **professor is refused** | `can_run_design_workshops` |
+| `/questionnaires` (**plural** — see below) | `canRunDesignWorkshops` — the same set, so a **professor is refused** | `can_run_design_workshops` (`_require_designer`) |
+| `/designers/profile` | `canRunDesignWorkshops` | `require_designer` |
 | `/artisans/new`, `/products/new`, `/tools/new` | `canCreateRecords` | `require_record_creator` |
 
-Anything unlisted is open to any signed-in user, which is the correct default for read surfaces.
+`/questionnaires` is the plural, and the plural is the whole point: `/questionnaire` (singular) is the
+one global artisan questionnaire, it is open to every signed-in user, and `routeMatches` compares
+whole segments so this rule cannot reach it. A future rule written with the singular would lock every
+researcher out of taking an interview.
+
+Anything unlisted is open to any signed-in user, which is the correct default for read surfaces —
+**but that sentence is only true if this table is complete**, and for a long time it was not. Five
+rules were missing, three of them the design-workshop family, and those three are exactly the ones a
+reader cannot re-derive: they are a SET (Designer, Admin, Master Admin), not a threshold, so no
+amount of reasoning down the rank ladder in §2 produces them. A maintainer adding a page beside the
+design-workshop tree read this table, found nothing, believed the closing sentence and shipped
+without a guard entry — which is the bug `frontend/lib/permissions.ts` records having already shipped
+for `/design-workshops` itself. The table is therefore checked mechanically now, not by eye: see the
+route-guard row of "How this document is kept true" below.
+
 Matching is by path segment and the **longest** rule wins, so `/artisans/new` can be stricter than
-`/artisans`. Admin-view is deliberately not consulted — it is a display preference, not a permission,
-and must never lock an admin out of a URL the API would serve.
+`/artisans`, and `/admin/analytics` and `/admin/designers` answer for themselves rather than riding
+on `/admin`. (Those two are nested under a rule that already refuses everyone below admin, so they
+change no decision today; they are listed because the day one of the server's predicates moves, the
+row that names it is what stops the two halves silently disagreeing.) Admin-view is deliberately not
+consulted — it is a display preference, not a permission, and must never lock an admin out of a URL
+the API would serve.
 
 `ROUTE_REDIRECTS` handles the different case where a page *has* an ordinary-user twin: a researcher
 opening `/workshop-access/manage` is sent to `/workshop-access/request`, because a padlock would be
@@ -642,7 +668,7 @@ mechanical standing behind it.
 | Design-workshop viewer grants (§4.4) | `backend/app/services/design_workshop_viewers.py` and `backend/app/api/routes/design_workshop_viewers.py`; the "three ways in" are the three clauses of `load_workshop_or_404` in `backend/app/services/design_workshops.py`, and the model's own reasoning is on `DesignWorkshopViewer` in `backend/prisma/schema.prisma`. `backend/tests/test_design_workshop_viewers.py` asserts the two refusals — delete and re-granting — rather than the routes that happen to enforce them today |
 | The questionnaire visibility that follows (§4.4.4) | `_works_on_this_questionnaires_workshop` and `_visible_questionnaire_where` in `backend/app/api/routes/questionnaire_forms.py`. The three boundaries are each pinned by a test; the `/options` asymmetry is not, and is the row of §4.4.4 most likely to change |
 | The offline speech-model download row | `_require_entitlement` in `backend/app/api/routes/asr_models.py`, and `backend/tests/test_asr_model_download.py`, which parametrises all seven roles and asserts PROFESSOR is **refused** on the manifest, the bytes and the HEAD. A separate test in that file reads the route's own import lines and asserts the dictation cap and consent gate are absent, which is the half of the rule a role matrix cannot express |
-| The route-guard table (§5) | `ROUTE_GUARDS` is a single literal array; diff it against the table. |
+| The route-guard table (§5) | `docs/tools/check-docs.mjs` **fails** when the `path` values in `ROUTE_GUARDS` (`frontend/lib/permissions.ts`) and the routes in §5's table disagree, in either direction. This used to read "diff it against the table" — a human instruction, and the table sat at 7 of 14 rules until an audit counted them. The gate NAMES in the middle column are still a human read; only the completeness of the route list is mechanical. |
 
 **Review triggers** — this document needs a human read whenever any of these change:
 `backend/app/core/deps.py`, `backend/app/services/access.py`,

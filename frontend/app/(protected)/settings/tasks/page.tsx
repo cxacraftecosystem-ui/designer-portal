@@ -6,6 +6,9 @@ import { ClipboardCheck, Lock, RefreshCw } from "lucide-react";
 
 import { PageHeader } from "@/components/PageHeader";
 import { useAuth } from "@/components/AuthProvider";
+import { CappedListNotice } from "@/components/data/CappedListNotice";
+import { flagCutNotice } from "@/components/data/cappedList";
+import { TextInput } from "@/components/FormControls";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
 import { AccountabilityBoard } from "@/components/tasks/AccountabilityBoard";
@@ -64,12 +67,44 @@ export default function TaskAssignmentBoardPage() {
   const [batchesError, setBatchesError] = useState<string | null>(null);
   const [batchPage, setBatchPage] = useState(1);
 
-  // The artisan picker narrows to the chosen workshop, so the options call is re-run on every change.
+  /**
+   * What the admin has typed into "Find a person, workshop or artisan", and the settled copy of it
+   * that actually goes on the wire.
+   *
+   * ── WHY THIS BOX EXISTS AT ALL ──────────────────────────────────────────────────────────────────
+   * Audit 2026-08-15 (MAJOR). `GET /tasks/options` reads the first 500 users, 200 workshops and 500
+   * artisans and returns whatever fell inside. On this repository's own measured population — 3632
+   * accounts and 731 artisans (docs/OPEN_FINDINGS.md, 2026-08-13) — two of those cuts are live
+   * today, so an admin looking for a colleague whose name sorts late in the alphabet was shown an
+   * empty picker and no explanation. `AssignmentBuilder` filters in the BROWSER over whatever
+   * arrived, which cannot reach past a cut by construction: there was no second request it could
+   * make. The route now takes `search` and folds it into the same WHERE as the `take`, which is the
+   * only placement that works — searching after the take searches the first 500 names of the
+   * alphabet and stops at exactly the ceiling the parameter exists to get past.
+   *
+   * ── WHY TWO PIECES OF STATE ─────────────────────────────────────────────────────────────────────
+   * One request per keystroke against three tables, one of which is the user table, is not a search
+   * box — it is a load generator. 350 ms is the interval `/artisans` already debounces its live
+   * search at, and using a second number here would make two screens in the same app feel
+   * differently responsive for no reason. `appliedSearch` is what `loadOptions` depends on, so an
+   * abandoned prefix never becomes a request.
+   */
+  const [pickerSearch, setPickerSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setAppliedSearch(pickerSearch.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [pickerSearch]);
+
+  // The artisan picker narrows to the chosen workshop, so the options call is re-run on every change
+  // — and on every settled search term, which narrows all three capped lists at the server.
   const loadOptions = useCallback(async () => {
     if (!permitted) return;
     setOptionsLoading(true);
     try {
-      const data = await apiFetch<TaskOptions>(`/tasks/options${buildQuery({ workshopId })}`);
+      const data = await apiFetch<TaskOptions>(
+        `/tasks/options${buildQuery({ workshopId, search: appliedSearch || undefined })}`
+      );
       setOptions(data);
       setOptionsError(null);
     } catch (err) {
@@ -77,7 +112,7 @@ export default function TaskAssignmentBoardPage() {
     } finally {
       setOptionsLoading(false);
     }
-  }, [permitted, workshopId]);
+  }, [permitted, workshopId, appliedSearch]);
 
   const loadReport = useCallback(async () => {
     if (!permitted) return;
@@ -124,20 +159,49 @@ export default function TaskAssignmentBoardPage() {
     setBatchPage(1);
   }, [workshopId]);
 
-  const workshopOptions = useMemo(
-    () => [
+  /**
+   * The workshop currently in scope, remembered ACROSS a search that no longer returns it.
+   *
+   * The search box narrows the workshop list too, and the scope is chosen from that list — so
+   * without this, typing an artisan's name after picking a workshop dropped the workshop out of
+   * `options.workshops`, the `Dropdown` found no option matching `workshopId` and fell back to its
+   * placeholder ("All workshops") while the page, the rollup and the batch list all stayed narrowed
+   * to a workshop the screen no longer named. A control showing "All workshops" over a filtered
+   * board is worse than the cut this search box was added to fix.
+   *
+   * This is `mergeById`'s rule (components/data/cappedList) in the one place a shared helper cannot
+   * be used, because the pinned row must survive a list it is genuinely absent from: additive, and
+   * a narrower list must never be allowed to look like a shorter world. Cleared when the scope is
+   * cleared, so it can never accumulate.
+   */
+  const [pinnedWorkshop, setPinnedWorkshop] = useState<TaskOptions["workshops"][number] | null>(null);
+  useEffect(() => {
+    if (!workshopId) {
+      setPinnedWorkshop(null);
+      return;
+    }
+    const found = options?.workshops.find((workshop) => workshop.id === workshopId);
+    if (found) setPinnedWorkshop(found);
+  }, [options, workshopId]);
+
+  const workshopOptions = useMemo(() => {
+    const listed = options?.workshops ?? [];
+    const rows =
+      pinnedWorkshop && !listed.some((workshop) => workshop.id === pinnedWorkshop.id)
+        ? [pinnedWorkshop, ...listed]
+        : listed;
+    return [
       { value: "", label: "All workshops" },
-      ...(options?.workshops ?? []).map((workshop) => ({
+      ...rows.map((workshop) => ({
         value: workshop.id,
         label: workshop.place ? `${workshop.title} · ${workshop.place}` : workshop.title
       }))
-    ],
-    [options]
-  );
+    ];
+  }, [options, pinnedWorkshop]);
 
   const workshopTitle = useMemo(
-    () => options?.workshops.find((workshop) => workshop.id === workshopId)?.title ?? null,
-    [options, workshopId]
+    () => options?.workshops.find((workshop) => workshop.id === workshopId)?.title ?? pinnedWorkshop?.title ?? null,
+    [options, workshopId, pinnedWorkshop]
   );
 
   function refreshAll() {
@@ -228,9 +292,41 @@ export default function TaskAssignmentBoardPage() {
                 placeholder={optionsLoading ? "Loading workshops..." : "All workshops"}
               />
             </FieldBlock>
+            {/*
+              The workshop list is capped at 200 and this repository holds 196 measured on
+              2026-08-15 — four rows from the cut, on the list of every workshop ever run, which
+              only grows. Said HERE and not once at the top of the page, because a notice has to sit
+              at the control it is about: the reader who cannot find their workshop is looking at
+              this dropdown, not at a paragraph above the fold.
+            */}
+            <CappedListNotice cuts={[flagCutNotice(options?.workshopsTruncated, "workshops", appliedSearch)]} />
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 pl-9 md:pl-0">
+        <div className="grid gap-3 pl-9 md:pl-0">
+          <FieldBlock
+            label="Find a person, workshop or artisan"
+            hint="Searched at the server, so it reaches names that are not on the lists below."
+          >
+            {/*
+              ONE BOX FOR ALL THREE PICKERS, because it is one request. `GET /tasks/options` takes a
+              single `search` and applies it to the users (name OR email), the workshops (title OR
+              place) and the artisans (name OR place) in the same call — so a box per picker would be
+              three controls posting the same parameter and overwriting each other's terms.
+
+              It does NOT jump focus and it does not submit: this narrows the lists in place, exactly
+              like the workshop dropdown beside it, and stealing focus into the builder mid-search is
+              what `advanceOnSelect={false}` exists to prevent on that control.
+            */}
+            <TextInput
+              type="search"
+              value={pickerSearch}
+              placeholder="Name, email or place"
+              aria-label="Search the assignment pickers"
+              onChange={(event) => setPickerSearch(event.target.value)}
+            />
+          </FieldBlock>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 pl-9 md:col-span-2 md:pl-0">
           <p className="max-w-md text-xs leading-5 text-ink-500">
             {workshopTitle
               ? `Artisans, the rollup and the assignment list below are all limited to ${workshopTitle}.`
@@ -275,6 +371,10 @@ export default function TaskAssignmentBoardPage() {
           loading={optionsLoading}
           workshopId={workshopId}
           workshopTitle={workshopTitle}
+          // The settled term, not `pickerSearch`: the builder only uses it to word its truncation
+          // notices, and those describe the lists it is HOLDING — which came back for the term that
+          // was actually sent. Quoting a half-typed prefix would name a search nobody ran.
+          pickerSearch={appliedSearch}
           onAssigned={onAssigned}
         />
       ) : null}

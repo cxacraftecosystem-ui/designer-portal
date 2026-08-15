@@ -24,6 +24,14 @@
  *     skips rows whose text did not change — so re-saving a section a designer merely walked back
  *     through writes nothing and does not re-stamp authorship on answers somebody else recorded.
  *
+ * NOTHING LEAVES THIS SCREEN WITHOUT ASKING, and the reason is that three exits used to. "Each
+ * section is saved as you move through it" was true of the two section buttons and of nothing else:
+ * the round back arrow, the header's "Edit the questionnaire" link and — worst, because it does not
+ * even navigate — the Sitting dropdown all discarded the section in progress without a word. So
+ * every one of them now goes through `requestExit`, which is the only way to reach `leaveNow`, and
+ * the tab-close path is covered by a `beforeunload` because no interceptor can see that one. If you
+ * add a fourth exit, add it to `Exit` rather than wiring a handler of its own.
+ *
  * RETIRED QUESTIONS ARE SHOWN AND NOT OFFERED. `save_answers` refuses them with a 422: a question
  * that was superseded or retired keeps the answers it already has and must never collect new ones,
  * or the wording a designer deliberately replaced quietly carries on gathering evidence. But the
@@ -43,6 +51,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
+import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
+import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { formatDateTime } from "@/lib/format";
 import {
   answerableQuestions,
@@ -93,6 +103,68 @@ function AnswerPageBody() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   /** Question ids whose box has been touched since the last successful save of their section. */
   const dirty = useRef<Set<string>>(new Set());
+  /**
+   * The size of that set, MIRRORED INTO STATE, and the mirror is not redundant.
+   *
+   * The ref is what `saveSection` reads, because it must see the very latest keystroke even when it
+   * was called from a handler that closed over an older render. But a ref changing re-renders
+   * nothing, so nothing derived from it can decide anything: `useLeaveGuard` takes a BOOLEAN and the
+   * `beforeunload` listener is installed by an effect, and both of those need a value that changes
+   * to notice that the first answer of a section has just been typed. Keeping the count in state is
+   * what makes "is there unsaved work" answerable by something other than the save button.
+   *
+   * EVERY WRITE TO `dirty.current` MUST BE PAIRED WITH `syncDirty()`, and the pairing is now
+   * enforced by a test rather than by this sentence, because the sentence alone did not hold.
+   *
+   * The first version of this mirror carried exactly this comment and still shipped broken: the two
+   * writes that happen while a designer is actually WORKING — the answer box's `onChange` and the
+   * note box's `onChange` — called `dirty.current.add(question.id)` and nothing else. The four
+   * `syncDirty()` calls in the file all sat beside writes that EMPTY the set (the two seeding
+   * branches, the post-save delete loop, Discard), so `dirtyCount` was 0 for the entire time a
+   * section was being typed. `useLeaveGuard` was registered with `false` and the `beforeunload`
+   * effect returned early, which meant the round back arrow and the tab close discarded a sitting's
+   * answers exactly as they had before the guard was added — two of the four exits this whole
+   * arrangement exists to close, unguarded behind a guard that looked present.
+   *
+   * `markAnswerDirty` is the answer to that: the per-question write and its mirror are ONE call, so
+   * a handler cannot do half of it. Do not inline it back into the handlers "because it is two
+   * lines" — the two lines coming apart is the defect. The bulk writes below still pair by hand
+   * because they genuinely live at different times (the ref inside a `for` loop over a server
+   * response, the state once at the end of it), which is why there is no single setter for those.
+   */
+  const [dirtyCount, setDirtyCount] = useState(0);
+  const syncDirty = useCallback(() => setDirtyCount(dirty.current.size), []);
+  /** Mark one question's box as touched — the ref for `saveSection`, the count for the guards. */
+  const markAnswerDirty = useCallback(
+    (questionId: string) => {
+      dirty.current.add(questionId);
+      syncDirty();
+    },
+    [syncDirty]
+  );
+
+  /**
+   * WHAT THE DESIGNER ASKED TO DO WHILE THERE WAS UNSAVED WORK — the thing the prompt is about.
+   *
+   * Every exit from this screen used to be its own decision about typed answers, and all but two of
+   * them decided the answers were expendable. The round back arrow navigated (nothing had registered
+   * an interceptor). The header's "Edit the questionnaire" link navigated. The SITTING dropdown was
+   * the worst of the three, because it did not even leave: it re-seeded the boxes from another
+   * sitting's stored answers and emptied `dirty.current` in the same commit, so the eleven answers
+   * typed in front of a respondent were gone AND the record of their having been typed was gone, and
+   * a later press of "Save this section" sent nothing and said nothing (`saveSection` returns early
+   * on an empty list, above the toast).
+   *
+   * So an exit is now a VALUE rather than a handler: the request is recorded here, the prompt goes
+   * up, and the exit is performed by `leaveNow` only after Save or Discard has answered the question
+   * the prompt asks. Null means no prompt is on screen.
+   */
+  type Exit =
+    | { kind: "back" }
+    /** Switch to another sitting — a move WITHIN this screen, which is why it needs its own kind. */
+    | { kind: "sitting"; entryId: string }
+    | { kind: "edit" };
+  const [pendingExit, setPendingExit] = useState<Exit | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -150,6 +222,7 @@ function AnswerPageBody() {
       setDraft({});
       setNotes({});
       dirty.current = new Set();
+      syncDirty();
       return;
     }
     if (seededFor.current === entry.id) return;
@@ -162,8 +235,13 @@ function AnswerPageBody() {
     }
     setDraft(seededText);
     setNotes(seededNotes);
+    // Emptying the set here is correct ONLY because nothing reaches this effect with unsaved work
+    // any more: the sitting switch is gated by `requestExit` and every other route to a different
+    // `entry.id` (the `?entry=` link, a freshly started sitting) begins with an empty set. It used
+    // to be the line that destroyed the evidence — see `pendingExit`.
     dirty.current = new Set();
-  }, [entry]);
+    syncDirty();
+  }, [entry, syncDirty]);
 
   const sections = form?.sections ?? [];
   const section: QFormSection | null = sections[sectionIndex] ?? null;
@@ -216,13 +294,41 @@ function AnswerPageBody() {
           answerText: draft[question.id] ?? "",
           notes: notes[question.id]?.trim() ? notes[question.id] : null
         }));
-      if (!answers.length) return true;
+      if (!answers.length) {
+        /*
+          A NO-OP THAT SAYS SO, because the wordless version was indistinguishable from a broken one.
+          Audit 2026-08-15 (MINOR, frontend).
+
+          This early return sat above `setSaving`, above the request and above the success toast, so
+          pressing "Save this section" with nothing dirty produced NOTHING: no toast, no error, no
+          spinner, no state change. That control is the one a designer presses when she is unsure —
+          and "there was nothing to send" and "what you typed has already been discarded" looked
+          identical, which removed the last chance to notice a loss while the respondent was still in
+          the room.
+
+          The SILENT callers are left silent on purpose. `goToSection` and "Finish this sitting" pass
+          `{ silent: true }` and pass through here on every section a designer merely read; a toast
+          on each of those is a toast nobody reads by the fourth section. The defect was only ever
+          that the explicit button shared their wordless return.
+        */
+        if (!options?.silent) {
+          toast({
+            tone: "info",
+            title: `Nothing new to save in "${target.title}"`,
+            description: "Every answer in this section is already recorded."
+          });
+        }
+        return true;
+      }
 
       setSaving(true);
       setError(null);
       try {
         await saveAnswers(id, entryId, answers);
         for (const answer of answers) dirty.current.delete(answer.questionId);
+        // Only what was SENT is cleared, and only after the server took it — a question typed into
+        // while the request was in flight is still unsaved, and the prompt must still know about it.
+        syncDirty();
         // Re-read so the progress counter and the detail page's "N of M answered" agree with what
         // is stored rather than with what this tab believes it sent.
         await load();
@@ -245,8 +351,69 @@ function AnswerPageBody() {
         setSaving(false);
       }
     },
-    [draft, notes, entryId, id, load, toast]
+    [draft, notes, entryId, id, load, toast, syncDirty]
   );
+
+  /**
+   * Perform an exit. Called only when there is nothing unsaved, or from the prompt's Save/Discard.
+   *
+   * The sitting arm does exactly what the dropdown's `onChange` used to do inline; moving it here is
+   * the whole fix, because it is now reachable ONLY through `requestExit`.
+   */
+  const leaveNow = useCallback(
+    (exit: Exit) => {
+      if (exit.kind === "back") {
+        router.back();
+        return;
+      }
+      if (exit.kind === "edit") {
+        router.push(`/questionnaires/${id}`);
+        return;
+      }
+      setEntryId(exit.entryId);
+      setSectionIndex(0);
+      router.replace(
+        exit.entryId ? `/questionnaires/${id}/answer?entry=${exit.entryId}` : `/questionnaires/${id}/answer`
+      );
+    },
+    [id, router]
+  );
+
+  /** Every exit goes through here: straight out when nothing is unsaved, otherwise via the prompt. */
+  const requestExit = useCallback(
+    (exit: Exit) => {
+      if (dirty.current.size === 0) {
+        leaveNow(exit);
+        return;
+      }
+      setPendingExit(exit);
+    },
+    [leaveNow]
+  );
+
+  /**
+   * Hands the prompt to the round back control in the page header, which is the same arrangement
+   * every record form in the app uses. The boolean must be `dirtyCount > 0` and not
+   * `dirty.current.size > 0`: the guard re-reads its inputs on every commit, and a ref that mutates
+   * without one would leave it holding `false` for the whole first section a designer types.
+   */
+  useLeaveGuard(dirtyCount > 0, () => setPendingExit({ kind: "back" }));
+
+  /**
+   * The tab-close half, which no interceptor can cover — closing the tab never reaches React Router.
+   * Written inline rather than through `useUnsavedChanges` (lib/forms.ts) because that hook owns its
+   * own `dirty` state and this screen's dirty set is a ref maintained per question id; the same shape
+   * `ProcessForm` uses for the same reason.
+   */
+  useEffect(() => {
+    if (dirtyCount === 0) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirtyCount]);
 
   async function goToSection(nextIndex: number) {
     // Saving BEFORE moving is what makes "next" safe. A designer who fills a section in and presses
@@ -284,7 +451,21 @@ function AnswerPageBody() {
         description="One sitting is one filled-in copy of this questionnaire. Each section is saved as you move through it."
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
         actions={
-          <Link className="field-button-secondary" href={`/questionnaires/${id}`}>
+          // STILL A LINK, deliberately: it keeps the URL in the status bar, and a middle-click or a
+          // ctrl-click still opens the questionnaire in a second tab, which leaves THIS tab and its
+          // unsaved answers exactly where they were. Only the plain left-click — the one that takes
+          // the answers with it — is held back for the prompt, and only while there is something to
+          // lose. `BackButton`'s interceptor cannot cover this: it is a different element entirely.
+          <Link
+            className="field-button-secondary"
+            href={`/questionnaires/${id}`}
+            onClick={(event) => {
+              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+              if (dirty.current.size === 0) return;
+              event.preventDefault();
+              setPendingExit({ kind: "edit" });
+            }}
+          >
             Edit the questionnaire
           </Link>
         }
@@ -305,11 +486,13 @@ function AnswerPageBody() {
           <FieldBlock label="Sitting">
             <Dropdown
               value={entryId}
-              onChange={(next) => {
-                setEntryId(next);
-                setSectionIndex(0);
-                router.replace(next ? `/questionnaires/${id}/answer?entry=${next}` : `/questionnaires/${id}/answer`);
-              }}
+              // NOT `setEntryId` directly, and this is the finding this screen was reported for.
+              // Changing `entryId` changes `entry`, which fires the seeding effect, which overwrites
+              // every box from the OTHER sitting's stored answers and empties the dirty set — so a
+              // designer who opened this dropdown merely to check what a respondent said in an
+              // earlier interview lost the section she was in the middle of, silently. It is an exit
+              // from the current sitting even though the URL barely changes, so it asks like one.
+              onChange={(next) => requestExit({ kind: "sitting", entryId: next })}
               options={[
                 { value: "", label: form.entries.length ? "Choose a sitting" : "No sittings recorded yet" },
                 ...form.entries.map((candidate) => ({
@@ -437,7 +620,11 @@ function AnswerPageBody() {
                       value={draft[question.id] ?? ""}
                       maxLength={8000}
                       onChange={(event) => {
-                        dirty.current.add(question.id);
+                        // THE KEYSTROKE THAT ARMS THE GUARDS. `markAnswerDirty`, never a bare
+                        // `dirty.current.add(...)`: the ref alone re-renders nothing, so the back
+                        // arrow and the tab close would both stay unguarded through the whole
+                        // section being typed. See the note on `markAnswerDirty`.
+                        markAnswerDirty(question.id);
                         setDraft((prev) => ({ ...prev, [question.id]: event.target.value }));
                       }}
                     />
@@ -449,7 +636,9 @@ function AnswerPageBody() {
                       value={notes[question.id] ?? ""}
                       placeholder="Context, uncertainty, who said it"
                       onChange={(event) => {
-                        dirty.current.add(question.id);
+                        // A note is unsaved work too — it travels in the same payload as the answer
+                        // and is lost by the same exits. Same helper, same reason.
+                        markAnswerDirty(question.id);
                         setNotes((prev) => ({ ...prev, [question.id]: event.target.value }));
                       }}
                     />
@@ -502,6 +691,40 @@ function AnswerPageBody() {
           </footer>
         </section>
       ) : null}
+
+      {/*
+        ONE PROMPT FOR ALL FOUR EXITS — the back arrow, the header link, the sitting dropdown and
+        (through `beforeunload`) the tab close. Four separate handlers is how three of them came to
+        decide, independently and wrongly, that typed answers were expendable.
+
+        Save runs the section save the "Save this section" button runs, NOT the silent one: if the
+        server refuses — a 422 saying only the person who recorded an answer may change it, or that a
+        question has since been retired — the banner is the whole point, and the exit is abandoned so
+        the designer is looking at the section the message is about. Discard empties the dirty set
+        first, because for the sitting switch the seeding effect is what runs next and it must not
+        find work it would silently carry into the other sitting's boxes.
+      */}
+      <UnsavedChangesDialog
+        open={pendingExit !== null}
+        saving={saving}
+        onKeepEditing={() => setPendingExit(null)}
+        onDiscard={() => {
+          const exit = pendingExit;
+          dirty.current = new Set();
+          syncDirty();
+          setPendingExit(null);
+          if (exit) leaveNow(exit);
+        }}
+        onSave={() => {
+          const exit = pendingExit;
+          void (async () => {
+            const ok = await saveSection(section, { silent: true });
+            setPendingExit(null);
+            if (!ok || !exit) return;
+            leaveNow(exit);
+          })();
+        }}
+      />
     </>
   );
 }

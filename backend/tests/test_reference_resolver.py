@@ -465,6 +465,77 @@ async def test_picking_a_different_artisan_rewrites_the_row(client, linked, worl
     assert row["artisanRef"] == world["mohan"].id
 
 
+async def test_re_pointing_at_a_thinly_documented_artisan_clears_what_it_cannot_answer(
+    client, linked, world
+):
+    """THE REGRESSION. Half a rewrite names one artisan over another artisan's phone and face.
+
+    The overwrite was applied field by field inside the copy loop, which skips a blank source
+    value — so re-pointing a row at an artisan who has only a name and a craft rewrote the name
+    and the specialisation and left the PREVIOUS artisan's phone, village, gender, local name,
+    years of experience and PHOTOGRAPH standing under the new artisan's id. That row prints in the
+    participant table of a .docx submitted to a ministry, and because the copy IS the historical
+    record by design, nothing can ever re-resolve it.
+
+    The row is sent back WHOLE, the way both clients really send it: the web's
+    ``hydrateFromReference`` applies the same skip-the-blanks rule in the browser, so the stale
+    boxes are still on screen and still in the payload when the designer saves. A test that
+    re-sent only ``artisanRef`` would pass against the broken code, because there would be nothing
+    stale in the request for the server to keep.
+
+    ``outsider`` is the second artisan on purpose: they carry a name and a place and nothing else
+    — no craft, no phone, no gender, no local name, no recorded experience and NO PHOTOGRAPH —
+    which is an ordinary state for somebody who walked in on day two, and the only shape that
+    exposes the defect. Re-pointing at ``mohan`` would not: he has a portrait and a craft of his
+    own, so those two fields were overwritten even by the broken code.
+    """
+    _save(client, linked, STAGE_3, "participant",
+          [{"_clientKey": "p1", "artisanRef": world["latha"].id}])
+    filled = _read(client, linked, STAGE_3, "participant")[0]
+    assert filled["phone"] == "9876500001", "the fixture has to start fully hydrated"
+    assert filled["photo"]
+
+    re_pointed = {k: v for k, v in filled.items() if not k.startswith("_")}
+    re_pointed["_clientKey"] = "p1"
+    re_pointed["artisanRef"] = world["outsider"].id
+    _save(client, linked, STAGE_3, "participant", [re_pointed])
+
+    row = _read(client, linked, STAGE_3, "participant")[0]
+    assert row["artisanRef"] == world["outsider"].id
+    assert row["name"] == world["outsider"].name
+    assert row["village"] == "Kutch", "what the new artisan DOES say still overwrites"
+    # And everything the new artisan cannot answer is gone rather than inherited. Absent, not
+    # blank: `validate_entry` drops a key it has no value for, so the stored row simply stops
+    # claiming to know the participant's telephone number — and stops carrying somebody else's
+    # face into the report's participant table.
+    for stale in ("phone", "gender", "localName", "experienceYears", "specialisation", "photo"):
+        assert not row.get(stale), f"{stale} still holds the previous artisan's answer"
+
+
+async def test_a_gallery_survives_a_re_pointed_reference(client, linked, world):
+    """The multi arm is exempt from the clearing above, for the reason it is exempt from the
+    overwrite: those photographs were taken in the room and there is no second copy of them.
+
+    Asserted on the tool row rather than the product row because it is the same code path with a
+    different entity, and a clearing rule that ever grew a "just pop everything mapped" shortcut
+    would take the workshop's own photographs with it.
+    """
+    saree = world["products"]["Sambalpuri saree"]
+    mine = ["photo-taken-in-the-room", "second-angle"]
+    _save(client, linked, STAGE_6, "existingProduct",
+          [{"_clientKey": "e1", "productRef": saree.id, "productPhotos": mine}])
+    filled = _read(client, linked, STAGE_6, "existingProduct")[0]
+
+    re_pointed = {k: v for k, v in filled.items() if not k.startswith("_")}
+    re_pointed["_clientKey"] = "e1"
+    re_pointed["productRef"] = world["products"]["Gift box"].id
+    _save(client, linked, STAGE_6, "existingProduct", [re_pointed])
+
+    row = _read(client, linked, STAGE_6, "existingProduct")[0]
+    assert row["productRef"] == world["products"]["Gift box"].id
+    assert row["productPhotos"] == mine
+
+
 async def test_the_copy_survives_the_record_it_was_copied_from(client, linked, world):
     """THE REASON THE COPY EXISTS. A workshop report is a historical document; the artisan
     record behind it is live data that gets merged into a duplicate, corrected or deleted.

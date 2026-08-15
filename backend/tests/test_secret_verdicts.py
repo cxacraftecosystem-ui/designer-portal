@@ -355,3 +355,157 @@ def test_a_rotated_key_refreezes_the_engine_it_used_to_thaw(monkeypatch, stack) 
     assert verification["elevenlabs"]["keyState"] == app_settings.STT_KEY_UNTESTED
     assert verification["elevenlabs"]["rankable"] is False
     assert "never been tested" in verification["elevenlabs"]["frozenReason"]
+
+
+# --- The override that cannot be decrypted any more ---------------------------------------------------
+#
+# THE ROTATION CASUALTY, and the one state in which "a row exists" and "the stored key is what gets
+# sent" are different facts. SECRETS_ENCRYPTION_KEY was never set, JWT_SECRET was rotated on a
+# deploy, and every ManagedSecret row is now well-formed Fernet ciphertext for a key this process no
+# longer holds. `refresh_if_stale` drops those rows from the override cache and flags them FAILED
+# with a re-enter message; `peek_secret` falls through to the environment. Everything below is about
+# the three surfaces that used to derive provenance from `row is not None` and therefore told the
+# admin a fact about the STORED key while handing them the ENVIRONMENT one:
+#
+#   * GET /secrets/{key}/reveal - an environment plaintext labelled source "database";
+#   * POST /secrets/{key}/test - the environment value probed, the verdict stamped on the row, and
+#     the "re-enter this key" flag erased until the cache next went stale;
+#   * the Settings hub's hint - the last four characters of the key that is NOT in force.
+#
+# The environment key is deliberately DIFFERENT from the stored one in these tests (ANOTHER_KEY ends
+# "0000", A_KEY ends "f4b8"), because a fixture where both are the same value cannot tell a right
+# answer from a wrong one on any of the three.
+
+
+def _lock_the_stored_override(s: _Stack) -> None:
+    """Reproduce the accident: rotate the signing secret out from under a row already written.
+
+    Encrypting first and rotating afterwards is what makes the row REAL rather than a string of
+    garbage - it is a valid token for a key that is gone, which is exactly what a production row
+    looks like the morning after a JWT_SECRET rotation. Both derived keys move (the Fernet key and
+    the verdict pepper), because both come from the same source.
+    """
+    s.knobs.jwt_secret = "the-deploy-rotated-the-signing-secret-2026"
+    managed_secrets._fernet.cache_clear()
+    managed_secrets._fingerprint_pepper.cache_clear()
+    managed_secrets.invalidate()
+
+
+def _undecryptable(stack, *, env_key: str | None = ANOTHER_KEY) -> _Stack:
+    s = stack(env_key=env_key)
+    s.secrets.rows[ELEVENLABS] = _managed_row(ELEVENLABS)  # encrypts A_KEY, hint "f4b8"
+    _lock_the_stored_override(s)
+    return s
+
+
+def test_the_override_really_is_unreadable_and_the_environment_value_is_what_resolves(stack) -> None:
+    """The precondition every test below depends on. If this ever stops holding they all go green
+    for the wrong reason, so it is asserted on its own rather than assumed."""
+    s = _undecryptable(stack)
+
+    assert asyncio.run(managed_secrets.get_secret(ELEVENLABS)) == ANOTHER_KEY
+    assert s.secrets.rows[ELEVENLABS].lastStatus == "FAILED"
+    assert s.secrets.rows[ELEVENLABS].lastError == managed_secrets._UNDECRYPTABLE_ERROR
+
+
+def test_revealing_an_unreadable_override_says_the_value_came_from_the_environment(stack) -> None:
+    """The eye button after a rotation. It showed a full, plausible key labelled source "database",
+    so the master admin concluded the stored override had survived; it had not, and what they were
+    reading was the deployment's environment variable."""
+    _undecryptable(stack)
+
+    revealed = asyncio.run(managed_secrets.reveal_secret(ELEVENLABS))
+
+    assert revealed["value"] == ANOTHER_KEY, "the value in force is what the eye button must show"
+    assert revealed["source"] == managed_secrets.SOURCE_ENVIRONMENT, "it did NOT come from the row"
+    assert revealed["overrideUnreadable"] is True, "and the broken row must still be reported"
+
+
+def test_the_hint_beside_an_unreadable_override_names_the_key_in_force(stack) -> None:
+    """The hint exists so an admin can reconcile against a provider dashboard without revealing
+    anything. Printing the stored row's four characters beside the environment key's value points
+    them at the credential the deployment is not using - the wrong conclusion, confidently."""
+    _undecryptable(stack)
+
+    listed = {entry["key"]: entry for entry in asyncio.run(managed_secrets.list_managed_secrets())}
+    entry = listed[ELEVENLABS]
+
+    assert entry["hint"] == ANOTHER_KEY[-4:]
+    assert entry["hint"] != "f4b8", "that is the stored key's fingerprint, and it is not in force"
+    assert entry["source"] == managed_secrets.SOURCE_ENVIRONMENT
+    assert entry["overrideUnreadable"] is True
+    assert entry["configured"] is True, "the environment value is a value"
+
+
+def test_testing_an_unreadable_override_leaves_the_re_enter_flag_alone(stack) -> None:
+    """THE ERASURE. Test probed the environment key, then wrote OK over the FAILED that
+    `refresh_if_stale` had put on the row, so the one durable signal saying which overrides must be
+    re-entered was destroyed by the button meant to check them - and came back minutes later when
+    the cache went stale, leaving the row alternating between healthy and broken."""
+    s = _undecryptable(stack)
+
+    described = asyncio.run(managed_secrets.test_secret(ELEVENLABS))
+
+    row = s.secrets.rows[ELEVENLABS]
+    assert row.lastStatus == "FAILED", "the probe was of a different key; the row keeps its verdict"
+    assert row.lastError == managed_secrets._UNDECRYPTABLE_ERROR
+    # The verdict about the value that WAS probed goes where an environment verdict belongs.
+    assert s.verdicts.rows[ELEVENLABS].status == "OK"
+    assert s.verdicts.rows[ELEVENLABS].fingerprint == managed_secrets.fingerprint(ANOTHER_KEY)
+    # ...and the answer says both things, because the admin asked a question and deserves an answer.
+    assert described["lastStatus"] == "FAILED"
+    assert managed_secrets._UNDECRYPTABLE_ERROR in described["lastError"]
+    assert "environment value" in described["lastError"]
+    assert described["source"] == managed_secrets.SOURCE_ENVIRONMENT
+    assert described["overrideUnreadable"] is True
+
+
+def test_testing_an_unreadable_override_with_nothing_behind_it_keeps_the_reason(stack) -> None:
+    """The `value is None` arm of the same defect: it used to write lastError = "Not configured"
+    over the undecryptable message, replacing the only sentence that says what to do about it."""
+    s = _undecryptable(stack, env_key=None)
+
+    described = asyncio.run(managed_secrets.test_secret(ELEVENLABS))
+
+    assert s.secrets.rows[ELEVENLABS].lastError == managed_secrets._UNDECRYPTABLE_ERROR
+    assert s.verdicts.rows == {}, "there was no environment value to record a verdict about"
+    assert managed_secrets._UNDECRYPTABLE_ERROR in described["lastError"]
+    assert described["source"] == managed_secrets.SOURCE_UNSET
+    assert described["configured"] is False, "an unopenable row supplies nothing"
+    assert asyncio.run(managed_secrets.reveal_secret(ELEVENLABS))["value"] is None
+
+
+def test_pressing_test_on_an_unreadable_override_does_not_thaw_the_engine(monkeypatch, stack) -> None:
+    """The secondary consequence, end to end: `lastStatus == OK` on the row is what makes an engine
+    rankable, so the stamped verdict also lifted the STT freeze on the strength of a key the stored
+    row does not contain."""
+    from app.api.routes import settings as settings_route
+
+    _undecryptable(stack)
+    monkeypatch.setattr(
+        settings_route.ai,
+        "transcription_provider_configured",
+        lambda: {"elevenlabs": True, "deepgram": False, "whisper": False},
+    )
+
+    asyncio.run(managed_secrets.test_secret(ELEVENLABS))
+    verification = asyncio.run(settings_route._provider_verification())
+
+    assert verification["elevenlabs"]["keyState"] == app_settings.STT_KEY_FAILING
+    assert verification["elevenlabs"]["rankable"] is False
+    assert "Re-enter the key" in verification["elevenlabs"]["frozenReason"]
+
+
+def test_a_readable_override_is_still_the_database_with_its_own_hint(stack) -> None:
+    """The other direction, and the one an over-eager fix breaks: nothing above may make a healthy
+    override read as environment-sourced, or report the environment's four characters for it."""
+    s = stack(env_key=ANOTHER_KEY)
+    s.secrets.rows[ELEVENLABS] = _managed_row(ELEVENLABS)  # decrypts cleanly under this key
+
+    entry = asyncio.run(managed_secrets.describe_secret(ELEVENLABS))
+    revealed = asyncio.run(managed_secrets.reveal_secret(ELEVENLABS))
+
+    assert entry["source"] == managed_secrets.SOURCE_DATABASE
+    assert entry["overrideUnreadable"] is False
+    assert entry["hint"] == "f4b8", "the stored row's own hint, as before"
+    assert revealed["value"] == A_KEY and revealed["source"] == managed_secrets.SOURCE_DATABASE

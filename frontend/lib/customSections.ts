@@ -57,6 +57,7 @@ import {
   type DwEntryData,
   type DwField,
   type DwFieldType,
+  type DwStage,
   type DwTier,
   type DwValue
 } from "@/lib/designWorkshops";
@@ -918,13 +919,32 @@ export function fieldEditCost(
  * rule the server enforces: nothing here refuses anything the server would accept, which is the line
  * this repository draws for every client-side check.
  *
- * Two rules are deliberately NOT attempted here, because they need state this screen may not hold:
- * a collision with one of the 496 registry field keys or labels (that needs the registry stage, and
- * the server names the colliding field, which is the useful half), and a key that already holds an
- * answer given to a different question (that needs the stored answers of every stage). Both come
- * back as a 422 or a 409 with a sentence naming the way round it, and both are shown verbatim.
+ * WHAT IS MIRRORED AND WHAT IS NOT, ENUMERATED — because the previous version of this paragraph said
+ * "a complete mirror" and it was not one, which is how the next person to add a server rule comes to
+ * trust it rather than check it. Audit 2026-08-15 (MINOR, frontend) filed exactly that.
+ *
+ * MIRRORED: the section and field key patterns, the section/field/option counts, the uniqueness of
+ * section keys, of field keys across the workshop and of labels within a stage, the title/description/
+ * label/help/unit lengths, the v1 type whitelist, the required-must-be-Basic tier rule, the option
+ * rules, the numeric bounds and the max-length applicability — and, since this audit, BOTH stage-
+ * scoped collision checks: a custom key equal to a live field key of any entity of that stage, and a
+ * custom label case-folding equal to a live label of that stage's SINGLETON entity. Those last two
+ * need `stages`, which is why the parameter exists.
+ *
+ * NOT MIRRORED, and it cannot be from here: a key that already holds an answer given to a different
+ * question. That needs the stored answers of every stage, which this screen does not load. It comes
+ * back as a 409 with a sentence naming the way round it, and is shown verbatim.
+ *
+ * `stages` DEFAULTS TO EMPTY AND THAT IS THE HONEST DEGRADATION. With no registry loaded the two
+ * stage-scoped checks simply do not run: this function then mirrors what it can and cannot invent a
+ * refusal for a stage it has never seen. It must never be the other way round — refusing on absent
+ * evidence would block a Save the server would have accepted, which is the one thing a pre-flight
+ * check is forbidden to do.
  */
-export function customDefinitionProblems(sections: readonly DwCustomSection[]): string[] {
+export function customDefinitionProblems(
+  sections: readonly DwCustomSection[],
+  stages: readonly DwStage[] = []
+): string[] {
   const problems: string[] = [];
 
   if (sections.length > MAX_CUSTOM_SECTIONS) {
@@ -989,8 +1009,13 @@ export function customDefinitionProblems(sections: readonly DwCustomSection[]): 
       );
     }
 
+    // Resolved once per section rather than once per field: the lookup is over 22 stages and the
+    // answer is the same for every field of the section. `undefined` when the section names no stage
+    // (already reported above) or when no registry was supplied.
+    const stage = section.stageKey ? stages.find((candidate) => candidate.key === section.stageKey) : undefined;
+
     for (const field of fields) {
-      problems.push(...fieldProblems(section, field, seenFieldKeys, seenLabels));
+      problems.push(...fieldProblems(section, field, seenFieldKeys, seenLabels, stage));
     }
   }
 
@@ -1001,7 +1026,9 @@ function fieldProblems(
   section: DwCustomSection,
   field: DwCustomField,
   seenFieldKeys: Map<string, string>,
-  seenLabels: Map<string, string>
+  seenLabels: Map<string, string>,
+  /** The registry stage this section's questions are asked at, when this browser holds the registry. */
+  stage?: DwStage
 ): string[] {
   const problems: string[] = [];
   const where = `${section.key}.${field.key || "(unnamed)"}`;
@@ -1148,6 +1175,70 @@ function fieldProblems(
       );
     } else {
       seenLabels.set(id, where);
+    }
+  }
+
+  /*
+    THE TWO STAGE-SCOPED COLLISIONS THE SERVER ENFORCES AND THIS FILE USED NOT TO. Audit 2026-08-15
+    (MINOR, frontend). Neither could run while `fieldProblems` took only the section and the field:
+    both need the registry stage the section's questions are asked at. Without them, `problems` was
+    EMPTY for a colliding definition and the Save gate — `disabled={busy || problems.length > 0 ||
+    …}` — was open, so a whole-set PUT was refused after the fact for a rule this editor exists to
+    catch before it, taking every unrelated edit in the same body with it.
+
+    `stage === undefined` covers two different innocent cases and neither may produce a refusal: a
+    section that names no stage (already reported, and adding a second sentence about the same
+    mistake is noise — the server skips these checks for the same reason), and a browser that has no
+    registry loaded, which has no evidence either way.
+  */
+  if (stage) {
+    /*
+      RESERVED-KEY COLLISION, over EVERY entity of the stage, exactly as the server walks it.
+
+      Not mechanically harmful under the current storage — the custom answers live in their own row
+      and cannot shadow a core key — and refused anyway for two reasons that outlive that choice: a
+      designer looking at one stage form must not see two different questions under one key, and
+      refusing it keeps a later move to nested storage open instead of making it a data migration.
+
+      `deprecated` is honoured because a retired registry field is not on the form and its key is
+      free again; refusing against it would block a key nothing is using.
+    */
+    for (const entity of stage.entities) {
+      const core = entity.fields.find((candidate) => candidate.key === field.key && !candidate.deprecated);
+      if (core) {
+        problems.push(
+          `${JSON.stringify(field.key)} is already a field of stage ${stage.number} (${stage.title} → ` +
+            `${entity.title}: ${core.label}). Choose another key.`
+        );
+      }
+    }
+
+    /*
+      RESERVED-LABEL COLLISION, NARROWED TO THE SINGLETON ENTITY — and the narrowing is the whole
+      correctness of the check, not a shortcut.
+
+      `StageCompleteness.missing` holds LABELS and is de-duplicated, so two required fields sharing
+      a label collapse into ONE row on the readiness screen, in the report's Outstanding column and
+      in the export warnings, while `requiredTotal` still counts two. A SINGLETON field files its
+      label bare and so does a custom field, so those two can collapse into each other. A COLLECTION
+      field files `"{entity.title}: {label}"`, which cannot collide with a bare label at all — so
+      refusing "Notes" on stage 13 because a prototype row has a "Notes" column would be a refusal
+      with no failure behind it, on some of the most ordinary words a form uses. The server narrows
+      it for exactly this reason; widening it here would refuse definitions the server accepts.
+    */
+    const singleton = stage.entities.find((entity) => entity.cardinality === "SINGLETON");
+    if (singleton && label) {
+      const clash = singleton.fields.find(
+        (candidate) => !candidate.deprecated && candidate.label.trim().toLowerCase() === label
+      );
+      if (clash) {
+        problems.push(
+          `A field on stage ${stage.number} (${stage.title}) is already called ` +
+            `${JSON.stringify(clash.label)}. Two questions with one name become one line on the readiness ` +
+            "screen and in the report's Outstanding column, while the count beside it still says two — so " +
+            "the report disagrees with itself. Give this one a different label."
+        );
+      }
     }
   }
 

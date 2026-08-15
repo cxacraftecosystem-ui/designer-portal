@@ -226,9 +226,14 @@ branch and it always records its keys.
 
 ### [MEDIUM] one refused save was reported as two different numbers on the two surfaces — **the frontend half was ALREADY DONE, and this register was wrong about it**
 
-Re-checked on 2026-08-15 against the tree. `frontend/lib/designWorkshopStore.ts:3465` reads
-`refusedAnswersToShow(saved.refusedAnswers, saved.errors)` and `DwSaveResult.refusedAnswers` is
-declared in `frontend/lib/designWorkshops.ts:502`. The implementation is better than what the entry
+Re-checked on 2026-08-15 against the tree. The sync pass in `frontend/lib/designWorkshopStore.ts`
+reads `refusedAnswersToShow(saved.refusedAnswers, saved.errors)` — that function is declared in the
+same file — and `DwSaveResult.refusedAnswers` is declared in `frontend/lib/designWorkshops.ts`.
+(Both were pinned by line when this entry was written. Checked on 2026-08-15, the store pin landed on
+a comment in the middle of an unrelated function — neither the declaration of `refusedAnswersToShow`
+nor the call it quoted, which are hundreds of lines apart in that file. Symbols, not numbers — see
+the maintenance table.)
+The implementation is better than what the entry
 asked for: it takes the server's count EXCEPT where doing so would report "nothing refused" about a
 response this build can see refused something, so it cannot be wrong in the under-reporting direction
 — the one direction this repository has already decided must never be wrong.
@@ -376,8 +381,18 @@ the stage route under the load at the time.
 
 ### [MAJOR] A row deletion that is not the LAST row of a collection is recorded nowhere on the handset (android)
 
-**Where.** `android/.../ui/designworkshop/StageScreen.kt:1320-1325` (the only writer of `emptied`) and
-`android/.../data/WorkshopSync.kt:810-821` (`unsentDeletions`).
+**Where.** `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/StageScreen.kt`,
+the `onRowsChange` lambda of the collection renderer — the only writer of `emptied` — and
+`android/app/src/main/java/com/designprototype/workshop/data/WorkshopSync.kt`, `unsentDeletions` on
+`WorkshopSyncStatus`.
+(Both were cited by line number — `StageScreen.kt:1320-1325` <!-- rotted --> and
+`WorkshopSync.kt:810-821` <!-- rotted --> — and both had rotted onto unrelated code while still
+passing the checker, which at the time only verified that a cited line is inside the file. The
+`<!-- rotted -->` markers are what tell `docs/tools/check-docs.mjs` that these two numbers are being
+exhibited as broken rather than offered as pointers; without them its drift test reports the very
+rot this sentence is describing. What they now point at is not recorded
+here: both files are under active edit and the answer changes weekly. The symbol names above are
+what to grep for.)
 
 **Found 2026-08-13.** `emptied` gains an entity key only when `rows.isEmpty() && had` — the collection
 went from having rows to having none. Deleting one row of three leaves NO record anywhere: not in
@@ -404,8 +419,10 @@ honestly without claiming to know the whole collection.
 
 ### [MAJOR] `PUT /custom-sections` is last-write-wins over the whole definition, and the digest that would stop it is already in every response (backend, frontend)
 
-**Where.** `backend/app/schemas/design_workshops.py:535` (`CustomSectionsIn`, whose only field is
-`sections`) and `frontend/components/designworkshop/CustomSectionsEditor.tsx`.
+**Where.** `CustomSectionsIn` in `backend/app/schemas/design_workshops.py` — whose only field is
+`sections` — and `frontend/components/designworkshop/CustomSectionsEditor.tsx`. (Pinned at line 535
+when this was written; the class had moved 28 lines down by 2026-08-15 and the pin still passed the
+bounds check, which is the defect the checker's new drift test exists to end.)
 
 **Found 2026-08-13, measured on the wire** against the running API and Postgres:
 
@@ -430,7 +447,8 @@ against), so it only has to send back what it loaded. Optional keeps every shipp
 
 ### [MINOR] `StageSaveResultDto.removed` has no reader on the handset (android)
 
-**Where.** `android/.../data/StageSchema.kt:1310`. The field is decoded and used by nothing — a grep
+**Where.** `android/app/src/main/java/com/designprototype/workshop/data/StageSchema.kt`,
+`StageSaveResultDto.removed`. The field is decoded and used by nothing — a grep
 across `android/` finds the declaration and no other mention.
 
 The server answers every stage save with the number of rows it deleted. The web prints it ("Stage
@@ -442,7 +460,11 @@ one line of state plus a sentence.
 
 ### [MINOR, LATENT] `patchDraftHeader` would PATCH a blank header over the office's, and today nothing calls it (frontend)
 
-**Where.** `frontend/lib/designWorkshopStore.ts:974`, and the PATCH it arms at line 2657.
+**Where.** `patchDraftHeader` in `frontend/lib/designWorkshopStore.ts` — it is the only writer of a
+non-null `headerDirtyAt` — and the `needsHeader` arm of the sync pass in the same file, which is what
+that flag arms. (Both were pinned by line; by 2026-08-15 the first pin sat 279 lines above the
+function and the second named a docstring about stage definitions. Grep `headerDirtyAt`: every site
+that matters is a hit, which is what a line number was pretending to be.)
 
 Checked while enumerating every payload either client builds, and recorded because it is a door that is
 shut only by having no caller. `ensureDraft` seeds a header of empty strings and nulls with
@@ -504,7 +526,8 @@ still green. 25 pass restored; `tsc --noEmit` clean.
 
 ### [BLOCKER] CORRECTNESS — the handset's whole sweep gate was spelled as silence, and the server reads silence as "delete the rest" (android) — **found and fixed 2026-08-13**
 
-**Where.** `android/.../data/StageSchema.kt`, `StageSaveBody.replaceCollections`.
+**Where.** `android/app/src/main/java/com/designprototype/workshop/data/StageSchema.kt`,
+`StageSaveBody.replaceCollections`.
 
 **What.** `buildStageBody` decides `replaceCollections = authoritative` and has done so correctly since
 the fortnight-of-process-steps incident. It never reached the wire. The property carried `= false`;
@@ -544,7 +567,8 @@ of them (`APIModel` is `extra="forbid"`). The two rules are opposite and both ar
 **Why 1107 passing unit tests missed it.** Every test of the gate — including the four in
 `StageAuthorityEarnedByReadingTest` — reads `body.replaceCollections` off the Kotlin object, where the
 value has always been right. The defect exists only in the bytes. **New:
-`android/.../data/StageSweepReachesTheWireTest.kt`, 5 tests, all asserting on the SERIALISED JSON**
+`android/app/src/test/java/com/designprototype/workshop/data/StageSweepReachesTheWireTest.kt`, 5
+tests, all asserting on the SERIALISED JSON**
 using ApiClient's own configuration: the flag is present and false when unread, present and true when
 read, `merge` is still absent when false, the round trip decodes to the authority the builder decided,
 and `emptiedEntities` is named only under a claim the server will honour. 5/5 pass with the fix.
@@ -701,7 +725,8 @@ absent, so "leave this column alone" and "set this column to nothing" stay diffe
 ### [MEDIUM] CORRECTNESS — one refused save was reported as two different numbers on the two surfaces (backend + frontend) — **backend fixed 2026-08-13, frontend one-line change outstanding**
 
 **Where.** `backend/app/services/design_workshops.py`, the `save_stage` response;
-`frontend/lib/designWorkshopStore.ts` line ~2831; `android/.../data/DwStageRefusal.kt`.
+`frontend/lib/designWorkshopStore.ts` line ~2831;
+`android/app/src/main/java/com/designprototype/workshop/data/DwStageRefusal.kt`.
 
 **What.** `errors` is `{scope: {field: message}}` and carried no total, so each client derived its
 own. The web read `Object.keys(saved.errors ?? {}).length` — the number of **scopes** — while Android
@@ -890,7 +915,9 @@ in either direction.
 `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/WorkshopViewersScreen.kt` —
 the three-state notice under the search box. (Written in full rather than abbreviated to `android/…`,
 because `docs/tools/check-docs.mjs` resolves every path it can see and reports the short form as a
-broken one; there are already ten of those in this file and this pass is not adding an eleventh.)
+broken one; there were ten of those in this file and this pass did not add an eleventh. **All ten
+have since been expanded**, on 2026-08-15 — the abbreviation cost a reader the ability to open the
+file as surely as it cost the checker the ability to resolve it. Write paths in full here.)
 
 **What.** `truncated` covers two different cuts and only ONE of them can be narrowed by typing. When
 the ACTIVE-ROSTER read is what was cut, the missing designers are excluded from every possible search
@@ -970,8 +997,9 @@ had to be named against the route for the first time, and the two names did not 
 
 **What.** It stated that stage entries are `extra="forbid"`, so arbitrary designer keys "will be
 refused by design". They are not refused. `extra="forbid"` applies to the **envelope**;
-`StageEntryIn.data` is an open `dict[str, Any]` (`backend/app/schemas/design_workshops.py:145`) and
-`validate_entry` iterates `entity.fields` only (`backend/app/services/stage_schema.py:1120-1152`), so
+`StageEntryIn.data` is an open `dict[str, Any]` (`backend/app/schemas/design_workshops.py`) and
+`validate_entry` iterates `entity.fields` only (`backend/app/services/stage_schema.py` — its
+docstring says so in as many words: "Unknown keys are DROPPED rather than rejected"), so
 an unknown key is **dropped in silence**. The `merge: Extra inputs are not permitted` refusal the
 plan cited as its evidence was an *envelope* field and said nothing about the payload.
 
@@ -985,9 +1013,17 @@ correction left visible rather than silently amended.
 
 ## The entry as it was written, kept for the re-check
 
+*Everything below is a verbatim copy of the entry as filed, including its line number, which pointed
+at the defective regex in the tree of the day it was filed. **It has not pointed there since the fix
+landed** — the line now carries an unrelated comment — and it is deliberately not re-pinned, because
+re-pinning it would make a frozen quotation say something it never said. The regex itself is quoted
+below; that is what to search for.* <!-- rotted -->
+
 ### [HIGH] CORRECTNESS — The server's OCR clips a card's 16-digit VID into a 12-digit "Aadhaar number" printed nowhere on the card (backend)
 
-**Where.** `backend/app/services/identity_ocr.py:311`
+**Where.** `backend/app/services/identity_ocr.py:311` <!-- rotted -->
+
+
 
 ```python
 _AADHAAR_RUN = re.compile(r"(?<![0-9])((?:[0-9][ \-]?){11}[0-9])(?![0-9])")
@@ -1013,7 +1049,9 @@ and `2345 6789 0124` is Verhoeff-VALID — it is this repository's own test fixt
 produces a candidate the card does not carry, all the way to the confirm panel.
 
 **The Android client already refuses it**, deliberately and with the case named:
-`IdentityCardText.scanDigitRuns` (`android/…/data/IdentityCardText.kt`) scans **maximal** runs, so a
+`IdentityCardText.scanDigitRuns`
+(`android/app/src/main/java/com/designprototype/workshop/data/IdentityCardText.kt`) scans **maximal**
+runs, so a
 sixteen-digit run yields nothing rather than its first twelve digits. Confirmed on the Galaxy M32 on
 2026-08-09 against a card carrying both the number and the VID: exactly one candidate was offered.
 `IdentityCardTextTest.the sixteen-digit VID beside the number yields nothing at all` pins it, and
@@ -1052,9 +1090,10 @@ CLUSTER_CRAFT_BACKGROUND` with `"merge": true` answered **200** while the banner
 to make the request. `blocksRetry` (`frontend/lib/offline.ts`) now re-attempts a schema refusal once
 per app run, at workshop, stage and registry level, in both drains; draft schema v3 re-triages the
 refusals already on disk; and the same policy is mirrored on the handset, which sends the same
-`merge` flag (`android/.../data/WorkshopSync.kt`, `blocksRetry` + `ApiRefusal.schemaSkew`). Pinned by
+`merge` flag (`android/app/src/main/java/com/designprototype/workshop/data/WorkshopSync.kt`,
+`blocksRetry` + `ApiRefusal.schemaSkew`). Pinned by
 `frontend/e2e/schema-skew-retry-unit.spec.ts`, `frontend/e2e/design-workshop-schema-skew.spec.ts` and
-`android/app/src/test/.../DwSchemaSkewRetryTest.kt`.
+`android/app/src/test/java/com/designprototype/workshop/data/DwSchemaSkewRetryTest.kt`.
 
 **VERIFIED 2026-08-09, and it was resolved in THREE halves, not two.** The browser spec above had
 never been run — it skips without credentials — so it was run against the live stack for the first
@@ -1076,12 +1115,13 @@ gaps were found and closed in the same pass:
    `APIModel`, so `extra_forbidden` is reachable there exactly as it is for a stage. `PendingEntry`
    now carries `skewRun`, `replayEntry` reads the error body once through `apiRefusal`, and both
    queues on the handset use one `blocksRetry` and one `skewSentence`. Pinned by
-   `android/app/src/test/.../OutboxSchemaSkewRetryTest.kt`.
+   `android/app/src/test/java/com/designprototype/workshop/data/OutboxSchemaSkewRetryTest.kt`.
 
 **Both halves are now closed.**
 
 - *The provenance line* was closed earlier: it is built at
-  `android/…/report/ReportSettings.kt` (`fieldCopyNote`), reaches the cover from
+  `android/app/src/main/java/com/designprototype/workshop/report/ReportSettings.kt`
+  (`fieldCopyNote`), reaches the cover from
   `ui/designworkshop/ReportScreen.kt`, and is covered by
   `android/app/src/test/…/ReportSettingsLedgerTest.kt`. Commit `5886fd9`.
 - *The export log* was the last open item in this file and is closed by `cfec845`.
@@ -1208,3 +1248,38 @@ them.
 and is gated on `isAdmin && adminChrome`, which correctly mirrors `backend/app/api/routes/tasks.py`
 (`view=created` raises 403 unless the caller is an admin) and `frontend/lib/permissions.ts`
 (`canAssignTasks = hasRank(user, "ADMIN")`). No permission was invented on either client.
+
+---
+
+## How this document is kept true
+
+**A register is kept true by re-checking its entries against the tree, and by nothing else.** There
+is no generator here and there cannot be: every entry is a claim that a specific defect is open or
+closed, and only reading the code settles that. The header carries the date of the last re-check for
+exactly this reason — an entry is trustworthy to the extent that somebody looked recently, and the
+date is how a reader judges it.
+
+**This file has already failed in both directions, and both failures are recorded above rather than
+tidied away.** One entry sat listed as outstanding after it had been fixed (the frontend half of the
+refused-answer count), which costs the next reader a hunt for a bug that is gone. And the closed
+count read 40 while the sections held 41. Neither is detectable mechanically. The recount by heading,
+and the note explaining it, are kept in the body as the warning.
+
+| Claim class | Kept true by |
+|---|---|
+| Whether an entry is open or closed | **A re-read of the named code, on a date, by a person.** Nothing else. When you re-check, move the entry and update *Last re-checked against the tree* in the header — a stale date is honest, an unchanged date over changed content is not. |
+| The **Status** line's two numbers | Counted against the section headings below, which is how the 40-versus-41 discrepancy was found. Recount when you move an entry; do not increment. |
+| Every **Where** in an entry | `node docs/tools/check-docs.mjs`, which resolves every repository path in this file. It cannot tell you the path is the *right* one, only that it exists. |
+| Every **Pinned by** in a closed entry | The named test, actually run. A closed entry whose test does not exist, or exists and cannot fail, is the exact defect this register was written to stop shipping — several entries above say so explicitly, including one that records mutating the fix to prove the test went red. |
+| The relationship to [AUDIT-2026-08-15.md](AUDIT-2026-08-15.md) | Deliberate and one-way: the audit is a register of what was *found* and is not rewritten. Items are promoted from it into this file as they are taken on. Do not copy findings here that have not been through the fix-and-pin cycle, or this document stops meaning what its header says it means. |
+| Line numbers in entries | **Do not add any.** By 2026-08-15 seven of this file's citations had rotted onto unrelated code — `StageScreen.kt:1320-1325` <!-- rotted -->, `WorkshopSync.kt:810-821` <!-- rotted -->, `StageSchema.kt:1310` <!-- rotted -->, and four more that were removed the same day: `CustomSectionsIn` cited 28 lines above the class, `patchDraftHeader` 279 lines above the function, a `designWorkshopStore.ts` pin on a comment in an unrelated function, and a `stage_schema.py` range 50 lines short of `validate_entry`. Every one of them passed the checker, because all it asked was whether the number was inside the file. **It now also tests drift**, wherever a backticked symbol sits on the same line as the pin — see `checkCitations` in `docs/tools/check-docs.mjs` — but that check is deliberately silent on a pin that names no symbol, so it cannot rescue a bare number. Name the symbol; a symbol that moves is still greppable and a line number that moves is a confident lie. |
+| Paths written in full | Same run of `check-docs.mjs`. The `android/…` shorthand this file used ten times resolved for nobody — not the checker, not a reader trying to open the file. All ten were expanded on 2026-08-15; the note in the viewer-picker entry explains the convention and it is now the rule for this file. |
+
+**Review triggers:** any fix landing that this register lists as open; any audit finding promoted
+here; the end of any pass that closed something, at which point the header date and the two counts
+both need touching.
+
+**Known unverified:** entries closed against a *live stack* (several say so, naming
+`designer@example.org` and `backend/scripts/seed_test_accounts.py`) are verified against a database
+that has since moved on. The test named beside each is the durable part; the live-stack run is a
+dated observation.

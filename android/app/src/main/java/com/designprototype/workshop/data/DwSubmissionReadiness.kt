@@ -430,6 +430,40 @@ object DwSubmissionReadiness {
      * ---------------------------------------------------------------------------------- */
 
     /**
+     * The same two checks, for a caller that is not assembling a whole readiness result.
+     *
+     * ── WHY THIS OVERLOAD EXISTS ──────────────────────────────────────────────────────────────────
+     *
+     * [assess] computed these on every stage-index open and threw them away: its one caller in
+     * `main/` reads [DwWorkshopReadiness.blocking] and nothing else, so 'stage-excluded' — a stage
+     * the designer has deliberately left out of the delivered document, holding answers — was
+     * computed twenty-two times a session and rendered on no screen at all. Meanwhile the exclusion
+     * IS honoured: `applyReportSettings` drops those sections from the file, while the Data
+     * completeness annexure in the same file scores the excluded stage as complete. A stage's worth
+     * of captured work left the building with nothing anywhere saying so.
+     *
+     * The report screen is where that sentence has to land, because it is the screen a designer is
+     * standing on with an officer waiting, and `reportWarnings` (ReportSettings.kt) has no arm for
+     * either condition — it covers template substitution, PDF typefaces and unsupported annexures.
+     *
+     * ── AND WHY IT TAKES SCORES RATHER THAN COMPUTING THEM ────────────────────────────────────────
+     *
+     * ASSEMBLY, NOT ARITHMETIC — the law in this file's header. The report screen has already run
+     * [computeWorkshopCompleteness] over the MERGED draft (its own local work plus the stages it
+     * downloaded for this export) and prints a percentage from it. Re-scoring here would be a second
+     * walk of the same 22 stages AND a second opinion: scored from the local draft alone, an
+     * excluded stage the designer filled in on another handset would read as empty and the warning
+     * would not fire on the one document that is missing it.
+     */
+    fun reportChecks(
+        schema: SchemaResponse,
+        draft: WorkshopDraft?,
+        workshopId: String,
+        /** As [computeWorkshopCompleteness] returned it, for the copy being exported. */
+        scores: List<DwStageCompleteness>,
+    ): List<DwReadinessCheck> = reportChecks(schema, draft, workshopId, scores.associateBy { it.stageKey })
+
+    /**
      * The stage-20 conditions that change the delivered document without failing anything.
      *
      * Both are computable from the registry and the draft alone, which is the bar for putting a check

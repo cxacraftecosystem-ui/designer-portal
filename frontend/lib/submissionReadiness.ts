@@ -7,9 +7,26 @@
  * on a submit. A THIRD scorer written to drive a checklist would be a third opinion, and the day it
  * disagreed the designer would be told to go and fill in a field the Save button was perfectly happy
  * with. So the set of blocking items in this module is `DwStageCompleteness.missing` and nothing
- * else — the very list the report already prints in `X-Report-Warnings` as "Stage 7 (…): 3 required
+ * else — the same list the report prints in `X-Report-Warnings` as "Stage 7 (…): 3 required
  * field(s) not recorded". This module adds two things to it and only two: an ADDRESS for each entry,
  * and an order.
+ *
+ * ⚠ "THE SAME LIST", WITH ONE KNOWN EXCEPTION, AND IT IS WRITTEN DOWN HERE BECAUSE THE PARAGRAPH
+ * ABOVE USED TO SAY "THE VERY LIST" AND MEAN IT. Audit 2026-08-15 (MINOR, cross-surface) found the
+ * identity does not hold for a REQUIRED REF WHOSE TARGET ROW HAS BEEN DELETED. `stage_completeness`
+ * takes an optional `ref_resolves` predicate and counts such a field as EMPTY; exactly one caller
+ * supplies it — the report builder, for its completeness annexure and its per-stage warning lines.
+ * `workshop_completeness` (what `GET /{id}` returns and what every non-report scorer uses) does not,
+ * and neither does `scoreStageData` here, which judges a REF with plain `isFilled`.
+ *
+ * So the browser, the handset and the submit gate all agree with each other, and the REPORT BUILDER
+ * is the odd one out — deliberately, because it is the only scorer with a database under it and the
+ * stage form has to score itself on a phone with no connection. Nothing here is wrong about
+ * submittability, and adding a client-side `refResolves` would create exactly the third opinion the
+ * paragraph above forbids. What IS short is the second section: {@link reportChecks} raises only the
+ * two stage-20 checks, so "what the report would warn about" omits a dangling-REF warning the report
+ * will actually emit. That gap is real, is not a blocker, and is recorded rather than papered over —
+ * do not "fix" it by teaching `scoreStageData` about refs.
  *
  * WHY AN ADDRESS HAS TO BE DERIVED SEPARATELY. `missing` holds field LABELS, because that is what a
  * warning sentence and a report annexure need. A label cannot be navigated to. {@link stageAddresses}

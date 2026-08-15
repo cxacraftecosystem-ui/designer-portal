@@ -14,6 +14,7 @@ from app.schemas.settings import (
 )
 from app.services import ai, managed_secrets
 from app.services.app_settings import (
+    DEFAULT_TIMEZONE,
     SINGLETON_ID,
     STT_KEY_ABSENT,
     STT_KEY_FAILING,
@@ -24,6 +25,7 @@ from app.services.app_settings import (
     get_or_create_app_settings,
     invalid_stt_provider_order,
     is_valid_hhmm,
+    is_valid_timezone,
     load_stt_provider_order,
     recalled_key_verdict,
     remember_key_verdict,
@@ -59,6 +61,24 @@ async def update_app_settings(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{field} must be a 24-hour HH:mm time",
             )
+    # THE THIRD FIELD OF THE SAME SETTING, and until this check it was the only one on the whole body
+    # with no validation: the mode, both HH:mm times and the provider order were all refused when
+    # unusable, while the zone went straight to the column. `within_processing_window` then swallowed
+    # a bad one and evaluated the window in Asia/Kolkata, and `AppSettingDto` echoed the stored
+    # string back, so the page redrew showing a zone the queue was not using — a settings screen
+    # describing something other than what happens, which is the one thing it cannot do. The web
+    # input is free text (AppSettingsPanel), so "IST" or "India Standard Time" is a normal thing for
+    # a master admin to type and must be answered, not absorbed. The offending value is named in the
+    # detail because "invalid timezone" beside a box the admin typed three words into is not enough
+    # to work out which three were wrong.
+    if "batchTimezone" in data and not is_valid_timezone(data["batchTimezone"]):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"batchTimezone {data['batchTimezone']!r} is not a timezone this server knows. "
+                f"Use an IANA name such as {DEFAULT_TIMEZONE!r} or 'UTC'."
+            ),
+        )
     if "sttProviderOrder" in data:
         problem = invalid_stt_provider_order(data["sttProviderOrder"])
         if problem:

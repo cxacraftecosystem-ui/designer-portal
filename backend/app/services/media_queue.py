@@ -46,7 +46,41 @@ RATE_LIMIT_MAX_SECONDS = 900
 # below this fraction of the CPU count — so spare daytime capacity is used instead of waiting for night.
 IDLE_LOAD_FACTOR = 0.6
 
-# Single elected worker (see main.py), so module-level cooldown state is safe.
+# PER-PROCESS STATE, AND IN PRODUCTION THERE ARE TWO PROCESSES. This used to read "Single elected
+# worker (see main.py), so module-level cooldown state is safe", and both halves of that sentence are
+# false. There is no multi-worker uvicorn to elect between (Dockerfile pins ``--workers 1``, with a
+# comment recording the outage ``--workers 2`` caused), and the election in main.py is not what runs
+# the drain in production anyway: ``app/worker.py`` is a standalone systemd unit
+# (``fieldrepo-queue.service``) and the web box ships ``MEDIA_QUEUE_WORKER_ENABLED=false``
+# (DEPLOY_AWS.md). So the drain's cooldown lives in the QUEUE process's memory, while
+# ``POST /media/jobs/process`` — the "Run queue now" button — drains inside the UVICORN process,
+# whose copy of these two globals is always empty. An admin pressing that button during a 429 storm
+# therefore walks straight through a backoff the queue process is observing and re-hits the throttled
+# provider. In dev both run in one process and the state genuinely is shared, which is why this never
+# showed up in testing.
+#
+# THE PAUSE IS NO LONGER CARRIED BY THESE TWO GLOBALS ALONE. They still hold the LADDER — how many
+# consecutive 429s have been seen and therefore how long the next pause is — because that is a
+# judgement about one provider conversation and only the process having it can make it. The pause
+# ITSELF is now written where both processes can see it: ``_park_transcription_jobs_until`` pushes
+# every queued transcription job's ``runAfter`` out to the cooldown deadline, so the web process's
+# selection query (``runAfter <= now``, which it was already running) declines to hand the button any
+# transcription work without needing to know a cooldown exists. The database was already the right
+# place for this and was already half-used for it: ``_defer_rate_limited_job`` has always pushed the
+# ONE job it broke on, which is why the hole was easy to miss — the throttled job was held back and
+# the other forty were not.
+#
+# THE OBVIOUS ALTERNATIVE WAS REJECTED FOR A CONCRETE REASON. An ``AppSetting`` column holding
+# ``transcriptionCooldownUntil`` is the shape this wants, and ``AppSetting`` is a fixed-column
+# singleton, so it needs a schema migration — off limits in this pass. ``runAfter`` is not a
+# substitute chosen to dodge that: it is what the column MEANS ("do not run this before"), it needs
+# no new state to fall out of date, and it is already the predicate the drain selects on.
+#
+# WHAT IS STILL PER-PROCESS, SO NOBODY RE-DISCOVERS IT AS A BUG: a transcription job enqueued DURING
+# a cooldown gets ``runAfter = now`` and can be picked up by the button, because the park is a sweep
+# at the moment of throttling and not a standing predicate. That is self-correcting — the provider
+# 429s it, the batch breaks, and the sweep runs again with a longer ladder — and it costs one
+# request rather than the whole backlog, which is the difference this change is for.
 _rate_limit_cooldown_until: datetime | None = None
 _consecutive_rate_limits = 0
 
@@ -71,10 +105,30 @@ def _server_is_idle() -> bool:
 
 
 def _transcription_in_cooldown(now: datetime | None = None) -> bool:
+    """THIS PROCESS'S OWN VIEW OF THE PAUSE, AND ON PURPOSE IT IS NOT THE ONLY ONE.
+
+    It answers from module state, so in the web process it is always False — which is exactly the
+    hole that made the "Run queue now" button walk through a backoff the queue process was
+    observing. It is NOT the place that was fixed: reaching into the database from a hot predicate
+    that runs on every drain pass would buy a round trip per pass to re-derive something
+    ``_park_transcription_jobs_until`` has already written onto the rows the selection query reads.
+    The pause is enforced by ``runAfter``; this stays as the cheap in-process shortcut that keeps the
+    drain from even asking for transcription work it knows is parked.
+    """
     return _rate_limit_cooldown_until is not None and (now or datetime.now(UTC)) < _rate_limit_cooldown_until
 
 
-def _enter_rate_limit_cooldown(retry_after: float | None) -> None:
+def _enter_rate_limit_cooldown(retry_after: float | None) -> datetime:
+    """Advance the backoff ladder and return the deadline the whole queue is now paused until.
+
+    IT RETURNS THE DEADLINE BECAUSE THE CALLER HAS TO PERSIST IT. The ladder is computed here and
+    nowhere else; handing the answer back is what lets ``_defer_rate_limited_job`` and
+    ``_park_transcription_jobs_until`` write the SAME instant onto the rows instead of each
+    re-deriving a number from ``retry_after``. The deferred job used to be pushed
+    ``RATE_LIMIT_BASE_SECONDS`` while this pause could be thirty times that, so the row said the job
+    was runnable long before the process holding the pause agreed — two accounts of one decision,
+    and the shorter one was the one a second process could see.
+    """
     global _rate_limit_cooldown_until, _consecutive_rate_limits
     _consecutive_rate_limits += 1
     if retry_after and retry_after > 0:
@@ -82,6 +136,7 @@ def _enter_rate_limit_cooldown(retry_after: float | None) -> None:
     else:
         delay = min(RATE_LIMIT_BASE_SECONDS * (2 ** (_consecutive_rate_limits - 1)), RATE_LIMIT_MAX_SECONDS)
     _rate_limit_cooldown_until = datetime.now(UTC) + timedelta(seconds=delay)
+    return _rate_limit_cooldown_until
 
 
 def _clear_rate_limit_cooldown() -> None:
@@ -287,10 +342,30 @@ async def process_next_media_jobs(
     limit: int | None = None,
     worker_id: str = "api-worker",
     settings: Settings | None = None,
+    *,
+    recover: bool = True,
 ) -> dict[str, int]:
+    """Drain a batch of media processing jobs.
+
+    ``recover=False`` FOR ANY CALLER THAT IS NOT THE QUEUE PROCESS, and the reason is a double
+    transcription. :func:`recover_stale_processing_jobs` decides a job is dead purely from the age of
+    ``lockedAt`` against a 30-minute cutoff — there is no liveness check on ``lockedBy``, and there
+    cannot be a cheap one across two hosts. Inside the queue process that is safe by construction: it
+    is serial, so a job it is itself holding cannot also be a job it is between batches on. From the
+    WEB process it is not: ``POST /media/jobs/process`` runs there (see the note above
+    ``_rate_limit_cooldown_until``), and a provider call that has hung past thirty minutes in the
+    queue process is flipped back to QUEUED by the button, then honestly re-locked — ``_lock_job``'s
+    CAS matches on ``status: QUEUED`` and the recovery has just made that true, so the compare-and-set
+    succeeds and defends nothing. The same recording is sent twice, billed twice, and the two results
+    race to write ``MediaFile.transcriptText``.
+
+    Recovery is not lost by skipping it here: the queue process calls this every pass, so a genuinely
+    dead lock is cleared within one drain interval instead of within one button press.
+    """
     settings = settings or get_settings()
     batch_size = max(1, limit or settings.media_queue_batch_size)
-    await recover_stale_processing_jobs()
+    if recover:
+        await recover_stale_processing_jobs()
     now = datetime.now(UTC)
     where: dict[str, Any] = {"status": QUEUED, "runAfter": {"lte": now}}
     # When transcription may run: inside the configured off-peak window, OR whenever the server is idle
@@ -326,8 +401,16 @@ async def process_next_media_jobs(
         except RateLimited as exc:
             # Throttled: requeue this job without consuming an attempt, then pause transcription for a
             # cooldown and stop draining the batch so we don't keep hammering a throttled provider.
-            await _defer_rate_limited_job(job, exc.retry_after)
-            _enter_rate_limit_cooldown(exc.retry_after)
+            #
+            # THE LADDER IS ADVANCED FIRST BECAUSE THE DEADLINE IT PRODUCES IS WHAT BOTH WRITES USE.
+            # Moving ``_enter_rate_limit_cooldown`` below them would leave each write deriving its
+            # own number from ``retry_after`` — which is the split (a row saying "runnable in 30s"
+            # under a process pausing for 900) this ordering exists to close. The park runs after the
+            # defer so it sees that job already back at QUEUED; it does not touch it again, because
+            # its ``lt`` predicate excludes a row already sitting exactly on the deadline.
+            until = _enter_rate_limit_cooldown(exc.retry_after)
+            await _defer_rate_limited_job(job, until)
+            await _park_transcription_jobs_until(until)
             break
         except Exception as exc:  # noqa: BLE001
             failed += 1
@@ -335,10 +418,17 @@ async def process_next_media_jobs(
     return {"processed": processed, "succeeded": succeeded, "failed": failed}
 
 
-async def _defer_rate_limited_job(job: Any, retry_after: float | None) -> None:
+async def _defer_rate_limited_job(job: Any, until: datetime) -> None:
     """Requeue a throttled transcription job, restoring its pre-lock attempt count so rate limiting
-    never exhausts its retries — it will be picked up again after the cooldown."""
-    delay = retry_after if (retry_after and retry_after > 0) else RATE_LIMIT_BASE_SECONDS
+    never exhausts its retries — it will be picked up again after the cooldown.
+
+    ``until`` IS THE COOLDOWN DEADLINE, NOT A DELAY OF THIS FUNCTION'S OWN. It used to take
+    ``retry_after`` and derive ``RATE_LIMIT_BASE_SECONDS`` from it whenever the provider named no
+    number — thirty seconds, while the process pausing itself in the same breath could be pausing
+    for nine hundred. The row therefore advertised the job as runnable during a window in which the
+    only process that knew better was refusing to run it, and a second process reading only the row
+    took the offer. One deadline, written to both places.
+    """
     await db.mediaprocessingjob.update(
         where={"id": job.id},
         data={
@@ -346,9 +436,43 @@ async def _defer_rate_limited_job(job: Any, retry_after: float | None) -> None:
             "lockedAt": None,
             "lockedBy": None,
             "attempts": job.attempts,
-            "runAfter": datetime.now(UTC) + timedelta(seconds=delay),
+            "runAfter": until,
             "error": "Rate-limited; awaiting cooldown before automatic retry.",
         },
+    )
+
+
+async def _park_transcription_jobs_until(until: datetime) -> None:
+    """Hold every queued transcription job back until the cooldown expires.
+
+    THE COOLDOWN HAD TO BECOME VISIBLE TO A SECOND PROCESS, AND THIS IS WHERE IT BECOMES SO. The
+    backoff lives in module globals; ``app/worker.py`` runs the drain in its own systemd unit while
+    ``POST /media/jobs/process`` — the media panel's "Run queue now" button — drains inside the
+    uvicorn process, whose copy of those globals is always empty (the web box ships
+    ``MEDIA_QUEUE_WORKER_ENABLED=false``; see the note above ``_rate_limit_cooldown_until``). So an
+    admin who sees the queue growing during a 429 storm and presses the button walked straight
+    through a pause the queue process was observing and re-hit the throttled provider — with the
+    whole backlog, because ``_defer_rate_limited_job`` had held back only the single job the batch
+    broke on. In dev both run in one process and the state genuinely is shared, which is why this
+    never showed up in testing.
+
+    ``runAfter`` CARRIES IT RATHER THAN A NEW COLUMN. It already means "do not run this before", it
+    is already the predicate ``process_next_media_jobs`` selects on, and it therefore needs no
+    reader anywhere: a process that knows nothing about cooldowns declines the work for the right
+    reason. The alternative — an ``AppSetting`` row — needs a schema migration and a second thing to
+    keep in step with the queue.
+
+    ``runAfter: {"lt": until}`` SO A LONGER HOLD IS NEVER SHORTENED. A job already parked past this
+    deadline (by a previous, longer rung of the ladder, or by a provider's own Retry-After) keeps
+    the later time; this only ever pushes rows outwards. Dropping that condition would let a second
+    429 with a short Retry-After pull the whole backlog forward into a provider still refusing it.
+
+    Attempts are untouched, deliberately: being throttled is not a failed attempt, which is the
+    invariant ``_defer_rate_limited_job`` already exists to protect.
+    """
+    await db.mediaprocessingjob.update_many(
+        where={"jobType": TRANSCRIPTION, "status": QUEUED, "runAfter": {"lt": until}},
+        data={"runAfter": until},
     )
 
 
@@ -545,7 +669,26 @@ async def _process_job(job: Any, settings: Settings) -> None:
         # COMPLETED — i.e. awaiting human approval through the existing transcript-approval flow.
         mode = transcription_mode(await load_app_settings())
         if result.get("status") == "COMPLETED" and mode in {"REFINED", "REFINED_TRANSLATED"} and result.get("text"):
-            refined = await refine_transcript_text(result.get("text"), mode == "REFINED_TRANSLATED", settings)
+            # THE SECOND HOP IS OPTIONAL AND MUST NEVER COST THE FIRST ONE. The provider has already
+            # been paid and the raw transcript is sitting in ``result`` at this line; letting an
+            # exception out of the refine call sent the whole run to ``_handle_job_failure``, which
+            # writes a job status and — until the fix above — left the clip at QUEUED with the
+            # transcript discarded unwritten. Refinement is a formatting and translation pass over
+            # text we already hold, so its failure is a degradation, not a failure of the job: fall
+            # back to the raw text and let the run land COMPLETED. Anyone who "simplifies" this by
+            # removing the try re-creates a defect that throws away money and testimony together.
+            try:
+                refined = await refine_transcript_text(
+                    result.get("text"), mode == "REFINED_TRANSLATED", settings
+                )
+            except Exception as exc:  # noqa: BLE001 — see above: the raw transcript is worth keeping.
+                logger.warning(
+                    "media_queue: transcript refinement failed for media %s; storing the raw "
+                    "transcript instead (%s)",
+                    job.mediaFileId,
+                    exc,
+                )
+                refined = {}
             if refined.get("status") == "COMPLETED" and refined.get("refined"):
                 result = {
                     **result,
@@ -728,6 +871,41 @@ async def _finalize_refused_job(job: Any, verdict: Any) -> None:
 
 
 async def _handle_job_failure(job_id: str, exc: Exception) -> None:
+    """Record a failed attempt on the job — and, once the ladder is spent, on the CLIP as well.
+
+    THE CLIP USED TO BE LEFT BEHIND, AND QUEUED IS A TRAP. ``MediaFile.transcriptStatus`` is written
+    back only by :func:`_apply_transcription_result`, which is reached only after the provider has
+    answered. Every raise BEFORE that point — the consent read, ``get_object_bytes``,
+    ``transcribe_audio_bytes`` itself, ``load_app_settings``, ``refine_transcript_text`` — lands here
+    instead, and here used to update the job and nothing else. So a clip whose S3 object was briefly
+    unreachable overnight ended with the job FAILED and the clip still reading
+    ``transcriptStatus="QUEUED"``, ``transcriptError=None``. While QUEUED was ALSO on
+    ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES`` that was terminal: every later stage save
+    skipped the clip, ``/media/complete`` could not rescue it either (``_finish_pending_media``
+    re-enqueues only when the row has NO job, and a FAILED job is still a job), and the only escapes
+    were the admin-only "Transcribe now" button and ``POST /media/jobs/{id}/retry``.
+
+    THIS IS THE SECOND HALF OF A FIX WHOSE FIRST HALF IS ALREADY IN. ``workshop_transcripts`` no
+    longer treats QUEUED/PROCESSING as settled — it reads them as a CLAIM that a job exists and
+    checks the queue table, so saving the stage already recovers a stranded clip. That closes the
+    "never transcribed again" half and leaves this one: the COLUMN still said QUEUED with no error
+    on it, so ``report_annexures`` went on classifying the recording as "still being transcribed",
+    ``GET /media`` showed a designer a clip that was permanently waiting on nothing, and a clip no
+    stage references had no save to be rescued by at all. Writing the terminal state here is what
+    makes the column a fact rather than a claim, and it is where the job's own terminal state is
+    already being written — one place, one truth.
+
+    FAILED rather than any new value, because FAILED is deliberately ABSENT from
+    ``_SETTLED_TRANSCRIPT_STATUSES`` (that set's own comment says so), so the recovery path the
+    consent-refusal writer already relies on picks this clip up too.
+
+    IT WILL NOT WRITE OVER A TRANSCRIPT THAT ALREADY EXISTS. The ``transcriptText`` guard in the
+    ``update_many`` below mirrors :func:`_record_transcription_refused` and honours
+    :func:`_transcript_write`'s hard-won rule: a clip transcribed months ago whose re-run failed must
+    not be relabelled FAILED, because that is a lie about the row and hides it from every screen that
+    filters on the status. Expressed as a predicate on the UPDATE rather than as a read-then-write so
+    there is no window between the two, and so the whole thing stays one round trip.
+    """
     job = await db.mediaprocessingjob.find_unique(where={"id": job_id})
     if not job:
         return
@@ -749,3 +927,23 @@ async def _handle_job_failure(job_id: str, exc: Exception) -> None:
             "error": error,
         },
     )
+    if exhausted and job.jobType == TRANSCRIPTION and job.mediaFileId:
+        # Only on exhaustion: while attempts remain the clip really IS queued, and saying FAILED
+        # between two retries would make ``enqueue_stage_transcriptions`` file a second job for a
+        # recording the first one is still working through.
+        try:
+            await db.mediafile.update_many(
+                where={
+                    "id": job.mediaFileId,
+                    "OR": [{"transcriptText": None}, {"transcriptText": ""}],
+                },
+                data={"transcriptStatus": FAILED, "transcriptError": error},
+            )
+        except Exception as exc2:  # noqa: BLE001 — the job's own terminal state is already written.
+            logger.warning(
+                "media_queue: transcription job %s is exhausted but the clip's status could not be "
+                "written, so media %s may stay stuck at QUEUED (%s)",
+                job_id,
+                job.mediaFileId,
+                exc2,
+            )

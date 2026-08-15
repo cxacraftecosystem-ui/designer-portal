@@ -159,7 +159,27 @@ export function setToken(token: string | null) {
   else window.localStorage.removeItem("field_repo_token");
 }
 
-export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+/**
+ * Per-call behaviour that is about the CALLER's context rather than the request itself, which is why
+ * it is a third argument and not stuffed into `RequestInit`.
+ */
+export type ApiFetchOptions = {
+  /**
+   * Send the browser to /login when the server answers 401 to a request that carried a token.
+   * Defaults to true: for a screen that only exists for a signed-in user, an expired session and a
+   * sign-in form are the same thing.
+   *
+   * Pass `false` from a call that runs on PUBLIC pages. The one that matters is `AuthProvider`'s
+   * `/me` probe — see the note in the 401 branch below.
+   */
+  redirectOn401?: boolean;
+};
+
+export async function apiFetch<T>(
+  path: string,
+  init: RequestInit = {},
+  options: ApiFetchOptions = {}
+): Promise<T> {
   assertApiConfigured();
 
   const headers = new Headers(init.headers);
@@ -186,11 +206,39 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     // resort on its own, or a body-less failure reaches the screen as a blank error box.
     const message = describeApiDetail(detail, response.statusText || `The server refused the request (HTTP ${response.status}).`);
     if (response.status === 401 && token && typeof window !== "undefined") {
-      // A previously-valid session expired: drop the stored token and send the user to login
-      // (unless they are already there). Anonymous requests — e.g. the landing page's /me probe —
-      // sent no token, so they fail without navigating the visitor away from public pages.
+      // A previously-valid session expired: drop the stored token, always. The token is proven dead
+      // by the answer we are holding, and every screen — public or protected — is better off
+      // without it.
       setToken(null);
-      if (window.location.pathname !== "/login") window.location.assign("/login");
+
+      /*
+        THE NAVIGATION IS A SEPARATE DECISION, AND IT IS THE CALLER'S.
+
+        The comment that used to live here reasoned that "anonymous requests — e.g. the landing
+        page's /me probe — sent no token, so they fail without navigating the visitor away from
+        public pages". That is true only of a visitor who has NO stored token. `AuthProvider` sits
+        in the ROOT layout (app/layout.tsx), above the public landing page as well as the protected
+        tree, and its mount effect probes /me on EVERY page load. A designer who last signed in six
+        weeks ago opens the marketing home page: her expired token is sent, 401 comes back, and the
+        browser hard-navigates her off the one route this app most needs to be publicly reachable,
+        mid-scroll, with no explanation. Audit 2026-08-15 (MINOR, frontend) filed it; the invariant
+        the old comment asserted was enforced by nothing.
+
+        So the condition is no longer "a token was sent" — it is "the caller says this call belongs
+        to a signed-in screen". `AuthProvider.refreshMe` opts out (`redirectOn401: false`) and
+        handles its own 401 correctly: it clears the token, sets `user` to null, and `AppShell` then
+        does the SOFT `router.replace("/login")` for protected routes only. Public pages are left
+        alone, which is the whole point.
+
+        `replace`, not `assign`: `assign` pushes a history entry, so Back returned the visitor to
+        the page they had just been thrown off — Back appearing to malfunction was half of what the
+        finding described. `replace` leaves history where it was.
+
+        The /login self-exclusion stays; without it a 401 on the sign-in screen reloads it forever.
+      */
+      if ((options.redirectOn401 ?? true) && window.location.pathname !== "/login") {
+        window.location.replace("/login");
+      }
     }
     throw new ApiError(response.status, message, body);
   }

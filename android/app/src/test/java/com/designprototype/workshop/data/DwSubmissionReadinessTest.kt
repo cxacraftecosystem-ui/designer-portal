@@ -351,6 +351,96 @@ class DwSubmissionReadinessTest {
         assertFalse(empty.checks.map { it.id }.contains("stage-excluded:SETUP"))
     }
 
+    /**
+     * The two checks, reachable by the screen that has to SAY them.
+     *
+     * ── THE DEFECT THIS PINS ──────────────────────────────────────────────────────────────────────
+     *
+     * `reportChecks` was private and [DwSubmissionReadiness.assess] was its only route out. The one
+     * caller of `assess` in `main/` is the stage index, which reads `blocking` and nothing else — so
+     * both checks were computed on every stage-index open and rendered nowhere, while the exclusion
+     * they warn about was honoured in full: `applyReportSettings` drops the section from the file and
+     * the Data completeness annexure in that same file scores the dropped stage as complete. A stage
+     * of captured work left the building and no surface said a word.
+     *
+     * THE ASSERTION IS AGREEMENT, not the checks themselves — those are covered by the two tests
+     * above, through `assess`. What must never drift is that the report screen and the readiness
+     * screen answer this question the same way; a second route to the same fact is exactly how the
+     * two screens would come to disagree about which stages are in the delivered document.
+     */
+    @Test
+    fun `the report screen reaches the same two checks assess computes, entry for entry`() {
+        val exporting = draftWith(
+            stage("SETUP", singleton = mapOf("craftName" to text("Sambalpuri bandha"))),
+            stage(
+                "REPORT_GENERATION",
+                singleton = mapOf(
+                    "templateId" to text("MINISTRY_2031"),
+                    "excludedStages" to buildJsonArray { add("SETUP") },
+                ),
+            ),
+        )
+
+        val direct = DwSubmissionReadiness.reportChecks(
+            registry, exporting, workshopId, computeWorkshopCompleteness(registry, exporting, null),
+        )
+        val throughAssess = DwSubmissionReadiness.assess(registry, exporting, workshopId).checks
+
+        assertEquals(
+            "the report screen must be able to state both without assembling a readiness result",
+            listOf("template-unknown", "stage-excluded:SETUP"),
+            direct.map { it.id },
+        )
+        assertEquals(
+            "one question, one answer: the export screen and the stage index must not drift",
+            throughAssess.map { it.id to it.detail },
+            direct.map { it.id to it.detail },
+        )
+    }
+
+    /**
+     * WHICH COPY THE CHECKS ARE SCORED FROM, which is the report screen's own decision and the
+     * reason this overload takes scores instead of computing them.
+     *
+     * The export screen builds its document from the MERGED draft — this device's work with the
+     * stages it downloaded for this export filled in around it (`reportSourceFor`) — and prints its
+     * completeness percentage from the same scores. Scoring the exclusion check against the LOCAL
+     * draft alone would read the excluded stage as empty on exactly the workshop that most needs the
+     * warning: one captured on a colleague's handset, where every answer being dropped from the file
+     * arrived from the server ten seconds ago.
+     */
+    @Test
+    fun `an excluded stage is judged by the copy being exported, not by the local one`() {
+        val settings = stage(
+            "REPORT_GENERATION",
+            singleton = mapOf(
+                "templateId" to text("DCH_STANDARD"),
+                "excludedStages" to buildJsonArray { add("SETUP") },
+            ),
+        )
+        // What this handset itself has for stage 1: nothing. The stage was captured elsewhere.
+        val localOnly = draftWith(settings)
+        // What `reportSourceFor` hands the exporter: the server's copy of stage 1, merged in.
+        val merged = draftWith(
+            stage("SETUP", singleton = mapOf("craftName" to text("Sambalpuri bandha"))),
+            settings,
+        )
+
+        assertFalse(
+            "nothing is being lost from the file, so nothing is said",
+            DwSubmissionReadiness.reportChecks(
+                registry, localOnly, workshopId,
+                computeWorkshopCompleteness(registry, localOnly, null),
+            ).map { it.id }.contains("stage-excluded:SETUP"),
+        )
+        assertTrue(
+            "the downloaded stage IS in the document's source and IS being dropped from it",
+            DwSubmissionReadiness.reportChecks(
+                registry, merged, workshopId, computeWorkshopCompleteness(registry, merged, null),
+            ).map { it.id }.contains("stage-excluded:SETUP"),
+        )
+    }
+
     // ── Saying it honestly ───────────────────────────────────────────────────────────────────────
 
     @Test

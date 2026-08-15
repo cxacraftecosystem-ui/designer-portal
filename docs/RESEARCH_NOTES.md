@@ -394,7 +394,7 @@ flowchart LR
 
 ### 5.5 What the fix is, and the honesty about what it changes
 
-The read fix is `hydrate_relations` (`backend/app/services/records.py:420`), which issues **exactly
+The read fix is `hydrate_relations` (`backend/app/services/records.py`), which issues **exactly
 one `find_many` per relation — the same statements the `include` produced — and awaits them
 together** through a semaphore-bounded `asyncio.gather` (`backend/app/services/concurrency.py`).
 
@@ -739,10 +739,11 @@ Higher rank inherits every power below it; grantable capability booleans (`canRe
 `canDownloadDataset`, `canManageWorkshops`, …) can additionally lift one specific power for one
 lower-tier account without promoting them.
 
-**DERIVED** — the identical ladder appears in `backend/app/core/deps.py:30`,
-`frontend/lib/permissions.ts:8`, `android/.../MainActivity.kt:2277` and
-`android/.../ui/AppNavigation.kt:144`. Numeric ranks are spaced by ten specifically so a tier can be
-inserted without renumbering.
+**DERIVED** — the identical ladder appears in `backend/app/core/deps.py::ROLE_RANK`,
+`frontend/lib/permissions.ts::ROLE_RANK`,
+`android/app/src/main/java/com/designprototype/workshop/MainActivity.kt::ROLE_RANK` and
+`android/app/src/main/java/com/designprototype/workshop/ui/AppNavigation.kt::FieldPermissions`.
+Numeric ranks are spaced by ten specifically so a tier can be inserted without renumbering.
 
 **Enforcement is server-side.** **127 route-level dependency guards** across the route modules —
 DERIVED by counting `Depends(...)` occurrences in `backend/app/api/routes/*.py`:
@@ -1115,10 +1116,11 @@ object keys share the single `media/` prefix.
 ## 13. Result 9 — responsive navigation priced by measurement, not by estimate
 
 The Android navigation bar sheds width in five ordered tiers rather than scrolling horizontally. The
-rationale, from `android/.../ui/AppNavigation.kt`, is worth quoting because it is a usability claim
-with a mechanism: an earlier pass wrapped the bar in a horizontal scroller, and on a 360 dp phone
-that showed the wordmark, Dashboard and part of Walkthrough while four groups, the admin toggle and
-the hamburger sat off-screen behind a gesture nobody discovers — *"which reads to the person holding
+rationale, from `android/app/src/main/java/com/designprototype/workshop/ui/AppNavigation.kt`, is
+worth quoting because it is a usability claim with a mechanism: an earlier pass wrapped the bar in a
+horizontal scroller, and on a 360 dp phone that showed the wordmark, Dashboard and part of
+Walkthrough while four groups, the admin toggle and the hamburger sat off-screen behind a gesture
+nobody discovers — *"which reads to the person holding
 the phone as a navigation bar that was never built. A chip the user cannot see is a chip that does
 not exist."*
 

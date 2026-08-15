@@ -258,6 +258,42 @@ def test_a_required_question_left_blank_prints_as_a_visible_gap():
     )
 
 
+def test_a_retired_required_question_nobody_answered_prints_no_row_at_all():
+    """The intersection the two tests above each cover one half of, and it was the defect.
+
+    ``prints`` was ``has_answer or is_required`` — retirement was never consulted — and nothing
+    upstream clears ``isRequired`` when a question is retired: ``supersede_question`` copies it onto
+    the replacement and leaves it set on the original, so a REQUIRED question that was reworded is
+    permanently ``required, unanswered, retired`` for every sitting recorded afterwards. Twelve
+    sittings taken after one rewording each grew a row reading "How many looms do you own?
+    (no longer asked) | Not recorded." — a respondent who was never shown the question, recorded as
+    having left it blank, in an annexure whose own lead paragraph tells the reader that a blank means
+    a gap in the fieldwork.
+
+    The rule is stated in the loader (``questionnaire_forms.report_items``: retired questions are
+    "printed where they carry an answer") and implemented correctly in the sibling renderer
+    (``report_custom_sections.printed_fields``). Both other arms are asserted here too, because the
+    cheap way to pass this test is to stop printing retired questions altogether, which would delete
+    the evidence the supersede rule exists to keep.
+    """
+    item = _item([
+        _sitting(answers=[
+            _answer("Who else weaves in the household?", "My wife"),
+            _answer("How many looms do you own?", "", is_required=True, is_retired=True),
+            _answer("How many looms did you own?", "9", is_required=True, is_retired=True),
+            _answer("What is your monthly income?", "", is_required=True),
+        ]),
+    ])
+    text = _text(_document([item])[0])
+    assert "How many looms do you own?" not in text, (
+        "a required question that was reworded before this sitting printed a Not recorded. row, so "
+        "the annexure asserts a gap in fieldwork that never happened"
+    )
+    # The two arms this must not have broken to get there.
+    assert "How many looms did you own?" in text and RETIRED_NOTE in text
+    assert "What is your monthly income?" in text and NOT_RECORDED in text
+
+
 def test_the_interviewers_note_prints_with_the_answer_it_belongs_to():
     item = _item([
         _sitting(answers=[

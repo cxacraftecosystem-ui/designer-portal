@@ -595,22 +595,71 @@ def _hint(value: str | None) -> str | None:
     return value[-4:] if len(value) > 8 else "…"
 
 
+def _override_is_readable(row: Any | None) -> bool:
+    """Can the ciphertext on *row* actually be opened with the key this process holds?
+
+    THE PROVENANCE OF A MANAGED SECRET IS NOT "DOES A ROW EXIST". It is "which value will the next
+    provider call actually send", and those two answers part company in exactly the case the module
+    header warns about: JWT_SECRET rotated while SECRETS_ENCRYPTION_KEY was unset leaves every
+    stored override permanently unopenable, ``refresh_if_stale`` drops it from ``_overrides``
+    (see :func:`refresh_if_stale`, which never adds an undecryptable row to the cache), and
+    ``peek_secret`` falls through to the environment value. Deriving ``source``/``hint``/
+    ``configured`` from ``row is not None`` — which is what this function replaces — then told the
+    admin a fact about the STORED key while handing them the ENVIRONMENT one, on all three surfaces
+    that exist to tell two keys apart: ``GET /secrets/{key}/reveal`` returned the environment
+    plaintext labelled ``source: "database"``, the Test button probed the environment value and
+    stamped the verdict on the row (erasing the "re-enter this key" flag), and the Settings hub
+    printed the stored key's last four characters beside the environment key's value. Three audit
+    findings, one cause; fix it here and all three surfaces tell the truth without a special case
+    of their own. Do not reintroduce a ``row is not None`` provenance test anywhere downstream.
+
+    DECRYPTING HERE RATHER THAN CONSULTING ``_overrides`` is deliberate and load-bearing. The cache
+    is up to ``_CACHE_TTL_SECONDS`` behind a row written by another process (the queue worker, a
+    second API box), so a perfectly healthy override saved elsewhere twenty seconds ago is simply
+    absent from it — reading readability off the cache would replace the old lie with a fresh one
+    that says a working key is broken. ``decrypt`` is a pure function of the ciphertext already in
+    hand, and it is cheap: on this machine a Fernet open of the 140-byte token these rows carry
+    measures 55 µs, and a token that cannot be opened fails in 9 µs (timeit, 100k loops, CPython in
+    backend/.venv). The seven decrypts a Settings-hub load costs are ~0.4 ms — noise beside the
+    query that fetched the rows.
+
+    Never returns, logs or stores the plaintext: only whether there was one.
+    """
+    if row is None:
+        return False
+    token = getattr(row, "valueEnc", None)
+    return bool(token) and decrypt(token) is not None
+
+
 def _describe(spec: ManagedKey, row: Any | None, verdict: dict[str, Any] | None = None) -> dict[str, Any]:
     """The safe, value-free projection of one managed key. NEVER add the plaintext to this dict.
 
     ``verdict`` is the durable SecretTestResult for an ENVIRONMENT-supplied key, and is consulted
     only when there is no ManagedSecret row: a stored override carries its own verdict columns and
     the two must not be mixed, since they describe different values.
+
+    ``source`` names WHERE THE VALUE IN FORCE COMES FROM, which is why an unopenable override reads
+    as ``environment`` (or ``unset``) and not as ``database`` — the environment value is what every
+    provider call, and the reveal endpoint, will actually use. The fact that a broken row is sitting
+    behind it is not lost, it moves to ``overrideUnreadable``, which is what a client renders as
+    "this override needs re-entering" and what ``test_secret`` branches on.
     """
     environment = env_value(spec.key)
     stored = row is not None
-    if stored:
+    readable = _override_is_readable(row)
+    if readable:
         source = SOURCE_DATABASE
     elif environment:
         source = SOURCE_ENVIRONMENT
     else:
         source = SOURCE_UNSET
     updated_by = getattr(row, "updatedBy", None) if stored else None
+    # THE ROW'S OWN VERDICT COLUMNS WIN FOR ANY STORED ROW, readable or not. When the row cannot be
+    # opened, refresh_if_stale has just written FAILED + _UNDECRYPTABLE_ERROR onto it, and that is
+    # the ONE durable signal telling the operator which overrides must be re-entered after a key
+    # rotation. Letting an environment SecretTestResult (a verdict about a different value, quite
+    # possibly a passing one) supply lastStatus here would hide it — the same erasure test_secret
+    # used to perform, arriving by another route.
     if stored:
         last_status, last_checked_at, last_error = row.lastStatus, row.lastCheckedAt, row.lastError
     elif verdict is not None:
@@ -625,12 +674,32 @@ def _describe(spec: ManagedKey, row: Any | None, verdict: dict[str, Any] | None 
         "key": spec.key,
         "label": spec.label,
         "description": spec.description,
-        "configured": stored or bool(environment),
+        # "Something will be sent to the provider" — an override nobody can decrypt supplies
+        # nothing, so with no environment value behind it this key is genuinely unconfigured.
+        "configured": readable or bool(environment),
         "source": source,
-        "hint": (row.hint if stored else _hint(environment)),
+        # True ONLY for the rotation casualty: a row exists and its ciphertext is dead. Callers use
+        # it to say "the stored override needs re-entering" beside a value that came from elsewhere.
+        #
+        # AND IT IS HALF OF "IS THERE A ROW TO DELETE", which is a different question from `source`
+        # and must be answered from both fields together: a row exists exactly when
+        # `source == "database"` OR `overrideUnreadable` is true. The Settings hub learned this the
+        # expensive way — it drew its "Clear override" button from `source == "database"` alone, so
+        # making `source` honest above took the button off the one row that needs it and left the
+        # admin reading "this override cannot be decrypted" with no control to remove it (see
+        # `hasStoredOverride` in frontend/components/settings/ApiKeysPanel.tsx). If a client only
+        # ever needs "does a row exist", give it a field of its own here — never let it go back to
+        # inferring row existence from `source`.
+        "overrideUnreadable": stored and not readable,
+        # The fingerprint an admin compares against a provider dashboard, so it must describe the
+        # key IN FORCE. `row.hint` was written from the stored value; once that value is unreadable
+        # the hint names a key the deployment is not using, which is worse than showing none.
+        "hint": (row.hint if readable else _hint(environment)),
         "lastStatus": last_status,
         "lastCheckedAt": last_checked_at,
         "lastError": last_error,
+        # Still reported for an unreadable row: who last saved the override, and when, is exactly
+        # the person and date an operator needs in order to work out which key to re-enter.
         "updatedBy": (getattr(updated_by, "name", None) or getattr(updated_by, "email", None)),
         "updatedAt": (row.updatedAt if stored else None),
     }
@@ -663,6 +732,41 @@ async def describe_secret(key: str) -> dict[str, Any]:
     row = await db.managedsecret.find_unique(where={"key": key}, include={"updatedBy": True})
     verdict = None if row is not None else await environment_verdict(key)
     return _describe(MANAGED_KEYS[key], row, verdict)
+
+
+async def reveal_secret(key: str) -> dict[str, Any]:
+    """The plaintext in force for *key*, WITH the provenance of that same plaintext.
+
+    THE VALUE AND ITS LABEL COME OUT OF ONE READ OF ONE ROW, and that is the whole point of this
+    function existing rather than the route calling ``get_secret`` and ``describe_secret`` a line
+    apart. Those are two resolutions of two different questions ("what value applies" and "what does
+    the table look like"), and they disagreed precisely when it mattered: an override that could not
+    be decrypted made ``get_secret`` return the ENVIRONMENT key while ``describe_secret`` labelled it
+    ``source: "database"``, so the one screen an operator uses to check which key is stored where
+    reported a plausible key from the wrong place, in the state this module documents as
+    unrecoverable. A key rotation was therefore left in place because the reveal button said the
+    stored override had survived.
+
+    The refresh first is not decoration: it is what writes the FAILED/"re-enter this key" flag onto
+    a row that has just become unopenable, so the eye button and the list agree about the same row.
+    """
+    await refresh_if_stale()
+    row = await db.managedsecret.find_unique(where={"key": key})
+    token = getattr(row, "valueEnc", None) if row is not None else None
+    # The one place besides a provider call where plaintext leaves this module (see the SECURITY
+    # note in the module docstring). Decrypting the row we just read — rather than reading the
+    # cache — is what ties the returned value to the returned source: both are statements about
+    # this ciphertext, so there is no window in which they can describe different keys.
+    override = decrypt(token) if token else None
+    if override:
+        return {"key": key, "value": override, "source": SOURCE_DATABASE, "overrideUnreadable": False}
+    environment = env_value(key)
+    return {
+        "key": key,
+        "value": environment,
+        "source": SOURCE_ENVIRONMENT if environment else SOURCE_UNSET,
+        "overrideUnreadable": row is not None,
+    }
 
 
 # --- Writes -----------------------------------------------------------------------------------------
@@ -709,6 +813,23 @@ async def delete_secret(key: str) -> dict[str, Any]:
 # --- Probing ------------------------------------------------------------------------------------------
 
 
+def _undecryptable_probe_note(ok: bool, error: str | None, *, configured: bool) -> str:
+    """What Test has to say when the row it was pressed on cannot be decrypted.
+
+    Both halves matter and neither may be dropped. The re-entry instruction is the durable state of
+    the row and must survive the click that used to erase it; the probe result is the answer to the
+    question the admin actually asked, and returning the row unchanged would make the button look
+    broken. ``lastCheckedAt`` is deliberately NOT advanced to now by the caller: nothing checked the
+    stored key, and a fresh timestamp beside "needs re-entering" reads as "somebody has looked at
+    this and it is fine".
+    """
+    if not configured:
+        return f"{_UNDECRYPTABLE_ERROR} There is no environment value behind it either, so this key is unusable."
+    if ok:
+        return f"{_UNDECRYPTABLE_ERROR} (Test ran against the environment value, which passed.)"
+    return f"{_UNDECRYPTABLE_ERROR} (Test ran against the environment value, which failed: {error})"
+
+
 async def test_secret(key: str) -> dict[str, Any]:
     """Run this key's probe now and persist the verdict, wherever this key's verdict belongs.
 
@@ -728,6 +849,33 @@ async def test_secret(key: str) -> dict[str, Any]:
         ok, error = await asyncio.to_thread(_safe_probe, spec, value)
 
     described = await describe_secret(key)
+
+    # A ROW WHOSE CIPHERTEXT IS DEAD GETS ITS VERDICT COLUMNS LEFT ALONE. `value` above came from
+    # the environment (get_secret falls through), so a verdict about it is not a verdict about the
+    # stored key, and writing it onto the row overwrote the FAILED + _UNDECRYPTABLE_ERROR that
+    # refresh_if_stale had just put there — the one durable "re-enter this key" flag an operator has
+    # after a JWT_SECRET rotation. The row then read OK until the cache went stale and the flag came
+    # back, so it alternated between healthy and broken depending on how recently somebody had
+    # pressed Test, and while it read OK the STT freeze thawed on the strength of a key the stored
+    # row does not contain (settings.py `_provider_verification` maps lastStatus == OK to PASSING).
+    # The environment value we DID probe gets its verdict where an environment verdict belongs, in
+    # SecretTestResult, which stores no trace of the value.
+    if described["overrideUnreadable"]:
+        if value:
+            await record_environment_verdict(key, value, ok=ok, checked_at=checked_at, error=error)
+        described["lastStatus"] = _STATUS_FAILED
+        described["lastError"] = _undecryptable_probe_note(ok, error, configured=bool(value))
+        # WARNING, not INFO: under uvicorn an app logger has no handler and INFO records are
+        # dropped, and "Test said OK about a key that is not the stored one" is the sentence
+        # somebody reading the journal after a rotation needs to find.
+        logger.warning(
+            "Managed secret %s could not be decrypted; probed the environment value instead "
+            "(result %s). The stored override still needs re-entering.",
+            key,
+            _STATUS_OK if ok else _STATUS_FAILED,
+        )
+        return described
+
     described["lastStatus"] = _STATUS_OK if ok else _STATUS_FAILED
     described["lastCheckedAt"] = checked_at
     described["lastError"] = None if ok else error

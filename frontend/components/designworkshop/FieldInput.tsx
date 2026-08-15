@@ -551,6 +551,13 @@ export function FieldInput({
        * end is very often typed before the start is known; refusing the only date the designer
        * currently has would be the completeness gate all over again, in the one place it was never
        * meant to run.
+       *
+       * THE PARTNER'S LABEL TRAVELS WITH THE BOUND, and it is not decoration. The bound refused a
+       * typed date in total silence for as long as it existed: the box snapped back to the old value
+       * on blur with nothing said, so the only way to move the earlier end of a range forward was to
+       * clear the later end first — a rule stated on no screen. `DateField` now keeps the typed date
+       * and explains itself, and the explanation is only actionable if it can name the field the
+       * designer has to change; that name is here and nowhere below.
        */
       const range = dateRangePartner(entity, field);
       const partnerIso = range ? inputValue(row[range.partner.key]).slice(0, 10) : "";
@@ -560,6 +567,8 @@ export function FieldInput({
           value={inputValue(value).slice(0, 10)}
           min={range?.role === "end" ? partnerIso || undefined : undefined}
           max={range?.role === "start" ? partnerIso || undefined : undefined}
+          minLabel={range?.role === "end" ? range.partner.label : undefined}
+          maxLabel={range?.role === "start" ? range.partner.label : undefined}
           describedBy={describedBy}
           invalid={Boolean(error)}
           disabled={disabled}
