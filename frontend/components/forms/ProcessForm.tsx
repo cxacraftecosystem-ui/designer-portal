@@ -6,6 +6,7 @@ import { Lock, Plus } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
+import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
@@ -222,24 +223,52 @@ function MultiNoteInput({ label, value, onChange }: { label: string; value: stri
     <div className="grid gap-2">
       <span className="text-sm font-semibold text-ink-900">{label}</span>
       {rows.map((note, index) => (
-        <div key={index} className="flex items-start gap-2">
-          <textarea
-            className="field-input min-h-16 flex-1"
-            rows={2}
-            placeholder={rows.length > 1 ? `Note ${index + 1}` : "Note"}
-            value={note}
-            onChange={(event) => emit(rows.map((n, i) => (i === index ? event.target.value : n)))}
+        <div key={index} className="grid gap-1">
+          <div className="flex items-start gap-2">
+            <textarea
+              className="field-input min-h-16 flex-1"
+              rows={2}
+              placeholder={rows.length > 1 ? `Note ${index + 1}` : "Note"}
+              value={note}
+              onChange={(event) => emit(rows.map((n, i) => (i === index ? event.target.value : n)))}
+            />
+            {rows.length > 1 ? (
+              <button
+                type="button"
+                aria-label="Remove note"
+                className="field-button-secondary h-9 min-h-0 shrink-0 px-2.5"
+                onClick={() => emit(rows.filter((_, i) => i !== index))}
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
+          {/*
+            A MICROPHONE PER NOTE, AND NO FORMATTING TOOLBAR.
+
+            Dictation belongs here: this is the box a researcher fills standing at a loom describing
+            what the artisan's hands are doing, which is the whole argument for speaking instead of
+            typing. Rich text does not: each row is a two-line "additional context for this step",
+            the several rows are joined with a blank line into one `ProcessStep.notes` column, and
+            Android's `MultiNoteInput` splits that column back apart on blank lines. A document in
+            there would be one note containing JSON. The user's rule — formatting on the LARGER boxes
+            only — reads the same way from the other side.
+
+            The button is per ROW rather than one for the group because a single microphone would
+            have to guess which note the phrase belongs in, and its only defensible guess (the last
+            one) is wrong exactly when somebody is going back to fill in note two.
+
+            `explainWhenUnavailable` is on for the first row only: on Firefox the alternative is the
+            same paragraph repeated once per note, which nobody reads.
+          */}
+          <OnDeviceDictationButton
+            fieldLabel={rows.length > 1 ? `${label}, note ${index + 1}` : label}
+            explainWhenUnavailable={index === 0}
+            onCommit={(phrase) => {
+              const joiner = !note || /\s$/.test(note) ? "" : " ";
+              emit(rows.map((n, i) => (i === index ? `${note}${joiner}${phrase}` : n)));
+            }}
           />
-          {rows.length > 1 ? (
-            <button
-              type="button"
-              aria-label="Remove note"
-              className="field-button-secondary h-9 min-h-0 shrink-0 px-2.5"
-              onClick={() => emit(rows.filter((_, i) => i !== index))}
-            >
-              ✕
-            </button>
-          ) : null}
         </div>
       ))}
       <button type="button" className="field-button-secondary h-9 min-h-0 justify-self-start px-3 text-xs" onClick={() => emit([...rows, ""])}>

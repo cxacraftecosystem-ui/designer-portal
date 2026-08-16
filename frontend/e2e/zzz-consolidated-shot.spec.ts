@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
+import { CREDENTIALS_MISSING, EMAIL, PASSWORD, signIn } from "./support/session";
 
 /**
  * Screenshot probe for the consolidated per-artisan questionnaire.
@@ -11,8 +12,24 @@ import fs from "node:fs";
  * only the transport for the new endpoint redirected.
  */
 
-const EMAIL = process.env.E2E_EMAIL ?? "admin@example.com";
-const PASSWORD = process.env.E2E_PASSWORD ?? "";
+/*
+ * CREDENTIALS COME FROM `support/session`, AND THERE IS NO DEFAULT PASSWORD.
+ *
+ * This file used to declare its own `EMAIL = ... ?? "admin@example.com"` and, fatally,
+ * `PASSWORD = process.env.E2E_PASSWORD ?? ""`. An empty-string default is not a missing value the
+ * spec notices — it is a value it happily types into the form. The login page marks the password
+ * input `required minLength={8}` (matching the API, which answers a short password with
+ * `422 string_too_short`), so the browser's own constraint validation refused to submit, NO request
+ * was ever sent, the page stayed on /login, and the test died 90s later inside `waitForURL`
+ * reporting a navigation failure. Nothing was wrong with sign-in; the spec had simply invented a
+ * credential that could never work.
+ *
+ * `CREDENTIALS_MISSING` is the suite-wide answer and every other signed-in spec already uses it:
+ * a run that cannot sign in has learned nothing about the product, so it skips with a reason rather
+ * than failing with a mystery. Do not reintroduce a local default for either value — a default that
+ * cannot authenticate turns "you forgot an env var" into a red suite, which is exactly the training
+ * e2e/README.md is written to prevent.
+ */
 const ARTISAN_ID = process.env.E2E_ARTISAN_ID ?? "cmqiz1mmb0005kb59dydk6g49";
 const OUT = process.env.E2E_SHOT_DIR ?? "shots";
 const LOCAL_API = process.env.E2E_LOCAL_API ?? "http://127.0.0.1:8000";
@@ -46,8 +63,17 @@ async function setTheme(page: Page, theme: "light" | "dark") {
 
 test("consolidated questionnaire screenshots", async ({ page, request }) => {
   test.skip(!LOCAL_BACKEND_PROVIDED, "E2E_LOCAL_API must point at a local backend carrying the consolidated route");
+  test.skip(Boolean(CREDENTIALS_MISSING), CREDENTIALS_MISSING);
   fs.mkdirSync(OUT, { recursive: true });
 
+  /*
+   * Two DIFFERENT logins on purpose, and they are not interchangeable.
+   *
+   * `localToken` authenticates the proxy below against E2E_LOCAL_API — the backend that carries the
+   * consolidated route the deployed API lacks. The browser session is a separate thing and is
+   * planted by `signIn` against the app's own API. Collapsing them would point the page's session at
+   * whichever backend happened to be named last.
+   */
   const login = await request.post(`${LOCAL_API}/api/auth/login`, {
     data: { email: EMAIL, password: PASSWORD }
   });
@@ -65,11 +91,7 @@ test("consolidated questionnaire screenshots", async ({ page, request }) => {
     });
   });
 
-  await page.goto("/login");
-  await page.getByLabel(/email/i).first().fill(EMAIL);
-  await page.getByLabel(/password/i).first().fill(PASSWORD);
-  await page.getByRole("button", { name: /sign in|log in/i }).first().click();
-  await page.waitForURL((url) => !url.pathname.includes("/login"), { timeout: 120_000 });
+  await signIn(page);
 
   for (const [label, width, height] of [
     ["1280", 1280, 900],
@@ -105,6 +127,20 @@ test("consolidated questionnaire screenshots", async ({ page, request }) => {
  * shaped exactly like the endpoint's response.
  */
 test("conflict rendering, from a fixture", async ({ page }) => {
+  /*
+   * WHY THIS GUARD WAS MISSING, since the gap is easy to reopen.
+   *
+   * The sibling test is gated on E2E_LOCAL_API because it needs a backend carrying the consolidated
+   * route. That gate incidentally hid the credential problem for it — nobody sets E2E_LOCAL_API
+   * without also setting E2E_EMAIL/E2E_PASSWORD — so the sibling always skipped and looked healthy.
+   * This test serves its whole payload from a fixture via `page.route`, so it correctly needs no
+   * local backend, dropped that gate, and with it silently dropped the only thing that had been
+   * keeping a credential-less run from driving the login form with an empty password.
+   *
+   * The gate it actually needs is the credential one. Rendering a fixture still requires being
+   * signed in, because /questionnaire/consolidated/* is behind the protected layout.
+   */
+  test.skip(Boolean(CREDENTIALS_MISSING), CREDENTIALS_MISSING);
   fs.mkdirSync(OUT, { recursive: true });
 
   const provenance = (id: string, title: string, date: string, count: number, co: string[]) => ({
@@ -220,11 +256,21 @@ test("conflict rendering, from a fixture", async ({ page }) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(fixture) });
   });
 
-  await page.goto("/login");
-  await page.getByLabel(/email/i).first().fill(EMAIL);
-  await page.getByLabel(/password/i).first().fill(PASSWORD);
-  await page.getByRole("button", { name: /sign in|log in/i }).first().click();
-  await page.waitForURL((url) => !url.pathname.includes("/login"), { timeout: 120_000 });
+  /*
+   * `signIn`, NOT the login form — see e2e/README.md, "Signing in".
+   *
+   * This test drove the form and was the last spec in the suite still doing so without a credential
+   * guard, which is how it became the file's only red: it typed an empty password (see the note on
+   * the constants above), the form's own `required` validation refused to submit, and 90 seconds
+   * later `waitForURL` reported a navigation that was never going to happen.
+   *
+   * Restoring a guarded form-drive would fix today's symptom and leave two documented races in
+   * place — the hydration race (the button paints before React attaches its handler, so the click
+   * submits nothing) and the login throttle (the API rate-limits repeated logins from one address).
+   * Planting the token avoids all three. The login form is not left untested: `a11y-barriers.spec.ts`
+   * drives it deliberately, which is where a test of the form belongs.
+   */
+  await signIn(page);
 
   for (const [label, width, height] of [
     ["1280", 1280, 900],

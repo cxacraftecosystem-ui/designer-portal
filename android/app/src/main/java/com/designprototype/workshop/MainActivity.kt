@@ -87,6 +87,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -167,10 +168,13 @@ import com.designprototype.workshop.data.TokenStore
 import com.designprototype.workshop.data.ToolCreateRequest
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopCreateRequest
+import com.designprototype.workshop.data.AccessRefusal
+import com.designprototype.workshop.data.accessRefusal
 import com.designprototype.workshop.data.apiErrorMessage
-import com.designprototype.workshop.data.isAccountRefusal
 import com.designprototype.workshop.data.signInErrorMessage
 import com.designprototype.workshop.data.occurrenceDate
+import com.designprototype.workshop.ui.AccessRosterScreen
+import com.designprototype.workshop.ui.accessRefusalChrome
 import com.designprototype.workshop.ui.ApiKeysScreen
 import com.designprototype.workshop.ui.AppPreferences
 import com.designprototype.workshop.ui.AppPreferencesStore
@@ -193,6 +197,9 @@ import com.designprototype.workshop.ui.Coral
 import com.designprototype.workshop.ui.ConsolidatedQuestionnaireScreen
 import com.designprototype.workshop.ui.DataBrowserScreen
 import com.designprototype.workshop.ui.RecordCodeSection
+// The shared prose box behind every record form: an optional on-device microphone and an optional
+// rich-text editor, both defaulting to off. See `ui/RecordProseField.kt` and `ui/RecordProseText.kt`.
+import com.designprototype.workshop.ui.RecordProseField
 // The Design & Prototype Workshop capture surface. Four screens, all of them rendered entirely
 // from the field registry — see ui/designworkshop/FieldRenderer.kt for why there is no per-stage
 // form code here or anywhere else.
@@ -580,6 +587,16 @@ private sealed interface Screen {
     /** The roster that gates the DESIGNER tier's sign-in. Admin only, enforced inside the screen. */
     data object DesignerRoster : Screen
 
+    /**
+     * The PLATFORM allow-list — who may sign in at all — and the queue of people waiting to be let
+     * in. Admin only, enforced inside the screen.
+     *
+     * A DIFFERENT SCREEN FROM [DesignerRoster] AND NOT A TAB OF IT, because they are different
+     * decisions with different remedies: one ends an empanelment, the other ends access to the
+     * application, and the person is told a different sentence by each.
+     */
+    data object AccessRoster : Screen
+
     /*
      * A designer's OWN questionnaires — `/api/questionnaires`, plural — three screens deep:
      * list -> one questionnaire -> one sitting being answered.
@@ -735,14 +752,19 @@ private fun RepositoryApp(
     var loading by remember { mutableStateOf(user == null && repository.hasToken()) }
     var error by remember { mutableStateOf<String?>(null) }
     /**
-     * Whether [error] is the server refusing the ACCOUNT rather than the credentials.
+     * WHAT [error] was refused FOR — the account, the credentials, or neither.
      *
-     * Held beside the message rather than sniffed out of it, because the sign-in card changes what
-     * it says around the error: a refused ACCOUNT must not be shown under a note advising the reader
-     * to use Google instead, which is exactly the advice that sends a suspended designer round the
-     * same loop again.
+     * Held beside the message rather than sniffed out of it, because the sign-in card changes what it
+     * says AROUND the error: a refused ACCOUNT must not be shown under a note advising the reader to
+     * use Google instead, which is exactly the advice that sends a suspended designer round the same
+     * loop again.
+     *
+     * WIDENED FROM A BOOLEAN WHEN THE PLATFORM ALLOW-LIST ARRIVED, and the boolean is the bug it
+     * fixes: five different refusals now come back as 403, and the one heading the card used to draw
+     * for all of them ("your access has been withdrawn") is false for four. A person waiting to be
+     * approved for the first time has had nothing withdrawn. See [AccessRefusal].
      */
-    var accessRefused by remember { mutableStateOf(false) }
+    var refusal by remember { mutableStateOf(AccessRefusal.NOT_REFUSED) }
 
     // Persistent login: start from the cached profile so minimise/resume never logs the user out.
     // Refresh in the background and only clear the session if the token is genuinely rejected.
@@ -769,13 +791,18 @@ private fun RepositoryApp(
                         status == 403 -> {
                             repository.logout()
                             user = null
-                            accessRefused = true
+                            // The STATUS and headers first, then the message: reading the message
+                            // consumes Retrofit's buffered error body, so the classification has to
+                            // be taken while it is still cheap. An unlabelled 403 lands on
+                            // UNCLASSIFIED and the card then says only what the server said, which
+                            // is the correct answer when we do not know which refusal this is.
+                            refusal = err.accessRefusal()
                             error = err.signInErrorMessage()
                         }
                         status == 401 -> {
                             repository.logout()
                             user = null
-                            accessRefused = false
+                            refusal = AccessRefusal.NOT_REFUSED
                             error = "Your session expired. Please sign in again."
                         }
                         // Anything else is the network, and a network failure must never log anybody
@@ -804,11 +831,35 @@ private fun RepositoryApp(
     // on a periodic fallback. `pendingUploads` powers the "saved offline — uploading" banner.
     val appContext = LocalContext.current.applicationContext
     var pendingUploads by remember { mutableStateOf(0) }
+    /**
+     * HOW MANY PEOPLE ARE WAITING TO BE LET INTO THE APPLICATION — the badge on the menu's
+     * "Who may sign in".
+     *
+     * THE FEATURE'S WHOLE NOTIFICATION CHANNEL, and it rides the loop below rather than adding a
+     * timer of its own. The requirement asks that admins be told when somebody is turned away, and
+     * this codebase has no email sender, no push transport and no job runner to build one from — so
+     * the notification is a number on the chrome an admin already opens. A second poller would be a
+     * second wake-up on a phone in a field, and two clocks that drift apart would show two different
+     * numbers on two surfaces of one app.
+     */
+    var pendingAccessRequests by remember { mutableIntStateOf(0) }
     LaunchedEffect(user) {
         if (user == null) return@LaunchedEffect
         while (true) {
             runCatching { repository.syncOutbox(appContext) }
             pendingUploads = runCatching { repository.pendingUploads(appContext) }.getOrDefault(0)
+            // ONLY FOR AN ACCOUNT THAT COULD READ IT. The endpoint is `require_access_manager`, so
+            // asking on behalf of a designer would spend a request every 45 seconds to be refused —
+            // and would log an authorisation failure, forever, against somebody doing nothing wrong.
+            //
+            // A FAILURE KEEPS THE LAST NUMBER rather than resetting to zero, and the difference
+            // matters: a phone that loses signal for one cycle must not tell an admin the queue has
+            // emptied. The badge is a nicety on somebody else's screen, so nothing here is ever
+            // reported as an error — the queue itself says its own failures out loud when opened.
+            if (user?.let { FieldPermissions.canManageAccessRoster(it) } == true) {
+                runCatching { repository.pendingAccessCount() }
+                    .onSuccess { pendingAccessRequests = it.pending }
+            }
             delay(if (pendingUploads > 0) 12_000L else 45_000L)
         }
     }
@@ -837,26 +888,26 @@ private fun RepositoryApp(
             loading -> Text("Loading repository...", color = Muted, modifier = Modifier.align(Alignment.Center))
             user == null -> LoginScreen(
                 error = error,
-                accessRefused = accessRefused,
+                refusal = refusal,
                 busy = loading,
                 onLogin = { email, password ->
                     scope.launch {
                         loading = true
                         error = null
-                        accessRefused = false
+                        refusal = AccessRefusal.NOT_REFUSED
                         runCatching { repository.login(email, password) }
                             .onSuccess { user = it }
                             .onFailure { failure ->
-                                // The STATUS first, then the message, and in that order: reading the
-                                // message consumes Retrofit's buffered error body, so the status has
-                                // to be taken while it is still cheap. `signInErrorMessage` surfaces
-                                // the server's own `detail` — for a suspended designer that is the
-                                // sentence explaining that their access was withdrawn, which is the
-                                // whole point of this branch. It used to render
+                                // The STATUS AND HEADERS first, then the message, and in that order:
+                                // reading the message consumes Retrofit's buffered error body, so the
+                                // classification has to be taken while it is still cheap.
+                                // `signInErrorMessage` surfaces the server's own `detail` — for
+                                // somebody waiting on an administrator that is the sentence saying
+                                // so, which is the whole point of this branch. It used to render
                                 // `HttpException.message` ("HTTP 403 Forbidden") or the string
-                                // "Login failed", and the designer would go and reset a password
-                                // that was never wrong.
-                                accessRefused = failure.isAccountRefusal()
+                                // "Login failed", and the person would go and reset a password that
+                                // was never wrong.
+                                refusal = failure.accessRefusal()
                                 error = failure.signInErrorMessage()
                             }
                         loading = false
@@ -866,18 +917,22 @@ private fun RepositoryApp(
                     scope.launch {
                         loading = true
                         error = null
-                        accessRefused = false
+                        refusal = AccessRefusal.NOT_REFUSED
                         runCatching {
                             val idToken = googleAuthClient.getIdToken()
                             repository.loginWithGoogle(idToken)
                         }
                             .onSuccess { user = it }
                             .onFailure { failure ->
-                                // The Google path matters MORE than the password one here, because
-                                // it is the path a designer actually uses: their roster row is what
-                                // decides whether the token is accepted, and "sign-in failed" beside
-                                // a Google button they have used for months reads as a Google fault.
-                                accessRefused = failure.isAccountRefusal()
+                                // The Google path matters MORE than the password one here, and it
+                                // matters more again since the allow-list shipped. It is the path
+                                // researchers actually use, and a verified Google address that
+                                // nobody has approved NO LONGER GETS AN ACCOUNT — it becomes a
+                                // pending request. "Sign-in failed" beside a Google button somebody
+                                // has used for months reads as a Google fault; the classified panel
+                                // below says an administrator has to approve them, which is the only
+                                // true and actionable thing anyone can tell them.
+                                refusal = failure.accessRefusal()
                                 error = failure.signInErrorMessage()
                             }
                         loading = false
@@ -889,6 +944,11 @@ private fun RepositoryApp(
                 user = user!!,
                 preferences = preferences,
                 onPreferencesChanged = onPreferencesChanged,
+                // Read by the poll above; corrected by the allow-list screen the moment it knows
+                // better. Passed down rather than fetched inside HomeScreen so there is exactly one
+                // number in the app and one place that asks for it.
+                pendingAccessRequests = pendingAccessRequests,
+                onPendingAccessRequests = { pendingAccessRequests = it },
                 onLogout = {
                     scope.launch {
                         runCatching { googleAuthClient.clear() }
@@ -928,18 +988,23 @@ private fun LoginScreen(
     onLogin: (String, String) -> Unit,
     onGoogleLogin: () -> Unit,
     /**
-     * True when [error] is the server refusing the ACCOUNT — a suspended designer, most often — and
-     * not the credentials.
+     * WHAT [error] was refused for — the account, the credentials, or neither.
      *
      * The distinction changes what this card is allowed to say. Its standing advice is "use Google,
      * the password boxes are for admin-issued accounts", and that advice is correct for a mistyped
-     * password and actively harmful for a withdrawn access: the reader tries Google, is refused
+     * password and actively harmful for a refused ACCOUNT: the reader tries Google, is refused
      * identically, decides the password boxes must be the answer after all, and resets a password
-     * that was never wrong. So on a refusal the advice is replaced by the refusal itself, drawn as
-     * the loudest thing on the card, and the sign-in controls are left alone rather than being
+     * that was never wrong. So on an account refusal the advice is replaced by the refusal itself,
+     * drawn as the loudest thing on the card, and the sign-in controls are left alone rather than
      * hidden — the person may hold a second, unaffected account.
+     *
+     * IT IS AN ENUM AND NOT A BOOLEAN, since the platform allow-list shipped, because five different
+     * refusals arrive as one status code and they do not mean the same thing to the person reading
+     * them. Somebody waiting to be approved for the first time must not be told their access was
+     * withdrawn, and — the ruling this whole feature was built under — must not be told to check
+     * their password either.
      */
-    accessRefused: Boolean = false
+    refusal: AccessRefusal = AccessRefusal.NOT_REFUSED
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -972,44 +1037,49 @@ private fun LoginScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (!error.isNullOrBlank()) {
-                    if (accessRefused) {
-                        // Given a filled panel rather than a red line, because this message is not a
-                        // "try again" — it is the only place the person will ever be told that their
-                        // access was withdrawn and what to do about it, and a 13sp line above the
-                        // Login button is read as a validation error and dismissed.
+                    val chrome = accessRefusalChrome(refusal)
+                    if (chrome != null) {
+                        // A FILLED PANEL RATHER THAN A RED LINE, because this message is not a "try
+                        // again" — it is the only place the person will ever be told what is actually
+                        // happening to their account and what to do about it, and a 13sp line above
+                        // the Login button is read as a validation error and dismissed.
+                        //
+                        // The AMBER container for somebody who is WAITING and the error container for
+                        // somebody who was REFUSED. Colour never carries it alone: both headings say
+                        // which they are in words, because a person who cannot tell the two colours
+                        // apart still has to know whether an administrator has not got to them yet or
+                        // has said no.
+                        val container =
+                            if (chrome.waiting) MaterialTheme.field.warningContainer
+                            else MaterialTheme.colorScheme.errorContainer
+                        val onContainer =
+                            if (chrome.waiting) MaterialTheme.field.onWarningContainer
+                            else MaterialTheme.colorScheme.onErrorContainer
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(
-                                    MaterialTheme.colorScheme.errorContainer,
-                                    RoundedCornerShape(10.dp)
-                                )
+                                .background(container, RoundedCornerShape(10.dp))
                                 .padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
-                                "Your access to this app has been withdrawn",
+                                chrome.heading,
                                 display = true,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                color = onContainer,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp
                             )
                             // The server's own sentence, verbatim. It names the reason and whom to
                             // contact, and nothing this client could write in its place would know
                             // either of those.
-                            Text(
-                                error,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                "Your password is not the problem, and resetting it will not help. " +
-                                    "Ask an administrator to restore you on the designer roster.",
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                fontSize = 12.sp
-                            )
+                            Text(error, color = onContainer, fontSize = 13.sp)
+                            Text(chrome.advice, color = onContainer, fontSize = 12.sp)
                         }
                     } else {
+                        // A wrong password, a dead connection, or a refusal this build could not
+                        // classify. All three get the plain line and the server's own words: dressing
+                        // a mistyped password in a panel would make every typo look like an account
+                        // problem, which is this feature's mistake made backwards.
                         Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                     }
                 }
@@ -1039,11 +1109,15 @@ private fun LoginScreen(
                 // Steer researchers to Google sign-in. Many were typing into the email/password fields
                 // (meant only for admin-issued password accounts) and getting locked out.
                 //
-                // SUPPRESSED on an account refusal. The note is good advice for somebody who mistyped
-                // a password and is the wrong advice for somebody whose access was withdrawn: it
-                // sends them back through Google, which refuses them identically, and then to the
-                // password reset that cannot help. The panel above says what actually happened.
-                if (!accessRefused) {
+                // SUPPRESSED on an account refusal — every kind of one, which is why the test is the
+                // presence of the panel rather than a status code. The note is good advice for
+                // somebody who mistyped a password and is the wrong advice for anybody the ACCOUNT
+                // was refused for: it sends them back through Google, which refuses them
+                // identically, and then to a password reset that cannot help. Since the allow-list
+                // shipped it is wrong in a second way too — a person who is not on the list is not
+                // let in by Google either, because that path is gated by the same list. The panel
+                // above says what actually happened.
+                if (accessRefusalChrome(refusal) == null) {
                     Text(
                         "Researchers: please use \"Sign in with Google\" above. The email & password fields are only for special accounts an administrator set up with a password — if you normally use your Google account, do not type a password here.",
                         color = Muted,
@@ -1062,7 +1136,18 @@ private fun HomeScreen(
     user: UserDto,
     preferences: AppPreferences,
     onPreferencesChanged: (AppPreferences) -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    /**
+     * How many people are waiting to be let into the application — the drawer badge's number.
+     *
+     * OWNED BY THE HOST, because the app-wide poll owns it: it is read by the same 45-second loop
+     * that drains the outbox, so the notification costs no timer of its own. Zero draws nothing,
+     * which also covers "we could not ask" — a confident "0" over a queue that failed to load is a
+     * lie an admin would act on by not opening it.
+     */
+    pendingAccessRequests: Int = 0,
+    /** The allow-list screen correcting the number the moment it has read the queue itself. */
+    onPendingAccessRequests: (Int) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var stats by remember { mutableStateOf<DashboardStats?>(null) }
@@ -1345,6 +1430,7 @@ private fun HomeScreen(
             // somebody else's arrives from the roster, not from here.
             NavDestination.DESIGNER_PROFILE -> screen = Screen.DesignerProfile()
             NavDestination.DESIGNER_ROSTER -> screen = Screen.DesignerRoster
+            NavDestination.ACCESS_ROSTER -> screen = Screen.AccessRoster
             NavDestination.MY_ACTIVITY -> screen = Screen.MyActivity
             NavDestination.TASKS -> screen = screenFor(EntryMode.TASKS)
             // The web's /search. [EntryMode.SEARCH] keeps the page's own title so the two entries that
@@ -1432,6 +1518,7 @@ private fun HomeScreen(
             // have searched and scrolled to get to.
             is Screen.DesignerProfile -> if (s.userId != null) Screen.DesignerRoster else Screen.Dashboard
             is Screen.DesignerRoster -> Screen.Dashboard
+            is Screen.AccessRoster -> Screen.Dashboard
             // One level at a time again: a sitting returns to ITS questionnaire and not to the list,
             // which is what a designer taking three sittings in a row off one form needs.
             is Screen.Questionnaires -> Screen.Dashboard
@@ -1479,6 +1566,7 @@ private fun HomeScreen(
         // and the profile's additionally says WHOSE profile it is, which a shared header cannot.
         is Screen.DesignerProfile -> null
         is Screen.DesignerRoster -> null
+        is Screen.AccessRoster -> null
         // Null on all three, again because each draws its own heading — and on the answer sheet that
         // heading is the questionnaire's own title over the name of the person answering, which is
         // the one thing a designer glances up at to check they are in the right sitting.
@@ -1532,6 +1620,7 @@ private fun HomeScreen(
         is Screen.QuestionnaireDetail,
         is Screen.QuestionnaireAnswers -> NavDestination.CUSTOM_QUESTIONNAIRES
         is Screen.DesignerRoster -> NavDestination.DESIGNER_ROSTER
+        is Screen.AccessRoster -> NavDestination.ACCESS_ROSTER
         // Only the OWN profile lights the menu row, because that is the only profile the row opens.
         // Lighting it while an admin edits somebody else's would say "you are on your own profile"
         // on the one screen where getting that wrong means editing the wrong person's report cover.
@@ -1586,6 +1675,7 @@ private fun HomeScreen(
                         adminMode = adminView,
                         currentDestination = currentDestination,
                         onNavigate = ::navigate,
+                        pendingAccessCount = pendingAccessRequests,
                         pushingUpdate = pushingUpdate,
                         onToggleAdminView = { adminViewRequested = !adminView },
                         onPushUpdate = {
@@ -2232,6 +2322,24 @@ private fun HomeScreen(
                 },
                 onMessage = { showMessage(it) },
                 onError = { showMessage(it) }
+            )
+
+            /*
+             * The platform allow-list. Ungated at this call site for the same reason as the two
+             * screens above: the permission is re-derived inside the screen, at the moment of every
+             * write, from the CACHED account. A gate here would be a third copy of the rule and the
+             * one most likely to drift, because it is the one nobody reads when changing the screen.
+             */
+            is Screen.AccessRoster -> AccessRosterScreen(
+                repository = repository,
+                onMessage = { showMessage(it) },
+                onError = { showMessage(it) },
+                // The screen has just READ the queue, so its number is fresher than the 45-second
+                // poll's and the badge adopts it immediately. Without this an admin who approves the
+                // last waiting request watches the menu go on claiming somebody is waiting for up to
+                // three quarters of a minute — and the obvious response to that is to open the queue
+                // again to find out who.
+                onPendingCount = onPendingAccessRequests,
             )
 
             /*
@@ -6044,7 +6152,11 @@ private fun CraftForm(
         TextInput("Local name", localName) { localName = it }
         TextInput("Category", category) { category = it }
         TextInput("Place", place, titleCased = true) { place = it }
-        TextInput("Description", description, minLines = 3) { description = it }
+        // `Craft.description` is the craft's narrative and it prints in the report, so it takes both
+        // controls. The single-line boxes above take neither: that is the user's own "only the larger
+        // text boxes" rule, and `ui/RecordProseText.kt` carries the full enumeration of what was
+        // given a control and what was deliberately skipped.
+        TextInput("Description", description, minLines = 3, dictate = true, rich = true) { description = it }
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "craft", recordId = editing!!.id, onError = onError)
         }
@@ -6407,7 +6519,16 @@ private fun ArtisanForm(
                 .fillMaxWidth()
                 .focusRequester(emailFocus)
         )
-        TextInput("Address", address, minLines = 2) { address = it }
+        /*
+         * ADDRESS GETS THE MICROPHONE AND NOT THE EDITOR, and the asymmetry is the rule working.
+         *
+         * It is multi-line, so it qualifies on size — but a postal address is not narrative. Nobody
+         * bolds a house number, the value is read back by the geocoder and printed on a label, and a
+         * bulleted address would be a novelty that costs a reader. Dictation, on the other hand, is
+         * exactly right for it: an address is the worst thing on a phone keyboard and the easiest
+         * thing to say out loud.
+         */
+        TextInput("Address", address, minLines = 2, dictate = true) { address = it }
         MultiNoteInput(value = notes) { notes = it }
         // Identity — the same grouped block, in the same position (after notes, before Do's/Don'ts),
         // as the web form's `role="group"` panel. The heading is what makes the dependency between
@@ -6694,7 +6815,8 @@ private fun WorkshopForm(
             }
         }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
-        TextInput("Description", description, minLines = 3) { description = it }
+        // `Workshop.description` — the narrative of what happened at the workshop, and it prints.
+        TextInput("Description", description, minLines = 3, dictate = true, rich = true) { description = it }
         MultiNoteInput(value = notes) { notes = it }
         ArtisanMultiSelectField(
             label = "Linked artisans",
@@ -6999,10 +7121,19 @@ private fun ProductForm(
             Box(modifier = Modifier.weight(1f)) { TextInput("Selling price", sellingPrice, keyboardType = KeyboardType.Decimal) { sellingPrice = it } }
         }
         DropdownField("Market demand", marketDemandOptions.map { it to it }, marketDemand, includeNone = false) { marketDemand = it }
-        TextInput("Raw materials used", rawMaterials, minLines = 2) { rawMaterials = it }
-        TextInput("Main tools used", mainTools, minLines = 2) { mainTools = it }
-        TextInput("Function or use", functionUse, minLines = 2) { functionUse = it }
-        TextInput("Remarks", remarks, minLines = 3) { remarks = it }
+        /*
+         * THE PRODUCT'S FOUR NARRATIVE COLUMNS, ALL FOUR WITH BOTH CONTROLS.
+         *
+         * Raw materials and main tools are the two that look borderline and are not: the web form's
+         * own help asks for them one per line, they are exported as prose, and a real answer runs to
+         * several materials with a note against each. That is a list, which is the one piece of
+         * formatting this storage keeps intact end to end — `toPlain` writes bullets as "• " and
+         * `recordDocFromStored` reads them back, so a list written here reopens as a list.
+         */
+        TextInput("Raw materials used", rawMaterials, minLines = 2, dictate = true, rich = true) { rawMaterials = it }
+        TextInput("Main tools used", mainTools, minLines = 2, dictate = true, rich = true) { mainTools = it }
+        TextInput("Function or use", functionUse, minLines = 2, dictate = true, rich = true) { functionUse = it }
+        TextInput("Remarks", remarks, minLines = 3, dictate = true, rich = true) { remarks = it }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
         if (isEdit) {
             RecordMediaSection(repository = repository, context = context, linkedType = "product", recordId = editing!!.id, onError = onError)
@@ -7323,8 +7454,11 @@ private fun ToolForm(
         DropdownField("Maker", makerOptions.map { it to it }, maker, includeNone = false) { maker = it }
         DropdownField("Tradition type", traditionOptions.map { it to it }, traditionType, includeNone = false) { traditionType = it }
         TextInput("Replacement cost", replacementCost, keyboardType = KeyboardType.Decimal) { replacementCost = it }
-        TextInput("Suggestions for improvement", suggestions, minLines = 2) { suggestions = it }
-        TextInput("Remarks", remarks, minLines = 3) { remarks = it }
+        // The tool form's two narrative columns. `processUsedIn` above stays single-line and plain —
+        // it is single-line on the web form too, and widening it here would put the two platforms out
+        // of step over a field the review registry already disagrees with itself about.
+        TextInput("Suggestions for improvement", suggestions, minLines = 2, dictate = true, rich = true) { suggestions = it }
+        TextInput("Remarks", remarks, minLines = 3, dictate = true, rich = true) { remarks = it }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
         ToolStagesSection(stages = stages, onMessage = onError, onError = onError)
         if (isEdit) {
@@ -9050,11 +9184,21 @@ private fun FeedbackScreen(repository: WorkshopRepository, onError: (String) -> 
             // ---- Qualitative ----
             Text("In your words", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
             TextInput("Your role (e.g. researcher, field documenter)", role) { role = it }
-            TextInput("What do you like most?", likeMost, minLines = 2) { likeMost = it }
-            TextInput("What should we improve?", improve, minLines = 2) { improve = it }
-            TextInput("Any bugs or issues you hit?", bugs, minLines = 2) { bugs = it }
-            TextInput("Features you'd like to see", featureRequests, minLines = 2) { featureRequests = it }
-            TextInput("Anything else (general comments)", comment, minLines = 3) { comment = it }
+            /*
+             * FEEDBACK: THE MICROPHONE, NOT THE EDITOR, ON ALL FIVE.
+             *
+             * They are multi-line and they are prose, so they clear the size bar — and dictation is
+             * the whole point of them, because a researcher reporting a bug at the end of a field day
+             * will say four sentences and type none. But nothing renders these: they go into a table
+             * an administrator reads and nowhere else, so a formatting toolbar would buy a heading
+             * nobody will ever see and would cost every one of them a line of explanatory copy under
+             * the box. Size alone was never the rule; "would formatting be read by anyone" is.
+             */
+            TextInput("What do you like most?", likeMost, minLines = 2, dictate = true) { likeMost = it }
+            TextInput("What should we improve?", improve, minLines = 2, dictate = true) { improve = it }
+            TextInput("Any bugs or issues you hit?", bugs, minLines = 2, dictate = true) { bugs = it }
+            TextInput("Features you'd like to see", featureRequests, minLines = 2, dictate = true) { featureRequests = it }
+            TextInput("Anything else (general comments)", comment, minLines = 3, dictate = true) { comment = it }
 
             val anyProvided = rating > 0 || easeOfUse > 0 || reliability > 0 || performance > 0 ||
                 design > 0 || features > 0 || recommend > 0 ||
@@ -10028,7 +10172,10 @@ private fun PendingReviewRow(
                         color = Muted,
                         fontSize = 11.sp
                     )
-                    TextInput("What needs to change?", reviseNote, minLines = 2) { reviseNote = it }
+                    // The reviewer's note back to the field. Dictation only: it is read as a message,
+                    // not rendered as a document, and the reviewer is usually dictating a correction
+                    // while looking at the record rather than composing anything.
+                    TextInput("What needs to change?", reviseNote, minLines = 2, dictate = true) { reviseNote = it }
                     Button(
                         enabled = !busy && reviseNote.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
@@ -10052,7 +10199,29 @@ private fun PendingReviewRow(
                         )
                         fields.forEach { field ->
                             val value = edited[field.key].orEmpty()
-                            TextInput(field.label, value, minLines = if (field.multiline) 2 else 1) {
+                            /*
+                             * THE REVIEW-EDIT RENDERER: DICTATION ON THE MULTILINE FIELDS, NEVER THE
+                             * EDITOR, AND THE SECOND HALF IS A CORRECTNESS DECISION RATHER THAN TASTE.
+                             *
+                             * A reviewer here is correcting somebody else's fieldwork in place, and
+                             * what they change is logged as a diff against the previous value. The
+                             * diff renderer — this platform's and the web's — compares plain strings.
+                             * Giving this box a rich editor would let a reviewer restructure a
+                             * paragraph into a list and produce a diff that reads as a total rewrite
+                             * of a field they touched one word in, on the screen where somebody
+                             * decides whether to accept a day's work.
+                             *
+                             * Dictation is a different matter and belongs here: correcting a misspelt
+                             * village or a garbled address by saying it is the fastest thing on the
+                             * screen. `field.multiline` is the same flag the web's registry uses, so
+                             * the two platforms light up the same boxes.
+                             */
+                            TextInput(
+                                field.label,
+                                value,
+                                minLines = if (field.multiline) 2 else 1,
+                                dictate = field.multiline,
+                            ) {
                                 edited[field.key] = it
                             }
                             // Name-like columns are title-cased server-side, so show what will land.
@@ -10170,7 +10339,18 @@ private fun DatasetDownloadCard(repository: WorkshopRepository, onError: (String
                             // than a failed one, because nobody goes back for the rest.
                             if (res.truncated) {
                                 "\n\nWARNING: this export hit the server's row cap, so it does NOT " +
-                                    "contain all of the data. Ask an admin for a full extract."
+                                    "contain all of the data. Ask an admin for a full extract." +
+                                    // WHICH kind of incomplete, when the server can say. `truncated`
+                                    // is raised by a capped table OR by a media row the server could
+                                    // not address, and those need different follow-up: one is "ask
+                                    // for a full extract", the other is "these specific files are
+                                    // broken in storage". Naming the count is the only way the
+                                    // researcher can tell them apart from this screen.
+                                    if (res.skippedMedia > 0) {
+                                        " (${res.skippedMedia} media file" +
+                                            "${if (res.skippedMedia == 1) "" else "s"} could not be " +
+                                            "addressed at all and are not in the archive.)"
+                                    } else ""
                             } else ""
                     }.onFailure { onError(it.message ?: "Unable to download the dataset") }
                     downloading = false
@@ -10993,7 +11173,10 @@ private fun AndroidMediaForm(
             includeNone = true,
             enabled = linkedMode != null && !loadingEntries
         ) { linkedEntryId = it }
-        TextInput("Caption", caption, minLines = 2) { caption = it }
+        // A media caption. Dictation only — a caption is one sentence describing a photograph, and it
+        // is printed as a single run under the picture in the media annexure, where a heading or a
+        // bullet has nowhere to go.
+        TextInput("Caption", caption, minLines = 2, dictate = true) { caption = it }
         // Web parity (app/(protected)/media/page.tsx): the GPS block closes the form, after the
         // caption — it describes the upload rather than being one of the things being described.
         LocationAddressEditor(
@@ -12060,7 +12243,21 @@ private fun QuestionnaireForm(
         // Attach photos, video, audio files and other media to this interview (with live upload
         // progress) — the same media array used by every other record form.
         MediaCaptureSection(repository = repository, media = media, onMessage = onError, onError = onError)
-        MultiNoteInput(value = notes) { notes = it }
+        /*
+         * THE ONE `MultiNoteInput` WITH NO MICROPHONE, AND THE OPT-OUT IS THE POINT OF THE FLAG.
+         *
+         * The questionnaire screens were placed out of scope for the record-form dictation work by
+         * decision, not by oversight: they already have a capture workflow of their own — per-section
+         * or per-question audio recorded as a MediaFile and transcribed asynchronously by the queue —
+         * whose default hides the written answer boxes entirely, and which was designed around how
+         * these interviews are actually conducted. Adding a live microphone anywhere on this screen
+         * puts two capture models in front of one researcher.
+         *
+         * So this one line is what keeps the shared control's new default from reaching a screen it
+         * was told to leave alone. Removing it does not "enable a feature here"; it opts this screen
+         * into a decision nobody has taken.
+         */
+        MultiNoteInput(value = notes, dictate = false) { notes = it }
         fun submit() {
             if (!validateRequired(listOf(
                     RequiredCheck(title.isBlank(), { titleError = it }, titleFocus)
@@ -13292,7 +13489,9 @@ private fun WorkshopAccessScreen(
             )
             levels.firstOrNull { it.level == level }?.description?.takeIf { it.isNotBlank() }
                 ?.let { Text(it, color = Muted, fontSize = 11.sp) }
-            TextInput("Why do you need access? (optional)", note, minLines = 2) { note = it }
+            // A note to whoever grants the access. Dictation only: it is read once, by a person, in a
+            // request list — there is nothing here for formatting to survive into.
+            TextInput("Why do you need access? (optional)", note, minLines = 2, dictate = true) { note = it }
             Button(
                 enabled = !busy && selected.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
@@ -14263,6 +14462,27 @@ private fun TitleCaseHint(value: String) {
  * [keyboardType] mirrors the web form's `type` attribute: every measurement, count and price box is
  * `<input type="number">` there, and leaving it at the default here opened the full QWERTY keyboard
  * for a field that only ever takes digits — the one place on a phone where that difference is felt.
+ *
+ * ── [dictate] AND [rich]: THE TWO CONTROLS THE STAGE SCREENS HAVE, ON THE RECORD FORMS ────────
+ *
+ * The requirement was *"in the existing pages apart from the designer workshop as well, the dictate
+ * option along with the rich text formatting for the bigger fields should be there"*, and this is
+ * the single edit that delivers it: roughly two hundred boxes across every record form in this app
+ * are built here, so a screen gains a microphone or an editor by naming one argument rather than by
+ * being rewritten. The controls themselves live in `ui/RecordProseField.kt` — deliberately, so that
+ * the sibling web repository can copy two self-contained files rather than reconstruct a decision
+ * from twenty diffs, and so that no two record screens can drift apart in what dictation means.
+ *
+ * **BOTH DEFAULT TO OFF, AND THAT IS THE USER'S OWN RULE.** *"Only the larger text boxes need to
+ * have the rich text features."* Almost every call site below is a single-line box for a name, a
+ * code, a phone number, a price or a date: a formatting toolbar over a two-word village name can
+ * only get in the way, and a microphone beside a money box returns words where the coercion wants
+ * digits. The stage screens narrow the same way, in `dictatable()`, for the same reason.
+ *
+ * **AND [dictate] NEVER UPLOADS.** A record form has no design workshop behind it, so it has no
+ * recorded consent for an artisan's voice to leave the device, so it gets the platform recogniser
+ * and this app's own bundled model and nothing else. The argument, and the two guards that keep it
+ * true, are in `ui/RecordProseText.kt`.
  */
 @Composable
 private fun TextInput(
@@ -14271,19 +14491,30 @@ private fun TextInput(
     minLines: Int = 1,
     titleCased: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
+    /** Draw the on-device microphone. On-device rungs only — nothing here posts a clip anywhere. */
+    dictate: Boolean = false,
+    /** Draw the rich-text editor instead of a plain box. **Larger narrative boxes only.** */
+    rich: Boolean = false,
+    /** Re-seed the rich editor when a form loads a different record into the same composition. */
+    resetKey: Any? = null,
     onValueChange: (String) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            label = { Text(label) },
-            minLines = minLines,
-            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-            modifier = Modifier.fillMaxWidth()
-        )
-        if (titleCased) TitleCaseHint(value)
-    }
+    // FORWARDED RATHER THAN BRANCHED HERE, so that the plain path and the two enriched ones cannot
+    // diverge in padding, label placement or keyboard type. With both flags off `RecordProseField`
+    // draws precisely the `OutlinedTextField` this function drew before it existed — same
+    // `minLines`, same `keyboardOptions`, no trailing icon and no extra composables — which is what
+    // makes this edit additive for the ~200 call sites that ask for nothing.
+    RecordProseField(
+        label = label,
+        value = value,
+        onValueChange = onValueChange,
+        minLines = minLines,
+        keyboardType = keyboardType,
+        dictate = dictate,
+        rich = rich,
+        resetKey = resetKey,
+        below = { if (titleCased) TitleCaseHint(value) },
+    )
 }
 
 /** Split a stored newline-separated list into editable rows (always at least one, for the empty case). */
@@ -14299,6 +14530,23 @@ private fun joinNumbered(items: List<String>): String =
  * splits it into a new bullet (so the user just types a point and hits Enter for the next). Rows can be
  * removed individually, and "+ Add point" appends an empty one. Backed by a List<String>; persist with
  * [joinNumbered]. Used for an artisan's Do's (positive prompt) and Don'ts (negative prompt).
+ *
+ * ── DELIBERATELY LEFT WITHOUT EITHER CONTROL, AND THIS IS THE RECORD OF WHY ───────────────────
+ *
+ * It is the one multi-row input on a record form that got neither a microphone nor an editor, so a
+ * later reader will assume it was missed. It was not.
+ *
+ * NO EDITOR: this control already IS a list editor. Its rows persist as a newline-joined string and
+ * reopen as numbered points, which is precisely the structure a rich document would encode — so
+ * adding one would put two list models in one column, each convinced it owned the newlines.
+ *
+ * NO MICROPHONE, AND THIS HALF IS A JUDGEMENT THAT COULD REASONABLY GO THE OTHER WAY. A do or a
+ * don't is one short line ("do not wash in hot water"), which is the shape the user's own rule
+ * excludes; and the row's box carries three behaviours the shared control does not have — an
+ * `onValueChange` that splits on a pasted newline into new bullets, an `isError` on the first row,
+ * and a `FocusRequester` the form drives on a validation failure. Threading those through
+ * `RecordProseField` would widen it for exactly one caller. If somebody later decides these points
+ * are worth dictating, widen the shared control rather than hand-rolling a fourth microphone here.
  */
 @Composable
 private fun NumberedListInput(
@@ -14371,9 +14619,38 @@ private fun joinNotes(items: List<String>): String =
  * Multi-note editor: several free-text notes, each its own multi-line field, with an "Add note" button
  * and per-note remove. Drop-in for a single notes field — reads/writes the same stored string (notes
  * joined by a blank line). Optional, unlike the required numbered Do's/Don'ts.
+ *
+ * ── EACH ROW GETS A MICROPHONE AND NONE OF THEM GETS THE EDITOR ───────────────────────────────
+ *
+ * This composable builds its own boxes rather than calling `TextInput`, so it would have been missed
+ * by the one edit that lit up every other record field — and it is behind four of the biggest boxes
+ * in the app (an artisan's notes, a workshop's notes, a process's step notes). A field note is the
+ * single most dictated thing in this product: it is written standing up, at the end of a
+ * conversation, about something that has just been said.
+ *
+ * The editor stays out, and the reason is structural rather than aesthetic. These rows are NOT
+ * separate columns — they are one `String?` joined by blank lines and split back on blank lines, so
+ * a rich document in row two would have to survive being concatenated with rows one and three and
+ * torn apart again on the next load. The multi-note control IS the structure here, and a second
+ * structure inside each of its cells would be two things fighting over one column.
  */
 @Composable
-private fun MultiNoteInput(label: String = "Notes", value: String, resetKey: Any? = null, onValueChange: (String) -> Unit) {
+private fun MultiNoteInput(
+    label: String = "Notes",
+    value: String,
+    resetKey: Any? = null,
+    /**
+     * Draw a microphone on each row. **On by default, and there is exactly one caller that says no.**
+     *
+     * Defaulted ON, unlike every other dictation flag in this app, because every record form that
+     * uses this control wants it and defaulting off would mean four call sites all saying yes — and
+     * the fifth silently missing out the day somebody adds one. The opt-OUT exists for the
+     * questionnaire interview form, which is out of this lane's scope by decision and whose behaviour
+     * must not change; see the comment at that call site.
+     */
+    dictate: Boolean = true,
+    onValueChange: (String) -> Unit,
+) {
     var rows by remember(resetKey) { mutableStateOf(splitNotes(value).ifEmpty { listOf("") }) }
     fun emit(updated: List<String>) {
         val next = updated.ifEmpty { listOf("") }
@@ -14384,12 +14661,18 @@ private fun MultiNoteInput(label: String = "Notes", value: String, resetKey: Any
         Text(label, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
         rows.forEachIndexed { index, note ->
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedTextField(
+                RecordProseField(
+                    label = if (rows.size > 1) "Note ${index + 1}" else "Note",
                     value = note,
                     onValueChange = { v -> emit(rows.toMutableList().also { it[index] = v }) },
-                    label = { Text(if (rows.size > 1) "Note ${index + 1}" else "Note") },
                     minLines = 2,
-                    modifier = Modifier.weight(1f)
+                    dictate = dictate,
+                    // KEYED ON THE ROW, so that removing note 2 does not leave note 3's dictation
+                    // buffer sitting under the row that slid up into its place. `index` alone would
+                    // be the same key for a different note; the note's own identity is not stable
+                    // either (two blank rows are equal), so the pair is what distinguishes them.
+                    resetKey = resetKey to index,
+                    modifier = Modifier.weight(1f),
                 )
                 if (rows.size > 1) {
                     IconButton(onClick = { emit(rows.toMutableList().also { it.removeAt(index) }) }) {

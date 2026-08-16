@@ -81,6 +81,12 @@ class DwWorkshopSearchRegistryTest {
         "existingProduct.artisanRef" to "artisanName",
         "existingProduct.productRef" to "name",
         "prototype.productRef" to "productName",
+        // Added 2026-08-16 with the widening of the server/web hydration table from seven pairs to
+        // eight. This row is why the test failed: the registry declared the ref, the web's table
+        // named `documentedProcessName` for it, and this client's derivation could spell only
+        // `processName` and `name` — so the stage-5 documented process was in the web's search index
+        // and absent from the phone's. See the `documented` rule in `DwWorkshopSearch`.
+        "traditionalProcess.processRef" to "documentedProcessName",
     )
 
     /**
@@ -128,7 +134,18 @@ class DwWorkshopSearchRegistryTest {
             // The keys this client's derivation will try, IN ORDER. Every one of them that the entity
             // actually declares as a live text box gets a DIFFERENT word written into it, so that a
             // hit for the web's word is proof the same box was read and not merely that some box was.
-            val candidates = listOf(site.refField.key.removeSuffix("Ref") + "Name", "name")
+            //
+            // RESTATED HERE ON PURPOSE, rather than imported from `DwWorkshopSearch`: a mirror that
+            // called the production function would agree with any rule it grew, including a wrong
+            // one, and the whole job of this test is to hold the derivation against the web's table.
+            // So when the `documented…Name` rule was added on 2026-08-16 this line had to be edited
+            // by hand — which is the review step, not an oversight in the design.
+            val stem = site.refField.key.removeSuffix("Ref")
+            val candidates = listOf(
+                stem + "Name",
+                "documented" + stem.replaceFirstChar { it.uppercase() } + "Name",
+                "name",
+            )
             assertTrue("${site.pair}: the web's box is not one this client would ever try", webKey in candidates)
 
             val values = HashMap<String, JsonElement>()

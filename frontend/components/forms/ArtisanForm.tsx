@@ -8,7 +8,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
 import { CarryForwardCards } from "@/components/CarryForwardCards";
-import { Field, MultiNoteField, Select, TextArea, TextInput } from "@/components/FormControls";
+import { Field, Select, TextInput } from "@/components/FormControls";
 import { AadhaarField, aadhaarValidationError, isMaskedIdentityNumber } from "@/components/forms/AadhaarField";
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
@@ -22,13 +22,16 @@ import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
+import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
+import { RichTextField } from "@/components/richtext/RichTextField";
+import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { ApiError, apiFetch, buildQuery, listResource } from "@/lib/api";
 import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
-import { appendRemarksWithExif, collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, type BatchProgress } from "@/lib/media";
+import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
@@ -541,7 +544,13 @@ export function ArtisanForm({
         email: textValue(form, "email"),
         place: requiredText(form, "place"),
         address: textValue(form, "address"),
-        notes: appendRemarksWithExif(textValue(form, "notes") as string | null, exifRemark),
+        // `appendStoredParagraph` and NOT `appendRemarksWithExif`: the notes box is a rich-text
+        // editor now, so this column may hold a JSON document. Concatenating the EXIF summary onto
+        // the end of a JSON string produces a value that is neither valid JSON nor readable prose —
+        // the editor would show raw braces followed by the summary, and so would every CSV. The
+        // helper appends INTO the document when there is one and behaves byte-for-byte like
+        // `appendRemarksWithExif` when there is not.
+        notes: appendStoredParagraph(textValue(form, "notes") as string | null, exifRemark, "paragraph"),
         // Identity. The Aadhaar mirror input carries the bare digits (the visible box only groups
         // them for reading), or the mask verbatim when the editor was never shown the real number —
         // which the API recognises and drops, leaving the stored value alone. The Pehchan mask has
@@ -778,10 +787,41 @@ export function ArtisanForm({
               </p>
             ) : null}
           </Field>
-          <Field label="Address">
-            <TextArea name="address" defaultValue={initial?.address ?? ""} />
-          </Field>
-          <MultiNoteField defaultValue={initial?.notes ?? ""} />
+          {/*
+            DICTATION BUT NOT RICH TEXT, and the split is the whole point of there being two
+            controls. An address is three lines, so a researcher standing in a courtyard genuinely
+            wants to speak it rather than thumb it in — but a bold word or a bulleted list in a
+            postal address is meaningless, and a formatting toolbar here would be an invitation to
+            store a document in a column that four exports print as a delivery address.
+          */}
+          <DictatedTextArea
+            name="address"
+            label="Address"
+            defaultValue={initial?.address ?? ""}
+            onDirty={markDirty}
+          />
+          {/*
+            NOTES IS THE ONE LARGE NARRATIVE BOX ON THIS FORM, so it is the one that gets the editor.
+
+            IT REPLACES `MultiNoteField`, whose several textareas were joined with a blank line into
+            the same `Artisan.notes` column. `join="paragraph"` is what keeps that contract: an
+            unformatted document is written back blank-line separated, so Android's `MultiNoteInput`
+            — which SPLITS on blank lines to rebuild its rows — still reconstructs exactly the notes
+            that were written here. Drop that argument and four notes silently become one the next
+            time the record is opened on a handset.
+
+            The EXIF remark that `submit` appends to this field goes through `appendStoredParagraph`
+            rather than `appendRemarksWithExif` for the same reason: concatenating plain text onto a
+            stored document would produce a value that is neither.
+          */}
+          <RichTextField
+            name="notes"
+            label="Notes"
+            defaultValue={initial?.notes ?? ""}
+            join="paragraph"
+            className="md:col-span-2"
+            onDirty={markDirty}
+          />
           {/* Android parity (ArtisanForm): the three identity answers sit after the contact and
               notes fields and before Do's/Don'ts. Grouping them makes the dependency between
               "holds a card" and "card number" obvious at a glance. */}

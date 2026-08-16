@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { mergeById } from "@/components/data/cappedList";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
-import { Field, Select, TextArea, TextInput } from "@/components/FormControls";
+import { Field, Select, TextInput } from "@/components/FormControls";
 import { CarryContextBanner, carryScope, useCarryContext } from "@/components/forms/CarryContextBanner";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
@@ -16,12 +16,14 @@ import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/Worksho
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { GridMeasurement, type GridFiles, type GridGroup } from "@/components/media/GridMeasurement";
 import { UploadProgress } from "@/components/media/UploadProgress";
+import { RichTextField } from "@/components/richtext/RichTextField";
+import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch } from "@/lib/api";
 import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
-import { appendRemarksWithExif, collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
+import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
@@ -252,7 +254,12 @@ export function ToolForm({
         traditionType: requiredText(form, "traditionType") || "UNKNOWN",
         replacementCost: numericValue(form, "replacementCost"),
         suggestionsForToolImprovement: textValue(form, "suggestionsForToolImprovement"),
-        remarks: appendRemarksWithExif(textValue(form, "remarks") as string | null, exifRemark),
+        // `appendStoredParagraph` and NOT `appendRemarksWithExif`: remarks is a rich-text editor
+        // now, so this column may hold a JSON document, and concatenating the EXIF summary onto the
+        // end of a JSON string produces a value that is neither valid JSON nor readable prose. The
+        // helper appends INTO the document when there is one and is byte-for-byte the old behaviour
+        // when there is not.
+        remarks: appendStoredParagraph(textValue(form, "remarks") as string | null, exifRemark),
         artisanId: artisanId || null,
         craftId: craftId || null,
         workshopId: workshop.workshopId || null,
@@ -574,12 +581,31 @@ export function ToolForm({
           </Field>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <Field label="Suggestions for improvement">
-            <TextArea name="suggestionsForToolImprovement" defaultValue={initial?.suggestionsForToolImprovement ?? ""} />
-          </Field>
-          <Field label="Remarks">
-            <TextArea name="remarks" defaultValue={initial?.remarks ?? ""} />
-          </Field>
+          {/*
+            THE TWO NARRATIVE BOXES ON THIS FORM. Both were already `<TextArea>` (`min-h-24`, no
+            length cap) and both hold prose a researcher would rather speak than thumb in.
+
+            `processUsedIn` above is DELIBERATELY LEFT ALONE even though the review registry
+            (`components/review/reviewEditFields.ts`) marks it `multiline: true` and the CSV exports
+            it as "Usage". On this form it is a single-line `TextInput`, and that disagreement
+            predates this change by a long way; resolving it means deciding which of the two is
+            right, which is a change to what the field IS rather than to what it can do. Recorded
+            here so the next person does not read the omission as an oversight in the sweep.
+          */}
+          <RichTextField
+            name="suggestionsForToolImprovement"
+            label="Suggestions for improvement"
+            defaultValue={initial?.suggestionsForToolImprovement ?? ""}
+            className="md:col-span-2"
+            onDirty={markDirty}
+          />
+          <RichTextField
+            name="remarks"
+            label="Remarks"
+            defaultValue={initial?.remarks ?? ""}
+            className="md:col-span-2"
+            onDirty={markDirty}
+          />
           <StatusField canSetStatus={canSetStatus} initialStatus={initial?.status} onDirty={markDirty} />
         </div>
         <MediaCaptureField

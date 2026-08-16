@@ -231,6 +231,23 @@ export const ROUTE_GUARDS: RouteGuard[] = [
       "The designer roster decides who may sign in as a designer at all, and it is a list of named individuals and their institutional standing — so reading it is admin work as much as writing it is. Admins and the master admin add, suspend and restore designers there."
   },
   {
+    // The PLATFORM allow-list, and the queue of people waiting to be let in. Nested under /admin
+    // like the roster above and here for the same reason: `require_access_manager` is a predicate of
+    // its own on the server, and the day it moves the two would silently disagree if this route were
+    // still riding on the hub's `require_admin`.
+    //
+    // The copy names the QUEUE and not only the list, because an account below admin most often
+    // arrives here having been sent the link by a colleague who cannot sign in — and a refusal that
+    // said only "you cannot read the list" would leave them believing that colleague's request is
+    // nowhere at all.
+    path: "/admin/access",
+    can: canManageAccessRoster,
+    gate: "require_access_manager",
+    title: "Admin access required",
+    message:
+      "Who may sign in to this application at all — and the queue of people waiting for a decision — is settled by admins and the master admin. The queue is a list of named people who tried to get in, so reading it is restricted for the same reason deciding it is."
+  },
+  {
     // The page now holds two things with two different owners, so the ROUTE is admin and the halves
     // gate themselves. Key VALUES stay master-admin (every /secrets route is require_master_admin,
     // and the page renders ApiKeysPanel only for them); RANKING the transcription providers is
@@ -424,5 +441,25 @@ export function canRunDesignWorkshops(user: User | null | undefined) {
 
 /** Add, suspend and restore designers on the roster that gates their sign-in: Admin and above. */
 export function canManageDesignerRoster(user: User | null | undefined) {
+  return isAdmin(user);
+}
+
+/**
+ * Decide who may sign in to this application AT ALL, and work the queue of people asking to: Admin
+ * and above. Mirrors `can_manage_access_roster` in backend/app/core/deps.py.
+ *
+ * THE SAME TIER AS THE DESIGNER ROSTER, for a stronger version of the same reason: this list is
+ * every address that may reach the product, so whoever can edit it can lock everybody else out,
+ * including each other. It is not a professor's job.
+ *
+ * READ IS GATED WITH WRITE, and that is not an oversight to tidy up later. The pending queue is a
+ * list of people who tried to get in — somebody's colleagues, applicants and former staff — so
+ * browsing it is administrative work as much as deciding it is.
+ *
+ * A SEPARATE FUNCTION FROM {@link canManageDesignerRoster} although both are `isAdmin` today. They
+ * mirror two different server predicates over two different tables, and collapsing them into one
+ * would mean the day either server gate moves, the other client surface moves with it silently.
+ */
+export function canManageAccessRoster(user: User | null | undefined) {
   return isAdmin(user);
 }

@@ -29,6 +29,11 @@ Value coercion lives here too (:func:`num`, :func:`money`, :func:`dims`, :func:`
 :func:`enum_label`). Prisma ``Decimal`` columns arrive as objects that stringify with
 trailing zeros, and Prisma enums stringify as ``MediaType.AUDIO``; both are normalised
 before they ever reach a cell.
+
+And so does the RICH-TEXT read boundary. The larger free-text columns can now hold a formatted
+document rather than a bare paragraph, and :func:`cell` flattens it — one call, at the one place
+every value in every one of the four surfaces above passes through. Its docstring says what breaks
+without it.
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services.artisan_identity import mask_aadhaar
+from app.services.rich_text import plain_from_stored
 
 # ---------------------------------------------------------------------------
 # Value coercion
@@ -100,8 +106,26 @@ def human_size(value: Any) -> str:
 
 
 def cell(value: Any) -> str:
-    """Any value -> a trimmed string safe to drop straight into a table cell."""
-    return "" if value is None else str(value).strip()
+    """Any value -> a trimmed string safe to drop straight into a table cell.
+
+    THE FLATTENING IS NOT DECORATION — IT IS WHY THE RICH-TEXT FEATURE IS SAFE. The larger record
+    fields (artisan notes and do's/don'ts, product remarks and materials, tool remarks and usage,
+    process notes) now accept bold, lists and tables from the web and Android editors, and they are
+    stored inside the SAME ``String?`` columns as before: no migration, no column type change, no
+    second column. ``rich_text.plain_from_stored`` is what tells a formatted value apart from the
+    prose sitting in every other row and renders it back down to the words a person wrote.
+
+    Every export surface in this repository funnels through this one function — the data browser's
+    info card, the ``/data/report`` workbook, the ``details.txt`` inside the dataset zip, and the
+    ``/export/products.csv`` and ``/export/tools.csv`` downloads. Remove the call below and every
+    one of them starts emitting ``{"blocks":[{"kind":"PARAGRAPH",…`` into files that go to a
+    ministry. Nothing raises when that happens, which is exactly why the guard belongs here, at the
+    chokepoint, rather than at four call sites where the fifth one would be added without it.
+
+    A plain string is returned unchanged by ``plain_from_stored`` — by identity, not by round trip —
+    so the existing corpus renders byte-for-byte as it did before this line existed.
+    """
+    return "" if value is None else str(plain_from_stored(value)).strip()
 
 
 def meta_of(record: Any) -> dict[str, Any]:

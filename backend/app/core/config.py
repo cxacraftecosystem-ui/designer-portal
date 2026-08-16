@@ -201,6 +201,15 @@ class Settings(BaseSettings):
     # RESEARCHER to restore the pre-six-tier behavior.
     default_signup_role: str = Field(default="CROWDSOURCE_VOLUNTEER", alias="DEFAULT_SIGNUP_ROLE")
 
+    # THE CEILING ON A QUEUE FED BY UNAUTHENTICATED REQUESTS. A refused sign-in by a proven identity
+    # (a correct password, or a Google token that verified) writes a PENDING row in AccessRoster,
+    # and nothing in this repository rate-limits the login endpoint — app/scale/rate_limit.py is
+    # dead code its own flag defaults off, and nginx carries no limit_req. Past this many waiting
+    # requests, new ones are refused with a message that says so rather than being silently dropped
+    # into a queue no administrator will ever finish reading. Rows already in the queue are
+    # unaffected, so raising the number never strands anybody. See app/services/access_roster.py.
+    access_pending_max: int = Field(default=500, alias="ACCESS_PENDING_MAX")
+
     # Speech-to-text provider chain (highest priority first): ElevenLabs Scribe when
     # ELEVENLABS_API_KEY is set, else Deepgram Nova-3 when DEEPGRAM_API_KEY is set, else OpenAI
     # Whisper. The OpenAI key's primary role is transcript refinement/translation; it only

@@ -298,6 +298,12 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
     # The known set, so that a write path DISAPPEARING (moved into a helper the regex misses) is as
     # visible as a new one arriving without invalidation.
     assert set(writers) == {
+        # Approving a platform-access request LIFTS an existing account to the tier the admin chose
+        # — a promotion, and therefore a User write, on a route whose whole job is admission. It is
+        # the newest member of this set and it is exactly the kind of path the audit exists for: an
+        # account whose cached identity still says CROWDSOURCE_VOLUNTEER for the next TTL after an
+        # admin approved it as a researcher would read as the approval silently not working.
+        "app/api/routes/access.py",
         "app/api/routes/auth.py",
         "app/api/routes/users.py",
         "scripts/seed_admin.py",

@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    access,
     analytics,
     app_release,
     artisans,
@@ -40,6 +41,11 @@ api_router = APIRouter(prefix="/api")
 api_router.include_router(auth.router)
 api_router.add_api_route("/me", auth.me, methods=["GET"], tags=["auth"])
 api_router.include_router(users.router)
+# The platform allow-list — who may sign in AT ALL — and the queue of people asking to. Mounted next
+# to users because it is the other half of "who has an account here", and BEFORE designers because
+# the designer roster is now the narrower of the two lists: it says who is empanelled, this one says
+# who may reach the product. See app/services/access_roster.py for why they are two tables.
+api_router.include_router(access.router)
 api_router.include_router(artisans.router)
 api_router.include_router(crafts.router)
 api_router.include_router(workshops.router)

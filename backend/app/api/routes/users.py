@@ -25,6 +25,7 @@ from app.core.deps import (
 )
 from app.core.security import hash_password
 from app.schemas.users import UserCreate, UserUpdate
+from app.services import access_roster
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.records import clean_data, contains
 
@@ -190,6 +191,19 @@ async def create_user(payload: UserCreate, current_user: Any = Depends(require_a
     # A brand-new cuid cannot already be cached, but every write to a User row invalidates without
     # exception — a rule with a documented exception is a rule the next person has to re-derive.
     invalidate_cached_user(user.id)
+    # AN ADMIN CREATING AN ACCOUNT IS AN ADMIN APPROVING IT. Without this the platform allow-list
+    # would refuse the account the moment it was made: the admin would hand somebody a password,
+    # watch them be told they are awaiting approval, and then have to approve them in a second
+    # screen — for a request they themselves caused. The gate fails closed, deliberately (see
+    # `auth.assert_access_admits`), so every path that mints an account has to admit it, and this is
+    # the only other one besides Google sign-in.
+    await access_roster.admit(
+        user.email,
+        admit_role=role,
+        actor_id=current_user.id,
+        full_name=user.name,
+        note=f"Admitted with the account, created here by {current_user.email}.",
+    )
     return serialize_user(user)
 
 
@@ -251,6 +265,13 @@ async def update_user(
     # This is the promotion/demotion route: the cached identity now describes authority the user no
     # longer has (or has not been given yet), so it must not outlive the write by even one request.
     invalidate_cached_user(user_id)
+    if "email" in data and data["email"] != user.email:
+        # THE ALLOW-LIST IS KEYED BY EMAIL. An admin correcting a typo in an address would otherwise
+        # lock the account out at its next sign-in — the new address has no row, and the gate reads
+        # a missing row as "never approved". See `access_roster.follow_email_change`.
+        await access_roster.follow_email_change(
+            user.email, data["email"], actor_id=current_user.id
+        )
     return serialize_user(updated)
 
 

@@ -168,6 +168,27 @@ async def world():
                 "role": role,
                 "passwordHash": hash_password(PASSWORD),
             })
+            # THE PLATFORM ALLOW-LIST ADMITS EVERY ACCOUNT THIS MODULE CREATES, so that what the
+            # tests below observe is the DESIGNER EMPANELMENT gate and nothing else.
+            #
+            # Inserting a `User` row directly is not one of the two paths that admit somebody — an
+            # admin creating an account through `/users` admits it, and a Google sign-in for an
+            # admitted address provisions one — so a fixture that skipped this would find every
+            # login answered "awaiting administrator approval" and would be testing
+            # `auth.assert_access_admits` while claiming to test `assert_roster_admits`. Any
+            # script that writes accounts straight into the database has the same obligation; see
+            # app/services/access_roster.py.
+            await db.accessroster.create(data={
+                "email": address(slug),
+                "status": "ACTIVE",
+                "joinedAt": datetime.now(UTC),
+                "notes": "Seeded by tests/test_designer_roster.py; this module is about the "
+                         "designer empanelment gate, not the platform allow-list.",
+            })
+        # "newcomer" is deliberately given NO allow-list row: it has an ACTIVE designer-roster row
+        # and no account, which is the empanel-before-the-account-exists flow, and the gate's
+        # empanelment clause is what has to admit it. If that clause is ever removed,
+        # test_a_rostered_email_with_no_account_is_created_as_a_designer fails here first.
         for slug, is_active in ROSTER:
             await db.designerroster.create(data={
                 "email": address(slug),

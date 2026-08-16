@@ -129,6 +129,20 @@ def can_manage_designer_roster(user: Any) -> bool:
     return is_admin(user)
 
 
+def can_manage_access_roster(user: Any) -> bool:
+    """Decide who may sign in to this application at all: Admin and above.
+
+    THE SAME TIER AS THE DESIGNER ROSTER, and for a stronger version of the same reason. This list
+    is every address that may reach the product, so the people who can edit it can lock everybody
+    else out — including each other. It is not a professor's job and it is emphatically not a
+    designer's.
+
+    Read is gated with write, again like the designer roster: the pending queue is a list of people
+    who tried to get in, which is a list of somebody's colleagues, applicants and former staff.
+    """
+    return is_admin(user)
+
+
 def can_manage_workshops(user: Any) -> bool:
     """Create or update a workshop: Professor and above, RANK ALONE — see ``can_manage_crafts`` for
     why the ``canManageWorkshops`` grant is no longer consulted."""
@@ -532,6 +546,21 @@ async def require_designer_roster_manager(current_user: Any = Depends(get_curren
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Managing the designer roster requires Admin access or above.",
+        )
+    return current_user
+
+
+async def require_access_manager(current_user: Any = Depends(get_current_user)) -> Any:
+    """Gates every arm of ``/access/roster``, READ included — see :func:`can_manage_access_roster`.
+
+    THE ENDPOINTS BEHIND THIS ARE THE ONLY IN-PRODUCT REMEDY FOR A LOCKED-OUT INSTITUTION. If this
+    predicate is ever tightened to master-admin-only, the break-glass stops being a break-glass and
+    becomes a single point of failure: one account, one forgotten password, nobody gets in again.
+    """
+    if not can_manage_access_roster(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Managing who may sign in requires Admin access or above.",
         )
     return current_user
 

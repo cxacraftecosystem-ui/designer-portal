@@ -657,17 +657,31 @@ fun DataBrowserScreen(
                                         onProgress = { done, total -> zipDone = done; zipTotal = total }
                                     )
                                 }.onSuccess { result ->
+                                    // The walk stops at the server's file/depth ceiling and says so
+                                    // in the response. "Archive saved — 20,000 files" over a subtree
+                                    // that holds more is the one message on this screen that could
+                                    // send somebody away believing they have everything, so the
+                                    // server's flag is appended verbatim rather than inferred from
+                                    // the counts — which cannot show it: a capped manifest is
+                                    // internally consistent, every file it names IS fetched.
+                                    val short = if (result.truncated) {
+                                        " This folder holds more than one archive can carry, so some " +
+                                            "of it is NOT included."
+                                    } else {
+                                        ""
+                                    }
                                     note(
                                         when {
                                             result.total == 0 ->
                                                 "Nothing in this folder matches the selected filters."
                                             result.failed > 0 ->
                                                 "Archive saved with ${result.saved} of ${result.total} files — " +
-                                                    "${result.failed} failed. Saved to ${result.displayLocation}"
+                                                    "${result.failed} failed. Saved to ${result.displayLocation}" +
+                                                    short
                                             else ->
                                                 "Archive saved — ${result.total} " +
                                                     "file${if (result.total == 1) "" else "s"}. " +
-                                                    "Saved to ${result.displayLocation}"
+                                                    "Saved to ${result.displayLocation}" + short
                                         }
                                     )
                                 }.onFailure {

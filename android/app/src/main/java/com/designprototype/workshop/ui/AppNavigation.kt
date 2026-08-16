@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Handyman
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LockPerson
 import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PermMedia
@@ -274,6 +275,24 @@ object FieldPermissions {
      */
     fun canManageDesignerRoster(user: UserDto): Boolean = isAdmin(user)
 
+    /**
+     * `can_manage_access_roster` — decide who may sign in to this application AT ALL, and work the
+     * queue of people asking to. Admin and above.
+     *
+     * THE SAME TIER AS THE DESIGNER ROSTER, for a stronger version of the same reason: this list is
+     * every address that may reach the product, so whoever can edit it can lock everybody else out,
+     * including each other.
+     *
+     * READ IS GATED WITH WRITE. The pending queue is a list of people who tried to get in — somebody's
+     * colleagues, applicants and former staff — so browsing it is administrative work as much as
+     * deciding it is, and the server refuses the GET on the same rule.
+     *
+     * A SEPARATE FUNCTION FROM [canManageDesignerRoster] although both are `isAdmin` today: they
+     * mirror two different server predicates over two different tables, and collapsing them would
+     * mean that the day either server gate moves, the other client surface moves with it in silence.
+     */
+    fun canManageAccessRoster(user: UserDto): Boolean = isAdmin(user)
+
     /** `require_reviewer` — anyone with somebody beneath them on the ladder, or a grant. */
     fun canReview(user: UserDto): Boolean =
         rank(user.role) >= RANK_FIELD_CONTRIBUTOR || user.canReview
@@ -399,6 +418,11 @@ enum class NavDestination {
     REVIEW,
     SETTINGS_HUB,
     MANAGE_USERS,
+    /**
+     * The PLATFORM allow-list — who may sign in at all — and the queue of people waiting to be let
+     * in. Not [DESIGNER_ROSTER], which is the narrower question of who is empanelled as a designer.
+     */
+    ACCESS_ROSTER,
     SETTINGS,
     GIVE_FEEDBACK
 }
@@ -495,6 +519,15 @@ val FIELD_NAV_ITEMS: List<NavEntry> = listOf(
     // browsing as an ordinary user does not carry a roster of named individuals around with them —
     // but the predicate is what decides, and it is the same `is_admin` the GET enforces.
     NavEntry(NavDestination.DESIGNER_ROSTER, "Designer roster", Icons.Filled.Badge, NavGroup.ADMIN, FieldPermissions::canManageDesignerRoster, "can_manage_designer_roster", adminSurface = true),
+    // The sign-in gate for EVERYBODY, and the queue of people waiting for a decision. Above the
+    // designer roster in the reading order an admin needs — "may this person reach the app at all"
+    // comes before "is this person empanelled as a designer" — and directly in the menu because the
+    // pending count is drawn on this entry: a notification an admin has to go looking for through a
+    // hub is not a notification. The web reaches the same screen from its settings-hub tile and
+    // badges the hub entry instead; the NUMBER is what must match across the two clients, not the
+    // route to it. `adminSurface` like its neighbours, so an admin browsing as an ordinary user is
+    // not carrying a list of named strangers around with them.
+    NavEntry(NavDestination.ACCESS_ROSTER, "Who may sign in", Icons.Filled.LockPerson, NavGroup.ADMIN, FieldPermissions::canManageAccessRoster, "require_access_manager", adminSurface = true),
 
     // Account — personal, so nothing here is role-gated. On Android "Settings" is the Appearance &
     // accessibility screen: the web's /settings is two columns in one page, and the master admin's
@@ -1400,7 +1433,25 @@ fun AppNavigationDrawerContent(
     onLogout: () -> Unit,
     currentDestination: NavDestination? = null,
     pushingUpdate: Boolean = false,
-    onPushUpdate: () -> Unit = {}
+    onPushUpdate: () -> Unit = {},
+    /**
+     * HOW MANY PEOPLE ARE WAITING TO BE LET INTO THE APPLICATION — the badge on "Who may sign in".
+     *
+     * THE FEATURE'S WHOLE NOTIFICATION CHANNEL. The requirement asks that admins be told when
+     * somebody is turned away, and this codebase has no email sender, no push transport and no job
+     * runner to build one from — so the notification is a number on the chrome an admin already
+     * opens, with the queue one tap behind it.
+     *
+     * PASSED IN RATHER THAN FETCHED HERE, and that is not merely style: the drawer is recomposed
+     * whenever it opens, and a fetch inside it would be a request per open. The value rides the
+     * app-wide 45-second loop that is already running to drain the outbox (see `MainActivity`), so
+     * the count costs no timer, no wake-up and no second clock that could drift away from the one
+     * the screen itself reads.
+     *
+     * Zero draws NOTHING, which also covers "we could not ask": a confident "0" over a queue that
+     * failed to load is a lie an admin would act on by not opening it.
+     */
+    pendingAccessCount: Int = 0
 ) {
     val items = visibleNavItems(user, adminMode)
     val rootItems = items.filter { it.group == null }
@@ -1455,12 +1506,12 @@ fun AppNavigationDrawerContent(
                 .verticalScroll(rememberScrollState())
         ) {
             rootItems.forEach { entry ->
-                NavRow(entry, entry.destination == currentDestination, onNavigate)
+                NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount))
             }
             groups.forEach { (group, entries) ->
                 NavGroupHeading(group.label)
                 entries.forEach { entry ->
-                    NavRow(entry, entry.destination == currentDestination, onNavigate)
+                    NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount))
                 }
             }
             Spacer(Modifier.padding(bottom = 8.dp))
@@ -1517,12 +1568,37 @@ private fun NavGroupHeading(label: String) {
     )
 }
 
+/**
+ * The number this entry wears, or null for none.
+ *
+ * A FUNCTION OF THE ENTRY, hoisted out of the drawer and `internal`, so `AppNavigationBadgeTest` can
+ * assert the two rules that actually matter: the count lands on "Who may sign in" and on nothing
+ * else, and a zero draws nothing at all. Both are the kind of thing that is obviously right while
+ * you are writing it and silently wrong six months later, when a second badge arrives and the
+ * condition is copied one entry down.
+ */
+internal fun navBadge(entry: NavEntry, pendingAccessCount: Int): String? =
+    if (entry.destination == NavDestination.ACCESS_ROSTER && pendingAccessCount > 0) {
+        pendingAccessCount.toString()
+    } else {
+        null
+    }
+
 @Composable
-private fun NavRow(entry: NavEntry, selected: Boolean, onNavigate: (NavDestination) -> Unit) {
+private fun NavRow(
+    entry: NavEntry,
+    selected: Boolean,
+    onNavigate: (NavDestination) -> Unit,
+    badge: String? = null
+) {
     NavigationDrawerItem(
         label = { Text(entry.label, style = MaterialTheme.typography.labelLarge) },
         selected = selected,
         icon = { Icon(entry.icon, contentDescription = null) },
+        // Material's own badge slot rather than something drawn into the label: it is announced as a
+        // separate node, so a screen reader says the destination and then the number instead of
+        // running "Who may sign in 3" together as one name.
+        badge = badge?.let { count -> { Text(count, style = MaterialTheme.typography.labelLarge) } },
         onClick = { onNavigate(entry.destination) },
         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
     )

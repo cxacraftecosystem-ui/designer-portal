@@ -325,9 +325,28 @@ STAGE_3 = StageSpec(
                     column_width_pct=24.0),
             fromref("localName", "Name in the local language", T, S),
             fromref("gender", "Gender", T, S, max_length=20),
-            f("age", "Age", INT, S, unit="years", min_value=10, max_value=110),
-            f("artisanCardNo", "Artisan ID / card number", T, S, report_role=COL,
-              column_width_pct=16.0),
+            # AGE IS HYDRATED AND IS STILL MOSTLY BLANK, AND BOTH HALVES OF THAT ARE DELIBERATE.
+            # `Artisan` has no age column. The value comes from the one legacy `extraMetadata`
+            # spelling researchers used before the record registry existed — the same key
+            # `record_fields.py` reads for the artisan record sheet — so old records fill in and
+            # records created since the artisan form stopped writing free metadata do not. Marked
+            # `fromref` because it genuinely is filled in from the record when the record has it.
+            # The fix is a `dateOfBirth` column on Artisan and a derivation, NOT an `age` column:
+            # an age stored in 2024 is wrong in 2026 and nothing would ever say so.
+            fromref("age", "Age", INT, S, unit="years", min_value=10, max_value=110,
+                    help="Recorded against the artisan when they were documented."),
+            # THE PM VISHWAKARMA CARD, MASKED. See the note beside `pehchanCardNumber` in
+            # `REFERENCE_MODELS["Artisan"]`: the number arrives as "XXXX XXXX 3456" because a
+            # design workshop's stage reads do not pass through the API's identity masking and a
+            # workshop viewer is a grantee — the exact hole `record_fields.py` records having
+            # closed once already. A designer entitled to the full number can still type it over
+            # the mask; only-fill-blanks then leaves their answer alone.
+            fromref("artisanCardNo", "Artisan ID / card number", T, S, report_role=COL,
+                    column_width_pct=16.0,
+                    help="The Artisan Pehchan Card number. Shown masked to its last four digits "
+                         "when it is filled in from the linked record."),
+            fromref("pehchanCardAvailable", "Holds an Artisan Pehchan Card", BOOL, S,
+                    help="Whether the artisan is enrolled under PM Vishwakarma."),
             fromref("specialisation", "Specialisation", T, S, report_role=COL,
                     column_width_pct=23.0),
             fromref("experienceYears", "Experience", INT, S, unit="years", min_value=0,
@@ -335,10 +354,52 @@ STAGE_3 = StageSpec(
             f("isMasterCraftsperson", "Master craftsperson", BOOL, S, report_role=COL,
               column_width_pct=18.0, help="MCP status as recognised by the implementing agency."),
             fromref("village", "Village", T, S),
+            # ── THE REST OF THE STATED ADDRESS ────────────────────────────────────────────────
+            #
+            # KEY_VALUE, every one of them, and that is not a preference. The six TABLE_COLUMN
+            # widths declared above this point already sum to exactly 100; a seventh would push
+            # `report_builder._table_columns` past its six-column cap onto the proportional
+            # fallback and silently re-lay-out a participant table that is already in submitted
+            # documents. `report_builder` prints KEY_VALUE fields in the per-row block beneath the
+            # table (:1194-1213), so nothing declared here is lost — see the same argument written
+            # out at `processStep.documentedFor` and `tool.toolFamily`.
+            #
+            # STATED, not provenance. `_subject_point` explains why the device's own GPS fix never
+            # crosses: on this database every one of those fixes is the desk the record was typed
+            # at, 1,500 km from the village on the same row.
+            fromref("district", "District", T, S, max_length=80),
+            fromref("state", "State", T, S, max_length=80),
+            fromref("pincode", "PIN code", T, S, max_length=10),
+            fromref("address", "Address", LT, S),
+            fromref("subjectLocation", "Location of the artisan’s place", GEO, A,
+                    help="The pin a researcher dropped on the artisan’s own place, not the "
+                         "device’s position when the record was typed."),
+            fromref("email", "Email", FieldType.EMAIL, S),
             fromref("phone", "Phone", FieldType.PHONE, S),
+            # THE MOST USEFUL THING ON THE ARTISAN RECORD TO SOMEBODY STANDING IN THE ROOM, and it
+            # reached nothing. `dos`/`donts` are newline-separated, numbered guidance a researcher
+            # wrote about how to work with THIS artisan — a positive prompt and a negative one.
+            # BULLETS rather than KEY_VALUE so the renderer prints them as the list they were
+            # typed as instead of one paragraph with the numbers still inside it.
+            fromref("dos", "Do’s", LT, S, report_role=BULLETS,
+                    help="Guidance recorded against this artisan. One point per line."),
+            fromref("donts", "Don’ts", LT, S, report_role=BULLETS,
+                    help="One point per line."),
+            # `recordNotes` and not `notes`: this is what the RESEARCHER wrote on the artisan
+            # record, and a box called "Notes" on a workshop roster row would be read as somewhere
+            # for the DESIGNER to write. Two different authors must not share one box — the report
+            # prints both and a reader has to be able to tell which is which.
+            fromref("recordNotes", "Notes on the artisan record", LT, S),
+            # Provenance of the SOURCE record, so a reader of the printed roster can tell a row
+            # filled from a survey three years ago from one filled last week.
+            fromref("documentedOn", "Artisan documented on", DATE, S),
             f("attendedDays", "Days attended", INT, S, min_value=0),
             fromref("photo", "Photograph", IMG, S, report_role=GALLERY),
-            f("photoCaption", "Photograph caption", T, S, caption_for="photo", report_role=CAP),
+            # The caption the researcher typed against that photograph in the repository. It used
+            # to stop at the join and the designer was asked to retype it for a photograph they
+            # had never seen taken — see `ReferencePhoto` in `design_workshops`.
+            fromref("photoCaption", "Photograph caption", T, S, caption_for="photo",
+                    report_role=CAP),
         ), label_field="name"),
     ),
 )
@@ -422,8 +483,49 @@ STAGE_5 = StageSpec(
     ),
     entities=(
         single("traditionalProcess", "DwTraditionalProcess", "Process overview", (
+            # ── THE DOCUMENTED PROCESS, AS A WHOLE, ONCE ────────────────────────────────────
+            #
+            # The first ref field on a SINGLETON that hydrates from an external record, and the
+            # reason it exists is written above `REFERENCE_HYDRATION["processStep.processRef"]`:
+            # that mapping refuses to copy a `Process`'s own sub-steps and its pre-process flag
+            # onto a per-step row, correctly, because a whole sequence printed inside one of its
+            # own steps would repeat on every row naming the same process. The note ends by
+            # naming the right home and observing that the home had no door — "a singleton has no
+            # ref field to hydrate from". This is the door. Until it existed, `ProcessStep` — the
+            # ordered sub-steps a researcher actually documented — reached nothing anywhere in a
+            # design workshop.
+            #
+            # WORKSHOP-scoped for exactly the reason `processStep.processRef` is: a `Process`
+            # hangs off a product at one cluster, so "Tie and dye" at Bagru and "Tie and dye" at
+            # Bhuj are two different sequences under one name and the picker's sublabel is the
+            # only thing on screen that separates them.
+            f("processRef", "Documented process", REF, S, ref_model="Process",
+              ref_scope=W_SCOPE, report_role=HIDDEN,
+              help="Choose a process already documented for this workshop. Its name, notes, "
+                   "sub-steps and pre-process answer are filled in below."),
             f("processOverview", "Broad process steps", RICH, B, required=True, report_role=NARR,
               help="The making sequence in outline. Individual steps are recorded below."),
+            # NOT `processOverview`, AND THE DISTINCTION IS THE WHOLE POINT. `processOverview`
+            # above is a REQUIRED narrative the DESIGNER writes about what they observed at the
+            # workshop. These four are what a RESEARCHER recorded, somewhere else, earlier.
+            # Only-fill-blanks would have dropped the second into the first on every workshop
+            # whose designer had not typed yet, and no reader of the .docx could have told which
+            # of the two they were reading — which is the one thing a report of this kind must
+            # never make ambiguous.
+            fromref("documentedProcessName", "Documented process", T, S),
+            fromref("documentedFor", "Documented for", T, S,
+                    help="The product whose documented process this is."),
+            fromref("documentedProcessNotes", "Notes from the process record", LT, S,
+                    report_role=NARR),
+            fromref("documentedSteps", "Sub-steps on the process record", LT, S,
+                    report_role=BULLETS,
+                    help="The ordered sub-steps as they were documented, one per line."),
+            # THE PRE-PROCESS FLAG, IN THE ONE PLACE IT ANSWERS A QUESTION SOMEBODY ASKED. The
+            # registry's objection to it was never to the value — it was to "Pre-process
+            # available: Yes" appearing under step 3 of 7. It is a property of the whole process,
+            # so it belongs on the whole-process record, which is this one.
+            fromref("preProcessAvailable", "Pre-process required", BOOL, S),
+            fromref("documentedOn", "Process documented on", DATE, S),
             f("totalMakingTime", "Total making time", DEC, S, unit="days", min_value=0),
             f("currentProblems", "Current problems", RICH, S, report_role=BULLETS,
               help="One problem per line."),
@@ -508,6 +610,7 @@ STAGE_5 = StageSpec(
             fromref("name", "Tool", T, B, required=True, report_role=COL,
                     column_width_pct=24.0),
             fromref("localName", "Local name", T, S, report_role=COL, column_width_pct=18.0),
+            fromref("englishName", "English name", T, S),
             f("toolType", "Type", T, S, report_role=COL, column_width_pct=16.0,
               help="What kind of tool this is, in the words the artisans use. Choose the family "
                    "below as well, so the same tool can be counted across clusters."),
@@ -536,10 +639,76 @@ STAGE_5 = StageSpec(
                    "itself in “Type” above."),
             fromref("usedFor", "Used for", LT, S, report_role=COL, column_width_pct=26.0),
             fromref("material", "Made of", T, S),
-            fromref("source", "Where obtained", T, S, report_role=COL, column_width_pct=16.0),
+            # `f()` AND NOT `fromref()`, AND IT WAS THE OTHER WAY ROUND UNTIL THIS LANE.
+            #
+            # This is the defect the whole "not all fields are being carried faithfully" complaint
+            # is a symptom of, seen from the opposite side: the field CLAIMED a carry it did not
+            # have. `fromref` appends the FROM_REF sentence — "Filled in from the linked record
+            # when one is chosen" — to the help text, so the form told the designer this box would
+            # fill itself in. No mapping ever wrote it, `validate_registry` cannot see a help-text
+            # marker, and no test compared the two. The sentence shipped, in the browser and in the
+            # bundled Android asset, and every designer who believed it left the box empty.
+            #
+            # It is demoted rather than mapped because `ToolDocumentation` HAS NO COLUMN for where
+            # a tool was obtained. `maker` is a different question and now has its own box below;
+            # answering "where obtained: carpenter" from it would be a plausible wrong sentence in
+            # a submitted report, which is the failure every translation table in
+            # `design_workshops` is written to refuse. `test_reference_carry.py` now asserts
+            # fromref ⟺ mapping in both directions, so neither half of this can drift again.
+            f("source", "Where obtained", T, S, report_role=COL, column_width_pct=16.0,
+              help="Bought, made by the artisan, inherited. The documented tool record does not "
+                   "record this, so it is not filled in from a linked tool."),
+            fromref("maker", "Made by", ENUM, S, enum="MAKER_TYPE",
+                    help="Who made the tool — a different question from where it was obtained."),
+            fromref("traditionType", "Traditional or contemporary", ENUM, S,
+                    enum="TRADITION_TYPE"),
             fromref("cost", "Cost", MONEY, S, unit="INR", min_value=0),
+            fromref("yearsInUse", "Years in use", INT, S, unit="years", min_value=0),
+            # ── PROVENANCE OF THE TOOL RECORD ITSELF ─────────────────────────────────────────
+            # The tool picker is deliberately ALL-scoped (see the note on `toolRef` above): a pit
+            # loom is a TYPE and the same loom stands at every weaving cluster. That is what makes
+            # these three worth printing — a reader of the report can see that this workshop's
+            # loom row was filled from a record documented for a different craft in a different
+            # place, which is legitimate reuse and not a mistake, but only if it is visible.
+            fromref("craftName", "Craft on the tool record", T, S),
+            fromref("place", "Place on the tool record", T, S),
+            fromref("artisanName", "Documented for", T, S),
+            fromref("improvements", "Improvements suggested", LT, S),
+            fromref("remarks", "Remarks on the tool record", LT, S),
+            # ── SEVEN MEASUREMENTS, TWO DIFFERENT STATES OF KNOWLEDGE ────────────────────────
+            #
+            # `lengthCm`/`breadthCm` are converted from `lengthInches`/`breadthInches`, which
+            # declare their unit in the column name and in the record form's labels. See
+            # `_inches_to_cm` for why a straight copy into a box labelled "cm" would put a wrong
+            # measurement into a ministry report that the only-fill-blanks rule then makes
+            # permanent. BREADTH keeps its own word here — unlike the product's, which maps
+            # breadth onto width — because `ToolDocumentation` also has a separate unitless
+            # `width` column and collapsing the two would merge two different measurements.
+            #
+            # The five "(as recorded)" fields DECLARE NO UNIT, and that is the honest declaration.
+            # Their source columns carry no unit suffix, the tool form labels them with the bare
+            # words "Height", "Weight", "Radius", and the record sheet prints them bare. Nobody
+            # knows whether a 12 is inches, centimetres or kilograms. Giving them `unit="cm"` here
+            # would convert an unknown into a stated wrong answer, which is worse than the blank
+            # they replace. If a unit column is ever added to `ToolDocumentation`, these become
+            # ordinary converted fields and these five can be deprecated with `replaced_by`.
+            fromref("lengthCm", "Length", DEC, S, unit="cm", min_value=0),
+            fromref("breadthCm", "Breadth", DEC, S, unit="cm", min_value=0),
+            fromref("heightAsRecorded", "Height (as recorded)", DEC, S, min_value=0,
+                    help="Copied from the tool record, which does not state the unit it was "
+                         "measured in."),
+            fromref("widthAsRecorded", "Width (as recorded)", DEC, S, min_value=0,
+                    help="Unit not stated on the tool record."),
+            fromref("thicknessAsRecorded", "Thickness (as recorded)", DEC, S, min_value=0,
+                    help="Unit not stated on the tool record."),
+            fromref("weightAsRecorded", "Weight (as recorded)", DEC, S, min_value=0,
+                    help="Unit not stated on the tool record."),
+            fromref("radiusAsRecorded", "Radius (as recorded)", DEC, S, min_value=0,
+                    help="Unit not stated on the tool record."),
+            fromref("documentedOn", "Tool documented on", DATE, S),
             fromref("photo", "Photograph", IMG, S, report_role=GALLERY),
-            f("photoCaption", "Photograph caption", T, S, caption_for="photo", report_role=CAP),
+            fromref("photoCaption", "Photograph caption", T, S, caption_for="photo",
+                    report_role=CAP),
         ), label_field="name"),
         many("rawMaterial", "DwRawMaterial", "Raw materials", (
             f("name", "Material", T, B, required=True, report_role=COL, column_width_pct=22.0),
@@ -614,32 +783,77 @@ STAGE_6 = StageSpec(
             f("productCode", "Product code", T, S, report_role=COL, column_width_pct=12.0),
             fromref("name", "Product", T, B, required=True, report_role=COL,
                     column_width_pct=22.0),
-            f("category", "Category", ENUM, S, enum="PRODUCT_CATEGORY", report_role=COL,
-              column_width_pct=16.0),
-            f("lengthCm", "Length", DEC, B, unit="cm", min_value=0),
-            f("widthCm", "Width", DEC, B, unit="cm", min_value=0),
-            f("heightCm", "Height", DEC, S, unit="cm", min_value=0),
+            fromref("localName", "Name in the local language", T, S),
+            # `fromref`, WHICH IT SHOULD ALWAYS HAVE BEEN. This box has been hydrated since the
+            # mapping was written and carried no help text at all — the exact mirror of
+            # `tool.source`, which promised a carry it never had. Both directions of that drift
+            # are now asserted by `test_reference_carry.py`.
+            fromref("category", "Category", ENUM, S, enum="PRODUCT_CATEGORY", report_role=COL,
+                    column_width_pct=16.0,
+                    help="What the product IS. Only filled in from the linked record when the "
+                         "record’s own type answers this question — see “Type on the record”."),
+            # THE SOURCE RECORD'S OWN ANSWER, IN ITS OWN WORDS. `ProductType` has six members and
+            # only two of them mean anything to `PRODUCT_CATEGORY` above: a FINISHED_GOOD may be a
+            # saree or a bag, and a SAMPLE is a saree that happens not to be for sale. Before this
+            # box existed those four answers were simply lost at the picker, because the only place
+            # they could have landed was a column that would have printed them as a wrong category.
+            fromref("recordType", "Type on the record", ENUM, S, enum="PRODUCT_TYPE",
+                    help="What kind of record this is on the product documentation — a different "
+                         "question from the category above."),
+            # ── MEASUREMENTS: THE SOURCE IS IN INCHES AND THESE BOXES SAY CM ────────────────
+            # `_inches_to_cm` in `design_workshops` carries the argument. The short version: the
+            # source columns are `lengthInches`/`breadthInches`/`heightInches`, these three declare
+            # `unit="cm"`, and a mapping pair without the ×2.54 would have written 12 into a box
+            # printed as "12 cm" for a saree 30.48 cm long — permanently, because only-fill-blanks
+            # never lets the row go back to unanswered. `breadthInches` lands on `widthCm` because
+            # the two words are one measurement and neither model has both. `weightG` has no source
+            # column at all and stays a workshop-only answer.
+            fromref("lengthCm", "Length", DEC, B, unit="cm", min_value=0),
+            fromref("widthCm", "Width", DEC, B, unit="cm", min_value=0),
+            fromref("heightCm", "Height", DEC, S, unit="cm", min_value=0),
             f("weightG", "Weight", DEC, S, unit="g", min_value=0),
-            f("dimensionsNote", "Dimensions (as described)", T, B, report_role=COL,
-              column_width_pct=18.0,
-              help="Free text, for a product the measured fields do not suit."),
+            fromref("dimensionsNote", "Dimensions (as described)", T, B, report_role=COL,
+                    column_width_pct=18.0,
+                    help="Free text, for a product the measured fields do not suit. Filled in "
+                         "from the linked record’s “size”."),
             fromref("price", "Selling price", MONEY, B, required=True, unit="INR", min_value=0,
                     report_role=COL, column_width_pct=16.0),
+            # The other half of the cost question, and the one stage 17's cost sheet actually
+            # needs. The product record has held it all along.
+            fromref("costOfMaking", "Cost of making", MONEY, S, unit="INR", min_value=0),
             fromref("material", "Material", T, S, report_role=COL, column_width_pct=16.0),
             f("materialFamily", "Material family", ENUM, S, enum="MATERIAL_FAMILY"),
+            fromref("mainToolsUsed", "Main tools used", LT, S),
             f("technique", "Technique", T, S),
             fromref("use", "Use", LT, S),
             f("traditionType", "Traditional or contemporary", ENUM, S, enum="TRADITION_TYPE"),
             f("productionTimeDays", "Production time", DEC, S, unit="days", min_value=0),
+            # BESIDE `productionTimeDays`, NOT INSTEAD OF IT, and not parsed into it. The source
+            # column is free text — "about three days", "2 weeks", "one season" — and a parser
+            # that reads "2 weeks" as 2 puts a wrong number into the cost sheet above while one
+            # that gives up quietly leaves the blank this lane exists to end. Same pairing, same
+            # reason, as `tool.toolType` beside `tool.toolFamily`: the words are what the report
+            # prints, the number is what a calculation can use.
+            fromref("productionTimeNote", "Time to make (as recorded)", T, S,
+                    help="As written on the product record, in the researcher’s own words."),
             f("monthlyCapacity", "Monthly capacity", INT, S, unit="pieces", min_value=0),
+            # MarketDemand and DEMAND_LEVEL share all five tokens; the translation is still an
+            # explicit total table in `design_workshops` rather than a passthrough, because the
+            # two lists are versioned separately and "they match today" is not a thing a mapping
+            # may rely on silently. NOT the same question as `marketChannel` below.
+            fromref("marketDemand", "Market demand", ENUM, S, enum="DEMAND_LEVEL"),
             f("marketChannel", "Market channel", MENUM, S, enum="MARKET_CHANNEL"),
             f("problems", "Problems reported", RICH, S, report_role=NARR),
+            fromref("craftName", "Craft on the product record", T, S),
+            fromref("place", "Place on the product record", T, S),
+            fromref("remarks", "Remarks on the product record", LT, S),
+            fromref("documentedOn", "Product documented on", DATE, S),
             # Written out rather than built by ``photos()`` for the sake of the one extra
             # sentence: the documented product's own photograph is seeded into this gallery, and
             # a designer who is not told that will add it a second time.
             fromref("productPhotos", "Photographs", IMGS, B, report_role=GALLERY),
-            f("productPhotosCaption", "Photograph caption", T, B, caption_for="productPhotos",
-              report_role=CAP),
+            fromref("productPhotosCaption", "Photograph caption", T, B,
+                    caption_for="productPhotos", report_role=CAP),
             f("viewFront", "Front view", IMG, A),
             f("viewBack", "Back view", IMG, A),
             f("viewDetail", "Detail view", IMG, A),

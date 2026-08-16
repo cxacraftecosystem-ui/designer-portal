@@ -28,6 +28,7 @@ from app.services.records import (
     hydrate_relations,
     media_url_owners,
     merge_field_provenance,
+    prose_contains,
     public_encode,
     require_record,
     resubmit_status,
@@ -245,7 +246,9 @@ async def list_processes(
     if vis:
         and_filters.append(vis)
     if search:
-        where["OR"] = [{"name": contains(search)}, {"notes": contains(search)}]
+        # ``notes`` is the process's narrative column and can now hold a rich-text document, so it
+        # needs the search helper that knows about the stored shape; ``name`` is single-line.
+        where["OR"] = [{"name": contains(search)}, prose_contains("notes", search)]
     if productId:
         where["productId"] = productId
     # The craft/artisan funnel narrows processes through their parent product.

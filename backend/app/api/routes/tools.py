@@ -24,6 +24,7 @@ from app.services.records import (
     include_of,
     media_url_owners,
     merge_field_provenance,
+    prose_contains,
     public_encode,
     require_record,
     resubmit_status,
@@ -112,9 +113,12 @@ async def list_tools(
             {"craftName": contains(search)},
             {"artisanName": contains(search)},
             {"place": contains(search)},
-            {"processUsedIn": contains(search)},
+            # ``processUsedIn`` and ``remarks`` are the two narrative columns on a tool and can now
+            # hold a formatted document; ``material`` is a short single-line value and stays on the
+            # plain filter. ``prose_contains`` argues the difference.
+            prose_contains("processUsedIn", search),
             {"material": contains(search)},
-            {"remarks": contains(search)},
+            prose_contains("remarks", search),
         ]
     if craftId:
         where["craftId"] = craftId

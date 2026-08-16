@@ -507,15 +507,39 @@ object DwWorkshopSearch {
      *
      *  * `craftRef` → `craftName`, `artisanRef` → `artisanName`, `productRef` → `productName` — the
      *    ref's own key with `Ref` traded for `Name`, which is how an entity spells the hydrated name
-     *    when it holds more than one of them; then
+     *    when it holds more than one of them;
+     *  * `processRef` → `documentedProcessName` — the same spelling under the `documented` prefix an
+     *    entity uses when its hydrated boxes describe a record documented ELSEWHERE, rather than
+     *    something observed at this workshop (see below); then
      *  * plain `name`, which is how it spells the only one.
      *
-     * On the registry as it stands that reproduces the web's table entry for entry, for all seven of
+     * On the registry as it stands that reproduces the web's table entry for entry, for all eight of
      * its rows (`workshopSetup.craftRef`→craftName, `participant.artisanRef`→name,
      * `processStep.processRef`→name, `tool.toolRef`→name, `existingProduct.artisanRef`→artisanName,
-     * `existingProduct.productRef`→name, `prototype.productRef`→productName). A ref that grows a
-     * hydrated name spelled some third way gets no hint and is left out of the index, which is the
-     * honest silence decision 4 asks for rather than a wrong label.
+     * `existingProduct.productRef`→name, `prototype.productRef`→productName,
+     * `traditionalProcess.processRef`→documentedProcessName). A ref that grows a hydrated name
+     * spelled some fourth way gets no hint and is left out of the index, which is the honest silence
+     * decision 4 asks for rather than a wrong label.
+     *
+     * ── WHY THE `documented` RULE HAD TO BE ADDED, 2026-08-16 ────────────────────────────────────
+     *
+     * IT WAS ADDED TO FIX A LIVE PARITY DEFECT, and the shape of the defect is the argument for
+     * keeping this derived rather than tabulated. The reference-hydration table was widened on the
+     * server and the web from seven pairs to eight; the eighth is stage 5's `traditionalProcess`
+     * singleton, whose hydrated boxes are all prefixed `documented…` precisely BECAUSE the stage
+     * holds two kinds of writing side by side — what the designer watched happen in the workshop,
+     * and what a researcher recorded about the process somewhere else months earlier. Naming the
+     * imported one `processName` would have put it in the box the observed one belongs in.
+     *
+     * The two rules above could not spell `documentedProcessName`, so this client produced no hint
+     * for that ref and left it out of the offline index — while the web indexed it. A designer
+     * searching their own phone for a workshop by its documented process found nothing, and the same
+     * search on a laptop found it. `DwWorkshopSearchRegistryTest` caught this because it walks the
+     * registry and compares against the web's table; it is the reason that test exists.
+     *
+     * A THIRD SPELLING IS STILL A RULE AND NOT A TABLE. It is derived from the ref's own key for
+     * every entity that adopts the prefix, so the next `documented…Ref` needs no edit here — which
+     * is the property `DwReferenceField` refused to give up when it declined to mirror the web.
      *
      * THE GUARD IS NOT OPTIONAL. This runs only for a model that is NOT an entity of this registry.
      * Without it, a `prototype.sketchRef` whose sketch row is missing from the draft would fall
@@ -529,8 +553,12 @@ object DwWorkshopSearch {
         record: Map<String, JsonElement>,
     ): String {
         if (field.refModel.isEmpty() || models.containsKey(field.refModel)) return ""
-        val derived = field.key.removeSuffix("Ref") + "Name"
-        for (key in listOf(derived, "name")) {
+        val stem = field.key.removeSuffix("Ref")
+        val derived = stem + "Name"
+        // `processRef` → `documentedProcessName`. Built from the same stem, so it costs nothing on an
+        // entity that does not use the prefix — `entity.field(key)` simply finds no such box.
+        val documented = "documented" + stem.replaceFirstChar { it.uppercase() } + "Name"
+        for (key in listOf(derived, documented, "name")) {
             val target = entity.field(key)?.takeIf { !it.deprecated } ?: continue
             val type = DwFieldType.of(target.type)
             if (type != DwFieldType.TEXT && type != DwFieldType.LONG_TEXT) continue

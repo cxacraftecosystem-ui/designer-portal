@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { mergeById } from "@/components/data/cappedList";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
-import { Field, Select, TextArea, TextInput } from "@/components/FormControls";
+import { Field, Select, TextInput } from "@/components/FormControls";
 import { CarryContextBanner, carryScope, useCarryContext } from "@/components/forms/CarryContextBanner";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
@@ -16,12 +16,14 @@ import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/Worksho
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { GridMeasurement, type GridFiles, type GridGroup } from "@/components/media/GridMeasurement";
 import { UploadProgress } from "@/components/media/UploadProgress";
+import { RichTextField } from "@/components/richtext/RichTextField";
+import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch } from "@/lib/api";
 import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
-import { appendRemarksWithExif, collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
+import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, ProductDocumentation, RecordStatus } from "@/lib/types";
@@ -248,7 +250,12 @@ export function ProductForm({
         rawMaterialsUsed: textValue(form, "rawMaterialsUsed"),
         mainToolsUsed: textValue(form, "mainToolsUsed"),
         productFunctionUse: textValue(form, "productFunctionUse"),
-        remarks: appendRemarksWithExif(textValue(form, "remarks") as string | null, exifRemark),
+        // `appendStoredParagraph` and NOT `appendRemarksWithExif`: remarks is a rich-text editor
+        // now, so this column may hold a JSON document, and concatenating the EXIF summary onto the
+        // end of a JSON string produces a value that is neither valid JSON nor readable prose. The
+        // helper appends INTO the document when there is one and is byte-for-byte the old behaviour
+        // when there is not.
+        remarks: appendStoredParagraph(textValue(form, "remarks") as string | null, exifRemark),
         artisanId: artisanId || null,
         craftId: craftId || null,
         workshopId: workshop.workshopId || null,
@@ -520,18 +527,47 @@ export function ProductForm({
           </Field>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <Field label="Raw materials used">
-            <TextArea name="rawMaterialsUsed" defaultValue={initial?.rawMaterialsUsed ?? ""} />
-          </Field>
-          <Field label="Main tools used">
-            <TextArea name="mainToolsUsed" defaultValue={initial?.mainToolsUsed ?? ""} />
-          </Field>
-          <Field label="Function or use">
-            <TextArea name="productFunctionUse" defaultValue={initial?.productFunctionUse ?? ""} />
-          </Field>
-          <Field label="Remarks">
-            <TextArea name="remarks" defaultValue={initial?.remarks ?? ""} />
-          </Field>
+          {/*
+            THE FOUR NARRATIVE BOXES ON THIS FORM, and all four qualify under the rule the user set:
+            each was already a `<TextArea>` (`min-h-24`, no length cap) holding prose about how the
+            product is made, what it is made of and what it is for. The four single-line boxes above
+            — code, dimensions, cost, selling price, market demand — deliberately get nothing: a
+            formatting toolbar on a price field is noise, and dictating four digits is slower than
+            typing them.
+
+            Raw materials and main tools are lists as often as they are sentences, which is exactly
+            what the editor's bullet button is for; they are seeded as prose rather than as lists
+            because the existing records in these columns are comma-separated sentences and reshaping
+            them on open would be the editor arguing with what was written.
+          */}
+          <RichTextField
+            name="rawMaterialsUsed"
+            label="Raw materials used"
+            defaultValue={initial?.rawMaterialsUsed ?? ""}
+            className="md:col-span-2"
+            onDirty={markDirty}
+          />
+          <RichTextField
+            name="mainToolsUsed"
+            label="Main tools used"
+            defaultValue={initial?.mainToolsUsed ?? ""}
+            className="md:col-span-2"
+            onDirty={markDirty}
+          />
+          <RichTextField
+            name="productFunctionUse"
+            label="Function or use"
+            defaultValue={initial?.productFunctionUse ?? ""}
+            className="md:col-span-2"
+            onDirty={markDirty}
+          />
+          <RichTextField
+            name="remarks"
+            label="Remarks"
+            defaultValue={initial?.remarks ?? ""}
+            className="md:col-span-2"
+            onDirty={markDirty}
+          />
           <StatusField canSetStatus={canSetStatus} initialStatus={initial?.status} onDirty={markDirty} />
         </div>
         {initial ? <ExistingMedia linkedRecordType="product" linkedRecordId={initial.id} /> : null}

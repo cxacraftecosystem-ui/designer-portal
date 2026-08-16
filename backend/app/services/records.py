@@ -9,6 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from app.core.db import db
 from app.services.artisan_identity import mask_aadhaar
 from app.services.concurrency import gather_reads
+from app.services.rich_text import search_needles
 from app.services.text_format import title_case_fields
 from prisma import Json
 
@@ -537,6 +538,38 @@ def contains(value: str) -> dict[str, Any]:
     for character in _LIKE_METACHARACTERS:
         escaped = escaped.replace(character, "\\" + character)
     return {"contains": escaped, "mode": "insensitive"}
+
+
+def prose_contains(field: str, value: str) -> dict[str, Any]:
+    """:func:`contains` for a column that may now hold a FORMATTED document rather than a paragraph.
+
+    ── WHY A SEARCH HELPER EXISTS AT ALL ───────────────────────────────────────────────────────────
+    The larger free-text record columns (artisan notes, product remarks and materials, tool remarks
+    and usage, process notes) accept rich text from this release on, and they are still ``String?``
+    columns — the storage decision was explicitly "no migration, no new column". A row somebody
+    formatted therefore holds ``{"blocks":[…]}`` where prose used to be, and the ``ILIKE '%term%'``
+    this composes is reading that JSON directly. Read the banner above
+    ``rich_text.stored_text_document`` before changing either side.
+
+    The words themselves survive: they sit inside ``"text"`` values as themselves, so an ordinary
+    one-word search still finds them and this returns EXACTLY the single-clause filter the call site
+    had before. What does not survive is any term carrying a character JSON escapes — a quote, a
+    backslash, a newline, a tab — because the column holds the escaped form. ``he said "no"`` would
+    match nothing at all and the researcher would be told the record does not exist. The second
+    needle is that repair, and it is only ever added for terms that need it.
+
+    ── THE LIMIT, STATED RATHER THAN HIDDEN ────────────────────────────────────────────────────────
+    Two gaps remain on FORMATTED rows and no ``contains`` can close either: a phrase interrupted by
+    a bolded word is split across two spans, and a phrase spanning a paragraph or list-item boundary
+    is split across two blocks — neither can match. Going further needs a generated column or a real
+    text index, i.e. the migration this feature deliberately did not take. The blast radius is
+    bounded by the encoder's rule that an UNFORMATTED value is stored as plain prose: rows nobody
+    formatted — which is nearly all of them — search exactly as they always have.
+    """
+    needles = search_needles(value)
+    if len(needles) == 1:
+        return {field: contains(needles[0])}
+    return {"OR": [{field: contains(needle)} for needle in needles]}
 
 
 def plain(value: str) -> str:

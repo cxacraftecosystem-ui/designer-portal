@@ -33,150 +33,45 @@
  * 4. **Committing appends, never replaces.** The recogniser is stopped and started many times across
  *    a long answer, and a commit that overwrote the box would delete the previous three sentences
  *    the moment somebody paused for breath.
+ *
+ * WHERE THE FIRST RUNG WENT. The Web Speech typings, the language list, the remembered preference,
+ * the failure wording and the fifty lines that wire a recogniser's callbacks up correctly used to
+ * live in this file. They now live in `components/dictation/onDeviceSpeech.ts`, unchanged, because
+ * the record forms (artisan, product, tool, process) grew a microphone of their own and must not
+ * import from a module named after design workshops — nor, far more importantly, get anywhere near
+ * the server rung below. **Nothing about this component's behaviour changed in that move**: it still
+ * prefers the browser recogniser, still probes the deployment when there is none, still refuses a
+ * local-only workshop outright, and still posts to the consent-gated per-workshop route. The `mode`
+ * machine, the `workshopId` requirement and the MediaRecorder fallback are all still here, and this
+ * is the only file in the tree that may hold them.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Mic, Square } from "lucide-react";
 
+import {
+  createBrowserRecognition,
+  DICTATION_LANGUAGES,
+  readStoredLanguage,
+  speechRecognitionConstructor,
+  startRecognition,
+  storeLanguage,
+  type SpeechRecognitionLike
+} from "@/components/dictation/onDeviceSpeech";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { ApiError } from "@/lib/api";
 import { DW_DICTATE_PATH, dictateAudio, dictationAnswerSentence, serverOffersRoute } from "@/lib/designWorkshops";
 import { isLocalWorkshopId } from "@/lib/designWorkshopStore";
 import { pickAudioRecorderMimeType, SPEECH_AUDIO_CONSTRAINTS } from "@/lib/media";
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The Web Speech API, typed
- * ──────────────────────────────────────────────────────────────────────────── */
-
 /**
- * `lib.dom` has no `SpeechRecognition` — it is not in any published standard, only in a W3C
- * community-group note — so the shape is declared here rather than reached for through `any`.
+ * Re-exported so the move above stayed invisible to anything that imported the list from here.
  *
- * Narrow on purpose: only the members this file touches. A wider transcription of the note would be
- * a second, unverifiable specification sitting in the repository, and the compiler cannot check any
- * of it against the browser that will actually run it.
+ * The canonical home is `components/dictation/onDeviceSpeech.ts`. New call sites should import it
+ * from there; this line exists so that relocating the list was not also an edit to files owned by
+ * other work in flight.
  */
-type SpeechAlternative = { transcript: string; confidence: number };
-type SpeechResult = { isFinal: boolean; length: number; 0: SpeechAlternative };
-type SpeechResultList = { length: number; [index: number]: SpeechResult };
-type SpeechRecognitionEventLike = { resultIndex: number; results: SpeechResultList };
-type SpeechRecognitionErrorLike = { error: string; message?: string };
-
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  maxAlternatives: number;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorLike) => void) | null;
-  onend: (() => void) | null;
-  onaudiostart: (() => void) | null;
-};
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
-function speechRecognitionConstructor(): SpeechRecognitionConstructor | null {
-  if (typeof window === "undefined") return null;
-  const scope = window as unknown as {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
-  };
-  // The unprefixed name first: Chromium has been shipping it alongside the prefix, and a build that
-  // eventually drops the prefix must not lose dictation on the day it does.
-  return scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null;
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Languages
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * The languages a workshop is actually held in.
- *
- * NOT the recogniser's whole list, which runs to a hundred-odd locales and would make the picker a
- * scrolling exercise on a phone. These eleven are the languages this repository's clusters work in,
- * and the tags are the `BCP 47` forms the Web Speech API wants — `hi-IN` and not `hi`, because the
- * bare subtag falls back to a generic model that mangles Indian place names.
- *
- * English is first and is the default because it is what a designer's field notes are usually in
- * even where the interview is not. The rest are in the order a speaker of each would expect to find
- * their own: by speaker population, which is the only ordering that is not somebody's ranking.
- */
-export const DICTATION_LANGUAGES: Array<{ value: string; label: string }> = [
-  { value: "en-IN", label: "English (India)" },
-  { value: "hi-IN", label: "हिन्दी — Hindi" },
-  { value: "bn-IN", label: "বাংলা — Bengali" },
-  { value: "mr-IN", label: "मराठी — Marathi" },
-  { value: "te-IN", label: "తెలుగు — Telugu" },
-  { value: "ta-IN", label: "தமிழ் — Tamil" },
-  { value: "gu-IN", label: "ગુજરાતી — Gujarati" },
-  { value: "kn-IN", label: "ಕನ್ನಡ — Kannada" },
-  { value: "ml-IN", label: "മലയാളം — Malayalam" },
-  { value: "or-IN", label: "ଓଡ଼ିଆ — Odia" },
-  { value: "pa-IN", label: "ਪੰਜਾਬੀ — Punjabi" }
-];
-
-/**
- * The chosen language, remembered.
- *
- * A workshop is one language for a week. Making a designer re-pick Odia on every field of every
- * stage is the kind of friction that ends with everything dictated in English-India and the Odia
- * words transliterated wrong.
- *
- * `localStorage` THROWS rather than returning null when storage is blocked (Safari's private mode,
- * a locked-down kiosk profile), so both halves are wrapped — an exception here would take the whole
- * field down over a preference.
- */
-const LANGUAGE_STORAGE_KEY = "field_repo_dictation_language";
-
-function readStoredLanguage(): string {
-  try {
-    const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    return DICTATION_LANGUAGES.some((entry) => entry.value === stored) ? (stored as string) : "en-IN";
-  } catch {
-    return "en-IN";
-  }
-}
-
-function storeLanguage(value: string): void {
-  try {
-    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, value);
-  } catch {
-    /* A preference that cannot be saved is still a preference that works for this session. */
-  }
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Failure wording
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * One sentence per way this goes wrong, naming the NEXT MOVE rather than the error code.
- *
- * `not-allowed` and `service-not-allowed` are genuinely different — the first is the site being
- * refused the microphone, the second is the speech service being refused by policy — but the person
- * standing there does the same thing about both, so they share a sentence that covers both doors.
- */
-function describeSpeechError(code: string): string {
-  switch (code) {
-    case "not-allowed":
-    case "service-not-allowed":
-      return "The browser refused access to the microphone. Allow it for this site in the address-bar permissions, then press the microphone again — or type the answer in.";
-    case "no-speech":
-      return "Nothing was heard. Hold the handset closer, or check that the right microphone is selected, and try again.";
-    case "audio-capture":
-      return "No microphone was found on this device. Plug one in, or type the answer in.";
-    case "network":
-      return "This browser sends dictation to a speech service over the internet and could not reach it. Dictation needs a connection even though the rest of this form does not.";
-    case "aborted":
-      return "";
-    default:
-      return `Dictation stopped unexpectedly (${code}). Press the microphone to try again, or type the answer in.`;
-  }
-}
+export { DICTATION_LANGUAGES };
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The control
@@ -314,55 +209,38 @@ export function DictationButton({
   useEffect(() => stopEverything, [stopEverything]);
 
   function startBrowserRecognition() {
-    const Recognition = speechRecognitionConstructor();
-    if (!Recognition) return;
-    const recognition = new Recognition();
-    recognition.lang = languageRef.current;
-    // `continuous` keeps the session open across the pauses in a spoken paragraph; without it the
-    // recogniser stops after the first sentence and a designer describing a five-step process has to
-    // press the button five times.
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    /*
+      The wiring is `createBrowserRecognition`'s, in components/dictation/onDeviceSpeech.ts, and the
+      four callbacks below are exactly what this function used to do inline:
 
-    recognition.onresult = (event) => {
-      let pending = "";
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        const text = result[0]?.transcript ?? "";
-        if (result.isFinal) {
-          const finished = text.trim();
-          if (finished) commitRef.current(finished);
-        } else {
-          pending += text;
-        }
+        - interim results are drawn separately from committed ones (rule 2 in the header);
+        - "aborted" never reaches `onProblem` at all, because the shared `describeSpeechError`
+          returns "" for it and the factory drops empty sentences — narrating a deliberate stop as a
+          failure would train designers to ignore the one line that matters;
+        - `onStopped("end")` releases the handle and `onStopped("error")` does not, because `onend`
+          reliably follows `onerror` and releasing twice would drop a live recogniser's reference
+          while it is still delivering.
+
+      Sharing it with the record forms' on-device button is the point: there is one implementation of
+      "how a phrase becomes text", so a fix to interim handling cannot land on one surface only.
+    */
+    const recognition = createBrowserRecognition({
+      language: languageRef.current,
+      onPhrase: (text) => commitRef.current(text),
+      onInterim: setInterim,
+      onProblem: setProblem,
+      onStopped: (reason) => {
+        setListening(false);
+        if (reason === "end") recognitionRef.current = null;
       }
-      setInterim(pending.trim());
-    };
-
-    recognition.onerror = (event) => {
-      const sentence = describeSpeechError(event.error);
-      // "aborted" is what the API reports when the page stopped it deliberately, which is every
-      // normal end of a dictation. Narrating it back as a failure would train designers to ignore
-      // the one line that matters when something is genuinely wrong.
-      if (sentence) setProblem(sentence);
-      setListening(false);
-      setInterim("");
-    };
-
-    recognition.onend = () => {
-      setListening(false);
-      setInterim("");
-      recognitionRef.current = null;
-    };
+    });
+    if (!recognition) return;
 
     recognitionRef.current = recognition;
     setProblem(null);
     setInterim("");
     setListening(true);
-    try {
-      recognition.start();
-    } catch {
+    if (!startRecognition(recognition)) {
       // Safari throws InvalidStateError when start() is called on an instance that is already
       // running — which happens on a double tap, and must not leave the button stuck reading "Stop".
       setListening(false);

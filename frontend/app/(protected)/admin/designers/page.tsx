@@ -320,6 +320,24 @@ export default function DesignerRosterPage() {
     <>
       {header}
 
+      {/*
+        ADDED WHEN THE PLATFORM ALLOW-LIST SHIPPED, because this page's own header sentence ("An
+        address on this list may sign in") became half of the truth that morning: a designer now
+        needs an ACTIVE row HERE *and* an admission on the platform list, and an admin looking for
+        why somebody cannot sign in will otherwise read a perfectly healthy roster row and conclude
+        the product is broken. Empanelling still admits automatically — the allow-list accepts an
+        ACTIVE empanelment — so this is a pointer rather than a second thing to do.
+      */}
+      <p className="mb-4 text-sm leading-6 text-ink-500">
+        This roster is the <em>designer</em> half of signing in. Whether an address may reach the application at all is
+        decided on{" "}
+        <Link href="/admin/access" className="font-medium text-purple-700 hover:underline">
+          Who may sign in
+        </Link>
+        , where people waiting for approval also queue up. Empanelling somebody here admits them there too, so this stays
+        one action.
+      </p>
+
       {error ? (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
       ) : null}

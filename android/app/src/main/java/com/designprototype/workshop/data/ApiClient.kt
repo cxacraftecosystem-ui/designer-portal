@@ -42,6 +42,28 @@ object ApiClient {
         retrofit(tokenStore).create(WorkshopRepositoryApi::class.java)
 
     /**
+     * The decoder Retrofit is built with — hoisted out of [retrofit] so the ONE caller that decodes
+     * a response Retrofit deliberately did not decode can use the identical settings.
+     *
+     * That caller is `WorkshopRepository.readManifest`, which reads the streamed download manifest a
+     * line at a time (see `data/ManifestStream.kt` for the OutOfMemoryError that made it necessary).
+     * It MUST share these four flags rather than construct its own `Json`: `ignoreUnknownKeys` is
+     * what stops a manifest entry gaining a field on the server from turning every installed
+     * handset's download into 20,000 unreadable lines, and a second `Json` built beside this one is
+     * how that guarantee gets lost silently the next time somebody adds a flag here and not there.
+     */
+    internal val json: Json = Json {
+        ignoreUnknownKeys = true
+        explicitNulls = false
+        // The API serializes Prisma Decimal columns (measurements, costs) as JSON *strings*
+        // (e.g. "12.5"). isLenient lets numeric DTO fields decode from quoted values, and
+        // coerceInputValues falls back to defaults if a non-null field arrives null — together
+        // these stop a single measured record from failing an entire list deserialization.
+        isLenient = true
+        coerceInputValues = true
+    }
+
+    /**
      * The configured Retrofit — the gateway retry, the auth header, the timeouts and the lenient JSON
      * above — so a feature can declare its OWN typed service without standing up a second HTTP stack
      * beside this one. A second stack is not a style question here: it would silently opt that
@@ -49,17 +71,6 @@ object ApiClient {
      * the Decimal-as-string leniency that keeps one measured record from failing a whole list.
      */
     fun retrofit(tokenStore: TokenStore): Retrofit {
-        val json = Json {
-            ignoreUnknownKeys = true
-            explicitNulls = false
-            // The API serializes Prisma Decimal columns (measurements, costs) as JSON *strings*
-            // (e.g. "12.5"). isLenient lets numeric DTO fields decode from quoted values, and
-            // coerceInputValues falls back to defaults if a non-null field arrives null — together
-            // these stop a single measured record from failing an entire list deserialization.
-            isLenient = true
-            coerceInputValues = true
-        }
-
         val logging = HttpLoggingInterceptor().apply {
             level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
         }

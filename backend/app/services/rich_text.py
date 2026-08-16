@@ -40,6 +40,13 @@ means the renderers cannot drift.
 search, for CSV export and for the completeness gate — which counts a field as filled on its
 text, never on its formatting.
 
+A design workshop stores these documents in a JSON column, so the pair above is the whole story
+there. The RECORD forms — artisan notes, product remarks, tool remarks, process notes — store them
+inside plain ``String?`` columns that also hold, and will keep holding, ordinary prose. That needs a
+second pair, :func:`from_stored_text` / :func:`to_stored_text`, and a read boundary,
+:func:`plain_from_stored`; the section that defines them argues the case at length and names the
+silent-corruption defect it exists to prevent. Nothing in this module knows what a workshop is.
+
 Every string entering this module passes ``report_model.clean_text``, for exactly the reason that
 module documents: a lone surrogate from a phone that cut an emoji in half makes
 ``word/document.xml`` not well-formed, and Word refuses the entire file rather than dropping the
@@ -50,6 +57,7 @@ character.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -549,6 +557,238 @@ def is_empty(raw: Any) -> bool:
     if isinstance(raw, str):
         return not raw.strip()
     return from_json(raw).is_empty
+
+
+# --------------------------------------------------------------------------------------
+# Rich text inside a plain ``String`` column — the record forms, not the workshop
+# --------------------------------------------------------------------------------------
+#
+# EVERYTHING ABOVE THIS LINE ASSUMES A JSON COLUMN. A design workshop keeps its rich fields inside
+# ``DwStageEntry.data``, a Prisma ``Json`` column, so the value arriving at :func:`from_json` is
+# already a ``dict`` and the question "is this a document or is this prose?" never came up.
+#
+# The record forms — artisan notes, product remarks, tool remarks, process notes — have no JSON
+# column and are NOT getting one: their columns are ``String?`` in ``prisma/schema.prisma`` and they
+# stay ``String?``. Every row in production today holds plain prose, older clients will keep writing
+# plain prose forever, and a migration to change the type is a schema change this feature does not
+# get to make. So a rich document has to live inside a string, alongside the plain strings, and be
+# told apart from them by looking at it.
+#
+# ── THE DEFECT THIS SECTION EXISTS TO PREVENT ───────────────────────────────────────────────────
+# :func:`from_json` reads a ``str`` as PROSE and never as JSON (see its docstring — that is the rule
+# that makes promoting a LONG_TEXT field to RICH_TEXT non-destructive, and it is load-bearing in all
+# three ports). Feed it the string ``'{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"hello"}]}]}'``
+# and it hands back a document whose single paragraph is that line of JSON syntax, verbatim. The
+# CSV a ministry downloads then contains a column of braces. **Nothing crashes.** That is what makes
+# it dangerous: it is silent corruption on read, discovered by a reader, weeks later, in a file that
+# has already left the building.
+#
+# So the string form gets its own front door, :func:`from_stored_text`, which tries JSON FIRST and
+# falls back to prose. Do not "simplify" a call to it into a call to ``from_json``.
+#
+# ── THE STORED SHAPE, WHICH IS A CROSS-PLATFORM CONTRACT AND NOT THIS FILE'S TO CHANGE ──────────
+# The column holds one of exactly three things, and all three genuinely occur:
+#
+#     NULL                                the researcher left the box empty
+#     prose                               everything written before this feature, everything an
+#                                         older client writes after it, and everything written
+#                                         since that nobody actually formatted
+#     {"blocks":[…]}                      a serialised document, and ONLY once a mark, a heading,
+#                                         a list, a quote, an alignment, a table or an inline
+#                                         photograph has been applied
+#
+# The document is recognised BY SHAPE — a value that trims to ``{…}`` and parses to an object with a
+# ``blocks`` array — rather than by a marker byte, and the rule is written out identically in
+# ``frontend/components/richtext/storedRichText.ts`` (``decodeStoredRichText`` /
+# ``encodeStoredRichText``), which is the editor that actually writes these columns. **The two must
+# agree exactly.** A sentinel-prefixed variant was considered here and rejected for that reason
+# alone: this side inventing a second envelope would mean the web editor re-opening a
+# backend-written value could not parse it and would show the researcher their own prose followed by
+# a line of machinery.
+#
+# WHY "ONLY WHEN FORMATTED" IS THE LOAD-BEARING HALF. Turning a rich editor on over an existing
+# column must not rewrite the corpus. Because an unformatted document is written back as prose, the
+# overwhelming majority of rows keep exactly the bytes they keep today — so free-text search, the
+# four export surfaces, the review panel and the Android forms see no change at all for them, and no
+# coordinated release is needed. The cost of the feature is confined to rows somebody deliberately
+# formatted. Make the encoding unconditional and that cost moves to every row in the repository.
+#
+# ── WHAT THIS COSTS FREE-TEXT SEARCH, STATED RATHER THAN HIDDEN ─────────────────────────────────
+# Search in this app is a raw Prisma ``contains`` against the column — ``ILIKE '%term%'`` — in eleven
+# places, and none of them can parse a document first. Against a FORMATTED row the prose survives
+# only inside ``"text"`` values, so three things go wrong and only one of them is fixable here:
+#
+#   * a query containing a character JSON escapes (a quote, a backslash, a newline, a tab) can never
+#     match, because the column holds the escaped form. FIXED — see :func:`search_needles`, used by
+#     ``records.prose_contains``;
+#   * a phrase interrupted by a bolded word, or spanning a paragraph or list-item boundary, is split
+#     across two ``"text"`` values and can never match. NOT FIXABLE with ``contains``; closing it
+#     needs a generated column or a real text index, i.e. the migration this feature did not take;
+#   * the envelope's own key names and enum values (``blocks``, ``spans``, ``text``, ``marks``,
+#     ``align``, ``level``, ``rows``, ``media``, ``kind``, ``TABLE``, ``IMAGE``, ``QUOTE``, ``CODE``,
+#     ``BOLD``, ``LEFT``, ``RIGHT``, ``CENTER``…) are ordinary English words, so searching for one of
+#     THOSE over-matches every formatted row. A visible false positive a person can dismiss, unlike
+#     the two above. Closing it means shortening the envelope's keys in all three ports at once.
+#
+# Because only formatted rows are affected, that is a bounded regression and not a general one. Do
+# not "fix" it by having the encoder always write JSON — that is the change that would make it
+# general.
+
+
+def _document_from_payload(payload: str) -> RichDoc | None:
+    """Parse a serialised ``{"blocks": […]}`` envelope, or ``None`` if that is not what this is.
+
+    The ``blocks`` key is REQUIRED and must hold a list, matching ``decodeStoredRichText`` on the
+    web line for line. A bare list at the top level is accepted by :func:`from_json` and is
+    deliberately NOT accepted here: in a column that mostly holds prose, ``[see the photograph]`` is
+    a far more likely value than a serialised block array, and guessing wrong turns a researcher's
+    note into an empty cell.
+    """
+    try:
+        parsed = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("blocks"), list):
+        return None
+    return from_json(parsed)
+
+
+def stored_text_document(value: str) -> RichDoc | None:
+    """The document inside a ``String`` column value, or ``None`` when the value is plain prose.
+
+    ``None`` is not a failure — it is the answer for every row written before this feature and
+    every row an older client will write after it. Callers must treat it as "leave this string
+    alone", never as "empty".
+    """
+    stripped = value.strip()
+    if not stripped.startswith("{") or not stripped.endswith("}"):
+        # Cheap gate before the parse, and the same one the web takes: prose is not JSON-shaped, and
+        # attempting ``json.loads`` on every note in a 2000-row export would be paid per cell.
+        return None
+    return _document_from_payload(stripped)
+
+
+def is_stored_rich_text(value: Any) -> bool:
+    """Whether a column value carries formatting, rather than being the plain string it looks like."""
+    if isinstance(value, (dict, list, RichDoc)):
+        return True
+    return isinstance(value, str) and stored_text_document(value) is not None
+
+
+def from_stored_text(value: Any) -> RichDoc:
+    """A ``String`` column value as a document — JSON first, prose second.
+
+    The counterpart of :func:`from_json` for columns that are not JSON columns. Use this, and not
+    ``from_json``, anywhere the value came out of a ``String``/``String?`` Prisma field.
+    """
+    if value is None:
+        return EMPTY
+    if isinstance(value, str):
+        document = stored_text_document(value)
+        return document if document is not None else from_plain(value)
+    return from_json(value)
+
+
+def _is_unformatted(document: RichDoc) -> bool:
+    """Whether every block survives a trip through plain text unchanged.
+
+    A WHITELIST of "nothing interesting is set", never a blacklist of known-lossy features, and the
+    twin of ``isPlainProse`` in ``frontend/components/richtext/storedRichText.ts``. A block kind or
+    a mark added to this module later must default to "store as JSON": the other polarity fails
+    invisibly, flattening a researcher's table to pipe-separated lines at save time, which nobody
+    finds out about until the report is printed.
+    """
+    for block in document.blocks:
+        if block.kind is not BlockKind.PARAGRAPH:
+            return False
+        if block.align is not Align.LEFT or block.level or block.rows or block.media:
+            return False
+        if any(span.marks for span in block.spans):
+            return False
+    return True
+
+
+def to_stored_text(doc: Any) -> str | None:
+    """A document as a value for a plain ``String?`` column — prose unless it is actually formatted.
+
+    The Python twin of ``encodeStoredRichText`` in ``frontend/components/richtext/storedRichText.ts``
+    and the thing that keeps the two honest: ``backend/tests/test_rich_text_stored_columns.py``
+    asserts the shape this produces is exactly the shape :func:`stored_text_document` recognises, so
+    a divergence between the two platforms shows up here rather than as a researcher's notes turning
+    into braces.
+
+    No backend route writes these columns from a document today — every write arrives as a string
+    from a client. It exists so that the first one that does cannot invent a third encoding, and so
+    the read tests can build a realistic stored value without hand-writing JSON.
+
+    ONE DELIBERATE OMISSION: the web encoder takes a ``join`` argument and rejoins an unformatted
+    document's blocks with a BLANK line for ``Artisan.notes`` and the process form's step notes,
+    because ``MultiNoteField`` (web) and ``MultiNoteInput`` (Android) both split those two columns
+    on blank lines to rebuild their note rows. That contract belongs to the multi-note CONTROL, not
+    to the column, and no server-side caller has one — reproducing it here would be a second copy of
+    a rule with no way to know when it applies. Anything writing one of those two columns from a
+    document on this side must join with ``"\\n\\n"`` itself, or four notes silently become one.
+
+    ``None`` rather than ``""`` for an empty document, because ``NULL`` is what every one of these
+    columns already means by "the researcher left this blank"; a feature that starts writing empty
+    strings where NULLs were makes ``field IS NULL`` reporting quietly wrong.
+    """
+    document = doc if isinstance(doc, RichDoc) else from_json(doc)
+    if document.is_empty:
+        return None
+    if _is_unformatted(document):
+        return to_plain(document) or None
+    # ``ensure_ascii=False`` so Devanagari, Bengali and Gujarati prose stays legible in the column
+    # to anybody reading it with psql — and, more practically, so the raw ``contains`` searches see
+    # the same bytes the researcher typed rather than a run of ``\uXXXX`` escapes.
+    return json.dumps(to_json(document), ensure_ascii=False, separators=(",", ":"))
+
+
+def plain_from_stored(value: Any) -> Any:
+    """Any read value, with formatting flattened away — AND A NO-OP ON EVERYTHING ELSE.
+
+    This is the read boundary. Call it wherever a record column is rendered for a human or written
+    into a file: the info panel, the .xlsx sheets, ``details.txt``, both CSV downloads.
+
+    **The identity guarantee is the important half, and ``backend/tests/test_rich_text_stored_
+    columns.py`` pins it.** A plain string comes back as the *same object*, not as a string that
+    survived a round trip through :func:`from_plain` and :func:`to_plain`. That round trip is not
+    the identity: it runs ``clean_text``, strips each line, collapses runs of blank lines and drops
+    trailing whitespace. Applying it to the whole repository would silently reformat every existing
+    note, address and remark in every export — a diff nobody asked for, across data this app's users
+    are the custodians of rather than the authors of. Non-strings (``Decimal``, ``datetime``, ``int``,
+    an enum) are returned untouched for the same reason: their callers already know how to coerce
+    them and this function has no opinion about them.
+    """
+    if isinstance(value, str):
+        document = stored_text_document(value)
+        return value if document is None else to_plain(document)
+    if isinstance(value, (dict, list, RichDoc)):
+        # A JSON column, or a value already parsed by a caller. There is no ambiguity here, so no
+        # detection: it is a document.
+        return to_plain(value)
+    return value
+
+
+def search_needles(term: str) -> tuple[str, ...]:
+    """The literal strings a raw ``contains`` must try so that a search still finds formatted prose.
+
+    ONE needle for an ordinary word. Inside a stored document the researcher's words sit in
+    ``"text"`` values as themselves, so ``ILIKE '%weaving%'`` finds ``{"text":"weaving on a pit
+    loom"}`` with no help at all — which is why this is not a general search rewrite.
+
+    A SECOND needle when the term contains a character JSON escapes: a quote, a backslash, a
+    newline, a tab. Those do NOT survive as themselves — ``he said "no"`` is stored as
+    ``he said \\"no\\"`` — so the typed term matches nothing and the researcher is told the record
+    does not exist. The escaped needle is that repair, and it is the only one of the three recall
+    gaps listed in this section's banner that a ``contains`` can close.
+
+    Deliberately one needle in the common case rather than always two: each extra needle is another
+    ``ILIKE '%…%'`` in the WHERE clause, no btree can answer any of them, and paying that on every
+    search for a word with no quote in it would be a measurable cost for zero recall.
+    """
+    escaped = json.dumps(term, ensure_ascii=False)[1:-1]
+    return (term,) if escaped == term else (term, escaped)
 
 
 # --------------------------------------------------------------------------------------

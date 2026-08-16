@@ -27,6 +27,7 @@ import sys
 from app.core.db import connect_db, db, disconnect_db
 from app.core.deps import invalidate_cached_user
 from app.core.security import hash_password
+from app.services import access_roster
 
 #: The shared password. Deliberately obvious: these are throwaway local accounts and a memorable
 #: password is the whole point. Nothing here is ever created against a remote database.
@@ -86,6 +87,22 @@ async def main() -> None:
             # TTL would otherwise check the OLD role's permissions and quietly report a pass.
             if row is not None:
                 invalidate_cached_user(row.id)
+            # AND THE PLATFORM ALLOW-LIST, or none of these six can sign in at all.
+            #
+            # Same class of trap as the designer roster row below, one level up: since the
+            # allow-list arrived, `auth.assert_access_admits` refuses any account with no ACTIVE row
+            # — it fails closed on purpose — and an account written straight into the User table has
+            # taken neither of the two paths that admit somebody. Without this, running this script
+            # produces six accounts that look perfect in Settings > Users and answer every sign-in
+            # with "your access request is awaiting administrator approval", which is the single
+            # most misleading state a test bench can be in.
+            await access_roster.admit(
+                email,
+                admit_role=role,
+                full_name=name,
+                note="Seeded by scripts/seed_test_accounts.py.",
+                decided=False,
+            )
             print(f"  {verb:<8} {role:<22} {email}")
 
         # THE DESIGNER ALSO NEEDS A ROSTER ROW, or they cannot sign in at all.

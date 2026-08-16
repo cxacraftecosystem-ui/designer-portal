@@ -678,6 +678,15 @@ def _price_bands(values: list[float]) -> list[tuple[str, float]]:
     ]
 
 
+#: How many stage-1 rows the cover table holds. A cover table longer than this stops being a
+#: cover — but stage 1 declares twenty-one COVER_FIELD boxes, so the cap bites on any properly
+#: documented workshop. Named rather than inlined because two things now depend on the same
+#: number: the block that is drawn, and the warning that says what fell off it. See the block at
+#: the end of :meth:`ReportBuilder._render_cover` for which templates that costs and why the
+#: answer is a sentence rather than a second table.
+COVER_INFO_ROWS = 10
+
+
 # --------------------------------------------------------------------------------------
 # The builder
 # --------------------------------------------------------------------------------------
@@ -720,12 +729,86 @@ class ReportBuilder:
                     if isinstance(entry_id, str) and entry_id:
                         self._rows_by_id[entry_id] = (entity, row)
         self._label_cache: dict[str, str] = {}
+        #: The stage-1 cover fields this document filled in and then did NOT print anywhere —
+        #: written by :meth:`_render_cover`, read by :func:`build_report` for a warning. See
+        #: :data:`COVER_INFO_ROWS` for the loss, and ``ref_resolves`` for why the answer is taken
+        #: off the builder AFTER the render rather than recomputed beside it: a second copy of
+        #: "what did the cover print" is exactly how two statements about one document come apart.
+        self.cover_fields_dropped: tuple[str, ...] = ()
 
     # -- tier and emptiness -----------------------------------------------------------
 
     def _visible(self, spec: FieldSpec) -> bool:
         """Whether the template's tier admits this field at all."""
         return not spec.deprecated and spec.tier.rank <= self.template.max_tier.rank
+
+    def _is_filled(self, spec: FieldSpec, row: dict[str, Any]) -> bool:
+        """Whether this field of this row HAS something a report could have printed.
+
+        Asked of a field the tier cap has already excluded, so it cannot go through ``_printable``
+        — that skips an invisible field before it ever looks at the value. It asks the two
+        questions the two printing paths ask, and no third one: media is placed by ``_images``
+        (which reads ids, never text) and everything else is placed from ``_value`` (which is what
+        turns a dead reference into a blank rather than a cuid). A field that would have rendered
+        as nothing anyway is not a loss and must not be counted as one — a "fields were left out"
+        warning that fires on empty boxes is a warning designers learn to ignore.
+        """
+        if spec.type.is_media:
+            return bool(_media_ids(row.get(spec.key)))
+        return bool(self._value(spec, row))
+
+    def fields_hidden_by_tier(self) -> list[tuple[StageSpec, list[str]]]:
+        """The filled fields this template's ``max_tier`` kept out of the document, by stage.
+
+        **THE OTHER HALF OF A WARNING THAT ONLY EVER COVERED THE DESIGNER'S OWN QUESTIONS.**
+        ``build_report`` already tells a designer when their own custom section asks only questions
+        above the template's capture tier, and the argument written there applies verbatim to the
+        two and a half thousand fields of the REGISTRY: COMPACT_SUMMARY is the one template in
+        ``TEMPLATES`` whose ``max_tier`` is not ADVANCED, it describes itself as "Basic-tier fields
+        only", and every Standard and Advanced answer a designer typed is dropped from it by
+        ``_visible`` without one word anywhere saying so. A designer who fills in an artisan's
+        village, phone and specialisation — all Standard, all of them copied in from the artisan
+        record by the picker — generates a Compact summary and gets a file with none of them, and
+        is told nothing. That is precisely the failure ``apply_report_settings``' docstring names:
+        an absent feature is obvious and a silent one is a bug the designer blames themselves for.
+
+        A FACT ABOUT THIS WORKSHOP AND NOT ABOUT THE REGISTRY. Only fields that were actually
+        FILLED IN count, which is why this is a method on the builder rather than a comparison of
+        two tiers: "COMPACT_SUMMARY omits 1,900 Standard fields" is true of every report ever
+        generated from it and tells a designer nothing about their own. "17 fields you recorded are
+        not in this file" is a thing they can act on, and the action — generate it as
+        DCH_STANDARD — is named in the warning.
+
+        ``report_role=HIDDEN`` fields are skipped: they print at no tier, so the cap took nothing
+        away and naming them would blame the template for a decision the registry made. Nothing
+        else is filtered — a CAPTION or a METRIC left out by the cap is as absent as a key-value
+        pair, and the designer typed it either way.
+
+        Returns ``[(stage, [field labels])]`` in the registry's own stage order, and only for the
+        stages the template actually prints. A field left out because the template does not carry
+        its stage AT ALL is a different and visible thing: the template's section list is a
+        decision the designer made when they chose it and can read in its description, while the
+        tier cap is invisible from the picker.
+        """
+        out: list[tuple[StageSpec, list[str]]] = []
+        for spec in stages():
+            if self.template.section_for(spec.key) is None:
+                continue
+            lost: list[str] = []
+            for entity in spec.entities:
+                rows = ([self.data.singleton(spec.key)]
+                        if entity.cardinality is Cardinality.SINGLETON
+                        else self.data.rows(spec.key, entity.key))
+                for field_spec in entity.fields:
+                    if self._visible(field_spec) or field_spec.deprecated:
+                        continue
+                    if field_spec.report_role is ReportRole.HIDDEN:
+                        continue
+                    if any(self._is_filled(field_spec, row) for row in rows):
+                        lost.append(field_spec.label)
+            if lost:
+                out.append((spec, lost))
+        return out
 
     # -- references -------------------------------------------------------------------
 
@@ -1806,13 +1889,43 @@ class ReportBuilder:
             ),
             logo=logo,
             hero_image=hero,
-            info_rows=tuple(rows[:10]),   # a cover table longer than this stops being a cover
+            info_rows=tuple(rows[:COVER_INFO_ROWS]),
             footer_lines=tuple(x for x in (
                 _submission_line(settings),
                 (f"Generated on {_format_date(self.doc.meta.generated_at[:10])}"
                  if self.doc.meta.generated_at else ""),
             ) if x),
         ))
+
+        # ── the cover fields this template will print NOWHERE, recorded for a warning ──────────
+        #
+        # THE COVER CAP IS EDITORIAL AND THE SILENCE AROUND IT IS NOT. Stage 1 declares twenty-one
+        # COVER_FIELD boxes and a filled-in workshop fills most of them, so `rows` regularly runs
+        # past `COVER_INFO_ROWS` — and the overflow is dropped here with nothing said. For four of
+        # the six templates that costs nothing, because they also print the WORKSHOP_SETUP stage
+        # section and `_render_narrative` prints COVER_FIELD there as a key-value pair, so every
+        # overflowed value appears a page later. For IMPLEMENTING_AGENCY and PHOTO_CATALOGUE,
+        # which carry a cover and no stage 1, the overflow appears NOWHERE IN THE DOCUMENT: on a
+        # fully documented workshop that is the start and end dates, the duration, the designer's
+        # institution, the sanction order and its date, and the workshop code, typed by a designer
+        # and absent from the file with no gap visible where they should be.
+        #
+        # NOT FIXED BY PRINTING THEM ANYWAY, and the reason is written into this pipeline twice
+        # over. Where they would go is an editorial decision belonging to the template — and
+        # `report_templates.TEMPLATES` is pinned by value against the Kotlin port in a 485 KB
+        # fixture that can only be regenerated inside the API container, so the natural fix (give
+        # IMPLEMENTING_AGENCY a "Workshop particulars" annexure, exactly as it already reduces the
+        # cluster and survey background to Annexures B and C) has to ship with that pin. The
+        # handset's `ReportScreen.kt` caps the same list with the same `infoRows.take(10)`, so a
+        # server-only change here would make one workshop's report differ between the two surfaces
+        # — the divergence this whole port exists to end.
+        #
+        # So the fix is the SENTENCE, which is what was actually missing. `build_report` turns this
+        # into a warning beside the download, exactly as it already does for a designer's own
+        # section that the template's capture tier left out: an absent feature is obvious and a
+        # silent one is a bug the designer blames themselves for.
+        if len(rows) > COVER_INFO_ROWS and self.template.section_for("WORKSHOP_SETUP") is None:
+            self.cover_fields_dropped = tuple(label for label, _v in rows[COVER_INFO_ROWS:])
 
     def _render_summary_metrics(self, section: TemplateSection) -> None:
         """Headline counts, derived from the records unless stage 18 states otherwise.
@@ -2097,15 +2210,23 @@ def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResol
                  template: ReportTemplate | None = None) -> tuple[ReportDocument, list[str]]:
     """Build the report document for one workshop under one template.
 
-    Returns the document and any warnings — a substituted template, a stage whose required
-    fields are unfilled, a designer's own section this template's capture tier left out — which
-    the caller shows beside the download rather than writing into the file. A warning belongs to
-    the act of generating, not to the document: the officer who opens the .docx next month should
-    not find a note about what was missing on the day.
+    Returns the document and any warnings — a substituted template, a stage whose required fields
+    are unfilled, REGISTRY FIELDS AND COVER FIELDS THIS TEMPLATE LEFT OUT, and a designer's own
+    section this template's capture tier left out — which the caller shows beside the download
+    rather than writing into the file. A warning belongs to the act of generating, not to the
+    document: the officer who opens the .docx next month should not find a note about what was
+    missing on the day.
 
-    THE THIRD OF THOSE IS HERE AND NOT IN THE LOADER because it is the only place that knows both
-    halves: the sections attached to ``data`` and the SHAPED ``template`` that decided which of them
-    could print. See the block that raises it, at the end of this function.
+    THE LAST THREE ARE HERE AND NOT IN THE LOADER because this is the only place that knows both
+    halves: the data attached to ``data`` and the SHAPED ``template`` that decided which of it could
+    print. See the blocks that raise them, at the end of this function.
+
+    WHAT THE THREE OF THEM SHARE, and it is the rule for adding a fourth: each names a loss the
+    designer CANNOT SEE from the picker. A template printing three of the twenty-two stages is a
+    decision they made and can read in the template's own description; a Basic-tier cap silently
+    dropping every Standard answer they typed, and a ten-row cover table silently dropping the
+    eleventh field, are not. Warn about the invisible ones only — a warning that fires on every
+    report is one nobody reads, including on the report where it mattered.
 
     ``theme`` overrides the template's palette for this one document, exactly as ``meta``
     overrides its page size and running furniture, and for the same reason: a designer trying
@@ -2195,6 +2316,50 @@ def build_report(data: WorkshopData, template_id: str, resolve_media: MediaResol
     # template — every test that builds a bare `TEMPLATES` entry, and the 38 pinned
     # `apply_report_settings` cases — carries no CUSTOM_SECTION at all and gets an empty list here,
     # so no existing report gains a warning it did not have.
+    # ── the REGISTRY fields this template's capture tier left out ──────────────────────────────
+    #
+    # THE SAME WARNING AS THE ONE BELOW, FOR THE OTHER NINETY-NINE PERCENT OF THE FIELDS. The block
+    # under this one has told a designer for a while that their OWN section was above the
+    # template's tier; nothing told them that the artisan's village, phone and specialisation the
+    # picker copied in off the artisan record — Standard, every one of them — were dropped from a
+    # Compact summary too. One report, two rules, and the designer only ever heard about one.
+    #
+    # ASKED OF THE BUILDER AFTER THE RENDER, exactly as ``ref_resolves`` is and for the same
+    # reason: ``_visible`` is the one decision that actually kept the fields out, and a tier
+    # comparison recomputed here would be a second copy of it — which is how the two custom-section
+    # warnings came apart in the first place. Five of the six templates admit every tier, so
+    # ``fields_hidden_by_tier`` returns an empty list for them and no existing report gains a
+    # warning it did not have.
+    lost_by_tier = builder.fields_hidden_by_tier()
+    if lost_by_tier:
+        total = sum(len(labels) for _spec, labels in lost_by_tier)
+        # NAMED BY STAGE AND NOT BY FIELD. Seventeen field labels in a header is a wall a designer
+        # scrolls past; "stages 3, 6 and 13" is where they go and look. The first four, because the
+        # sentence has to stay a sentence.
+        where = ", ".join(f"stage {spec.number}" for spec, _labels in lost_by_tier[:4])
+        warnings.append(
+            f"{total} field(s) recorded in this workshop are above {template.name}'s capture tier "
+            f"({template.max_tier.value.title()}) and are not in this file — {where}"
+            + ("…" if len(lost_by_tier) > 4 else "")
+            + ". Generate the report with a template that captures every tier to include them."
+        )
+
+    # ── the cover fields that fell off the ten-row cover table ─────────────────────────────────
+    #
+    # SEE THE BLOCK AT THE END OF ``_render_cover``, which decides this and says at length why the
+    # answer is a sentence rather than a second table. In short: the cap is editorial and right,
+    # four of the six templates print the overflow in their stage-1 section anyway, and for the two
+    # that do not the values are in the record and nowhere in the document. Only those two ever
+    # reach this branch, so no existing report gains a warning it did not have.
+    if builder.cover_fields_dropped:
+        names = ", ".join(builder.cover_fields_dropped[:4])
+        warnings.append(
+            f"{len(builder.cover_fields_dropped)} cover field(s) did not fit the cover table and "
+            f"the {template.name} template prints no workshop-setup section to carry them, so "
+            f"they are not in this file: {names}"
+            + ("…" if len(builder.cover_fields_dropped) > 4 else "") + "."
+        )
+
     hidden = sections_hidden_by_tier(
         [
             custom_section_of(data, section.custom_key)

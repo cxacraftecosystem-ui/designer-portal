@@ -52,6 +52,8 @@ import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.FieldPermissions
+// The shared record-form prose box: on-device dictation and the rich editor, both opt-in.
+import com.designprototype.workshop.ui.RecordProseField
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt. Every file
 // in this feature imports it, or its headings are quietly set in the body face.
 import com.designprototype.workshop.ui.Text
@@ -715,12 +717,17 @@ private fun RosterEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
+                // `DesignerRoster.notes` — an administrator's note about why this person is on the
+                // roster. Dictation only: it is read in a list beside the row and nowhere else, so
+                // there is nothing for formatting to survive into, and a toolbar inside an
+                // AlertDialog would cost the dialog most of its height.
+                RecordProseField(
+                    label = "Notes",
                     value = notes,
                     onValueChange = { notes = it },
-                    label = { Text("Notes") },
                     minLines = 3,
-                    modifier = Modifier.fillMaxWidth()
+                    dictate = true,
+                    resetKey = existing?.id,
                 )
             }
         },

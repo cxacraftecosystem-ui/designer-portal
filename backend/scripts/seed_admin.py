@@ -5,9 +5,23 @@ from app.core.config import get_settings
 from app.core.db import connect_db, db, disconnect_db
 from app.core.deps import invalidate_cached_user
 from app.core.security import hash_password
+from app.services import access_roster
 
 
 async def upsert_admin(email: str, name: str, password: str, role: str) -> None:
+    """Create or refresh a seeded administrator, and ADMIT IT TO THE PLATFORM ALLOW-LIST.
+
+    THE ADMISSION IS NOT OPTIONAL FOR THE NON-MASTER ADMIN. Since the allow-list arrived, an account
+    written straight into the `User` table cannot sign in: `auth.assert_access_admits` fails closed
+    on a missing row, deliberately, and the two paths that admit somebody (an admin using `/users`,
+    and a Google sign-in for an already-admitted address) are both HTTP paths this script does not
+    take. Seeding the row and not the admission produces exactly the account that wastes an
+    afternoon — correct in the user table, refused at the login screen with a message about waiting
+    for an administrator who is the person reading it.
+
+    The master admin is exempt from the gate in code and would work without this; the row is written
+    for it anyway so the admin screen shows the whole institution rather than everyone-but-one.
+    """
     is_master_admin = role == "MASTER_ADMIN"
     existing = await db.user.find_unique(where={"email": email})
     if existing:
@@ -39,6 +53,13 @@ async def upsert_admin(email: str, name: str, password: str, role: str) -> None:
         )
         invalidate_cached_user(created.id)
         print(f"Created {role.lower()} user: {email}")
+    await access_roster.admit(
+        email,
+        admit_role=role,
+        full_name=name,
+        note="Seeded by scripts/seed_admin.py.",
+        decided=False,
+    )
 
 
 async def main() -> None:

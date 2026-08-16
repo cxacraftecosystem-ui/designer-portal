@@ -38,11 +38,8 @@ import com.designprototype.workshop.ui.SelectOption
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonArray
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -701,9 +698,26 @@ private fun orphanLabel(id: String): String = "Linked record ${id.take(8)}"
  * asks for: a box left blank costs one retype and is filled at save anyway; a box filled from the
  * wrong key costs a wrong value nobody can see is wrong.
  *
- * A value bound for a MULTI field is wrapped in a list on the way, exactly as `hydrate_entries`
- * does server-side. The documented product's single photograph seeds a GALLERY, and writing the
- * bare string into an IMAGE_LIST would leave a media field holding something no renderer can read.
+ * EVERY VALUE GOES THROUGH [DwValues.coerceHydrated] ON THE WAY, which is `hydrate_entries`' own
+ * `coerce_value(target, value)` call restated here. It is what wraps the documented product's single
+ * photograph into a GALLERY, what turns a plain string bound for a RICH_TEXT box into a document,
+ * and — the case that matters most as the mapping widens — what DROPS a value the target field
+ * cannot legally hold instead of writing it. Its KDoc sets out at length what writing an
+ * out-of-vocabulary enum token cost on this surface: a red mark on a row the designer never touched,
+ * over a value they cannot correct because the dropdown does not offer it either.
+ *
+ * A DROPPED VALUE IS A BLANK BOX, NEVER A CLEARED ONE. This function only ever reports what the new
+ * record has to say; [hydrationPatch] decides what that does to the row, and its clearing rule keys
+ * off what the PREVIOUS pick wrote. So a value refused here leaves whatever was in the box alone.
+ *
+ * ── NO UNIT CONVERSION HAPPENS HERE, AND NONE MAY EVER BE ADDED ─────────────────────────────────
+ *
+ * `ProductDocumentation` stores its measurements in INCHES and `existingProduct` declares its boxes
+ * in CENTIMETRES, so somebody has to convert, and that somebody is `REFERENCE_MODELS[...].data` on
+ * the server — the one place both clients read the number from. A conversion added on this side
+ * would be applied on top of the server's, and the handset would report a product 2.54 times the
+ * size the browser reports for the same record, in a document that goes to a ministry. The value in
+ * `option.data` is already in the unit the target field declares; copy it, do not reason about it.
  */
 internal fun hydratedValues(
     option: DwReferenceOption,
@@ -716,12 +730,7 @@ internal fun hydratedValues(
         val target = writable[targetKey] ?: return@forEach
         if (target.deprecated) return@forEach
         val raw = option.data[sourceKey] ?: return@forEach
-        if (!DwValues.isFilled(raw)) return@forEach
-        out[targetKey] = if (DwFieldType.of(target.type).isMulti && raw !is JsonArray) {
-            buildJsonArray { add(raw) }
-        } else {
-            raw
-        }
+        out[targetKey] = DwValues.coerceHydrated(target, raw) ?: return@forEach
     }
     return out
 }

@@ -498,21 +498,17 @@ fun dwModelChoiceSentence(
     labels: Map<String, String> = emptyMap(),
 ): String = buildString {
     val plan = choice.plan
+    /*
+     * THE ROW OPENS WITH THE TWO FIGURES A DESIGNER CHOOSES ON — the model's name and what the
+     * download costs — and nothing else. The quantisation tag, the run bound, the peak memory
+     * figure and the handset the figures came off were dropped 2026-08-16 for the reason set out on
+     * [dwTierOfferSentence]: they compare CANDIDATE MODELS, which is a decision this app has already
+     * made on the designer's behalf, and they are still on [DwModelPlan] for the reader making it.
+     */
     append(plan.modelId)
-    append(" (")
-    append(plan.quantisation)
-    append("). ")
-    // WHAT ONE RUN IS, IN THIS MODEL'S OWN UNITS — not "an N-token context cap", which is a
-    // sentence about a decoder and false of a CTC speech model. See [DwModelPlan.runBound].
-    append("One run is: ")
-    append(plan.runBound)
-    append(" It is ")
+    append(" — ")
     append(dwBytesLabel(plan.onDiskBytes))
-    append(" on the phone once installed and needs ")
-    append(dwBytesLabel(plan.peakRssBytes))
-    append(" of memory while it runs, measured on a ")
-    append(plan.measuredOn)
-    append(". ")
+    append(" to download. ")
     append(dwModelFitSentence(choice, measurement))
     /*
      * THE ACCURACY GOES ON THE ROW, NOT IN A FOOTNOTE, AND IT IS THE POINT OF THE FEATURE.
@@ -526,7 +522,18 @@ fun dwModelChoiceSentence(
      */
     append(dwModelAccuracyClause(plan, labels))
     append(dwModelSpeedClause(plan))
-    append(dwModelBackgroundingClause(plan))
+    /*
+     * THE TIGHT ARM ALREADY SAID THIS, MORE SPECIFICALLY, AND BOTH WERE PRINTING.
+     *
+     * A tight row read "Android may close this app while the model is running — most likely while
+     * you are using the camera — and the job would have to be started again. Your recording,
+     * photographs and draft are saved either way." and then, forty words later, "It may stop if you
+     * leave the app. Your recording and draft are saved either way." Same warning, same
+     * reassurance, twice in one paragraph — which reads as two separate risks and is why the row
+     * measured 176 words. The fit sentence wins because it names the camera and the consequence;
+     * the generic clause is what the OTHER fits need, and they still get it.
+     */
+    if (choice.fit != DwModelFit.TIGHT) append(dwModelBackgroundingClause(plan))
 }
 
 /**
@@ -560,34 +567,31 @@ fun dwModelFitSentence(choice: DwModelChoice, measurement: DwDeviceMeasurement):
     }
 
     DwModelFit.TIGHT -> buildString {
-        append("This phone can run it, with less room to spare than this app would choose. ")
+        // "but only just" rather than "with less room to spare than this app would choose": the note
+        // that follows gives the two figures, so the opening only has to carry the verdict.
+        append("This phone can run it, but only just. ")
         append(choice.notes.joinToString(" ") { dwFitNoteClause(it, choice, measurement) })
         // "THIS APP may be closed", never "it may be closed": the ambiguous pronoun reads as the
         // MODEL being closed, which sounds like a tidy shutdown rather than the app the designer is
         // working in disappearing mid-sentence. What Android ends is the process.
         append(
             " Android may close this app while the model is running — most likely while you are " +
-                "using the camera or a recording is open — and if that happens the job stops and " +
-                "has to be started again. The recording, the photographs and the draft are saved " +
-                "either way. You may install it anyway: this is a recommendation and not a rule."
+                "using the camera — and the job would have to be started again. Your work is " +
+                "saved either way. You can install it anyway."
         )
     }
 
     DwModelFit.WILL_NOT_FIT -> buildString {
         append("This model cannot run on this phone. ")
         append(choice.notes.joinToString(" ") { dwFitNoteClause(it, choice, measurement) })
-        append(
-            " That is not a setting and not a recommendation — it is the difference between a " +
-                "download that is a risk and one that cannot work, so it is not offered."
-        )
+        append(" It is not offered.")
     }
 
     DwModelFit.UNMEASURED -> buildString {
         append(choice.notes.joinToString(" ") { dwFitNoteClause(it, choice, measurement) })
         append(
-            " So whether this model would fit is unknown, and this app will not spend a download " +
-                "this size on a guess. Tap “Check again”; if it keeps saying this, the work stays " +
-                "on the server."
+            " So whether it would fit is unknown, and nothing this size will be fetched on a " +
+                "guess. Tap “Check again”."
         )
     }
 }
@@ -599,20 +603,29 @@ private fun dwFitNoteClause(
     measurement: DwDeviceMeasurement,
 ): String = when (note) {
     DwFitNote.LARGER_THAN_THIS_PHONE_S_MEMORY ->
-        "It needs ${dwBytesLabel(choice.plan.peakRssBytes)} of memory while it runs, which is more " +
-            "than this phone has in total — so closing every other app would not make room for it."
+        "It needs ${dwBytesLabel(choice.plan.peakRssBytes)} of memory, more than this phone has in " +
+            "total — closing other apps would not make room."
 
     DwFitNote.LARGER_THAN_THE_FREE_STORAGE ->
         "It is ${dwBytesLabel(choice.plan.onDiskBytes)} to download and there is less free storage " +
-            "than that on this phone, so the download could not finish."
+            "than that, so the download could not finish."
 
     DwFitNote.NO_BUILD_FOR_THIS_PROCESSOR ->
         "There is no build of it for this phone's processor (it was built for ${choice.plan.abi})."
 
+    /*
+     * THE CITATION CAME OFF HERE ON 2026-08-16, AND IT WAS THE LAST ONE LIVE ON A SCREEN.
+     *
+     * `DwSpeechCardProseTest` asserts across the whole DwAiTier × DwTierRefusal grid that no refusal
+     * names a file in this repository, and it swept all six arms clean on 2026-08-13 — but the model
+     * ROWS were never in its net, and this clause sat on one of them still reading "it is exactly
+     * what docs/DEVICE-TIER-MEASUREMENT.md exists to collect". A designer cannot open a path in this
+     * repository; its only effect is to tell them the app is addressing its own authors. The test
+     * now walks the fit notes too, so the next one cannot hide in the same blind spot.
+     */
     DwFitNote.LOAD_FAILED_HERE_BEFORE ->
-        "It was tried on this phone and would not load, although the memory and storage said it " +
-            "would fit. That failure is worth reporting — it is exactly what " +
-            "docs/DEVICE-TIER-MEASUREMENT.md exists to collect — and it will not be tried again here."
+        "It was tried on this phone and would not load. It will not be tried again here, and the " +
+            "failure is worth reporting."
 
     DwFitNote.PROCESSOR_UNMEASURED ->
         "This phone would not say what kind of processor it has."
@@ -627,26 +640,21 @@ private fun dwFitNoteClause(
         "This phone would not say how much memory is free."
 
     DwFitNote.ANDROID_CALLS_THIS_A_LOW_MEMORY_DEVICE ->
-        "Android itself flags this handset as a low-memory device, which is its own verdict about " +
-            "the phone and not a reading this app took."
+        "Android flags this handset as a low-memory device."
 
     DwFitNote.LITTLE_MEMORY_LEFT_OVER ->
-        "It needs ${dwBytesLabel(choice.plan.peakRssBytes)} of memory while it runs and this phone " +
-            "reports ${dwBytesLabel(measurement.totalRamBytes)} in total, so even with everything " +
-            "else closed there would be less than the " +
-            "${dwBytesLabel(DW_MODEL_FREE_RAM_MARGIN_BYTES)} spare this app keeps for the draft, " +
-            "the photographs it is holding and the screen you are looking at."
+        "It needs ${dwBytesLabel(choice.plan.peakRssBytes)} of memory and this phone has " +
+            "${dwBytesLabel(measurement.totalRamBytes)} in total, so even with everything else " +
+            "closed there would be too little left for your draft and photographs."
 
     DwFitNote.LITTLE_FREE_MEMORY_RIGHT_NOW ->
-        "At this moment this phone has ${dwBytesLabel(measurement.availableRamBytes)} of memory " +
-            "free and this model needs ${dwBytesLabel(choice.plan.peakRssBytes)} of it. Closing " +
-            "the apps you are not using and tapping “Check again” would change this reading — it " +
-            "is the one figure on this card that moves minute to minute."
+        "It needs ${dwBytesLabel(choice.plan.peakRssBytes)} of memory and this phone has " +
+            "${dwBytesLabel(measurement.availableRamBytes)} free right now — close other apps and " +
+            "tap “Check again”."
 
     DwFitNote.LITTLE_STORAGE_LEFT_OVER ->
-        "It would leave ${dwBytesLabel(choice.freeStorageHeadroomBytes)} of storage free, which is " +
-            "less than the ${dwBytesLabel(DW_MODEL_FREE_STORAGE_MARGIN_BYTES)} this app keeps back " +
-            "for a workshop day of photographs and recordings."
+        "It would leave only ${dwBytesLabel(choice.freeStorageHeadroomBytes)} of storage free, " +
+            "less than this app keeps back for a workshop day of photographs and recordings."
 }
 
 /**
