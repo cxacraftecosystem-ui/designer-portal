@@ -38,7 +38,9 @@ import com.designprototype.workshop.data.CustomEntryDto
 import com.designprototype.workshop.data.CustomQuestionDto
 import com.designprototype.workshop.data.CustomQuestionnaireDto
 import com.designprototype.workshop.data.CustomSectionDto
+import com.designprototype.workshop.data.DwQuestionnaireArtefact
 import com.designprototype.workshop.data.DwQuestionnaireStore
+import com.designprototype.workshop.data.QFormChangeReportDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.SearchableSelectField
@@ -98,6 +100,88 @@ fun QuestionnaireDetailScreen(
     var editingQuestion by remember { mutableStateOf<CustomQuestionDto?>(null) }
     var removingQuestion by remember { mutableStateOf<CustomQuestionDto?>(null) }
     var startingSitting by remember { mutableStateOf(false) }
+
+    // ── The .xlsx interchange ────────────────────────────────────────────────────────────────────
+    // Absent by decision until 2026-08-16; the reversal and its reasoning are in
+    // `data/WorkshopRepositoryApi.kt`, beside the endpoints.
+    var interchangeBusy by remember { mutableStateOf(false) }
+    /** Which artefact is being fetched right now — so only ITS button shows a spinner. */
+    var downloading by remember { mutableStateOf<DwQuestionnaireArtefact?>(null) }
+    var reuploading by remember { mutableStateOf(false) }
+    var savedQuestionSetTo by remember(questionnaireId) { mutableStateOf<String?>(null) }
+    var savedWorkbookTo by remember(questionnaireId) { mutableStateOf<String?>(null) }
+    var uploadReport by remember(questionnaireId) { mutableStateOf<QFormChangeReportDto?>(null) }
+
+    fun download(artefact: DwQuestionnaireArtefact) {
+        if (interchangeBusy) return
+        interchangeBusy = true
+        downloading = artefact
+        scope.launch {
+            runCatching {
+                repository.downloadQuestionnaireArtefact(
+                    context = appContext,
+                    artefact = artefact,
+                    questionnaireId = questionnaireId,
+                    fallbackStem = form?.title.orEmpty(),
+                )
+            }
+                .onSuccess { location ->
+                    if (artefact == DwQuestionnaireArtefact.QUESTION_SET) {
+                        savedQuestionSetTo = location
+                    } else {
+                        savedWorkbookTo = location
+                    }
+                }
+                .onFailure { error ->
+                    if (error !is CancellationException) {
+                        // The server's own sentence. The 403 on `/xlsx` is the one place a
+                        // non-owner is told that the QUESTION SET exists and is theirs to take;
+                        // "download failed" would send them to find an admin for a file they never
+                        // needed. `apiErrorMessage` already prefers `detail` over the status line,
+                        // and the repository lifts it off a streamed Response for the same reason.
+                        onError(error.apiErrorMessage("That workbook could not be downloaded."))
+                    }
+                }
+            downloading = null
+            interchangeBusy = false
+        }
+    }
+
+    val pickWorkbook = rememberWorkbookPicker { uri ->
+        if (interchangeBusy) return@rememberWorkbookPicker
+        interchangeBusy = true
+        reuploading = true
+        uploadReport = null
+        scope.launch {
+            runCatching {
+                repository.reuploadQuestionnaireWorkbook(
+                    context = appContext,
+                    questionnaireId = questionnaireId,
+                    uri = uri,
+                )
+            }
+                .onSuccess { result ->
+                    uploadReport = result.report
+                    // Re-read rather than trusting the questionnaire in the reply. The edit path
+                    // returns the form WITH retired questions, which is what this screen wants — but
+                    // the reload also refreshes the sittings and re-warms the offline cache, and a
+                    // screen that skipped it would show a question list that no longer matches the
+                    // answer counts printed above it.
+                    reload++
+                }
+                .onFailure { error ->
+                    if (error !is CancellationException) {
+                        // A 409 here means the file's Details sheet names a DIFFERENT questionnaire —
+                        // the designer picked the wrong .xlsx out of Downloads. That refusal just
+                        // saved this questionnaire's entire question set from being retired as
+                        // "absent from the upload", so its sentence is shown as written.
+                        onError(error.apiErrorMessage("That workbook could not be uploaded."))
+                    }
+                }
+            reuploading = false
+            interchangeBusy = false
+        }
+    }
 
     LaunchedEffect(questionnaireId, reload) {
         loading = true
@@ -201,6 +285,21 @@ fun QuestionnaireDetailScreen(
                         }
                     },
                 )
+
+                InterchangeCard(
+                    mayEdit = mayEdit,
+                    busy = interchangeBusy,
+                    downloading = downloading,
+                    reuploading = reuploading,
+                    savedQuestionSetTo = savedQuestionSetTo,
+                    savedWorkbookTo = savedWorkbookTo,
+                    onDownload = ::download,
+                    onPickWorkbook = pickWorkbook,
+                )
+
+                uploadReport?.let { report ->
+                    UploadReportPanel(report = report, onDismiss = { uploadReport = null })
+                }
 
                 SittingsCard(
                     form = loaded,
@@ -524,6 +623,119 @@ private fun HeaderCard(
                         "questions. You can still record answers against it.",
                     color = MaterialTheme.field.muted,
                     fontSize = 11.sp
+                )
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------------------------------------
+// The spreadsheet: two downloads that are not the same file, and the owner's re-upload
+// --------------------------------------------------------------------------------------
+
+/**
+ * The .xlsx interchange for ONE questionnaire.
+ *
+ * ── WHY THE QUESTION SET IS OFFERED TO EVERYBODY AND THE WORKBOOK IS OFFERED TO EVERYBODY TOO ──
+ *
+ * Neither download is hidden, and that is a decision rather than an oversight.
+ *
+ * The QUESTION SET is genuinely ungated on the server: `_require_designer` and nothing more, on the
+ * stated reasoning that `read_questionnaire` already hands the questions of any questionnaire to any
+ * designer, so refusing the same content as a spreadsheet would protect nothing. Hiding the button
+ * from a non-owner would therefore hide a file they are entitled to, and it is the file a colleague
+ * who was handed this form most needs.
+ *
+ * The WORKBOOK is owner-gated, and this client still shows the button, because the server's 403
+ * carries a sentence that is worth more than a hidden control: it says the question set exists, that
+ * it holds the questions and no answers, and that any designer may take it. A greyed-out button
+ * teaches nobody that. This is the one place in the questionnaire screens where a control is left
+ * standing over a refusal on purpose, and the reason is that the refusal is a signpost rather than a
+ * wall. `mayEditQuestionnaire`'s own note — "do not add a guard here over anything that is only
+ * readable" — is the same principle read the other way.
+ *
+ * THE RE-UPLOAD IS OWNER-ONLY AND IS HIDDEN, unlike the two downloads, because its refusal is not a
+ * signpost: there is no other door a non-owner could be sent to, and offering somebody a control
+ * that can only ever answer 403 is the greyed-button failure with an extra network round trip.
+ */
+@Composable
+private fun InterchangeCard(
+    mayEdit: Boolean,
+    busy: Boolean,
+    downloading: DwQuestionnaireArtefact?,
+    reuploading: Boolean,
+    savedQuestionSetTo: String?,
+    savedWorkbookTo: String?,
+    onDownload: (DwQuestionnaireArtefact) -> Unit,
+    onPickWorkbook: () -> Unit,
+) {
+    ElevatedCard(
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "As a spreadsheet",
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            // THE DISTINCTION, ONCE, ABOVE BOTH BUTTONS. Each row states its own contents as well —
+            // see ArtefactNotice — but a designer scanning two adjacent buttons with a colleague
+            // waiting needs the difference before they read either label.
+            Text(
+                "Two different files. One carries your questions; the other carries every person you " +
+                    "interviewed. Both are named after this questionnaire and both land in Downloads, " +
+                    "so read what each one holds before you send it to anybody.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+
+            ArtefactDownloadRow(
+                label = "Download question set",
+                artefact = DwQuestionnaireArtefact.QUESTION_SET,
+                busy = busy,
+                working = downloading == DwQuestionnaireArtefact.QUESTION_SET,
+                savedTo = savedQuestionSetTo,
+                onDownload = { onDownload(DwQuestionnaireArtefact.QUESTION_SET) },
+            )
+
+            HorizontalDivider(color = MaterialTheme.field.hairline)
+
+            ArtefactDownloadRow(
+                label = "Download everything (.xlsx)",
+                artefact = DwQuestionnaireArtefact.FULL_WORKBOOK,
+                busy = busy,
+                working = downloading == DwQuestionnaireArtefact.FULL_WORKBOOK,
+                savedTo = savedWorkbookTo,
+                onDownload = { onDownload(DwQuestionnaireArtefact.FULL_WORKBOOK) },
+            )
+            if (!mayEdit) {
+                Text(
+                    "This one belongs to the designer who created the questionnaire, a designer on " +
+                        "its design workshop, or an admin. If the server refuses it, it will say so " +
+                        "and point you at the question set — which is yours to take.",
+                    color = MaterialTheme.field.muted,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+            }
+
+            if (mayEdit) {
+                HorizontalDivider(color = MaterialTheme.field.hairline)
+                WorkbookUploadRow(
+                    label = "Upload an edited workbook",
+                    blurb = "Replaces THIS questionnaire's questions with the ones in the file — " +
+                        "download it above, edit it on a computer, and bring it back. A question " +
+                        "that already has answers is never overwritten: its old wording is kept with " +
+                        "its answers and your new wording is added beside it, and you are told which " +
+                        "ones. A file downloaded from a DIFFERENT questionnaire is refused rather " +
+                        "than applied.",
+                    busy = busy,
+                    working = reuploading,
+                    onPick = onPickWorkbook,
                 )
             }
         }

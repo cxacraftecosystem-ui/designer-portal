@@ -466,6 +466,38 @@ def _headers(world: dict[str, Any], slug: str = "designer") -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(subject=world['people'][slug].id)}"}
 
 
+def _open_workshop(client: Any, world: dict[str, Any], body: dict[str, Any], owner: str = "designer") -> str:
+    """A design workshop the account named by ``owner`` may work in, and its id.
+
+    THE ADMIN OPENS IT AND GRANTS THE DESIGNER. Every workshop in this module used to be created by
+    the designer directly; only admins and the master admin may START one now
+    (``can_create_design_workshops``), because a workshop is the container a fortnight of records
+    lives in and the unit the ministry indexes and funds, not a record. Seven tests here opened one
+    inline and each of them would now die on that line with a 403 about the create rule, which is
+    about as far from what they assert as it is possible to get.
+
+    The grant is not scaffolding to get past a gate; it is the flow. A designer only ever works in a
+    workshop somebody else opened for them, so the workshops these tests attach questionnaires to
+    are exactly that. The roster rows in ``world`` are what let it succeed — ``replace_viewers``
+    refuses an account the ACTIVE designer roster does not admit.
+
+    NOTE FOR THE ONE TEST THAT REPLACES THE VIEWER SET LATER: the PUT is a whole-set replace, so
+    granting somebody else afterwards revokes the grant made here. That is fine where it happens
+    today (the designer's own reads all precede it) and it is the first thing to check if a test in
+    this module starts 404ing halfway through.
+    """
+    response = client.post("/api/design-workshops", json=body, headers=_headers(world, "admin"))
+    assert response.status_code == 201, response.text
+    workshop_id = response.json()["id"]
+    granted = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [world["people"][owner].id]},
+        headers=_headers(world, "admin"),
+    )
+    assert granted.status_code == 200, granted.text
+    return workshop_id
+
+
 def _upload(client: Any, world: dict[str, Any], payload: bytes, name: str = "form.xlsx") -> Any:
     return client.post(
         "/api/questionnaires/upload",
@@ -999,13 +1031,7 @@ async def test_answers_are_recorded_in_the_app_and_saving_twice_changes_nothing(
 async def test_a_questionnaire_attaches_to_a_workshop_and_shows_up_in_the_dropdown(client, world):
     """The dropdown the owner asked for. ``/options`` is its own endpoint because a dropdown that
     silently stops at page one is a designer who cannot find what they uploaded this morning."""
-    workshop = client.post(
-        "/api/design-workshops",
-        json={"title": f"Attach test {world['stamp']}"},
-        headers=_headers(world),
-    )
-    assert workshop.status_code == 201, workshop.text
-    workshop_id = workshop.json()["id"]
+    workshop_id = _open_workshop(client, world, {"title": f"Attach test {world['stamp']}"})
 
     created = _upload(
         client,
@@ -1070,13 +1096,7 @@ async def test_a_questionnaire_cannot_be_attached_to_a_workshop_the_designer_can
     a viewer grant makes the very same PATCH succeed, and the workshop's creator attaching their own
     form is pinned by the test above.
     """
-    workshop = client.post(
-        "/api/design-workshops",
-        json={"title": f"Not yours {world['stamp']}"},
-        headers=_headers(world),
-    )
-    assert workshop.status_code == 201, workshop.text
-    workshop_id = workshop.json()["id"]
+    workshop_id = _open_workshop(client, world, {"title": f"Not yours {world['stamp']}"})
 
     # The premise: to this designer the workshop does not exist.
     assert (
@@ -1178,12 +1198,7 @@ async def test_a_questionnaire_cannot_be_attached_to_a_deleted_workshop(client, 
     then open to find out what is in it. ``for_edit=True`` is what makes this a 409 with a sentence
     that names the way out ("Restore it before editing") rather than a silent 200.
     """
-    workshop = client.post(
-        "/api/design-workshops",
-        json={"title": f"Deleted target {world['stamp']}"},
-        headers=_headers(world),
-    )
-    workshop_id = workshop.json()["id"]
+    workshop_id = _open_workshop(client, world, {"title": f"Deleted target {world['stamp']}"})
     created = client.post(
         "/api/questionnaires",
         json={"title": f"For a dead workshop {world['stamp']}"},
@@ -1247,13 +1262,7 @@ async def test_the_report_annexure_prints_a_two_section_form_section_by_section(
     ``ANNEXURE_QUESTIONNAIRES`` -> ``attach_report_questionnaires`` -> ``report_items`` -> the
     builder's one branch — rather than the last hop of it.
     """
-    workshop = client.post(
-        "/api/design-workshops",
-        json={"title": f"Annexure order {world['stamp']}"},
-        headers=_headers(world),
-    )
-    assert workshop.status_code == 201, workshop.text
-    workshop_id = workshop.json()["id"]
+    workshop_id = _open_workshop(client, world, {"title": f"Annexure order {world['stamp']}"})
 
     created = _upload(
         client,
@@ -1362,13 +1371,7 @@ async def test_a_recorded_answer_is_inside_the_generated_docx_file(client, world
     The answer strings are nonsense words on purpose: "12" or "Ramesh" could plausibly appear in a
     report for some unrelated reason, and an assertion that can pass by accident proves nothing.
     """
-    workshop = client.post(
-        "/api/design-workshops",
-        json={"title": f"Docx annexure {world['stamp']}"},
-        headers=_headers(world),
-    )
-    assert workshop.status_code == 201, workshop.text
-    workshop_id = workshop.json()["id"]
+    workshop_id = _open_workshop(client, world, {"title": f"Docx annexure {world['stamp']}"})
 
     created = _upload(
         client,
@@ -1449,13 +1452,7 @@ async def test_an_unanswered_questionnaire_is_never_silently_absent_from_the_rep
     never again be invisible. The preview half of the assertion is what keeps that honest: the
     warning must exist in full somewhere the designer can actually reach.
     """
-    workshop = client.post(
-        "/api/design-workshops",
-        json={"title": f"Unanswered {world['stamp']}", "templateId": "DCH_STANDARD"},
-        headers=_headers(world),
-    )
-    assert workshop.status_code == 201, workshop.text
-    workshop_id = workshop.json()["id"]
+    workshop_id = _open_workshop(client, world, {"title": f"Unanswered {world['stamp']}", "templateId": "DCH_STANDARD"})
 
     created = client.post(
         "/api/questionnaires",
@@ -1520,13 +1517,7 @@ async def test_a_questionnaire_title_a_designer_typed_cannot_split_its_own_warni
     The split asserted here is the frontend's — ``";"``, not ``"; "`` — because what is pinned is
     what the designer reads.
     """
-    workshop = client.post(
-        "/api/design-workshops",
-        json={"title": f"Split title {world['stamp']}", "templateId": "PHOTO_CATALOGUE"},
-        headers=_headers(world),
-    )
-    assert workshop.status_code == 201, workshop.text
-    workshop_id = workshop.json()["id"]
+    workshop_id = _open_workshop(client, world, {"title": f"Split title {world['stamp']}", "templateId": "PHOTO_CATALOGUE"})
 
     title = f"Loom survey; round two {world['stamp']}"
     created = client.post(

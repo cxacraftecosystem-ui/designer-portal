@@ -39,7 +39,7 @@ from fastapi import HTTPException, status
 
 from app.core.db import db
 from app.core.deps import is_admin
-from app.services import custom_sections, dictation_consent, rich_text
+from app.services import custom_sections, dictation_consent, entry_provenance, rich_text
 from app.services.address import DISTRICTS_BY_STATE
 from app.services.concurrency import gather_reads
 from app.services.design_workshop_viewers import has_viewer_grant
@@ -1230,6 +1230,16 @@ class PendingEntry:
     row_id: str | None
     ordinal: int
     client_key: str | None
+    #: What the row's ``fieldProvenance`` held before this save; empty for a new row.
+    previous_provenance: dict[str, Any] = dataclass_field(default_factory=dict)
+    #: WHICH KEYS HYDRATION ACTUALLY WROTE ON THIS SAVE, and where each came from. Filled by
+    #: :func:`hydrate_entries` as it writes, and read by ``merge_entry_provenance`` immediately
+    #: afterwards to attribute those fields to the CANONICAL RECORD's author rather than to the
+    #: designer who picked it. It has to be recorded here rather than inferred later because the
+    #: information is gone the instant the value lands: a hydrated name and a typed name are the
+    #: same string in ``data``, which is the whole reason field-level provenance was unanswerable
+    #: on this table before. Reset per save, never persisted.
+    hydrated: dict[str, "entry_provenance.HydrationSource"] = dataclass_field(default_factory=dict)
 
 
 def _has_value(value: Any) -> bool:
@@ -1270,6 +1280,14 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
 
     A reference whose record has been deleted hydrates nothing and is left exactly as it is —
     which is the whole point of having copied the fields in the first place.
+
+    EVERY WRITE IS RECORDED ON ``item.hydrated`` AS IT HAPPENS, naming the record and column the
+    value came from and that record's author. This is the only moment at which a hydrated value is
+    distinguishable from a typed one — a second later they are the same string in ``data`` — and it
+    is what lets ``entry_provenance.merge_entry_provenance`` attribute the field to the canonical
+    record's recorder rather than to the designer who chose it from the picker. It records only
+    what is actually stored: a value ``coerce_value`` rejects is not written and is not stamped, so
+    the provenance map can never claim authorship of a field that stayed blank.
     """
     wanted: dict[str, set[str]] = {}
     for item in entries:
@@ -1285,6 +1303,12 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
         return
 
     resolved: dict[str, dict[str, dict[str, Any]]] = {}
+    # THE CANONICAL RECORD'S AUTHOR, CAPTURED BESIDE ITS DATA. ``model_spec.data`` is a display
+    # projection and deliberately does not carry ``createdById`` — nothing printed in a report
+    # should — but a hydrated field's provenance IS that column, so it is read off the row here
+    # while the row is in hand. Reading it later would mean a second query over records this
+    # function has already loaded.
+    authors: dict[str, dict[str, str | None]] = {}
     for model, ids in wanted.items():
         model_spec = REFERENCE_MODELS[model]
         rows = await getattr(db, model_spec.delegate).find_many(
@@ -1294,6 +1318,7 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
         resolved[model] = {
             row.id: model_spec.data(row, photos.get(row.id)) for row in rows
         }
+        authors[model] = {row.id: getattr(row, "createdById", None) for row in rows}
 
     for item in entries:
         for spec in item.entity.fields:
@@ -1343,6 +1368,12 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
                     # WRITE to them. Refusing to put new data into a retired field is not a reason
                     # to keep a different person's data there: the value still travels in `data`.
                     item.data.pop(target_key, None)
+                    # AND SO IS ITS PROVENANCE. The value being cleared belonged to the PREVIOUS
+                    # record, and leaving its stamp behind would attribute the incoming record's
+                    # value — or a blank the designer then fills in — to the recorder of a record
+                    # this row no longer names. That is the same class of defect as leaving the old
+                    # artisan's phone number beside the new artisan's name, one layer down.
+                    item.previous_provenance.pop(target_key, None)
             for source_key, target_key in mapping.items():
                 value = source.get(source_key)
                 if value in (None, ""):
@@ -1365,6 +1396,12 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
                 if error or cleaned is None:
                     continue
                 item.data[target_key] = cleaned
+                item.hydrated[target_key] = entry_provenance.HydrationSource(
+                    model=spec.ref_model,
+                    record_id=str(ref_id),
+                    source_key=source_key,
+                    author_id=authors.get(spec.ref_model, {}).get(str(ref_id)),
+                )
 
 
 # --------------------------------------------------------------------------------------
@@ -1452,6 +1489,18 @@ async def seed_designer_prefill(
                     "entityKey": entity.key,
                     "ordinal": 0,
                     "data": _json(clean),
+                    # STAMPED TO THE CREATOR AS A DESIGNER VALUE, not as a reference one, and that
+                    # is a real distinction rather than a default. These fields come from the
+                    # designer's OWN `DesignerProfile` and from the create form they just filled
+                    # in — their name, their institution — so the person who set them is the person
+                    # creating the workshop. `source: "reference"` is reserved for a value copied
+                    # off a record somebody ELSE recorded, which is the case where authorship has
+                    # to stay behind. Leaving these unstamped would instead hand them to whichever
+                    # co-designer next saves stage 1 without changing them.
+                    "fieldProvenance": _json(entry_provenance.merge_entry_provenance(
+                        previous={}, previous_data={}, new_data=clean,
+                        hydrated={}, user=user,
+                    )),
                     "createdById": user.id,
                 })
                 # Only columns this subset actually filled, and only the string-valued ones.
@@ -1795,9 +1844,11 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             ordinal = 0
 
         previous: dict[str, Any] = {}
+        previous_provenance: dict[str, Any] = {}
         if row is not None:
             touched_ids.add(row.id)
             previous = dict(row.data or {})
+            previous_provenance = entry_provenance.entry_provenance(row)
             if entry_errors:
                 # A REJECTED FIELD MUST NOT DESTROY THE VALUE ALREADY STORED UNDER IT.
                 #
@@ -1839,6 +1890,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             entity=entity, data=clean, previous=previous,
             row_id=row.id if row is not None else None,
             ordinal=ordinal, client_key=client_key,
+            previous_provenance=previous_provenance,
         ))
         if client_key:
             claimed_client_keys.add((entity.key, client_key))
@@ -1854,6 +1906,17 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
 
     for item in pending:
         promoted.update(promoted_values(item.entity.key, item.data))
+        # COMPUTED AFTER HYDRATION AND BEFORE THE WRITE, which is the only window in which both
+        # halves of the answer exist: `item.hydrated` is populated by the pass above and `item.data`
+        # is final. Doing it before hydration would attribute every copied field to the designer who
+        # picked the record; doing it after the write would have nothing left to read.
+        field_provenance = entry_provenance.merge_entry_provenance(
+            previous=item.previous_provenance,
+            previous_data=item.previous,
+            new_data=item.data,
+            hydrated=item.hydrated,
+            user=user,
+        )
         if item.row_id is not None:
             # deletedAt is cleared unconditionally: the client is asserting this row exists, and
             # for a row that was never deleted writing None over None costs nothing. Clearing it
@@ -1861,7 +1924,12 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # may have changed between the SELECT above and this UPDATE.
             updates.append((
                 item.row_id,
-                {"data": _json(item.data), "ordinal": item.ordinal, "deletedAt": None},
+                {
+                    "data": _json(item.data),
+                    "ordinal": item.ordinal,
+                    "deletedAt": None,
+                    "fieldProvenance": _json(field_provenance),
+                },
             ))
         else:
             creates.append({
@@ -1870,6 +1938,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                 "entityKey": item.entity.key,
                 "ordinal": item.ordinal,
                 "data": _json(item.data),
+                "fieldProvenance": _json(field_provenance),
                 "clientKey": item.client_key,
                 "createdById": user.id,
             })
@@ -1890,10 +1959,29 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # payload that carried no custom entry writes nothing here at all — which is what makes a client
     # one release behind harmless rather than destructive.
     if custom_to_store is not None:
+        # THE RESERVED ROW GETS PROVENANCE ON THE SAME RULE, with the hydration half empty because
+        # a custom field can never be hydrated: `_custom` is invisible to `hydrate_entries` by
+        # construction (it is not a registry entity, so it never enters `pending`). Every stamp here
+        # is therefore a designer stamp or a carried one — which is exactly the requirement applied
+        # to a question one designer wrote and another answered. Leaving this row out would have
+        # made the custom section the one place on the workshop where "who set this" has no answer,
+        # and it is the section most likely to be filled in by whoever is holding the phone.
+        custom_provenance = entry_provenance.merge_entry_provenance(
+            previous=entry_provenance.entry_provenance(custom_row) if custom_row else {},
+            previous_data=dict(custom_row.data or {}) if custom_row is not None else {},
+            new_data=custom_to_store,
+            hydrated={},
+            user=user,
+        )
         if custom_row is not None:
             updates.append((
                 custom_row.id,
-                {"data": _json(custom_to_store), "ordinal": 0, "deletedAt": None},
+                {
+                    "data": _json(custom_to_store),
+                    "ordinal": 0,
+                    "deletedAt": None,
+                    "fieldProvenance": _json(custom_provenance),
+                },
             ))
         else:
             creates.append({
@@ -1902,6 +1990,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                 "entityKey": custom_sections.CUSTOM_ENTITY_KEY,
                 "ordinal": 0,
                 "data": _json(custom_to_store),
+                "fieldProvenance": _json(custom_provenance),
                 "clientKey": None,
                 "createdById": user.id,
             })
@@ -2240,6 +2329,13 @@ def assemble_workshop_data(record: Any, entries: list[Any]) -> WorkshopData:
         title=record.title,
         singletons=singletons,
         collections=collections,
+        # THE `_custom` ROW IS EXCLUDED FROM THE BUCKETS ABOVE BUT NOT FROM THIS ONE, deliberately.
+        # Its answers reach the report on their own attribute through
+        # `attach_report_custom_sections`, which reads the same rows and needs the same attribution;
+        # dropping its stamps here would make the custom section the only part of the document with
+        # no answer to "who wrote this". Keying by entry id is what makes that free — a map that
+        # nothing indexes by bucket cannot be confused by a row that lives in neither.
+        field_provenance=entry_provenance.resolve_entry_provenance(entries),
         generated_at=datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
     )
 

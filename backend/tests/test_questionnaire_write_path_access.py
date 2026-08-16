@@ -135,11 +135,36 @@ ONE_QUESTION = [
 
 
 def _workshop(client, env, title: str, slug: str = "lead") -> str:
+    """A workshop belonging to *slug*, opened the way workshops are now opened.
+
+    THE ADMIN CREATES IT AND THEN GRANTS THE DESIGNER, and this helper changed shape when the
+    create rule did: only admins and the master admin may START a design workshop
+    (``can_create_design_workshops``), because a workshop is the container a fortnight of records
+    lives in and the unit the ministry indexes, not a record. It used to post as *slug* itself,
+    which now answers 403 — so every test in this module would have failed on its first line for a
+    reason that has nothing to do with the write path it is about.
+
+    The two steps together are the REAL flow, not a workaround for the gate: an admin opens the
+    workshop for a cluster and hands it to the designer who will run it. Doing it here means every
+    test below exercises a designer working in a workshop somebody else created, which is now the
+    only kind of workshop a designer ever works in.
+    """
     response = client.post(
-        "/api/design-workshops", json={"title": title}, headers=_as(env, slug)
+        "/api/design-workshops", json={"title": title}, headers=_as(env, "admin")
     )
     assert response.status_code == 201, response.text
-    return response.json()["id"]
+    workshop_id = response.json()["id"]
+    granted = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [env["people"][slug].id]},
+        headers=_as(env, "admin"),
+    )
+    # The roster rows in `world` are what make this succeed — `replace_viewers` refuses an account
+    # the ACTIVE designer roster does not admit. Asserted rather than assumed, because a silently
+    # ungranted designer would turn every "the owner may write" test below into a false pass of the
+    # "a stranger may not" kind.
+    assert granted.status_code == 200, granted.text
+    return workshop_id
 
 
 def _questionnaire(client, env, title: str, *, workshop_id: str | None, slug: str = "lead") -> dict:

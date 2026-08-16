@@ -237,6 +237,15 @@ data class DwIdentityOcrDto(
      * never auto-commits regardless; this is the belt to that braces.
      */
     val requiresConfirmation: Boolean = true,
+    /**
+     * What the server did with the PICTURE, as opposed to what it read off it.
+     *
+     * NULL WHEN THE DEPLOYMENT IS OLDER THAN THE FIELD, and that must not be read as "not stored" —
+     * see [photographWasNotStored], which is the one place that distinction is enforced. Until this
+     * block existed the "the photograph is not kept" line in the reader's own copy was a CLAIM by
+     * whoever wrote the panel; now it is a fact read out of the reply.
+     */
+    val photograph: DwIdentityPhotographDto? = null,
 )
 
 object DwReferenceStore {

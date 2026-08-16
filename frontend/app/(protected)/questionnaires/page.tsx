@@ -30,6 +30,7 @@ import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
+import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
 import { UploadReport } from "@/components/questionnaires/UploadReport";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
@@ -40,6 +41,7 @@ import { formatDate } from "@/lib/format";
 import {
   createQuestionnaire,
   downloadProForma,
+  downloadQuestionSet,
   downloadQuestionnaireWorkbook,
   listQuestionnaires,
   type QFormSummary,
@@ -198,6 +200,15 @@ export default function QuestionnairesPage() {
       */}
       {report ? <UploadReport report={report} className="mb-5" /> : null}
 
+      {/*
+        Drawn on the list rather than only on the detail page, because THIS is the screen with a
+        "Download .xlsx" button on every row. A designer sending a colleague their questions starts
+        here, and the difference between the two files — one of which carries every respondent they
+        have ever interviewed — has to be readable at the moment the row action is chosen, not one
+        navigation away.
+      */}
+      <ArtefactNotice className="mb-5" />
+
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <SearchInput
           value={query}
@@ -314,6 +325,26 @@ export default function QuestionnairesPage() {
                         <Link className={rowAction("neutral")} href={`/questionnaires/${row.id}/answer`}>
                           Record answers
                         </Link>
+                        {/*
+                          THE SHARING DOWNLOAD COMES FIRST, and its label says what it is rather than
+                          what format it is. It is offered on EVERY row, including a colleague's
+                          questionnaire, because the server gates it exactly as it gates reading the
+                          form — any designer. "Download .xlsx" beside it is the lossless one, which
+                          answers 403 for anyone but the owner, a designer on its design workshop, or
+                          an admin; it is left in place for everyone rather than hidden, because this
+                          list does not know which of those the reader is and a refusal that names
+                          the question set is more use than a control that silently vanished.
+                        */}
+                        <button
+                          type="button"
+                          className={rowAction("neutral")}
+                          disabled={downloading}
+                          onClick={() =>
+                            download(() => downloadQuestionSet(row.id), "Unable to download that question set")
+                          }
+                        >
+                          Download question set
+                        </button>
                         <button
                           type="button"
                           className={rowAction("neutral")}

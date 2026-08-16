@@ -17,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -32,10 +33,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.CustomQuestionnaireSummaryDto
+import com.designprototype.workshop.data.DwQuestionnaireArtefact
+import com.designprototype.workshop.data.QFormChangeReportDto
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.data.visibleQuestionnaires
@@ -82,6 +86,43 @@ fun QuestionnaireListScreen(
     var reload by remember { mutableIntStateOf(0) }
     /** Rows shown, of the total the server reports — set only when the walk stopped short. */
     var partial by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+
+    // ── The .xlsx interchange ────────────────────────────────────────────────────────────────────
+    // The application context, so a download that is still copying into MediaStore when the designer
+    // navigates away cannot hold an Activity alive behind it.
+    val appContext = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    var interchangeBusy by remember { mutableStateOf(false) }
+    var downloadingProForma by remember { mutableStateOf(false) }
+    var uploading by remember { mutableStateOf(false) }
+    var proFormaSavedTo by remember { mutableStateOf<String?>(null) }
+    var uploadReport by remember { mutableStateOf<QFormChangeReportDto?>(null) }
+
+    val pickWorkbook = rememberWorkbookPicker { uri ->
+        if (interchangeBusy) return@rememberWorkbookPicker
+        interchangeBusy = true
+        uploading = true
+        // Cleared BEFORE the request. The seconds an upload takes are exactly when the PREVIOUS
+        // upload's report is still on screen, and a designer reading "38 questions added" over a
+        // spinner for a different file is being told about work that is not the work they are
+        // waiting on.
+        uploadReport = null
+        scope.launch {
+            runCatching { repository.uploadQuestionnaireWorkbook(appContext, uri) }
+                .onSuccess { result ->
+                    uploadReport = result.report
+                    reload++
+                    onMessage("“${result.questionnaire.title}” was created from that workbook.")
+                }
+                .onFailure { error ->
+                    if (error !is CancellationException) {
+                        onError(error.apiErrorMessage("That workbook could not be uploaded."))
+                    }
+                }
+            uploading = false
+            interchangeBusy = false
+        }
+    }
 
     LaunchedEffect(reload, search, showDeactivated) {
         // Debounced only for TYPING. Keying on `search` cancels and restarts the effect per keystroke,
@@ -141,10 +182,13 @@ fun QuestionnaireListScreen(
         // makes a co-designer distrust the row that is most likely to be the one they came here for.
         // Each card already names its owner and the workshop it hangs off, so the line only has to
         // stop contradicting them.
+        // NOT "built on a computer, answered here" any more. That sentence was true when this client
+        // bound none of the .xlsx endpoints; leaving it standing over a "Upload a workbook" button
+        // would be the screen contradicting itself about what the handset can do.
         Text(
-            "Questionnaires you built, and the ones attached to a design workshop you work on — " +
-                "built from the .xlsx pro-forma on a computer, answered here. Open one to record a " +
-                "sitting, section by section.",
+            "Questionnaires you built, and the ones attached to a design workshop you work on. " +
+                "Open one to record a sitting, section by section — or download it as a spreadsheet, " +
+                "send its questions to another designer, and upload one you were sent.",
             color = MaterialTheme.field.muted,
             fontSize = 12.sp
         )
@@ -162,6 +206,91 @@ fun QuestionnaireListScreen(
                 Spacer(Modifier.width(6.dp))
                 Text("New")
             }
+        }
+
+        // ── Building a questionnaire from a spreadsheet, on the handset ─────────────────────────
+        //
+        // These two controls were absent by decision until 2026-08-16 and the decision was reversed
+        // by the person the app is for; the argument, including the part of it that was wrong, is in
+        // `data/WorkshopRepositoryApi.kt` where the endpoints are bound.
+        //
+        // WHAT IS STILL TRUE IS SAID RATHER THAN ENFORCED BY AN ABSENCE. A phone is a poor place to
+        // author forty questions, so the pro-forma's line says what to do with the file — send it to
+        // a computer — instead of implying the typing happens here.
+        ElevatedCard(
+            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "The spreadsheet",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                ArtefactDownloadRow(
+                    label = "Download the pro-forma",
+                    artefact = DwQuestionnaireArtefact.PRO_FORMA,
+                    busy = interchangeBusy,
+                    working = downloadingProForma,
+                    savedTo = proFormaSavedTo,
+                    onDownload = {
+                        if (interchangeBusy) return@ArtefactDownloadRow
+                        interchangeBusy = true
+                        downloadingProForma = true
+                        proFormaSavedTo = null
+                        scope.launch {
+                            runCatching {
+                                repository.downloadQuestionnaireArtefact(
+                                    context = appContext,
+                                    artefact = DwQuestionnaireArtefact.PRO_FORMA,
+                                )
+                            }
+                                .onSuccess { proFormaSavedTo = it }
+                                .onFailure { error ->
+                                    if (error !is CancellationException) {
+                                        onError(error.apiErrorMessage("The pro-forma could not be downloaded."))
+                                    }
+                                }
+                            downloadingProForma = false
+                            interchangeBusy = false
+                        }
+                    }
+                )
+                Text(
+                    "Send it to a computer to type your questions into — a spreadsheet with forty " +
+                        "rows is not a thing a phone is good at. Then bring the filled-in file back " +
+                        "and upload it here, or upload it from the website.",
+                    color = MaterialTheme.field.muted,
+                    fontSize = 11.sp
+                )
+
+                HorizontalDivider(color = MaterialTheme.field.hairline)
+
+                WorkbookUploadRow(
+                    label = "Upload a workbook",
+                    // NAMED BEFORE A FILE IS CHOSEN, which is the point. Three different files end up
+                    // in a designer's Downloads folder with .xlsx on the end, one of them behaves
+                    // differently from the other two, and a designer finds that out AFTER the upload
+                    // unless the door says so first.
+                    blurb = "Creates a NEW questionnaire. This door takes a filled-in pro-forma, or a " +
+                        "question set a colleague sent you. If the file came out of this platform — " +
+                        "it has a Questionnaire ID or Question IDs in it — its QUESTIONS are imported " +
+                        "and its ANSWERS are not: those answers already exist here under the names of " +
+                        "the people who recorded them. You are told either way.",
+                    busy = interchangeBusy,
+                    working = uploading,
+                    onPick = pickWorkbook,
+                )
+            }
+        }
+
+        uploadReport?.let { report ->
+            UploadReportPanel(report = report, onDismiss = { uploadReport = null })
         }
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -199,8 +328,9 @@ fun QuestionnaireListScreen(
                 if (search.isNotBlank()) {
                     "Nothing matches “$search”."
                 } else {
-                    "No questionnaires yet. Download the .xlsx pro-forma on a computer, type your " +
-                        "questions into it and upload it there — or tap New to start an empty one here."
+                    "No questionnaires yet. Download the pro-forma above, type your questions into it " +
+                        "on a computer and upload the filled-in file — here or on the website — or " +
+                        "tap New to start an empty one and add questions by hand."
                 }
             )
 

@@ -29,7 +29,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ClipboardList, Download, FileSpreadsheet, Lock, Plus, Upload } from "lucide-react";
+import { ClipboardList, Download, FileSpreadsheet, Lock, Plus, Share2, Upload } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
@@ -37,6 +37,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
 import { RowActions, rowAction } from "@/components/RowActions";
+import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
 import { UploadReport } from "@/components/questionnaires/UploadReport";
 import { QuestionRow } from "@/components/questionnaires/QuestionRow";
@@ -50,6 +51,7 @@ import {
   answeredCount,
   createQuestion,
   createSection,
+  downloadQuestionSet,
   downloadQuestionnaireWorkbook,
   getQuestionnaire,
   patchQuestionnaire,
@@ -239,6 +241,21 @@ export default function QuestionnaireDetailPage() {
     if (file) saveBlobToDisk(file.blob, file.fileName);
   }
 
+  /**
+   * The QUESTIONS ALONE — no answers, no respondents, no sittings — as a file to send on.
+   *
+   * NOT gated on `mayEdit`, and that is the whole point of it existing. Reading this form is open to
+   * any designer (the server's own rule: "the form is open to any designer and its sittings are
+   * not"), and this file is exactly that openly-readable half written into a spreadsheet. Gating it
+   * with the lossless download would put the two files back behind one permission and make sharing a
+   * questionnaire impossible again — which is what forced the only previous workaround, widening the
+   * gate on a workbook full of respondents' names.
+   */
+  async function downloadQuestions() {
+    const file = await run(() => downloadQuestionSet(id), "Unable to download the question set");
+    if (file) saveBlobToDisk(file.blob, file.fileName);
+  }
+
   if (error && !form) {
     return (
       <>
@@ -273,6 +290,18 @@ export default function QuestionnaireDetailPage() {
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
         actions={
           <>
+            {/*
+              UNGATED, AND IT IS THE ONE DOWNLOAD ON THIS PAGE THAT IS. It carries the questions and
+              nothing else — no answers, no respondents' names, no sittings — so the server offers it
+              to any designer, exactly as it offers the questions themselves through
+              `GET /questionnaires/{id}`. Hiding it from a non-owner would restore the state this
+              feature was built to end: a designer who wanted a colleague's questions had no way to
+              get them, and the only apparent fix was to widen the gate on the file below.
+            */}
+            <button type="button" className="field-button-secondary" onClick={downloadQuestions} disabled={busy}>
+              <Share2 className="h-4 w-4" aria-hidden />
+              Download question set
+            </button>
             {/*
               GATED BECAUSE THE WORKBOOK CARRIES THE SITTINGS, not just the questions: every
               respondent's name, their notes and every answer recorded against this form. The export
@@ -319,12 +348,19 @@ export default function QuestionnaireDetailPage() {
           <Lock className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
           <span>
             This questionnaire belongs to another designer, so its questions cannot be changed here. You can still record
-            answers against it and download it.
+            answers against it, and you can download the <span className="font-medium text-ink-900">question set</span> —
+            the questions on their own — to run this instrument yourself. The full .xlsx is not offered, because it
+            carries every sitting recorded against this form: the respondents&rsquo; names, the interview notes and every
+            answer.
           </span>
         </div>
       ) : null}
 
       {report ? <UploadReport report={report} className="mb-5" /> : null}
+
+      {/* Both download buttons sit in this page's header, side by side, with the same title on the
+          two files they produce. This is the caption for that choice. */}
+      <ArtefactNotice className="mb-5" />
 
       {mayEdit ? (
         <form onSubmit={renameQuestionnaire} className="panel mb-5 grid gap-4 p-4">

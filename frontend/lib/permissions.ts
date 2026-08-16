@@ -291,6 +291,15 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     // anybody who had been sent one, or who had it in their history, walked straight in. The
     // server refuses every write (`_require_designer` on the routes), but the LIST page still
     // rendered its chrome to somebody who could do nothing with it.
+    //
+    // THIS IS `canRunDesignWorkshops` AND NOT `canCreateDesignWorkshops`, and the difference is the
+    // entire point of the two predicates. A DESIGNER may not START a workshop any more, and may
+    // absolutely still open this page: it is where the workshops they have been given access to
+    // are listed, and where their fortnight of unsent fieldwork lives. Narrowing this row to the
+    // create set would lock a designer out of their own work to enforce a rule about a button.
+    // Creating is a CONTROL, not a route — there is no `/design-workshops/new` — so it is gated
+    // where it is rendered (the page) and where it is performed (`lib/designWorkshopStore.ts` for
+    // the offline path, `POST /design-workshops` for the online one), not here.
     path: "/design-workshops",
     can: canRunDesignWorkshops,
     gate: "can_run_design_workshops",
@@ -413,11 +422,16 @@ export function routeRedirectFor(user: User | null | undefined, pathname: string
 }
 
 /**
- * Create and edit a design & prototype workshop, and generate its report: Designer and above.
+ * RUN a design & prototype workshop — open it, fill its 22 stages, create records inside it and
+ * generate its report: Designer, Admin, Master Admin.
+ *
+ * NOT "start a new one". That is {@link canCreateDesignWorkshops}, a strictly narrower set, and
+ * the two are separate functions on purpose — see there. Everything a designer has ever been able
+ * to do inside a workshop is still this predicate.
  *
  * Mirrors `can_run_design_workshops` in backend/app/core/deps.py. Deliberately not
  * `canCreateRecords`: a design workshop ends in a document submitted under a named designer's
- * name, so the app should not invite somebody who cannot sign it to start one.
+ * name, so the app should not invite somebody who cannot sign it to work on one.
  */
 /**
  * Who may run a design & prototype workshop — and the ONE capability here that is not a rank
@@ -438,6 +452,48 @@ export const DESIGN_WORKSHOP_ROLES: readonly UserRole[] = ["DESIGNER", "ADMIN", 
 export function canRunDesignWorkshops(user: User | null | undefined) {
   return !!user && DESIGN_WORKSHOP_ROLES.includes(user.role);
 }
+
+/**
+ * Who may bring a NEW design & prototype workshop into existence — a STRICT SUBSET of
+ * {@link DESIGN_WORKSHOP_ROLES}, and the one place in this file where a DESIGNER is refused
+ * something a designer used to have.
+ *
+ * THE RULE, AS IT WAS ASKED FOR: "designers cannot create workshops (only admins/master admins
+ * can) — designers create records under existing workshops."
+ *
+ * WHY THE TWO PREDICATES ARE SEPARATE FUNCTIONS RATHER THAN ONE WITH A FLAG. They answer different
+ * questions about different things. `canRunDesignWorkshops` asks "may this account do the work of
+ * a workshop", and it gates a whole route tree; this asks "may this account open a NEW one", and
+ * it gates a single control. Collapsing them is how a future edit to one silently moves the other
+ * — and moving this one the wrong way costs a designer their fortnight of stage edits, which is far
+ * worse than this rule is worth.
+ *
+ * `backend/app/core/deps.py::DESIGN_WORKSHOP_CREATOR_ROLES` carries the identical set and must keep
+ * carrying it; `backend/tests/test_design_workshop_gate.py` reads THIS FILE to check that it does.
+ */
+export const DESIGN_WORKSHOP_CREATOR_ROLES: readonly UserRole[] = ["ADMIN", "MASTER_ADMIN"];
+
+export function canCreateDesignWorkshops(user: User | null | undefined) {
+  return !!user && DESIGN_WORKSHOP_CREATOR_ROLES.includes(user.role);
+}
+
+/**
+ * What a designer is told when they try to start a workshop — ONE sentence, in ONE place, because
+ * it is said on four surfaces: the list page's panel, the offline draft store's refusal, the
+ * server's 403 (`backend/app/core/deps.py::DESIGN_WORKSHOP_CREATE_REFUSAL`) and any dialog that
+ * grows out of them. A refusal that names a different next move depending on where you met it is
+ * not a rule, it is three rumours.
+ *
+ * IT NAMES WHO CAN CREATE ONE AND WHAT TO DO INSTEAD, and neither half is decoration. The person
+ * reading it is standing in a courtyard with participants in front of them: "you do not have
+ * permission" tells them to stop working, when the truth is that everything they came to do still
+ * works the moment an admin has opened the workshop. A greyed-out button says even less than that.
+ */
+export const DESIGN_WORKSHOP_CREATE_REFUSAL =
+  "Only admins and the master admin can start a new design & prototype workshop. Ask an admin to " +
+  "create it for your cluster and give you access — you can then fill in all 22 stages, add " +
+  "artisans, products and photographs, and generate the report exactly as before. Any workshop " +
+  "you already have access to is open to you now.";
 
 /** Add, suspend and restore designers on the roster that gates their sign-in: Admin and above. */
 export function canManageDesignerRoster(user: User | null | undefined) {

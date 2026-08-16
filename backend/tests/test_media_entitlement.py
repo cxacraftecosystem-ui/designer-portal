@@ -158,6 +158,19 @@ async def env():
                                   transcriptText=TEAM_TRANSCRIPT,
                                   linkedRecordType="designWorkshop",
                                   linkedRecordId=team_workshop.id)
+        # ROSTER ROWS, WHICH ARRIVED WITH THE CREATE RULE. `_workshop` now opens a workshop as the
+        # admin and grants the designer who will work in it, and `replace_viewers` refuses to grant
+        # an account the ACTIVE designer roster does not admit — a 422, not a silent skip. Without
+        # these rows every workshop in this module would exist and be unreachable by the account the
+        # test is about, and the entitlement assertions would all fail as 404s.
+        for account in (designer, stranger, colleague):
+            await db.designerroster.create(data={
+                "email": account.email,
+                "fullName": account.name,
+                "institution": "Directorate of Handicrafts",
+                "isActive": True,
+                "addedById": admin.id,
+            })
     finally:
         await db.disconnect()
 
@@ -174,6 +187,10 @@ async def env():
             "downloader": create_access_token(subject=downloader.id),
             "downloader_id": downloader.id,
             "designer_id": designer.id,
+            # Needed by `_workshop`: a workshop is now OPENED by an admin and GRANTED to the account
+            # that will work in it, so the helper has to name that account by id.
+            "admin_id": admin.id,
+            "stranger_id": stranger.id,
             "own_photo": own_photo.id,
             "foreign_photo": foreign_photo.id,
             "own_audio": own_audio.id,
@@ -228,10 +245,36 @@ def stranger_client(env):
     return _As(env["client"], env["stranger"])
 
 
-def _workshop(client) -> str:
-    response = client.post("/api/design-workshops", json={"title": "Entitlement test workshop"})
+def _workshop(env, owner: str = "designer_id") -> str:
+    """A workshop the account named by ``owner`` may work in, opened the way workshops are opened.
+
+    THE ADMIN CREATES IT AND GRANTS THE ACCOUNT. This helper used to post as whichever client it was
+    handed, which is how designers made workshops until only admins and the master admin could start
+    one (``can_create_design_workshops``): a workshop is the container a fortnight of records lives
+    in and the unit the ministry indexes, not a record. Posting as a designer now answers 403, so
+    every test in this module would have died on its setup line for a reason that has nothing to do
+    with media entitlement.
+
+    ``owner`` is an id key in ``env`` rather than a client, because the grant needs a user id and
+    ``_As`` deliberately hides it. An owner of ``"admin_id"`` skips the grant: the admin creating it
+    already reaches it through ``createdById`` and through ``is_admin``, and ``replace_viewers``
+    drops the creator from the set anyway.
+
+    NOTE FOR ANYONE READING AN ENTITLEMENT FAILURE HERE: the workshop's ``createdById`` is now the
+    ADMIN, not the designer. Nothing in this module asserts on it — media entitlement is decided per
+    FILE by who uploaded it, never by who owns the workshop, which is the distinction the whole file
+    exists to pin — but a test that starts depending on the creator will be depending on the admin.
+    """
+    admin = _As(env["client"], env["admin"])
+    response = admin.post("/api/design-workshops", json={"title": "Entitlement test workshop"})
     assert response.status_code == 201, response.text
-    return response.json()["id"]
+    workshop_id = response.json()["id"]
+    if owner != "admin_id":
+        granted = admin.put(
+            f"/api/design-workshops/{workshop_id}/viewers", json={"userIds": [env[owner]]}
+        )
+        assert granted.status_code == 200, granted.text
+    return workshop_id
 
 
 def _save(client, workshop_id: str, stage: str, entity: str, data: dict) -> None:
@@ -260,7 +303,7 @@ def test_a_photograph_uploaded_by_someone_else_never_reaches_the_report(env, cli
     generated .docx carried the stranger's photograph. The id must now appear nowhere in the
     document the preview describes.
     """
-    workshop_id = _workshop(client)
+    workshop_id = _workshop(env)
     _save(client, workshop_id, PHOTO_STAGE, PHOTO_ENTITY,
           {"workshopTitle": "Ikat", PHOTO_FIELD: env["foreign_photo"]})
 
@@ -276,7 +319,7 @@ def test_the_withheld_photograph_is_reported_rather_than_dropped_in_silence(env,
     Saying so is what tells a designer to ask the colleague who uploaded it for a data-access grant
     instead of re-photographing an artisan who has gone home.
     """
-    workshop_id = _workshop(client)
+    workshop_id = _workshop(env)
     _save(client, workshop_id, PHOTO_STAGE, PHOTO_ENTITY,
           {"workshopTitle": "Ikat", PHOTO_FIELD: env["foreign_photo"]})
 
@@ -289,7 +332,7 @@ def test_the_designers_own_photograph_still_reaches_the_report(env, client):
 
     Without this the entitlement could be "resolve nothing" and the test above would still pass.
     """
-    workshop_id = _workshop(client)
+    workshop_id = _workshop(env)
     _save(client, workshop_id, PHOTO_STAGE, PHOTO_ENTITY,
           {"workshopTitle": "Ikat", PHOTO_FIELD: env["own_photo"]})
 
@@ -304,7 +347,7 @@ def test_an_admin_may_still_be_handed_every_file(env, admin_client):
     An ADMIN outranks PROFESSOR, so ``owned_or_granted_where`` is empty for them and every media row
     resolves — which is what keeps the existing report suite, all of it written as an admin, honest.
     """
-    workshop_id = _workshop(admin_client)
+    workshop_id = _workshop(env, "admin_id")
     _save(admin_client, workshop_id, PHOTO_STAGE, PHOTO_ENTITY,
           {"workshopTitle": "Ikat", PHOTO_FIELD: env["foreign_photo"]})
 
@@ -320,7 +363,7 @@ def test_an_admin_may_still_be_handed_every_file(env, admin_client):
 def test_a_strangers_transcript_is_not_listed_by_the_transcripts_endpoint(env, client):
     """This endpoint showed the filename, duration, speaker count and opening line of any recording
     in the repository, to anybody who pasted its id onto a stage — before a report was generated."""
-    workshop_id = _workshop(client)
+    workshop_id = _workshop(env)
     _save(client, workshop_id, AUDIO_STAGE, AUDIO_ENTITY, {AUDIO_FIELD: env["foreign_audio"]})
 
     response = client.get(f"/api/design-workshops/{workshop_id}/transcripts")
@@ -331,7 +374,7 @@ def test_a_strangers_transcript_is_not_listed_by_the_transcripts_endpoint(env, c
 
 def test_a_strangers_transcript_does_not_come_back_onto_the_stage(env, client):
     """The stage read carries the transcript text keyed by media id, so it is a second way out."""
-    workshop_id = _workshop(client)
+    workshop_id = _workshop(env)
     _save(client, workshop_id, AUDIO_STAGE, AUDIO_ENTITY, {AUDIO_FIELD: env["foreign_audio"]})
 
     response = client.get(f"/api/design-workshops/{workshop_id}")
@@ -341,7 +384,7 @@ def test_a_strangers_transcript_does_not_come_back_onto_the_stage(env, client):
 
 
 def test_the_designers_own_recording_is_still_listed_and_still_comes_back(env, client):
-    workshop_id = _workshop(client)
+    workshop_id = _workshop(env)
     _save(client, workshop_id, AUDIO_STAGE, AUDIO_ENTITY, {AUDIO_FIELD: env["own_audio"]})
 
     listed = client.get(f"/api/design-workshops/{workshop_id}/transcripts")
@@ -392,7 +435,7 @@ def test_a_designer_with_no_grant_is_still_refused_the_same_recording(
     "any recording anybody filed under any workshop" — which is the version of this fix that would
     have handed every design workshop's audio to every designer in the repository.
     """
-    workshop_id = _workshop(stranger_client)
+    workshop_id = _workshop(env, "stranger_id")
     _save(stranger_client, workshop_id, AUDIO_STAGE, AUDIO_ENTITY,
           {AUDIO_FIELD: env["team_audio"]})
 
@@ -416,13 +459,13 @@ def test_the_report_path_refuses_a_strangers_recording_and_says_so(env, client):
     ``test_a_strangers_transcript_does_not_come_back_onto_the_stage`` — which proves the words
     themselves are withheld — are what stand between a stranger's recording and a ministry.
     """
-    mine = _workshop(client)
+    mine = _workshop(env)
     _save(client, mine, AUDIO_STAGE, AUDIO_ENTITY, {AUDIO_FIELD: env["own_audio"]})
     _save(client, mine, "REPORT_GENERATION", "reportSettings", {"includeTranscripts": True})
     own_warnings = " ".join(_preview(client, mine)["warnings"])
     assert "transcript annexure" not in own_warnings, own_warnings
 
-    theirs = _workshop(client)
+    theirs = _workshop(env)
     _save(client, theirs, AUDIO_STAGE, AUDIO_ENTITY, {AUDIO_FIELD: env["foreign_audio"]})
     _save(client, theirs, "REPORT_GENERATION", "reportSettings", {"includeTranscripts": True})
     their_warnings = " ".join(_preview(client, theirs)["warnings"])

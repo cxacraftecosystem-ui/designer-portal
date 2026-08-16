@@ -395,14 +395,48 @@ async def update_section(
     return public_encode(updated)
 
 
+async def answered_question_ids(question_ids: list[str]) -> set[str]:
+    """Which of these global-questionnaire questions carry an answer with actual TEXT against them.
+
+    The twin of ``_answered_question_ids`` in services/questionnaire_forms.py, deliberately written
+    to the same test rather than to a simpler one: a BLANK answer row does not count. The app writes
+    one when a researcher opens a section, tabs through it and saves, and treating that as "answered"
+    would freeze the wording of a question nobody has ever answered — which would turn the rule below
+    from a protection into an obstruction, and obstructions get worked around.
+
+    Filtered in Python rather than in the ``where`` clause for the reason stated there too: "not
+    null" is not the test. An answer saved as a single space is null-ish to a person and non-null to
+    Postgres, and only Python knows that.
+    """
+    if not question_ids:
+        return set()
+    rows = await db.questionnaireresponse.find_many(where={"questionId": {"in": question_ids}})
+    return {row.questionId for row in rows if (row.answerText or "").strip()}
+
+
 @router.delete("/sections/{section_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_section(
     section_id: str,
     _: Any = Depends(require_questionnaire_manager),
 ) -> None:
+    """Take a section out of use. Its questions stop being asked; every recorded answer stays.
+
+    THE ANSWERED QUESTIONS ARE STAMPED ``retiredAt`` AND THE REST ARE NOT, which is the same
+    distinction ``QuestionnaireFormQuestion.retiredAt`` draws in the custom builder: "retired while
+    carrying evidence" and "switched off before anybody answered" are two different facts about a
+    question, and a column that meant both would answer neither. It costs one extra read of the
+    section's responses, on a route an admin presses a handful of times a year.
+    """
     await require_section(section_id)
+    questions = await db.questionnairequestion.find_many(where={"sectionId": section_id})
+    answered = await answered_question_ids([q.id for q in questions])
     await db.questionnairesection.update(where={"id": section_id}, data={"isActive": False})
     await db.questionnairequestion.update_many(where={"sectionId": section_id}, data={"isActive": False})
+    if answered:
+        await db.questionnairequestion.update_many(
+            where={"id": {"in": sorted(answered)}, "retiredAt": None},
+            data={"retiredAt": datetime.now(UTC)},
+        )
 
 
 @router.post("/sections/reorder")
@@ -436,12 +470,64 @@ async def create_question(
     return public_encode(created)
 
 
+SUPERSEDED_DETAIL = (
+    "This question already has answers recorded against it, so its original wording and those "
+    "answers were kept and your new wording was added as a new question in the same place. Nothing "
+    "was overwritten and no recorded answer changed meaning."
+)
+
+
 @router.patch("/questions/{question_id}")
 async def update_question(
     question_id: str,
     payload: QuestionnaireQuestionUpdate,
     _: Any = Depends(require_questionnaire_manager),
 ) -> dict[str, Any]:
+    """Edit one question of the GLOBAL questionnaire — under this repository's one edit rule.
+
+    ================================================================================================
+    REWORDING AN ANSWERED QUESTION SUPERSEDES IT. IT USED TO OVERWRITE IT.
+    ================================================================================================
+
+    The rule is stated in full in services/questionnaire_forms.py and it is not this feature's rule
+    or that one's, it is the repository's: AN ANSWER IS EVIDENCE, AND THE WORDS IT WAS GIVEN UNDER
+    ARE PART OF THAT EVIDENCE. The custom questionnaire builder has honoured it since it was written
+    (``guard_question_edit`` / ``supersede_question``). This endpoint — on the ONE global instrument
+    every researcher in the repository answers — did not: it wrote the new prompt straight over the
+    old one with no answer check anywhere, so
+
+        "How many looms do you own?"      answered "12" by nineteen artisans
+        reworded to "How many weavers work with you?"
+
+    silently re-attributed nineteen recorded answers to a question nobody had ever been asked. The
+    answers were never in danger of being DELETED — ``QuestionnaireResponse.questionId`` is ON DELETE
+    RESTRICT — and that is precisely what made this so quiet: every safeguard in the schema was
+    pointed at the wrong hazard. The completion matrix, the consolidated per-artisan document and
+    its CSV all read those answers, and the .docx built from them goes to a ministry.
+
+    WHAT HAPPENS NOW, and it neither fails nor overwrites: the original is retired with its original
+    wording and keeps its answers, the new wording is created as a new question in the same section
+    at the same position, and ``supersededById`` links them. The manager gets the correction they
+    asked for and no recorded answer changes meaning. The response carries ``action`` so a client can
+    say so.
+
+    THE FIELDS THAT ARE NOT THE WORDING ARE STILL FREELY EDITABLE on an answered question — position,
+    section, active flag. None of them alters what a recorded answer asserts. That is the same line
+    the custom builder draws, and drawing it anywhere else would freeze questionnaires that merely
+    need reordering.
+
+    A QUESTION THAT HAS ALREADY BEEN SUPERSEDED REFUSES A SECOND REWORD with a 409 naming its
+    replacement. ``supersededById`` holds one id, so superseding a superseded row would overwrite the
+    first link and lose the middle of the chain — the reader would be left with a retired question
+    pointing at a replacement two steps away and no way to know a step was missing. The manager's
+    real intent is to edit the CURRENT wording, and the message says where to find it.
+
+    THE RESPONSE IS STILL THE QUESTION ROW, with keys added rather than wrapped around it. The web
+    editor ignores this body entirely and re-reads ``/questionnaire/sections`` afterwards, so a
+    wrapper would have been safe today and would have broken silently for any client that reads
+    ``.id`` or ``.prompt`` — and on a supersede ``.id`` is the one thing a client most needs, because
+    the row it was editing is no longer the row to edit. It gets the REPLACEMENT.
+    """
     question = await require_record(db.questionnairequestion, question_id)
     data = clean_data(payload.model_dump(exclude_unset=True))
     if "prompt" in data:
@@ -455,8 +541,50 @@ async def update_question(
     elif question.sectionId and ("sectionCode" not in data or "sectionTitle" not in data):
         section = await require_section(question.sectionId)
         data.update({"sectionCode": section.code, "sectionTitle": section.title})
+
+    new_prompt = data.get("prompt")
+    reworded = new_prompt is not None and new_prompt != (question.prompt or "").strip()
+    if reworded and await answered_question_ids([question.id]):
+        if question.supersededById:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This question was already replaced by a newer one, so its wording is now part "
+                    "of the record rather than something to edit. Edit the question that replaced "
+                    "it instead — it is the one being asked."
+                ),
+            )
+        replacement = await db.questionnairequestion.create(
+            data={
+                "sectionId": data.get("sectionId", question.sectionId),
+                "sectionCode": data.get("sectionCode", question.sectionCode),
+                "sectionTitle": data.get("sectionTitle", question.sectionTitle),
+                "prompt": new_prompt,
+                # The replacement stands exactly where the original stood. `QuestionnaireQuestion`
+                # carries no uniqueness on sortOrder (only `QuestionnaireSection` does), so the
+                # retired row and its replacement sharing a position is legal — and the retired row
+                # is filtered out of every list that asks for active questions only.
+                "sortOrder": data.get("sortOrder") or question.sortOrder,
+                "isActive": data.get("isActive", True),
+            }
+        )
+        await db.questionnairequestion.update(
+            where={"id": question.id},
+            data={
+                "isActive": False,
+                "retiredAt": datetime.now(UTC),
+                "supersededById": replacement.id,
+            },
+        )
+        return {
+            **public_encode(replacement),
+            "action": "superseded",
+            "supersededQuestionId": question.id,
+            "detail": SUPERSEDED_DETAIL,
+        }
+
     updated = await db.questionnairequestion.update(where={"id": question_id}, data=data)
-    return public_encode(updated)
+    return {**public_encode(updated), "action": "updated"}
 
 
 @router.delete("/questions/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -464,8 +592,28 @@ async def delete_question(
     question_id: str,
     _: Any = Depends(require_questionnaire_manager),
 ) -> None:
+    """Take a question out of use. It stops being asked; every answer recorded against it stays.
+
+    THIS HAS ALWAYS BEEN A RETIRE RATHER THAN A DELETE — it only ever set ``isActive = false`` — and
+    that half of the rule was therefore already honoured here. What it did not do was SAY SO in the
+    row: an answered question and one nobody ever touched came out of this endpoint identical, so
+    there was no way afterwards to tell a question that carries evidence from one an admin switched
+    off the day it was typed. ``retiredAt`` records the difference, exactly as it does on
+    ``QuestionnaireFormQuestion``.
+
+    STILL 204, unlike the custom builder's DELETE which answers 200 with an action. There the two
+    outcomes genuinely differ — a question with no answers is really deleted and disappears, one with
+    answers is retired and stays visible — so a client that assumed "gone" would draw the wrong list.
+    Here BOTH outcomes are the same outcome: the question stops being asked and its answers stay.
+    There is nothing for a client to branch on, and inventing a body to say so would change a
+    contract for no information.
+    """
     await require_record(db.questionnairequestion, question_id)
-    await db.questionnairequestion.update(where={"id": question_id}, data={"isActive": False})
+    answered = await answered_question_ids([question_id])
+    data: dict[str, Any] = {"isActive": False}
+    if answered:
+        data["retiredAt"] = datetime.now(UTC)
+    await db.questionnairequestion.update(where={"id": question_id}, data=data)
 
 
 @router.post("/questions/reorder")

@@ -211,6 +211,37 @@ export type QFormChangeDetail = {
   reason: string;
 };
 
+/**
+ * WHAT THE IMPORT DECIDED TO DO WITH THE ANSWERS THAT WERE ALREADY IN THE WORKBOOK.
+ *
+ * `null` when there were none, and then there is nothing to say. Otherwise one of two outcomes, and
+ * a client that does not print `reason` has re-created the bug this field exists to end:
+ *
+ * - `answersImported`    — the workbook was filled in BY HAND (no Questionnaire ID, no Question IDs),
+ *                          so there is no other recorder anywhere in the picture and the answers are
+ *                          recorded as sittings attributed to whoever uploaded it. The ordinary case.
+ * - `answersNotImported` — the workbook came OUT OF the platform, so its answers are somebody's
+ *                          fieldwork that already exists here under the names of the people who
+ *                          recorded it. The questions were imported and the answers were not, because
+ *                          writing them again would duplicate that fieldwork under a new author.
+ *                          `sourceQuestionnaireId` names where they really live, when the file said.
+ *
+ * The old behaviour was to import them unconditionally, with `createdById` and `answeredById` set to
+ * the uploader — so a designer handed a colleague's workbook silently acquired that colleague's
+ * respondents as their own recorded interviews, in their own name, in the questionnaire annexure of
+ * the report they submit. Nothing on any screen said so, which is exactly why this field is not
+ * optional to render.
+ */
+export type QFormProvenance = {
+  action: "answersImported" | "answersNotImported";
+  sourceQuestionnaireId: string | null;
+  answersImported?: number;
+  answersSkipped?: number;
+  entriesCreated?: number;
+  /** Written on the server to be shown VERBATIM. Do not paraphrase it here. */
+  reason: string;
+};
+
 export type QFormUploadReport = {
   created: number;
   updated?: number;
@@ -224,6 +255,12 @@ export type QFormUploadReport = {
   problems: QFormProblem[];
   /** Only the re-upload path can produce these — a fresh import has nothing to supersede. */
   details?: QFormChangeDetail[];
+  /** Sittings created from answer columns that were already filled in on the sheet. */
+  entriesCreated?: number;
+  answersImported?: number;
+  /** Answers the workbook carried that were deliberately NOT re-recorded. See {@link QFormProvenance}. */
+  answersSkipped?: number;
+  provenance?: QFormProvenance | null;
 };
 
 export type QFormUploadResult = { questionnaire: QForm; report: QFormUploadReport };
@@ -492,6 +529,26 @@ export function downloadProForma() {
  */
 export function downloadQuestionnaireWorkbook(id: string) {
   return fetchWorkbook(`/questionnaires/${id}/xlsx`, "questionnaire.xlsx");
+}
+
+/**
+ * The QUESTION SET: this questionnaire's questions, their order, their help text and their required
+ * flags — and NO answers, NO respondents' names and NO recorded sittings.
+ *
+ * THE FILE A DESIGNER SENDS TO ANOTHER DESIGNER, and the reason there are two downloads rather than
+ * one. {@link downloadQuestionnaireWorkbook} is deliberately lossless, so it carries every sitting
+ * ever recorded against the form; that is why the server refuses it to anyone but the owner, a
+ * designer on its design workshop, or an admin, and why sharing a questionnaire used to be
+ * impossible. This is the openly-readable half — the same questions `getQuestionnaire` already hands
+ * to any designer — written into a spreadsheet, so ANY designer may take it.
+ *
+ * ITS QUESTION IDs ARE BLANK ON PURPOSE. The receiving designer uploads it through
+ * {@link uploadQuestionnaire} and gets their OWN new, empty questionnaire carrying these questions,
+ * rather than an edit of the sender's. A UI that offered this file to a "re-upload" control would be
+ * offering to fork somebody else's form into their own.
+ */
+export function downloadQuestionSet(id: string) {
+  return fetchWorkbook(`/questionnaires/${id}/question-set.xlsx`, "questionnaire-questions.xlsx");
 }
 
 /**

@@ -265,6 +265,27 @@ object FieldPermissions {
     fun canRunDesignWorkshops(user: UserDto): Boolean = user.role in DESIGN_WORKSHOP_ROLES
 
     /**
+     * `can_create_design_workshops` — START a new design & prototype workshop. ADMIN AND ABOVE ONLY.
+     *
+     * ── THIS IS NOT [canRunDesignWorkshops] AND THE DIFFERENCE IS ONE ROLE ───────────────────────
+     *
+     * A DESIGNER passes that predicate and fails this one. They may do everything INSIDE a workshop —
+     * all 22 stages, the artisans, the products, the photographs, the dictation, the report — and may
+     * no longer open one. The reason is on [com.designprototype.workshop.data.canCreateDesignWorkshops]
+     * in full; the short of it is that a workshop is the unit a ministry indexes and funds, and
+     * creating one is an administrative act rather than a capture act.
+     *
+     * DELIBERATELY NOT USED TO GATE THE DESIGN-WORKSHOP DESTINATION. Narrowing the drawer entry to
+     * this would lock a designer out of their own fieldwork in order to enforce a rule about a
+     * button. The web made the same call and says so beside its route guard.
+     *
+     * The rule itself lives in the DATA layer, not here, because the offline draft store has to ask
+     * it too and must not import a UI type to do so. This is the typed front door for screens.
+     */
+    fun canCreateDesignWorkshops(user: UserDto): Boolean =
+        com.designprototype.workshop.data.canCreateDesignWorkshops(user.role)
+
+    /**
      * `can_manage_designer_roster` — add, suspend and restore designers on the roster that gates
      * their sign-in. Admin and above.
      *

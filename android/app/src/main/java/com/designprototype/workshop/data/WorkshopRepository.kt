@@ -229,6 +229,25 @@ private fun HttpException.dictationCapRefusal(): DwDictationCapRefused {
 }
 
 /** Pull the human-readable text out of whichever `detail` shape FastAPI returned. */
+/**
+ * FastAPI's `detail` out of an error body this caller already has as a String.
+ *
+ * The twin of [HttpException.serverDetail], for the two questionnaire downloads. Those are declared
+ * `Response<ResponseBody>` so that a 200 can be streamed to disk without Retrofit buffering it — and
+ * a non-2xx therefore arrives as a RESPONSE rather than as an exception, so the extension above,
+ * which reaches through `HttpException.response()`, has nothing to be called on.
+ *
+ * It matters that the sentence survives: the 403 on `/xlsx` is the one place the server tells a
+ * designer that the question set exists and is theirs to take, and "HTTP 403" would send them to
+ * find an admin for a file they never needed.
+ */
+private fun errorBodyDetail(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val body = runCatching { errorBodyJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject
+    val detail = body?.get("detail") ?: return null
+    return detailMessage(detail)
+}
+
 private fun detailMessage(detail: JsonElement): String? = when (detail) {
     is JsonPrimitive -> detail.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
     is JsonObject -> (detail["message"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
@@ -734,7 +753,14 @@ class WorkshopRepository(
      * The bytes are read from the DURABLE copy under filesDir rather than from a content Uri, so a
      * retry a minute later still has something to send.
      */
-    suspend fun designWorkshopIdentityOcr(context: Context, uri: Uri): DwIdentityOcrDto {
+    suspend fun designWorkshopIdentityOcr(
+        context: Context,
+        uri: Uri,
+        // The designer's DECLARED intention for their own copy of the picture. Defaulted to the safe
+        // half so a call site that has no choice to offer — and there are two — sends the same answer
+        // the server would have assumed for it. See [DW_RETENTION_DEFAULT].
+        retention: String = DW_RETENTION_DEFAULT,
+    ): DwIdentityOcrDto {
         val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
         val bytes = withContext(Dispatchers.IO) {
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -745,8 +771,38 @@ class WorkshopRepository(
             "identity-card.jpg",
             bytes.toRequestBody(mimeType.toMediaType())
         )
-        return api.designWorkshopIdentityOcr(part)
+        return api.designWorkshopIdentityOcr(
+            file = part,
+            // Normalised through this client's copy of the server's own parser, so a value mangled
+            // anywhere above lands on DISCARD here rather than being sent as something the server
+            // will then resolve to DISCARD anyway — the two must not be able to disagree about what
+            // was asked for, because the echo in the reply is what a screen reports back.
+            retention = parseRetention(retention).toRequestBody("text/plain".toMediaType()),
+        )
     }
+
+    /**
+     * Keep one already-stored identity photograph, or delete it outright.
+     *
+     * THROWS, like its neighbours, and here the reason is sharper than "there is no offline
+     * substitute". Both outcomes change durable state: one deletes a regulated document, the other
+     * writes an accountability record naming the person who chose to keep it. A failure swallowed
+     * into a null would leave a designer believing a photograph of somebody's Aadhaar card had been
+     * destroyed when it is still in the bucket — which is the exact belief the whole feature exists
+     * to make true rather than assumed.
+     *
+     * A 502 from this route means NOTHING WAS DELETED: the object could not be removed from storage,
+     * so the row was left pointing at it deliberately rather than being deleted anyway. The server's
+     * sentence says so and says what to do next, and this client shows it rather than translating a
+     * status code.
+     *
+     * NEVER QUEUED and never retried automatically — see the note on the route in
+     * [WorkshopRepositoryApi.decideIdentityPhotograph].
+     */
+    suspend fun decideIdentityPhotograph(mediaId: String, decision: String): DwRetentionResultDto =
+        api.decideIdentityPhotograph(
+            DwRetentionDecisionBody(mediaId = mediaId, decision = parseRetention(decision))
+        )
 
     /**
      * Send one dictated clip to be written down — rung 2 of the ladder in [dwDictationLadder].
@@ -1419,6 +1475,178 @@ class WorkshopRepository(
         answers: List<CustomAnswerInputBody>,
     ): CustomAnswerSaveResultDto =
         api.saveCustomAnswers(id, entryId, CustomAnswerBatchBody(answers = answers))
+
+    // ── The .xlsx interchange: three downloads and two uploads ───────────────────────────────────
+    //
+    // See the block comment in [WorkshopRepositoryApi] for why these exist now and did not before.
+    // Everything here goes to the DOWNLOADS folder through [persistFileToDownloads], the same path
+    // the dataset zip and the relational report already take, so a workbook a designer has just
+    // saved is where every file manager, mail client and WhatsApp attach dialog on the handset
+    // already looks — and shareable through the existing FileProvider on the pre-Q fallback.
+
+    /**
+     * Save one of the three questionnaire workbooks into the device's Downloads folder.
+     *
+     * THE SERVER'S OWN FILENAME IS USED WHEN IT SENDS ONE, and for this feature that is a
+     * correctness requirement rather than politeness. `question_set_filename` suffixes the stem with
+     * `-questions`, and its docstring gives the reason: both downloads land in the same folder under
+     * the same questionnaire title, and the difference between them is the difference between
+     * sending a colleague your question list and sending them every respondent you have ever
+     * interviewed — "the name is the last thing standing between a designer and that mistake". A
+     * client that composed its own name from the title would strip exactly that.
+     *
+     * [fallbackStem] is used only when the header is missing or unusable, and it carries the same
+     * distinction rather than a generic "questionnaire": a fallback that lost the suffix would
+     * reintroduce the confusion on precisely the deployments whose proxies rewrite headers.
+     *
+     * Returns where the file landed, for a message that tells the designer where to look.
+     */
+    suspend fun downloadQuestionnaireArtefact(
+        context: Context,
+        artefact: DwQuestionnaireArtefact,
+        questionnaireId: String? = null,
+        fallbackStem: String = "questionnaire",
+    ): String = withContext(Dispatchers.IO) {
+        val response = when (artefact) {
+            DwQuestionnaireArtefact.PRO_FORMA -> api.questionnaireProForma()
+            DwQuestionnaireArtefact.QUESTION_SET -> api.questionnaireQuestionSet(
+                requireNotNull(questionnaireId) { "A question set is a download OF a questionnaire." }
+            )
+            DwQuestionnaireArtefact.FULL_WORKBOOK -> api.questionnaireWorkbook(
+                requireNotNull(questionnaireId) { "A workbook is a download OF a questionnaire." }
+            )
+        }
+        if (!response.isSuccessful) {
+            // The server's own sentence, not a status code. The 403 on `/xlsx` names the next move
+            // ("download the question set instead"), and the 409 on a re-upload names the file the
+            // designer actually picked. Collapsing either into "download failed (HTTP 403)" would
+            // throw away the only part of the answer that helps.
+            throw IllegalStateException(
+                errorBodyDetail(response.errorBody()?.string())
+                    ?: "That workbook could not be downloaded (HTTP ${response.code()})."
+            )
+        }
+        val body = response.body() ?: throw IllegalStateException("The download response was empty.")
+        val name = filenameFromContentDisposition(response.headers()["Content-Disposition"])
+            ?: defaultArtefactFilename(artefact, fallbackStem)
+        // Spooled to the cache first and copied second, exactly as `downloadReport` does: the
+        // MediaStore entry is created with IS_PENDING and cleared once the bytes are there, so a
+        // transfer that dies half-way must not leave a half-written .xlsx visible in Downloads
+        // looking like a file somebody can open.
+        val tmp = File(context.cacheDir, name)
+        body.byteStream().use { input -> FileOutputStream(tmp).use { out -> input.copyTo(out) } }
+        val location = persistFileToDownloads(context, tmp, name, XLSX_MIME)
+        tmp.delete()
+        location
+    }
+
+    /**
+     * Create a NEW questionnaire from a workbook the designer picked out of the device.
+     *
+     * The bytes are read from the content Uri and sent whole. No re-encoding, no parsing on the
+     * phone: the .xlsx grammar lives in one place, on the server, and a handset that tried to
+     * validate a workbook before uploading it would be a second parser to disagree with the first.
+     *
+     * A FAILURE HERE IS SHOWN, NEVER QUEUED. `OfflineOutbox` exists for record creates, and this is
+     * not one: the response carries the change report — which questions were read, which rows could
+     * not be, and what happened to the answers — and a report nobody sees is the whole point of the
+     * upload thrown away. A designer with no signal is told to try again in signal.
+     */
+    suspend fun uploadQuestionnaireWorkbook(
+        context: Context,
+        uri: Uri,
+        title: String? = null,
+        designWorkshopId: String? = null,
+    ): QFormUploadResultDto {
+        val part = workbookPart(context, uri)
+        return api.uploadQuestionnaire(
+            file = part,
+            // Sent only when the designer typed one. An empty part is not "no title" to the server —
+            // it is a present-and-blank Form field, and `title or parsed.title` would then prefer the
+            // blank over the title written on the Details sheet of the file they just uploaded.
+            title = title?.trim()?.takeIf { it.isNotEmpty() }?.toPlainPart(),
+            designWorkshopId = designWorkshopId?.trim()?.takeIf { it.isNotEmpty() }?.toPlainPart(),
+        )
+    }
+
+    /**
+     * Re-upload an edited workbook over an existing questionnaire. Owner-only on the server.
+     *
+     * The response's `report.details` names every question that was superseded or retired and says
+     * why in a sentence meant to be shown verbatim — see [QFormDetailDto].
+     */
+    suspend fun reuploadQuestionnaireWorkbook(
+        context: Context,
+        questionnaireId: String,
+        uri: Uri,
+        title: String? = null,
+    ): QFormUploadResultDto {
+        val part = workbookPart(context, uri)
+        return api.reuploadQuestionnaire(
+            id = questionnaireId,
+            file = part,
+            title = title?.trim()?.takeIf { it.isNotEmpty() }?.toPlainPart(),
+        )
+    }
+
+    /**
+     * One picked document, as the multipart file part both upload routes take.
+     *
+     * THE FILENAME IS CARRIED THROUGH, because the server stores it as `sourceFilename` and shows it
+     * on the questionnaire ("From artisan-survey.xlsx"). A designer with three uploads in a week
+     * uses that line to tell which spreadsheet a questionnaire came out of, and a hardcoded
+     * "upload.xlsx" would make all three look the same.
+     *
+     * The bytes are read into memory rather than streamed. That is a deliberate exception to what
+     * [uploadResolved] does for media, and it is bounded by what this actually is: a questionnaire
+     * workbook is tens of kilobytes of XML — the pro-forma itself is a few — whereas the media path
+     * streams because it carries multi-hundred-megabyte video. Spooling a copy of a 40 KB file to
+     * disk to avoid holding it in the heap would be ceremony.
+     */
+    private suspend fun workbookPart(context: Context, uri: Uri): okhttp3.MultipartBody.Part {
+        val mimeType = context.contentResolver.getType(uri) ?: XLSX_MIME
+        val name = displayName(context, uri)?.let { safeDownloadName(it) } ?: "questionnaire.xlsx"
+        val bytes = withContext(Dispatchers.IO) {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException(
+                    "That file could not be opened on this device. Pick it again from Downloads, or " +
+                        "copy it onto the phone first — some cloud folders hand out a link rather " +
+                        "than the file."
+                )
+        }
+        if (bytes.isEmpty()) {
+            throw IllegalStateException("That file is empty, so there is nothing to read out of it.")
+        }
+        return okhttp3.MultipartBody.Part.createFormData(
+            "file",
+            name,
+            bytes.toRequestBody(mimeType.toMediaType())
+        )
+    }
+
+    /** A scalar on a multipart body — what `Form(...)` on the server reads. */
+    private fun String.toPlainPart(): okhttp3.RequestBody =
+        toRequestBody("text/plain".toMediaType())
+
+    /**
+     * The filename used only when the server sent no usable `Content-Disposition`.
+     *
+     * KEEPS THE `-questions` DISTINCTION. A fallback that named both downloads after the title alone
+     * would reintroduce, on exactly the deployments whose proxies strip headers, the confusion the
+     * suffix exists to prevent.
+     */
+    private fun defaultArtefactFilename(
+        artefact: DwQuestionnaireArtefact,
+        stem: String,
+    ): String {
+        val safe = stem.replace(Regex("[^A-Za-z0-9._-]+"), "_").trim('_').take(60)
+            .ifBlank { "questionnaire" }
+        return when (artefact) {
+            DwQuestionnaireArtefact.PRO_FORMA -> "questionnaire-pro-forma.xlsx"
+            DwQuestionnaireArtefact.QUESTION_SET -> "$safe-questions.xlsx"
+            DwQuestionnaireArtefact.FULL_WORKBOOK -> "$safe.xlsx"
+        }
+    }
 
     suspend fun login(email: String, password: String): UserDto {
         val response = api.login(LoginRequest(email = email.trim(), password = password))

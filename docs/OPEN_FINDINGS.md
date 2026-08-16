@@ -974,7 +974,7 @@ why the wording, not the plumbing, is what they test.
 not updated in the same commit — the exact failure its own header warns about, three paragraphs
 above where the entry sat. Re-checked by reading the module rather than by trusting either document:
 
-- `backend/app/services/identity_ocr.py:324` now holds `_DIGIT_TOKEN`, a **maximal** digit-run
+- `backend/app/services/identity_ocr.py` now holds `_DIGIT_TOKEN`, a **maximal** digit-run
   pattern — one ASCII digit followed by any number of "optional single separator, then another
   digit" — so a grouped sixteen-digit VID matches as ONE token rather than as a window into one.
   The pattern itself is deliberately not quoted here; read it in the module, where it sits under the

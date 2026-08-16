@@ -35,10 +35,30 @@
  * booleans and, for convenience, an SVG path string. Both the on-screen preview and the printed
  * sheet render from the same matrix, so what a designer checks on the screen is what the printer
  * puts on the card.
+ *
+ * ── WHY SO MUCH OF THIS FILE IS EXPORTED, WHEN NOTHING BUT THE ENCODER USED TO NEED IT ───────
+ *
+ * `lib/qrDecode.ts` reads the symbols this file writes, and it reads them by SHARING these tables
+ * and these functions rather than restating them. That is not tidiness, it is the only way the two
+ * halves can be trusted together. A decoder with its own copy of the block table, its own zigzag
+ * and its own mask formulae would agree with this file on the day it was written and drift the
+ * first time either was touched — and the failure that produces is the worst one this feature has:
+ * a card that ENCODES one identifier and DECODES as another, with a check digit that agrees all
+ * the way because both halves computed it over the same wrong bytes.
+ *
+ * Shared instead: the GF(256) tables, the block layout, the remainder bits, the alignment centres,
+ * the mask formulae, the format-information BCH, the alphanumeric alphabet, the function-pattern
+ * map and — the one most easily got subtly wrong — the module placement ORDER. Every one of them
+ * is already verified against reportlab by `e2e/workshop-codes.spec.ts`, so the decoder inherits
+ * that verification instead of needing a second one.
  */
 
-/** The 45 characters alphanumeric mode can carry, in the order that defines their values. */
-const ALPHANUMERIC = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
+/**
+ * The 45 characters alphanumeric mode can carry, in the order that defines their values.
+ *
+ * Exported for the decoder, which indexes into it in the other direction. See the file header.
+ */
+export const ALPHANUMERIC = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
 
 /** Error correction levels, and the two bits each contributes to the format information block. */
 export type QrEccLevel = "L" | "M" | "Q" | "H";
@@ -50,17 +70,22 @@ const ECC_FORMAT_BITS: Record<QrEccLevel, number> = { L: 0b01, M: 0b00, Q: 0b11,
  * not an omission, and {@link MAX_VERSION} may not be raised without adding the version
  * information block that versions 7 and up require in two corners.
  */
-const MIN_VERSION = 1;
-const MAX_VERSION = 6;
+export const MIN_VERSION = 1;
+export const MAX_VERSION = 6;
 
 /** Total codewords (data + error correction) in versions 1–6. */
-const TOTAL_CODEWORDS = [26, 44, 70, 100, 134, 172];
+export const TOTAL_CODEWORDS = [26, 44, 70, 100, 134, 172];
 
 /**
  * Alignment pattern centre coordinates per version. Version 1 has none; 2–6 have a single extra
  * pattern whose centre is the second coordinate in each pair.
+ *
+ * The decoder reads this table too, and for the part of its job that fails hardest without it: the
+ * alignment pattern is the fourth point that turns a photograph of a TILTED card into a square
+ * grid. Three finder patterns give an affine map, which is exact only for a symbol photographed
+ * flat-on; the fourth corrects the perspective a card held at an angle actually has.
  */
-const ALIGNMENT_CENTRES: number[][] = [[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34]];
+export const ALIGNMENT_CENTRES: number[][] = [[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34]];
 
 /**
  * How a version's codewords are cut into Reed-Solomon blocks, per error correction level.
@@ -74,7 +99,7 @@ const ALIGNMENT_CENTRES: number[][] = [[], [6, 18], [6, 22], [6, 26], [6, 30], [
  * {@link TOTAL_CODEWORDS} for that version. The spec test asserts exactly that for all 24 rows,
  * which is what turns a transcription slip into a red test instead of an unreadable card.
  */
-const BLOCKS: Record<QrEccLevel, number[][]> = {
+export const BLOCKS: Record<QrEccLevel, number[][]> = {
   //           ec  g1  g1data  g2  g2data
   L: [
     [7, 1, 19, 0, 0],
@@ -115,7 +140,16 @@ const BLOCKS: Record<QrEccLevel, number[][]> = {
  * seven for versions 2–6. They are written as light modules and carry nothing; omitting them leaves
  * seven modules of the symbol undefined, which some decoders read and some do not.
  */
-const REMAINDER_BITS = [0, 7, 7, 7, 7, 7];
+export const REMAINDER_BITS = [0, 7, 7, 7, 7, 7];
+
+/**
+ * The four error-correction levels, in the order a decoder should try them.
+ *
+ * Exported because the decoder does not KNOW a symbol's level until it has read the format
+ * information out of the symbol itself, and it identifies that by generating all 32 legal format
+ * strings from {@link formatBits} and picking the nearest. This is the list it iterates.
+ */
+export const ECC_LEVELS: readonly QrEccLevel[] = ["L", "M", "Q", "H"];
 
 /* ────────────────────────────────────────────────────────────────────────────
  * GF(256) — the field Reed-Solomon works in
@@ -124,8 +158,8 @@ const REMAINDER_BITS = [0, 7, 7, 7, 7, 7];
  * QR specifies. Two 256-entry tables turn every field multiplication into two lookups and an add.
  * ──────────────────────────────────────────────────────────────────────────── */
 
-const GF_EXP = new Uint8Array(512);
-const GF_LOG = new Uint8Array(256);
+export const GF_EXP = new Uint8Array(512);
+export const GF_LOG = new Uint8Array(256);
 
 (() => {
   let x = 1;
@@ -139,7 +173,7 @@ const GF_LOG = new Uint8Array(256);
   for (let i = 255; i < 512; i++) GF_EXP[i] = GF_EXP[i - 255];
 })();
 
-function gfMultiply(a: number, b: number): number {
+export function gfMultiply(a: number, b: number): number {
   if (a === 0 || b === 0) return 0;
   return GF_EXP[GF_LOG[a] + GF_LOG[b]];
 }
@@ -320,8 +354,16 @@ function drawFunctionPatterns(matrix: boolean[][], reserved: boolean[][], versio
   reserved[size - 8][8] = true;
 }
 
-/** The 15-bit BCH-protected format information for a level and mask. */
-function formatBits(level: QrEccLevel, mask: number): number {
+/**
+ * The 15-bit BCH-protected format information for a level and mask.
+ *
+ * Exported so the decoder can identify a symbol's level and mask by generating all 32 legal
+ * strings from this function and choosing the one nearest the bits it actually read. That is
+ * deliberately a GENERATE-AND-COMPARE rather than a hand-written BCH decoder: the BCH(15,5) code
+ * corrects three bit errors, and the whole error-correcting property is obtained here by comparing
+ * against the same generator the encoder used, with no second implementation to keep correct.
+ */
+export function formatBits(level: QrEccLevel, mask: number): number {
   const data = (ECC_FORMAT_BITS[level] << 3) | mask;
   let remainder = data;
   for (let i = 0; i < 10; i++) remainder = (remainder << 1) ^ ((remainder >>> 9) * 0x537);
@@ -345,8 +387,15 @@ function drawFormat(matrix: boolean[][], level: QrEccLevel, mask: number): void 
   for (let i = 8; i < 15; i++) matrix[size - 15 + i][8] = bit(i);
 }
 
-/** Whether mask `mask` inverts the module at (row, column). Straight from ISO 18004 table 10. */
-function maskInverts(mask: number, row: number, column: number): boolean {
+/**
+ * Whether mask `mask` inverts the module at (row, column). Straight from ISO 18004 table 10.
+ *
+ * Exported because masking is an involution — applying it twice is the identity — so the decoder
+ * UNMASKS with the identical call the encoder masked with. A decoder holding its own transcription
+ * of table 10 could differ in one case out of eight and produce, for one symbol in eight, a
+ * perfectly clean read of the wrong bytes.
+ */
+export function maskInverts(mask: number, row: number, column: number): boolean {
   switch (mask) {
     case 0:
       return (row + column) % 2 === 0;
@@ -490,11 +539,40 @@ function buildCodewords(text: string, version: number, level: QrEccLevel): Uint8
   return out;
 }
 
-/** Lay the codeword stream into the matrix in the standard two-column upward/downward zigzag. */
-function drawCodewords(matrix: boolean[][], reserved: boolean[][], codewords: Uint8Array, version: number): void {
-  const size = matrix.length;
-  const totalBits = codewords.length * 8 + REMAINDER_BITS[version - 1];
-  let bitIndex = 0;
+/**
+ * Every module that carries a function pattern or a reserved block, for one version.
+ *
+ * The same map {@link drawFunctionPatterns} builds, handed to the decoder so that it skips exactly
+ * the modules the encoder skipped. See the file header: a decoder with its own idea of which
+ * modules are reserved reads the data stream one bit out of step from the first alignment pattern
+ * onward, which does not fail cleanly — it produces a full set of codewords that Reed-Solomon then
+ * refuses, so the symbol reads as "damaged" when nothing is damaged at all.
+ */
+export function qrFunctionModules(version: number): boolean[][] {
+  const size = 17 + 4 * version;
+  const matrix = newMatrix(size);
+  const reserved = newMatrix(size);
+  drawFunctionPatterns(matrix, reserved, version);
+  return reserved;
+}
+
+/**
+ * The order the standard's two-column zigzag visits the DATA modules of one version, as
+ * `[row, column]` pairs — reserved modules already removed.
+ *
+ * ONE ZIGZAG, WALKED IN BOTH DIRECTIONS. The encoder writes bit *n* at `order[n]` and the decoder
+ * reads bit *n* from `order[n]`, so the two cannot disagree about placement even in principle. The
+ * zigzag is the single most error-prone part of ISO 18004 to transcribe — the column pair steps
+ * over the vertical timing pattern, the direction flips on the pair index rather than on the
+ * column, and getting either subtly wrong yields a symbol that a *conforming* decoder still reads
+ * (because the error is symmetric) while every real scanner in the world refuses it. Deriving both
+ * directions from one function is what makes that class of bug impossible here rather than merely
+ * unlikely.
+ */
+export function qrDataModuleOrder(version: number): Array<[number, number]> {
+  const size = 17 + 4 * version;
+  const reserved = qrFunctionModules(version);
+  const order: Array<[number, number]> = [];
 
   for (let right = size - 1; right >= 1; right -= 2) {
     // Column 6 is the vertical timing pattern; the pairs step over it entirely.
@@ -505,13 +583,29 @@ function drawCodewords(matrix: boolean[][], reserved: boolean[][], codewords: Ui
         const upward = ((rightColumn + 1) & 2) === 0;
         const row = upward ? size - 1 - vertical : vertical;
         if (reserved[row][column]) continue;
-        if (bitIndex >= totalBits) continue;
-        // Remainder bits past the last codeword stay light; they carry nothing.
-        const byte = bitIndex >>> 3;
-        matrix[row][column] = byte < codewords.length && ((codewords[byte] >>> (7 - (bitIndex & 7))) & 1) === 1;
-        bitIndex++;
+        order.push([row, column]);
       }
     }
+  }
+  return order;
+}
+
+/** Lay the codeword stream into the matrix in the standard two-column upward/downward zigzag. */
+function drawCodewords(matrix: boolean[][], reserved: boolean[][], codewords: Uint8Array, version: number): void {
+  const totalBits = codewords.length * 8 + REMAINDER_BITS[version - 1];
+  // `reserved` is not consulted here any more: {@link qrDataModuleOrder} has already removed every
+  // reserved module, and it built its map with the same `drawFunctionPatterns` that filled this
+  // one. The parameter is kept because the caller owns both matrices and dropping it would only
+  // move the coupling somewhere less obvious.
+  void reserved;
+  const order = qrDataModuleOrder(version);
+
+  for (let bitIndex = 0; bitIndex < order.length; bitIndex++) {
+    // Remainder bits past the last codeword stay light; they carry nothing.
+    if (bitIndex >= totalBits) break;
+    const [row, column] = order[bitIndex];
+    const byte = bitIndex >>> 3;
+    matrix[row][column] = byte < codewords.length && ((codewords[byte] >>> (7 - (bitIndex & 7))) & 1) === 1;
   }
 }
 

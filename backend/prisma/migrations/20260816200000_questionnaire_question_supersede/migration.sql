@@ -1,0 +1,57 @@
+-- Give the GLOBAL artisan questionnaire the two columns the CUSTOM questionnaire builder has always
+-- had, so that one repository rule is honoured by both of the two features that share its name.
+--
+-- ================================================================================================
+-- THE DEFECT THIS CLOSES
+-- ================================================================================================
+--
+-- This repository has one rule about editing a questionnaire, and it is stated at length in
+-- backend/app/services/questionnaire_forms.py: AN ANSWER IS EVIDENCE, AND THE WORDS IT WAS GIVEN
+-- UNDER ARE PART OF THAT EVIDENCE. So the wording an answer was recorded against is immutable.
+-- Rewording an ANSWERED question does not overwrite it; it SUPERSEDES it — the original keeps its
+-- original wording and its answers, the new wording becomes a new question in the same place, and
+-- `supersededById` links the two so a reader can see that a correction happened rather than a
+-- deletion and an addition.
+--
+-- The custom builder (QuestionnaireFormQuestion) honours that exactly. The GLOBAL questionnaire
+-- (QuestionnaireQuestion) — the ONE instrument every researcher in the repository answers, whose
+-- answers feed the completion matrix, the consolidated per-artisan document and its CSV — did not.
+-- `PATCH /api/questionnaire/questions/{id}` wrote the new prompt straight over the old one with no
+-- answer check of any kind. So:
+--
+--     "How many looms do you own?"   answered "12" by nineteen artisans
+--     reworded to
+--     "How many weavers work with you?"
+--
+-- and nineteen recorded answers silently changed what they assert. Nobody edited an answer. Nothing
+-- in any log says anything happened. QuestionnaireResponse.questionId is ON DELETE RESTRICT, so the
+-- rows are safe from deletion and were never safe from this.
+--
+-- ================================================================================================
+-- WHY COLUMNS RATHER THAN A CONVENTION
+-- ================================================================================================
+--
+-- `isActive` alone can retire a question, and the route already used it that way, so retirement was
+-- half-present. What was missing was the LINK. Without `supersededById`, a supersede is
+-- indistinguishable from "somebody deleted one question and added another" — which loses precisely
+-- the fact that makes the correction legible to whoever reads the data afterwards, and leaves the
+-- old wording looking like an abandoned question rather than the words nineteen answers were given
+-- under. `retiredAt` separates "retired because it carried evidence" from "an admin unticked it
+-- before anyone answered": the same distinction QuestionnaireFormQuestion.retiredAt draws, for the
+-- same reason.
+--
+-- Both are NULLABLE with no default and no backfill, and that is correct rather than lazy: NULL
+-- means "this question has never been superseded or retired", which is true of every row that
+-- exists today. There is no historical supersede to reconstruct — the old behaviour destroyed the
+-- evidence of its own edits, so nothing in the table records that any rewording ever took place.
+-- This migration therefore cannot repair the past; it stops the future.
+--
+-- `supersededById` is a PLAIN COLUMN, not a foreign key and not a Prisma relation — exactly as
+-- QuestionnaireFormQuestion.supersededById is, and for the reason stated there: it is only ever
+-- read to render "replaced by", never joined through, and a self-relation would cost every
+-- generated client an extra recursion level for nothing. The index is what the read needs.
+
+ALTER TABLE "QuestionnaireQuestion" ADD COLUMN "retiredAt" TIMESTAMP(3);
+ALTER TABLE "QuestionnaireQuestion" ADD COLUMN "supersededById" TEXT;
+
+CREATE INDEX "QuestionnaireQuestion_supersededById_idx" ON "QuestionnaireQuestion"("supersededById");

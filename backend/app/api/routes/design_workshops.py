@@ -30,15 +30,22 @@ something a mis-tap should end. Every read filters ``deletedAt: null``; an admin
 **Permissions**, as this file actually enforces them — read the four clauses, not the ladder,
 because one of them is not a rank threshold:
 
-* CREATING one needs BOTH ``assert_can_create_records`` (Researcher and above, the repository-wide
-  rule for making any record) AND ``_require_designer``, which is ``can_run_design_workshops`` — a
-  SET, ``{DESIGNER, ADMIN, MASTER_ADMIN}``, not a floor. A PROFESSOR outranks a designer on every
-  other surface in this codebase and still cannot start a workshop. ``PATCH``, every stage write and
-  the two capture aids (OCR and dictation) call ``_require_designer`` ALONE:
-  ``assert_can_create_records`` appears on the create route and nowhere else in this file. No caller
-  gets in that way who would not get in anyway — the designer set sits above Researcher on the
-  ladder, so whatever ``_require_designer`` admits ``can_create_records`` admits too — but which gate
-  is written where is exactly what this header is read for, so it says which.
+* CREATING one is ``assert_can_create_design_workshops`` — ADMIN or MASTER_ADMIN, and NOTHING
+  ELSE. It is the narrowest gate in this file and the only one that is narrower than
+  ``_require_designer``: **a DESIGNER may not start a workshop.** A workshop is not a record, it is
+  the container a fortnight of records lives in and the unit the ministry indexes and funds, so
+  opening one is an administrative act performed by whoever holds the sanction order.
+  ``assert_can_create_records`` used to sit on this route beside ``_require_designer`` and both are
+  gone from it: each was implied by the gate that replaced them, and a predicate that can never
+  fire is how a rule quietly comes back.
+* EVERYTHING ELSE A DESIGNER DOES IS UNCHANGED, and that is a load-bearing sentence rather than
+  reassurance. ``PATCH``, every stage write, the two capture aids (OCR and dictation), the AI
+  layers and the report all call ``_require_designer`` — ``can_run_design_workshops``, a SET,
+  ``{DESIGNER, ADMIN, MASTER_ADMIN}``, not a floor, so a PROFESSOR outranks a designer everywhere
+  else in this codebase and still cannot touch a workshop. A designer opens a workshop an admin
+  created (or granted them), fills all 22 stages, creates records inside it and submits the
+  report. ``tests/test_design_workshop_gate.py`` asserts that explicitly, because a permission
+  change that quietly cost a designer their stage edits would be far worse than this rule is worth.
 * OPENING someone else's is decided entirely by ``load_workshop_or_404``: the creator, an admin, or
   an account an admin has given a ``DesignWorkshopViewer`` row. A grant carries read AND the stage
   writes that go through that helper — see ``services/design_workshop_viewers.py`` for what it
@@ -72,6 +79,7 @@ different router over a different model.
 
 import asyncio
 import hashlib
+import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -79,6 +87,7 @@ from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     Form,
@@ -92,7 +101,7 @@ from fastapi import (
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import (
-    assert_can_create_records,
+    assert_can_create_design_workshops,
     assert_can_delete,
     can_run_design_workshops,
     get_current_user,
@@ -135,6 +144,11 @@ from app.services.custom_sections import (
     validate_definition,
 )
 from app.services.design_workshop_viewers import visible_to_clause
+from app.services.entry_provenance import (
+    canonical_divergence,
+    resolve_display_names,
+    resolve_entry_provenance,
+)
 from app.services.design_workshops import (
     REFERENCE_LIMIT_DEFAULT,
     REFERENCE_LIMIT_MAX,
@@ -158,10 +172,15 @@ from app.services.design_workshops import (
     workshop_summary,
 )
 from app.services.identity_ocr import (
+    DISCARD as RETENTION_DISCARD,
+    STORE as RETENTION_STORE,
     SUPPORTED_MIME_TYPES,
     IdentityOcrUnavailable,
     get_identity_ocr_settings,
+    parse_retention,
     read_identity_card,
+    retention_stamp,
+    with_retention,
 )
 from app.services.market_analysis import analyse, market_findings_payload
 from app.services.pagination import normalize_pagination, page_payload
@@ -174,7 +193,7 @@ from app.services.report_templates import (
     template as get_template,
     template_choices,
 )
-from app.services.s3 import get_object_bytes
+from app.services.s3 import delete_object, get_object_bytes
 from app.services.stage_schema import (
     REF_SCOPE_ALL,
     registry_to_dict,
@@ -184,6 +203,13 @@ from app.services.stage_schema import (
 from app.services.workshop_transcripts import load_transcript_items
 
 router = APIRouter(prefix="/design-workshops", tags=["design-workshops"])
+
+# Used by exactly one caller — the identity-photograph discard, when object storage refuses to
+# delete an identity document. That failure is invisible from the API's side (the caller gets a 502
+# and retries or gives up) and it leaves a regulated file in the bucket, so it is the one thing in
+# this file an operator has to be able to find afterwards. It logs the exception TYPE and never the
+# object key: the key embeds the uploader's user id and the original filename.
+logger = logging.getLogger(__name__)
 
 # A generated report is CPU-bound and can take seconds on a 26-page workshop with forty photos.
 # Every render therefore goes through asyncio.to_thread, exactly as xlsx_report does, so one
@@ -297,6 +323,7 @@ async def get_report_templates(_: Any = Depends(get_current_user)) -> list[dict[
 @router.post("/ocr/identity")
 async def scan_identity_card(
     file: UploadFile = File(...),
+    retention: str = Form(RETENTION_DISCARD),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Read the Aadhaar / Pehchan numbers off a photograph of an artisan's card.
@@ -318,8 +345,28 @@ async def scan_identity_card(
     503 when no vision provider is configured, naming the setting, because the alternative — a 200
     with an empty candidate list — is indistinguishable from "the card was unreadable" and would
     have a designer re-photographing a card in better light forever.
+
+    ── ``retention``, AND WHY IT IS IN THE ANSWER RATHER THAN ONLY IN A COMMENT ────────────────
+
+    The bytes this route receives are never stored, and that has always been true. What was not true
+    is that a CLIENT could know it: the fact lived in the comment at the bottom of this function, so
+    the panel a designer looks at could only ever *assert* that the photograph was not kept, on the
+    word of whoever wrote the panel. ``photograph`` in the response is that same fact as data —
+    ``stored: false`` on every single reply from this route, without exception and with no branch
+    that can produce anything else — so a screen saying "this photograph was not kept" is reading it
+    rather than claiming it, and a client that ever stops seeing it has a server that changed.
+
+    ``retention`` itself is the designer's DECLARED intention for the picture, echoed back. It
+    changes nothing about what this route does, and that is the point of accepting it: a caller that
+    sends ``store`` is telling the server what it is about to do with its own copy through
+    ``/media/complete``, and the reply tells it plainly that this route did not do it. The decision
+    is only real once it lands on a stored row, which is ``decide_identity_photograph`` below.
+    Anything unrecognised — including a client that sends nothing, which is every build shipped
+    before this field existed — resolves to DISCARD in ``parse_retention``; see its docstring for why
+    an unparseable answer must be the same as no answer rather than a 422.
     """
     _require_designer(current_user)
+    declared = parse_retention(retention)
     settings = get_identity_ocr_settings()
     content = await file.read()
     if not content:
@@ -349,7 +396,146 @@ async def scan_identity_card(
     # ``content`` goes out of scope here and is never written anywhere. A photograph of a national
     # identity document is retained only when a designer deliberately uploads it through the media
     # flow, which is a visible act with a record; this endpoint has no storage path at all.
-    return result.payload()
+    payload = result.payload()
+    payload["photograph"] = {
+        # NOT COMPUTED FROM ANYTHING. There is no code path in this function that stores the image,
+        # so there is no expression here that could evaluate to True — it is a literal precisely so
+        # that adding a storage path would have to come here and change it, in the response the
+        # clients read, rather than quietly making the comment above obsolete.
+        "stored": False,
+        "retention": declared,
+        # Named so a client does not have to know the route from a document. This is where a
+        # photograph that WAS uploaded through the media flow gets its decision recorded.
+        "decisionRoute": "/design-workshops/ocr/identity/retention",
+    }
+    return payload
+
+
+@router.post("/ocr/identity/retention")
+async def decide_identity_photograph(
+    mediaId: str = Body(..., embed=True),
+    decision: str = Body(RETENTION_DISCARD, embed=True),
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Keep this identity-card photograph, or delete it. The designer's answer, not the app's.
+
+    ── THE DEFECT THIS ROUTE EXISTS TO CLOSE ─────────────────────────────────────────────────────
+
+    ``scan_identity_card`` above stores nothing, and its own docstring is where that promise has
+    always been written. But the design workshop's stage form does not reach it with a loose file:
+    ``IdentityCardReader`` is rendered UNDER a media field, it reads the number off photographs the
+    designer has already attached there, and attaching there means the ordinary media flow has
+    already run — presigned PUT to S3, a ``MediaFile`` row from ``/media/complete``, an entry in the
+    workshop's media list. By the time anybody is offered the chance to think about an unmasked
+    identity document sitting in the repository, it has been sitting in the repository for a minute.
+    Nobody chose that. It is what the form does.
+
+    So this route is the choice, offered after the fact because after the fact is where the
+    photograph already is, and it is a REAL choice in both directions:
+
+    * ``DISCARD`` deletes the S3 object and then deletes the row. Not ``deletedAt``, not a flag, not
+      a filter. ``design_workshops.py``'s own header opens with **"Nothing here hard-deletes"** and
+      gives the reason — this is a research data set and a designer's fortnight of fieldwork must
+      survive a mis-tap. That reasoning is sound for a workshop and is precisely inverted for this:
+      a soft-deleted photograph of somebody's Aadhaar card is a retained photograph of somebody's
+      Aadhaar card, and the person who pressed "delete this" would be entitled to believe otherwise.
+      This is the one route in this file that means it.
+    * ``STORE`` writes the decision onto the file — who, by what name, and when — so a retained
+      identity document in this repository can always be traced to the person who decided it should
+      be. Without the stamp the row is indistinguishable from every other photograph, which is how
+      it got here.
+
+    ── ORDER OF DELETION, AND WHY THE OBJECT GOES FIRST ──────────────────────────────────────────
+
+    ``media.delete_media`` deletes the row and then makes a BEST-EFFORT attempt at the object,
+    swallowing storage failures because "the database row (the user-visible record) is gone". That
+    is a defensible trade for a photograph of a loom. It is the wrong one here: it can end with the
+    JPEG still in the bucket and nothing left in the database that knows it is there, which is the
+    exact definition of merely hiding. So this route deletes the OBJECT first and refuses the whole
+    request if that fails — the row survives, it still points at the bytes, and the designer can
+    press the button again. The other ordering fails silently in the direction that keeps the data;
+    this one fails loudly in the direction that keeps the record of it.
+
+    ── WHO MAY ──────────────────────────────────────────────────────────────────────────────────
+
+    ``_require_designer`` (the SET {Designer, Admin, Master Admin}) exactly as the read route above,
+    plus uploader-or-admin on the row itself, which is ``media.delete_media``'s rule. Both, not
+    either: the designer set is who is offered the card reader at all, and the uploader check is
+    what stops one designer deleting another's attachment off a shared workshop.
+    """
+    _require_designer(current_user)
+    choice = parse_retention(decision)
+    media = await db.mediafile.find_unique(where={"id": mediaId})
+    if media is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "That photograph is no longer here — it may already have been deleted. Nothing was "
+                "changed. Reload the stage to see what is still attached."
+            ),
+        )
+    if not is_admin(current_user) and getattr(media, "uploadedById", None) != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This photograph was attached by somebody else, so only they or an admin can decide "
+                "whether it is kept. Ask them, or ask an admin to remove it."
+            ),
+        )
+    # An identity decision is a decision about a PICTURE. Refusing anything else is not pedantry:
+    # this is the one route in the file that hard-deletes, and a client bug that sent an audio id
+    # would destroy an interview recording with no soft-delete to recover it from.
+    if getattr(media, "mediaType", None) != "IMAGE":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Only a photograph can be kept or deleted here, and that attachment is not one. "
+                "Remove it from the field instead if it does not belong."
+            ),
+        )
+
+    if choice == RETENTION_STORE:
+        stamp = retention_stamp(choice, user=current_user, at=datetime.now(UTC))
+        await db.mediafile.update(
+            where={"id": mediaId},
+            data={"extraMetadata": with_retention(getattr(media, "extraMetadata", None), stamp)},
+        )
+        return {"mediaId": mediaId, "decision": RETENTION_STORE, "deleted": False, "retention": stamp}
+
+    object_key = getattr(media, "objectKey", None)
+    if object_key:
+        # The same guard ``delete_media`` applies, minus this row: one object can legitimately back
+        # several MediaFile rows (the same photograph attached to two stages), and deleting the bytes
+        # out from under the other row would break an attachment nobody decided anything about.
+        shared = await db.mediafile.find_first(
+            where={"objectKey": object_key, "id": {"not": mediaId}}
+        )
+        if shared is None:
+            try:
+                await asyncio.to_thread(delete_object, object_key)
+            except Exception as exc:  # noqa: BLE001 - the storage message is not for the caller
+                # Deliberately NOT swallowed — see the docstring. Nothing has been deleted at this
+                # point, so the sentence can honestly say the photograph is still there.
+                logger.warning(
+                    "Identity photograph object could not be deleted (%s)", type(exc).__name__
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=(
+                        "The photograph could not be deleted from storage, so nothing was removed "
+                        "and it is still attached. Try again in a moment; if it keeps failing, tell "
+                        "an admin that this file needs deleting by hand."
+                    ),
+                ) from exc
+    await db.mediafile.delete(where={"id": mediaId})
+    return {
+        "mediaId": mediaId,
+        "decision": RETENTION_DISCARD,
+        # Both halves, stated separately, because "deleted" alone would be true of a soft delete too.
+        "deleted": True,
+        "objectDeleted": bool(object_key),
+        "retention": None,
+    }
 
 
 # A dictated sentence is seconds of speech. The cap is what stops this synchronous endpoint from
@@ -845,23 +1031,41 @@ async def list_design_workshops(
 async def create_design_workshop(
     payload: DesignWorkshopCreate, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """Start a workshop.
+    """Start a workshop — ADMINS AND THE MASTER ADMIN ONLY.
 
     Only the title is required. A workshop is created in a room on day one, before the sanction
     order number is to hand; the Basic-tier fields of stage 1 are enforced when a report is
     generated, not here.
     """
-    # BOTH gates, and the designer one is the point.
+    # ONE GATE, AND IT IS NARROWER THAN THE REST OF THIS FILE. Read this before widening it back.
     #
-    # `assert_can_create_records` is Researcher-and-above — the repository-wide rule for making any
-    # record. On its own it left this endpoint open to a RESEARCHER and a PROFESSOR while
-    # `frontend/lib/permissions.ts` hid the pages from exactly those two, which is a UI guard over
-    # an open route: the link disappears and the URL, the API and the Android client do not. A
-    # design workshop is a fortnight of a named designer's work that ends in a document submitted
-    # under their name, so the capability that decides who may start one is
-    # `can_run_design_workshops`, and it has to be enforced HERE rather than in the browser.
-    assert_can_create_records(current_user)
-    _require_designer(current_user)
+    # WHAT IT USED TO BE. `assert_can_create_records` (Researcher and above — the repository-wide
+    # rule for making any record) followed by the designer gate every other write route in this
+    # module still calls (`can_run_design_workshops`, the set {DESIGNER, ADMIN, MASTER_ADMIN}). The
+    # first of those was already implied by the second and both are implied by the line below, so
+    # nothing that could get in through them can be refused by it — dropping them loses no check,
+    # and keeping a predicate that can never fire is how a rule comes back: it reads as
+    # authoritative to whoever finds it first and nothing fails when it drifts.
+    #
+    # (Neither name is spelled as a CALL anywhere in this function, deliberately:
+    # `tests/test_design_workshop_gate.py` reads this route's source to prove the wider gate is off
+    # it, and a call written inside a comment would read to that test as a call.)
+    #
+    # WHY IT MOVED. A design workshop is not a record, it is the CONTAINER a fortnight of records
+    # lives in, and it is the unit the ministry indexes and funds. Opening one is an administrative
+    # act — the admin holding the sanction order is the person who knows the workshop exists — so
+    # the capability is `can_create_design_workshops` and NOT the one that decides who may work
+    # inside it. Everything else on this surface still asks the designer gate: PATCH, every stage
+    # write, the capture aids, the report. A designer therefore loses exactly one thing, and it is
+    # the one the requirement named.
+    #
+    # ENFORCED HERE AND NOT ONLY IN THE BROWSER, for the reason this whole module already carries a
+    # gate at all: a UI guard over an open route hides the link and leaves the URL, the API and the
+    # Android client. The web ALSO enforces it, in two places — the create control and the offline
+    # draft store (`frontend/lib/designWorkshopStore.ts`) — because a designer who only found out at
+    # sync time would have already filled 22 stages into a workshop that can never be accepted.
+    # Those are for the designer's benefit; THIS is the one that is load-bearing.
+    assert_can_create_design_workshops(current_user)
     data: dict[str, Any] = {
         "title": payload.title.strip(),
         "templateId": payload.templateId,
@@ -928,7 +1132,13 @@ async def get_design_workshop(
     entries = await entry_rows(workshop_id)
     definition = await load_custom_definition_or_empty(workshop_id)
     summary = workshop_summary(record)
+    # RESOLVED HERE AND NOT INSIDE `_stages_payload`, which is synchronous and shared by three
+    # routes. Each route does its own await so that a reader added later cannot pick up the
+    # serialiser and quietly ship stamps with no names on them — the failure would look like "this
+    # field has no author" rather than like a missing call. See `test_entry_provenance_readers.py`,
+    # which asserts per route rather than once.
     summary["stages"] = _stages_payload(entries)
+    await resolve_display_names(_provenance_maps(summary["stages"]))
     summary["completeness"] = workshop_completeness(entries, definition=definition)
     summary["transcripts"] = await _transcripts_payload(entries, current_user)
     summary["schemaVersion"] = registry_version()
@@ -1021,8 +1231,10 @@ async def list_stages(
     await load_workshop_or_404(workshop_id, current_user)
     entries = await entry_rows(workshop_id)
     definition = await load_custom_definition_or_empty(workshop_id)
+    payload = _stages_payload(entries)
+    await resolve_display_names(_provenance_maps(payload))
     return {
-        "stages": _stages_payload(entries),
+        "stages": payload,
         "completeness": workshop_completeness(entries, definition=definition),
         "transcripts": await _transcripts_payload(entries, current_user),
         "schemaVersion": registry_version(),
@@ -1041,12 +1253,86 @@ async def get_stage(
     entries = await entry_rows(workshop_id, stage_key=stage_key)
     definition = await load_custom_definition_or_empty(workshop_id)
     payload = _stages_payload(entries).get(stage_key) or {
-        "singleton": {}, "collections": {}, "custom": {}
+        "singleton": {}, "collections": {}, "custom": {},
+        # THE EMPTY FALLBACK CARRIES THE BUCKET TOO. A stage nobody has saved yet answers this
+        # route, and a client that reads `provenance` unconditionally would have crashed on the
+        # one shape that is guaranteed to exist for every workshop on its first day.
+        "provenance": {"singleton": {}, "collections": {}, "custom": {}},
     }
+    # `_provenance_maps` walks a `{stageKey: bucket}` map; this route holds one bucket, so it is
+    # wrapped rather than given a second walker.
+    await resolve_display_names(_provenance_maps({stage_key: payload}))
     payload["completeness"] = workshop_completeness(entries, definition=definition).get(stage_key)
     payload["transcripts"] = await _transcripts_payload(entries, current_user)
     payload["customSchemaVersion"] = definition.version
     return payload
+
+
+@router.get("/{workshop_id}/provenance")
+async def workshop_provenance(
+    workshop_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """The whole authorship picture for one workshop. Admins and master admins only.
+
+    "Admins and master admins have access to all of it" is two things, and only one of them is on
+    the ordinary stage reads. Every designer on the workshop already sees the per-field stamps —
+    they are on ``GET /design-workshops/{id}/stages``, because knowing that a colleague changed the
+    price is part of working on the record. THIS route adds the half nobody else can see: for every
+    field whose value was COPIED from a shared canonical record, what that record says TODAY,
+    beside what this workshop stored.
+
+    WHY THAT COMPARISON NEEDS AN ENDPOINT OF ITS OWN. Once a value is hydrated onto a stage entry
+    it is an ordinary string in ``data``; a hydrated village and a typed village are the same bytes
+    (see the note above ``REFERENCE_HYDRATION``, which is why the copy exists). So "this workshop
+    says Barpali and the artisan record now says Bargarh" is not derivable from anything the other
+    readers return — it takes the ``reference`` stamp, which names the record and the column, and a
+    live read of that record. Divergence is not an error and the endpoint never says it is: a
+    workshop is a dated observation and is SUPPOSED to keep what the designer saw. What an admin
+    needs is to be able to SEE it, which before this was impossible.
+
+    ADMIN, NOT PROFESSOR, and not the workshop's own designers. This crosses out of the workshop
+    into the shared record tables and reports one account's data next to another's, which is the
+    line ``is_admin`` draws everywhere else in this file. The stage reads are unaffected: a
+    designer loses nothing by not having this.
+
+    A deleted canonical record answers ``canonical: null`` with ``recordDeleted: true`` rather than
+    being omitted — that IS the interesting state, and it is exactly the case reference hydration
+    was built for. Omitting it would make "the record is gone" look identical to "the field was
+    never hydrated".
+    """
+    if not is_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Field-by-field provenance across the shared records is an admin view. "
+                "Ask a master admin if you need it for an audit."
+            ),
+        )
+    # `load_workshop_or_404` admits admins to soft-deleted workshops, which is deliberate here: an
+    # audit of who wrote what is most needed on a record somebody has deleted.
+    await load_workshop_or_404(workshop_id, current_user)
+    entries = await entry_rows(workshop_id)
+    stamps = resolve_entry_provenance(entries)
+    await resolve_display_names(stamps.values())
+    divergence = await canonical_divergence(entries)
+    return {
+        "entries": [
+            {
+                "entryId": row.id,
+                "stageKey": row.stageKey,
+                "entityKey": row.entityKey,
+                "ordinal": row.ordinal,
+                # WHO CREATED THE ROW IS REPORTED BESIDE THE PER-FIELD ANSWER, NOT INSTEAD OF IT.
+                # It is still a true and useful fact — somebody started this participant row — and
+                # showing both is what makes visible the thing this feature exists for: a row
+                # created by one designer whose fields are now attributed to three other people.
+                "createdById": row.createdById,
+                "fields": stamps.get(row.id, {}),
+                "canonical": divergence.get(row.id, {}),
+            }
+            for row in entries
+        ],
+    }
 
 
 def _submit_refusal_message(errors: Mapping[str, Any]) -> str:
@@ -3253,7 +3539,25 @@ def _parse_datetime(raw: str | None) -> datetime | None:
 
 
 def _stages_payload(entries: list[Any]) -> dict[str, Any]:
-    """Group stage entry rows into ``{stage: {singleton, collections, custom}}``."""
+    """Group stage entry rows into ``{stage: {singleton, collections, custom, provenance}}``.
+
+    ``provenance`` MIRRORS THE THREE DATA BUCKETS RATHER THAN RIDING INSIDE THEM, and it is keyed
+    by ENTRY ID for collections rather than by position. Both of those are deliberate:
+
+    * Inside ``data`` it would be a key the registry does not declare, so it would be echoed back
+      on the next save and reported in ``droppedKeys`` — the one drift signal this repository has,
+      which exists to say "this phone is running a newer field registry than the server". Firing it
+      on every save of every workshop would train whoever reads it to ignore it.
+    * By position it would be silently misaligned the moment a reader re-sorts. The collection rows
+      below are sorted by ``_ordinal`` AFTER grouping, ``assemble_workshop_data`` sorts BEFORE, and
+      the phone sorts its own draft; a positional map would attribute one participant's edits to
+      another on whichever of the three disagreed, and nothing would raise. An id-keyed map cannot
+      be misaligned by a re-sort.
+
+    See ``services/entry_provenance`` for what a stamp means and for the boundary between this and
+    reference hydration.
+    """
+    from app.services.entry_provenance import entry_provenance
     from app.services.stage_schema import Cardinality
 
     entity_cardinality = {
@@ -3262,8 +3566,15 @@ def _stages_payload(entries: list[Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for row in entries:
         bucket = out.setdefault(
-            row.stageKey, {"singleton": {}, "collections": {}, "custom": {}}
+            row.stageKey,
+            {
+                "singleton": {},
+                "collections": {},
+                "custom": {},
+                "provenance": {"singleton": {}, "collections": {}, "custom": {}},
+            },
         )
+        stamps = entry_provenance(row)
         data = dict(row.data or {})
         if row.entityKey == CUSTOM_ENTITY_KEY:
             # THE RESERVED ROW GETS ITS OWN KEY IN THE STAGE PAYLOAD, and this is the second of the
@@ -3273,18 +3584,40 @@ def _stages_payload(entries: list[Any]) -> dict[str, Any]:
             # which both clients would render as a table of one row they cannot delete, and whose
             # `_ordinal` key would then be echoed back into the container on the next save.
             bucket["custom"] = data
+            bucket["provenance"]["custom"] = stamps
         elif entity_cardinality.get(row.entityKey) is Cardinality.SINGLETON:
             bucket["singleton"] = data
+            bucket["provenance"]["singleton"] = stamps
         else:
             data["_entryId"] = row.id
             data["_ordinal"] = row.ordinal
             if row.clientKey:
                 data["_clientKey"] = row.clientKey
             bucket["collections"].setdefault(row.entityKey, []).append(data)
+            bucket["provenance"]["collections"].setdefault(row.entityKey, {})[row.id] = stamps
     for bucket in out.values():
         for rows in bucket["collections"].values():
             rows.sort(key=lambda r: r.get("_ordinal", 0))
     return out
+
+
+def _provenance_maps(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every stamp map inside a ``_stages_payload`` result, for one bulk name lookup.
+
+    Walked rather than collected during the build so that a bucket added to the payload later is
+    covered by adding it in ONE place. The maps are the live dicts, not copies —
+    ``resolve_display_names`` mutates them in place and the payload is what goes out on the wire.
+    """
+    maps: list[dict[str, Any]] = []
+    for bucket in payload.values():
+        prov = bucket.get("provenance") or {}
+        for key in ("singleton", "custom"):
+            stamps = prov.get(key)
+            if isinstance(stamps, dict):
+                maps.append(stamps)
+        for by_entry in (prov.get("collections") or {}).values():
+            maps.extend(s for s in by_entry.values() if isinstance(s, dict))
+    return maps
 
 
 async def _report_inputs(
@@ -3325,6 +3658,12 @@ async def _report_inputs(
     """
     entries = await entry_rows(workshop_id)
     data = assemble_workshop_data(record, entries)
+    # THE REPORT IS A READER TOO, and it resolves the overlay like every other one. It costs at
+    # most one query for the whole document (none at all for a workshop with no attributed field),
+    # and it is awaited HERE, before the three waves below, rather than inside them: the waves are
+    # gathered, and a load that mutates `data.field_provenance` alongside three that mutate other
+    # attributes is the one shape the comment below says cannot be gathered safely.
+    await resolve_display_names(data.field_provenance.values())
     # RESOLVED BEFORE THE LOADS, because one of them is only worth paying for on some templates.
     # `resolve_template_id` needs the stage-20 answers, which is why this cannot sit any earlier.
     template_id = resolve_template_id(

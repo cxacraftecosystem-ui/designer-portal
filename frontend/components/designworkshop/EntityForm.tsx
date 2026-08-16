@@ -48,6 +48,7 @@ import {
   type DwEntity,
   type DwEntryData,
   type DwField,
+  type DwFieldStamp,
   type DwReferenceOption,
   type DwRow,
   type DwValue
@@ -163,7 +164,8 @@ function FieldGrid({
   rowKey,
   anchorRowKey,
   capture,
-  focus
+  focus,
+  provenance
 }: {
   entity: DwEntity;
   fields: DwField[];
@@ -204,6 +206,17 @@ function FieldGrid({
   capture?: StageCaptureContext;
   /** The field a workshop search sent the designer to. See {@link FieldCell}. */
   focus?: StageFocus;
+  /**
+   * WHO LAST SET EACH FIELD OF THIS RECORD, keyed by field key.
+   *
+   * One record's worth, resolved by the caller — the singleton's map, the custom map, or the map for
+   * THIS ROW's entry id. Keyed by entry id and never by array position, for the reason set out on
+   * `DwStageProvenance`: the readers of that data sort their rows differently, and a positional
+   * lookup shows one participant's edits against another participant's name.
+   *
+   * Optional, so a caller that does not pass it renders exactly as before.
+   */
+  provenance?: Record<string, DwFieldStamp>;
 }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -254,6 +267,7 @@ function FieldGrid({
               error={errors?.[field.key] ?? null}
               place={{ stageKey, entityKey: entity.key, rowKey }}
               capture={capture}
+              stamp={provenance?.[field.key] ?? null}
               caption={
                 captionField
                   ? {
@@ -373,7 +387,8 @@ export function EntityForm({
   disabled,
   stageKey,
   capture,
-  focus
+  focus,
+  provenance
 }: {
   entity: DwEntity;
   data: DwEntryData;
@@ -387,6 +402,8 @@ export function EntityForm({
   capture?: StageCaptureContext;
   /** The field a workshop search sent the designer here for, when it is one of this entity's. */
   focus?: StageFocus;
+  /** Who last set each field of this singleton. See FieldGrid's own `provenance`. */
+  provenance?: Record<string, DwFieldStamp>;
 }) {
   const { primary, advanced } = useMemo(() => splitByTier(formFields(entity)), [entity]);
 
@@ -408,6 +425,7 @@ export function EntityForm({
         stageKey={stageKey}
         capture={capture}
         focus={focus}
+        provenance={provenance}
       />
       <MissingViewsHint entity={entity} data={data} />
       <AdvancedDisclosure
@@ -559,6 +577,7 @@ export function CollectionTable({
   rows,
   onRowsChange,
   workshopId,
+  provenance,
   errorsByIndex,
   disabled,
   stageKey,
@@ -585,6 +604,14 @@ export function CollectionTable({
   capture?: StageCaptureContext;
   /** The row and field a workshop search sent the designer here for, when it is one of these. */
   focus?: StageFocus;
+  /**
+   * Who last set each field of each row, keyed BY ENTRY ID then by field key.
+   *
+   * The whole entity's slice of `DwStageProvenance.collections`, handed down as-is; the row lookup
+   * happens at the grid, where the row is in scope. See the note at that lookup for why an index
+   * would be wrong.
+   */
+  provenance?: Record<string, Record<string, DwFieldStamp>>;
 }) {
   const { primary, advanced } = useMemo(() => splitByTier(formFields(entity)), [entity]);
   /**
@@ -813,6 +840,13 @@ export function CollectionTable({
                       rowKey={row._clientKey ?? null}
                       anchorRowKey={rowKey}
                       focus={focus}
+                      // BY ENTRY ID, never by index. `DwStageProvenance` is keyed that way on
+                      // purpose — the server, the report builder and the handset each sort these
+                      // rows differently, so a positional lookup would show one participant's edits
+                      // under another participant's name in the table that proves who attended.
+                      // A row the server has never seen has no entry id and no stamps yet, which is
+                      // correct: nobody has set anything on it but the person typing.
+                      provenance={row._entryId ? provenance?.[String(row._entryId)] : undefined}
                     />
                     <MissingViewsHint entity={entity} data={row} />
                     <AdvancedDisclosure
@@ -828,6 +862,7 @@ export function CollectionTable({
                         onPatch={(values) => patchRowMany(index, values)}
                         capture={capture}
                         workshopId={workshopId}
+                        provenance={row._entryId ? provenance?.[String(row._entryId)] : undefined}
                         errors={rowErrors}
                         disabled={disabled}
                         stageKey={stageKey}

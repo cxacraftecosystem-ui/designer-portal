@@ -26,6 +26,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -42,6 +43,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.ArtisanIdentity
 import com.designprototype.workshop.data.ConnectivityObserver
+import com.designprototype.workshop.data.DW_RETENTION_DISCARD
+import com.designprototype.workshop.data.DW_RETENTION_STORE
 import com.designprototype.workshop.data.DwIdentityCandidateDto
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.IdentityCardRecognizer
@@ -49,6 +52,10 @@ import com.designprototype.workshop.data.IdentityCardText
 import com.designprototype.workshop.data.MlKitIdentityCardRecognizer
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
+import com.designprototype.workshop.data.photographWasNotStored
+import com.designprototype.workshop.data.retentionChoiceBlurb
+import com.designprototype.workshop.data.retentionOutcomeSentence
+import kotlinx.coroutines.CancellationException
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
@@ -121,10 +128,10 @@ import java.io.File
  * access to the gallery at all — the right posture for a control whose entire subject matter is
  * regulated personal data.
  *
- * ── WHERE THE PHOTOGRAPH GOES: NOWHERE ────────────────────────────────────────────────────────
+ * ── WHERE THE PHOTOGRAPH GOES: NOWHERE, UNLESS A PERSON SAYS OTHERWISE ────────────────────────
  *
  * A photograph of somebody's Aadhaar card is the most sensitive object this application will ever
- * hold, and nobody asked to keep it — the field stores a NUMBER. So:
+ * hold, and nobody asked to keep it — the field stores a NUMBER. So, by default and on every path:
  *
  * - a photograph TAKEN here is written to a scratch directory of its own, sent, and deleted the
  *   moment the candidate is accepted or dismissed. It is never imported into the workshop's media,
@@ -137,9 +144,34 @@ import java.io.File
  *   intent in the foreground is a real event, and would otherwise leave an Aadhaar card photograph
  *   on a shared field handset indefinitely.
  *
- * The server keeps nothing either: `scan_identity_card` has no storage path in it at all, and says
- * so. A card photograph is retained ONLY when a designer deliberately uploads one through the
- * ordinary media flow, which is a visible act with a record.
+ * The server keeps nothing either — and as of 2026-08-16 THIS CLIENT READS THAT RATHER THAN
+ * ASSERTING IT. `scan_identity_card` has never had a storage path, but until its reply carried
+ * `photograph.stored` the sentence "the photograph is not kept" printed below was a claim on the
+ * word of whoever wrote this file. Now it is a fact taken out of the response, and only when the
+ * response actually contains it: [photographWasNotStored] is true for an explicit `false` and never
+ * for an absent key, so an older deployment produces silence rather than a promise made from a
+ * missing field.
+ *
+ * ── AND THE CHOICE, WHICH DID NOT EXIST BEFORE ────────────────────────────────────────────────
+ *
+ * "Discard" was the behaviour and there was no way to ask for anything else. That is fine right up
+ * until a designer legitimately needs the card on the record — a verification a supervisor will
+ * check later, a disputed registration — at which point the only route is to photograph the card
+ * AGAIN through the media field, which is a second copy of a national identity document taken
+ * because the first one was thrown away silently.
+ *
+ * So [onKeepPhotograph] is a seam, and the choice it enables is made BEFORE the shutter. That
+ * ordering is the whole design and it is the browser's too: a choice offered afterwards would force
+ * this control to hold an identity photograph while somebody thinks about it, and "think about it
+ * later" is how the web's stage form came to have a `MediaFile` row nobody had agreed to. Deciding
+ * first also means the answer can be DECLARED on the request itself, so the one packet carrying an
+ * unmasked identity document across the network carries the designer's answer with it.
+ *
+ * WHEN THE SEAM IS ABSENT NOTHING IS HIDDEN — there is simply nowhere for a kept photograph to go,
+ * so no choice is offered and the copy states plainly that the photograph is not kept. That is the
+ * artisan CREATE form, which is most often creating the very record the photograph would hang off,
+ * and the stage text field, whose media lives in a local draft with no server id until it syncs.
+ * The artisan EDIT form has a record to attach to and therefore has the choice.
  *
  * ── MASKING ───────────────────────────────────────────────────────────────────────────────────
  *
@@ -382,6 +414,24 @@ internal fun DwIdentityCardControl(
     enabled: Boolean,
     onUse: (String) -> Unit,
     onError: (String) -> Unit,
+    /**
+     * SOMEWHERE TO PUT A KEPT PHOTOGRAPH, for a caller that has one.
+     *
+     * Absent — which is the majority of call sites — means no choice is offered at all, because
+     * offering one with nothing behind it would be a tick box that quietly does nothing to a
+     * regulated document. The copy under the buttons then states that the photograph is not kept,
+     * which is both true and now confirmed by the server's own reply.
+     *
+     * Present, it is called with the photograph's Uri BEFORE the read, and must return the id of the
+     * `MediaFile` it created — that id is what `POST /design-workshops/ocr/identity/retention` then
+     * stamps with STORE and the decider's name. Returning null means the upload did not happen, and
+     * the flow says so rather than reporting a kept photograph that is not there.
+     *
+     * SUSPENDING, and called from this control's own scope: uploading an image is a network act and
+     * the designer is looking at a spinner while it runs. A blocking seam here would freeze the frame
+     * that is telling them what is happening.
+     */
+    onKeepPhotograph: (suspend (Uri) -> String?)? = null,
     // A DEFAULT rather than an injected dependency, because there is exactly one recogniser and the
     // parameter exists so that a future instrumented test can substitute a canned scan. The default
     // is a direct object reference and not a factory lookup: R8 shrinks the release APK, and the
@@ -396,6 +446,27 @@ internal fun DwIdentityCardControl(
     var working by remember { mutableStateOf(false) }
     var choices by remember { mutableStateOf<List<DwIdentityChoice>>(emptyList()) }
     var unconfirmedByServer by remember { mutableStateOf(false) }
+
+    // ── Keep the photograph, or discard it ───────────────────────────────────────────────────────
+    //
+    // FALSE, ALWAYS, ON EVERY MOUNT. This is the one piece of state in this control that must not be
+    // remembered across cards: a designer who kept the photograph of one artisan's Aadhaar card has
+    // said nothing whatever about the next artisan's, and a switch that stayed on would turn one
+    // deliberate decision into a standing policy nobody set. `remember` without a key is exactly
+    // right here — the control is re-composed per field, and the flag dies with it.
+    var keepPhotograph by remember { mutableStateOf(false) }
+    /** Only offered where a kept photograph has somewhere to go — see [onKeepPhotograph]. */
+    val canKeep = onKeepPhotograph != null
+    /** Said in the past tense once a kept photograph has actually landed, or failed to. */
+    var keptNote by remember { mutableStateOf<String?>(null) }
+    /**
+     * The SERVER's word for what it did with the picture, not this control's.
+     *
+     * Null until a reply carries `photograph.stored` explicitly. An older deployment leaves it null
+     * and the panel says nothing, rather than promising something about regulated data on the
+     * strength of a key that was missing.
+     */
+    var serverConfirmedDiscard by remember { mutableStateOf(false) }
 
     /**
      * Whether this phone can read this field's card at all without a connection.
@@ -434,7 +505,63 @@ internal fun DwIdentityCardControl(
         working = true
         choices = emptyList()
         unconfirmedByServer = false
+        serverConfirmedDiscard = false
+        keptNote = null
         scope.launch {
+            // ── 0. The photograph, if the designer asked for it to be kept ───────────────────────
+            //
+            // BEFORE THE READ, not after, and the ordering is deliberate on two counts. The read can
+            // fail — an unreadable card, no signal, a 503 — and a designer who ticked "keep this"
+            // meant it about the PHOTOGRAPH, which is a perfectly good photograph whether or not a
+            // number could be got off it. Doing it afterwards would silently drop the one they asked
+            // for on exactly the cards that are hardest to photograph twice.
+            //
+            // A FAILURE HERE IS REPORTED AND THE READ CONTINUES. Failing the whole flow would cost a
+            // re-photograph of a national identity document to fix a storage problem, which is the
+            // more expensive of the two errors — and the number, which is what the field actually
+            // stores, is still there to be read.
+            val keep = keepPhotograph && onKeepPhotograph != null
+            var keptMediaId: String? = null
+            if (keep) {
+                runCatching { onKeepPhotograph!!.invoke(source) }
+                    .onSuccess { mediaId ->
+                        keptMediaId = mediaId
+                        keptNote = if (mediaId.isNullOrBlank()) {
+                            // The seam ran and produced nothing to stamp. Said rather than treated as
+                            // success: "kept" with no row behind it is the claim this whole feature
+                            // exists to stop anybody making.
+                            "That photograph could NOT be kept — nothing was attached to the record. " +
+                                "The number can still be read below."
+                        } else {
+                            null // filled in by the stamp below, which names who decided
+                        }
+                    }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        keptNote = error.apiErrorMessage(
+                            "That photograph could NOT be kept. The number can still be read below."
+                        )
+                    }
+            }
+
+            // THE DECISION IS STAMPED ON THE ROW, not merely implied by the row existing. A kept
+            // identity photograph that carries no record of who decided to keep it is
+            // indistinguishable from every other attachment, which is how the web's stage form came
+            // to be holding one nobody had agreed to.
+            keptMediaId?.takeIf { it.isNotBlank() }?.let { mediaId ->
+                runCatching { repository.decideIdentityPhotograph(mediaId, DW_RETENTION_STORE) }
+                    .onSuccess { keptNote = retentionOutcomeSentence(it) }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        // The photograph IS on the record; only the stamp failed. Saying "kept" alone
+                        // would be true and would hide the part a supervisor needs, so both facts go
+                        // in one sentence.
+                        keptNote = "That photograph is on the record, but the app could not record " +
+                            "WHO decided to keep it. Tell an admin, so the decision can be written " +
+                            "against the file."
+                    }
+            }
+
             // ── 1. The phone ─────────────────────────────────────────────────────────────────────
             // A THROW here is not "no number on the card"; it is "the local reader is unavailable"
             // (an unreadable file, a model that would not load). Those need different next steps, so
@@ -459,9 +586,24 @@ internal fun DwIdentityCardControl(
                 return@launch
             }
 
-            runCatching { repository.designWorkshopIdentityOcr(context, source) }
+            runCatching {
+                repository.designWorkshopIdentityOcr(
+                    context = context,
+                    uri = source,
+                    // THE DESIGNER'S DECLARED ANSWER, on the request that actually carries the card.
+                    // It instructs the server to do nothing — this route has no storage path — and
+                    // that is the point of sending it: the one packet in which an unmasked identity
+                    // document crosses the network says whether anybody is keeping it.
+                    retention = if (keep) DW_RETENTION_STORE else DW_RETENTION_DISCARD,
+                )
+            }
                 .onSuccess { result ->
                     working = false
+                    // THE SERVER'S OWN WORD FOR IT. Only claimed when the reply says so explicitly,
+                    // and only when nobody asked to keep the picture — telling a designer who ticked
+                    // "keep this" that "nothing was kept" would be true of THIS route and false of
+                    // what they just did, which is worse than saying nothing.
+                    serverConfirmedDiscard = !keep && photographWasNotStored(result)
                     val offered = identityChoices(result.aadhaarCandidates, result.pehchanCandidates, kind)
                     if (offered.isEmpty()) {
                         discardPhoto()
@@ -586,6 +728,49 @@ internal fun DwIdentityCardControl(
     val usable = enabled && !working && (readableOnDevice || online)
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // ── THE DECISION, BEFORE THE SHUTTER ────────────────────────────────────────────────────
+        //
+        // Above the buttons because that is the only place it can be made in time. A control offered
+        // afterwards would have to hold a photograph of a national identity document while somebody
+        // thinks about it, and "decide later" is precisely how the browser's stage form ended up
+        // with a `MediaFile` row nobody had agreed to.
+        //
+        // Only where there is somewhere to put it. Everywhere else no control appears and the line
+        // under the buttons says the photograph is not kept — see [onKeepPhotograph].
+        if (canKeep) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Switch(
+                    checked = keepPhotograph,
+                    // Frozen while a read is running: the flag has already been acted on by then, and
+                    // a switch that moves without changing anything is a control that lies.
+                    enabled = enabled && !working,
+                    onCheckedChange = { keepPhotograph = it },
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Keep the photograph on this record",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        retentionChoiceBlurb(keepPhotograph),
+                        // Amber only when it is ON. The off state is the safe one and colouring it
+                        // would put a warning on every identity field in the app, which is how a
+                        // warning stops being read.
+                        color = if (keepPhotograph) {
+                            MaterialTheme.field.warning
+                        } else {
+                            MaterialTheme.field.muted
+                        },
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = ::startCamera, enabled = usable) {
                 if (working) {
@@ -603,6 +788,12 @@ internal fun DwIdentityCardControl(
             }
         }
         Text(
+            // THE TRAILING PROMISE IS NOW CONDITIONAL. It used to end every one of these sentences
+            // with "The photograph is not kept." unconditionally, which stopped being true the moment
+            // this control could be given somewhere to keep one — and a sentence that contradicts the
+            // switch two lines above it is worse than no sentence at all. Where there is no choice
+            // the promise still stands and is still made; where there is, the switch's own line says
+            // what will happen and this one does not repeat it.
             when {
                 // The disabled reason, in the disabled state, where the disabled control is. A greyed
                 // button with the explanation elsewhere is a button people tap repeatedly.
@@ -613,19 +804,40 @@ internal fun DwIdentityCardControl(
                 !readableOnDevice ->
                     "Photograph the card, or pick a photograph of it already on this phone, and the " +
                         "number is read off it on the server. You confirm it before anything is " +
-                        "filled in. The photograph is not kept."
+                        "filled in." + notKeptSuffix(canKeep)
                 online ->
                     "Photograph the card, or pick a photograph of it already on this phone. The " +
                         "number is read on this phone; if it cannot be read here, the server is asked " +
                         "as well. You confirm it before anything is filled in, and you are told which " +
-                        "one read it. The photograph is not kept."
+                        "one read it." + notKeptSuffix(canKeep)
                 else ->
                     "This works with no connection — the number is read on this phone. You confirm it " +
-                        "before anything is filled in. The photograph is not kept."
+                        "before anything is filled in." + notKeptSuffix(canKeep)
             },
             color = MaterialTheme.field.muted,
             fontSize = 11.sp
         )
+        // What actually happened to the photograph a designer asked to keep — including the two
+        // failures, which are the messages that matter most: the upload that produced nothing to
+        // stamp, and the stamp that did not land on a photograph which IS on the record. "Kept" is
+        // only ever said about a row that exists.
+        //
+        // AMBER ON EVERY BRANCH, INCLUDING SUCCESS, and that is deliberate rather than lazy. The
+        // success sentence says an unmasked identity document is now on the record and who put it
+        // there; that is the outcome a designer should notice on their way past, not a receipt. The
+        // ordinary state of this control has no note here at all.
+        keptNote?.let { note ->
+            Text(note, color = MaterialTheme.field.warning, fontSize = 11.sp, lineHeight = 16.sp)
+        }
+        // THE SERVER'S CONFIRMATION, and only when the server actually gave one. See
+        // [photographWasNotStored] for why an absent key is silence rather than reassurance.
+        if (serverConfirmedDiscard) {
+            Text(
+                "The server confirmed it kept nothing: the photograph was read and discarded.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp
+            )
+        }
     }
 
     if (choices.isNotEmpty()) {
@@ -741,6 +953,17 @@ internal fun nothingFoundOffline(
             "ask the server. Fill the frame with the card, hold it flat and try again — or type the " +
             "number in."
 }
+
+/**
+ * The "and it is not kept" half of the blurb, present only where there is no choice to make.
+ *
+ * Pure and internal so the ONE rule it encodes is pinned by a JVM test: the promise is made when
+ * this control genuinely cannot keep anything, and withheld when a switch two lines above has
+ * already said what will happen. A build that made it unconditional again would print "The
+ * photograph is not kept" underneath a switch set to keep it.
+ */
+internal fun notKeptSuffix(canKeep: Boolean): String =
+    if (canKeep) "" else " The photograph is not kept."
 
 /**
  * How a candidate is written on the button that would commit it.

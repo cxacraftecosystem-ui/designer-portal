@@ -78,6 +78,14 @@ PROFILE_INSTITUTION = "NIFT Bhubaneswar"
 PROFILE_BIOGRAPHY = "Twelve years of ikat and tie-and-dye across western Odisha."
 PROFILE_YEARS = 12
 
+#: The profile of the ADMIN who OPENS the workshops — deliberately different from the designer's
+#: above, so a prefill assertion can name which of the two actually reached the stage. See the
+#: ``designerprofile`` block in ``world`` for why an admin has one at all.
+ADMIN_PROFILE_NAME = "Sunil Patnaik"
+ADMIN_PROFILE_INSTITUTION = "Directorate of Handicrafts, Bhubaneswar"
+ADMIN_PROFILE_BIOGRAPHY = "Twenty years administering cluster development programmes."
+ADMIN_PROFILE_YEARS = 20
+
 # Accounts the module needs, and the roster standing each of them is meant to have. Suspended and
 # unlisted are two distinct ways of being refused and both are tested: one designer had access
 # ended, the other never had a row at all (an account that predates the roster), and the person
@@ -207,6 +215,26 @@ async def world():
             "institution": PROFILE_INSTITUTION,
             "biography": PROFILE_BIOGRAPHY,
             "experienceYears": PROFILE_YEARS,
+        })
+        # A PROFILE ON THE **ADMIN**, WHICH ARRIVED WITH THE CREATE RULE AND IS NOT DECORATION.
+        #
+        # ``seed_designer_prefill`` copies THE CREATOR's profile into stage 1 and stage 3. Only
+        # admins and the master admin may start a workshop now, so the creator is always an admin
+        # and the prefill is only reachable at all through an admin who has a profile — which is an
+        # ordinary thing to be here, since ADMIN is inside ``DESIGN_WORKSHOP_ROLES`` precisely so
+        # that admins can run workshops of their own.
+        #
+        # Its values are DIFFERENT from the designer's on purpose. The four prefill tests below can
+        # then say which profile actually landed in the stage, and
+        # ``test_a_workshop_an_admin_opens_for_a_designer_carries_the_ADMINS_details`` — the one
+        # that records what this change costs — would be unable to fail if both profiles read the
+        # same.
+        await db.designerprofile.create(data={
+            "user": {"connect": {"id": people["admin"].id}},
+            "displayName": ADMIN_PROFILE_NAME,
+            "institution": ADMIN_PROFILE_INSTITUTION,
+            "biography": ADMIN_PROFILE_BIOGRAPHY,
+            "experienceYears": ADMIN_PROFILE_YEARS,
         })
     finally:
         await db.disconnect()
@@ -742,12 +770,35 @@ async def test_the_profile_belongs_to_the_people_who_run_workshops(world, client
 
 @pytest.fixture
 def workshop_of(world, client):
-    def create(slug: str, title: str) -> str:
+    """``create(creator_slug, title, grant_to=None)`` -> the id of a workshop that account opened.
+
+    THE PARAMETER IS THE CREATOR AND IT MUST NOW BE AN ADMIN. This fixture used to be handed a
+    designer slug, because designers opened their own workshops; only admins and the master admin
+    may start one now (``can_create_design_workshops``), so a designer slug answers 403. The slug is
+    still a parameter rather than hard-coded because WHICH admin matters to the prefill: the
+    creator's profile is what ``seed_designer_prefill`` copies, so "an admin with a profile" and "an
+    admin without one" are two different fixtures' worth of behaviour and both are asserted below.
+
+    ``grant_to`` names the designer who will work in the workshop, and is what lets the tests read
+    the seeded stages back as that designer through the ordinary endpoint — which is the whole point
+    of reading them that way. It is optional because the prefill can also be inspected by the admin
+    who created it, and a grant there would be noise.
+    """
+
+    def create(creator_slug: str, title: str, grant_to: str | None = None) -> str:
         response = client.post(
-            "/api/design-workshops", json={"title": title}, headers=_headers(world, slug)
+            "/api/design-workshops", json={"title": title}, headers=_headers(world, creator_slug)
         )
         assert response.status_code == 201, response.text
-        return response.json()["id"]
+        workshop_id = response.json()["id"]
+        if grant_to:
+            granted = client.put(
+                f"/api/design-workshops/{workshop_id}/viewers",
+                json={"userIds": [world["people"][grant_to].id]},
+                headers=_headers(world, "admin"),
+            )
+            assert granted.status_code == 200, granted.text
+        return workshop_id
 
     return create
 
@@ -760,7 +811,7 @@ def _singleton(client: Any, world: dict[str, Any], slug: str, workshop_id: str, 
     return response.json()["singleton"]
 
 
-async def test_a_new_workshop_starts_with_the_designers_profile_in_stages_1_and_3(
+async def test_a_new_workshop_starts_with_the_creators_profile_in_stages_1_and_3(
     world, client, workshop_of
 ):
     """The chore this removes: retyping an institution and a biography into every workshop.
@@ -770,12 +821,20 @@ async def test_a_new_workshop_starts_with_the_designers_profile_in_stages_1_and_
     completeness score and the phone's offline renderer all read stage data and none of them knows
     a profile exists. A prefill visible only through a special case would work on the server and
     print blank on the phone.
+
+    IT SAYS "CREATOR" WHERE IT USED TO SAY "DESIGNER", AND THE RENAME IS THE HONEST PART. Only
+    admins and the master admin may start a workshop now, so the account whose profile
+    ``seed_designer_prefill`` copies is the ADMIN who opened it. The mechanism is unchanged and is
+    what this test pins: the profile of whoever created the workshop lands in stage 1 and stage 3
+    as ordinary stage data. WHOSE profile that is has changed, and the cost of that is pinned
+    separately and deliberately by
+    ``test_a_workshop_an_admin_opens_for_a_designer_carries_the_ADMINS_details``.
     """
-    workshop_id = workshop_of("active", "Prefilled workshop")
+    workshop_id = workshop_of("admin", "Prefilled workshop", grant_to="active")
 
     stage_1 = _singleton(client, world, "active", workshop_id, STAGE_1)
-    assert stage_1["designerName"] == PROFILE_NAME
-    assert stage_1["designerInstitution"] == PROFILE_INSTITUTION
+    assert stage_1["designerName"] == ADMIN_PROFILE_NAME
+    assert stage_1["designerInstitution"] == ADMIN_PROFILE_INSTITUTION
 
     stage_3 = _singleton(client, world, "active", workshop_id, STAGE_3)
     # Through ``to_plain``: ``designerProfile`` is NARRATIVE and therefore RICH_TEXT, so the
@@ -783,8 +842,51 @@ async def test_a_new_workshop_starts_with_the_designers_profile_in_stages_1_and_
     # working — ``coerce_value`` reads a plain string as unformatted prose precisely so a value
     # written before the field became rich is not lost. What this test cares about is that the
     # roster's biography reached stage 3, which is a claim about the text and not about its shape.
-    assert to_plain(stage_3["designerProfile"]) == PROFILE_BIOGRAPHY
-    assert stage_3["designerExperience"] == PROFILE_YEARS, "an INT field must arrive as an int"
+    assert to_plain(stage_3["designerProfile"]) == ADMIN_PROFILE_BIOGRAPHY
+    assert stage_3["designerExperience"] == ADMIN_PROFILE_YEARS, "an INT field must arrive as an int"
+
+
+async def test_a_workshop_an_admin_opens_for_a_designer_carries_the_ADMINS_details(
+    world, client, workshop_of
+):
+    """WHAT THE CREATE RULE COSTS, WRITTEN DOWN AS AN ASSERTION RATHER THAN LEFT TO BE DISCOVERED.
+
+    This test does not describe behaviour anybody wanted. It describes behaviour that FOLLOWS from
+    two correct decisions meeting: ``seed_designer_prefill`` copies the CREATOR's profile (right,
+    and the copy semantics matter — see the historical-document test below), and only admins may
+    create a workshop (right, and the reason is in ``deps.can_create_design_workshops``). Together
+    they mean that a workshop an admin opens FOR a designer arrives carrying the ADMIN's name,
+    institution and biography in stage 1 and stage 3 — and ``designerName`` is a promoted column, so
+    it is also what the workshop LIST and the report cover show until somebody corrects it.
+
+    It is recoverable and it is visible: stage 1 is editable, the designer sees a name that is not
+    theirs the first time they open it, and generating a report enforces the Basic-tier stage-1
+    fields. It is still wrong, and a report going to a ministry under the wrong designer's name is
+    exactly the kind of wrong this repository writes tests about.
+
+    THE FIX, WHICH IS DELIBERATELY NOT IN THIS CHANGE because it needs files this lane does not own:
+    let the admin name the workshop's designer on the create — a ``designerUserId`` on
+    ``DesignWorkshopCreate`` — and seed the prefill from THAT account instead of from
+    ``current_user``, granting them a ``DesignWorkshopViewer`` row in the same call. That turns the
+    two steps an admin must perform today into one and makes the prefill right again.
+
+    WHEN THAT LANDS, THIS TEST MUST BE REWRITTEN, NOT DELETED — it becomes "the workshop carries the
+    named designer's details", which is the assertion worth having.
+    """
+    workshop_id = workshop_of("admin", "Opened for a designer", grant_to="active")
+    stage_1 = _singleton(client, world, "active", workshop_id, STAGE_1)
+
+    assert stage_1["designerName"] == ADMIN_PROFILE_NAME
+    assert stage_1["designerName"] != PROFILE_NAME, (
+        "the designer who will run this workshop is 'active', and their name is NOT what was seeded"
+    )
+    header = client.get(
+        f"/api/design-workshops/{workshop_id}", headers=_headers(world, "active")
+    )
+    assert header.status_code == 200, header.text
+    assert header.json()["designerName"] == ADMIN_PROFILE_NAME, (
+        "and it reaches the promoted column, so it is what the list and the report cover show"
+    )
 
 
 async def test_the_prefilled_designer_name_reaches_the_promoted_column(
@@ -796,25 +898,38 @@ async def test_the_prefilled_designer_name_reaches_the_promoted_column(
     showing no designer in the one screen an admin scans — and the fix would look like a bug in
     the list rather than in the create.
     """
-    workshop_id = workshop_of("active", "Promoted prefill")
+    workshop_id = workshop_of("admin", "Promoted prefill", grant_to="active")
     header = client.get(
         f"/api/design-workshops/{workshop_id}", headers=_headers(world, "active")
     )
     assert header.status_code == 200, header.text
-    assert header.json()["designerName"] == PROFILE_NAME
+    assert header.json()["designerName"] == ADMIN_PROFILE_NAME
     assert header.json()["title"] == "Promoted prefill", (
         "seeding a promoted column must not overwrite the title the designer just typed"
     )
 
 
-async def test_a_designer_with_no_profile_gets_an_empty_stage_one(world, client, workshop_of):
+async def test_a_creator_with_no_profile_gets_an_empty_stage_one(world, client, workshop_of):
     """No profile is not an error, and it must not be a 500 on the create.
 
     The workshop row is already committed by the time the prefill runs, so a failure that
     propagated would leave an orphan draft behind on every retry until somebody noticed the list
     filling up with untitled duplicates.
+
+    THE ACCOUNT WITH NO PROFILE IS NOW AN ADMIN (``adminRostered``) AND USED TO BE A DESIGNER
+    (``barren``), for the reason the fixture above gives: the prefill copies the CREATOR's profile
+    and only admins create workshops, so "the creator has no profile" is the case this is about and
+    a designer cannot express it any more. ``adminRostered`` has a roster row and no
+    ``DesignerProfile``, which is exactly the shape needed — and it is emphatically NOT the
+    ``admin`` account, which was given a profile precisely so the prefill could be exercised.
+
+    This is also the ORDINARY case in the field now: most admins are administrators and have no
+    designer profile at all, so most workshops will open with an empty designer block and the
+    designer will type their own details into stage 1 — which is what happened before the prefill
+    existed, and is the recoverable half of the cost recorded in
+    ``test_a_workshop_an_admin_opens_for_a_designer_carries_the_ADMINS_details``.
     """
-    workshop_id = workshop_of("barren", "No profile workshop")
+    workshop_id = workshop_of("adminRostered", "No profile workshop", grant_to="barren")
     assert _singleton(client, world, "barren", workshop_id, STAGE_1) == {}
     assert _singleton(client, world, "barren", workshop_id, STAGE_3) == {}
 
@@ -831,22 +946,27 @@ async def test_the_prefill_is_a_copy_and_a_later_profile_edit_never_reaches_it(
     it, would name an institution that had nothing to do with the workshop and had never sponsored
     it. Copying is not an optimisation here; referencing would be a falsification.
     """
-    earlier = workshop_of("active", "Ran from NIFT")
+    earlier = workshop_of("admin", "Ran from NIFT", grant_to="active")
     assert _singleton(client, world, "active", earlier, STAGE_1)["designerInstitution"] == (
-        PROFILE_INSTITUTION
+        ADMIN_PROFILE_INSTITUTION
     )
 
+    # The profile edited is the CREATOR's, because the creator's profile is what the prefill copies.
+    # The rule under test — copy, never reference — is a property of ``seed_designer_prefill`` and
+    # is indifferent to whose profile it is; what it cannot be indifferent to is that the account
+    # whose profile moved is the account whose values were seeded, which is why this moved from
+    # "active" to "admin" along with the two workshops around it.
     moved = client.put(
         "/api/designers/me/profile",
         json={"institution": "NID Ahmedabad"},
-        headers=_headers(world, "active"),
+        headers=_headers(world, "admin"),
     )
     assert moved.status_code == 200, moved.text
 
-    later = workshop_of("active", "Ran from NID")
+    later = workshop_of("admin", "Ran from NID", grant_to="active")
     assert _singleton(client, world, "active", later, STAGE_1)["designerInstitution"] == (
         "NID Ahmedabad"
     )
     assert _singleton(client, world, "active", earlier, STAGE_1)["designerInstitution"] == (
-        PROFILE_INSTITUTION
+        ADMIN_PROFILE_INSTITUTION
     ), "the earlier workshop must still name the institution it was actually run from"

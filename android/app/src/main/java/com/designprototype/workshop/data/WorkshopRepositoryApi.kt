@@ -952,11 +952,48 @@ interface WorkshopRepositoryApi {
     // must therefore check connectivity BEFORE offering the control, because a request that hangs for
     // a two-minute timeout in a village is indistinguishable, to the designer holding the phone, from
     // an app that has crashed.
+    //
+    // `retention` DECLARES WHAT THE CALLER INTENDS TO DO WITH ITS OWN COPY. It is not an instruction:
+    // this route has no storage path and its reply says `photograph.stored: false` regardless. It is
+    // sent so that the one request in which an unmasked identity document crosses the wire carries
+    // the designer's answer to "are you keeping this". A FORM FIELD and not a query parameter,
+    // because the route declares it `Form(...)` — see `scan_identity_card`.
+    //
+    // OMITTING IT IS SAFE BY CONSTRUCTION. `parse_retention` maps everything it does not recognise
+    // — missing, blank, "keep", true — onto DISCARD and never raises, so every build shipped before
+    // this parameter existed gets the safe half. That is exactly why the default here is
+    // [DW_RETENTION_DEFAULT] rather than a nullable with no value: a caller that forgets should land
+    // on the same answer the server would have assumed, not on a different one.
     @Multipart
     @POST("design-workshops/ocr/identity")
     suspend fun designWorkshopIdentityOcr(
-        @Part file: okhttp3.MultipartBody.Part
+        @Part file: okhttp3.MultipartBody.Part,
+        @Part("retention") retention: okhttp3.RequestBody? = null
     ): DwIdentityOcrDto
+
+    // KEEP THIS IDENTITY PHOTOGRAPH, OR DELETE IT — the decision about a picture that is ALREADY
+    // stored, which is the only kind this route accepts.
+    //
+    // `DISCARD` HARD-DELETES: the S3 object first, then the row, and a storage failure refuses the
+    // whole request with a 502 rather than deleting the row anyway. That ordering is deliberately
+    // the inverse of `media.delete_media`, which deletes the row and then makes a best-effort
+    // attempt at the object — a defensible trade for a photograph of a loom and the wrong one here,
+    // because it can end with the JPEG in the bucket and nothing in the database that knows it is
+    // there. Everything else in `design_workshops.py` soft-deletes; this route is the stated
+    // exception and means it.
+    //
+    // SO A 502 FROM HERE MEANS NOTHING WAS DELETED. It is not a partial failure to be retried
+    // silently or reported as "removed": the row survives, it still points at the bytes, and the
+    // designer presses the button again. Show the server's sentence.
+    //
+    // NOT AUTO-RETRIED anywhere in this client, unlike a presign. Both outcomes change durable state
+    // — one deletes a file, the other writes an accountability record — and a request this client
+    // repeated on its own would be one decision recorded twice, or a 502 from a half-finished delete
+    // turned into a second delete attempt with nobody watching.
+    @POST("design-workshops/ocr/identity/retention")
+    suspend fun decideIdentityPhotograph(
+        @Body body: DwRetentionDecisionBody
+    ): DwRetentionResultDto
 
     // One dictated passage, written down by the SAME provider chain the workshop's own recordings go
     // through — rung 2 of the dictation ladder (see [dwDictationLadder]).
@@ -1223,11 +1260,102 @@ interface WorkshopRepositoryApi {
     // what the backend's own module docstring says a client must not be asked to do, which is why
     // every method below is additionally named `…CustomQuestionnaire…` rather than by its path.
     //
-    // THE .xlsx HALF OF THE API IS DELIBERATELY ABSENT. `GET /questionnaires/pro-forma`,
-    // `POST /questionnaires/upload` and `POST /questionnaires/{id}/upload` are how the form is BUILT,
-    // and a form is built on a laptop in a spreadsheet, not on a handset — a designer picking an
-    // .xlsx out of Android's document provider, on a phone with no spreadsheet application, is a
-    // worse route to the same place. What the handset is for is the other half: answering.
+    // ── THE .xlsx HALF OF THE API: ABSENT UNTIL 2026-08-16, NOW BOUND. THE DECISION WAS REVERSED ──
+    //
+    // WHAT THIS COMMENT USED TO SAY, KEPT SO THE REVERSAL IS LEGIBLE RATHER THAN MYSTERIOUS:
+    //
+    //     "THE .xlsx HALF OF THE API IS DELIBERATELY ABSENT. `GET /questionnaires/pro-forma`,
+    //      `POST /questionnaires/upload` and `POST /questionnaires/{id}/upload` are how the form is
+    //      BUILT, and a form is built on a laptop in a spreadsheet, not on a handset — a designer
+    //      picking an .xlsx out of Android's document provider, on a phone with no spreadsheet
+    //      application, is a worse route to the same place. What the handset is for is the other
+    //      half: answering."
+    //
+    // WHO REVERSED IT AND WHY. The user asked for BOTH surfaces on the handset explicitly — the
+    // downloads and the uploads — in the brief that added the questionnaire-interchange feature
+    // (2026-08-16). A requirement from the person the app is for outranks a client author's
+    // judgement about what a phone is for, and this note is not left standing as a reason the
+    // binding "should" be absent while the binding is right there underneath it.
+    //
+    // THE OLD ARGUMENT WAS ALSO PARTLY WRONG, AND THE WRONG PART IS THE POINT OF THE FEATURE. It
+    // reasoned entirely about BUILDING a form. Three of these six endpoints build nothing:
+    // `question-set.xlsx` is how one designer HANDS another an instrument, and receiving it is
+    // `POST /questionnaires/upload`. That exchange happens between two people standing in the same
+    // courtyard holding phones, and the laptop argument never covered it. Nor did it cover a
+    // designer who wants their own fieldwork out of the app while they are still at the site.
+    //
+    // WHAT REMAINS TRUE, AND IS NOW SAID ON SCREEN INSTEAD OF BEING ENFORCED BY AN ABSENCE: a phone
+    // is a poor place to AUTHOR forty questions. So the pro-forma download exists to be sent
+    // somewhere else, and the list screen says so rather than pretending the handset is where the
+    // typing happens.
+    //
+    // THE THREE DOWNLOADS ARE THREE ROUTES AND NOT ONE ROUTE WITH A FLAG, exactly as the server
+    // made them, and this client keeps them apart all the way to the button. `download_question_set`
+    // states the reason: `?questionsOnly=` would put the difference between "a question list" and
+    // "every respondent I have ever interviewed" inside a boolean that defaults. See
+    // [DwQuestionnaireArtefact].
+
+    // The blank workbook a questionnaire is typed into. `_require_designer` only — it contains
+    // nothing about anybody.
+    @Streaming
+    @GET("questionnaires/pro-forma")
+    suspend fun questionnaireProForma(): Response<ResponseBody>
+
+    // ONE QUESTIONNAIRE, LOSSLESSLY: every sitting, every respondent's name, every answer, and the
+    // retired questions too. Gated on the server to the owner, an admin, or a designer working on
+    // its design workshop — the same rule `read_questionnaire` applies to the sittings, because
+    // this workbook IS the sittings.
+    //
+    // A 403 here is not a bug to be retried: it carries the server's own sentence, which names the
+    // question set as the thing to download instead. Show it verbatim.
+    @Streaming
+    @GET("questionnaires/{id}/xlsx")
+    suspend fun questionnaireWorkbook(@Path("id") id: String): Response<ResponseBody>
+
+    // THE QUESTIONS ALONE — no answers, no respondents, no sittings. Any designer may take it, which
+    // is a WIDER gate than the workbook above and deliberately so: `read_questionnaire` already
+    // hands the questions of any questionnaire to any designer, and this is that same openly
+    // readable half written into a spreadsheet. The difference between this and `/xlsx` is not a
+    // filter that could be forgotten — `load_question_set` never issues the entry or answer queries
+    // at all.
+    @Streaming
+    @GET("questionnaires/{id}/question-set.xlsx")
+    suspend fun questionnaireQuestionSet(@Path("id") id: String): Response<ResponseBody>
+
+    // Create a questionnaire from a filled-in workbook.
+    //
+    // `title` AND `designWorkshopId` ARE FORM FIELDS ON THE MULTIPART BODY, NOT QUERY PARAMETERS,
+    // and the route's docstring says why it matters: declared as bare defaults on the server they
+    // would have been read as query parameters, and a client that appended them to the body would
+    // have had them silently ignored — an untitled questionnaire attached to nothing, with a 201
+    // saying it went fine. `@Part` is therefore correct here and `@Query` would not be.
+    //
+    // THE RESPONSE CARRIES `report.problems` AND `report.provenance`, AND BOTH ARE THE FEATURE.
+    // A workbook that came out of the platform imports its QUESTIONS ONLY — its answers are
+    // fieldwork already recorded in this database under the names of the people who recorded it,
+    // and writing them again would fork that fieldwork under one re-stamped author. The server says
+    // which branch it took; see [QFormChangeReportDto] and [qFormProvenanceNotice].
+    @Multipart
+    @POST("questionnaires/upload")
+    suspend fun uploadQuestionnaire(
+        @Part file: okhttp3.MultipartBody.Part,
+        @Part("title") title: okhttp3.RequestBody? = null,
+        @Part("designWorkshopId") designWorkshopId: okhttp3.RequestBody? = null,
+    ): QFormUploadResultDto
+
+    // Re-upload an edited workbook OVER an existing questionnaire. Owner-only on the server.
+    //
+    // A 409 means the file's Details sheet names a DIFFERENT questionnaire — the designer picked the
+    // wrong .xlsx out of their downloads folder. That refusal is protecting them from retiring this
+    // questionnaire's entire question set as "absent from the upload" in one press, so its sentence
+    // is shown as written rather than turned into "upload failed".
+    @Multipart
+    @POST("questionnaires/{id}/upload")
+    suspend fun reuploadQuestionnaire(
+        @Path("id") id: String,
+        @Part file: okhttp3.MultipartBody.Part,
+        @Part("title") title: okhttp3.RequestBody? = null,
+    ): QFormUploadResultDto
 
     @GET("questionnaires")
     suspend fun customQuestionnaires(

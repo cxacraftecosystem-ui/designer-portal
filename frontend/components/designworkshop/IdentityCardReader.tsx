@@ -3,6 +3,27 @@
 /**
  * "Read the number from this card" — and the reason it never writes the answer by itself.
  *
+ * ── READ THIS FIRST: THE PHOTOGRAPH IS ALREADY STORED WHEN THIS PANEL APPEARS ─────────────────
+ *
+ * This reader does not take a photograph. It is rendered UNDER a media field and works on images the
+ * designer has already attached to it — and attaching to a media field is the ordinary media flow,
+ * which by the time this panel is on screen has presigned a PUT, put the bytes in S3 and created a
+ * `MediaFile` row through `/media/complete`. So unlike `IdentityCardCapture` on the artisan form,
+ * which holds a loose `File` and stores nothing, everything this panel touches is durable already.
+ *
+ * That is not a detail of the wiring, it is the security fact of this screen: an unmasked identity
+ * document is in the repository before anybody has been asked whether it should be. It is worth
+ * being exact about why "unmasked" is the word. `artisan_identity.mask_aadhaar` and
+ * `records.mask_identity_number` mask the DIGITS on every exported surface and that machinery is
+ * sound — but a photograph of the card is those same digits in a form no masking function can
+ * reach. It is a JPEG. Nothing downstream will ever redact it.
+ *
+ * So once a designer has told this panel that a given photograph is an identity card — which is
+ * what pressing "Read this card" says, and is the first moment any code here could know it — the
+ * panel refuses to let the picture stay on the record by default. It asks, in two words, and the
+ * safe one is the one that needs no decision. See `lib/identityPhotoRetention.ts` for the argument
+ * and for why DISCARD is a hard delete rather than this file's usual soft one.
+ *
  * AN OCR MISREAD OF A NATIONAL IDENTITY NUMBER BECOMES AN ARTISAN'S DEDUPLICATION KEY. That is the
  * whole argument and it is worth spelling out, because "prefill it and let them correct it" is the
  * obvious design and it is the wrong one here.
@@ -45,18 +66,32 @@
  */
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, Loader2, MonitorCheck, ScanLine, X } from "lucide-react";
+import { AlertTriangle, Check, Loader2, MonitorCheck, ScanLine, ShieldAlert, Trash2, X } from "lucide-react";
 
 import { aadhaarValidationError } from "@/components/forms/AadhaarField";
 import { DW_OCR_IDENTITY_PATH, identityChoices, readIdentityCard, serverOffersRoute } from "@/lib/designWorkshops";
 import { browserCanReadCards, readCardTextInBrowser } from "@/lib/identityCardLocal";
 import { identityCandidatesFromText } from "@/lib/identityCardText";
+import {
+  DW_PHOTO_UNDECIDED,
+  decideIdentityPhotograph,
+  retentionOutcomeSentence,
+  type DwPhotoRetention
+} from "@/lib/identityPhotoRetention";
 import type { MediaFile } from "@/lib/types";
 
 type Candidate = {
   number: string;
   kind: string;
   confidence: number | null;
+  /**
+   * Which photograph it was read off, so a candidate cannot outlive the file it came from.
+   *
+   * A designer who deletes the picture and is then still shown a number to confirm has nothing left
+   * to check it against — and checking it against the card is the one safeguard between an OCR
+   * misread and this repository's deduplication key.
+   */
+  mediaId: string;
   /** The name of the photograph it came from, so a designer with three cards attached knows which. */
   source: string;
   /** True when it was recognised in this tab and the photograph was never sent. Stated, not implied. */
@@ -69,6 +104,7 @@ export function IdentityCardReader({
   targetLabel,
   currentValue,
   onConfirm,
+  onDiscard,
   disabled
 }: {
   /** The images already linked to the media field this reader sits under. */
@@ -78,6 +114,16 @@ export function IdentityCardReader({
   targetLabel: string;
   currentValue: string;
   onConfirm: (digits: string) => void;
+  /**
+   * Drop a photograph the server has just deleted from this field's value.
+   *
+   * OPTIONAL, AND THE DELETE HAPPENS WITHOUT IT. The bytes and the `MediaFile` row are gone the
+   * moment the route answers, which is the property that matters and is not this component's to
+   * negotiate; this callback only stops the field from going on referencing an id that no longer
+   * resolves. A caller that omits it gets a correct deletion and a tile that says the file is no
+   * longer readable, which is honest but is not as good as the tile not being there.
+   */
+  onDiscard?: (mediaId: string) => void;
   disabled?: boolean;
 }) {
   const [offered, setOffered] = useState<boolean | null>(null);
@@ -92,6 +138,28 @@ export function IdentityCardReader({
    * safer thing to do by accident.
    */
   const [readHere, setReadHere] = useState(true);
+  /**
+   * Every photograph declared to be an identity card and still awaiting a decision, oldest first.
+   *
+   * A LIST AND NOT A SLOT — see the append in `read` for the three-blurred-cards case that a slot
+   * loses in silence.
+   *
+   * ADDED TO WHEN A READ ACTUALLY RAN, whatever it found, and NOT when the panel merely rendered. Before
+   * a designer presses "Read this card" nothing here knows the image is a card — `offersIdentityOcr`
+   * guesses from a FIELD NAME, and a field named `identityCardPhoto` on a workshop whose designer
+   * attached a portrait to it by mistake is exactly the case a guess gets wrong. Pressing the button
+   * is the first statement by a person that this particular picture is somebody's identity document,
+   * and that is what turns keeping it into a decision worth forcing.
+   *
+   * A failed read counts. The photograph is stored either way, and a card the reader could not make
+   * out is still a card.
+   */
+  const [decidable, setDecidable] = useState<{ mediaId: string; name: string }[]>([]);
+  /** Which photograph is mid-decision and which way, so only its own two buttons go busy. */
+  const [deciding, setDeciding] = useState<{ mediaId: string; choice: DwPhotoRetention } | null>(null);
+  /** What happened to each picture, in the past tense, once its decision landed. */
+  const [retentionOutcome, setRetentionOutcome] = useState<string[]>([]);
+  const [decisionProblem, setDecisionProblem] = useState<string | null>(null);
 
   /**
    * Whether this deployment can read a card at all, probed once per tab.
@@ -138,10 +206,69 @@ export function IdentityCardReader({
   if (offered === null || browserReads === null) return null;
   if ((offered !== true && browserReads !== true) || !readable.length) return null;
 
+  /**
+   * Keep this photograph on the record, or delete it outright.
+   *
+   * The button is what makes the decision, and this is the only place either outcome is reachable
+   * from — there is no "later", no draft, and nothing that resolves on unmount. A decision that
+   * could be deferred is a decision most people defer, and deferring means keeping.
+   */
+  async function decide(mediaId: string, choice: DwPhotoRetention) {
+    setDeciding({ mediaId, choice });
+    setDecisionProblem(null);
+    try {
+      const result = await decideIdentityPhotograph(mediaId, choice);
+      setRetentionOutcome((current) => [...current, retentionOutcomeSentence(result)]);
+      // Only on a DELETE the server actually performed. `deleted` is the server's word for "the row
+      // and the object are gone", so a client that dropped the reference on anything weaker would
+      // hide a photograph that is still there — the precise failure this whole feature is against.
+      if (result.deleted) {
+        onDiscard?.(mediaId);
+        // The candidate came off some photograph; if it came off THIS one it must go with it. The
+        // number stays in the field if it was already confirmed — deleting the picture was never a
+        // statement about the digits — but an unconfirmed candidate read off a file that no longer
+        // exists is something a designer can no longer check against anything.
+        setCandidate((current) => (current && current.mediaId === mediaId ? null : current));
+      }
+      // Answered, so it leaves the queue whichever way it was answered.
+      setDecidable((current) => current.filter((entry) => entry.mediaId !== mediaId));
+    } catch (error) {
+      setDecisionProblem(
+        error instanceof Error
+          ? // NAMES THE STATE THE RECORD IS IN, which for the delete half is "still stored". A
+            // designer who reads "could not be deleted" and nothing else has no way to know whether
+            // to try again or whether it half-worked; the server refuses the whole request rather
+            // than half-deleting, so this can say so.
+            `That decision could not be recorded, so the photograph is exactly as it was — still stored on this record. ${error.message}`
+          : "That decision could not be recorded, so the photograph is exactly as it was — still stored on this record. Try again."
+      );
+    } finally {
+      setDeciding(null);
+    }
+  }
+
   async function read(media: MediaFile) {
     setReading(true);
     setProblem(null);
     setCandidate(null);
+    setDecisionProblem(null);
+    // THE DECLARATION, and the whole trigger for the decision block below: pressing this button on
+    // THIS photograph is a person saying it is an identity card. Recorded before the source check on
+    // purpose — a card attached on an earlier visit cannot be re-read in this tab, but it is still a
+    // stored identity document and still the designer's to keep or delete.
+    //
+    // APPENDED, NEVER REPLACED, and de-duplicated by id.
+    // A designer with three cards attached reads the first, gets a candidate, reads the second
+    // because the first was blurred, and reads the third. If this slot held one photograph, the
+    // first two decisions would have been silently dropped the moment the next read began — two
+    // unmasked identity documents left on the record by a control whose entire purpose is to stop
+    // exactly that. Every photograph a person has declared to be an identity card stays on this
+    // list until it is answered for.
+    setDecidable((current) =>
+      current.some((entry) => entry.mediaId === media.id)
+        ? current
+        : [...current, { mediaId: media.id, name: media.originalFilename }]
+    );
     try {
       const source = originals[media.id];
       if (!source) {
@@ -185,6 +312,7 @@ export function IdentityCardReader({
         setCandidate({
           number: first,
           kind: "AADHAAR",
+          mediaId: media.id,
           // The browser's recogniser returns no confidence, and inventing one would be worse than
           // saying nothing: the panel would print a word a designer could lean on.
           confidence: null,
@@ -215,6 +343,7 @@ export function IdentityCardReader({
       setCandidate({
         number: best.value,
         kind: best.kind,
+        mediaId: media.id,
         confidence: best.confidence,
         source: media.originalFilename,
         local: false
@@ -242,7 +371,8 @@ export function IdentityCardReader({
       <p className="text-xs leading-5 text-ink-500">
         The number is read from the photograph and shown here for you to check against the card. Nothing is written into{" "}
         {targetLabel} until you confirm it — a single wrong digit in an identity number does not clash with anybody, so it
-        creates a duplicate artisan that nothing downstream can detect.
+        creates a duplicate artisan that nothing downstream can detect. The photographs listed above were uploaded to
+        this record when you attached them; after a read you are asked whether to keep or delete the one you read.
       </p>
 
       {/*
@@ -354,6 +484,102 @@ export function IdentityCardReader({
             </button>
           </div>
         </div>
+      ) : null}
+
+      {/*
+        ── WHAT HAPPENS TO THE PICTURE ────────────────────────────────────────────────────────────
+
+        A SEPARATE BLOCK FROM THE CANDIDATE ABOVE, AND DELIBERATELY BELOW IT. Two decisions are
+        being asked for and they are about different objects: "is this the number on the card"
+        (which writes a field) and "should this repository keep a photograph of somebody's identity
+        document" (which deletes a file, or does not). Folded together, the second would be read as
+        a footnote to the first and answered by whichever button was nearer — and the candidate
+        block already has a link reading "Discard this reading", which discards a NUMBER and nothing
+        else. So this block names its object in every string it contains: the word is "photograph".
+
+        IT OUTLIVES THE CANDIDATE. Confirming the number clears the candidate panel; the photograph
+        is still on the record, so this stays until it is answered. That is the point — the moment a
+        designer is most likely to walk away is the moment the number lands, which is exactly when
+        the picture would otherwise be quietly retained.
+
+        ONE BLOCK PER UNDECIDED PHOTOGRAPH, and they accumulate. A designer who reads three cards
+        because the first two were blurred has made three declarations that a picture is an identity
+        document, and every one of them is still on the record. A single block would have shown the
+        last and lost the other two in silence.
+      */}
+      {decidable.map((entry) => {
+        const busy = deciding?.mediaId === entry.mediaId ? deciding.choice : null;
+        return (
+          <div key={entry.mediaId} className="grid gap-2 rounded-md border border-amber-500 bg-amber-100 p-3">
+            <p className="flex items-start gap-2 text-xs font-medium leading-5 text-amber-800">
+              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span>
+                {/* The filename in every block, because a designer who read three cards is looking
+                    at three of these and has no other way to tell which is which. */}
+                What happens to “{entry.name}”? {DW_PHOTO_UNDECIDED}
+              </span>
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {/*
+                THE SAFE ANSWER IS THE PRIMARY BUTTON, and it is first in the DOM so it is also first
+                for a keyboard and for a screen reader. Nothing here is preselected and nothing
+                happens on a timer: an identity document is not deleted because a designer looked
+                away, and it is not kept because they did either. What the ordering buys is that the
+                answer nearest to hand is the one that keeps nothing.
+
+                Only THIS photograph's buttons go busy while its own request is in flight — a single
+                shared flag would grey out the decisions on the other cards, which is how one slow
+                request turns into three undecided identity documents.
+              */}
+              <button
+                type="button"
+                className="field-button"
+                disabled={disabled || busy !== null}
+                onClick={() => void decide(entry.mediaId, "DISCARD")}
+                data-testid="identity-photo-discard"
+              >
+                {busy === "DISCARD" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                )}
+                Delete this photograph
+              </button>
+              <button
+                type="button"
+                className="field-button-secondary"
+                disabled={disabled || busy !== null}
+                onClick={() => void decide(entry.mediaId, "STORE")}
+                data-testid="identity-photo-store"
+              >
+                {busy === "STORE" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <Check className="h-4 w-4" aria-hidden />
+                )}
+                Keep it on this record
+              </button>
+            </div>
+            <p className="text-xs leading-5 text-amber-800">
+              {/* Both consequences, stated before the press rather than reported after it.
+                  "Deleted" is said in full because this app soft-deletes almost everything and a
+                  designer has every reason to assume this is another of those. */}
+              Deleting removes the file and the record of it — it cannot be undone, and the number you
+              confirm is unaffected. Keeping it records that you chose to, with your name and the time.
+            </p>
+          </div>
+        );
+      })}
+
+      {retentionOutcome.map((sentence, index) => (
+        <p key={`${index}-${sentence}`} role="status" className="text-xs leading-5 text-ink-500">
+          {sentence}
+        </p>
+      ))}
+      {decisionProblem ? (
+        <p role="alert" className="text-xs font-medium leading-5 text-error-600">
+          {decisionProblem}
+        </p>
       ) : null}
 
       {problem ? <p className="text-xs font-medium leading-5 text-error-600">{problem}</p> : null}
