@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
@@ -363,6 +364,7 @@ fun AppearanceScreen(
      * four cards became one navigation.
      */
     onOpenSpeechAndAi: () -> Unit,
+    onOpenMyAiKeys: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -521,6 +523,22 @@ fun AppearanceScreen(
             title = "Speech & AI",
             summary = speechSummary,
             onClick = onOpenSpeechAndAi,
+        )
+
+        /*
+         * ON THIS SIDE OF THE BOUNDARY BECAUSE A KEY FOLLOWS THE ACCOUNT, NOT THE HANDSET.
+         * The row above leads to what THIS PHONE can do offline; this one leads to a
+         * credential stored on the server against this account, which applies on every
+         * device the designer signs in on and on the web. It is deliberately NOT in the
+         * admin hub beside the deployment's keys: those are the organisation's, this is
+         * the person's own, and confusing the two is how somebody ends up paying for work
+         * they did not do.
+         */
+        SettingsRow(
+            icon = Icons.Filled.VpnKey,
+            title = "My AI keys",
+            summary = "Use your own OpenAI, Gemini or Claude key for AI work, billed to you",
+            onClick = onOpenMyAiKeys,
         )
     }
 }
