@@ -59,7 +59,7 @@ from app.services.report_questionnaires import attach_questionnaires, questionna
 # The ONE masking rule this application has, imported rather than reimplemented. See the note on
 # `pehchanCardNumber` in the Artisan reference model for why a card number crossing into a stage
 # entry has to go through it, and `record_fields.py:270-283` for the defect that settled it.
-from app.services.records import mask_identity_number
+from app.services.records import derive_age, mask_identity_number
 from app.services.report_templates import apply_report_settings, template as get_template
 from app.services.report_theme import resolve_accent, resolve_font, theme_from_accent
 from app.services.stage_schema import (
@@ -632,29 +632,35 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # is what a researcher typed into the free metadata before the relation existed.
             "specialisation": (_rel(r, "craft", "name")
                                or _meta_value(_meta(r), "specialisation", "specialization")),
-            # ── TWO ANSWERS THIS TABLE STILL CANNOT GIVE, AND WHY THEY ARE LEFT AS THEY ARE ──
+            # ── THE TWO ANSWERS THIS TABLE COULD NOT GIVE, AND NOW CAN ───────────────────────
             #
-            # `experienceYears` and `age` have NO COLUMN on `Artisan`. They are read from three and
-            # one legacy `extraMetadata` spellings respectively, which is where researchers put
-            # them before this registry existed — and `ArtisanForm` has written `extraMetadata`
-            # programmatically (EXIF only) since the raw JSON textarea was removed, so BOTH have
-            # been blank on every artisan created since. `participant.experienceYears` is a
-            # TABLE_COLUMN, so that blank is visible in the participant table of every submitted
-            # report.
+            # `experienceYears` and `age` had NO COLUMN on `Artisan` and were read only from legacy
+            # `extraMetadata` spellings — where researchers put them before the record form was
+            # structured, and which `ArtisanForm` stopped writing when the raw JSON textarea was
+            # removed. So both were blank on every artisan created since, and
+            # `participant.experienceYears` is a TABLE_COLUMN: the blank printed in the participant
+            # table of every submitted report, and the designer typed it back in from a printout.
             #
-            # The legacy reads are KEPT rather than deleted: the records that do carry a value are
-            # exactly the oldest ones, and dropping the read would blank a column that is currently
-            # right for them. But this is not the fix, and it cannot be made into one from this
-            # file. The fix is `experienceYears Int?` and `dateOfBirth DateTime?` on model Artisan
-            # plus the two inputs on the artisan form — an age COLUMN would rot the same way, which
-            # is why the pair is DOB-then-derive and not "add an age box". `record_fields.py` reads
-            # the identical dead keys for the artisan record sheet, so the migration fixes both
-            # surfaces at once. Until then this is the honest state and the report is blank rather
-            # than wrong.
-            "experienceYears": _meta_value(
+            # `Artisan.dateOfBirth` and `Artisan.experienceYears` now exist and the artisan form
+            # collects both, so an artisan IMPORTED into a workshop and one ADDED from inside it
+            # carry the same facts. AGE IS DERIVED from the date rather than stored, for the reason
+            # set out on the column: an age written down is wrong within a year and nothing notices.
+            #
+            # THE LEGACY READ SURVIVES AS A FALLBACK and must not be deleted. The migration copied
+            # every clean numeric value across, but it deliberately refused to guess at the ones it
+            # could not parse — "30+", "about 30" — and those artisans are exactly the oldest and
+            # most thoroughly documented rows. Dropping the fallback would blank a value that is
+            # currently right for them in order to tidy up a line of code.
+            "experienceYears": r.experienceYears if r.experienceYears is not None else _meta_value(
                 _meta(r), "experienceYears", "experience", "yearsOfExperience"
             ),
-            "age": _meta_value(_meta(r), "age"),
+            # `is not None` and NOT `or`: a derived age of 0 is a real answer (an infant), and
+            # `or` would read it as absent and fall through to a stale metadata value. Nobody
+            # documents a newborn artisan, which is exactly why this would never be noticed.
+            "age": (
+                derived if (derived := derive_age(r.dateOfBirth)) is not None
+                else _meta_value(_meta(r), "age")
+            ),
             "gender": r.gender,
             "phone": r.phone,
             "email": r.email,

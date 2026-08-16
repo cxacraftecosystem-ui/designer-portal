@@ -45,6 +45,7 @@ import pytest
 # Importing this module is what installs the twenty-two stages into the registry.
 import app.services.stage_definitions  # noqa: F401
 from app.services import design_workshops as dw
+from app.services.records import derive_age
 from app.services.stage_schema import (
     ENUMS,
     REFERENCE_HYDRATION,
@@ -149,6 +150,14 @@ ARTISAN_CARRIED = {
     "dos": "participant.dos",
     "donts": "participant.donts",
     "recordedAt": "participant.documentedOn",
+    # Added 2026-08-16 with the columns themselves. `dateOfBirth` reaches `participant.age` and NOT
+    # a date field, because the workshop asks for an age and the age is DERIVED here — see
+    # `records.derive_age` and the note on the column: an age stored is wrong within a year.
+    "dateOfBirth": "participant.age (derived, never stored)",
+    "experienceYears": "participant.experienceYears",
+    # Still carried, and now only as the FALLBACK for records written before the two columns above
+    # existed. The migration copied every clean numeric value across and deliberately left the ones
+    # it could not parse ("30+", "about 30") in the JSON rather than guessing at them.
     "extraMetadata": "participant.experienceYears + participant.age + specialisation (legacy)",
     "craftId": "participant.specialisation",
     "locationId": "participant.village/state/district/pincode/address/subjectLocation",
@@ -617,37 +626,59 @@ def test_the_pehchan_card_number_arrives_masked_and_the_aadhaar_does_not_arrive_
     assert row.aadhaarNumber not in str(data)
 
 
-def test_experience_and_age_come_only_from_legacy_metadata_and_this_is_the_known_gap():
-    """A SOURCE THAT NO LONGER WRITES, PINNED SO THE NEXT PERSON DOES NOT RE-DISCOVER IT.
+def test_experience_and_age_now_come_from_columns_with_the_legacy_metadata_behind_them():
+    """THE GAP THIS TEST WAS WRITTEN TO PIN IS CLOSED, and this is what replaced it.
 
-    ``Artisan`` has no ``experienceYears`` and no ``age`` column. Both are read from the
-    ``extraMetadata`` spellings researchers used before the record registry existed, and
-    ``ArtisanForm`` has written ``extraMetadata`` programmatically (EXIF only) since the raw JSON
-    textarea was removed — so both are blank on every artisan created since, and
-    ``participant.experienceYears`` is a TABLE_COLUMN, so that blank is visible in the participant
-    table of every submitted report.
+    It used to assert that ``Artisan`` had NO ``experienceYears`` and NO ``age`` column, that both
+    were read only from the ``extraMetadata`` spellings researchers used before the record registry
+    existed, and that both were therefore blank on every artisan created after ``ArtisanForm``
+    stopped writing free metadata. Its own docstring named the assertion that should fail the day
+    somebody did the migration. That day was 2026-08-16.
 
-    The legacy read is KEPT because the records that do carry a value are the oldest ones and
-    dropping it would blank a column that is currently right for them. Two assertions, in this
-    order: the fallback still works, and there is still no column. The second is what should fail
-    the day somebody does the migration — at which point this test's remaining half becomes the
-    regression guard for the old records.
+    The consequence it was pinning was not abstract: ``participant.age`` and
+    ``participant.experienceYears`` are ``fromref`` fields whose help text promises a designer the
+    picker fills them in, and ``experienceYears`` is a TABLE_COLUMN — so an imported artisan arrived
+    with both boxes blank, an artisan added from inside the workshop had nowhere to record them, and
+    the blank printed in the participant table of every submitted report.
+
+    Four assertions, and the last two are the ones that keep the migration honest:
+
+    1. both columns exist;
+    2. when a row carries them, the COLUMNS win — a stale legacy value cannot shadow a current one;
+    3. when a row does not (every record written before the migration could parse it), the legacy
+       metadata is still read, so the oldest and best-documented artisans do not go blank;
+    4. AGE IS DERIVED FROM THE DATE and not stored, which is why the column is a birthday. An age
+       written down is wrong within a year and nothing in this system would ever say so.
     """
-    assert "experienceYears" not in _columns("Artisan"), (
-        "Artisan gained an experienceYears column — read it in the data lambda, keep the three "
-        "legacy extraMetadata spellings as a fallback, and rewrite this test"
+    columns = _columns("Artisan")
+    assert "experienceYears" in columns, "the migration is the point of this test"
+    assert "dateOfBirth" in columns
+    assert "age" not in columns, (
+        "an age COLUMN is the mistake this design exists to avoid: it is wrong within a year of "
+        "being written and nothing would ever notice. Store the date, derive the age."
     )
-    assert "age" not in _columns("Artisan") and "dateOfBirth" not in _columns("Artisan")
 
-    data = dw.REFERENCE_MODELS["Artisan"].data(_artisan_row(), None)
-    assert data["experienceYears"] == 22
-    assert data["age"] == 44
+    # 2. The columns win over the legacy metadata, which is deliberately set to DIFFERENT values.
+    documented = _artisan_row(
+        dateOfBirth=datetime(1971, 1, 8), experienceYears=31,
+        extraMetadata={"experienceYears": 22, "age": 44},
+    )
+    carried = dw.REFERENCE_MODELS["Artisan"].data(documented, None)
+    assert carried["experienceYears"] == 31, "the column must outrank the legacy metadata"
+    assert carried["age"] != 44, "age must be derived from dateOfBirth, not read from metadata"
+    assert carried["age"] == derive_age(datetime(1971, 1, 8))
 
-    modern = dw.REFERENCE_MODELS["Artisan"].data(
+    # 3. A row from before the migration still answers, out of the metadata.
+    legacy = dw.REFERENCE_MODELS["Artisan"].data(_artisan_row(), None)
+    assert legacy["experienceYears"] == 22
+    assert legacy["age"] == 44
+
+    # 4. And a row with neither says nothing, rather than inventing a zero.
+    silent = dw.REFERENCE_MODELS["Artisan"].data(
         _artisan_row(extraMetadata={"mediaExif": [{"lat": 1}]}), None
     )
-    assert modern["experienceYears"] is None, "the known gap changed shape without a note"
-    assert modern["age"] is None
+    assert silent["experienceYears"] is None
+    assert silent["age"] is None
 
 
 def test_the_device_fix_never_reaches_the_workshop_and_the_subject_pin_does():
@@ -701,6 +732,12 @@ def _artisan_row(**overrides):
         notes="Prefers morning sessions.", dos="1. Speak in Odia\n2. Show samples",
         donts="1. Do not photograph the loom shed",
         extraMetadata={"experienceYears": 22, "age": 44},
+        # DEFAULTED TO None so this row is the LEGACY case: no columns, values only in metadata.
+        # That keeps every assertion written before the columns existed meaningful — they are now
+        # assertions that the fallback still works for the old records, which is the half of the
+        # old behaviour that had to survive. A row WITH the columns is built explicitly by the test
+        # that covers precedence.
+        dateOfBirth=None, experienceYears=None,
         recordedAt=datetime(2025, 3, 12, 9, 0), recordedTimezone="Asia/Kolkata",
         craft=SimpleNamespace(name="Sambalpuri Ikat"), location=_location_row(),
     )

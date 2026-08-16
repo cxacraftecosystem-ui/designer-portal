@@ -540,6 +540,12 @@ export function ArtisanForm({
         name: requiredText(form, "name"),
         localName: textValue(form, "localName"),
         gender: textValue(form, "gender"),
+        // `null` and not `undefined` when blank: on a PATCH an omitted key means "leave it alone",
+        // so clearing a date somebody entered by mistake would silently do nothing.
+        dateOfBirth: textValue(form, "dateOfBirth") || null,
+        experienceYears: textValue(form, "experienceYears")
+          ? Number(textValue(form, "experienceYears"))
+          : null,
         phone: textValue(form, "phone"),
         email: textValue(form, "email"),
         place: requiredText(form, "place"),
@@ -759,6 +765,42 @@ export function ArtisanForm({
                 <option key={option}>{option}</option>
               ))}
             </Select>
+          </Field>
+          {/* ── THE TWO FACTS THE DESIGN WORKSHOP ASKS OF EVERY ARTISAN ────────────────────
+              The workshop's participant table declares `age` and `experienceYears` as fields the
+              reference picker fills in — their help text promises the designer exactly that — and
+              until these inputs existed nothing on this page could answer either. So an artisan
+              IMPORTED into a workshop arrived with both boxes blank and an artisan ADDED from
+              inside one had nowhere to record them, and the designer typed them in from a printout
+              beside a row that already named this record.
+
+              A DATE OF BIRTH AND NOT AN AGE. The workshop asks for an age; storing one would be
+              wrong within a year with nothing to say so, so the server derives it from this date
+              every time it is read. That is also why the helper text says what it says: somebody
+              filling this in is answering a question they were not asked, and needs to know why. */}
+          <Field label="Date of birth">
+            <TextInput
+              name="dateOfBirth"
+              type="date"
+              defaultValue={initial?.dateOfBirth ? String(initial.dateOfBirth).slice(0, 10) : ""}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={markDirty}
+            />
+          </Field>
+          <Field label="Experience (years)">
+            <TextInput
+              name="experienceYears"
+              type="number"
+              inputMode="numeric"
+              /* 0..90 mirrors the stage registry's own bounds for `participant.experienceYears`.
+                 A wider range here would accept a number the workshop then refuses on a row it
+                 filled in from this very record. */
+              min={0}
+              max={90}
+              step={1}
+              defaultValue={initial?.experienceYears ?? ""}
+              onChange={markDirty}
+            />
           </Field>
           {/* FieldBlock, not Field: PhoneField contains a themed dropdown, and `Field` is a
               `<label>` — so the visible word "Phone" bound itself to the dial-code trigger (the

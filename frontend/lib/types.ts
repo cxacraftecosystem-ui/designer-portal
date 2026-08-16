@@ -176,6 +176,16 @@ export type Artisan = {
    * as regulated personal data: never render it in a list, a card or an export view.
    */
   aadhaarNumber?: string | null;
+  /**
+   * Date of birth, ISO. The design workshop's participant table shows an AGE, derived from this
+   * server-side on every read — an age stored would be wrong within a year with nothing to say so.
+   * Both this and `experienceYears` exist because the workshop declares them as fields the
+   * reference picker fills in, and until the columns existed importing an artisan left both blank
+   * and adding one had nowhere to put them.
+   */
+  dateOfBirth?: string | null;
+  /** Years practising the craft. 0..90, matching the stage registry's own bounds. */
+  experienceYears?: number | null;
   /** Does the artisan hold a PM Vishwakarma Pehchan card? Defaults to true on create. */
   pehchanCardAvailable?: boolean;
   /** Only ever set while `pehchanCardAvailable` is true — the API nulls it whenever the answer is No. */

@@ -81,6 +81,23 @@ class ArtisanCreate(APIModel):
     status: str = "PENDING"
     recordedAt: datetime | None = None
     recordedTimezone: str = "Asia/Kolkata"
+    # ── THE TWO FACTS THE DESIGN WORKSHOP ASKS EVERY ARTISAN FOR ────────────────────────────
+    #
+    # `participant.age` and `participant.experienceYears` are `fromref()` fields on the workshop's
+    # participant table — their help text promises the designer that picking an artisan fills them
+    # in — and until these two existed the Artisan table had no column behind either. Importing an
+    # artisan left both blank and adding one from inside the workshop had nowhere to put them, so
+    # the designer typed them back in from a printout on a row that already named the record. That
+    # is the behaviour the reference picker exists to end, and `experienceYears` is a TABLE_COLUMN,
+    # so the blank printed in the participant table of every submitted report.
+    #
+    # A DATE, NOT AN AGE, and the workshop's own `age` field is derived from it. See the column
+    # comment in schema.prisma: an age written down is wrong within a year and nothing notices.
+    dateOfBirth: datetime | None = None
+    # 0..90 matches `fromref("experienceYears", …, min_value=0, max_value=90)` in the stage
+    # registry EXACTLY. Two different ceilings would mean a number the artisan form accepts and the
+    # workshop then refuses on a row it filled in itself.
+    experienceYears: int | None = Field(default=None, ge=0, le=90)
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
 
@@ -136,6 +153,8 @@ class ArtisanUpdate(APIModel):
     aadhaarNumber: str | None = None
     pehchanCardAvailable: bool | None = None
     pehchanCardNumber: str | None = None
+    dateOfBirth: datetime | None = None
+    experienceYears: int | None = Field(default=None, ge=0, le=90)
     dos: str | None = None
     donts: str | None = None
     craftId: str | None = None

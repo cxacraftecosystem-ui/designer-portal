@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services.artisan_identity import mask_aadhaar
+from app.services.records import derive_age
 from app.services.rich_text import plain_from_stored
 
 # ---------------------------------------------------------------------------
@@ -126,6 +127,11 @@ def cell(value: Any) -> str:
     so the existing corpus renders byte-for-byte as it did before this line existed.
     """
     return "" if value is None else str(plain_from_stored(value)).strip()
+
+
+def _first_answer(*values: Any) -> Any:
+    """The first value that is not None. NOT `or`: 0 and "" are answers, not absences."""
+    return next((v for v in values if v is not None), None)
 
 
 def meta_of(record: Any) -> dict[str, Any]:
@@ -305,11 +311,28 @@ ARTISAN = RecordSpec(
             lambda a: "Yes" if a.pehchanCardAvailable else "No",
         ),
         _f("Pehchan card number", lambda a: mask_aadhaar(a.pehchanCardNumber)),
-        _f("Age", lambda a: meta_val(meta_of(a), "age")),
+        # DATE OF BIRTH IS PRINTED AND AGE IS DERIVED BESIDE IT, in that order, because they are two
+        # different kinds of statement: the date is what the artisan told a researcher and does not
+        # change, and the age is a fact about today that this sheet computes each time it is drawn.
+        # Printing only the age would put a number on a record sheet that is quietly wrong from the
+        # next birthday onwards — which is what this sheet did for years, reading a legacy
+        # `extraMetadata` key no form had written since the raw JSON textarea was removed.
+        _f("Date of birth", lambda a: getattr(a, "dateOfBirth", None)),
+        # `is not None` and NOT `or`: a derived 0 is a real answer and `or` would read it
+        # as absent and print a stale metadata value instead.
+        _f("Age", lambda a: _first_answer(
+            derive_age(getattr(a, "dateOfBirth", None)),
+            meta_val(meta_of(a), "age"),
+        )),
         _f("Gender", lambda a: a.gender),
         _f(
             "Experience (years)",
-            lambda a: meta_val(meta_of(a), "experienceYears", "experience", "yearsOfExperience"),
+            # The column first, the legacy metadata behind it: the migration copied every clean
+            # number across and deliberately left the ones it could not parse ("30+", "about 30")
+            # in the JSON rather than guessing, and those rows are the oldest and best documented.
+            lambda a: getattr(a, "experienceYears", None)
+            if getattr(a, "experienceYears", None) is not None
+            else meta_val(meta_of(a), "experienceYears", "experience", "yearsOfExperience"),
         ),
         _f("Do's", lambda a: a.dos),
         _f("Don'ts", lambda a: a.donts),
