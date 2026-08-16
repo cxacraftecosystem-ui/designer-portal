@@ -253,6 +253,25 @@ data class StageDraft(
      */
     val custom: Map<String, JsonElement> = emptyMap(),
     /**
+     * WHO LAST SET EACH FIELD, exactly as the server reported it on the read this stage was folded
+     * from. Rendered under each box on the stage screen.
+     *
+     * ── IT IS THE SERVER'S ANSWER AND THIS DEVICE NEVER WRITES IT ────────────────────────────────
+     *
+     * A designer typing into a box does NOT restamp anything here, and that is deliberate rather
+     * than unfinished. Authorship is decided by `entry_provenance.merge_entry_provenance`, which
+     * ignores whatever a client sends — see [DwStageProvenanceDto], whose own note says a stamp a
+     * client could set is a stamp a client could forge. So a locally-invented stamp would be a claim
+     * this handset is not entitled to make AND would be overwritten by the truth on the next read.
+     * Showing what the server last said, and letting the next fold correct it, is the honest local
+     * behaviour.
+     *
+     * NO [WORKSHOP_DRAFT_SCHEMA_VERSION] RUNG IS OWED, by that constant's own rule: this is a purely
+     * additive key. A draft written by an older build simply has none, which renders as no
+     * attribution line — indistinguishable, correctly, from a field nobody has stamped.
+     */
+    val provenance: DwStageProvenanceDto = DwStageProvenanceDto(),
+    /**
      * WHETHER THIS DEVICE HAS EVER READ THE SERVER'S `_custom` ROW FOR THIS STAGE — the one fact that
      * decides whether [custom] may be sent as a REPLACEMENT rather than as a merge.
      *

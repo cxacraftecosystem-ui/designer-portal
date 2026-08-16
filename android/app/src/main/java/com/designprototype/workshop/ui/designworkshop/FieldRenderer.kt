@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.report.BlockKind
+import com.designprototype.workshop.data.DwFieldStampDto
 import com.designprototype.workshop.data.DwCustomFieldDto
 import com.designprototype.workshop.data.DwDerived
 import com.designprototype.workshop.data.DwFieldType
@@ -265,11 +266,27 @@ fun FieldRenderer(
      * the same class of failure that once turned a five-photograph selection into one photograph.
      */
     onPatch: (Map<String, JsonElement?>) -> Unit = {},
+    /**
+     * WHO LAST SET THIS FIELD, as the server reported it on the read this stage was folded from.
+     *
+     * Null renders nothing, which is what lets this be threaded one screen at a time: a caller that
+     * does not pass it behaves exactly as it did before this parameter existed. See
+     * [DwFieldStampDto.attribution] for the two sentences and why there are only two.
+     */
+    stamp: DwFieldStampDto? = null,
 ) {
     val type = remember(field.type) { DwFieldType.of(field.type) }
     val parentField = remember(field.refFilterBy, siblings) { siblings[field.refFilterBy] }
     val parentValue = rowValues[field.refFilterBy]
 
+    /*
+     * THE ATTRIBUTION LINE IS APPENDED TO THIS COLUMN, ONCE, RATHER THAN ADDED TO EACH BRANCH.
+     *
+     * The `when (type)` below has more than a dozen arms — every scalar shape, media, GEO, REF, the
+     * rich-text editor — and threading a line into all of them would mean the next arm somebody adds
+     * silently lacks it. Placed at the end of this column it is structurally impossible to miss:
+     * whatever the branch drew, the stamp is the last thing in the field's own column.
+     */
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -547,6 +564,14 @@ fun FieldRenderer(
                 field, value, onChange, enabled, error, resetKey = resetKey,
                 services = services,
             )
+        }
+
+        // Last in the column, under whatever the branch above drew. `attribution()` returns null for
+        // an unstamped field — the ordinary state on every row written before the column existed —
+        // and a label reading "Unknown" on all of them would train a designer to stop reading it at
+        // all, at which point it cannot do its one job on the rows that DO carry an author.
+        stamp?.attribution()?.let { line ->
+            Text(line, color = MaterialTheme.field.muted, fontSize = 11.sp)
         }
     }
 }

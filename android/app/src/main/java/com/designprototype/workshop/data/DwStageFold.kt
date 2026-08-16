@@ -406,6 +406,13 @@ fun dwFoldServerStage(
             order = if (base.order != 0) base.order else (spec?.number ?: 0),
             values = values,
             custom = custom,
+            // TAKEN WHOLESALE FROM THE SERVER, not merged with what the draft held — unlike `values`
+            // above, which folds key by key so an offline edit is never overwritten. These are not
+            // answers and there is nothing of the designer's to protect: the server is the only
+            // author of a stamp, so its latest word simply replaces the previous one. Merging would
+            // preserve a stamp for a value the server has since re-attributed, which is the one
+            // outcome worse than showing none.
+            provenance = bucket.provenance,
             // EARNED HERE, on the same evidence and in the same breath as the read: the bucket's third
             // key IS the server's `_custom` row, so from this moment the device knows what that row
             // holds — including that it holds nothing. See [StageDraft.customSeen].

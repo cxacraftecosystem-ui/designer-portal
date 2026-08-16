@@ -52,6 +52,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import com.designprototype.workshop.data.DwStageProvenanceDto
+import com.designprototype.workshop.data.DwFieldStampDto
 import com.designprototype.workshop.data.AppScope
 import com.designprototype.workshop.data.CUSTOM_ENTITY_KEY
 import com.designprototype.workshop.data.ConnectivityObserver
@@ -182,6 +184,16 @@ private data class CollectionRow(
 private data class StageState(
     val singleton: Map<String, JsonElement> = emptyMap(),
     val collections: Map<String, List<CollectionRow>> = emptyMap(),
+    /**
+     * WHO LAST SET EACH FIELD, as the server reported it — [StageDraft.provenance], carried onto the
+     * screen state so the attribution under a box and the value in it come from one read.
+     *
+     * NEVER WRITTEN BY THIS SCREEN. A keystroke does not restamp anything: authorship is decided by
+     * `entry_provenance.merge_entry_provenance`, which ignores whatever a client sends, so a locally
+     * invented stamp would be a claim this handset is not entitled to make and would be replaced by
+     * the truth on the next fold. It is seeded and then read.
+     */
+    val provenance: DwStageProvenanceDto = DwStageProvenanceDto(),
     /**
      * Answers to the questions this workshop's DESIGNER added to this stage — [StageDraft.custom].
      *
@@ -1439,6 +1451,7 @@ fun StageScreen(
                 onValueChange = { key, value ->
                     edit { current -> current.copy(singleton = current.singleton.put(key, value)) }
                 },
+                stamps = state.provenance.singleton,
                 onPatch = { patch ->
                     // ONE state write for the whole hydration. Calling `onValueChange` once per key
                     // would work here by luck — the singleton setter reads through `edit`'s
@@ -1474,6 +1487,9 @@ fun StageScreen(
             CollectionSection(
                 entity = entity,
                 rows = state.collections[entity.key].orEmpty(),
+                // This entity's slice of the stage's stamps. Keyed by entry id inside; see
+                // [CollectionSection.stampsByEntry] for why it may never be keyed by position.
+                stampsByEntry = state.provenance.collections[entity.key].orEmpty(),
                 media = media,
                 services = services,
                 focus = focus?.takeIf { it.entityKey == entity.key },
@@ -1706,6 +1722,13 @@ private fun EntitySection(
     /** Hydration from a reference pick: several keys, one write. See `putAll` and [FieldRenderer]. */
     onPatch: (Map<String, JsonElement?>) -> Unit,
     /**
+     * WHO LAST SET EACH FIELD OF THIS RECORD, keyed by field key.
+     *
+     * One record's worth, resolved by the caller — the singleton's map, or the map for THIS ROW's
+     * entry id. Empty renders nothing, so a caller that does not pass it behaves as before.
+     */
+    stamps: Map<String, DwFieldStampDto> = emptyMap(),
+    /**
      * What the field inputs' local text buffers belong to — see `resetKey` on [FieldRenderer].
      *
      * The entity key is right for a singleton, which has exactly one record. A collection passes the
@@ -1840,6 +1863,7 @@ private fun EntitySection(
                 siblings = fieldsByKey,
                 rowValues = values,
                 onPatch = onPatch,
+                stamp = stamps[field.key],
             )
         }
         if (advanced.isNotEmpty()) {
@@ -1867,6 +1891,7 @@ private fun EntitySection(
                         siblings = fieldsByKey,
                         rowValues = values,
                         onPatch = onPatch,
+                        stamp = stamps[field.key],
                     )
                 }
             }
@@ -1932,6 +1957,17 @@ private fun CollectionSection(
      * about, and it puts every message after the first collection on the wrong row.
      */
     errorsByRow: Map<Int, Map<String, String>> = emptyMap(),
+    /**
+     * WHO LAST SET EACH FIELD OF EACH ROW, keyed BY ENTRY ID and then by field key.
+     *
+     * BY ENTRY ID AND NEVER BY POSITION, which is the same rule [DwStageProvenanceDto] states for
+     * the wire and for the same reason: the server, its report builder and this device each sort
+     * these rows differently, so a positional lookup shows one participant's edits under another
+     * participant's name — in the table that exists to prove who attended. `errorsByRow` above is
+     * keyed by screen position deliberately and is NOT a precedent for this: that translation was
+     * done once, against the array that was actually sent.
+     */
+    stampsByEntry: Map<String, Map<String, DwFieldStampDto>> = emptyMap(),
     onRowsChange: (List<CollectionRow>) -> Unit,
 ) {
     // OPEN ON THE ROW THAT HOLDS IT. Rows are collapsed by default, so a link to "the material on
@@ -2034,7 +2070,13 @@ private fun CollectionSection(
                             }
                         }
                     )
-                }
+                },
+                // THIS ROW's stamps, looked up by the entry id the server knows it by. A row the
+                // server has never seen has no entry id and no stamps — correct, since nobody but
+                // the person typing has set anything on it.
+                stamps = (row.values["_entryId"] as? JsonPrimitive)?.content
+                    ?.let { stampsByEntry[it] }
+                    .orEmpty(),
             )
         }
     }
@@ -2059,6 +2101,8 @@ private fun CollectionRowCard(
     onDelete: () -> Unit,
     onValueChange: (String, JsonElement?) -> Unit,
     onPatch: (Map<String, JsonElement?>) -> Unit,
+    /** Who last set each field of THIS row. Empty for a row the server has never seen. */
+    stamps: Map<String, DwFieldStampDto> = emptyMap(),
 ) {
     // Opened when the field they were sent to is behind "More detail", closed otherwise — and
     // ordinary state from then on, so the disclosure still answers its own header.
@@ -2108,6 +2152,7 @@ private fun CollectionRowCard(
                     onValueChange = onValueChange,
                     onPatch = onPatch,
                     resetKey = row.rowId,
+                    stamps = stamps,
                 )
                 TextButton(
                     onClick = onDelete,
@@ -2322,6 +2367,9 @@ private fun focusOpensAdvanced(stage: StageDto, focus: DwStageFocus?): Boolean {
 private fun fromDraft(stage: StageDto, draft: StageDraft): StageState = StageState(
     singleton = draft.values,
     custom = draft.custom,
+    // Straight off the draft the boxes are filled from, in the same breath, so the attribution under
+    // a field and the value in it can never come from two different reads of the stage.
+    provenance = draft.provenance,
     // Carried through rather than re-derived: this branch reads no server copy, so it can neither
     // earn the fact nor honestly disclaim one the draft already recorded.
     customSeen = draft.customSeen,

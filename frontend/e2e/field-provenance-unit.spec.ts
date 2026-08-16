@@ -20,77 +20,104 @@ import { fieldProvenanceLine } from "../components/designworkshop/FieldProvenanc
  * Getting a real stamp onto a real box needs a workshop, a stage, an entry the server has already
  * seen, and a second account to have edited one field of it — minutes of fixture, admin
  * credentials, and rows left behind. What is actually worth pinning is the DECISION: given a stamp,
- * which of the three sentences is right. That is a pure function, so it is tested as one. The
+ * which of the two sentences is right. That is a pure function, so it is tested as one. The
  * threading (store → page → grid → control) is covered by the type-checker, which is the correct
  * tool for "is this prop connected".
  *
- * ── THE CASE THE WHOLE MODEL TURNS ON IS THE THIRD ONE ───────────────────────────────────────────
+ * ── THE CASE THIS FILE EXISTS FOR, AND THE MISTAKE IT CAUGHT ─────────────────────────────────────
  *
- * A stamp naming ONLY a record is a value that was copied and never touched — the record is the
- * author. A stamp naming ONLY a person is a value somebody typed. A stamp naming BOTH is a value
- * that arrived from the record and was then changed here, and that is precisely the moment
- * provenance moves from the record's author to the editor. If a reader cannot tell the second from
- * the third at a glance, the distinction may as well not be stored — so it is asserted explicitly,
- * and asserted as a DIFFERENCE rather than as two strings that happen to be right today.
+ * The server writes exactly two sources and they are mutually exclusive. `reference` means hydration
+ * wrote the value from a shared record, and its `by` is THAT RECORD's author. `designer` means a
+ * person on this workshop typed or changed it. Rule 3 in `entry_provenance.py` REPLACES the whole
+ * stamp on an edit, so "copied from a record and then edited here" is not a state that occurs.
+ *
+ * The first version of the component rendered a `reference` stamp carrying a name as
+ * "Sita Devi — edited here" — a sentence about somebody who never opened the workshop, since Sita
+ * Devi is whoever recorded the artisan one table away. Attributing an edit to a person who did not
+ * make it is worse than saying nothing, and it is the kind of wrongness that reads perfectly.
  */
 
 test.describe("the attribution line under a stage field", () => {
   test("a value nobody has stamped says nothing at all", () => {
-    // An unstamped field is the ordinary case on a stage nobody has pushed yet. A line reading
-    // "unknown" under forty boxes would be noise on every new workshop.
+    // An unstamped field is the ordinary case on every row written before this column existed. A
+    // line reading "unknown" under forty boxes would be noise that trains designers to stop reading
+    // the label at all — at which point it cannot do its job on the rows that DO carry an author.
     expect(fieldProvenanceLine(undefined)).toBe("");
     expect(fieldProvenanceLine(null)).toBe("");
     expect(fieldProvenanceLine({})).toBe("");
+    // A designer-sourced stamp with no author is the same state and must also stay silent.
+    expect(fieldProvenanceLine({ source: "designer", at: "2026-08-14T09:00:00Z" })).toBe("");
   });
 
-  test("a value copied from a record and never touched is attributed to the record", () => {
-    const line = fieldProvenanceLine({ source: "reference", refModel: "Artisan", refId: "art_1" });
-    expect(line).toBe("From the artisan record");
-    // The record is named in the words a designer uses for it, never as a Prisma model name.
-    expect(line).not.toContain("ProductDocumentation");
-  });
-
-  test("a value somebody typed is attributed to them, with the day", () => {
-    expect(fieldProvenanceLine({ by: "usr_1", byName: "Sita Devi", at: "2026-08-14T09:00:00Z" }))
-      .toMatch(/^Sita Devi, \d+ \w+$/);
-  });
-
-  test("a value that was copied and THEN edited says both, and is not the same as either", () => {
-    const copied = fieldProvenanceLine({ source: "reference", refModel: "Artisan" });
-    const typed = fieldProvenanceLine({ by: "usr_1", byName: "Sita Devi", at: "2026-08-14T09:00:00Z" });
-    const edited = fieldProvenanceLine({
+  test("a hydrated value names the RECORD, and its person is that record's author", () => {
+    // THE ASSERTION THIS FILE EXISTS FOR. `source: "reference"` means hydration wrote the value from
+    // a shared record, and `by` is THAT RECORD's author — not anybody who touched this workshop
+    // (entry_provenance.py, rule 1). An earlier version of this component rendered exactly this
+    // stamp as "Sita Devi — edited here", which is a sentence about a person who never opened the
+    // workshop: Sita Devi recorded the artisan, one table away. Attributing an edit to somebody who
+    // did not make it is worse than showing nothing at all.
+    const line = fieldProvenanceLine({
       source: "reference",
       refModel: "Artisan",
-      by: "usr_1",
-      byName: "Sita Devi",
-      at: "2026-08-14T09:00:00Z"
+      refId: "art_1",
+      by: "usr_9",
+      byName: "Sita Devi"
     });
-
-    expect(edited).toContain("Sita Devi");
-    expect(edited).toContain("edited here");
-    // The assertions that matter: it is DISTINGUISHABLE from both of the other two. Two of these
-    // rendering the same sentence is the failure, and it would not be caught by checking any one of
-    // them in isolation.
-    expect(edited).not.toBe(copied);
-    expect(edited).not.toBe(typed);
+    expect(line).toBe("From the artisan record, by Sita Devi");
+    expect(line).not.toContain("edited");
   });
 
-  test("a deleted account is named as a person, never as a cuid", () => {
-    // The stamp keeps its `by` id when the account goes, because "attributed to somebody no longer
-    // on record" is more useful than dropping the attribution. Printing the id would tell a designer
-    // nothing and read as a bug.
-    const line = fieldProvenanceLine({ by: "cmf3k2xyz0000abcd", byName: null, at: "2026-08-14T09:00:00Z" });
+  test("a hydrated value whose record author is gone still names the record", () => {
+    // The record answers even when the account that recorded it does not, so the clause is dropped
+    // rather than replaced with a cuid or with the word "unknown".
+    const line = fieldProvenanceLine({ source: "reference", refModel: "ToolDocumentation", by: "usr_x" });
+    expect(line).toBe("From the tool record");
+    expect(line).not.toContain("usr_x");
+  });
+
+  test("a hydrated value with no author at all names the record", () => {
+    expect(fieldProvenanceLine({ source: "reference", refModel: "Craft" })).toBe("From the craft record");
+  });
+
+  test("a value somebody typed here is attributed to them, with the day", () => {
+    expect(
+      fieldProvenanceLine({ source: "designer", by: "usr_1", byName: "Ravi Kumar", at: "2026-08-14T09:00:00Z" })
+    ).toMatch(/^Ravi Kumar, \d+ \w+$/);
+  });
+
+  test("typing over a hydrated field reads as the designer's, with no trace of the record", () => {
+    // Rule 3 REPLACES the whole stamp, so this is what the server actually sends once a designer
+    // types over a hydrated value: a plain designer stamp with no refModel. It must not mention the
+    // record, because the record is no longer the source of what is in the box.
+    const line = fieldProvenanceLine({
+      source: "designer",
+      by: "usr_1",
+      byName: "Ravi Kumar",
+      at: "2026-08-14T09:00:00Z"
+    });
+    expect(line).not.toContain("record");
+    expect(line).toContain("Ravi Kumar");
+  });
+
+  test("a deleted editor is named as a person, never as a cuid", () => {
+    const line = fieldProvenanceLine({
+      source: "designer",
+      by: "cmf3k2xyz0000abcd",
+      byName: null,
+      at: "2026-08-14T09:00:00Z"
+    });
     expect(line).toContain("former colleague");
     expect(line).not.toContain("cmf3k2xyz0000abcd");
   });
 
   test("a stamp with no time prints the author alone rather than inventing one", () => {
-    expect(fieldProvenanceLine({ by: "usr_1", byName: "Sita Devi" })).toBe("Sita Devi");
+    expect(fieldProvenanceLine({ source: "designer", by: "usr_1", byName: "Ravi Kumar" })).toBe("Ravi Kumar");
   });
 
   test("an unparseable timestamp degrades to the author rather than to Invalid Date", () => {
     // The API is entitled to send a shape this build does not expect; `new Date("soon")` is NaN and
     // `toLocaleDateString` on it renders the words "Invalid Date" straight onto the form.
-    expect(fieldProvenanceLine({ by: "usr_1", byName: "Sita Devi", at: "soon" })).toBe("Sita Devi");
+    expect(fieldProvenanceLine({ source: "designer", by: "usr_1", byName: "Ravi Kumar", at: "soon" }))
+      .toBe("Ravi Kumar");
   });
 });

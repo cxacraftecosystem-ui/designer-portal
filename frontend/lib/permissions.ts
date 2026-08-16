@@ -300,6 +300,31 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     // Creating is a CONTROL, not a route — there is no `/design-workshops/new` — so it is gated
     // where it is rendered (the page) and where it is performed (`lib/designWorkshopStore.ts` for
     // the offline path, `POST /design-workshops` for the online one), not here.
+    /*
+      THE PROVENANCE VIEW IS ADMIN, AND IT OUTRANKS `/design-workshops` BY BEING LONGER.
+
+      `routeGuardFor` keeps the LONGEST matching rule rather than the first, so position in this
+      array is irrelevant and this row wins over the `/design-workshops` prefix on its own path
+      regardless of where it sits. (An earlier draft of this comment claimed the opposite and put
+      the row here to exploit it; both halves were wrong, and a rule that depends on array order
+      would be a live hazard the day somebody sorted this table.)
+
+      It uses a `:id` segment, which `routeMatches` did not understand until this row needed it —
+      see that function.
+
+      Why admin and not the workshop's own designers: this view crosses OUT of the workshop into the
+      shared record tables and reports one account's data beside another's, which is the line
+      `isAdmin` draws everywhere else. The stage reads are unaffected — every designer still sees the
+      per-field stamps under their own boxes; what they do not see is the canonical comparison.
+    */
+    path: "/design-workshops/:id/provenance",
+    can: isAdmin,
+    gate: "require_admin (GET /design-workshops/{id}/provenance)",
+    title: "Admin access required",
+    message:
+      "Field-by-field provenance across the shared records reports one account's data beside another's, so it is an admin view. The per-field authorship on each stage is unaffected and stays open to every designer on the workshop."
+  },
+  {
     path: "/design-workshops",
     can: canRunDesignWorkshops,
     gate: "can_run_design_workshops",
@@ -348,8 +373,27 @@ export const ROUTE_GUARDS: RouteGuard[] = [
   { path: "/tools/new", ...RECORD_CREATOR_GUARD }
 ];
 
+/**
+ * Whether one rule covers one pathname, segment by segment.
+ *
+ * TWO BEHAVIOURS, AND THE SECOND IS NEW. A rule still covers its own path and everything beneath it,
+ * which is what lets `/design-workshops` gate every page of every workshop with one row. What it can
+ * now also do is name a VARIABLE segment as `:something`, which matches exactly one segment of any
+ * value — needed the moment a rule has to sit at a path with an id in the middle of it, as
+ * `/design-workshops/:id/provenance` does.
+ *
+ * WHY SEGMENT-WISE AND NOT A REGEX. The old implementation was `startsWith(rulePath + "/")`, which
+ * is a STRING prefix and not a PATH prefix: `/data` would have covered `/database` had such a route
+ * existed. Comparing segments removes that class of accident entirely, and it is the reason
+ * `/questionnaire` and `/questionnaires` cannot reach each other — a property the table's own note
+ * relies on and which was previously true only because neither is a string prefix of the other.
+ */
 function routeMatches(rulePath: string, pathname: string): boolean {
-  return pathname === rulePath || pathname.startsWith(`${rulePath}/`);
+  const rule = rulePath.split("/").filter(Boolean);
+  const actual = pathname.split("/").filter(Boolean);
+  // A rule may be shorter than the path (it covers everything beneath it) but never longer.
+  if (actual.length < rule.length) return false;
+  return rule.every((segment, index) => segment.startsWith(":") || segment === actual[index]);
 }
 
 /** The most specific guard covering `pathname`, or null when the route is open to any signed-in user. */

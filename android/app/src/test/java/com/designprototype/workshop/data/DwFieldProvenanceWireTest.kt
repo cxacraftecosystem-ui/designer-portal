@@ -92,7 +92,13 @@ class DwFieldProvenanceWireTest {
         assertTrue(stamp.fromSharedRecord)
         assertEquals("Artisan", stamp.refModel)
         assertEquals("art_1", stamp.refId)
-        assertEquals("From the record, by Meena Iyer", stamp.attribution())
+        // WORDED IDENTICALLY TO THE WEB, and that is the assertion rather than a coincidence:
+        // `fieldProvenanceLine` in components/designworkshop/FieldProvenance.tsx returns this exact
+        // string for this exact stamp. A designer who reads one sentence on a laptop and another on
+        // the handset for the same field has been told two things by one product and cannot know
+        // which is true. The record is NAMED — "artisan", not "record" — because a designer looking
+        // at a participant row needs to know which of five record types the value came out of.
+        assertEquals("From the artisan record, by Meena Iyer", stamp.attribution())
     }
 
     @Test
@@ -103,7 +109,10 @@ class DwFieldProvenanceWireTest {
         val stamps = bucket().provenance.forRow("participant", "ent_p1")
         assertEquals("usr_asha", stamps["phone"]!!.by)
         assertFalse(stamps["phone"]!!.fromSharedRecord)
-        assertEquals("Edited by Asha Patel", stamps["phone"]!!.attribution())
+        // A designer stamp reads as the person and the day, not as "Edited by" — same as the web.
+        // The old wording said "Edited by Asha Patel" on a field she may simply have been the first
+        // to answer, which is a different claim from the one the stamp makes.
+        assertTrue(stamps["phone"]!!.attribution()!!.startsWith("Asha Patel, "))
         assertEquals("usr_meena", stamps["name"]!!.by)
     }
 
@@ -138,7 +147,10 @@ class DwFieldProvenanceWireTest {
         val stamp = bucket().provenance.forRow("participant", "ent_p2")["name"]!!
         assertEquals("usr_gone", stamp.by)
         assertNull(stamp.byName)
-        assertEquals("From the record, by an account no longer on record", stamp.attribution())
+        // The RECORD still answers when the account that recorded it does not, so the clause about
+        // the person is dropped rather than replaced with a cuid or with the word "unknown". The web
+        // returns this same string for this same stamp.
+        assertEquals("From the artisan record", stamp.attribution())
     }
 
     @Test
@@ -173,7 +185,18 @@ class DwFieldProvenanceWireTest {
         // of those rows is noise that trains a designer to stop reading the label, at which point it
         // cannot do its one job on the rows that DO carry an author.
         assertNull(DwFieldStampDto().attribution())
+        // A `reference` stamp naming NEITHER a record nor a person is silent too. This assertion
+        // predates the rewording and survived it deliberately: the rewritten `attribution()` names
+        // the record ("From the artisan record"), and with no `refModel` the only thing left to say
+        // would be "From the linked record" — a vague sentence pretending to be a fact. The web
+        // returns "" for the same stamp for the same reason.
         assertNull(DwFieldStampDto(source = "reference").attribution())
+        // …but a reference stamp that DOES name its record is not silent, which is what stops the
+        // guard above from being over-applied into "reference stamps say nothing".
+        assertEquals(
+            "From the craft record",
+            DwFieldStampDto(source = "reference", refModel = "Craft").attribution()
+        )
     }
 
     @Test
@@ -187,7 +210,9 @@ class DwFieldProvenanceWireTest {
         )
         assertEquals("import", stamp.source)
         assertFalse(stamp.fromSharedRecord)
-        assertEquals("Edited by Asha Patel", stamp.attribution())
+        // An unknown source falls to the designer rendering, which is the neutral one: it names the
+        // person and the day and claims nothing about where the value came from.
+        assertTrue(stamp.attribution()!!.startsWith("Asha Patel, "))
     }
 
     @Test
