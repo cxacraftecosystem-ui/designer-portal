@@ -56,8 +56,8 @@ android {
             "https://d2b34i3e92al6i.cloudfront.net/api/"
         )
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"$apiBaseUrl\"")
-        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"614092441670-3e5k15srupq9mfpg3aktqfkjvkavu0g3.apps.googleusercontent.com\"")
-        buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"614092441670-5rckig6t1al6plbfll8irn9prcmp446t.apps.googleusercontent.com\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"614092441670-t718gqk8d00iihh3732t39ppm4tram5e.apps.googleusercontent.com\"")
+        buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"614092441670-p6kfpnqqitg4n8dtc3klj815jcaa2h94.apps.googleusercontent.com\"")
         buildConfigField("String", "MAPTILER_API_KEY", "\"OJJYFRqCD2HD2k3BbXGF\"")
 
         /**

@@ -5,3 +5,6 @@
 .env*
 !.env.example
 !.env.local.example
+
+.vercel
+.env*
