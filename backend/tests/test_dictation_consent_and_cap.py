@@ -1101,13 +1101,18 @@ def dictation(monkeypatch):
     """
     from app.api.routes import design_workshops as routes
 
-    seen = SimpleNamespace(provider_calls=[], spends=[], allowance=None)
+    seen = SimpleNamespace(provider_calls=[], spends=[], allowance=None, transcribed_for=[])
 
     async def _workshop(workshop_id, user, **kwargs):
         return _workshop_row(id=workshop_id, dictationConsent=state.consent)
 
-    async def _transcribe(content, filename, mime, settings):
+    async def _transcribe(content, filename, mime, settings, *, user_id=None):
+        # `user_id` IS RECORDED, NOT MERELY TOLERATED. It is what routes a dictation onto the
+        # speaker's own provider key rather than the organisation's, so a stub that quietly swallowed
+        # it would let the route stop passing it and every test here would still pass — while every
+        # designer who had supplied a key silently went back to being billed to the deployment.
         seen.provider_calls.append((len(content), filename, mime))
+        seen.transcribed_for.append(user_id)
         return dict(state.result)
 
     async def _load_allowance(user_id, *, now=None):
@@ -1162,6 +1167,10 @@ def test_a_consented_workshop_reaches_the_provider_and_gets_its_words_back(dicta
     assert payload["languageHint"] == "or"
     assert len(dictation.seen.provider_calls) == 1
     assert dictation.seen.spends == [("usr_1", "2026-08-12")]
+    # THE SPEAKER IS NAMED TO THE TRANSCRIBER, which is what lets their own provider key run this
+    # dictation and take the charge. The route reads it off the token, so passing anything else — or
+    # nothing — would bill the deployment for work a designer chose to pay for themselves.
+    assert dictation.seen.transcribed_for == ["usr_1"]
 
 
 def test_the_consent_gate_is_checked_before_the_cap(dictation):

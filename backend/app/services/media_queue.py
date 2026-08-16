@@ -513,6 +513,12 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
         _value(media, "originalFilename") or "recording.webm",
         _value(media, "mimeType") or "audio/webm",
         settings,
+        # THE UPLOADER, NOT "nobody". This runs in the background, but it is not background
+        # work in the sense that matters for billing: it is one designer's own recording being
+        # transcribed because they uploaded it. Passing None here would mean a designer who
+        # supplied a key had their live dictation billed to them and every uploaded recording
+        # billed to the organisation, which is not a distinction anybody asked for or could see.
+        user_id=_value(media, "uploadedById"),
     )
     mode = transcription_mode(await load_app_settings())
     if result.get("status") == "COMPLETED" and mode in {"REFINED", "REFINED_TRANSLATED"} and result.get("text"):
@@ -662,6 +668,10 @@ async def _process_job(job: Any, settings: Settings) -> None:
             media.originalFilename or "recording.webm",
             media.mimeType or "audio/webm",
             settings,
+            # The person who ASKED for this job, which is who the work is for. Falls back to
+            # the uploader for a job created by a sweep rather than by a person, and to None
+            # when neither is recorded — at which point the organisation pays, correctly.
+            user_id=getattr(job, "requestedById", None) or getattr(media, "uploadedById", None),
         )
         # Apply the configured transcription mode: RAW keeps the plain transcript; REFINED rewrites it
         # into a clean interviewer/interviewee dialogue; REFINED_TRANSLATED also translates to English.

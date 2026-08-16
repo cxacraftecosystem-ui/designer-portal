@@ -441,6 +441,9 @@ async def _transcribe_one_dictation(
         file.filename or "dictation.webm",
         (file.content_type or "audio/webm").split(";")[0].strip(),
         get_settings(),
+        # Live dictation: the person at the microphone is the person asking, so their own key
+        # runs it when they have supplied one.
+        user_id=current_user.id,
     )
     if str(result.get("status") or "").upper() == "UNAVAILABLE":
         # The same reasoning as the OCR route: an empty 200 reads as "you said nothing". And nothing is
@@ -2166,7 +2169,7 @@ async def proofread_ai_layer(
         # the designer is not charged for a run that could never have been recorded. See
         # `ai_layers.check_placement`, which runs the identical checks `layer_create_plan` runs.
         ai_layers.check_placement(ai_layers.LayerKind.PROOFREAD, source)
-        answer = await ai.proofread_text(text, get_settings())
+        answer = await ai.proofread_text(text, get_settings(), user_id=current_user.id)
         plan = ai_verbs.proofread(
             workshop_id=workshop_id,
             source=source,
@@ -2228,7 +2231,7 @@ async def expand_ai_layer(
     answer: Mapping[str, Any] | None = None
     try:
         language = ai_verbs.clean_language(payload.language, what="the note")
-        answer = await ai.expand_text(payload.text, get_settings())
+        answer = await ai.expand_text(payload.text, get_settings(), user_id=current_user.id)
         plan = ai_verbs.expand(
             workshop_id=workshop_id,
             note=payload.text,
@@ -2304,6 +2307,7 @@ async def translate_ai_layer(
             target_language=target or "",
             source_language=source_language,
             settings=get_settings(),
+            user_id=current_user.id,
         )
         plan = ai_verbs.translate(
             workshop_id=workshop_id,
@@ -2380,6 +2384,7 @@ async def caption_ai_layer(
             # sentence stored as Odia, in the one annexure whose purpose is telling a reader what
             # produced a passage and in what.
             language,
+            user_id=current_user.id,
         )
         plan = ai_verbs.caption(
             workshop_id=workshop_id,

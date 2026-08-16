@@ -12,7 +12,15 @@ import requests
 from fastapi import UploadFile
 
 from app.core.config import Settings
-from app.services import app_settings, managed_secrets, subtitles
+from app.services import (
+    anthropic_verbs,
+    app_settings,
+    managed_secrets,
+    subtitles,
+    user_ai_keys,
+)
+from app.services.ai_providers import AiProvider, AiTask
+from app.services.user_ai_keys import AiCredential
 from app.services.measurement_provenance import (
     MeasurementProvenance,
     self_reported_confidence,
@@ -262,6 +270,71 @@ def _post_openai_transcription(content: bytes, filename: str, mime_type: str, se
     payload = response.json()
     text = str(payload.get("text") or "").strip()
     return _transcription_result(text, payload)
+
+
+def _transcribe_on_personal_key(
+    content: bytes, filename: str, mime_type: str, credential: AiCredential
+) -> dict[str, Any] | None:
+    """One transcription attempt on a designer's OWN key. ``None`` means "not this provider".
+
+    RETURNS None RATHER THAN RAISING for a provider that cannot transcribe, because the caller's
+    contract is "try this, then fall into the chain" and an exception there would be indistinguishable
+    from a provider that was reached and failed. Anthropic never arrives here at all — ``resolve``
+    will not hand back a Claude credential for a transcription task, because no Claude model accepts
+    audio — so this is belt and braces rather than the enforcement point.
+    """
+    if credential.provider is AiProvider.OPENAI:
+        response = requests.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {credential.api_key}"},
+            data={"model": credential.model, "response_format": "json"},
+            files={"file": (filename, content, mime_type or "application/octet-stream")},
+            timeout=180,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return _transcription_result(str(payload.get("text") or "").strip(), payload)
+
+    if credential.provider is AiProvider.GEMINI:
+        # Gemini takes audio as an inline part on the ordinary generate endpoint — there is no
+        # separate transcription route. The prompt is deliberately bare: this is a transcription and
+        # not a summary, and any instruction beyond "write down what is said" is an invitation to
+        # tidy the speech, which is precisely what a field transcript must not do.
+        response = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{credential.model}:generateContent",
+            headers={"x-goog-api-key": credential.api_key},
+            json={
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": "Transcribe this recording word for word, in the language "
+                                "spoken. Do not translate, summarise, tidy or omit anything. "
+                                "Return only the transcript."
+                            },
+                            {
+                                "inlineData": {
+                                    "mimeType": mime_type or "audio/mpeg",
+                                    "data": base64.b64encode(content).decode("ascii"),
+                                }
+                            },
+                        ]
+                    }
+                ]
+            },
+            timeout=180,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        candidates = payload.get("candidates") or []
+        parts = ((candidates[0].get("content") or {}).get("parts") or []) if candidates else []
+        text = "".join(str(part.get("text", "")) for part in parts).strip()
+        # An empty answer is NOT a transcript of a silent recording — it is a refusal or a safety
+        # block, and returning it would file an empty transcript against real audio. None sends the
+        # job into the server's chain, which is the honest outcome.
+        return _transcription_result(text, payload) if text else None
+
+    return None
 
 
 # A 400/422 means the provider refused the REQUEST, not the audio in it — a renamed option, a model
@@ -696,10 +769,42 @@ async def transcribe_audio_bytes(
     filename: str,
     mime_type: str,
     settings: Settings,
+    *,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     # Prime the managed-secret cache on the event loop BEFORE any thread hop, so both the provider
     # chain below and the header reads inside the thread see keys saved in the UI.
     await managed_secrets.refresh_if_stale()
+
+    # ── A DESIGNER'S OWN KEY, AND WHY IT DOES NOT JOIN THE FAILOVER CHAIN ──────────────────────
+    #
+    # The chain below is this repository's transcription quality ladder: ElevenLabs first because it
+    # auto-detects the regional languages, Deepgram second, Whisper last, each one tried when the one
+    # before it fails. It is ordered by how well each provider hears an Odia courtyard, and the order
+    # is administrator-configurable for exactly that reason.
+    #
+    # A personal key is a BILLING choice, not a quality one, so it is offered as a first attempt and
+    # the chain remains intact behind it. If the designer's own provider fails, the job falls into
+    # the ordinary ladder and the recording still gets transcribed — a recording is the one artefact
+    # in this app that cannot be re-taken, and no billing preference is worth losing one over.
+    #
+    # `user_id` is None for the queue worker unless the job carries its requester, which is what
+    # keeps a background drain off an arbitrary designer's card.
+    if user_id:
+        personal = await user_ai_keys.resolve(user_id, AiTask.TRANSCRIBE)
+        if personal is not None and personal.is_user_supplied:
+            try:
+                answer = await asyncio.to_thread(
+                    _transcribe_on_personal_key, content, filename, mime_type, personal
+                )
+                if answer is not None:
+                    return answer
+            except Exception as exc:  # noqa: BLE001 - fall into the chain, never fail the recording
+                logger.warning(
+                    "A designer's own transcription key failed (%s); falling back to the "
+                    "server's provider chain",
+                    redact_secrets(str(exc)),
+                )
     # Resolve the chain here, per job, and hand it to the thread: the ranking lives in the database
     # and awaiting it is impossible once inside `to_thread`. Reading it now is also what makes a
     # reorder apply to the very next job in both the API and the queue process, with no restart.
@@ -965,6 +1070,111 @@ def _verb_failed(what: str, exc: Exception) -> dict[str, Any]:
     }
 
 
+def _post_openai_chat_keyed(
+    messages: list[dict[str, str]], *, api_key: str, model: str, temperature: float
+) -> str:
+    """``_post_openai_chat`` with the key and model supplied rather than resolved.
+
+    A SECOND FUNCTION RATHER THAN A PARAMETER ON THE FIRST, on purpose. ``_post_openai_chat`` resolves
+    the DEPLOYMENT's key through ``_key`` and reads the deployment's configured chat model, and the
+    transcript-refinement path depends on it being exactly that request. Giving it optional overrides
+    would leave one function whose behaviour depends on which caller reached it, and the way that
+    goes wrong is silent: a defaulted argument threads the deployment's key into a call a designer's
+    key was chosen to pay for.
+    """
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": model, "messages": messages, "temperature": temperature},
+        timeout=VERB_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return str(payload["choices"][0]["message"]["content"]).strip()
+
+
+def _post_gemini_chat(system: str, user: str, *, api_key: str, model: str, temperature: float) -> str:
+    """One text completion from Gemini, with ONE key rather than the deployment's rotation pool.
+
+    NO KEY ROTATION HERE, deliberately, and it is the difference between this and every other Gemini
+    call in this module. The pool exists so that the deployment's free-tier quota on any single key
+    is not the ceiling for measurement work shared by everybody. A designer's own key is one key by
+    definition — rotating onto the deployment's would move their bill onto the organisation's account
+    without either party asking — so this takes the key it is given and no other.
+
+    The key goes in the ``x-goog-api-key`` HEADER and never in ``?key=``: a query parameter is part
+    of the prepared URL and therefore inside the message of every ``requests`` exception, which
+    travels into logs and back to callers. Same rule as ``_post_gemini_caption``.
+    """
+    response = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        headers={"x-goog-api-key": api_key},
+        json={
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "systemInstruction": {"parts": [{"text": system}]},
+            "generationConfig": {"temperature": temperature},
+        },
+        timeout=VERB_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        # A safety block arrives as 200 with no candidates, exactly as a Claude refusal arrives as
+        # 200 with empty content. Returning "" rather than raising keeps it a status the caller can
+        # report, instead of an exception that reads as a network fault.
+        return ""
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    return "".join(str(part.get("text", "")) for part in parts).strip()
+
+
+def _model_for(credential: AiCredential, settings: Settings) -> str:
+    """Which model this credential actually runs.
+
+    THE ONE SPECIAL CASE IS THE DEPLOYMENT'S OPENAI KEY, and it exists to keep this change from
+    altering a single existing deployment. Before designer-supplied keys, every text verb ran on
+    ``settings.openai_chat_model`` — ``gpt-4o-mini`` unless an operator set otherwise. The catalogue's
+    OpenAI default is a newer and more expensive model, so resolving the app-level key through the
+    catalogue would have quietly re-pointed every existing installation at it and multiplied the
+    bill without anybody choosing that. A designer's OWN key runs their OWN choice, which is the
+    whole point of them supplying one.
+    """
+    if credential.provider is AiProvider.OPENAI and not credential.is_user_supplied:
+        return settings.openai_chat_model
+    return credential.model
+
+
+def _chat_verb_keyed(
+    system: str, user: str, credential: AiCredential, settings: Settings, *, temperature: float
+) -> dict[str, Any]:
+    """One text transform against whichever provider the resolved credential names."""
+    model = _model_for(credential, settings)
+    if credential.provider is AiProvider.ANTHROPIC:
+        return anthropic_verbs.chat_verb(
+            system=system, user=user, api_key=credential.api_key, model=model
+        )
+    if credential.provider is AiProvider.GEMINI:
+        text = _post_gemini_chat(
+            system, user, api_key=credential.api_key, model=model, temperature=temperature
+        )
+        provider = "gemini"
+    else:
+        text = _post_openai_chat_keyed(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            api_key=credential.api_key,
+            model=model,
+            temperature=temperature,
+        )
+        provider = "openai"
+    return {
+        "available": True,
+        "status": "COMPLETED" if text else "EMPTY",
+        "text": text or None,
+        "provider": provider,
+        "model": model,
+    }
+
+
 def _chat_verb_sync(
     system: str, user: str, settings: Settings, *, temperature: float
 ) -> dict[str, Any]:
@@ -1015,15 +1225,35 @@ async def _run_chat_verb(
     user: str,
     settings: Settings,
     temperature: float,
+    task: AiTask,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
-    """Guard, prime, hop to a thread, and turn every failure into a sentence. Shared by three verbs."""
-    if not await managed_secrets.get_secret("OPENAI_API_KEY"):
-        return _verb_unavailable(what, "OPENAI_API_KEY")
+    """Resolve a credential, hop to a thread, and turn every failure into a sentence.
+
+    ``user_id`` IS THE WHOLE OF THE PERSONALISATION. Passed, this runs on that designer's own key,
+    model and bill when they have supplied one that can do *task*; omitted or unmatched, it runs on
+    the deployment's key exactly as it did before personal keys existed. A caller with no person
+    attached — a queue drain, a scheduled job — passes nothing and gets the shared key, which is the
+    only safe default: charging an arbitrary designer for background work nobody asked them for
+    would be a worse bug than the feature is a benefit.
+    """
+    credential = await user_ai_keys.resolve(user_id, task)
+    if credential is None:
+        return _verb_unavailable(what, "an AI provider key")
     try:
         return await asyncio.to_thread(
-            _chat_verb_sync, system, user, settings, temperature=temperature
+            _chat_verb_keyed, system, user, credential, settings, temperature=temperature
         )
+    except anthropic_verbs.AnthropicUnavailable:
+        # The deployment has a Claude key but not the SDK. Naming the package is right here: the
+        # only person who can act on this is whoever administers the server, and "Claude failed"
+        # would send them looking at the key, which is fine.
+        logger.error("%s could not run: the anthropic package is not installed", what)
+        return _verb_unavailable(what, "the anthropic package on this server")
     except requests.RequestException as exc:
+        logger.error("%s failed: %s", what, redact_secrets(str(exc)))
+        return _verb_failed(what, exc)
+    except Exception as exc:  # noqa: BLE001 - an SDK error must become a sentence, never a 500
         logger.error("%s failed: %s", what, redact_secrets(str(exc)))
         return _verb_failed(what, exc)
 
@@ -1061,7 +1291,9 @@ _PROOFREAD_SYSTEM = (
 )
 
 
-async def proofread_text(text: str | None, settings: Settings) -> dict[str, Any]:
+async def proofread_text(
+    text: str | None, settings: Settings, *, user_id: str | None = None
+) -> dict[str, Any]:
     """Correct spelling, grammar and punctuation in a passage, and change nothing else.
 
     THE OUTPUT IS A LAYER AND NEVER A WRITE BACK INTO THE FIELD — see ``services/ai_verbs``. This
@@ -1094,6 +1326,8 @@ async def proofread_text(text: str | None, settings: Settings) -> dict[str, Any]
         # As deterministic as this API allows. Two runs disagreeing about one comma is two layers a
         # person has to read against each other for no gain.
         temperature=0.0,
+        task=AiTask.PROOFREAD,
+        user_id=user_id,
     )
 
 
@@ -1124,7 +1358,9 @@ _EXPAND_SYSTEM = (
 )
 
 
-async def expand_text(text: str | None, settings: Settings) -> dict[str, Any]:
+async def expand_text(
+    text: str | None, settings: Settings, *, user_id: str | None = None
+) -> dict[str, Any]:
     """Write a terse field note out into prose. **The highest-risk verb in this module.**
 
     Read ``services/ai_verbs.expand`` before changing anything here: the safety of this verb is
@@ -1150,6 +1386,8 @@ async def expand_text(text: str | None, settings: Settings) -> dict[str, Any]:
         # without reading, which is worse than a slightly loose one they actually check. Not high
         # either — every degree of freedom here is a degree of invention.
         temperature=0.3,
+        task=AiTask.EXPAND,
+        user_id=user_id,
     )
 
 
@@ -1177,6 +1415,7 @@ async def translate_text(
     target_language: str,
     source_language: str | None,
     settings: Settings,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     """Translate a passage into ``target_language``. **The original is untouched — see ``ai_verbs``.**
 
@@ -1216,7 +1455,79 @@ async def translate_text(
         ),
         settings=settings,
         temperature=0.1,
+        task=AiTask.TRANSLATE,
+        user_id=user_id,
     )
+
+
+# --- Summarising ----------------------------------------------------------------------------------
+
+#: **THE VERB THAT MUST NOT BECOME EXPANSION RUN BACKWARDS.**
+#:
+#: A summary is the only verb here that is allowed to DROP information, which makes it the only one
+#: whose failure is invisible: an expansion that invents is caught by a reader who knows the note, and
+#: a proofread that translates is caught on sight, but a summary that quietly omits the one sentence
+#: about a failed firing reads perfectly. So the refusals are about what may not be lost, and they
+#: are ordered with the irreplaceable things first.
+#:
+#: THE OUTPUT IS A LAYER, exactly as the other three are, and the same rule applies: nothing derived
+#: from it, inert until a person accepts it. See ``services/ai_verbs``.
+_SUMMARISE_SYSTEM = (
+    "You summarise field notes and interview transcripts from craft documentation workshops in "
+    "India, for a reader who has not read the original.\n"
+    "THE MOST IMPORTANT RULE: you add NOTHING. Every fact in your summary must be in the source. You "
+    "do not infer, you do not supply what a craft 'usually' involves, and you do not resolve an "
+    "ambiguity — where the source is unclear, the summary says so.\n"
+    "NEVER drop a number, a measurement, a date, a price, a quantity, a material, a place name or a "
+    "person's name that the source states. Those are the record; the prose around them is not.\n"
+    "NEVER drop a problem, a failure, a disagreement or a complaint. A summary that keeps only what "
+    "went well is a false report, and this material is read to find out what is going wrong.\n"
+    "Write in the same language as the source. Do not translate.\n"
+    "Keep craft terms, place names and personal names exactly as written.\n"
+    "Write plainly and briefly — this goes into a government record. No adjectives of praise, no "
+    "concluding flourish, no 'in conclusion'.\n"
+    "If the source is already shorter than a summary would be, say so in one sentence instead of "
+    "padding it."
+)
+
+
+async def summarise_text(
+    text: str | None, settings: Settings, *, user_id: str | None = None
+) -> dict[str, Any]:
+    """Condense a passage, keeping every fact and every problem in it.
+
+    Named with the British spelling to match ``_SUMMARISE_SYSTEM`` and the rest of this repository's
+    prose; :func:`summarize_text` below is an alias so a caller written either way compiles.
+    """
+    clean = (text or "").strip()
+    if not clean:
+        return {
+            "available": True,
+            "status": "EMPTY",
+            "text": None,
+            "message": "There is nothing to summarise yet — type or dictate the passage first.",
+        }
+    return await _run_chat_verb(
+        what="Summarising",
+        system=_SUMMARISE_SYSTEM,
+        user=(
+            "Summarise the following. Return the summary and nothing else — no preamble, no "
+            "heading, no note about what you left out.\n\n"
+            + _clip_for_verb(clean, verb="summarise")
+        ),
+        settings=settings,
+        # Low but not zero. At 0.0 a summary of a list becomes the list again, which is not a
+        # summary; the small amount of freedom is what lets it choose an ordering.
+        temperature=0.2,
+        task=AiTask.SUMMARISE,
+        user_id=user_id,
+    )
+
+
+#: The American spelling, for callers that reach for it. One implementation, two names — the
+#: alternative is two functions that drift, which is how a repository ends up with two summarisers
+#: whose prompts differ by a clause nobody remembers adding.
+summarize_text = summarise_text
 
 
 # --- Captioning -----------------------------------------------------------------------------------
@@ -1271,7 +1582,12 @@ def _caption_language_clause(language: str | None) -> str:
 
 
 def _post_gemini_caption(
-    content: bytes, mime_type: str, settings: Settings, language: str | None = None
+    content: bytes,
+    mime_type: str,
+    settings: Settings,
+    language: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """One caption from Gemini, with key rotation. The vision twin of ``_chat_verb_sync``.
 
@@ -1282,7 +1598,13 @@ def _post_gemini_caption(
     ``language`` IS ASKED FOR AND THEN RECORDED, never recorded without being asked for — see
     :func:`_caption_language_clause`, which is where that argument is made in full.
     """
-    keys = managed_secrets.gemini_key_pool()
+    # A DESIGNER'S OWN KEY IS A POOL OF ONE, and that is the whole of the difference. The rotation
+    # below exists so the DEPLOYMENT's free-tier quota on any single key is not the ceiling for work
+    # everybody shares; rotating a personal call onto the organisation's keys would move somebody's
+    # bill onto the organisation without either party asking, and rotating it onto OTHER designers'
+    # keys is not something this code could do and must never learn to.
+    keys = [api_key] if api_key else managed_secrets.gemini_key_pool()
+    caption_model = model or settings.gemini_measurement_model
     if not keys:
         raise RuntimeError("No Gemini API key configured")
     body = {
@@ -1308,7 +1630,7 @@ def _post_gemini_caption(
         try:
             response = requests.post(
                 "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{settings.gemini_measurement_model}:generateContent",
+                f"{caption_model}:generateContent",
                 headers={"x-goog-api-key": key},
                 json=body,
                 timeout=VERB_TIMEOUT_SECONDS,
@@ -1350,7 +1672,7 @@ def _post_gemini_caption(
             "status": "COMPLETED" if caption else "EMPTY",
             "text": caption,
             "provider": CAPTION_PROVIDER,
-            "model": settings.gemini_measurement_model,
+            "model": caption_model,
             # SELF-REPORTED AND UNCALIBRATED, carried under the name that says so — the same
             # discipline and the same key name `measurement_provenance` fixed for the grid reader,
             # for its stated reason: a client shown "confidence: 80%" beside a caption will treat it
@@ -1362,7 +1684,12 @@ def _post_gemini_caption(
 
 
 async def caption_image_bytes(
-    content: bytes, mime_type: str, settings: Settings, language: str | None = None
+    content: bytes,
+    mime_type: str,
+    settings: Settings,
+    language: str | None = None,
+    *,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     """Describe a photograph in one sentence, for the annexure and for a screen reader.
 
@@ -1377,8 +1704,6 @@ async def caption_image_bytes(
     it would be recording a fact about text nobody asked for. See :func:`_caption_language_clause`.
     """
     await managed_secrets.refresh_if_stale()  # prime before the thread hop (see _key)
-    if not managed_secrets.gemini_key_pool():
-        return _verb_unavailable("Describing a photograph", "GEMINI_API_KEY")
     if not content:
         return {
             "available": True,
@@ -1386,6 +1711,48 @@ async def caption_image_bytes(
             "text": None,
             "message": "That file is empty, so there is nothing to describe.",
         }
+
+    # THE DESIGNER'S OWN KEY FIRST, AND ONLY WHEN IT IS THEIRS. `resolve` returns an app-sourced
+    # credential too, and taking that branch would route captioning away from the Gemini key POOL
+    # below onto whichever single key the resolver picked — losing the rotation the deployment's
+    # free-tier quota depends on, for no gain. So the personal branch is taken only for a personal
+    # key, and everything else falls through to the path that was here before.
+    credential = await user_ai_keys.resolve(user_id, AiTask.CAPTION)
+    if credential is not None and credential.is_user_supplied:
+        prompt = _CAPTION_PROMPT + _caption_language_clause(language)
+        try:
+            if credential.provider is AiProvider.ANTHROPIC:
+                return await asyncio.to_thread(
+                    anthropic_verbs.caption_image,
+                    prompt=prompt,
+                    content=content,
+                    mime_type=mime_type or "image/jpeg",
+                    api_key=credential.api_key,
+                    model=credential.model,
+                )
+            if credential.provider is AiProvider.GEMINI:
+                return await asyncio.to_thread(
+                    _post_gemini_caption,
+                    content,
+                    mime_type,
+                    settings,
+                    language,
+                    credential.api_key,
+                    credential.model,
+                )
+            # OpenAI: vision through the same chat endpoint the text verbs use, as a data URL.
+            return await asyncio.to_thread(
+                _caption_openai_sync, prompt, content, mime_type, credential
+            )
+        except anthropic_verbs.AnthropicUnavailable:
+            logger.error("Captioning could not run: the anthropic package is not installed")
+            return _verb_unavailable("Describing a photograph", "the anthropic package on this server")
+        except Exception as exc:  # noqa: BLE001 - a personal key's failure is still a sentence
+            logger.error("Captioning failed on a designer's own key: %s", redact_secrets(str(exc)))
+            return _verb_failed("Describing a photograph", exc)
+
+    if not managed_secrets.gemini_key_pool():
+        return _verb_unavailable("Describing a photograph", "GEMINI_API_KEY")
     try:
         return await asyncio.to_thread(
             _post_gemini_caption, content, mime_type, settings, language
@@ -1393,6 +1760,61 @@ async def caption_image_bytes(
     except requests.RequestException as exc:
         logger.error("Captioning failed: %s", redact_secrets(str(exc)))
         return _verb_failed("Describing a photograph", exc)
+
+
+def _caption_openai_sync(
+    prompt: str, content: bytes, mime_type: str, credential: AiCredential
+) -> dict[str, Any]:
+    """A caption from an OpenAI vision model, on the caller's own key.
+
+    The image travels as a ``data:`` URL in an ``image_url`` part — the shape OpenAI's chat endpoint
+    takes for vision — rather than as a separate upload, because a caption is a single call about a
+    photograph the server already has in memory and a Files-API round trip would double the latency
+    of a verb a designer is waiting on.
+    """
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {credential.api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": credential.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:"
+                                + (mime_type or "image/jpeg")
+                                + ";base64,"
+                                + base64.b64encode(content).decode("ascii")
+                            },
+                        },
+                    ],
+                }
+            ],
+        },
+        timeout=VERB_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    caption = str(payload["choices"][0]["message"]["content"] or "").strip()
+    return {
+        "available": True,
+        "status": "COMPLETED" if caption else "EMPTY",
+        "text": caption,
+        "provider": "openai",
+        "model": credential.model,
+        # Not self-reported by this path at all, and the two keys are still present so that every
+        # caption answer has the same shape whichever provider produced it. `None` is the honest
+        # value: the Gemini path asks the model for a number, this one does not ask.
+        "selfReportedConfidence": None,
+        "confidenceIsCalibrated": False,
+    }
 
 
 # --- Timed transcription: the timings the chain above throws away ---------------------------------
