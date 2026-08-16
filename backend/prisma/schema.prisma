@@ -202,6 +202,11 @@ model User {
   // Design workshops this account has been let into by an admin, and the grants it made as one.
   designWorkshopsVisible DesignWorkshopViewer[] @relation("DesignWorkshopViewerUser")
   designWorkshopViewersGranted DesignWorkshopViewer[] @relation("DesignWorkshopViewerGrantedBy")
+  // The platform allow-list, from the two sides an account can be on it: the admin who put an
+  // address on the list, and the admin who approved or rejected a request. Both SetNull on the far
+  // side — the record that somebody was admitted outlives the admin who admitted them.
+  accessRosterAdded    AccessRoster[] @relation("AccessRosterAddedBy")
+  accessRosterDecided  AccessRoster[] @relation("AccessRosterDecidedBy")
   dwStageEntriesCreated  DwStageEntry[]   @relation("DwStageEntryCreatedBy")
   dwReportExports        DwReportExport[] @relation("DwReportExportGeneratedBy")
   /// The four sides of an AI layer's life this account can be on. Three are SetNull (the row
@@ -2514,6 +2519,14 @@ model DwAiVerbDailyUsage {
 ///
 /// Admin and above may edit the roster; nobody else may read it, because it is a list of named
 /// individuals and their institutional standing.
+///
+/// NOT THE PLATFORM ALLOW-LIST — see `AccessRoster`, which is. This table means "empanelled as a
+/// designer", which is a stronger and narrower claim than "may sign in at all": an ACTIVE row here
+/// PROMOTES a new or lower-ranked account to DESIGNER on its first Google sign-in. The platform
+/// gate was deliberately NOT built by widening this table, because grandfathering every existing
+/// account into it — which the requirement demands — would have handed the DESIGNER role to every
+/// volunteer in the product at their next sign-in, and would have blown `active_roster_emails`
+/// past a cap sized for one row per empanelled designer.
 model DesignerRoster {
   id    String @id @default(cuid())
   /// Lower-cased on write. The join key to User.email, which is itself unique — but this row may
@@ -2588,4 +2601,124 @@ model DesignerProfile {
   updatedAt DateTime @updatedAt
 
   user User @relation("DesignerProfileUser", fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ======================================================================================
+// The platform allow-list: who may sign in AT ALL, and the queue of people asking to
+// ======================================================================================
+
+/// Where an email stands with respect to signing in at all. See `AccessRoster`.
+///
+/// FOUR STATES AND NOT A BOOLEAN, because the four are answered with four different sentences and
+/// three different remedies. A person who is waiting on an admin, a person an admin turned down, a
+/// person whose access was ended after they had it, and a person who is in — collapsed into
+/// `isActive` those are one refusal, and the one thing every one of them would then be told is the
+/// thing that is true of none of them.
+enum AccessStatus {
+  /// May sign in. The only value that admits.
+  ACTIVE
+  /// Asked (by attempting to sign in) and not yet decided. This is the notification queue.
+  PENDING
+  /// An admin said no. A re-attempt does NOT move this back to PENDING — see the service module.
+  REJECTED
+  /// Had access, an admin ended it. Distinct from REJECTED so the roster keeps saying which
+  /// decision was actually taken; an admin reading "rejected" on somebody who worked here for two
+  /// years has been told something false.
+  SUSPENDED
+}
+
+/// THE PLATFORM ALLOW-LIST. One row per email that has ever been admitted to, or asked to be
+/// admitted to, this application. `auth.login` refuses every account that has no ACTIVE row here —
+/// every account but the master admin's, which is exempt.
+///
+/// **KEYED BY EMAIL, NOT BY USER ID, AND THAT IS THE POINT.** It is `DesignerRoster`'s design and
+/// it is kept for the same two reasons: an admin can admit somebody BEFORE their account exists
+/// (there is no invitation email in this product, so the row is the invitation), and a request from
+/// a Google identity with no account can be recorded without creating the account that recording it
+/// would otherwise imply. A user-id foreign key could express neither.
+///
+/// **WHY THIS IS NOT A STATUS COLUMN ON `DesignerRoster`.** That table already means something
+/// stronger — "empanelled as a designer" — and an ACTIVE row in it promotes the account to DESIGNER
+/// on first Google sign-in. Grandfathering every existing account into it, which the requirement
+/// requires, would therefore have promoted every crowdsource volunteer in the product to DESIGNER
+/// at their next sign-in: a privilege escalation delivered by the migration that was supposed to
+/// change nothing. It would also have taken `active_roster_emails` — one full-table read capped at
+/// a number chosen for "one row per empanelled designer" — past its cap, silently dropping eligible
+/// designers out of the viewer picker and the designer directory. The two tables cooperate instead:
+/// an ACTIVE `DesignerRoster` row is accepted as an admission here and writes itself an ACTIVE row
+/// on the way through, so an admin who empanels a designer has still done everything needed.
+///
+/// **NOTHING AN ATTACKER CONTROLS IS STORED HERE BEYOND THE ADDRESS.** A row is only ever created
+/// after an identity proof — a bcrypt-verified password against an existing account, or a Google ID
+/// token verified against the configured audience — so an anonymous caller cannot enqueue an
+/// address they do not hold. `fullName` and `notes` are ADMIN-typed only and are never populated
+/// from a Google profile: the requirement's "notification" surface is a list an admin reads, and a
+/// display name lifted from an unverified source is a place to put a phishing sentence.
+model AccessRoster {
+  id String @id @default(cuid())
+  /// Lower-cased on write, by `app/services/access_roster.py:normalise_email` and nowhere else.
+  /// Joined to `User.email`, which is NOT lower-cased on that side — every comparison against it
+  /// therefore lower-cases both. A row typed `A.Sharma@Example.org` that never matches the account
+  /// signing in as `a.sharma@example.org` is a person locked out of the app by a capital letter,
+  /// with an admin looking straight at the row that was supposed to let them in.
+  email  String       @unique
+  status AccessStatus @default(PENDING)
+
+  /// The tier a NEW account for this address is created at, and the tier an existing lower-ranked
+  /// account is lifted to, when this row admits. NULL means `DEFAULT_SIGNUP_ROLE` — the lowest rung,
+  /// which is the documented default for this platform ("all users join as the lowest rung unless
+  /// promoted"). An admin approving a request may set it higher, up to their own tier.
+  ///
+  /// LIFTS, NEVER LOWERS. Applied through a strictly-below rank comparison, for `login_with_google`'s
+  /// reason: an admin whose row says CROWDSOURCE_VOLUNTEER because nobody ever edited it must not be
+  /// demoted by their own next sign-in.
+  admitRole UserRole?
+
+  /// **THE DATE OF JOINING THE PLATFORM**, which the requirement asks the admin screen to show.
+  ///
+  /// Its own column rather than a read of `User.createdAt`, and the migration backfills it FROM
+  /// `User.createdAt` so nothing is invented for the accounts that predate this table. Three things
+  /// `User.createdAt` cannot answer: a row admitted before any account exists has no user row to
+  /// read; an account deleted and recreated would report the second creation as the joining date
+  /// while this row remembers the first; and after this table exists, joining the platform is the
+  /// admission decision, which is not the same event as the account row appearing.
+  joinedAt DateTime?
+
+  /// When this address first asked. Set on the transition into PENDING and never moved, so the
+  /// queue can be worked oldest-first and "how long has this person been waiting" is answerable.
+  requestedAt DateTime?
+  /// Refused sign-in attempts by a proven identity for this address, and the latest one. THE BOUND
+  /// ON A WRITE NO SIGNED-IN USER MADE: one person hammering the form is one row with a rising
+  /// count, not a row per attempt. An admin reads the count as "this person is still trying", which
+  /// is the one useful thing about a repeat attempt.
+  attemptCount  Int       @default(0)
+  lastAttemptAt DateTime?
+
+  /// Who decided, and when. NULL on a row nobody has decided yet, and on the grandfathered rows —
+  /// which is honest: no admin approved the accounts that predate the gate, the migration admitted
+  /// them wholesale, and `notes` says so.
+  decidedAt   DateTime?
+  decidedById String?
+  decidedBy   User?     @relation("AccessRosterDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  /// First SUCCESSFUL sign-in after admission. Answers "did the person we approved ever actually
+  /// arrive" — an invitation that never reached them looks exactly like one that was ignored.
+  firstSeenAt DateTime?
+
+  /// Admin-typed, both of them. Never written from a login attempt. See the model docstring.
+  fullName String?
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  addedById String?
+  addedBy   User?    @relation("AccessRosterAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+
+  /// The pending count on the admin surfaces is `count(where status = PENDING)` and it is read on
+  /// every page load of several screens, so it gets an index of its own. The composite serves the
+  /// queue itself, which is ordered oldest-request-first.
+  @@index([status])
+  @@index([status, requestedAt])
+  @@index([addedById])
+  @@index([decidedById])
 }

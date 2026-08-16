@@ -63,6 +63,8 @@ import com.designprototype.workshop.ui.AddressReferenceCache
 import com.designprototype.workshop.ui.ArtisanPhoneField
 import com.designprototype.workshop.ui.FieldDateField
 import com.designprototype.workshop.ui.FieldPermissions
+// The shared record-form prose box: on-device dictation and the rich editor, both opt-in.
+import com.designprototype.workshop.ui.RecordProseField
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text. Without this import the bare
@@ -583,13 +585,38 @@ fun DesignerProfileScreen(
                         color = MaterialTheme.field.muted,
                         fontSize = 12.sp
                     )
-                    OutlinedTextField(
+                    /*
+                     * THE LARGEST PROSE BOX IN THIS APP OUTSIDE A STAGE SCREEN, AND THE ONE WHERE
+                     * FORMATTING DEMONSTRABLY REACHES A READER.
+                     *
+                     * `DesignerProfile.biography` is a plain `String?` column that `designers.py`
+                     * copies into the registry key `designerProfile`, which `stage_definitions.py`
+                     * declares as RICH_TEXT with `report_role=NARR` — so a rich renderer for this
+                     * text ALREADY EXISTS and already runs, on the "Designer's profile" page of
+                     * every report. It works today only because of the string-as-prose rule
+                     * (`RichText.fromJson` reads a bare string as an unformatted document), which
+                     * is exactly the property `recordStoredFromDoc` preserves by writing flattened
+                     * text back into the column. Nothing about the storage changes here; what
+                     * changes is that a paragraph break or a list typed on the phone survives into
+                     * the report instead of being a run-on line.
+                     *
+                     * It also gets the microphone. Five lines about your own practice, written on a
+                     * phone, is the definition of a box somebody abandons after two sentences.
+                     */
+                    RecordProseField(
+                        label = "Biography",
                         value = form.biography,
                         onValueChange = { form = form.copy(biography = it) },
-                        label = { Text("Biography") },
                         enabled = canEdit,
                         minLines = 5,
-                        modifier = Modifier.fillMaxWidth()
+                        rich = true,
+                        dictate = true,
+                        // Re-seed when a different designer's profile is opened into this
+                        // composition — an admin stepping through the roster is the case. Without it
+                        // the editor would keep the first profile's document open under the second
+                        // profile's name. `targetUserId` is what identifies whose profile this is;
+                        // null (the signed-in account's own) is a stable key of its own.
+                        resetKey = targetUserId,
                     )
                 }
 

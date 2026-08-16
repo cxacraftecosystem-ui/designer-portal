@@ -66,6 +66,18 @@ const SEARCH_DEBOUNCE_MS = 300;
 /** The server's own default page. Stated here only so the truncation notice can name it. */
 const REFERENCE_PAGE = 50;
 
+/**
+ * The widest page the server will serve — `REFERENCE_LIMIT_MAX` in `design_workshops.py`, which
+ * clamps anything larger rather than refusing it.
+ *
+ * Asked for by ONE call only: {@link describeCreated}, which is hunting for a single record it
+ * already knows the id of. Every other request here is a list a human reads, and fifty is the right
+ * size for that; a page four times as long would be four times the ILIKE scan for rows nobody
+ * scrolls to. The hunt is the opposite case — the one row it exists to find is the one that must not
+ * fall off the end of the page.
+ */
+const REFERENCE_PAGE_MAX = 200;
+
 type PickerState = {
   payload: DwReferencePayload | null;
   loading: boolean;
@@ -147,6 +159,104 @@ function ScopeNotice({ field, payload }: { field: DwField; payload: DwReferenceP
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * The record that did not exist when the list was fetched
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A record `InlineRecordDialog` just made, in the only shape this file is allowed to read it in.
+ *
+ * The dialog hands back the RAW REPOSITORY ROW — the same JSON `POST /products` returns — and the
+ * whole argument below is that this file must not interpret one. So the type names the three
+ * name-bearing columns and nothing else: `name` on an Artisan and a Process, `productName` on a
+ * ProductDocumentation, `toolkitName` on a ToolDocumentation.
+ */
+type CreatedRecord = {
+  id: string;
+  name?: string | null;
+  productName?: string | null;
+  toolkitName?: string | null;
+};
+
+/**
+ * The name a just-created record goes by.
+ *
+ * THE ONE THING READ OFF A RAW ROW HERE, and the exception is narrow on purpose. A label is a
+ * label on every surface — the server's own `label` lambda for each of these models reads this
+ * exact column, and it is also the FIRST of that model's `search_fields`, which is what makes it
+ * usable as the search term in {@link describeCreated}. The values that fill a stage row are a
+ * different matter entirely; see the note there for why none of them may be read from here.
+ */
+function createdLabel(record: CreatedRecord): string {
+  return (record.name || record.productName || record.toolkitName || "").trim();
+}
+
+/**
+ * WHAT THE SERVER WOULD SAY ABOUT A RECORD THAT DID NOT EXIST WHEN THE LIST WAS FETCHED.
+ *
+ * THE DEFECT THIS EXISTS TO END. Both pickers below used to build the new option's `data` out of
+ * the raw row the create returned and hand it straight to `hydrateFromReference`. The row's keys
+ * are PRISMA COLUMN NAMES and the hydration table's keys are the REFERENCE PAYLOAD's: for a
+ * product the table asks for `name`, `price`, `use`, `material`, and the row carries
+ * `productName`, `sellingPrice`, `productFunctionUse`, `rawMaterialsUsed`. Not one of them
+ * matched, so an inline-created product hydrated NOTHING. That is not a cosmetic loss:
+ * `existingProduct.name` and `existingProduct.price` are `required=True` and the server validates
+ * BEFORE it hydrates (`design_workshops.py` says so beside the ordering), so the designer was left
+ * looking at two blank required boxes and the stage 422'd on submit — seconds after they created
+ * the record that holds both answers.
+ *
+ * WHY THE FIX IS A ROUND TRIP AND NOT A RENAMING TABLE IN THE BROWSER. `REFERENCE_MODELS[…].data`
+ * is not a rename of the row, it is a TRANSLATION, and every part of it is load-bearing:
+ * `_inches_to_cm` multiplies by 2.54 because the source columns are inches and
+ * `existingProduct.lengthCm` prints "cm"; `_money` renders a Prisma Decimal as a two-place string
+ * because a float round trip turns 1250.10 into 1250.0999999999999; `mask_identity_number` keeps a
+ * full PM Vishwakarma card number out of a report every grantee can download; three exhaustive
+ * enum tables refuse to guess a PRODUCT_CATEGORY for the four ProductType members that have no
+ * honest one; the photograph and its caption are a join onto MediaFile that the row does not
+ * contain at all. A browser-side copy would be a SECOND declaration of knowledge that already
+ * lives in exactly one place — and every way it could drift writes a value that is WRONG rather
+ * than missing. Hydration only ever fills blanks, so a wrong value written here can be corrected
+ * but never un-answered; there is no state the mistake heals from. One request is cheaper.
+ *
+ * ANDROID DECIDED THIS FIRST and matching the handset is worth more than inventing a third
+ * behaviour: `DwReferenceField.kt` arms `pendingHydration` for a record it holds an id but no
+ * description of, and waits for the server's `data`, with a comment explaining that hydrating from
+ * an empty map would be actively destructive.
+ *
+ * FOUND BY SEARCHING FOR THE RECORD'S OWN NAME, because the references endpoint has no by-id
+ * route — see {@link createdLabel} for why that name is a reliable search term rather than a
+ * guess.
+ *
+ * ASKED WITH THE SAME SCOPE AND FILTER THE PICKER'S OWN LIST USES, deliberately. A wider question
+ * here would hydrate a row from a record this picker can never show: if the new product does not
+ * belong to the artisan on this row, the cascade excludes it from the list and it must be excluded
+ * from the hydration too, or the row quietly holds another artisan's price under this one's name.
+ *
+ * Returns null for both kinds of miss — a network failure and a record the narrowed list does not
+ * contain — because the caller has one honest sentence to say about either and no action that
+ * differs between them.
+ */
+async function describeCreated(
+  workshopId: string,
+  field: DwField,
+  filterValue: string,
+  record: CreatedRecord
+): Promise<DwReferenceOption | null> {
+  const search = createdLabel(record);
+  try {
+    const payload = await listStageReferences(workshopId, {
+      model: field.refModel as string,
+      scope: field.refScope,
+      filterBy: field.refFilterBy ? filterValue || null : null,
+      search: search || null,
+      limit: REFERENCE_PAGE_MAX
+    });
+    return payload.options.find((option) => option.id === record.id) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Single select
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -178,8 +288,24 @@ export function StageReferenceSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
-  /** Set when the cascade cleared this field, so the clearing is announced rather than silent. */
-  const [cascadeNotice, setCascadeNotice] = useState<string | null>(null);
+  /**
+   * The one line of amber under this control, and it has two authors.
+   *
+   * The cascade writes it when it clears a choice that no longer belongs to the record above.
+   * {@link adoptCreated} writes it when a record was created and the server could not be got to
+   * describe it. Named `notice` rather than `cascadeNotice` since the second author arrived: a
+   * message about an inline create is not a cascade message, and two amber boxes stacked under one
+   * field is a form arguing with itself.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * A record made from inside this picker, held only until the server can describe it.
+   *
+   * Carries the label because nothing else on screen can name it: it is in no fetched list, and
+   * the display field it would normally be read back from has not been hydrated yet. Android keeps
+   * a `locallyCreated` stand-in for exactly this window and for exactly this reason.
+   */
+  const [pending, setPending] = useState<{ id: string; label: string } | null>(null);
   /**
    * Which record the inline dialog is working on, or null when it is closed.
    *
@@ -220,7 +346,44 @@ export function StageReferenceSelect({
    * {@link referenceDisplayHint}: the name is on the row already, put there by hydration.
    */
   const chosenLabel =
-    options.find((option) => option.id === selectedId)?.label || referenceDisplayHint(entity, field, row);
+    options.find((option) => option.id === selectedId)?.label ||
+    // A record created seconds ago is in no list and has hydrated no display field onto the row
+    // yet, so its own name is the only thing on this screen that can name it. It is consulted
+    // BEFORE the row's hint because during a re-point the row still holds the PREVIOUS record's
+    // name — showing that beside the new record's id is the one outcome the hydration rules exist
+    // to prevent, and it must not be reintroduced by a label.
+    (pending?.id === selectedId ? pending.label : "") ||
+    referenceDisplayHint(entity, field, row);
+
+  /**
+   * The row as it is RIGHT NOW, for a hydration that started before the current render.
+   *
+   * `adoptCreated` awaits a round trip and only then applies its patch, and the only-fill-blanks
+   * rule reads the row to decide what it may write. The `row` captured when the create finished is
+   * a snapshot; a designer types into the boxes beside the picker while the answer is in flight,
+   * and a patch decided against the snapshot would overwrite what they had just typed. This is the
+   * hook equivalent of the handset rebuilding its `openInlineRecord` closure on every composition,
+   * which its own comment says is there to keep hydration bookkeeping from going stale.
+   */
+  const latestRow = useRef(row);
+  useEffect(() => {
+    latestRow.current = row;
+  }, [row]);
+
+  /**
+   * Which deferred hydration is still wanted.
+   *
+   * A create arms an answer that lands a round trip later, and anything the designer does in
+   * between — picking somebody else, clearing the link, creating a second record — makes that
+   * answer wrong rather than merely late. Bumping the count is how the in-flight continuation
+   * learns it has been superseded; Android drops its `pendingHydration` at the same three moments
+   * and names the same failure, one artisan's village landing under another's name.
+   */
+  const hydration = useRef(0);
+  const supersede = useCallback(() => {
+    hydration.current += 1;
+    setPending(null);
+  }, []);
 
   /**
    * WHEN THE ARTISAN CHANGES, THE PRODUCT CHOSEN FOR THE PREVIOUS ARTISAN IS CLEARED — and said.
@@ -242,7 +405,7 @@ export function StageReferenceSelect({
     lastFilter.current = filterValue;
     if (!selectedId) return;
     onChange(null);
-    setCascadeNotice(
+    setNotice(
       had
         ? "The record this list depends on changed, so the previous choice was cleared — pick one from the new list."
         : "Choose the record above first; this list narrows to it."
@@ -284,6 +447,10 @@ export function StageReferenceSelect({
 
   const choose = useCallback(
     (option: DwReferenceOption) => {
+      // A pick supersedes a create still waiting to be described. Left armed, the answer landing a
+      // moment later would fill this row in from the record made before the designer changed their
+      // mind — one product's price under another product's name, with the id naming the second.
+      supersede();
       const patch = hydrateFromReference(entity, field, option, row, selectedId);
       // One write, not two. The id and the fields it filled belong to the same act, and applying
       // them separately would let a re-render between them see a row naming a record whose name it
@@ -291,9 +458,74 @@ export function StageReferenceSelect({
       onPatch({ ...patch, [field.key]: option.id });
       setOpen(false);
       setQuery("");
-      setCascadeNotice(null);
+      setNotice(null);
     },
-    [entity, field, row, selectedId, onPatch]
+    [entity, field, row, selectedId, onPatch, supersede]
+  );
+
+  /**
+   * A record created from inside this picker: linked at once, hydrated when the server can say what
+   * belongs on the row.
+   *
+   * TWO WRITES AND NOT ONE, WHICH IS THE OPPOSITE OF WHAT `choose` ARGUES ABOVE, and the difference
+   * is that here there is nothing to write in the first act. The link is the half we are certain
+   * of; the values are a question only the server can answer, and a picker that showed nothing at
+   * all until a round trip came back reads as the create having failed — which is the moment a
+   * designer creates the same record a second time. So the link lands immediately, the control says
+   * what it is waiting for, and the boxes fill when the answer arrives.
+   */
+  const adoptCreated = useCallback(
+    async (record: CreatedRecord) => {
+      const label = createdLabel(record);
+      /*
+       * The record this row named BEFORE this one, read here rather than at the end because by then
+       * the field holds the new id. It is the whole difference between "fill the blanks" and "clear
+       * what the last record wrote, then fill" — see the long block in `hydrateFromReference`.
+       */
+      const previous = selectedId;
+      onChange(record.id);
+      setPending({ id: record.id, label });
+      setNotice(null);
+      hydration.current += 1;
+      const generation = hydration.current;
+
+      const described = await describeCreated(workshopId, field, filterValue, record);
+      // Superseded while the answer was in flight. Whatever the designer did instead is newer than
+      // this, and writing now would land a stale record's values on a row that has moved on.
+      if (hydration.current !== generation) return;
+      setPending(null);
+
+      if (!described) {
+        setNotice(
+          previous
+            ? "The record was saved and linked, but this list cannot describe it just now — so the boxes the previous record had filled in have been CLEARED rather than left standing under the new record's name. Fill them in by hand, or reopen the list and search for it."
+            : "The record was saved and linked, but this list cannot describe it just now, so the boxes it would have filled in are still blank. Fill them in by hand, or reopen the list and search for it — a required box left blank is refused when the stage is submitted."
+        );
+      }
+
+      /*
+       * ONE CALL FOR BOTH OUTCOMES, AND THE FAILING ONE IS NOT A NO-OP.
+       *
+       * A description that never arrived is handed on as an option with an EMPTY `data`, which the
+       * same table then reads exactly as it should: with no previous link there is nothing to clear
+       * and nothing to write, so the patch is empty; with a previous link the mapped boxes are
+       * cleared and left blank. That second case is the one worth spelling out — the alternative is
+       * the previous record's name, village and price sitting beside the new record's id, which
+       * `hydrateFromReference`'s own comment calls the one outcome worse than either alternative,
+       * and which nothing downstream could ever re-resolve. A blank required box is refused loudly
+       * at submit; a filled box naming the wrong record is not refused at all.
+       *
+       * The id is rewritten alongside the patch for the same reason `choose` writes them together,
+       * and it is safe to rewrite because a designer who unlinked or re-picked during the round
+       * trip has already superseded this continuation above.
+       */
+      const option: DwReferenceOption = described ?? { id: record.id, label, sublabel: "", data: {} };
+      onPatch({
+        ...hydrateFromReference(entity, field, option, latestRow.current, previous),
+        [field.key]: record.id
+      });
+    },
+    [entity, field, filterValue, onChange, onPatch, selectedId, workshopId]
   );
 
   /** The LABEL of the field this one cascades from — never its key: "artisanRef" is not a question. */
@@ -449,8 +681,14 @@ export function StageReferenceSelect({
               // are what the designer confirmed in the room, and a report that loses a participant's
               // name because somebody unlinked a duplicate artisan record is the failure the copy
               // exists to prevent.
+              //
+              // An unlink also supersedes a create still waiting to be described: left armed, the
+              // answer landing a second later would re-link the record the designer has just
+              // deliberately unlinked and fill the row in from it. The handset drops its
+              // `pendingHydration` on the same gesture and says the same thing.
+              supersede();
               onChange(null);
-              setCascadeNotice(null);
+              setNotice(null);
             }}
           >
             <X className="h-3 w-3" aria-hidden />
@@ -478,9 +716,20 @@ export function StageReferenceSelect({
         </div>
       ) : null}
 
-      {cascadeNotice ? (
+      {/*
+        Said, not spun. The link is already made and visible above; this line exists so the blank
+        boxes beside it read as "not yet" rather than as "this picker filled nothing in", which is
+        the reading that has a designer retyping what is about to arrive.
+      */}
+      {pending ? (
+        <p className="text-xs leading-5 text-ink-500">
+          Filling in what the repository holds about “{pending.label || "the new record"}”…
+        </p>
+      ) : null}
+
+      {notice ? (
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-2 py-1 text-xs leading-5 text-amber-800">
-          {cascadeNotice}
+          {notice}
         </p>
       ) : null}
 
@@ -490,30 +739,18 @@ export function StageReferenceSelect({
           model={field.refModel}
           recordId={inlineDialog.mode === "edit" ? inlineDialog.id : undefined}
           onClose={() => setInlineDialog(null)}
+          /*
+            LINKED FROM THE CREATE, DESCRIBED FROM THE SERVER — see `adoptCreated` and
+            `describeCreated` for the defect that split those two apart. What used to be here was a
+            `DwReferenceOption` assembled out of the raw repository row, whose column names are not
+            the hydration table's keys; it hydrated nothing and left required boxes blank.
+
+            Nothing has to invalidate the list: `useReferenceOptions` re-fetches whenever the picker
+            becomes active again, so the next open shows the record in its proper place with the
+            server's own label and sublabel.
+          */
           onCreated={(record) => {
-            /*
-              SELECTED IMMEDIATELY, and hydrated from the record we already hold.
-
-              The new record is not in `options` — that list was fetched before it existed — so the
-              option is built here from what the create returned. Re-fetching first and then
-              selecting would leave the picker briefly showing nothing while the designer waits,
-              and it would be a round trip in the middle of their sentence.
-
-              Nothing has to invalidate the list: `useReferenceOptions` re-fetches whenever the
-              picker becomes active again, and `choose` closes it — so the next open shows the
-              record in its proper place with the server's own sublabel.
-            */
-            const option: DwReferenceOption = {
-              id: record.id,
-              label:
-                (record as { name?: string; productName?: string; toolkitName?: string }).name ??
-                (record as { productName?: string }).productName ??
-                (record as { toolkitName?: string }).toolkitName ??
-                "",
-              sublabel: (record as { place?: string }).place ?? "",
-              data: record as unknown as Record<string, unknown>
-            };
-            choose(option);
+            void adoptCreated(record);
           }}
         />
       ) : null}
@@ -561,6 +798,10 @@ export function StageReferenceMultiPicker({
   const [picked, setPicked] = useState<DwReferenceOption[]>([]);
   /** Open while the designer is creating a record that is missing from the roster. */
   const [creating, setCreating] = useState(false);
+  /** The label of a record just created, while the server is being asked to describe it. */
+  const [describing, setDescribing] = useState<string | null>(null);
+  /** Said inside the panel when that description could not be got. */
+  const [createProblem, setCreateProblem] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
   const { payload, loading, problem } = useReferenceOptions({
@@ -577,6 +818,23 @@ export function StageReferenceMultiPicker({
   useEffect(() => {
     if (!open) return;
     function onPointer(event: MouseEvent) {
+      /*
+        A CLICK INSIDE THE RECORD DIALOG IS NOT A CLICK OUTSIDE THIS PANEL, however the DOM reads.
+
+        `FieldDialog` renders through a PORTAL, so the artisan form the "Create a new artisan"
+        button opens is not a descendant of `wrapperRef` — and this handler, which cannot see the
+        difference between the dialog and the page behind it, closed the roster on the designer's
+        very first keystroke in that form. Reopening it resets `picked`, so the half-ticked list the
+        button exists to protect was lost anyway and the record they had just made was never added.
+        The single picker does not have this problem only because it closes itself deliberately
+        before opening the dialog.
+
+        Matched on the overlay's own data attribute rather than on a ref, because the dialog is
+        mounted by the picker's own subtree and owning a ref into somebody else's portal is a
+        tighter coupling than reading the marker it already publishes.
+      */
+      const target = event.target as Element | null;
+      if (target?.closest?.("[data-field-dialog-overlay]")) return;
       if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false);
     }
     function onKey(event: KeyboardEvent) {
@@ -593,6 +851,37 @@ export function StageReferenceMultiPicker({
     };
   }, [open]);
 
+  /**
+   * A record created from inside the roster: described by the server, THEN ticked.
+   *
+   * The same defect and the same fix as `adoptCreated` on the single picker — see
+   * {@link describeCreated} for why the raw row the create returns cannot be handed to hydration.
+   * The difference is what happens when the description cannot be got. This control's ticks become
+   * ROWS, through `hydrateFromReference` in `EntityForm.addFromReferences`, so a tick made from an
+   * empty payload is a roster row carrying a link and no name — indistinguishable in the
+   * participant table from a designer who added a blank row by accident. Nothing is ticked in that
+   * case; the panel says the record was saved and where to find it, and the search above will now
+   * return it because the server does hold it.
+   */
+  const tickCreated = useCallback(
+    async (record: CreatedRecord) => {
+      setCreateProblem(null);
+      setDescribing(createdLabel(record) || "the new record");
+      // No filter value to carry: `EntityForm` only offers this control for a REF field with no
+      // `refFilterBy` at all, so the roster's list is never a cascaded one.
+      const option = await describeCreated(workshopId, field, "", record);
+      setDescribing(null);
+      if (!option) {
+        setCreateProblem(
+          "The record was saved, but this list cannot describe it just now, so it has not been ticked. Search for its name above and tick it there."
+        );
+        return;
+      }
+      setPicked((current) => (current.some((entry) => entry.id === option.id) ? current : [...current, option]));
+    },
+    [field, workshopId]
+  );
+
   return (
     <div className="relative" ref={wrapperRef}>
       <button
@@ -604,6 +893,10 @@ export function StageReferenceMultiPicker({
         onClick={() => {
           setOpen((current) => !current);
           setPicked([]);
+          // Cleared with the selection it belongs to. Left standing, "the record was saved but has
+          // not been ticked" would greet the next designer to open this roster, about a record they
+          // did not create and can now see in the list.
+          setCreateProblem(null);
         }}
       >
         {triggerLabel}
@@ -693,6 +986,17 @@ export function StageReferenceMultiPicker({
 
           <ScopeNotice field={field} payload={payload} />
 
+          {describing ? (
+            <p className="border-t border-line-200 px-3 py-2 text-xs leading-5 text-ink-500">
+              Reading back what the repository holds about “{describing}”…
+            </p>
+          ) : null}
+          {createProblem ? (
+            <p className="border-t border-line-200 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
+              {createProblem}
+            </p>
+          ) : null}
+
           <div className="flex items-center justify-between gap-2 border-t border-line-200 px-3 py-2">
             <span className="text-xs text-ink-500" id={`${baseId}-count`}>
               {picked.length ? `${picked.length} selected` : "Nothing selected yet"}
@@ -724,27 +1028,18 @@ export function StageReferenceMultiPicker({
           open
           model={field.refModel}
           onClose={() => setCreating(false)}
+          /*
+            TICKED, not added. The roster's own "Add" button is what commits the selection, and a
+            record that added itself the moment it was created would break that — the designer would
+            have made a row they had not confirmed, in a list they were still building. So the new
+            record joins `picked` and the count goes up by one, exactly as if they had found it and
+            ticked it.
+
+            What it is ticked WITH is the server's description of the record and never the raw row
+            the create returned; `tickCreated` and `describeCreated` carry that argument.
+          */
           onCreated={(record) => {
-            /*
-              TICKED, not added. The roster's own "Add" button is what commits the selection, and a
-              record that added itself the moment it was created would break that — the designer
-              would have made a row they had not confirmed, in a list they were still building.
-              So the new record joins `picked` and the count goes up by one, exactly as if they had
-              found it and ticked it.
-            */
-            const option: DwReferenceOption = {
-              id: record.id,
-              label:
-                (record as { name?: string; productName?: string; toolkitName?: string }).name ??
-                (record as { productName?: string }).productName ??
-                (record as { toolkitName?: string }).toolkitName ??
-                "",
-              sublabel: (record as { place?: string }).place ?? "",
-              data: record as unknown as Record<string, unknown>
-            };
-            setPicked((current) =>
-              current.some((entry) => entry.id === option.id) ? current : [...current, option]
-            );
+            void tickCreated(record);
           }}
         />
       ) : null}

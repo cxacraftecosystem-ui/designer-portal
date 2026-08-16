@@ -41,11 +41,13 @@ import {
 
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
+import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
 import { HoveredLink, MenuItem } from "@/components/ui/navbar-menu";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
 import {
   canCreateRecords,
   canDownloadDataset,
+  canManageAccessRoster,
   canManageCrafts,
   canManageDesignerRoster,
   canManageUsers,
@@ -65,6 +67,39 @@ import type { User } from "@/lib/types";
  */
 const NAV_GROUPS = ["Record", "Browse", "Admin", "Account"] as const;
 type NavGroup = (typeof NAV_GROUPS)[number];
+
+/**
+ * The entry that wears the "people are waiting to be let in" count.
+ *
+ * The hub rather than the allow-list itself, because the allow-list has no nav entry of its own —
+ * the same rule the designer roster follows and for the same reason (see the NAV_ITEMS note). A
+ * constant rather than a literal in two places, so the badge and the fetch that feeds it can only
+ * ever be about one destination.
+ */
+const PENDING_ACCESS_BADGE_HREF = "/admin";
+
+/**
+ * The count, drawn so it survives being glanced at.
+ *
+ * NOT A BARE DIGIT. A number alone in a corner is decoration; this says what it counts, in text, so
+ * an admin who has never seen it before does not have to open the screen to find out. `title`
+ * carries the sentence for a pointer and the sr-only span carries it for a screen reader, which
+ * would otherwise announce "Settings hub 3" and leave the listener to guess at the three.
+ */
+function PendingAccessBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const people = count === 1 ? "person is" : "people are";
+  return (
+    <span
+      title={`${count} ${people} waiting to be approved to sign in`}
+      className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
+    >
+      {count}
+      <span className="font-medium">waiting</span>
+      <span className="sr-only">to be approved to sign in</span>
+    </span>
+  );
+}
 
 type NavItem = {
   href: string;
@@ -367,6 +402,33 @@ export function DynamicIslandNav() {
     items: visibleItems.filter((item) => item.group === label)
   })).filter((group) => group.items.length > 0);
 
+  /**
+   * HOW MANY PEOPLE ARE WAITING TO BE LET INTO THE APPLICATION — the badge on "Settings hub".
+   *
+   * ── WHY THE COUNT IS HERE AT ALL ────────────────────────────────────────────────────────────
+   * The requirement asks that admins be NOTIFIED when somebody is turned away, and this codebase
+   * has no email sender, no push transport and no job runner to build one from. What it has is
+   * admins who open screens, so the notification is a number on the chrome that is already on every
+   * page. The queue itself is one tap away, on the hub tile this badge points at.
+   *
+   * ── WHY IT BADGES "Settings hub" AND NOT AN ENTRY OF ITS OWN ────────────────────────────────
+   * See the note further up this file: the designer roster deliberately has no nav entry, because
+   * administrative configuration reached from three places is three copies of one gate to keep in
+   * step. The allow-list follows that rule, so the number rides on the parent an admin already uses
+   * to reach it. Android reaches its own roster from the menu directly and badges THAT entry — the
+   * NUMBER is the thing that must match across the two clients, not the route to it.
+   *
+   * ── WHY THE FETCH IS TIED TO THE ENTRY BEING VISIBLE ────────────────────────────────────────
+   * `enabled` is "the badged entry is actually on screen", which folds in the permission AND the
+   * admin-view toggle in one expression that cannot drift from what is rendered. An admin browsing
+   * as an ordinary user is not shown admin chrome and does not spend a request on it; an account
+   * that could not read the endpoint never asks and is never 403'd. Shared with the hub tile through
+   * one module-level store, so the badge and the tile can never disagree — see the hook.
+   */
+  const hubEntryVisible = visibleItems.some((item) => item.href === PENDING_ACCESS_BADGE_HREF);
+  const pendingAccess = usePendingAccessCount(hubEntryVisible && canManageAccessRoster(user));
+  const pendingAccessCount = pendingAccess?.pending ?? 0;
+
   if (!user) return null;
 
   async function handleLogout() {
@@ -451,6 +513,9 @@ export function DynamicIslandNav() {
                           <span className="inline-flex items-center gap-2">
                             <item.icon className="h-3.5 w-3.5 text-ink-300" aria-hidden />
                             {item.label}
+                            {item.href === PENDING_ACCESS_BADGE_HREF ? (
+                              <PendingAccessBadge count={pendingAccessCount} />
+                            ) : null}
                           </span>
                         </HoveredLink>
                       ))}
@@ -538,6 +603,10 @@ export function DynamicIslandNav() {
                   >
                     <item.icon className="h-4 w-4 shrink-0 text-ink-300" aria-hidden />
                     {item.label}
+                    {/* The sheet is the keyboard and touch route to everything, so the badge has to
+                        be here as well as in the desktop dropdown — a notification that only exists
+                        on a pointer-driven hover menu does not reach an admin on a tablet. */}
+                    {item.href === PENDING_ACCESS_BADGE_HREF ? <PendingAccessBadge count={pendingAccessCount} /> : null}
                   </Link>
                 ))}
               </div>

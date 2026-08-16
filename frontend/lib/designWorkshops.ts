@@ -1038,6 +1038,25 @@ export function listStageReferences(workshopId: string, query: DwReferenceQuery)
  * entry that is WRONG costs a wrong value nobody can see is wrong. So this table fails closed — an
  * unknown `entityKey.fieldKey` hydrates nothing rather than guessing.
  */
+/*
+  THE SERVER'S `stage_schema.REFERENCE_HYDRATION`, COPIED BY HAND, AND EQUALITY IS ASSERTED.
+
+  `backend/tests/test_reference_registry.py::test_the_web_carries_the_same_hydration_table` parses
+  this literal and requires it to equal the server's table exactly — not to be a subset. Its docstring
+  names the defect that bought the rule: Android once hydrated by matching key NAMES while the server
+  MAPPED, the two disagreed permanently on the same pick (choosing the artisan on a stage 6 row wrote
+  her name into the PRODUCT column), and the only-fill-blanks rule then refused to correct it at save.
+
+  Android cannot drift any more — it reads the server's `refHydration` off the schema. **This file is
+  the one remaining hand-maintained copy, which makes it the one place the defect can come back.** A
+  MISSING entry here costs one retyped box that the server fills at save; a WRONG one writes a value
+  nobody can see is wrong. Hence equality.
+
+  WIDENED 2026-08-16 with the carry-fidelity work: 32 field-pairs became 81 across these eight
+  mappings, and `traditionalProcess.processRef` is new. **When the server table moves, this moves in
+  the same change** — the parity test failed exactly once during that work, for exactly this reason,
+  which is the test doing its job rather than an argument for deleting it.
+*/
 const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
   "workshopSetup.craftRef": { craftName: "craftName", craftLocalName: "craftLocalName" },
   "participant.artisanRef": {
@@ -1048,7 +1067,26 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     gender: "gender",
     phone: "phone",
     village: "village",
-    photo: "photo"
+    photo: "photo",
+    // The widening. `notes -> recordNotes` and `pehchanCardNumber -> artisanCardNo` are the two whose
+    // names differ on purpose: the workshop already owns a `notes` of its own, and the card box was
+    // called `artisanCardNo` long before anything filled it. The number arrives MASKED — the server's
+    // data lambda applies `mask_identity_number` before it is ever on the wire, and `aadhaarNumber`
+    // is refused outright rather than masked, so nothing here can widen that.
+    email: "email",
+    address: "address",
+    notes: "recordNotes",
+    dos: "dos",
+    donts: "donts",
+    pehchanCardAvailable: "pehchanCardAvailable",
+    pehchanCardNumber: "artisanCardNo",
+    documentedOn: "documentedOn",
+    age: "age",
+    state: "state",
+    district: "district",
+    pincode: "pincode",
+    subjectLocation: "subjectLocation",
+    photoCaption: "photoCaption"
   },
   "tool.toolRef": {
     name: "name",
@@ -1056,13 +1094,45 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     material: "material",
     usedFor: "usedFor",
     cost: "cost",
-    photo: "photo"
+    photo: "photo",
+    // `lengthCm`/`breadthCm` are CONVERTED on the server (the source columns are inches, ×2.54); the
+    // five `*AsRecorded` fields are the ones whose source carries no unit at all, and they keep that
+    // honesty in their name rather than being silently declared centimetres.
+    englishName: "englishName",
+    yearsInUse: "yearsInUse",
+    maker: "maker",
+    traditionType: "traditionType",
+    craftName: "craftName",
+    place: "place",
+    artisanName: "artisanName",
+    improvements: "improvements",
+    remarks: "remarks",
+    lengthCm: "lengthCm",
+    breadthCm: "breadthCm",
+    heightAsRecorded: "heightAsRecorded",
+    widthAsRecorded: "widthAsRecorded",
+    thicknessAsRecorded: "thicknessAsRecorded",
+    weightAsRecorded: "weightAsRecorded",
+    radiusAsRecorded: "radiusAsRecorded",
+    documentedOn: "documentedOn",
+    photoCaption: "photoCaption"
   },
-  // Widened with the server's, and the two must stay in step: `Process` holds notes and hangs off
-  // a product, so a step row now carries what happens and which documented product's sequence it
-  // came from instead of a bare name. `steps` and `preProcessAvailable` are deliberately absent —
-  // `stage_schema.REFERENCE_HYDRATION` says why beside the decision.
+  // `Process` holds notes and hangs off a product, so a step row carries what happens and which
+  // documented product's sequence it came from instead of a bare name. `steps` and
+  // `preProcessAvailable` are deliberately absent HERE and present on `traditionalProcess.processRef`
+  // below — a STEP is one line of a sequence and cannot carry the whole sequence into itself.
   "processStep.processRef": { name: "name", notes: "description", productName: "documentedFor" },
+  // New with the widening: the stage-5 singleton, which is where a whole documented process belongs.
+  // `steps` arrives as one ordered bulleted list built from all four `ProcessStep` columns — the
+  // source's own sub-steps, which reached nothing at all before.
+  "traditionalProcess.processRef": {
+    name: "documentedProcessName",
+    notes: "documentedProcessNotes",
+    productName: "documentedFor",
+    steps: "documentedSteps",
+    preProcessAvailable: "preProcessAvailable",
+    documentedOn: "documentedOn"
+  },
   "existingProduct.artisanRef": { name: "artisanName" },
   "existingProduct.productRef": {
     name: "name",
@@ -1070,7 +1140,27 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     material: "material",
     price: "price",
     use: "use",
-    photo: "productPhotos"
+    photo: "productPhotos",
+    // `lengthCm`/`widthCm`/`heightCm` are the inches columns converted ×2.54 on the server. The boxes
+    // print "cm", so a raw copy would have understated every measurement by a factor of 2.54 in a
+    // document a ministry receives. `recordType` carries the four `productType` tokens that
+    // `category` cannot express, rather than hydrating blank as it did for nearly every product.
+    localName: "localName",
+    recordType: "recordType",
+    craftName: "craftName",
+    place: "place",
+    artisanName: "artisanName",
+    mainToolsUsed: "mainToolsUsed",
+    costOfMaking: "costOfMaking",
+    marketDemand: "marketDemand",
+    lengthCm: "lengthCm",
+    widthCm: "widthCm",
+    heightCm: "heightCm",
+    dimensionsNote: "dimensionsNote",
+    productionTimeNote: "productionTimeNote",
+    remarks: "remarks",
+    documentedOn: "documentedOn",
+    photoCaption: "productPhotosCaption"
   },
   "prototype.productRef": { name: "productName" }
 };

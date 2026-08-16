@@ -91,6 +91,7 @@ import {
   entryDataOf,
   fetchStageRegistry,
   isFilled,
+  listDesignWorkshops,
   newClientKey,
   patchDesignWorkshop,
   peekStageRegistry,
@@ -384,6 +385,38 @@ export type DwDraft = {
    * {@link patchDraftHeader} is the only thing that can arm a PATCH and it always records its keys.
    */
   headerDirtyKeys?: string[];
+  /**
+   * When `POST /design-workshops` was last SENT for this draft and its answer never came back.
+   * Null, or absent, means no create is unaccounted for.
+   *
+   * ── WHY A CREATE NEEDS A MEMORY OF ITS OWN ───────────────────────────────────────────────────
+   *
+   * The create is a check-then-act across a network round trip: `remoteId === null` is read, the
+   * POST is awaited, the id is written back. A pass that dies ANYWHERE in that middle leaves a
+   * workshop that exists on the server and a draft on disk that still says it never has. Nothing
+   * in the exchange can tell the two apart afterwards, because `createDesignWorkshop` carries no
+   * client key and the create route de-duplicates nothing: send the same draft twice and the
+   * ministry holds two records under one title, one of them empty forever.
+   *
+   * AND THE DEATH IS NOT EXOTIC. It is a tap. The offline create lands the designer on
+   * `/design-workshops/dwlocal-…`, the connection comes back, `DraftSyncBanner` drains and the
+   * create goes out — and the designer taps through to the list, or to a stage, or the browser
+   * discards the tab. A full document teardown kills the in-flight `fetch`, so the write-back never
+   * runs, and it releases the Web Lock the pass was holding, so the NEXT document's drain is
+   * granted the lease immediately, finds a draft that still says "never created", and posts it
+   * again. Measured, not theorised: two `DesignWorkshop` rows under one title, 3.8 seconds apart,
+   * from one submit — and the list then adopts the orphan as a SECOND local draft, which is the
+   * "two drafts where one is expected" this field was added to end.
+   *
+   * The stamp is written BEFORE the POST and cleared only when the workshop's id is safely on disk,
+   * so it is only ever set while the answer is genuinely unaccounted for. See
+   * {@link resolveInterruptedCreate} for what the next pass does with it.
+   *
+   * Optional for the reason {@link DwDraft.headerDirtyKeys} is: no schema rung is spent, and a draft
+   * written by an older build simply carries no memory of an interrupted create — which is the
+   * behaviour that shipped, unchanged, for drafts that were already on disk.
+   */
+  createSentAt?: number | null;
   stages: Record<string, DwDraftStage>;
   createdAt: number;
   updatedAt: number;
@@ -2770,6 +2803,107 @@ function headerOf(summary: DwSummary): DwDraftHeader {
   };
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * The window between the server minting an id and this store recording it
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Held EXCLUSIVE across `POST /design-workshops` and the write-back; taken SHARED by the adopt. */
+const CREATE_LOCK = "dw-draft-create";
+
+/**
+ * Creates that have been sent and whose id this store has not recorded yet — this realm's.
+ *
+ * A plain Set of promises rather than a counter because the waiter wants to await them, and a
+ * Set because {@link runSync} sends one create per un-created draft and a designer who spent a
+ * fortnight offline has several.
+ */
+const createsInFlight = new Set<Promise<unknown>>();
+
+/**
+ * Claim the create window: nothing may adopt server rows while this runs.
+ *
+ * ── THE PREMISE THIS EXISTS TO KEEP TRUE ─────────────────────────────────────────────────────────
+ *
+ * {@link adoptServerSummaries} reads "no local draft carries this row's id" as "this device has
+ * never seen this workshop" and mints a local record for it. That premise is false for exactly one
+ * window — a workshop THIS DEVICE is creating right now, whose id the server has minted and the
+ * store has not yet written back — and in that window the list adopts the designer's own workshop
+ * as a stranger.
+ *
+ * WHAT IT COST, and it is worse than a second row on a list. Come back into signal in a courtyard
+ * on a slow connection: the pass POSTs the draft, the server commits and starts the reply crawling
+ * back, and the list page — which fetched a moment later and got a FAST answer, because a list of
+ * twenty summaries is a fraction of the create's work — sees the new id, finds no local draft
+ * carrying it, and writes a second draft. Seconds later the create's reply lands and the write-back
+ * stamps that same id on the designer's ORIGINAL draft. Two local records now claim one server
+ * workshop, which is the precise fork {@link ensureDraft} argues at length is unrecoverable without
+ * clearing browser storage: autosaves land in whichever record the URL names, while
+ * `adoptServerDetail`/`adoptServerStage` resolve by REMOTE id through `getAll().find()` and fold
+ * into whichever key order reaches first, so the fold and the edits end up in different rows and one
+ * of them is silently pushed over the other. The designer sees their workshop twice and watches the
+ * two copies diverge.
+ *
+ * TWO LAYERS, BECAUSE THE REALM IS NOT THE DEVICE. The Set closes the single-tab case — which is
+ * every case on a browser without Web Locks, and Web Locks need a secure context — and the lock
+ * closes the pairing of a list tab and a stage tab, where the create is in a different realm's
+ * module instance entirely and no amount of module state can see it.
+ *
+ * NO TIMEOUT ON THE WAIT, and the obvious "bound it so a wedged create cannot stall the cache" is
+ * the bug being fixed, re-armed. A `fetch` that black-holes can hang for minutes, and a bound would
+ * expire exactly when the window is widest. What is being delayed is a WRITE-BEHIND cache of rows
+ * the designer is already reading on screen; what is being prevented is a duplicated government
+ * record. The claim is released in a `finally` and the lock is released by the browser if the tab
+ * dies, so neither can be held by nothing.
+ */
+async function underCreateClaim<T>(run: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  const claim = locks?.request ? locks.request(CREATE_LOCK, { mode: "exclusive" }, run) : run();
+  createsInFlight.add(claim);
+  try {
+    return await claim;
+  } finally {
+    createsInFlight.delete(claim);
+  }
+}
+
+/**
+ * Titles this device has sent a create for and never heard back about — see
+ * {@link DwDraft.createSentAt}.
+ *
+ * The adopt uses it to leave those rows alone. A workshop matching one of these titles may BE the
+ * unaccounted-for create: adopting it would mint a second local record for a workshop the designer
+ * already has open, and — worse — would make the row look "claimed" to
+ * {@link resolveInterruptedCreate}, which would then conclude the create never landed and send it
+ * again. Skipping costs nothing but a page of offline cache for one workshop until the next sync
+ * pass resolves it, at which point the draft carries the id and the adopt matches it normally.
+ */
+function titlesAwaitingACreate(drafts: DwDraft[]): Set<string> {
+  const titles = new Set<string>();
+  for (const draft of drafts) {
+    if (draft.remoteId === null && (draft.createSentAt ?? null) !== null) titles.add(draft.header.title);
+  }
+  return titles;
+}
+
+/** Wait until no create is between the server's id and this store's record of it. */
+async function settleCreateClaims(): Promise<void> {
+  // Snapshotted, and that is sound rather than lazy: a create sent AFTER this line cannot have
+  // produced a row in the list response the caller is holding, because that response had already
+  // arrived. Awaiting arrivals as well would be waiting for work that cannot be relevant.
+  const mine = [...createsInFlight];
+  // `allSettled`: a create that FAILED has left no id anywhere, so it constrains nothing — and
+  // rejecting here would take the whole adopt down with it and lose the offline list cache over a
+  // create that was going to be retried anyway.
+  if (mine.length) await Promise.allSettled(mine);
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  if (!locks?.request) return;
+  // SHARED, so adopts in several tabs never wait on each other — only on a create.
+  await locks.request(CREATE_LOCK, { mode: "shared" }, async () => undefined).catch(() => {
+    // A lock manager that refused the request leaves this pass with the old, racy behaviour rather
+    // than with no local cache at all. The Set above still covers this realm.
+  });
+}
+
 /**
  * Keep the list's rows locally too, so the workshop list draws with no connection.
  *
@@ -2783,6 +2917,10 @@ function headerOf(summary: DwSummary): DwDraftHeader {
  */
 export async function adoptServerSummaries(rows: DwSummary[]): Promise<void> {
   if (!rows.length) return;
+  // BEFORE THE TRANSACTION, NOT INSIDE IT — see {@link transact}: a body that awaits anything other
+  // than `req` lets the transaction commit out from under it, and this waits on a network round
+  // trip. See {@link underCreateClaim} for what is being waited for and why the wait is unbounded.
+  await settleCreateClaims();
   await transact([STORE_DRAFTS], "readwrite", async (stores) => {
     const store = stores[STORE_DRAFTS];
     const existing = (
@@ -2794,6 +2932,10 @@ export async function adoptServerSummaries(rows: DwSummary[]): Promise<void> {
     const byRemote = new Map(
       existing.filter((draft) => draft.remoteId && draftBelongsToSession(draft)).map((draft) => [draft.remoteId!, draft])
     );
+    // Only this session's, for the same reason `byRemote` is: another designer's interrupted create
+    // on a shared laptop is not this session's to reason about, and their title is not evidence
+    // about anything in this session's store.
+    const awaiting = titlesAwaitingACreate(existing.filter(draftBelongsToSession));
     const now = Date.now();
     for (const row of rows) {
       const current = byRemote.get(row.id);
@@ -2804,6 +2946,8 @@ export async function adoptServerSummaries(rows: DwSummary[]): Promise<void> {
         await req(store.put({ ...current, header: headerOf(row), ownerUserId: current.ownerUserId ?? sessionUserId, updatedAt: now }));
         continue;
       }
+      // NOT A STRANGER — POSSIBLY THIS DEVICE'S OWN, MID-CREATE. See {@link titlesAwaitingACreate}.
+      if (awaiting.has(row.title)) continue;
       await req(
         store.put({
           schemaVersion: DW_DRAFT_SCHEMA_VERSION,
@@ -3481,6 +3625,65 @@ async function runSyncUnderLease(): Promise<DwSyncResult> {
 }
 
 /**
+ * Did the create this draft already sent actually land? Ask the server, do not guess.
+ *
+ * Answers the workshop's summary when exactly one on the server can be this draft's, `"ambiguous"`
+ * when more than one can, and `null` when none can — which is the ordinary case and means "go ahead
+ * and send it".
+ *
+ * ── THE TEST, AND WHY IT IS THE ONE IT IS ────────────────────────────────────────────────────────
+ *
+ * There is no client key on `POST /design-workshops` and the create route de-duplicates nothing, so
+ * this device cannot ASK the server "is my create in there". What it can do is describe the record
+ * it would have made: the exact title it sent, created by the account that is signed in here, and
+ * not already spoken for by another local draft. A workshop matching all three is either the
+ * interrupted create or something indistinguishable from it, and adopting it is right in both
+ * cases — the alternative is a second empty record in a government index that nobody ever reconciles.
+ *
+ * `createdById`, NOT the date. The obvious extra filter — "created since `createSentAt`" — compares
+ * a browser's clock against a server's, and those differ by minutes on field laptops that have been
+ * off the network for a fortnight. A skewed clock would silently reject the very record it was
+ * meant to find and the pass would create the duplicate anyway, which is the worst kind of guard:
+ * one that only fails when it matters.
+ *
+ * ALREADY-CLAIMED ROWS ARE EXCLUDED so that two drafts cannot both adopt one workshop; that is the
+ * `getAll().find()` fork {@link ensureDraft} documents, arrived at from the other direction.
+ * {@link titlesAwaitingACreate} is the other half of keeping this honest: it stops the list adopt
+ * minting a cache row for exactly these workshops, which would make a row look claimed and send this
+ * function's answer from "found it" to "create another one".
+ *
+ * MORE THAN ONE CANDIDATE IS NOT A COIN TOSS. Two workshops the same designer titled the same way is
+ * a real thing a person can do — twice from the same default title, most obviously — and choosing
+ * between them by `createdAt` would put a fortnight of stages into the wrong record under a 200.
+ * The caller turns this into a refusal a person can read and act on.
+ *
+ * A LOOKUP THAT ITSELF FAILS ANSWERS `null` — send it. The failure modes are not symmetric only in
+ * theory: refusing to create because a search request timed out would strand the workshop for as
+ * long as the connection stayed bad, which is the whole population this feature exists for, while
+ * the duplicate this misses is the one the pass would have made anyway.
+ */
+async function resolveInterruptedCreate(draft: DwDraft): Promise<DwSummary | "ambiguous" | null> {
+  const title = draft.header.title || "Untitled design workshop";
+  const claimed = new Set(
+    (await refreshDrafts()).map((row) => row.remoteId).filter((id): id is string => typeof id === "string")
+  );
+  const found = await listDesignWorkshops({ page: 1, pageSize: 100, search: title }).catch(() => null);
+  if (!found) return null;
+  const candidates = found.items.filter(
+    (row) =>
+      row.title === title &&
+      !claimed.has(row.id) &&
+      // A null `sessionUserId` cannot happen here — `runSync` refuses to send anything until
+      // `GET /me` has answered — and the fallback is stated rather than asserted because a sync pass
+      // is the wrong place to throw. Without an owner to compare, the title alone is too weak a
+      // claim on a government record, so nothing is adopted.
+      (sessionUserId ? row.createdById === sessionUserId : false)
+  );
+  if (candidates.length > 1) return "ambiguous";
+  return candidates[0] ?? null;
+}
+
+/**
  * @param skewRun pass {@link APP_RUN_ID} — and ONLY that — when the refusal is one no edit can clear
  *   and only an update to the client or the server will. See {@link DwDraftFailure.skewRun}.
  */
@@ -3590,59 +3793,115 @@ async function runSync(): Promise<DwSyncResult> {
     try {
       /* 1. The workshop itself. ------------------------------------------------------------- */
       if (!draft.remoteId) {
-        const created = await createDesignWorkshop({
-          title: draft.header.title || "Untitled design workshop",
-          templateId: draft.header.templateId,
-          craftName: draft.header.craftName,
-          clusterName: draft.header.clusterName,
-          state: draft.header.state,
-          district: draft.header.district,
-          startDate: draft.header.startDate,
-          endDate: draft.header.endDate,
-          workshopId: draft.header.workshopId,
-          notes: draft.header.notes
-        });
-        // Written back BEFORE a single stage or byte moves. From here on the workshop exists, and a
-        // pass that dies during the media must come back to the media, never to the create — the
-        // resumability rule `lib/offline.ts` documents, and the reason a bad signal used to
-        // duplicate a record once per sync pass for as long as it stayed bad.
-        const recorded = await mutate(draft.localId, (current) => ({
-          ...current,
-          remoteId: created.id,
-          headerDirtyAt: null,
-          // The CREATE carried the whole header, so every recorded edit is discharged. Cleared with
-          // the timestamp for the reason the PATCH arm gives: a list left behind would make the next
-          // unrelated edit send fields nobody touched.
-          headerDirtyKeys: [],
-          header: { ...current.header, status: String(created.status) },
+        /*
+          LOOK BEFORE SENDING IT AGAIN — see {@link DwDraft.createSentAt}.
+
+          A stamp here means a create went out and this device never saw the answer, which is what a
+          document teardown mid-POST leaves behind. Posting on top of that is how one submit becomes
+          two government records. `resolveInterruptedCreate` answers the only question that matters:
+          did the earlier attempt land?
+        */
+        const resumed = (draft.createSentAt ?? null) === null ? null : await resolveInterruptedCreate(draft);
+        if (resumed === "ambiguous") {
+          await mutate(draft.localId, (current) => ({
+            ...current,
+            failure: failure(
+              "This workshop was sent once and this browser never saw the answer, and the server now holds more than one " +
+                "workshop with this title — so this device cannot tell which one is yours, and sending it again could file " +
+                "it twice. Nothing has been thrown away. Open the list, check which of them is the one you started, and " +
+                "either rename this one or delete the copy you do not want, then use Try again.",
+              true,
+              (current.failure?.attempts ?? 0) + 1
+            )
+          }));
+          result.failed += 1;
+          continue;
+        }
+        /*
+          THE POST AND THE WRITE-BACK ARE ONE CLAIMED WINDOW — see {@link underCreateClaim}.
+
+          They were two statements with nothing between them but an `await`, and that await is a
+          network round trip on a field connection. `adoptServerSummaries` running inside it reads
+          the id off the LIST — which the server can answer in a fraction of the create's time —
+          finds no local draft carrying it, and writes a SECOND local draft for the workshop this
+          very line is creating. Both records then claim one server id and the designer's own
+          workshop appears twice on their own list, diverging from there.
+
+          Do not narrow this to the POST alone: the whole point is that the id is unrecorded until
+          `mutate` has committed, so the claim has to outlive the response.
+        */
+        const recorded = await underCreateClaim(async () => {
           /*
-            EVERY STAGE LOSES ITS `serverLoadedAt`, AND THE PENDING SWEEPS GO WITH IT.
+            THE STAMP GOES DOWN BEFORE THE REQUEST GOES OUT, and the order is the whole point: a
+            stamp written after the POST would be written by a document that may no longer exist.
+            One extra IndexedDB write per created workshop — once in the life of a workshop — buys
+            the next pass the ability to tell "never sent" from "sent, answer unknown".
 
-            `putDraftStage` stamps `serverLoadedAt` on any stage written while `remoteId` is null, on
-            the true premise that a workshop the server has never heard of has nothing up there to
-            overwrite. The create is exactly the moment that premise expires: `POST /design-workshops`
-            runs `seed_designer_prefill`, which writes `workshopSetup` (designerName,
-            designerInstitution) into stage 1 and `workshopPlan` (designerProfile — REQUIRED rich text
-            — and designerExperience) into stage 3. Those rows are on the server and this browser has
-            never read them, which is the precise definition of never-read; leaving the stamp made the
-            very next PUT omit `merge`, and `save_stage` replaced each singleton row's `data`
-            wholesale, destroying all four values in place with no `RecordRevision` and nulling the
-            promoted `designerName` column. Stage 3 then read as incomplete for a biography the
-            designer had never seen. With the stamp cleared the first post-create save carries
-            `merge: true` on all three arms and `{**previous, **clean}` keeps them.
-
-            `removedFrom` IS CLEARED IN THE SAME BREATH, and that is not a shortcut — it is the fact
-            that makes clearing the stamp free of a false alarm. `seed_designer_prefill` skips every
-            entity whose cardinality is not SINGLETON, so a workshop the server has just created holds
-            NO collection row anywhere; a deletion recorded here before the create was a deletion of a
-            row that has only ever existed on this device, and there is nothing above for a sweep to
-            reach. Left standing, it would make {@link stageSweep} report `withheld` — "you deleted
-            rows this browser may not send" — about rows that exist nowhere but here, which is how a
-            designer learns to stop reading this app's warnings.
+            Not written when the workshop has already been FOUND up there: nothing is about to be
+            sent, so there would be nothing outstanding for it to record, and the write-back below
+            clears it in the same breath anyway.
           */
-          stages: stagesUnreadAfterCreate(current.stages),
-          failure: null
-        }));
+          if (!resumed) await mutate(draft.localId, (current) => ({ ...current, createSentAt: Date.now() }));
+          const created =
+            resumed ??
+            (await createDesignWorkshop({
+              title: draft.header.title || "Untitled design workshop",
+              templateId: draft.header.templateId,
+              craftName: draft.header.craftName,
+              clusterName: draft.header.clusterName,
+              state: draft.header.state,
+              district: draft.header.district,
+              startDate: draft.header.startDate,
+              endDate: draft.header.endDate,
+              workshopId: draft.header.workshopId,
+              notes: draft.header.notes
+            }));
+          // Written back BEFORE a single stage or byte moves. From here on the workshop exists, and a
+          // pass that dies during the media must come back to the media, never to the create — the
+          // resumability rule `lib/offline.ts` documents, and the reason a bad signal used to
+          // duplicate a record once per sync pass for as long as it stayed bad.
+          return mutate(draft.localId, (current) => ({
+            ...current,
+            remoteId: created.id,
+            // CLEARED IN THE SAME TRANSACTION THAT RECORDS THE ID, never before and never after: the
+            // stamp's whole meaning is "an answer is outstanding", and the id landing on disk is
+            // exactly the moment that stops being true.
+            createSentAt: null,
+            headerDirtyAt: null,
+            // The CREATE carried the whole header, so every recorded edit is discharged. Cleared with
+            // the timestamp for the reason the PATCH arm gives: a list left behind would make the next
+            // unrelated edit send fields nobody touched.
+            headerDirtyKeys: [],
+            header: { ...current.header, status: String(created.status) },
+            /*
+              EVERY STAGE LOSES ITS `serverLoadedAt`, AND THE PENDING SWEEPS GO WITH IT.
+
+              `putDraftStage` stamps `serverLoadedAt` on any stage written while `remoteId` is null, on
+              the true premise that a workshop the server has never heard of has nothing up there to
+              overwrite. The create is exactly the moment that premise expires: `POST /design-workshops`
+              runs `seed_designer_prefill`, which writes `workshopSetup` (designerName,
+              designerInstitution) into stage 1 and `workshopPlan` (designerProfile — REQUIRED rich text
+              — and designerExperience) into stage 3. Those rows are on the server and this browser has
+              never read them, which is the precise definition of never-read; leaving the stamp made the
+              very next PUT omit `merge`, and `save_stage` replaced each singleton row's `data`
+              wholesale, destroying all four values in place with no `RecordRevision` and nulling the
+              promoted `designerName` column. Stage 3 then read as incomplete for a biography the
+              designer had never seen. With the stamp cleared the first post-create save carries
+              `merge: true` on all three arms and `{**previous, **clean}` keeps them.
+
+              `removedFrom` IS CLEARED IN THE SAME BREATH, and that is not a shortcut — it is the fact
+              that makes clearing the stamp free of a false alarm. `seed_designer_prefill` skips every
+              entity whose cardinality is not SINGLETON, so a workshop the server has just created holds
+              NO collection row anywhere; a deletion recorded here before the create was a deletion of a
+              row that has only ever existed on this device, and there is nothing above for a sweep to
+              reach. Left standing, it would make {@link stageSweep} report `withheld` — "you deleted
+              rows this browser may not send" — about rows that exist nowhere but here, which is how a
+              designer learns to stop reading this app's warnings.
+            */
+            stages: stagesUnreadAfterCreate(current.stages),
+            failure: null
+          }));
+        });
         /*
           THE WRITE-BACK IS CHECKED, BECAUSE AN UNRECORDED SERVER ID CREATES THE WORKSHOP AGAIN.
 

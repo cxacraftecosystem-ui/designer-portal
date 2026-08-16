@@ -56,6 +56,10 @@ from app.services.report_docx import render_docx
 from app.services.report_model import ImageRef, PageSize, ReportMeta
 from app.services.report_pdf import render_pdf
 from app.services.report_questionnaires import attach_questionnaires, questionnaire_warnings
+# The ONE masking rule this application has, imported rather than reimplemented. See the note on
+# `pehchanCardNumber` in the Artisan reference model for why a card number crossing into a stage
+# entry has to go through it, and `record_fields.py:270-283` for the defect that settled it.
+from app.services.records import mask_identity_number
 from app.services.report_templates import apply_report_settings, template as get_template
 from app.services.report_theme import resolve_accent, resolve_font, theme_from_accent
 from app.services.stage_schema import (
@@ -260,6 +264,83 @@ def _rel(row: Any, relation: str, attribute: str) -> Any:
     return getattr(related, attribute, None) if related is not None else None
 
 
+def _rel_obj(row: Any, relation: str) -> Any:
+    """An included relation itself, or None when it was not loaded."""
+    return getattr(row, relation, None)
+
+
+def _subject_point(location: Any) -> dict[str, float] | None:
+    """The STATED pin a researcher dropped on the subject's own place, as a registry GEO value.
+
+    `subjectLatitude`/`subjectLongitude` and NEVER `latitude`/`longitude`. The `Location` model's
+    docstring is the argument in full and it is worth not re-deriving: every artisan on the live
+    database that carries a location sits within two thousandths of a degree of one point in
+    Kharagpur, while the places their researchers typed are Bagru, Kutch, Rudraprayag and
+    Sanganer. Those coordinates are real, they jitter, they carry honest accuracy values — and
+    they are fixes of THE DESK THE RECORD WAS TYPED AT. Copying them into a workshop entry would
+    put a map pin on a desk in West Bengal for an artisan in Rajasthan, and the report's map
+    section is one of the few things in the document a reader trusts without checking.
+
+    No `accuracy` key: a hand-dropped pin has no error bar, and `coerce_value` treats the key as
+    optional precisely so that "somebody pointed at this" and "a device measured this" stay
+    distinguishable. Returns None unless BOTH halves are present — half a coordinate is not one.
+    """
+    if location is None:
+        return None
+    lat = getattr(location, "subjectLatitude", None)
+    lon = getattr(location, "subjectLongitude", None)
+    if lat is None or lon is None:
+        return None
+    try:
+        return {"lat": float(lat), "lon": float(lon)}
+    except (TypeError, ValueError):
+        return None
+
+
+def _step_lines(process: Any) -> str | None:
+    """A documented process's own ordered sub-steps, as one newline-separated bulleted list.
+
+    WHY THE SUB-STEPS LAND ON THE SINGLETON AND NOT ON A ROW. `REFERENCE_HYDRATION`'s note above
+    `processStep.processRef` refuses to copy `steps` onto a process-step row, and it is right:
+    `processStep` IS the workshop's own ordered list of steps, so putting a whole sequence inside
+    one of them would print the sequence again on every row that names the same process. That note
+    ends by saying the omission is a decision — and the decision left the source's sub-steps
+    reaching nothing at all, which is the gap this function closes from the other side. Stage 5's
+    `traditionalProcess` singleton is one-per-workshop, so the sequence prints ONCE, above the
+    steps table, which is where a reader wants it.
+
+    All four `ProcessStep` columns travel, one line each: `sortOrder` becomes the number (the list
+    is ordered by it, so the number is the POSITION and never an id a reader might mistake for
+    one), `name` is the line, `stepType == GROUP` is marked because a group is not a step in the
+    sequence but a bracket around several of them, and `notes` follows an em dash.
+
+    ONE NEWLINE-SEPARATED STRING AND NOT A TAGS LIST, which was the first shape and the wrong one.
+    A TAGS field reaches `report_builder.format_value` as `", ".join(...)`, so the whole documented
+    sequence would have printed as a single run-on line — "1. Tying, 2. Dyeing, 3. Washing" — under
+    a heading that promises a list. A LONG_TEXT with `report_role=BULLETS` goes down the renderer's
+    pre-promotion path, which splits on newlines and prints one bullet per step. It also splits on
+    semicolons, which is deliberate elsewhere in the registry and means a step note containing one
+    breaks into two bullets; that is the renderer's documented behaviour for every BULLETS field
+    here and is not worth a special case.
+    """
+    steps = getattr(process, "steps", None) or []
+    ordered = sorted(steps, key=lambda s: (getattr(s, "sortOrder", 0) or 0,
+                                           str(getattr(s, "name", "") or "")))
+    lines: list[str] = []
+    for index, step in enumerate(ordered, start=1):
+        name = str(getattr(step, "name", "") or "").strip()
+        if not name:
+            continue
+        line = f"{index}. {name}"
+        if _enum_token(getattr(step, "stepType", None)) == "GROUP":
+            line += " (group)"
+        note = str(getattr(step, "notes", "") or "").strip()
+        if note:
+            line = f"{line} — {note}"
+        lines.append(line)
+    return "\n".join(lines) or None
+
+
 def _money(value: Any) -> str | None:
     """A Prisma Decimal as the two-place string a MONEY field is stored as.
 
@@ -279,21 +360,223 @@ def _joined(*parts: Any) -> str:
     return " · ".join(str(p).strip() for p in parts if p not in (None, "") and str(p).strip())
 
 
+def _decimal(value: Any) -> float | None:
+    """A Prisma ``Decimal`` as the plain number a registry DECIMAL field stores.
+
+    Unlike :func:`_money` this returns a float rather than a string, because DECIMAL is stored as a
+    number and only MONEY has the two-place round-trip problem. Kept as its own named function so
+    that a measurement never accidentally goes through ``_money`` and arrives in the report with a
+    rupee sign in front of it.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _iso_date(value: Any) -> str | None:
+    """A Prisma ``DateTime`` as the bare ISO date a registry ``DATE`` field stores.
+
+    ``coerce_value`` reads a DATE as ``str(raw)[:10]``, so a naive copy of a ``datetime`` would
+    already work by accident. Doing it here makes it deliberate: the value that crosses into the
+    workshop is a DATE, the time of day is dropped on purpose (a report prints "documented on
+    12 March 2025", never a timestamp), and nothing downstream has to know that the source column
+    happened to carry one.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()[:10]
+    return text or None
+
+
+#: 2.54 exactly — the inch has been DEFINED as 25.4 mm since the 1959 international yard and pound
+#: agreement, so this is not an approximation and must never be "rounded to 2.5 for readability".
+_CM_PER_INCH = 2.54
+
+
+def _inches_to_cm(value: Any) -> float | None:
+    """A source measurement in INCHES as the CENTIMETRES the workshop entity declares.
+
+    THE UNITS ON THE TWO SIDES OF THIS CARRY DO NOT MATCH, AND NOTHING ELSE IN THIS FILE HAD EVER
+    HAD TO NOTICE. ``ProductDocumentation.lengthInches`` / ``breadthInches`` / ``heightInches`` and
+    ``ToolDocumentation.lengthInches`` / ``breadthInches`` are inches — the column names say so and
+    the record forms label the boxes "Length (inches)". ``existingProduct.lengthCm`` and its
+    neighbours declare ``unit="cm"``, which every client renders as the suffix beside the number
+    and the report prints verbatim. A plain mapping pair would therefore have written 12 into a box
+    labelled "cm" for a saree 30.48 cm long, and the document submitted to the ministry would have
+    said 12 cm with nothing anywhere to suggest it was wrong.
+
+    It is worse than an ordinary wrong value because of the hydration rule: ``hydrate_entries``
+    only ever fills BLANKS, so once the wrong number is stored the designer can correct it but can
+    never get back to "nobody measured this" — and a re-point clears and rewrites it with the same
+    wrong conversion. There is no state from which the mistake self-heals.
+
+    Rounded to two places to match the source columns, which are ``Decimal(10, 2)``: carrying
+    30.479999999999997 would print that many digits in a table cell and read as false precision.
+    """
+    if value is None:
+        return None
+    try:
+        return round(float(value) * _CM_PER_INCH, 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _enum_token(value: Any) -> str:
+    """The bare token of a Prisma enum, which arrives as either a str or an enum member."""
+    return str(getattr(value, "value", value) or "")
+
+
+# ── THE THREE ENUM TRANSLATION TABLES, AND WHY EVERY ONE OF THEM IS TOTAL ───────────────────
+#
+# A Prisma enum and a registry ENUM are two closed lists written by two different people for two
+# different documents, and the only safe way to cross between them is a table that names EVERY
+# member of the source list — including the members that have no honest destination, which are
+# spelled `None` here rather than left out.
+#
+# THE DEFECT THAT MADE THAT RULE NECESSARY is `_PRODUCT_TYPE_TO_CATEGORY` below as it stood: it
+# held two of ProductType's six members, and `.get()` returns None for the other four. That is the
+# right BEHAVIOUR and it was invisible — nothing distinguished "FINISHED_GOOD deliberately has no
+# category" from "somebody forgot FINISHED_GOOD", and nothing at all would have distinguished
+# either from "a seventh member was added to the Prisma enum last week". A partial map degrades
+# silently into a stale map, and a stale map is a blank column in a report nobody re-reads.
+#
+# So: every table below is exhaustive over its Prisma enum, `None` is an explicit and reasoned
+# entry, and `test_reference_carry.py` reads `prisma/schema.prisma` and fails if a member exists
+# that these tables do not name. Adding a token to the schema now breaks a test instead of quietly
+# hydrating nothing. DO NOT "tidy" these into `.get()` over a short dict again.
+
 # ProductType and PRODUCT_CATEGORY answer two different questions and only two of their tokens
 # mean the same thing. ProductType asks what KIND OF THING a documented record is — a finished
 # good, a sample, a raw material — while the workshop registry's category asks what the product
 # IS: a saree, a floor covering, a bag. Guessing across them would fill a ministry report's
 # category column with plausible, wrong values that nobody would think to check, so only the two
 # genuine matches are mapped and everything else arrives blank for the designer to choose.
-_PRODUCT_TYPE_TO_CATEGORY: dict[str, str] = {
+#
+# THE ANSWER TO "then the source's own type is lost" IS `existingProduct.recordType`, not a guess
+# here. The four unmappable members are carried across verbatim into a field whose own ENUM is
+# ProductType, so the record's answer reaches the workshop and the report intact — it simply
+# reaches its own box instead of being mistranslated into somebody else's.
+_PRODUCT_TYPE_TO_CATEGORY: dict[str, str | None] = {
+    "PACKAGING": "PACKAGING",
+    "OTHER": "OTHER",
+    # No honest counterpart: none of these says what the product IS. A finished good may be a
+    # saree or a bag; a sample is a saree that happens not to be for sale.
+    "FINISHED_GOOD": None,
+    "SAMPLE": None,
+    "RAW_MATERIAL": None,
+    "COMPONENT": None,
+}
+
+#: ProductType -> PRODUCT_TYPE, the registry list added to mirror the Prisma enum member for
+#: member. An identity map, and the reason it exists at all: it is what lets the four members
+#: above be spelled `None` without losing the record's answer. The source says "this is a sample";
+#: the workshop now has a box that can say "this is a sample" instead of a Category column
+#: pretending a sample is a kind of saree.
+_PRODUCT_TYPE_TO_MEMBER: dict[str, str | None] = {
+    "FINISHED_GOOD": "FINISHED_GOOD",
+    "SAMPLE": "SAMPLE",
+    "RAW_MATERIAL": "RAW_MATERIAL",
+    "COMPONENT": "COMPONENT",
     "PACKAGING": "PACKAGING",
     "OTHER": "OTHER",
 }
 
+#: MarketDemand -> DEMAND_LEVEL. Five members, five identical tokens, and the identity is written
+#: out rather than assumed: the two lists live in two repositories that are versioned separately,
+#: and "they happen to match today" is not something a mapping may depend on silently. If either
+#: side gains a member the test that walks this table says so.
+_MARKET_DEMAND_TO_DEMAND_LEVEL: dict[str, str | None] = {
+    "LOW": "LOW",
+    "MEDIUM": "MEDIUM",
+    "HIGH": "HIGH",
+    "SEASONAL": "SEASONAL",
+    "UNKNOWN": "UNKNOWN",
+}
 
-def _enum_token(value: Any) -> str:
-    """The bare token of a Prisma enum, which arrives as either a str or an enum member."""
-    return str(getattr(value, "value", value) or "")
+#: TraditionType -> TRADITION_TYPE. The names collide and the tokens do not: the source says
+#: TRADITIONAL / MODERN / HYBRID / UNKNOWN, the registry says TRADITIONAL / CONTEMPORARY /
+#: TRANSITIONAL. Without this table `coerce_value` would refuse three of the four source answers
+#: and drop them — silently, because a rejected hydration is indistinguishable from a source
+#: column nobody filled in.
+#:
+#: MODERN -> CONTEMPORARY and HYBRID -> TRANSITIONAL are translations, not guesses: they are the
+#: same answer to the same question in two vocabularies, and TRANSITIONAL's own label in the
+#: registry reads "Traditional form, contemporary use", which is what a hybrid tool IS. UNKNOWN
+#: has no counterpart because the registry deliberately offers none — an unanswered ENUM is
+#: expressed by leaving the box empty, not by a token that means "empty".
+_TRADITION_TYPE_TO_TRADITION: dict[str, str | None] = {
+    "TRADITIONAL": "TRADITIONAL",
+    "MODERN": "CONTEMPORARY",
+    "HYBRID": "TRANSITIONAL",
+    "UNKNOWN": None,
+}
+
+#: MakerType -> MAKER_TYPE. An identity map over a registry list that was ADDED to mirror this
+#: Prisma enum (see ``ENUMS["MAKER_TYPE"]``), so the seven tokens are the same seven by
+#: construction. It is still written out, for the reason above: the mirror is a decision somebody
+#: made once, and a table plus a test is how that decision survives the next schema edit.
+_MAKER_TYPE_TO_MAKER: dict[str, str | None] = {
+    "ARTISAN": "ARTISAN",
+    "LOCAL_BLACKSMITH": "LOCAL_BLACKSMITH",
+    "CARPENTER": "CARPENTER",
+    "WORKSHOP": "WORKSHOP",
+    "FACTORY": "FACTORY",
+    "OTHER": "OTHER",
+    # Carried, unlike TraditionType's UNKNOWN, because the registry list mirrors this enum and so
+    # HAS an UNKNOWN member: "Not known" is a real answer a researcher chose, and blanking it
+    # would turn it into "not asked".
+    "UNKNOWN": "UNKNOWN",
+}
+
+
+def _translated(table: Mapping[str, str | None], value: Any) -> str | None:
+    """One enum token through one of the total tables above.
+
+    WHERE "REFUSE LOUDLY" ACTUALLY HAPPENS, and it is not here. A token the table does not name is
+    a schema edit that shipped without its mapping, and the place to catch that is
+    ``tests/test_reference_carry.py``, which walks ``prisma/schema.prisma`` and fails before the
+    build leaves the machine. Raising here instead would 500 the whole picker — fifty rows lost
+    because one of them holds a token added last week — which is the trade this module refuses
+    everywhere else (see ``_load_one_reference_model``: "one unjoinable model must not lose a
+    report that is the end of two weeks of fieldwork").
+
+    So at RUNTIME the unmapped token is logged with the table it was not in, and the field arrives
+    blank for the designer to answer. Silent is what this must never be; fatal is what it must not
+    be either. An empty or absent source value is a different thing and logs nothing.
+    """
+    token = _enum_token(value)
+    if not token:
+        return None
+    if token not in table:
+        logger.error(
+            "Reference carry: %r is not in its translation table, so it hydrates blank. Add it "
+            "to the table in design_workshops (spelled None, with a reason, if it has no honest "
+            "counterpart).", token,
+        )
+        return None
+    return table[token]
+
+
+@dataclass(frozen=True, slots=True)
+class ReferencePhoto:
+    """The one photograph a referenced record contributes, AND THE WORDS UNDER IT.
+
+    ``_reference_photos`` used to return the media id alone, and the caption a researcher typed
+    against that photograph in the repository — the one sentence that says what the picture shows
+    — stopped at the join. Every gallery in this registry is declared with a ``*Caption`` field
+    beside it (``report_role=CAPTION``, printed directly under the picture), so the workshop then
+    asked the designer to retype a caption that already existed one row away, for a photograph
+    they had never seen taken.
+
+    A dataclass rather than a ``(id, caption)`` tuple because four call sites read this and a
+    tuple index is the kind of thing that survives a refactor by silently meaning the other field.
+    """
+
+    id: str
+    caption: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,7 +591,7 @@ class ReferenceModel:
     delegate: str                                   # the attribute on the Prisma client
     label: Callable[[Any], str]
     sublabel: Callable[[Any], str]
-    data: Callable[[Any, str | None], dict[str, Any]]
+    data: Callable[[Any, ReferencePhoto | None], dict[str, Any]]
     order: dict[str, str]
     search_fields: tuple[str, ...]
     include: dict[str, Any] = dataclass_field(default_factory=dict)
@@ -349,16 +632,83 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # is what a researcher typed into the free metadata before the relation existed.
             "specialisation": (_rel(r, "craft", "name")
                                or _meta_value(_meta(r), "specialisation", "specialization")),
+            # ── TWO ANSWERS THIS TABLE STILL CANNOT GIVE, AND WHY THEY ARE LEFT AS THEY ARE ──
+            #
+            # `experienceYears` and `age` have NO COLUMN on `Artisan`. They are read from three and
+            # one legacy `extraMetadata` spellings respectively, which is where researchers put
+            # them before this registry existed — and `ArtisanForm` has written `extraMetadata`
+            # programmatically (EXIF only) since the raw JSON textarea was removed, so BOTH have
+            # been blank on every artisan created since. `participant.experienceYears` is a
+            # TABLE_COLUMN, so that blank is visible in the participant table of every submitted
+            # report.
+            #
+            # The legacy reads are KEPT rather than deleted: the records that do carry a value are
+            # exactly the oldest ones, and dropping the read would blank a column that is currently
+            # right for them. But this is not the fix, and it cannot be made into one from this
+            # file. The fix is `experienceYears Int?` and `dateOfBirth DateTime?` on model Artisan
+            # plus the two inputs on the artisan form — an age COLUMN would rot the same way, which
+            # is why the pair is DOB-then-derive and not "add an age box". `record_fields.py` reads
+            # the identical dead keys for the artisan record sheet, so the migration fixes both
+            # surfaces at once. Until then this is the honest state and the report is blank rather
+            # than wrong.
             "experienceYears": _meta_value(
                 _meta(r), "experienceYears", "experience", "yearsOfExperience"
             ),
+            "age": _meta_value(_meta(r), "age"),
             "gender": r.gender,
             "phone": r.phone,
+            "email": r.email,
+            # ── IDENTITY: THE CARD YES, THE NUMBER MASKED, THE AADHAAR NOT AT ALL ────────────
+            #
+            # `participant.artisanCardNo` is labelled "Artisan ID / card number", is a TABLE_COLUMN
+            # in every participant table, and sat directly opposite `Artisan.pehchanCardNumber`
+            # unwired — so designers have been reading the PM Vishwakarma card over the artisan's
+            # shoulder and typing it in beside a picker that already knew it.
+            #
+            # It is carried MASKED, and that is not timidity. `record_fields.py` carries the scar:
+            # "The card number used to print verbatim here while the Aadhaar beside it was masked,
+            # so a full PM Vishwakarma ID reached every grantee, dataset downloader and reviewer —
+            # a rule that held on the API responses and nowhere else." A design workshop is exactly
+            # such a surface: its stage reads do NOT pass through `records._redact_sensitive`, and
+            # a DesignWorkshopViewer is a grantee. Copying the bare digits onto an entry would
+            # re-open that hole through a new door, and the entry is then a permanent copy by
+            # design. The last four are what a reader checks against the physical card anyway.
+            #
+            # `aadhaarNumber` is NOT carried at any masking. It is the deduplication key, it is
+            # governed, and "XXXX XXXX 9012" in a design report's participant table answers no
+            # question the report asks — the artisan is identified by name, Pehchan card and phone.
+            # If policy ever grants this report the full card number, ONE line changes: drop the
+            # `mask_identity_number` call. That is the whole reason the masking happens here rather
+            # than being spread across three clients.
+            "pehchanCardAvailable": r.pehchanCardAvailable,
+            "pehchanCardNumber": mask_identity_number(r.pehchanCardNumber),
             # The STATED village, never the provenance placeName: see the long note above the
             # Location model for why the two are not the same answer. `place` is the free-text
             # fallback the researchers were using before the stated-address columns existed.
             "village": _rel(r, "location", "village") or r.place,
-            "photo": photo,
+            # THE REST OF THE STATED ADDRESS, and STATED is the whole point. `Location` holds two
+            # groups of columns and the model's own docstring explains at length why reading one as
+            # the other is a bug: `latitude`/`longitude`/`altitude`/`accuracy`/`capturedAt` are
+            # PROVENANCE — a real GPS fix of the desk the record was typed at, 1,500 km from the
+            # village named beside it on every live row — and `placeName` is derived from that fix.
+            # None of those five crosses. `state`, `district`, `pincode` and the SUBJECT pin do.
+            "state": _rel(r, "location", "state"),
+            "district": _rel(r, "location", "district"),
+            "pincode": _rel(r, "location", "pincode"),
+            "address": r.address or _rel(r, "location", "address"),
+            "subjectLocation": _subject_point(_rel_obj(r, "location")),
+            "notes": r.notes,
+            # Newline-separated, numbered guidance for working with THIS artisan — a positive
+            # prompt and a negative one. Arguably the most useful thing on the record to a designer
+            # standing in the room, and it reached nothing.
+            "dos": r.dos,
+            "donts": r.donts,
+            # Provenance of the SOURCE RECORD, not of the workshop: when the artisan was
+            # documented. Same job as `processStep.documentedFor` — it lets a reader of the printed
+            # report tell a roster row filled from a 2023 survey from one filled last week.
+            "documentedOn": _iso_date(r.recordedAt),
+            "photo": photo.id if photo else None,
+            "photoCaption": photo.caption if photo else None,
         },
     ),
     "ProductDocumentation": ReferenceModel(
@@ -374,12 +724,45 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         data=lambda r, photo: {
             "name": r.productName,
             "localName": r.localName,
-            "category": _PRODUCT_TYPE_TO_CATEGORY.get(_enum_token(r.productType)),
+            "category": _translated(_PRODUCT_TYPE_TO_CATEGORY, r.productType),
+            # The source's OWN answer, untranslated, beside the workshop's own question above.
+            # See `_PRODUCT_TYPE_TO_CATEGORY`: four of ProductType's six members have no honest
+            # category, and this is where they land instead of being guessed at.
+            "recordType": _translated(_PRODUCT_TYPE_TO_MEMBER, r.productType),
             "material": r.rawMaterialsUsed,
+            "mainToolsUsed": r.mainToolsUsed,
             "price": _money(r.sellingPrice),
+            "costOfMaking": _money(r.costOfMaking),
+            "marketDemand": _translated(_MARKET_DEMAND_TO_DEMAND_LEVEL, r.marketDemand),
             "use": r.productFunctionUse,
+            "craftName": r.craftName,
+            "place": r.place,
             "artisanName": r.artisanName,
-            "photo": photo,
+            # ── THE UNIT CONVERSION. Read `_inches_to_cm` before touching any of these three. ──
+            #
+            # `breadthInches` -> `widthCm` is a NAMING judgement made deliberately: breadth and
+            # width are the same measurement under two words, `ProductDocumentation` has no
+            # separate width column and `existingProduct` has no separate breadth field, so the
+            # pairing is forced and correct. (The tool model DOES have both, and is mapped
+            # differently for exactly that reason — see `ToolDocumentation` below.)
+            #
+            # `weightG` has no source column at all and stays a workshop-only answer.
+            "lengthCm": _inches_to_cm(r.lengthInches),
+            "widthCm": _inches_to_cm(r.breadthInches),
+            "heightCm": _inches_to_cm(r.heightInches),
+            # The free-text size, which is what a product the measured boxes do not suit is
+            # actually described by ("king size", "9 yards"). It lands on `dimensionsNote`, which
+            # is the box that was already sitting opposite it.
+            "dimensionsNote": r.size,
+            # Free text on the source ("about three days", "2 weeks"), and the workshop's
+            # `productionTimeDays` is a DECIMAL. NOT parsed into it: a parser that reads "2 weeks"
+            # as 2 puts a wrong number in a cost sheet, and one that gives up silently is the
+            # blank this whole lane exists to end. The words are carried as words.
+            "productionTimeNote": r.timeTakenToCompleteProduct,
+            "remarks": r.remarks,
+            "documentedOn": _iso_date(r.recordedAt),
+            "photo": photo.id if photo else None,
+            "photoCaption": photo.caption if photo else None,
         },
     ),
     "ToolDocumentation": ReferenceModel(
@@ -395,15 +778,55 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         data=lambda r, photo: {
             "name": r.toolkitName,
             "localName": r.localName,
+            "englishName": r.englishName,
             "material": r.material,
             "usedFor": r.processUsedIn,
             "cost": _money(r.replacementCost),
-            "photo": photo,
+            "yearsInUse": r.yearsInUse,
+            "maker": _translated(_MAKER_TYPE_TO_MAKER, r.maker),
+            "traditionType": _translated(_TRADITION_TYPE_TO_TRADITION, r.traditionType),
+            "craftName": r.craftName,
+            "place": r.place,
+            "artisanName": r.artisanName,
+            "improvements": r.suggestionsForToolImprovement,
+            "remarks": r.remarks,
+            # ── SEVEN MEASUREMENTS IN TWO DIFFERENT STATES OF KNOWLEDGE ─────────────────────
+            #
+            # `lengthInches` and `breadthInches` DECLARE their unit in the column name and the
+            # tool form labels them "Length (inches)" / "Breadth (inches)", so they convert — see
+            # `_inches_to_cm`. They keep the word BREADTH here, unlike the product's, because
+            # `ToolDocumentation` also has a separate unitless `width` column and collapsing the
+            # two into one "width" would silently merge two different measurements.
+            #
+            # `height`, `width`, `thickness`, `weight` and `radius` DECLARE NOTHING. The Prisma
+            # columns carry no unit suffix, the form's labels are the bare words "Height",
+            # "Weight", "Radius", and the record sheet prints them bare too. Nobody knows whether
+            # a 12 is inches, centimetres or kilograms. So they are carried into fields that make
+            # the same claim the source makes — none — rather than into a box labelled "cm" that
+            # would turn an unknown unit into a stated wrong one. Inventing a unit is the failure
+            # `_inches_to_cm` exists to prevent, and guessing one is the same failure with a
+            # shrug in front of it.
+            "lengthCm": _inches_to_cm(r.lengthInches),
+            "breadthCm": _inches_to_cm(r.breadthInches),
+            "heightAsRecorded": _decimal(r.height),
+            "widthAsRecorded": _decimal(r.width),
+            "thicknessAsRecorded": _decimal(r.thickness),
+            "weightAsRecorded": _decimal(r.weight),
+            "radiusAsRecorded": _decimal(r.radius),
+            "documentedOn": _iso_date(r.recordedAt),
+            "photo": photo.id if photo else None,
+            "photoCaption": photo.caption if photo else None,
         },
     ),
     "Process": ReferenceModel(
         delegate="process",
-        include={"product": True},
+        # `steps` JOINED HERE, AND IT COSTS ONE EXTRA READ PER PICKER CALL. A `Process` owns an
+        # ordered list of `ProcessStep` rows — the sequence a researcher actually documented — and
+        # until this include existed there was no way for any of it to reach a workshop at all.
+        # Prisma issues the relation as one extra `WHERE processId IN (…)` for the whole page, not
+        # one per row, and the picker is bounded at `REFERENCE_LIMIT_MAX`, so this is a second
+        # indexed read (`@@index([processId])`) and not an N+1.
+        include={"product": True, "steps": True},
         order={"name": "asc"},
         search_fields=("name",),
         workshop_where=lambda wid: {"workshopId": wid},
@@ -424,6 +847,23 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "name": r.name,
             "notes": r.notes,
             "productName": _rel(r, "product", "productName"),
+            # ── THE THREE KEYS THAT NO PROCESS-STEP ROW MAY RECEIVE ─────────────────────────
+            #
+            # These are read by `traditionalProcess.processRef` — the stage-5 SINGLETON — and by
+            # nothing else, on purpose. `REFERENCE_HYDRATION["processStep.processRef"]` refuses
+            # both `steps` and `preProcessAvailable` and its reasons are still correct: a whole
+            # sequence printed inside one of its own steps, repeated on every row naming the same
+            # process, and "Pre-process available: Yes" under step 3 of 7 answering a question
+            # nobody asked of that row. That note also identified the right home — "the
+            # `traditionalProcess` singleton … but a singleton has no ref field to hydrate from" —
+            # so the singleton was given one. One copy, above the steps table, where a reader
+            # wants the sequence and the pre-process answer.
+            #
+            # If somebody later adds any of these three to the `processStep.processRef` mapping,
+            # the row-level defect comes back exactly as described. Widen the singleton instead.
+            "steps": _step_lines(r),
+            "preProcessAvailable": r.preProcessAvailable,
+            "documentedOn": _iso_date(r.recordedAt),
         },
     ),
     "Craft": ReferenceModel(
@@ -436,9 +876,104 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         media_field="craftId",
         label=lambda r: str(r.name or ""),
         sublabel=lambda r: _joined(r.category, r.place),
+        # `category`, `description` and `place` are NOT carried, and the reason is that stage 1
+        # already asks all three of its own questions and asks them better. `workshopSetup` has
+        # `state`/`district`/`block`/`village` as four REQUIRED cover fields — a Craft's single
+        # free-text `place` cannot answer them and would disagree with them — and the craft's own
+        # description belongs to stage 4's `craftIntroduction`, a RICH_TEXT narrative that a
+        # one-line taxonomy string would sit oddly inside. `Craft.category` has no counterpart on
+        # the cover at all. The two names are what the cover page needs from the craft record.
         data=lambda r, _photo: {"craftName": r.name, "craftLocalName": r.localName},
     ),
 }
+
+
+class _ProbeRow:
+    """A record every column of which is empty, for asking a ``data`` lambda what keys it emits.
+
+    Every lambda above is total in its keys — it returns the same dict shape whatever the row
+    holds, with ``None`` for the columns nobody filled in — so calling one with this is a safe way
+    to learn the key set without a database. ``__getattr__`` rather than a fixed set of attributes
+    on purpose: a lambda that starts reading a new column must not make the probe raise, or the
+    guard below would fail for the wrong reason and somebody would delete it.
+    """
+
+    def __getattr__(self, _name: str) -> None:
+        return None
+
+
+def reference_data_keys() -> dict[str, frozenset[str]]:
+    """The key set each reference model's ``data`` lambda actually produces."""
+    return {
+        model: frozenset(spec.data(_ProbeRow(), None))
+        for model, spec in REFERENCE_MODELS.items()
+    }
+
+
+def validate_reference_carry() -> list[str]:
+    """The half of the carry ``stage_schema.validate_registry`` is structurally unable to check.
+
+    THE TWO TABLES ARE ONE FEATURE AND ONLY ONE OF THEM WAS GUARDED. ``validate_registry`` refuses
+    a hydration mapping whose TARGET is not a field of the entity, and its own comment explains why
+    it stops there: the SOURCE key names a key of a ``REFERENCE_MODELS`` data lambda, which lives in
+    this module, and ``stage_schema`` must not import it. So a typo on the source side — or a data
+    lambda that stops producing a key, or a mapping written against a key that never existed —
+    hydrated NOTHING, silently, on every save, for ever, and the first symptom was a blank column
+    in a submitted document.
+
+    This function is the missing half, and it lives here because here is the only place both
+    tables are importable. It reports in both directions:
+
+    * a mapping whose source key no reference model produces (the silent-nothing case), and
+    * a data-lambda key that no mapping consumes (the ``localName`` case: ``ProductDocumentation``
+      has produced a product's local name since the model was written, no mapping ever read it,
+      and ``existingProduct`` had no box for it — three separate omissions that each looked like
+      somebody else's job).
+
+    The second is reported rather than raised because a produced-but-unmapped key is legitimate for
+    a model whose picker shows it in a sublabel. Nothing does that today, so the test asserts an
+    empty list; if a future model needs one, add it to ``_CARRY_EXEMPT`` with a reason rather than
+    weakening the check.
+
+    Returns a list of human-readable problems; empty means the two tables agree.
+    """
+    problems: list[str] = []
+    produced = reference_data_keys()
+    consumed: dict[str, set[str]] = {model: set() for model in REFERENCE_MODELS}
+
+    for path, mapping in REFERENCE_HYDRATION.items():
+        entity_key, _, field_key = path.partition(".")
+        entity = next((e for _s, e in all_entities() if e.key == entity_key), None)
+        spec = entity.field(field_key) if entity else None
+        model = spec.ref_model if spec else ""
+        if model not in REFERENCE_MODELS:
+            # A ref pointing at a Dw… entity inside the same workshop, or a path
+            # ``validate_registry`` has already reported. Not this function's business.
+            continue
+        consumed[model].update(mapping)
+        for source_key in mapping:
+            if source_key not in produced[model]:
+                problems.append(
+                    f"hydration {path}[{source_key!r}] reads a key that "
+                    f"REFERENCE_MODELS[{model!r}].data never produces, so it copies nothing"
+                )
+
+    for model, keys in produced.items():
+        orphans = sorted(keys - consumed[model] - _CARRY_EXEMPT.get(model, frozenset()))
+        if orphans:
+            problems.append(
+                f"REFERENCE_MODELS[{model!r}].data produces {orphans}, which no hydration "
+                "mapping consumes — the value is computed on every picker call and lands nowhere"
+            )
+    return problems
+
+
+#: Data-lambda keys that are deliberately produced and deliberately not hydrated.
+#:
+#: Empty, and it should stay that way. It exists so that the day a model genuinely needs a key for
+#: something other than hydration — a computed sublabel, say — the exemption is written down with a
+#: reason instead of the check being loosened for everybody.
+_CARRY_EXEMPT: dict[str, frozenset[str]] = {}
 
 
 def _dw_entity(model: str) -> EntitySpec | None:
@@ -587,8 +1122,8 @@ async def _artisan_id_behind(workshop_id: str, candidate: str) -> str | None:
 _PHOTO_PARENT_COLUMNS = frozenset({"artisanId", "craftId", "productId", "toolId"})
 
 
-async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, str]:
-    """One photograph per record, in one query rather than one per row.
+async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, ReferencePhoto]:
+    """One photograph per record — AND ITS CAPTION — in one query rather than one per row.
 
     ONE PER PARENT, NOT ONE BUDGET SHARED BETWEEN THEM. This used to be a plain ``find_many`` with
     ``order={"createdAt": "asc"}, take=len(ids) * 4`` — a single ceiling across every id — so a
@@ -604,6 +1139,13 @@ async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, s
     and the report's ``load_report_references`` — are on a link measured at 756ms a hop. The
     ``createdAt, id`` tiebreak keeps the answer STABLE: two records photographed in the same second
     would otherwise swap portraits between two renders of the same report.
+
+    THE CAPTION TRAVELS WITH THE PICTURE and is selected in the same statement rather than in a
+    second read — it is a column of the row already being chosen, so it is free. See
+    :class:`ReferencePhoto` for why it was missing and what that cost the designer. Nothing else
+    about the MediaFile crosses: the URL and the object key are entitlement-gated
+    (``records._MEDIA_TAKEABLE_KEYS``) and the workshop resolves its own through ``media_resolver``
+    at render time, which is the only path allowed to hand a file out.
     """
     if not spec.media_field or not ids:
         return {}
@@ -614,13 +1156,20 @@ async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, s
         # name into the statement below.
         raise ValueError(f"Unsupported reference photo column: {column}")
     rows = await db.query_raw(
-        f'SELECT DISTINCT ON (m."{column}") m."{column}" AS parent, m."id" AS id '
+        f'SELECT DISTINCT ON (m."{column}") m."{column}" AS parent, m."id" AS id, '
+        f'm."caption" AS caption '
         f'FROM "MediaFile" m '
         f'WHERE m."mediaType" = \'IMAGE\'::"MediaType" AND m."{column}" = ANY($1::text[]) '
         f'ORDER BY m."{column}", m."createdAt" ASC, m."id" ASC',
         ids,
     )
-    return {str(row["parent"]): str(row["id"]) for row in rows if row.get("parent")}
+    return {
+        str(row["parent"]): ReferencePhoto(
+            id=str(row["id"]), caption=str(row.get("caption") or "").strip()
+        )
+        for row in rows
+        if row.get("parent")
+    }
 
 
 async def _in_record_options(record: Any, entity: EntitySpec, search: str | None,
@@ -1804,7 +2353,10 @@ async def load_report_references(entries: list[Any]) -> dict[str, ReferencedReco
             out[str(row.id)] = ReferencedRecord(
                 model=model,
                 label=spec.label(row),
-                photo=str(photos.get(row.id) or ""),
+                # `.id` off the ReferencePhoto, never the object: `ReferencedRecord.photo` is a
+                # bare media id that goes on to `media_resolver`, and the caption reaches the
+                # report through the stage entry's own `*Caption` field instead.
+                photo=(found.id if (found := photos.get(row.id)) else ""),
                 place=place,
                 district=district,
                 state=state,

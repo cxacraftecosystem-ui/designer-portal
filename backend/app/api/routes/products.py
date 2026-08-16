@@ -24,6 +24,7 @@ from app.services.records import (
     include_of,
     media_url_owners,
     merge_field_provenance,
+    prose_contains,
     public_encode,
     require_record,
     resubmit_status,
@@ -101,9 +102,12 @@ async def list_products(
             {"craftName": contains(search)},
             {"artisanName": contains(search)},
             {"place": contains(search)},
-            {"rawMaterialsUsed": contains(search)},
-            {"mainToolsUsed": contains(search)},
-            {"remarks": contains(search)},
+            # The three narrative columns take rich text from this release on; the identifier-ish
+            # columns above them do not. ``prose_contains`` explains why the two need different
+            # filters and what breaks if they are levelled back to one.
+            prose_contains("rawMaterialsUsed", search),
+            prose_contains("mainToolsUsed", search),
+            prose_contains("remarks", search),
         ]})
     if craftId:
         where["craftId"] = craftId

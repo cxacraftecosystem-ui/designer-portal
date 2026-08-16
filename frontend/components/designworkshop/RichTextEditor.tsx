@@ -168,6 +168,7 @@ import {
   X
 } from "lucide-react";
 
+import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { DictationButton } from "@/components/designworkshop/Dictation";
 import { apiFetch } from "@/lib/api";
 import { uploadMediaBatch } from "@/lib/media";
@@ -1103,17 +1104,31 @@ export type RichTextEditorProps = {
   ariaLabelledBy?: string;
   ariaLabel?: string;
   /**
-   * The workshop whose recorded consent governs a clip dictated into this editor.
+   * The workshop whose recorded consent governs a clip dictated into this editor — or ABSENT, which
+   * selects the on-device-only microphone.
    *
    * THIS EDITOR HAS NO DATA LAYER AND DELIBERATELY WANTS NONE — it is a general-purpose control, used
-   * in previews as well as in registry forms. So the id is threaded as a prop rather than reached
-   * for. It is REQUIRED because the alternative is the dictation button falling back to the un-gated
-   * route: `POST /design-workshops/dictate` takes no workshop id, consults no `dictationConsent`
-   * column, and sends an artisan's voice to a third-party provider regardless of what was recorded.
-   * These are the RICH_TEXT fields — the long narrative ones a designer most needs to dictate into —
-   * so this is the surface where forgetting would cost the most.
+   * in previews and on record forms as well as in registry forms. So the id is threaded as a prop
+   * rather than reached for. It used to be REQUIRED, and the reason was sound: the dictation button
+   * inside this editor could otherwise fall back to `POST /design-workshops/dictate`, which takes no
+   * workshop id, consults no `dictationConsent` column, and sends an artisan's voice to a
+   * third-party provider regardless of what was recorded.
+   *
+   * IT IS NOW OPTIONAL, AND THAT DOOR IS STILL SHUT — because omitting it does not weaken the
+   * dictation, it swaps the control for a different component. With an id: `DictationButton`, whose
+   * server rung posts to the consent-gated per-workshop route exactly as before. Without one:
+   * `OnDeviceDictationButton`, which has no `fetch`, no `MediaRecorder` and no code path that can
+   * produce a network request at all. A record form has no workshop whose consent could govern a
+   * recording, so it gets the transport that needs no consent because nothing leaves the handset.
+   *
+   * WHAT A FORGETFUL CALL SITE NOW LOSES is the Firefox fallback, not the gate: a stage form that
+   * omitted the id would offer on-device dictation and no server rung, which is a degradation a
+   * researcher can see and complain about. It cannot leak a voice recording. That is the property
+   * that made an optional prop acceptable here where a DEFAULT VALUE on `DictationButton` itself
+   * would still not be — a default there would make "the call site that forgot" indistinguishable
+   * from "the call site that meant it" on the button that actually uploads.
    */
-  workshopId: string;
+  workshopId?: string;
   placeholder?: string;
   /** The registry's `maxLength`, shown beside the live count. Advisory — see the note on it below. */
   maxLength?: number;
@@ -1763,6 +1778,38 @@ export function RichTextEditor({
       });
     },
     [commit, tableCursor]
+  );
+
+  /* ── Dictation ──────────────────────────────────────────────────────────── */
+
+  /**
+   * A finished spoken phrase, inserted where the caret is.
+   *
+   * LIFTED OUT OF THE JSX so that the two dictation buttons — the workshop one with its server rung,
+   * the on-device one without — share one insertion path. If they did not, the next fix to caret
+   * handling or mark inheritance would land on whichever surface the person making it happened to be
+   * looking at, and the other would drift.
+   *
+   * It is the same `insertText` an ordinary keystroke goes through, with the same mark inheritance
+   * and the same history entry, so a dictated phrase behaves exactly like a typed one: it lands
+   * where the caret is rather than at the end, it can be undone in one step, and it picks up the
+   * run's marks instead of arriving unstyled in the middle of a bolded sentence.
+   */
+  const commitDictated = useCallback(
+    (text: string) => {
+      const phrase = text.trim();
+      if (!phrase) return;
+      const range = selectionRef.current;
+      const block = docRef.current.blocks[range.focus.block];
+      // A space before the phrase unless the caret already follows one or begins the block — the
+      // recogniser is stopped and started across a long answer, and without this a paragraph
+      // dictated in five goes comes out as "…the warpis sized…".
+      const before = block ? blockText(block).slice(0, range.focus.offset) : "";
+      const joiner = !before || /\s$/.test(before) ? "" : " ";
+      const marks = pendingMarksRef.current ?? (block ? marksAt(block, range.focus.offset) : []);
+      commit(insertText(docRef.current, range, `${joiner}${phrase}`, marks), "dictate");
+    },
+    [commit]
   );
 
   /* ── Inline photographs ─────────────────────────────────────────────────── */
@@ -2879,32 +2926,21 @@ export function RichTextEditor({
           RICH_TEXT field is read by the server as unformatted prose — so one dictated sentence
           would have flattened every heading, list and bold run already in the field. The note in
           that file said the fix was to insert into the document model at the caret and that doing
-          so was the editor's job. This is that job.
-
-          It is the same `insertText` an ordinary keystroke goes through, with the same
-          mark inheritance and the same history entry, so a dictated phrase behaves exactly like a
-          typed one: it lands where the caret is rather than at the end, it can be undone in one
-          step, and it picks up the run's marks instead of arriving unstyled in the middle of a
-          bolded sentence.
+          so was the editor's job. This is that job — `commitDictated`, defined above.
         */}
         {!disabled ? (
-          <DictationButton
-            fieldLabel={ariaLabel ?? "this field"}
-            workshopId={workshopId}
-            onCommit={(text) => {
-              const phrase = text.trim();
-              if (!phrase) return;
-              const range = selectionRef.current;
-              const block = docRef.current.blocks[range.focus.block];
-              // A space before the phrase unless the caret already follows one or begins the
-              // block — the recogniser is stopped and started across a long answer, and without
-              // this a paragraph dictated in five goes comes out as "…the warpis sized…".
-              const before = block ? blockText(block).slice(0, range.focus.offset) : "";
-              const joiner = !before || /\s$/.test(before) ? "" : " ";
-              const marks = pendingMarksRef.current ?? (block ? marksAt(block, range.focus.offset) : []);
-              commit(insertText(docRef.current, range, `${joiner}${phrase}`, marks), "dictate");
-            }}
-          />
+          /*
+            TWO COMPONENTS, ONE INSERTION. Which button is drawn is decided by whether this editor
+            was told a workshop (see the prop's note): with one, the button that may fall back to the
+            consent-gated server route; without one, the button that cannot reach a network at all.
+            The `onCommit` below is IDENTICAL for both and is written once, because how a phrase
+            enters the document has nothing to do with how it was heard.
+          */
+          workshopId ? (
+            <DictationButton fieldLabel={ariaLabel ?? "this field"} workshopId={workshopId} onCommit={commitDictated} />
+          ) : (
+            <OnDeviceDictationButton fieldLabel={ariaLabel ?? "this field"} onCommit={commitDictated} />
+          )
         ) : null}
         <button
           type="button"

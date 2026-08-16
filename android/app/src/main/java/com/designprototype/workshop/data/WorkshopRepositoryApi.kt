@@ -340,6 +340,28 @@ interface WorkshopRepositoryApi {
     @POST("media/{id}/transcript")
     suspend fun setTranscript(@Path("id") id: String, @Body body: TranscriptUpdateRequest): MediaFileDto
 
+    // The whole-repository download manifest.
+    //
+    // TWO DECLARATIONS OF ONE ROUTE, AND THE STREAMED ONE IS THE ONE TO USE. The typed call below
+    // returns a fully-materialised DTO, which sends the response through Retrofit's
+    // kotlinx-serialization converter — `Serializer.FromString`, i.e. `decodeFromString(body
+    // .string())`, i.e. the entire body as one contiguous ByteArray and then one contiguous String.
+    // The manifest is unbounded in BYTES (the server caps the entry COUNT at 20,000 media rows plus
+    // 6x5,000 record rows, and inlines every details.txt, every answers.txt and every transcript),
+    // so on a large repository that single allocation is what throws
+    // `OutOfMemoryError: Failed to allocate a N byte allocation` on the handset. See
+    // data/ManifestStream.kt for the full account.
+    //
+    // The typed one is KEPT, not deleted, because it is the fallback for a server that predates
+    // `?stream=1`: such a server ignores the unknown parameter and answers `application/json`, and
+    // this app has to be able to finish the download against it — handsets update on their own
+    // schedule and a build that only works against a new server breaks every phone in the field on
+    // the day of a rollback. It must not be used for anything else: a new caller wanting "the list
+    // of files" should take the streamed route and consume it a line at a time.
+    @Streaming
+    @GET("export/dataset")
+    suspend fun datasetManifestStream(@Query("stream") stream: Int = 1): Response<ResponseBody>
+
     @GET("export/dataset")
     suspend fun datasetManifest(): DatasetManifestDto
 
@@ -745,6 +767,21 @@ interface WorkshopRepositoryApi {
 
     // The flattened subtree below `path`, for client-side zipping. `include` is a CSV of
     // text,images,videos,audios,transcripts,documents,other; omitted means everything.
+    //
+    // Same pair, same reason, as `datasetManifest`/`datasetManifestStream` above: a folder manifest
+    // with `include=transcripts` (or no filter at all) inlines every transcript body in the subtree,
+    // so it is unbounded in bytes too. The DOWNLOAD path takes the streamed one. The typed one stays
+    // because DataBrowserScreen's transcript panel genuinely needs the whole list resident — it
+    // indexes into `transcriptsByFolder` on every toggle — and because it is the fallback for an
+    // older server that does not know `?stream=1`.
+    @Streaming
+    @GET("data/manifest")
+    suspend fun dataManifestStream(
+        @Query("path") path: String = "",
+        @Query("include") include: String? = null,
+        @Query("stream") stream: Int = 1
+    ): Response<ResponseBody>
+
     @GET("data/manifest")
     suspend fun dataManifest(
         @Query("path") path: String = "",
@@ -1062,6 +1099,60 @@ interface WorkshopRepositoryApi {
     // is what lets the roster screen redraw the suspended state without a second round trip.
     @DELETE("designers/roster/{id}")
     suspend fun suspendDesigner(@Path("id") id: String): DesignerRosterDto
+
+    // ── The PLATFORM allow-list: who may sign in at all ──────────────────────────────────────────
+    //
+    // A DIFFERENT LIST FROM THE DESIGNER ROSTER ABOVE, on a different prefix, with a different
+    // permission behind it (`require_access_manager`). The roster says who is empanelled as a
+    // designer; this says who may reach the application, and the sign-in gate reads THIS one for
+    // every account except the master admin's.
+    //
+    // `search` and `status` ARE declared here, unlike the designer roster's deliberate omission of
+    // `search`. The reason is the pending queue: it is fetched as its own `?status=PENDING` page so
+    // the screen can show "who is waiting" without walking a table that holds every address the
+    // institution has ever admitted or refused. Filtering that on the device would mean downloading
+    // the whole allow-list to find three people — the exact cost the roster's on-device filter was
+    // accepted to avoid, inverted.
+    @GET("access/roster")
+    suspend fun accessRoster(
+        @Query("page") page: Int = 1,
+        @Query("pageSize") pageSize: Int = 100,
+        @Query("status") status: String? = null,
+        @Query("search") search: String? = null
+    ): PageResponse<AccessRosterDto>
+
+    // THE NOTIFICATION. One integer, cheap enough to ride the app-wide poll that already runs while
+    // somebody is signed in — which is why this client adds no timer of its own for it.
+    @GET("access/roster/pending-count")
+    suspend fun pendingAccessCount(): PendingAccessCountDto
+
+    @POST("access/roster")
+    suspend fun addToAccessRoster(@Body body: AccessRosterCreateBody): AccessRosterDto
+
+    // Approve or refuse a waiting request. APPROVING also lifts an existing account to the granted
+    // tier when that is higher than it already holds — never lower — so approving somebody at
+    // Researcher cannot demote a professor.
+    @POST("access/roster/{id}/decision")
+    suspend fun decideAccessRequest(
+        @Path("id") id: String,
+        @Body body: AccessDecisionBody
+    ): AccessRosterDto
+
+    // A JsonObject for the reason on [accessRosterUpdateJson]: `explicitNulls = false` would drop the
+    // very keys that mean "clear this", and the server's `exclude_unset` would then keep the old
+    // value with nothing on screen to say so.
+    @PATCH("access/roster/{id}")
+    suspend fun updateAccessEntry(
+        @Path("id") id: String,
+        @Body body: JsonObject
+    ): AccessRosterDto
+
+    // SUSPENDS, and answers 200 with the suspended row. It does not delete — the row holds the
+    // joining date, the attempt history and who admitted them, and because the sign-in gate reads a
+    // MISSING row as PENDING, a real delete would put the person straight back into the queue they
+    // were just removed from.
+    @DELETE("access/roster/{id}")
+    suspend fun suspendAccessEntry(@Path("id") id: String): AccessRosterDto
 
     @GET("designers/me/profile")
     suspend fun myDesignerProfile(): DesignerProfileDto

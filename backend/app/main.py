@@ -542,6 +542,17 @@ def create_app() -> FastAPI:
         allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
+        # WITHOUT THIS LINE THE BROWSER CANNOT READ THE HEADER AND THE PHONE CAN, which is the worst
+        # shape a cross-origin bug takes: every server test passes, the Android sign-in screen shows
+        # the right panel, and the web sign-in screen silently falls back to neutral chrome with
+        # nothing anywhere naming the cause. A cross-origin response only exposes a handful of
+        # "simple" headers to JavaScript; anything else has to be named here.
+        #
+        # `X-Access-Status` classifies a refused sign-in — awaiting approval, rejected, suspended,
+        # queue full — so the sign-in page can tell a person waiting on an administrator apart from
+        # a person who mistyped a password. It carries no information the response's own `detail`
+        # sentence does not already say in English; see app/api/routes/auth.py.
+        expose_headers=["X-Access-Status"],
     )
     # Added AFTER CORS so it wraps it (Starlette runs the most recently added middleware outermost),
     # which is what puts the security headers on preflight responses too.

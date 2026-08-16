@@ -1279,7 +1279,20 @@ data class DatasetManifestDto(
      *
      * Defaulted to false so an older server that omits the key still parses.
      */
-    val truncated: Boolean = false
+    val truncated: Boolean = false,
+    /**
+     * How many media rows the server could not address at all — a row whose object key or signed URL
+     * could not be produced, as distinct from a table that hit its cap.
+     *
+     * The server OR-s this into [truncated] on purpose (`export.py`: a zip short by an unaddressable
+     * file is exactly as partial as one short by a capped row), so a client that only reads
+     * [truncated] is already warned. It is carried separately because the two states are a different
+     * conversation for whoever has to go and find the missing files.
+     *
+     * Defaulted to 0 so an older server that omits the key still parses. On the streamed path the
+     * same number arrives as `X-Dataset-Skipped`.
+     */
+    val skippedMedia: Int = 0
 )
 
 @Serializable
@@ -2602,6 +2615,140 @@ data class DesignerRosterCreateBody(
     val isActive: Boolean = true
 )
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// THE PLATFORM ALLOW-LIST: who may sign in AT ALL, and the queue of people asking to.
+//
+// NOT THE DESIGNER ROSTER ABOVE, THOUGH THEY SIT NEXT TO EACH OTHER AND READ ALIKE. `DesignerRoster`
+// says who the institution recognises as a DESIGNER; `AccessRoster` says who may reach this
+// application at all, whatever their tier. Two tables, two endpoints, two refusals with two
+// different remedies — an admin who suspends the wrong one takes away something they did not mean
+// to, and the person is told the wrong reason for it. Everything here carries the word `Access`.
+//
+// WHAT AN UNAUTHENTICATED STRANGER CAN PUT IN THIS TABLE IS THE EMAIL ADDRESS AND NOTHING ELSE. A
+// PENDING row is written by the login endpoint only AFTER a password or a Google token has verified;
+// it carries no display name from the identity provider and no free text at all, and one address is
+// one row however many times it is tried. So the queue an admin reads on the phone is a list of
+// addresses, dates and integers, with nowhere in it for a stranger to write a sentence pretending to
+// come from the product. Do not add a field here that renders text an unauthenticated caller
+// supplied; the server does not store one.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One row of the platform allow-list, as `GET /access/roster` serves it.
+ *
+ * FOUR STATES, IN [status]: `ACTIVE` admits; `PENDING` is somebody who proved an identity and was
+ * turned away, recorded so an administrator can decide; `REJECTED` is an administrator's answer, and
+ * it does NOT reopen when the person tries again (their next attempt bumps [attemptCount] and leaves
+ * the status alone); `SUSPENDED` is access ended after it was granted.
+ *
+ * [joinedAt] IS THE "date of joining the platform" THE REQUIREMENT ASKS FOR, and the server writes
+ * it once: somebody admitted in 2024, suspended, and restored this morning still joined in 2024. Do
+ * not render it as "approved on" — an admin reading a joining date of last Tuesday draws the wrong
+ * conclusion about every record that person created.
+ *
+ * EVERY FIELD IS DEFAULTED, for [DesignerRosterDto]'s reason: a handset updates over the air and may
+ * be older than the server it is talking to, and one non-defaulted field the server has not started
+ * sending makes kotlinx throw and takes the whole screen down over a column nobody was reading.
+ */
+@Serializable
+data class AccessRosterDto(
+    val id: String = "",
+    /** Lower-cased server-side. The join key to `User.email`, and the only attacker-supplied value here. */
+    val email: String = "",
+    /** ADMIN-TYPED ONLY. Never a display name from Google — see the section note above. */
+    val fullName: String? = null,
+    /**
+     * `ACTIVE` / `PENDING` / `REJECTED` / `SUSPENDED`.
+     *
+     * Defaults to PENDING rather than to ACTIVE, which is the opposite of [DesignerRosterDto.isActive]
+     * and deliberately so: an unreadable roster row must not be drawn as somebody who may sign in.
+     * The screen's actions read this, so failing towards "waiting for a decision" costs an admin one
+     * extra look, where failing towards "admitted" would have them believe an unadmitted address is
+     * already in.
+     */
+    val status: String = "PENDING",
+    /** The tier the account is created at (or lifted to) on first sign-in. Null = the platform default. */
+    val admitRole: String? = null,
+    val joinedAt: String? = null,
+    val requestedAt: String? = null,
+    /** How many times this address has been refused. Rises on every attempt, including after a rejection. */
+    val attemptCount: Int = 0,
+    val lastAttemptAt: String? = null,
+    val decidedAt: String? = null,
+    val decidedById: String? = null,
+    /** Stamped the first time an admitted address actually got in. Null = admitted, never arrived. */
+    val firstSeenAt: String? = null,
+    val notes: String? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+    val addedById: String? = null
+)
+
+/**
+ * `GET /access/roster/pending-count` — THE NOTIFICATION, in the only channel either application has.
+ *
+ * There is no email sender and no push transport in this codebase, so "tell the admins somebody is
+ * waiting" is a number on a screen they already open. Its own endpoint precisely so a badge can be
+ * drawn without fetching a page of rows — on this client it rides the app-wide poll that already
+ * runs while somebody is signed in, so it costs no timer of its own.
+ *
+ * [capReached] is not decoration. Past [capacity] the server stops RECORDING new requests and tells
+ * the person to contact an administrator directly, so a queue that has stopped growing means either
+ * nobody is asking or the product has stopped listening — and an admin cannot tell which without it.
+ */
+@Serializable
+data class PendingAccessCountDto(
+    val pending: Int = 0,
+    val capacity: Int = 0,
+    val capReached: Boolean = false
+)
+
+/**
+ * `POST /access/roster` — admit an address by hand, before it has an account.
+ *
+ * ACTIVE IMMEDIATELY, not pending: an admin typing an address into the box IS the approval, and
+ * there is nobody else for the request to be routed to. A duplicate answers 409 naming the existing
+ * row rather than overwriting it — the row it would overwrite is usually the pending request that
+ * records how long the person has been waiting.
+ */
+@Serializable
+data class AccessRosterCreateBody(
+    val email: String,
+    val fullName: String? = null,
+    /** Null means the platform default joining tier — the lowest rung. */
+    val role: String? = null,
+    val notes: String? = null
+)
+
+/**
+ * `POST /access/roster/{id}/decision` — approve or refuse a waiting request.
+ *
+ * A DATA CLASS AND NOT A HAND-BUILT JsonObject, unlike [designerRosterUpdateJson]: this body is not
+ * applied with `exclude_unset` semantics that a null could corrupt. `decision` is required, and the
+ * server reads `role` only on APPROVE and only up to the deciding admin's own tier.
+ */
+@Serializable
+data class AccessDecisionBody(
+    /** "APPROVE" or "REJECT". Spelled by [AccessDecision] rather than typed at the call site. */
+    val decision: String,
+    val role: String? = null,
+    val notes: String? = null
+)
+
+/** The two answers an administrator can give, so no call site spells them as strings. */
+object AccessDecision {
+    const val APPROVE = "APPROVE"
+    const val REJECT = "REJECT"
+}
+
+/** The four states of an [AccessRosterDto], spelled once. Compared against [AccessRosterDto.status]. */
+object AccessStatus {
+    const val ACTIVE = "ACTIVE"
+    const val PENDING = "PENDING"
+    const val REJECTED = "REJECTED"
+    const val SUSPENDED = "SUSPENDED"
+}
+
 /**
  * The signed-in designer's own profile, as `GET /designers/me/profile` serves it — every column of
  * `DesignerProfile` plus the identifiers the client may not write.
@@ -2752,6 +2899,37 @@ fun designerProfileUpdateJson(body: DesignerProfileUpdateBody): JsonObject = bui
  * DELETE can express, and a screen that could suspend but not restore would push admins toward
  * deleting the row — destroying the record that the person was ever recognised.
  */
+/**
+ * The body of `PATCH /access/roster/{id}` — correcting the admin-typed columns of an allow-list row.
+ *
+ * BUILT KEY BY KEY, FOR THE SAME REASON [designerProfileUpdateJson] IS: this client is configured
+ * with `explicitNulls = false`, so a data class carrying `fullName = null` would encode to `{}` and
+ * the server's `exclude_unset` would leave the old value in place. Emptying the Notes box has to be
+ * able to mean emptying the notes, and a silent no-op that only shows up on the next load is the
+ * worst possible version of that.
+ *
+ * THERE IS NO `email` KEY AND THERE MUST NEVER BE ONE. The server's PATCH does not accept it, and
+ * that is deliberate on both sides: the address IS the gate, so an admin fixing a spelling must not
+ * be able to hand one person's admission to a different mailbox — the loser would simply stop being
+ * able to sign in, while the row on screen still said they may. Moving an admission to a new address
+ * is `follow_email_change`, which happens when an ADMIN edits the account's email, not this.
+ *
+ * THERE IS NO `status` KEY EITHER. Every transition goes through the decision or suspend endpoint so
+ * that the stamps that accompany it — who decided, when, the joining date — are written by one piece
+ * of code that cannot forget them.
+ */
+fun accessRosterUpdateJson(
+    fullName: String? = null,
+    role: String? = null,
+    notes: String? = null
+): JsonObject = buildJsonObject {
+    put("fullName", textOrNull(fullName))
+    // Null here means "the platform default joining tier", which is a real and choosable answer —
+    // the picker's first option — so it is sent as an explicit null rather than omitted.
+    put("role", textOrNull(role))
+    put("notes", textOrNull(notes))
+}
+
 fun designerRosterUpdateJson(
     email: String? = null,
     fullName: String? = null,

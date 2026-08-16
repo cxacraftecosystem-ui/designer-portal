@@ -232,7 +232,7 @@ class DwModelChoiceTest {
         assertNull("there is nothing to consent to", dwModelOverrideSentence(choice))
         assertTrue(
             "the sentence says closing apps would not help, because it would not",
-            dwModelFitSentence(choice, ordinaryPhone).contains("closing every other app")
+            dwModelFitSentence(choice, ordinaryPhone).contains("would not make room")
         )
     }
 
@@ -377,7 +377,7 @@ class DwModelChoiceTest {
         assertTrue(choice.notes.contains(DwFitNote.ANDROID_CALLS_THIS_A_LOW_MEMORY_DEVICE))
         assertTrue("still installable, with the reason said first", choice.fit.mayInstall)
         assertTrue(
-            dwModelFitSentence(choice, goEditionPhone).contains("Android itself flags this handset")
+            dwModelFitSentence(choice, goEditionPhone).contains("Android flags this handset")
         )
     }
 
@@ -570,27 +570,51 @@ class DwModelChoiceTest {
     // ---------------------------------------------------------------------------------------
 
     @Test
-    fun `a choice sentence names the size, the memory and the handset it was measured on`() {
+    fun `a choice sentence names the model and what the download costs, and stops there`() {
+        /*
+         * ── THIS TEST WAS INVERTED ON 2026-08-16, AND THE INVERSION IS THE POINT ──────────────
+         *
+         * It used to require the quantisation tag (`int4`), the run bound and its `1,024-token
+         * context cap`, the peak-memory figure and the name of the handset the figures came off —
+         * five engineering values, ASSERTED ONTO A ROW A DESIGNER READS. That is how the surface the
+         * repository owner has now rejected four times kept growing back after each cut: the prose
+         * was trimmed and the test pulled it straight back in.
+         *
+         * A row exists to answer "should I spend this download". The model's name and the size
+         * answer it; nothing else here does. So the two that survive are asserted, and the five that
+         * went are asserted ABSENT — a test that only checks what is present cannot stop the essay
+         * returning. They remain on [DwModelPlan] for whoever is choosing which model to ship, and
+         * `DwModelChoiceTest` still covers them there.
+         */
         val choice = dwModelFit(NOT_A_REAL_SMALL_MODEL, ordinaryPhone)
         val sentence = dwModelChoiceSentence(choice, ordinaryPhone)
         assertTrue(sentence.contains(NOT_A_REAL_SMALL_MODEL.modelId))
-        assertTrue(sentence.contains("int4"))
-        // The envelope one run was measured over, in the model's own units — see the same correction
-        // in `DwDeviceTierTest`. This fixture is decoder-shaped, so its bound names its token cap.
-        assertTrue(sentence.contains(NOT_A_REAL_SMALL_MODEL.runBound))
-        assertTrue(sentence.contains("1,024-token context cap"))
         assertTrue("the size a data bundle pays for", sentence.contains(dwBytesLabel(150L * mib)))
-        assertTrue("the number the low-memory killer reads", sentence.contains(dwBytesLabel(200L * mib)))
-        assertTrue(sentence.contains("this plan is a test fixture"))
+
+        listOf(
+            "int4" to "the quantisation tag",
+            "1,024-token context cap" to "the run bound",
+            dwBytesLabel(200L * mib) to "the peak-memory figure",
+            "this plan is a test fixture" to "the handset the figures were measured on",
+        ).forEach { (fragment, what) ->
+            assertFalse(
+                "$what is for whoever picks which model to ship, not for the person holding the " +
+                    "phone — it must not be back on the row: $sentence",
+                sentence.contains(fragment)
+            )
+        }
     }
 
     @Test
     fun `a model that does not survive backgrounding says so wherever it is offered`() {
         // The rule [DwModelPlan.survivesBackgrounding] exists for: a designer takes a photograph
-        // mid-summary, and if that kills the process the summary goes with it.
+        // mid-summary, and if that kills the process the summary goes with it. The clause was cut
+        // from 24 words to 16 on 2026-08-16; what it may never lose is the CAMERA, because that is
+        // the one thing a designer is certain to do and the only part they can act on.
         val fragile = NOT_A_REAL_SMALL_MODEL.copy(survivesBackgrounding = false)
         val sentence = dwModelChoiceSentence(dwModelFit(fragile, ordinaryPhone), ordinaryPhone)
-        assertTrue(sentence.contains("NOT surviving the app being sent to the background"))
+        assertTrue(sentence.contains("It stops if you leave the app"))
+        assertTrue("the photograph is the part a designer can act on", sentence.contains("photograph"))
     }
 
     @Test

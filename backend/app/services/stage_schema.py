@@ -320,6 +320,49 @@ ENUMS: dict[str, dict[str, str]] = {
         "MOULD": "Mould / die / block",
         "OTHER": "Other",
     },
+    # THE SOURCE RECORD'S OWN QUESTION, WHICH IS NOT THIS REGISTRY'S QUESTION.
+    #
+    # A mirror of the Prisma `ProductType` enum, member for member, and the only list in `ENUMS`
+    # that exists to receive a value from outside rather than to be answered by a designer. It was
+    # added because `PRODUCT_CATEGORY` below could not honestly receive four of ProductType's six
+    # members: a FINISHED_GOOD may be a saree or a bag, and a SAMPLE is a saree that happens not to
+    # be for sale, so `_PRODUCT_TYPE_TO_CATEGORY` maps them to nothing. Before this list existed
+    # that meant the record's answer was simply lost at the picker.
+    #
+    # THE TWO LISTS ARE NOT REDUNDANT AND MUST NOT BE MERGED. "What kind of thing is this record?"
+    # and "what IS this product?" are different questions with different answers, and a workshop
+    # row now carries both: `existingProduct.recordType` from the record, `existingProduct.category`
+    # from the designer (hydrated only for the two tokens that genuinely mean the same thing).
+    # Merging them would re-create the guess this arrangement exists to avoid.
+    #
+    # Keep the tokens identical to `prisma/schema.prisma`'s `enum ProductType`. `test_reference_
+    # carry.py` reads the schema file and fails if they drift.
+    "PRODUCT_TYPE": {
+        "FINISHED_GOOD": "Finished good",
+        "SAMPLE": "Sample",
+        "RAW_MATERIAL": "Raw material",
+        "COMPONENT": "Component",
+        "PACKAGING": "Packaging",
+        "OTHER": "Other",
+    },
+    # Who made the tool, mirroring Prisma's `MakerType` member for member — the same arrangement
+    # and the same rule as `PRODUCT_TYPE` above.
+    #
+    # NOT the same question as `tool.source` ("Where obtained"), which is why that box keeps its
+    # own free text and is NOT filled in from a chosen record: a loom bought second-hand from a
+    # cooperative was made by a carpenter, and answering "where obtained: carpenter" would be a
+    # plausible wrong sentence in a submitted report. `ToolDocumentation` has no column for where a
+    # tool was obtained, and inventing an answer from the nearest column is exactly the failure the
+    # translation tables in `design_workshops` are written to refuse.
+    "MAKER_TYPE": {
+        "ARTISAN": "The artisan themselves",
+        "LOCAL_BLACKSMITH": "Local blacksmith",
+        "CARPENTER": "Carpenter",
+        "WORKSHOP": "Workshop",
+        "FACTORY": "Factory",
+        "UNKNOWN": "Not known",
+        "OTHER": "Other",
+    },
     "PRODUCT_CATEGORY": {
         "APPAREL": "Apparel",
         "SAREE": "Saree",
@@ -573,23 +616,108 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "craftName": "craftName",
         "craftLocalName": "craftLocalName",
     },
+    # ── THE ARTISAN RECORD, IN FULL ──────────────────────────────────────────────────────────
+    #
+    # This mapping carried eight of the artisan record's twenty-seven answerable facts, and the
+    # nineteen it dropped were not obscure ones: the artisan's address, their email, their PM
+    # Vishwakarma card, the do's and don'ts a researcher wrote down about how to work with them,
+    # and every part of the stated address except the village. A designer picked the artisan from
+    # the picker and then typed those back in from a printout — which is the behaviour the whole
+    # reference feature exists to end, arriving one level further in than anybody had looked.
+    #
+    # Read `REFERENCE_MODELS["Artisan"].data` in `design_workshops` alongside this: it carries the
+    # reasoning for the three carries that were decisions rather than transcriptions — the MASKED
+    # Pehchan card number, the STATED-not-provenance address and subject pin, and the two fields
+    # (`age`, `experienceYears`) that have no column on `Artisan` at all and are therefore blank on
+    # every record created since the artisan form stopped writing free metadata.
+    #
+    # `aadhaarNumber` is the one column deliberately not here in any form. See that same note.
     "participant.artisanRef": {
         "name": "name",
         "localName": "localName",
         "specialisation": "specialisation",
         "experienceYears": "experienceYears",
+        "age": "age",
         "gender": "gender",
         "phone": "phone",
+        "email": "email",
+        "pehchanCardAvailable": "pehchanCardAvailable",
+        "pehchanCardNumber": "artisanCardNo",
         "village": "village",
+        "state": "state",
+        "district": "district",
+        "pincode": "pincode",
+        "address": "address",
+        "subjectLocation": "subjectLocation",
+        "notes": "recordNotes",
+        "dos": "dos",
+        "donts": "donts",
+        "documentedOn": "documentedOn",
         "photo": "photo",
+        "photoCaption": "photoCaption",
     },
+    # ── THE TOOL RECORD, IN FULL ─────────────────────────────────────────────────────────────
+    #
+    # Six of twenty-six. What a documented tool actually holds and this mapping used to drop: its
+    # English name, how many years it has been in use, who made it, whether it is traditional or
+    # modern, the improvements the artisan suggested for it, the remarks, the craft and place and
+    # artisan it was documented against, and all seven of its measurements.
+    #
+    # `source` ("Where obtained") is NOT in this mapping and must not be added to it. It used to be
+    # declared with `fromref()`, whose help text promises the designer it will be filled in from
+    # the linked record — and `ToolDocumentation` has no column that answers it, so the promise was
+    # never kept and nothing anywhere noticed. The field is now declared with plain `f()`. Filling
+    # it from `maker` or from `place` instead would be a plausible wrong sentence in a submitted
+    # report; see `ENUMS["MAKER_TYPE"]` for that argument in full.
     "tool.toolRef": {
         "name": "name",
         "localName": "localName",
+        "englishName": "englishName",
         "material": "material",
         "usedFor": "usedFor",
         "cost": "cost",
+        "yearsInUse": "yearsInUse",
+        "maker": "maker",
+        "traditionType": "traditionType",
+        "craftName": "craftName",
+        "place": "place",
+        "artisanName": "artisanName",
+        "improvements": "improvements",
+        "remarks": "remarks",
+        "lengthCm": "lengthCm",
+        "breadthCm": "breadthCm",
+        "heightAsRecorded": "heightAsRecorded",
+        "widthAsRecorded": "widthAsRecorded",
+        "thicknessAsRecorded": "thicknessAsRecorded",
+        "weightAsRecorded": "weightAsRecorded",
+        "radiusAsRecorded": "radiusAsRecorded",
+        "documentedOn": "documentedOn",
         "photo": "photo",
+        "photoCaption": "photoCaption",
+    },
+    # ── THE DOCUMENTED PROCESS AS A WHOLE, WHICH IS NOT A ROW ────────────────────────────────
+    #
+    # Stage 5's `traditionalProcess` is the one-per-workshop overview above the steps table, and it
+    # is the home the note on `processStep.processRef` below identified for the two things a
+    # per-step row must not receive: the source process's own ordered sub-steps, and its
+    # pre-process flag. That note ends "The right home is the `traditionalProcess` singleton … but
+    # a singleton has no ref field to hydrate from" — so the singleton was given one, and this is
+    # it. The sequence prints ONCE, where a reader wants it, instead of inside every step or
+    # nowhere at all.
+    #
+    # `notes` lands on `documentedProcessNotes` and NOT on `processOverview`. `processOverview` is
+    # a REQUIRED rich-text narrative the designer writes about the cluster's process as they
+    # observed it at the workshop; the record's notes are what a researcher wrote about it months
+    # earlier somewhere else. Only-fill-blanks would put the second where the first belongs on
+    # every workshop whose designer had not typed yet, and no reader of the .docx could tell which
+    # they were reading.
+    "traditionalProcess.processRef": {
+        "name": "documentedProcessName",
+        "notes": "documentedProcessNotes",
+        "productName": "documentedFor",
+        "steps": "documentedSteps",
+        "preProcessAvailable": "preProcessAvailable",
+        "documentedOn": "documentedOn",
     },
     # THE DOCUMENTED PROCESS IS THE STAGE'S SUBSTANTIVE NARRATIVE, and it used to contribute a
     # single word. The `Process` table holds five things — a name, free-text notes, a
@@ -637,13 +765,53 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
     #    only-fill-blanks rule would leave any of those standing untouched and indistinguishable
     #    from an answer the designer gave.
     "existingProduct.artisanRef": {"name": "artisanName"},
+    # ── THE PRODUCT RECORD, IN FULL ──────────────────────────────────────────────────────────
+    #
+    # Six of twenty-four, and the six were the cheap ones. Everything MEASURABLE about the product
+    # — three dimensions, the free-text size, the cost of making, the time to make it, the market
+    # demand — stopped at the picker, along with its local name, its craft, its place, the tools
+    # it is made with and the researcher's remarks. Stage 17's cost sheet asks for a cost of making
+    # that the product record already held.
+    #
+    # THREE OF THESE PAIRS ARE NOT TRANSCRIPTIONS AND THE COMMENTS ON THEM ARE LOAD-BEARING.
+    # `lengthCm`/`widthCm`/`heightCm` come from columns measured in INCHES and are converted; see
+    # `_inches_to_cm`, which explains why a silent copy would put "12 cm" in a ministry report for
+    # a saree 30.48 cm long and why the only-fill-blanks rule makes that unrecoverable.
+    # `recordType` exists because four of ProductType's six members have no honest category.
+    # `productionTimeNote` is free text and is deliberately NOT parsed into `productionTimeDays`.
+    #
+    # `artisanName` HAS TWO WRITERS, and that is the reason it is safe rather than a reason to
+    # worry. `existingProduct.artisanRef` above also writes it. The order works out: hydration
+    # walks the entity's fields in declaration order, `artisanRef` comes first, and each ref only
+    # CLEARS-and-rewrites the row when that ref itself was re-pointed. So whichever picker the
+    # designer just changed is the one whose answer lands, and the other pass sees a filled box and
+    # leaves it alone. The two can only disagree if the product record's denormalised
+    # `artisanName` is stale relative to the artisan record — and `productRef` is filtered by
+    # `artisanRef`, so the picker can only ever offer that same artisan's products. Adding it is
+    # what fills "Made by" for a designer who picks only the product, which is the common case.
     "existingProduct.productRef": {
         "name": "name",
+        "localName": "localName",
         "category": "category",
+        "recordType": "recordType",
         "material": "material",
+        "mainToolsUsed": "mainToolsUsed",
         "price": "price",
+        "costOfMaking": "costOfMaking",
+        "marketDemand": "marketDemand",
         "use": "use",
+        "craftName": "craftName",
+        "place": "place",
+        "artisanName": "artisanName",
+        "lengthCm": "lengthCm",
+        "widthCm": "widthCm",
+        "heightCm": "heightCm",
+        "dimensionsNote": "dimensionsNote",
+        "productionTimeNote": "productionTimeNote",
+        "remarks": "remarks",
+        "documentedOn": "documentedOn",
         "photo": "productPhotos",
+        "photoCaption": "productPhotosCaption",
     },
     "prototype.productRef": {"name": "productName"},
 }

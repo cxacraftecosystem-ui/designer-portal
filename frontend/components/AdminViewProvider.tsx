@@ -183,6 +183,20 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     alternative: undefined
   },
   {
+    // Nested under /admin and therefore already chrome — listed for the reason the two rules above
+    // are: the longest matching rule wins, and the hub's blurb (reviews, recordings, feedback) is
+    // not remotely what an admin was looking for when they typed this URL.
+    path: "/admin/access",
+    label: "Who may sign in",
+    blurb:
+      "The list of every address allowed into this application, and the queue of people waiting for an administrator to approve them.",
+    // No `alternative`. There is no ordinary-user half of this page and there must not be: it is a
+    // list of named people who tried to get in, and the person who most wants to read it is the one
+    // whose own request is in it. Somebody waiting is told they are waiting, on the sign-in screen,
+    // and that is the whole of what they may know.
+    alternative: undefined
+  },
+  {
     // Professor+ by role, so this rule can only ever fire for an ADMIN — a professor has no toggle
     // and `adminChromeVisible` returns true for them, which is what keeps them out of this branch.
     path: "/users",

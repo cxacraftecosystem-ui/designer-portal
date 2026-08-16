@@ -55,11 +55,49 @@ report; a researcher documents what they find.
 > A non-monotonic rule is far easier to let drift than a threshold, which is why
 > `frontend/lib/permissions.ts` carries the identical set and must keep carrying it.
 
-There is a second gate on top of the role for designers, and it is not in `deps.py`: a `DESIGNER`
-whose `DesignerRoster` row is missing or inactive **cannot sign in at all**
-(`backend/app/services/designers.py` → `roster_allows`). `User.role = DESIGNER` is not by itself what
-admits a designer, and the failure looks like a suspension message rather than a permission error.
-Admins are deliberately not roster-gated.
+**There are two gates on top of the role, and neither is in `deps.py`.** Both run on
+`POST /api/auth/login`, in this order, and both refuse with a 403 carrying a sentence rather than a
+permission error:
+
+1. **The platform allow-list** (`backend/app/services/access_roster.py` → `AccessRoster`) governs
+   **every account except the master admin's**. No ACTIVE row, no sign-in — a missing row is read as
+   "awaiting approval", not as an admission, so the gate fails closed. The refusals are deliberately
+   distinguishable: *awaiting approval*, *not approved*, *access suspended*, and — unchanged —
+   `401 Invalid email or password` for a wrong credential. **The `MASTER_ADMIN` exemption is what
+   makes gating everybody safe**: it lives in the gate, not in the table, so there is always one
+   account that can reach the roster and let people back in. Google sign-in is gated too; an address
+   that is not admitted becomes a pending request instead of an account.
+2. **The designer empanelment** (`backend/app/services/designers.py` → `roster_allows`) still gates
+   `DESIGNER` accounts only, and still answers in its own words. `User.role = DESIGNER` is not by
+   itself what admits a designer. Admins are deliberately not empanelment-gated — an admin
+   empanelled years ago and later suspended must not lose the ability to administer anything — and
+   an ACTIVE `DesignerRoster` row is accepted by the allow-list as an admission, so empanelling
+   somebody remains one action rather than two.
+
+Admin and above manage the allow-list (`can_manage_access_roster` → `require_access_manager`,
+`/api/access/roster`); read is gated with write, because the pending queue is a list of somebody's
+colleagues, applicants and former staff.
+
+**Where an administrator actually does it, on each client, and how they are told.** There is no
+email sender and no push transport anywhere in this codebase, so the notification is a COUNT on a
+surface an admin already opens, with the queue one tap behind it. The number is the same on both
+clients; the route to it is not, and that is deliberate rather than drift:
+
+| | Web | Android |
+|---|---|---|
+| The screen | `/admin/access` (`frontend/app/(protected)/admin/access/page.tsx`) | `AccessRosterScreen` (`android/…/ui/AccessRosterScreen.kt`) |
+| How it is reached | the "Who may sign in" tile on the `/admin` hub — rosters get no nav entry of their own here, the same rule the designer roster follows | the "Who may sign in" menu entry, beside "Designer roster" |
+| Where the count shows | the hub tile, and a badge on the nav's "Settings hub" (`usePendingAccessCount`, one shared fetch, no timer) | a badge on that menu entry, fed by the app-wide 45-second loop that already drains the outbox — **no second poller** |
+| Client permission mirror | `canManageAccessRoster` in `frontend/lib/permissions.ts`, plus a `ROUTE_GUARDS` row and an `ADMIN_CHROME_ROUTES` row | `FieldPermissions.canManageAccessRoster`, plus the entry's own `can` predicate |
+
+**The refused person is told which refusal it was, and the clients are told in a header.** The
+sentence in `detail` is for the reader; `X-Access-Status` (`PENDING` / `REJECTED` / `SUSPENDED` /
+`DESIGNER_SUSPENDED` / `NOT_RECORDED`) is how the two sign-in screens choose the heading and the
+"what to do next" line around it — because matching on the prose would break silently the first time
+somebody rewords a sentence. A 401 carries no label at all, and an unlabelled 403 draws neutral
+chrome around the server's own words rather than a guessed heading. The header must stay in
+`expose_headers` on the CORS middleware (`app/main.py`) or the browser cannot read it while the
+phone can.
 
 The single most-misdocumented line in this repository, stated plainly:
 

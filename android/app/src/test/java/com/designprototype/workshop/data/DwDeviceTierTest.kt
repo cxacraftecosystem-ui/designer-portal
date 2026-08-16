@@ -1268,34 +1268,45 @@ class DwDeviceTierTest {
     }
 
     @Test
-    fun `an offer states the model, what one run is, the real size and where the number came from`() {
-        // "Show the real size" — the language-pack screen refuses to print one because the platform
-        // reports none; our own models have a known size, so this screen must state it before the
-        // tap. And what one RUN is travels with the model everywhere the model is named.
+    fun `an offer states the model, the download size and the room this phone has — and no more`() {
+        /*
+         * ── REWRITTEN 2026-08-16, AND THE REWRITE IS A NARROWING ON PURPOSE ────────────────────
+         *
+         * This test used to require the run bound and its `2,048-token` cap, the peak-memory figure
+         * (`1.3 GB`) and the name of the handset those came off. Each was added for a real reason,
+         * and together they made the offer a paragraph: the test was the mechanism by which the card
+         * the repository owner has rejected four times kept coming back after every trim.
+         *
+         * The rule those assertions were reaching for is real and is KEPT — an offer may not name a
+         * model without saying what it costs. What was wrong is which cost. A designer pays a
+         * DOWNLOAD and needs ROOM ON THIS PHONE; they do not pay peak resident memory, cannot act on
+         * a token cap, and have never held the handset the figures were measured on. So the two
+         * costs that are theirs are asserted present, and the three that are ours are asserted
+         * absent — because a test that only checks what is present cannot keep an essay off a card.
+         */
         val offer = DwTierOffer.Available(NOT_A_REAL_MODEL, headroomBytes = 800L * mib)
         val sentence = dwTierOfferSentence(DwAiTier.TIER_2, offer)
         assertTrue(sentence.contains(NOT_A_REAL_MODEL.modelId))
-        /*
-         * IT USED TO ASSERT `sentence.contains("2048")` — the cap, as a bare number. That was the
-         * right rule spelled in the wrong units: what a sentence naming a model may not omit is the
-         * ENVELOPE ITS MEMORY FIGURE WAS MEASURED OVER, and for a CTC speech model that is seconds of
-         * audio rather than tokens. `runBound` is that envelope for every model family, so the
-         * assertion is on it — and the fixture's own bound still names its 2,048-token cap, so the
-         * decoder case is covered by the same line.
-         */
-        assertTrue(
-            "the envelope one run was measured over is not optional in a sentence naming a model",
-            sentence.contains(NOT_A_REAL_MODEL.runBound)
-        )
-        assertTrue("and for a decoder that envelope is still its cap", sentence.contains("2,048-token"))
-        // 900 MiB and 1,200 MiB, printed in the decimal units a data bundle is sold in.
-        assertTrue(sentence.contains("944 MB"))
-        assertTrue(sentence.contains("1.3 GB"))
-        assertTrue(sentence.contains(NOT_A_REAL_MODEL.measuredOn))
+        // 900 MiB, printed in the decimal units a data bundle is sold in: what the download costs.
+        assertTrue("an offer may not name a model without its download size", sentence.contains("944 MB"))
+        // 800 MiB of headroom: the one figure here that is about THIS phone rather than the model.
+        assertTrue("and without what this phone would have left", sentence.contains("839 MB"))
         assertTrue(
             "nothing downloads by itself, and the sentence says so",
             sentence.contains("Nothing is fetched unless you ask for it")
         )
+
+        listOf(
+            "2,048-token" to "the run bound's token cap",
+            "1.3 GB" to "the peak-memory figure",
+            NOT_A_REAL_MODEL.measuredOn to "the handset the figures were measured on",
+        ).forEach { (fragment, what) ->
+            assertFalse(
+                "$what compares candidate models — a decision this app already made — so it does " +
+                    "not belong in the offer: $sentence",
+                sentence.contains(fragment)
+            )
+        }
     }
 
     @Test

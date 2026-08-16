@@ -2,6 +2,11 @@ package com.designprototype.workshop.data
 
 import android.content.Context
 import com.designprototype.workshop.report.isEmptyDocument
+// Aliased because `fromJson`/`toJson` are words half this file's other imports could also have
+// claimed; at the call site in [DwValues.coerceHydrated] the reader has to be able to see that the
+// rich-text model is what is doing the normalising, and not kotlinx.
+import com.designprototype.workshop.report.fromJson as richTextFromJson
+import com.designprototype.workshop.report.toJson as richTextToJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -645,6 +650,116 @@ object DwValues {
     /** "12" rather than "12.0" for a whole bound, matching the server's `%g` formatting. */
     private fun trimNumber(value: Double): String =
         if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
+
+    /**
+     * A value arriving from a chosen REFERENCE RECORD, resolved into the form [field] may legally
+     * hold — or null, meaning the box is left blank for the designer to answer.
+     *
+     * ── WHY HYDRATION MAY NOT SKIP THE COERCION THE TYPED PATH GOES THROUGH ─────────────────────
+     *
+     * `hydrate_entries` (design_workshops.py) runs every value it copies through `coerce_value`
+     * before storing it, with the reason written beside the call: "a value the target field cannot
+     * legally hold — a product type that is not one of the workshop's categories — is dropped
+     * rather than written. A rejected hydration leaves the field blank for the designer to answer,
+     * which is recoverable; a token no client can render is not."
+     *
+     * THIS SURFACE HAD NO SUCH STEP. [com.designprototype.workshop.ui.designworkshop.hydratedValues]
+     * wrote the reference model's raw value into the row verbatim, so the phone and the server
+     * stored DIFFERENT THINGS from the same pick — and cross-surface divergence in what a record
+     * carries is the defect class this repository has been bitten by most often. Concretely:
+     *
+     *  - ENUM. `REFERENCE_MODELS["ProductDocumentation"].data["category"]` is a MAPPED token and the
+     *    map is deliberately partial, because ProductType and PRODUCT_CATEGORY answer two different
+     *    questions. The server drops a token the registry's enum does not contain. The phone WROTE
+     *    it, and then [validate] marked the row red — "…is not one of the options" — on a value the
+     *    designer never typed and cannot correct, because the dropdown does not offer it either.
+     *    [validate]'s own comment says "a picker cannot produce an out-of-range enum"; a picker
+     *    cannot, and a hydration can, which is precisely how that comment came to be wrong.
+     *  - RICH_TEXT. The server normalises through the rich-text model, so a plain string is stored
+     *    as a document. The phone stored the bare string — and the phone builds its OWN report,
+     *    offline, with no server to correct it, so the copy handed to a visiting officer at the
+     *    close of the workshop would be rendered from a value the renderer was never given.
+     *  - INT / DECIMAL / MONEY. Several source values are free metadata rather than typed columns
+     *    (`Artisan.experienceYears` is read out of `extraMetadata`), so "12 years" is a real answer
+     *    to find in one. The server drops it; the phone wrote the string into a field typed INT.
+     *
+     * None of that cost much while `REFERENCE_HYDRATION` held 27 pairs across seven pickers, which
+     * is exactly why it was worth fixing before the widening rather than after. It now holds 81
+     * across eight, and among the new pairs are three more ENUM targets (`existingProduct.recordType`
+     * on PRODUCT_TYPE, `marketDemand` on DEMAND_LEVEL, `tool.maker` on MAKER_TYPE — every one of
+     * them mapped from a Prisma enum whose token set is NOT the registry's), two BOOL targets, a GEO
+     * target and nine DATE/DECIMAL ones. Every pair added is one more chance for the two surfaces to
+     * store different things from the same pick.
+     *
+     * DROPPING IS FAIL-CLOSED, IT IS THE SERVER'S RULE, AND IT IS WORTH NAMING WHAT IT COSTS. This
+     * build's enum list can be OLDER than the value's source: the picker's records come off the
+     * network while the registry may still be the bundled asset, and a token ADDED to an enum does
+     * not move `registry_version()` (the digest covers the enum's NAME, not its members — see
+     * `test_the_bundled_android_asset_is_the_registry_it_claims_to_be`, which lists "an enum gains a
+     * token" among the eleven changes that move the asset and leave the version identical). In that
+     * window the phone leaves a box blank the server would have filled, and the server fills it on
+     * the next save regardless. The alternative — writing a token no dropdown on this device can
+     * draw — leaves a control showing nothing over a stored value, which is worse and, unlike a
+     * blank, does not correct itself.
+     *
+     * DO NOT "SIMPLIFY" THIS INTO [coerce]. [coerce] answers a different question — what a TEXT BOX
+     * a human is typing into should store — and it reports an error message meant to be drawn under
+     * that box. Here there is no box being typed into and no one to show a message to, so the only
+     * two answers are the value and nothing.
+     */
+    fun coerceHydrated(field: FieldDto, raw: JsonElement): JsonElement? {
+        if (!isFilled(raw)) return null
+        val type = DwFieldType.of(field.type)
+
+        // A gallery seeded from the record's one photograph, or a TAGS box. The scalar is wrapped
+        // rather than refused, which is `hydrate_entries`' own line: `if target.type.is_multi and
+        // not isinstance(value, (list, tuple)): value = [value]`. Writing the bare string into an
+        // IMAGE_LIST would leave a media field holding something no renderer here can read.
+        if (type.isMulti) {
+            val items = (raw as? JsonArray ?: JsonArray(listOf(raw)))
+                .map { text(it).trim() }
+                .filter { it.isNotBlank() }
+            if (items.isEmpty()) return null
+            // THE WHOLE VALUE IS REFUSED WHEN ANY TOKEN IS UNKNOWN, not the offending token alone.
+            // `coerce_value`'s MULTI_ENUM arm returns an error for the list rather than filtering
+            // it, and the two are not the same outcome: half a market-channel answer is a claim
+            // about where a product is sold that nobody actually made.
+            if (type == DwFieldType.MULTI_ENUM && field.options.isNotEmpty() &&
+                items.any { token -> field.options.none { it.value == token } }
+            ) return null
+            return JsonArray(items.map { JsonPrimitive(it) })
+        }
+
+        // A media id: nothing to coerce and nothing this function may reshape. An IMAGE field holds
+        // an id, and reformatting an id is how you lose the file.
+        if (type.isMedia) return raw
+
+        // A coordinate is passed through UNCHANGED but only if it is a coordinate at all.
+        //
+        // `coerce_value`'s GEO arm refuses a non-dict outright ("must be a coordinate") and then
+        // range-checks lat, lon and accuracy. The range checks are NOT repeated here on purpose:
+        // the object was built by the server out of a Location row it had already validated, and a
+        // second opinion about a bound is how two ports come to disagree. What IS repeated is the
+        // shape check, because that is the one failure a client can be handed and cannot survive —
+        // a bare string where the map picker expects `{lat,lon}` draws nothing and offers no way to
+        // fix it. `participant.subjectLocation` became a hydration target with the artisan widening,
+        // so this arm now carries real traffic rather than standing by.
+        if (type == DwFieldType.GEO) return raw as? JsonObject
+
+        // Normalised through the rich-text model exactly as `coerce_value`'s RICH_TEXT arm does, so
+        // a plain string arrives as unformatted prose in the document shape every reader on this
+        // device expects, and an empty document arrives as nothing at all rather than as a value
+        // that reads as filled to [isFilled] and prints as a blank line.
+        if (type == DwFieldType.RICH_TEXT) {
+            val doc = richTextFromJson(raw)
+            return if (doc.isEmpty) null else richTextToJson(doc)
+        }
+
+        // Everything else goes through the same arms a typed answer goes through — which is what
+        // makes a MONEY value land two-place and HALF_EVEN, matching the server to the paisa, and a
+        // number outside a declared range get dropped instead of stored.
+        return coerce(field, text(raw)).value
+    }
 
     /**
      * Every per-field problem in one entry, mirroring `validate_entry`.

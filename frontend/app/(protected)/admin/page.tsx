@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Settings,
   ShieldCheck,
+  ShieldUser,
   SlidersHorizontal,
   UserCog,
   Wrench,
@@ -25,9 +26,10 @@ import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { useAuth } from "@/components/AuthProvider";
+import { usePendingAccessCount } from "@/components/hooks/usePendingAccessCount";
 import { apiFetch } from "@/lib/api";
 import { bytes, formatDateTime } from "@/lib/format";
-import { canManageDesignerRoster, isAdmin, isMasterAdmin } from "@/lib/permissions";
+import { canManageAccessRoster, canManageDesignerRoster, isAdmin, isMasterAdmin } from "@/lib/permissions";
 import type { MediaFile } from "@/lib/types";
 
 type Tile = {
@@ -36,6 +38,17 @@ type Tile = {
   href: string;
   icon: LucideIcon;
   visible?: boolean;
+  /**
+   * A server-derived number worth acting on, drawn on the tile itself.
+   *
+   * THE FIRST ONE OF THESE IN THE HUB, and it exists because this product has no other way to tell
+   * an administrator that something is waiting for them: there is no email sender and no push
+   * transport anywhere in the codebase, so a notification has to be a number on a screen they
+   * already open. Absent (null) means either "nothing is waiting" or "we could not ask" — both of
+   * which must render as no badge rather than as a zero, because a confident "0" over a queue we
+   * failed to read is a lie an admin would act on by not opening it.
+   */
+  badge?: number | null;
 };
 
 /** /media/orphans returns the whole recovery list, so the table pages client-side. */
@@ -57,6 +70,16 @@ export default function AdminHubPage() {
   const [orphans, setOrphans] = useState<MediaFile[] | null>(null);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * How many people are waiting to be let into the application — the tile below wears it as a badge.
+   *
+   * Shared with the nav's own badge through one module-level store, so the two cannot show different
+   * numbers; and NOT fetched at all for an account that could not read it, because the endpoint is
+   * `require_access_manager` and a guaranteed 403 per page load is a request spent to be refused.
+   * Its failure is silent: a missing badge is a nicety lost, not a screen broken.
+   */
+  const pendingAccess = usePendingAccessCount(permitted && canManageAccessRoster(user));
 
   useEffect(() => {
     if (authLoading || !permitted) return;
@@ -159,6 +182,21 @@ export default function AdminHubPage() {
       icon: UserCog
     },
     {
+      label: "Who may sign in",
+      // Says what the LIST is, not what the screen does — an admin who reads this as "user
+      // management" will go to /users and wonder why the person they let in still cannot get in.
+      // The pending count rides on the tile because this is the surface an admin opens anyway;
+      // see `usePendingAccessCount` for why there is no timer behind it.
+      description:
+        "The platform allow-list, and the queue of people waiting to be approved. Approve, refuse, suspend and restore — nothing is ever deleted.",
+      href: "/admin/access",
+      // NOT ShieldCheck — "Workshop access" above already wears it, and two shields on one grid of
+      // twelve tiles is how an admin ends up on the wrong screen twice before reading the labels.
+      icon: ShieldUser,
+      visible: canManageAccessRoster(user),
+      badge: pendingAccess?.pending || null
+    },
+    {
       label: "Designer roster",
       // Says what the roster IS rather than what the screen does, because the thing admins get
       // wrong about it is thinking it is a view of the Designer role. It is not: the role says what
@@ -204,8 +242,22 @@ export default function AdminHubPage() {
               href={tile.href}
               className="group flex flex-col gap-2 rounded-lg border border-line-200 bg-card p-4 shadow-sm transition hover:border-purple-300 hover:shadow-md"
             >
-              <div className="grid h-10 w-10 place-items-center rounded-md bg-purple-800">
-                <tile.icon className="h-5 w-5 text-white" aria-hidden />
+              <div className="flex items-start justify-between gap-2">
+                <div className="grid h-10 w-10 place-items-center rounded-md bg-purple-800">
+                  <tile.icon className="h-5 w-5 text-white" aria-hidden />
+                </div>
+                {/*
+                  The number is never alone. "3" in a corner is decoration an admin learns to ignore;
+                  the visible text says what the three ARE, and the sr-only half says it again for a
+                  screen reader that would otherwise announce a bare digit inside a link.
+                */}
+                {tile.badge ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                    {tile.badge}
+                    <span className="font-medium">waiting</span>
+                    <span className="sr-only">for a decision</span>
+                  </span>
+                ) : null}
               </div>
               <div className="font-display text-base font-bold leading-snug text-ink-900">{tile.label}</div>
               <p className="text-xs leading-5 text-ink-500">{tile.description}</p>

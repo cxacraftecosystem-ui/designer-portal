@@ -28,6 +28,7 @@ from app.services.records import (
     hydrate_relations,
     include_of,
     merge_field_provenance,
+    prose_contains,
     public_encode,
     require_record,
     resubmit_status,
@@ -229,7 +230,11 @@ async def list_artisans(
             {"name": contains(search)},
             {"localName": contains(search)},
             {"place": contains(search)},
-            {"notes": contains(search)},
+            # ``notes`` is one of the columns that can now hold a rich-text document, so it goes
+            # through ``prose_contains`` rather than ``contains``. The other three cannot — a name,
+            # a local name and a place are single-line fields with no editor behind them — and they
+            # stay on the cheaper single-clause filter on purpose.
+            prose_contains("notes", search),
             {"craft": {"is": {"name": contains(search)}}},
         ]
     if craft:

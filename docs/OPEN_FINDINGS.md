@@ -64,6 +64,28 @@ surfaces — was run on 2026-08-15 and its findings are written up in `docs/AUDI
 rather than here, because they have not been through the fix-and-pin cycle this file records. Items
 from it are promoted into this register as they are taken on.
 
+### [MEDIUM] The browser assembles the whole archive as one in-memory `Blob` — three `JSZip.generateAsync({type:"blob"})` sites (frontend)
+
+`frontend/app/(protected)/data/page.tsx:865`, `:1516` and `sharing/page.tsx:766` each build the
+complete zip in the tab's heap: every media object is `await response.blob()`-ed into `JSZip`, and
+`generateAsync({type:"blob"})` then produces one more `Blob` holding the entire archive before a
+byte is written to disk. On a repository whose media runs to a gigabyte the tab dies.
+
+**This is deliberately NOT filed as part of the manifest defect closed alongside it, and conflating
+the two would have produced a fix that misses.** The handset failure was a single *contiguous*
+`ByteArray` sized to the *manifest* — text only, ~48 MB modelled — thrown by
+`ResponseBody.string()` inside Retrofit's converter, and it was fixed by never materialising the
+manifest. These three sites do not read the manifest as one string at all (they iterate
+`manifest.files` and could take `?stream=1` tomorrow); what they hold is the *media*, which the
+handset never holds because it copies each object straight into a `ZipOutputStream` on disk. Two
+different objects, two different allocators, two different ceilings. Streaming the manifest into
+these pages would be a real improvement and would not move the number that kills the tab.
+
+**The fix is a different mechanism:** `generateInternalStream` piped to the File System Access API
+(`showSaveFilePicker`), or a `TransformStream` into a service worker, so the archive is written to
+disk as it is produced. Both are browser-support decisions rather than code-shape decisions, which
+is why this is registered rather than bolted onto a memory fix aimed at the handset.
+
 ---
 
 ## Closed on 2026-08-15

@@ -10,6 +10,13 @@ import { useAuth } from "@/components/AuthProvider";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { GLASS_PANEL, GlassSurface } from "@/components/ui/GlassSurface";
 import { useToast } from "@/components/ui/Toast";
+import { ApiError } from "@/lib/api";
+import {
+  ACCESS_STATUS_HEADER,
+  accessRefusalChrome,
+  accessRefusalKind,
+  type AccessRefusalKind
+} from "@/lib/accessRoster";
 import { cn } from "@/lib/utils";
 
 declare global {
@@ -106,6 +113,17 @@ function LoginView() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * WHAT THE REFUSAL WAS, held beside the message rather than sniffed back out of it.
+   *
+   * The two answers this screen must never blur into one are "your password is wrong" and "an
+   * administrator has not approved you yet". They arrive as a 401 and a 403 with different words,
+   * and the card draws different chrome around them — so the kind is kept as data. Deriving it from
+   * the sentence would break silently the first time somebody rewords the sentence, and the screen
+   * would go on looking perfectly correct while telling a person waiting on an approval to check
+   * their password.
+   */
+  const [refusal, setRefusal] = useState<AccessRefusalKind | null>(null);
   const [loading, setLoading] = useState(false);
   const googleHost = useRef<HTMLDivElement | null>(null);
   const renderedWidth = useRef(0);
@@ -114,6 +132,30 @@ function LoginView() {
   useEffect(() => {
     if (user) router.replace("/dashboard");
   }, [router, user]);
+
+  /**
+   * One place that turns a failed sign-in into what this card shows, used by BOTH paths.
+   *
+   * Both, and that is the whole point of hoisting it. The password path and the Google path are
+   * refused by the same gate for the same reasons, and until this feature the Google path reported
+   * everything through a toast headed "Google sign-in failed" — which, for somebody awaiting an
+   * administrator's approval, names the wrong culprit entirely and sends them to try the password
+   * boxes that will refuse them identically.
+   *
+   * DECLARED ABOVE THE GOOGLE EFFECT THAT DEPENDS ON IT. A `const` referenced in an earlier hook's
+   * dependency array is read during render, before the initialiser has run — a temporal-dead-zone
+   * crash on the app's front door, and one that only fires when Google sign-in is configured.
+   */
+  const describeFailure = useCallback((err: unknown) => {
+    const status = err instanceof ApiError ? err.status : 0;
+    // `headers` is absent when there was no response at all (offline, or a build with no API
+    // address), and the header itself is absent when a proxy stripped it or the deployment predates
+    // it. Both land on UNCLASSIFIED, which draws neutral chrome around the server's own sentence
+    // rather than guessing at a category — the only safe direction to be wrong in on this screen.
+    const kind = accessRefusalKind(status, err instanceof ApiError ? err.headers?.get(ACCESS_STATUS_HEADER) : null);
+    setRefusal(kind);
+    setError(err instanceof Error ? err.message : "Unable to sign in or reach the server.");
+  }, []);
 
   /**
    * Google Identity Services will only render *its* button, at its own size — which is why
@@ -145,15 +187,25 @@ function LoginView() {
       window.google?.accounts.id.initialize({
         client_id: googleClientId,
         callback: async (response) => {
+          setError(null);
+          setRefusal(null);
           try {
             await loginWithGoogle(response.credential);
             router.replace("/dashboard");
           } catch (err) {
-            toast({
-              title: "Google sign-in failed",
-              description: err instanceof Error ? err.message : "Please try again.",
-              tone: "error"
-            });
+            /*
+              INTO THE CARD, NOT INTO A TOAST — and this is the biggest behavioural change on this
+              screen.
+
+              A verified Google address that is not on the allow-list no longer self-provisions an
+              account: it becomes a pending request and is refused with a sentence saying so. That
+              sentence is the ONLY thing standing between the person and the belief that Google is
+              broken, and a toast is the wrong carrier for it — it disappears on a timer, it is
+              announced away from the form, and its old title ("Google sign-in failed") blamed the
+              identity provider for an administrator's decision. The panel below stays on screen,
+              says what happened, and says what to do next.
+            */
+            describeFailure(err);
           }
         }
       });
@@ -182,7 +234,7 @@ function LoginView() {
         duration: 0
       });
     document.body.appendChild(script);
-  }, [googleClientId, loginWithGoogle, renderGoogleButton, router, toast]);
+  }, [describeFailure, googleClientId, loginWithGoogle, renderGoogleButton, router, toast]);
 
   useEffect(() => {
     const host = googleHost.current;
@@ -196,11 +248,12 @@ function LoginView() {
     event.preventDefault();
     setLoading(true);
     setError(null);
+    setRefusal(null);
     try {
       await login(email, password);
       router.replace("/dashboard");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to sign in or reach the server.");
+      describeFailure(err);
     } finally {
       setLoading(false);
     }
@@ -248,8 +301,18 @@ function LoginView() {
             ))}
           </ul>
         </div>
+        {/*
+          THIS SENTENCE USED TO SAY "New Google accounts join as Crowdsource Volunteers and are
+          elevated by an admin", AND IT STOPPED BEING TRUE THE DAY THE ALLOW-LIST SHIPPED. A verified
+          Google address that nobody has approved no longer gets an account at all — it becomes a
+          request an administrator decides. Leaving the old promise here would have been the product
+          telling somebody, on the very screen that is about to refuse them, that they were about to
+          be let in.
+        */}
         <p className="relative z-10 text-xs text-white/40">
-          New Google accounts join as Crowdsource Volunteers and are elevated by an admin.
+          Signing in is by invitation: an administrator approves your address first, and new accounts then join as
+          Crowdsource Volunteers until they are promoted. If yours has not been approved yet, signing in tells you so and
+          puts you in the queue.
         </p>
       </aside>
 
@@ -279,11 +342,7 @@ function LoginView() {
             answered. This is the front door of the app, so it is the one place where "the message
             is on screen" is furthest from "the message arrived".
           */}
-          {error ? (
-            <div role="alert" className="mb-4 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">
-              {error}
-            </div>
-          ) : null}
+          {error ? <SignInRefusal kind={refusal} message={error} /> : null}
 
           <form onSubmit={submit} className="grid gap-3">
             <div className="grid gap-2">
@@ -395,6 +454,74 @@ function LoginView() {
           </p>
         </GlassSurface>
       </main>
+    </div>
+  );
+}
+
+/**
+ * WHY A SIGN-IN WAS REFUSED, DRAWN SO THAT THE TWO CASES CANNOT BE MISTAKEN FOR EACH OTHER.
+ *
+ * ── THE RULING THIS IMPLEMENTS ──────────────────────────────────────────────────────────────────
+ *
+ * "Wrong password and pending approval should be differentiated." A person waiting on an
+ * administrator, told "invalid email or password", will reset a password that was never wrong —
+ * twice — and then telephone somebody who cannot help them, because this product has no
+ * registration page and no password-reset email, so the vague answer leaves them with no next
+ * action that exists. The account-enumeration cost of saying so was weighed and accepted; what is
+ * NOT accepted is saying anything more than "this address is awaiting approval". Nothing on this
+ * card names the person, their tier, whether a password was ever set, or anything about any other
+ * account — and nothing added later may either. The server's sentence is the whole disclosure.
+ *
+ * ── THE THREE SHAPES ────────────────────────────────────────────────────────────────────────────
+ *
+ * A WRONG CREDENTIAL stays exactly what it was: one red line, the size of a validation error,
+ * because that is what it is. Dressing it in a panel would make every typo look like an account
+ * problem, which is this feature's own mistake made backwards.
+ *
+ * A CLASSIFIED REFUSAL — awaiting approval, refused, suspended, queue full — gets a filled panel
+ * with a heading, the server's own sentence verbatim, and one line saying what to do. The heading
+ * exists because a 13px line above a "Sign In" button is read as a validation error and dismissed;
+ * this is the only place the person will ever be told what is actually happening to them.
+ *
+ * AN UNCLASSIFIED FAILURE — no response at all, or a deployment/proxy that did not send the
+ * classifying header — gets the neutral line and the server's words. Never a guessed heading: being
+ * told "your access has been suspended" because a proxy dropped a header would be worse than the
+ * plain sentence.
+ *
+ * ── THE COLOUR IS NOT THE MESSAGE ───────────────────────────────────────────────────────────────
+ *
+ * "Waiting" is amber and "refused" is red, and both say which they are in words, because a person
+ * who cannot distinguish the two colours must still be able to tell "an administrator has not got
+ * to you yet" from "an administrator said no". `role="alert"` for the same reason it was already
+ * here: sign-in fails without moving focus and without changing anything above the fold, so to
+ * somebody using a screen reader the difference between a wrong password and a server that never
+ * answered is otherwise silence.
+ */
+function SignInRefusal({ kind, message }: { kind: AccessRefusalKind | null; message: string }) {
+  const chrome = kind ? accessRefusalChrome(kind) : null;
+
+  if (!chrome) {
+    return (
+      <div role="alert" className="mb-4 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">
+        {message}
+      </div>
+    );
+  }
+
+  const waiting = chrome.tone === "waiting";
+  return (
+    <div
+      role="alert"
+      className={cn(
+        "mb-4 grid gap-1.5 rounded-md border px-3 py-3 text-sm",
+        waiting ? "border-amber-500/40 bg-amber-100 text-amber-900" : "border-red-200 bg-error-100 text-error-600"
+      )}
+    >
+      <p className="font-display text-base font-bold leading-snug">{chrome.heading}</p>
+      {/* The server's sentence, verbatim. It is the only text that knows why THIS attempt was
+          refused, and nothing this bundle could write in its place would know it. */}
+      <p className="leading-6">{message}</p>
+      <p className={cn("text-xs leading-5", waiting ? "text-amber-800" : "text-error-600/90")}>{chrome.advice}</p>
     </div>
   );
 }

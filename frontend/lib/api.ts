@@ -41,11 +41,27 @@ const baseIsLoopback = ((): boolean => {
 export class ApiError extends Error {
   status: number;
   payload: unknown;
+  /**
+   * The response's headers, when there was a response.
+   *
+   * Carried because one refusal in this API says something in a header that it deliberately does NOT
+   * say in the body: `X-Access-Status` classifies a refused sign-in (awaiting approval, rejected,
+   * suspended, queue full) so the sign-in page can tell a person waiting on an administrator apart
+   * from a person who mistyped a password. It is a header rather than a field because the refusal
+   * body is asserted to hold nothing but `detail` — see `tests/test_platform_access_gate.py` — and
+   * that assertion is the privacy floor of the whole allow-list feature.
+   *
+   * OPTIONAL, AND EVERY READER MUST COPE WITH IT BEING ABSENT. {@link ApiUnconfiguredError} is
+   * thrown without any response at all, and a cross-origin response only exposes headers the server
+   * named in `expose_headers`. A missing header means "not classified", never "not refused".
+   */
+  headers?: Headers;
 
-  constructor(status: number, message: string, payload: unknown) {
+  constructor(status: number, message: string, payload: unknown, headers?: Headers) {
     super(message);
     this.status = status;
     this.payload = payload;
+    this.headers = headers;
   }
 }
 
@@ -240,7 +256,7 @@ export async function apiFetch<T>(
         window.location.replace("/login");
       }
     }
-    throw new ApiError(response.status, message, body);
+    throw new ApiError(response.status, message, body, response.headers);
   }
 
   return body as T;

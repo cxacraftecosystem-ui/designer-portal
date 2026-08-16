@@ -74,7 +74,9 @@ call only runs the queries that level needs (each bounded by ``TAKE``).
 
 import asyncio
 import io
+import json
 import re
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -118,6 +120,7 @@ from app.services.record_fields import (
     sheet_row,
 )
 from app.services.records import owned_or_granted_where
+from app.services.rich_text import plain_from_stored
 from app.services.s3 import get_object_bytes
 from app.services.transcript_format import transcript_cell
 from app.services.xlsx_report import XLSX_MIME, build_report_workbook
@@ -449,9 +452,23 @@ def _folder(name: str, path: str, record_type: str = "category") -> dict[str, An
 
 
 def _text(parent: str, name: str, content: str | None) -> dict[str, Any] | None:
-    if not (content or "").strip():
+    """A synthesised .txt file in the browser tree — and the ONE rich-text bypass in this module.
+
+    Every other caller here hands over ``_info_text(info_panel(...))``, which has already been
+    through ``record_fields.cell`` and is therefore already flattened. The process-step ``notes.txt``
+    below does not: it passes a raw ``String?`` column straight in. Since the larger free-text
+    columns can now hold a serialised rich document (see ``rich_text.plain_from_stored``), that one
+    caller would have written a file of JSON braces into a downloaded folder while its four siblings
+    wrote clean prose.
+
+    The flattening is done HERE rather than at that call site on purpose: this is the funnel every
+    synthetic text file in the tree goes through, so the next one somebody adds is covered without
+    them having to know any of the above. A plain string is returned unchanged, by identity.
+    """
+    flattened = plain_from_stored(content)
+    if not (flattened or "").strip():
         return None
-    return {"name": name, "path": _join(parent, name), "kind": "file", "content": content}
+    return {"name": name, "path": _join(parent, name), "kind": "file", "content": flattened}
 
 
 def _media_entries(
@@ -1897,16 +1914,133 @@ async def _walk(
         await asyncio.gather(*child_walks)
 
 
-@router.get("/manifest")
+# ---------------------------------------------------------------------------
+# Serving a manifest as NDJSON — shared with /export/dataset.
+#
+# WHY THIS EXISTS. Both manifest endpoints answered with ONE JSON object holding every entry, and
+# the entries carry inline text: a ``details.txt`` body per record, an ``answers.txt`` per
+# questionnaire, and — with ``include=transcripts`` or no filter at all — ``_transcriptText``, the
+# FULL transcript of every audio row in the subtree. ``MAX_MANIFEST_FILES = 20000`` here and
+# ``MEDIA_TAKE = 20000`` + 6x``EXPORT_TAKE = 5000`` in export.py bound the entry COUNT and NOTHING
+# bounds the byte size, so ``docs/SCALABILITY.md`` already measures this at 476 kB today and models
+# ~48 MB at 100x the media.
+#
+# ON THE HANDSET THAT SINGLE BODY IS THE WHOLE FAILURE. ``WorkshopRepositoryApi.datasetManifest()``
+# and ``.dataManifest()`` were typed Retrofit calls returning a fully-materialised ``@Serializable``
+# class with no ``@Streaming``, so the response went through Retrofit's kotlinx-serialization
+# converter. That converter is ``Serializer.FromString``: its ``fromResponseBody`` calls
+# ``okhttp3.ResponseBody.string()`` and then ``decodeFromString`` (verified against the bytecode of
+# retrofit2-kotlinx-serialization-converter 1.0.0, not from memory). ``string()`` bottoms out in
+# okio's ``Buffer.readByteArray(byteCount)``, which is ONE contiguous ``ByteArray`` of the whole
+# body, immediately copied into one contiguous ``String``. A 48 MB manifest therefore asks Android's
+# allocator for a single 48 MB array on a heap that is also holding Compose, and the app dies with
+# ``java.lang.OutOfMemoryError: Failed to allocate a 48000000 byte allocation``.
+# ``android:largeHeap="true"`` is already set, so that mitigation is spent — and it would not have
+# helped anyway: a large enough CONTIGUOUS allocation fails on a fragmented heap however much total
+# free memory is reported.
+#
+# NDJSON RATHER THAN A JSON ARRAY, for the reason ``datasets.py`` already gives one module over: an
+# array must be closed before a parser can begin, so a client cannot consume it incrementally and a
+# truncated one yields nothing at all. One entry per line means the client decodes one entry at a
+# time and never holds more than the longest single line.
+#
+# THE DEFAULT SHAPE IS UNCHANGED, DELIBERATELY. ``?stream=1`` is opt-in because the browser clients
+# (frontend/app/(protected)/data/page.tsx, sharing/page.tsx) and every Android build already
+# installed in the field read the JSON object, and there is no way to make them all upgrade at once.
+# Do not "tidy" this by making NDJSON the default: that turns a deployment into a fleet-wide
+# download outage on handsets nobody in this repo can reach.
+# ---------------------------------------------------------------------------
+
+MANIFEST_NDJSON_MEDIA_TYPE = "application/x-ndjson"
+# The counts and the truncation flag travel as HEADERS because in NDJSON there is nowhere else to
+# put them: they must arrive BEFORE the first entry so the client can show real progress from the
+# first file, and a trailing summary line would be lost exactly when it matters most (a dropped
+# connection). ``X-Dataset-Total`` is the name ``datasets.py::_stream_headers`` already uses for
+# "how many things are in this body"; the two must not disagree about that word.
+MANIFEST_TOTAL_HEADER = "X-Dataset-Total"
+MANIFEST_MEDIA_HEADER = "X-Dataset-Media"
+MANIFEST_TRUNCATED_HEADER = "X-Dataset-Truncated"
+# THE FOURTH HEADER IS THIS REPOSITORY'S, NOT A COPY OF ANYTHING. ``/export/dataset`` here answers
+# ``{files, totalFiles, totalMedia, skippedMedia, truncated}`` — five keys, not four — because a
+# media row that could not be addressed at all is counted separately from a capped table (see
+# export.py's closing comment on why ``skippedMedia`` is OR-ed into ``truncated`` rather than
+# reported alone). Drop this header and the streamed path silently loses the one number that tells a
+# researcher WHICH kind of incomplete their archive is. ``/data/manifest`` has no such concept and
+# sends 0; a reader must therefore treat 0 and absent alike.
+MANIFEST_SKIPPED_HEADER = "X-Dataset-Skipped"
+# Lines per yield. Matches ``datasets.py``'s ``STREAM_BATCH``: one ASGI send per entry would spend
+# more time in the protocol than in the encode on a 20,000-entry manifest.
+_MANIFEST_STREAM_CHUNK = 200
+
+
+def manifest_ndjson_response(
+    files: list[dict[str, Any]],
+    total_media: int,
+    truncated: bool,
+    filename: str,
+    skipped_media: int = 0,
+) -> StreamingResponse:
+    """Serve an already-built manifest as newline-delimited JSON, one entry per line.
+
+    This does NOT make the SERVER's manifest build incremental — both callers still assemble the
+    whole ``files`` list before they get here, and doing otherwise means restructuring two recursive
+    builders that de-duplicate paths against sets (``used_dirs``/``used``) they can only fill by
+    walking everything first. What it does remove is the SECOND copy: ``JSONResponse`` would encode
+    that list into one ~48 MB ``bytes`` object held beside the list itself while the socket drains.
+
+    The entries are dropped from ``files`` as they are encoded (``files[i] = None``) for the same
+    reason — the inline ``content`` strings are most of the manifest's weight, and releasing each one
+    at the point it becomes bytes keeps the peak at roughly one copy instead of two. The list is the
+    caller's, but the caller has already returned by the time this generator runs, so nothing else
+    can observe the holes. Do not remove the ``= None`` as a tidy-up: on a single-worker t3.micro the
+    doubled peak is the difference this endpoint's caps exist to avoid.
+    """
+    total_files = len(files)
+
+    async def body() -> AsyncIterator[bytes]:
+        for start in range(0, total_files, _MANIFEST_STREAM_CHUNK):
+            lines: list[str] = []
+            for index in range(start, min(start + _MANIFEST_STREAM_CHUNK, total_files)):
+                entry = files[index]
+                files[index] = None  # type: ignore[call-overload]  # see the docstring
+                # ``ensure_ascii=False`` so a Devanagari transcript is not tripled in size on the
+                # wire. ``json.dumps`` escapes real newlines inside strings as ``\n``, which is what
+                # makes "one entry per line" hold for a multi-line details.txt body — break that and
+                # the client reads one entry as several, most unparseable, and hands back a short
+                # archive with no error raised anywhere in the system.
+                lines.append(json.dumps(entry, ensure_ascii=False))
+            yield ("\n".join(lines) + "\n").encode("utf-8")
+
+    return StreamingResponse(
+        body(),
+        media_type=MANIFEST_NDJSON_MEDIA_TYPE,
+        headers={
+            MANIFEST_TOTAL_HEADER: str(total_files),
+            MANIFEST_MEDIA_HEADER: str(total_media),
+            # Spelled "true"/"false" rather than 1/0 so a reader cannot mistake it for a count.
+            MANIFEST_TRUNCATED_HEADER: "true" if truncated else "false",
+            MANIFEST_SKIPPED_HEADER: str(skipped_media),
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.get("/manifest", response_model=None)
 async def data_manifest(
     path: str = "",
     include: str | None = None,
+    stream: bool = False,
     current_user: Any = Depends(require_dataset_downloader),
-) -> dict[str, Any]:
+) -> dict[str, Any] | StreamingResponse:
     """Flattened manifest of the subtree below ``path`` — same shape as /export/dataset
     ({files:[{path,url?,content?,mediaId?,mediaType?}], totalFiles, totalMedia, truncated});
     the client downloads/zips client-side. ``include`` filters entry kinds; omitted = everything.
-    The walk reuses the /tree listers, so it carries the same row visibility."""
+    The walk reuses the /tree listers, so it carries the same row visibility.
+
+    ``stream=1`` answers the same entries as NDJSON with the counts in headers instead of a wrapper
+    object — see :func:`manifest_ndjson_response` for the allocation failure it exists to stop, and
+    for why it is opt-in rather than the default.
+    """
     include_set: set[str] | None = None
     if include is not None and include.strip():
         include_set = {t.strip().lower() for t in include.split(",") if t.strip()}
@@ -1916,6 +2050,10 @@ async def data_manifest(
     state = {"truncated": False}
     await _walk(norm, "", include_set, files, 0, set(), state, scope)
     total_media = sum(1 for f in files if f.get("mediaId") and f.get("content") is None)
+    if stream:
+        return manifest_ndjson_response(
+            files, total_media, bool(state["truncated"]), "manifest.ndjson"
+        )
     return {
         "files": files,
         "totalFiles": len(files),
