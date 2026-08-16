@@ -21,15 +21,17 @@ import type { DwFieldStamp } from "@/lib/designWorkshops";
  *
  * ── WHAT IT SAYS, AND THE THREE THINGS IT REFUSES TO SAY ──────────────────────────────────────
  *
- * It answers one question — "where did THIS value come from" — in one of three ways:
+ * It answers one question — "where did THIS value come from" — in one of two ways:
  *
- *   * typed by a person        → "Sita Devi, 14 Aug"
- *   * copied from a record     → "From the artisan record"
- *   * copied, then edited      → "Sita Devi, 14 Aug — edited here"
+ *   * copied from a record  → "From the artisan record, by Sita Devi"   (Sita Devi recorded the
+ *                             ARTISAN; she has not touched this workshop)
+ *   * typed or changed here → "Ravi Kumar, 14 Aug"
  *
- * The third is the one the whole model turns on: provenance follows the ORIGINAL author until
- * somebody edits the field, and then it is theirs. A reader has to be able to tell those two apart
- * at a glance or the distinction may as well not be stored.
+ * TWO, NOT THREE. Provenance follows the original author until somebody edits the field, and then
+ * the stamp is REPLACED wholesale — so a hydrated field a designer has typed over reads as that
+ * designer's, with no trace of the record, which is exactly right. An earlier draft of this file
+ * invented a third "copied, then edited" case and rendered the RECORD's author as the editor; see
+ * the note on SOURCE_REFERENCE below for why that sentence was a lie about a real person.
  *
  * What it does NOT do:
  *
@@ -43,8 +45,22 @@ import type { DwFieldStamp } from "@/lib/designWorkshops";
  *    full on the workshop's provenance view, which is a table and reads correctly.
  */
 
-/** The stamp's `source` values that mean "this was copied from a shared record, untouched here". */
-const COPIED = new Set(["reference", "hydration", "carry", "prefill"]);
+/**
+ * The two source values the server writes, and there are exactly two.
+ *
+ * ``reference`` — hydration wrote this value from a shared canonical record. **`by` is THAT
+ * RECORD's author**, not the designer who picked it (`entry_provenance.py`, rule 1).
+ * ``designer``  — a person on this workshop typed or changed it; `by` is that person (rule 3).
+ *
+ * THEY ARE MUTUALLY EXCLUSIVE, WHICH IS THE FACT THIS FILE GOT WRONG ONCE. Rule 3 REPLACES the
+ * whole stamp when a value changes, so "copied from a record and then edited here" does not exist
+ * as a state: the moment a designer types over a hydrated field, the stamp becomes a plain
+ * `designer` one with no `refModel` at all. The first version of this component rendered a
+ * `reference` stamp that carried a name as "Sita Devi — edited here", which is a sentence about a
+ * person who never touched the field: Sita Devi is whoever recorded the ARTISAN, one table away.
+ * Attributing an edit to somebody who did not make it is worse than showing nothing.
+ */
+const SOURCE_REFERENCE = "reference";
 
 function shortDate(iso?: string): string {
   if (!iso) return "";
@@ -67,19 +83,40 @@ function recordName(refModel?: string | null): string {
   return (refModel && named[refModel]) || "linked";
 }
 
+/**
+ * The sentence for one stamp, or "" when there is nothing honest to say.
+ *
+ * WORD-FOR-WORD THE SAME AS ANDROID'S `DwFieldStampDto.attribution()`, and that is a requirement
+ * rather than a nicety: a designer who reads "From the artisan record, by Sita Devi" on a laptop
+ * and something else on the handset for the same field has been told two things by one product,
+ * and has no way to know which is true. `DwFieldProvenanceWireTest` and this file's spec assert the
+ * same cases so the pair cannot drift silently.
+ */
 export function fieldProvenanceLine(stamp?: DwFieldStamp | null): string {
   if (!stamp) return "";
-  const copied = COPIED.has(String(stamp.source ?? ""));
-  // A copied value with no author is the ordinary hydration case: the record is the author.
-  if (copied && !stamp.by) return `From the ${recordName(stamp.refModel)} record`;
-  const who = stamp.byName?.trim() || (stamp.by ? "a former colleague" : "");
-  if (!who) return copied ? `From the ${recordName(stamp.refModel)} record` : "";
+  const who = stamp.byName?.trim() || "";
   const when = shortDate(stamp.at);
-  const base = when ? `${who}, ${when}` : who;
-  // THE CLAUSE THE MODEL TURNS ON. A stamp that names both a person AND a source record means the
-  // value arrived from the record and was then changed here — which is exactly the moment
-  // provenance moves from the record's author to the editor, and the reader has to see it.
-  return copied ? `${base} — edited here` : base;
+
+  if (stamp.source === SOURCE_REFERENCE) {
+    // Neither a record nor a person is nothing concrete to say, and "From the linked record" would
+    // be a vague sentence pretending to be a fact. The server always sets refModel/refId/refKey when
+    // hydration writes a value, so this is not a state it produces — but a build one release ahead
+    // might, and silence is the honest fallback. Android returns null here for the same reason.
+    if (!stamp.refModel && !who) return "";
+    // The record is the subject of this sentence, and the person — when there is one — is the
+    // person who recorded THAT record. Never phrased as an edit to this field.
+    const record = `From the ${recordName(stamp.refModel)} record`;
+    if (who) return `${record}, by ${who}`;
+    // An id with no name is an account since deleted. The record still answers, so the clause is
+    // dropped rather than replaced with a cuid or with "unknown".
+    return record;
+  }
+
+  // A designer stamp. No `by` at all means the server had nothing to attribute — an unchanged value
+  // on a row written before this column existed — and it must say nothing rather than guess.
+  if (!stamp.by) return "";
+  const person = who || "A former colleague";
+  return when ? `${person}, ${when}` : person;
 }
 
 export function FieldProvenance({ stamp }: { stamp?: DwFieldStamp | null }) {

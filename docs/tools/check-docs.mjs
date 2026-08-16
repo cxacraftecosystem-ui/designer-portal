@@ -416,7 +416,12 @@ function checkRouteGuardTable() {
     .split("\n")
     .filter((line) => line.startsWith("| `/"))
     .join("\n");
-  const tabulated = new Set([...rows.matchAll(/`(\/[\w/-]+)`/g)].map((m) => m[1]));
+  // `:` is in the character class because ROUTE_GUARDS can now name a VARIABLE segment —
+  // `/design-workshops/:id/provenance` — and without it this regex captured `/design-workshops/`
+  // and stopped, so the row was in the table, the path was not "tabulated", and the check failed
+  // against a document that was actually correct. A checker that cannot express the shape it is
+  // checking reports the author as wrong.
+  const tabulated = new Set([...rows.matchAll(/`(\/[\w/:-]+)`/g)].map((m) => m[1]));
 
   for (const path of declared) {
     if (!tabulated.has(path)) {

@@ -25,8 +25,9 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { DraftingCompass, FileClock, FileText, Images, Layers, ListChecks, ListPlus, QrCode } from "lucide-react";
+import { DraftingCompass, FileClock, FileText, Images, Layers, ListChecks, ListPlus, QrCode, GitCompareArrows} from "lucide-react";
 
+import { useAuth } from "@/components/AuthProvider";
 import { WorkshopSearchPanel } from "@/components/designworkshop/WorkshopSearchPanel";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -51,6 +52,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
+import { isAdmin } from "@/lib/permissions";
 import { neverReconciled } from "@/lib/workshopOpenability";
 import { buildWorkshopSearchIndex, emptyWorkshopSearchIndex } from "@/lib/workshopSearch";
 
@@ -171,6 +173,9 @@ function draftHeader(draft: DwDraft): Omit<DwSummary, "id"> {
 export default function DesignWorkshopStagesPage({ params }: { params: Promise<{ id: string }> }) {
   // Next 16 hands route params over as a promise; `use` unwraps it in a client component.
   const { id } = use(params);
+  // Only to decide whether the admin-only provenance link is offered. The route and the
+  // endpoint are both gated independently; this is the affordance, not the boundary.
+  const { user } = useAuth();
 
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [draft, setDraft] = useState<DwDraft | null>(null);
@@ -446,6 +451,17 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
               <FileClock className="h-4 w-4" aria-hidden />
               Report history
             </Link>
+            {/* ADMIN ONLY, AND HIDDEN RATHER THAN GREYED for the reason the create control is: a
+                designer has lost nothing by not having this — every per-field stamp still renders
+                under their own boxes on every stage — so a disabled control would advertise a
+                capability they do not need and cannot get. The route is gated independently in
+                lib/permissions.ts and on the server; this is the affordance, not the boundary. */}
+            {isAdmin(user) ? (
+              <Link href={`/design-workshops/${id}/provenance`} className="field-button-secondary">
+                <GitCompareArrows className="h-4 w-4" aria-hidden />
+                Authorship &amp; divergence
+              </Link>
+            ) : null}
             <Link href={`/design-workshops/${id}/report`} className="field-button">
               <FileText className="h-4 w-4" aria-hidden />
               Report

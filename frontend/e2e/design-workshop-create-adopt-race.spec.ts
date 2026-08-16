@@ -39,7 +39,22 @@ import { expect, test, type Page } from "@playwright/test";
  * connection does to it anyway — so that a race that is real and rare becomes real and certain.
  */
 
-const WHO = { email: process.env.E2E_EMAIL ?? "designer@example.org", password: process.env.E2E_PASSWORD ?? "LocalDev123!" };
+/*
+ * THE ACCOUNT THIS FILE SIGNS IN AS CHANGED, AND THE REASON IS THE POINT.
+ *
+ * It used to be `designer@example.org`, and every test below opens the CREATE form. Design-workshop
+ * creation is now admin-and-above: a designer may still open every workshop they have access to,
+ * fill its 22 stages and produce its report, but may not bring a new one into existence — so the
+ * "New design workshop" control is HIDDEN for them and these tests timed out clicking a button that
+ * is correctly not there.
+ *
+ * The behaviour under test is unchanged and is not about permission at all: it is the offline
+ * create, the local draft, and what happens when the server's answer to a create is lost. Those are
+ * properties of the create path whoever performs it, so the fix is to perform it as an account that
+ * may — NOT to relax the gate, and not to delete the coverage. `design-workshop-create-gate-unit`
+ * is where the permission itself is asserted.
+ */
+const WHO = { email: process.env.E2E_EMAIL ?? "admin2@example.org", password: process.env.E2E_PASSWORD ?? "LocalDev123!" };
 
 /**
  * Long enough for a search, its list fetch, the adopt behind it and the reads below to all happen

@@ -1325,14 +1325,70 @@ data class DwFieldStampDto(
      * noise that trains a designer to stop looking at the label entirely — at which point it cannot
      * do its one job on the rows that DO carry an author.
      */
-    fun attribution(): String? = when {
-        !byName.isNullOrBlank() && fromSharedRecord -> "From the record, by $byName"
-        !byName.isNullOrBlank() -> "Edited by $byName"
-        by.isNullOrBlank() -> null
+    fun attribution(): String? {
+        if (fromSharedRecord) {
+            // A reference stamp that names NEITHER a record nor a person has nothing concrete to
+            // say, and "From the linked record" is a vague sentence pretending to be a fact. The
+            // server always sets refModel/refId/refKey when hydration writes a value, so this is not
+            // a state it produces — but a build one release ahead might, and silence is the honest
+            // fallback. `DwFieldProvenanceWireTest` pins it.
+            if (refModel.isNullOrBlank() && byName.isNullOrBlank()) return null
+            // The RECORD is the subject, and the person — when there is one — is whoever recorded
+            // THAT record, one table away. Never phrased as an edit to this field: `by` on a
+            // reference stamp is the canonical record's author and has typically never opened this
+            // workshop, so "Edited by Sita Devi" would be a sentence about somebody who did not do
+            // it. The web made exactly that mistake once; see FieldProvenance.tsx.
+            val record = "From the ${recordLabel(refModel)} record"
+            return if (!byName.isNullOrBlank()) "$record, by $byName" else record
+        }
+        // A designer stamp. No `by` at all is an unchanged value on a row written before this column
+        // existed — the server had nothing to attribute, and neither has this.
+        if (by.isNullOrBlank()) return null
         // An id with no name is an account that has been deleted. Saying so is more useful than
         // printing a cuid, and more honest than pretending the field was never attributed.
-        fromSharedRecord -> "From the record, by an account no longer on record"
-        else -> "Edited by an account no longer on record"
+        val person = if (!byName.isNullOrBlank()) byName else "A former colleague"
+        val day = shortDay(at)
+        return if (day.isNotEmpty()) "$person, $day" else person
+    }
+}
+
+
+/**
+ * The record a hydrated value came out of, in the words a designer uses for it.
+ *
+ * WORD-FOR-WORD THE SAME TABLE AS THE WEB'S `recordName` in `FieldProvenance.tsx`, and the two must
+ * stay identical: a designer who reads "From the artisan record" on a laptop and "From the Artisan
+ * record" — or worse, "From the ProductDocumentation record" — on the handset has been shown two
+ * products. A model this table does not name falls back to "linked", which is vague and true,
+ * rather than to the Prisma model name, which is neither.
+ */
+private fun recordLabel(refModel: String?): String = when (refModel) {
+    "Artisan" -> "artisan"
+    "Craft" -> "craft"
+    "Process" -> "process"
+    "ProductDocumentation" -> "product"
+    "ToolDocumentation" -> "tool"
+    else -> "linked"
+}
+
+/**
+ * The day and month of an ISO timestamp, or "" for anything unparseable.
+ *
+ * Day and month only, matching the web: a year on every one of forty fields is noise, and where the
+ * year matters the provenance view prints it in full. "" rather than an exception for a shape this
+ * build does not expect — the API is entitled to send one, and a crash in a label is far worse than
+ * a label without a date.
+ */
+private fun shortDay(iso: String): String {
+    if (iso.isBlank()) return ""
+    return runCatching {
+        val date = java.time.OffsetDateTime.parse(iso).toLocalDate()
+        "${date.dayOfMonth} ${date.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault())}"
+    }.getOrElse {
+        runCatching {
+            val date = java.time.LocalDate.parse(iso.take(10))
+            "${date.dayOfMonth} ${date.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault())}"
+        }.getOrDefault("")
     }
 }
 
