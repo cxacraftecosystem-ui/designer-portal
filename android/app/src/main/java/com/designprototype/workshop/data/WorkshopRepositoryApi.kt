@@ -886,6 +886,30 @@ interface WorkshopRepositoryApi {
     ): StageSaveResultDto
 
     /**
+     * The whole authorship picture for one workshop — ADMIN AND MASTER ADMIN ONLY.
+     *
+     * `require_admin` in all but name: `workshop_provenance` raises 403 itself rather than through a
+     * dependency, so {ADMIN, MASTER_ADMIN} and nobody else — not a PROFESSOR, and not the workshop's
+     * own designers. That is the line `is_admin` draws everywhere else in this API, and it is drawn
+     * here because this call crosses OUT of the workshop into the shared record tables and reports
+     * one account's data beside another's.
+     *
+     * A DESIGNER LOSES NOTHING BY NOT HAVING IT, which is why the phone HIDES the control rather than
+     * greying it: every per-field stamp still renders under their own boxes on every stage, off the
+     * ordinary `GET /stages` read. What this adds is the canonical comparison, and only that.
+     *
+     * NOT CACHED AND NOT QUEUED, unlike almost everything else in this feature. The whole answer is
+     * "what do the shared records say TODAY", so an answer held on the device is the one thing this
+     * report may never be: a workshop's own values are a dated observation and are safe to hold, and
+     * the other column is by definition not. See [WorkshopRepository.designWorkshopProvenance].
+     *
+     * It answers for SOFT-DELETED workshops too, deliberately (`load_workshop_or_404` admits admins
+     * to them): an audit of who wrote what is most needed on a record somebody has deleted.
+     */
+    @GET("design-workshops/{id}/provenance")
+    suspend fun designWorkshopProvenance(@Path("id") id: String): DwProvenanceReportDto
+
+    /**
      * The questions THIS WORKSHOP'S DESIGNER added to it, and the digest of them.
      *
      * READ-ONLY ON THIS CLIENT, AND THE PUT IS DELIBERATELY NOT BOUND. Authoring a definition is a

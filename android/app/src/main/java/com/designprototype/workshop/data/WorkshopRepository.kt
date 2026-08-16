@@ -1005,6 +1005,30 @@ class WorkshopRepository(
     ): List<DwViewerDto> =
         api.setDesignWorkshopViewers(workshopId, DwViewersBody(userIds = userIds)).viewers
 
+    /**
+     * The admin authorship & divergence report for one workshop — every stage entry, every stamp, and
+     * what the shared record behind each hydrated field says TODAY.
+     *
+     * THROWS, AND IS NEVER CACHED OR FALLEN BACK, which puts it with the three access calls above
+     * rather than with the stage reads. The stage block degrades to the device because a workshop is
+     * a DATED OBSERVATION and yesterday's copy of it is still true. Half of THIS answer is the
+     * opposite kind of fact: "what does the artisan record say now" has no offline form, and a cached
+     * one would show an admin a comparison against a record as it stood the last time this phone had
+     * signal — which is a divergence report that invents divergences and hides real ones. Failing
+     * honestly is the only correct behaviour, and [DwProvenanceScreen] renders the failure in place.
+     *
+     * ADMIN AND MASTER ADMIN ONLY on the server; see [WorkshopRepositoryApi.designWorkshopProvenance].
+     * Nothing here re-derives that — the screen decides whether to ASK, using `FieldPermissions
+     * .isAdmin`, and the server decides whether to answer.
+     *
+     * [workshopId] IS THE SERVER'S ID AND NOT THE DRAFT STORE'S. A workshop started in a courtyard
+     * carries a `local-…` id no server has ever seen; the caller resolves `remoteId` first, exactly as
+     * `WorkshopViewersScreen` does, because this endpoint has nothing to say about a workshop that has
+     * never left the phone.
+     */
+    suspend fun designWorkshopProvenance(workshopId: String): DwProvenanceReportDto =
+        api.designWorkshopProvenance(workshopId)
+
     // ── The DESIGNER tier ────────────────────────────────────────────────────────────────────────
     //
     // NOTHING IN THIS BLOCK FALLS BACK TO THE DEVICE, and that is the difference between it and the
