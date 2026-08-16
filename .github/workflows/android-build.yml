@@ -94,6 +94,36 @@ jobs:
       #     URL hard-coded in build.gradle.kts — i.e. the CI APK points at production, not
       #     at anyone's laptop. Do not "helpfully" write a local.properties here.
 
+      - name: Fetch the vendored sherpa-onnx AAR
+        # WITHOUT THIS STEP THIS WORKFLOW CANNOT COMPILE, and it failed for exactly that
+        # reason from the moment the offline speech engine landed:
+        #   Could not find :sherpa-onnx-static-link-onnxruntime-1.13.5:
+        #
+        # The engine is on NO Maven repository — `docs/ASR-RUNTIME-MEASUREMENT.md` §1 proved
+        # that through the Gradle resolver rather than by searching: six coordinate spellings,
+        # six live 404s. So `app/build.gradle.kts` binds it as a bare file through the
+        # `flatDir` in settings.gradle.kts, and `.gitignore` excludes `android/app/libs/`
+        # because the file is 36 MB — correctly, as a binary that size does not belong in
+        # git history. The consequence is that it exists on a developer's machine and has
+        # never existed on a runner, so the break was invisible locally and total in CI.
+        #
+        # VERIFIED AGAINST THE DIGEST `build.gradle.kts` ALREADY DOCUMENTS, and that check is
+        # the point of the step rather than a flourish: this pulls 36 MB of native code that
+        # ships inside the APK, so "downloaded successfully" is not the question — "is it the
+        # artifact we measured" is. The size and SHA-256 below are the ones recorded beside
+        # the `implementation` line, both re-checked against the upstream release asset and
+        # against the local file. A mismatch fails the build rather than warning: an engine
+        # that is not the one that was measured is not one to sign an APK around.
+        run: |
+          set -euo pipefail
+          aar="app/libs/sherpa-onnx-static-link-onnxruntime-1.13.5.aar"
+          sha="508b79be1aeef3cbb92b8d4325b9b1dad0fa9a4eb1991de0d3d1826b8a09c358"
+          mkdir -p app/libs
+          curl -fsSL --retry 3 --retry-delay 5 -o "$aar" \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-static-link-onnxruntime-1.13.5.aar"
+          echo "$sha  $aar" | sha256sum -c -
+          test "$(stat -c%s "$aar")" = "37749854"
+
       - name: Compile Kotlin (debug)
         id: compile
         # Run before assembleDebug even though assemble depends on it: a compile break is
