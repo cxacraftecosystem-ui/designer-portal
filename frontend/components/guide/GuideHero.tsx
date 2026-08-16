@@ -35,10 +35,24 @@ export function GuideHero({ stepCount, onStart }: { stepCount: number; onStart: 
     return `radial-gradient(30rem 26rem at ${x}% ${y}%, oklch(0.648 0.19 305 / 0.42), transparent 64%)`;
   });
 
+  /*
+   * THE THREE FACTS ARE THE READER'S ORIENTATION, AND THE FIRST ONE HAS TO BE ABOUT GETTING IN.
+   *
+   * The walkthrough is reachable before anybody has an account — it is linked off the landing page's
+   * "Take the walkthrough" — so its readers include people who have not signed in yet and people
+   * whose sign-in was just refused. Since the platform allow-list shipped, the second group exists
+   * in numbers it never did before: an address nobody has admitted gets a pending request instead of
+   * an account. Teaching that reader the ten steps of documentation without first telling them why
+   * the door did not open sends them to look for a fault in the app, or to try again with a
+   * different browser, which is the worst version of the same wait.
+   *
+   * It replaces the review fact rather than joining it because four facts is a list and three is an
+   * orientation — and review is taught properly at step 10, where the reader is doing it.
+   */
   const facts = [
+    { icon: ShieldCheck, text: "Access is by invitation — an admin admits your address first" },
     { icon: ListOrdered, text: `${stepCount} steps, in the order you do them in the field` },
-    { icon: Compass, text: "Every record is scoped to a workshop" },
-    { icon: ShieldCheck, text: "Everything you submit is reviewed before it counts" }
+    { icon: Compass, text: "Every record is scoped to a workshop" }
   ];
 
   return (
