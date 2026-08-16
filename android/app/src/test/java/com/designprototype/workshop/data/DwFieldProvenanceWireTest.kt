@@ -240,4 +240,77 @@ class DwFieldProvenanceWireTest {
         assertFalse(body.contains("fieldProvenance"))
         assertFalse(body.contains("byName"))
     }
+
+    @Test
+    fun `the day is the reader's own, not the server's`() {
+        /*
+         * THE DATE IN THIS LABEL IS THE READER'S LOCAL DAY, AND IT USED TO BE UTC'S.
+         *
+         * The server stamps in UTC and sends `+00:00`. Reading the date straight off that offset
+         * names the UTC day, which for this product's users is the WRONG day for a third of every
+         * one: a designer in Asia/Kolkata (UTC+5:30) who edits a field at 01:30 on 2 March is
+         * stamped `2026-03-01T20:00:00+00:00`, and the label said "1 Mar" for something they did on
+         * the 2nd. Any stamp between 18:30 and 24:00 UTC hit it.
+         *
+         * It also split the two surfaces. The browser has always converted (`new Date(iso)
+         * .toLocaleDateString`), so one stamp read at one moment said "2 Mar" on a laptop and
+         * "1 Mar" on the phone beside it — the failure the whole port is written to prevent, in the
+         * label that exists to say who did what and when.
+         *
+         * The zone is forced here rather than trusted: on a CI box running UTC this case would pass
+         * against the bug it was written for, which is the same fiction as a fixture the server
+         * cannot send.
+         */
+        val original = java.util.TimeZone.getDefault()
+        try {
+            val stamp = DwFieldStampDto(
+                by = "usr_asha",
+                byName = "Asha Patel",
+                at = "2026-03-01T20:00:00+00:00",
+                source = "designer",
+            )
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Kolkata"))
+            assertEquals("Asha Patel, 2 Mar", stamp.attribution())
+            // And the same instant read from London names the day it was there. Not a second answer:
+            // one instant, two readers, each told the day it was where they are standing — which is
+            // what the browser does and what a person means by "when".
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Europe/London"))
+            assertEquals("Asha Patel, 1 Mar", stamp.attribution())
+        } finally {
+            java.util.TimeZone.setDefault(original)
+        }
+    }
+
+    @Test
+    fun `a padded name does not reach the label with its padding`() {
+        // `User.name` is free text an admin typed, so it can carry padding, and untrimmed this read
+        // "by  Meena Iyer " — a double space and a trailing one, in the label whose whole job is
+        // naming a person properly. The web trims (`stamp.byName?.trim()`); this now does too.
+        assertEquals(
+            "From the artisan record, by Meena Iyer",
+            DwFieldStampDto(
+                by = "usr_meena",
+                byName = "  Meena Iyer  ",
+                at = "2026-03-01T09:00:00+00:00",
+                source = "reference",
+                refModel = "Artisan",
+                refId = "art_1",
+                refKey = "name",
+            ).attribution()
+        )
+        // A name that is nothing BUT padding is not a name. It falls through to the same silence an
+        // absent one gets, rather than printing "by" with a blank after it.
+        assertEquals(
+            "From the artisan record",
+            DwFieldStampDto(
+                by = "usr_meena",
+                byName = "   ",
+                at = "2026-03-01T09:00:00+00:00",
+                source = "reference",
+                refModel = "Artisan",
+                refId = "art_1",
+                refKey = "name",
+            ).attribution()
+        )
+    }
 }

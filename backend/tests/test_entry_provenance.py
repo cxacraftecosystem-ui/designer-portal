@@ -636,6 +636,60 @@ async def test_a_deleted_record_reads_as_deleted_rather_than_disappearing(monkey
     }
 
 
+async def test_a_reference_this_build_cannot_resolve_is_not_reported_as_a_deletion(monkeypatch):
+    """**"DELETED" IS A CLAIM ABOUT A RECORD, NOT ABOUT THIS BUILD'S REGISTRY.**
+
+    The gathering pass only queries a stamp whose ``refModel`` is in ``REFERENCE_MODELS``; the
+    per-field pass did not apply the same test, so a stamp naming a model this build no longer knows
+    found nothing and was reported ``recordDeleted: True``. The screen renders that as "the record
+    this came from no longer exists" — a deletion that never happened, about a record nobody looked
+    for, sending an admin to search an archive for something that is sitting there under a name the
+    code has stopped recognising.
+
+    NOT REACHABLE TODAY and deliberately tested anyway: ``hydrate_entries`` only stamps when
+    ``spec.ref_model in REFERENCE_MODELS``, so nothing writes such a stamp now. It becomes reachable
+    the day a model is renamed or dropped from that table while stamps written under the old name
+    remain — which is exactly the aged archive this endpoint exists to be read against, and exactly
+    when nobody will be looking for a fresh bug in it.
+    """
+    entry = await _hydrate(
+        monkeypatch, "participant", {"artisanRef": "art_1"}, rows={"artisan": [_artisan_row()]}
+    )
+    stamps = _merge(entry, ASHA)
+    # A stamp from a build whose registry named this model. The row and its value are untouched.
+    stamps["name"] = {**stamps["name"], "refModel": "ArtisanLegacy"}
+    row = SimpleNamespace(id="ent_1", data=dict(entry.data), fieldProvenance=stamps)
+
+    monkeypatch.setattr("app.core.db.db", _FakeDb({"artisan": [_artisan_row()]}))
+    picture = await ep.canonical_divergence([row])
+
+    # Neither answer is invented: the value is still reported, and both flags say "nothing was
+    # compared" rather than one of them claiming something the lookup never established.
+    assert picture["ent_1"]["name"] == {
+        "stored": "Latha Devi", "canonical": None, "diverged": False, "recordDeleted": False
+    }
+
+
+async def test_a_reference_stamp_with_no_record_id_is_not_reported_as_a_deletion(monkeypatch):
+    """The other half of the gathering pass's guard: ``and record_id``.
+
+    A ``reference`` stamp naming a model but no record was queried for nothing and then reported as
+    a deleted record, for the same reason and with the same wrong sentence.
+    """
+    entry = await _hydrate(
+        monkeypatch, "participant", {"artisanRef": "art_1"}, rows={"artisan": [_artisan_row()]}
+    )
+    stamps = _merge(entry, ASHA)
+    stamps["name"] = {**stamps["name"], "refId": ""}
+    row = SimpleNamespace(id="ent_1", data=dict(entry.data), fieldProvenance=stamps)
+
+    monkeypatch.setattr("app.core.db.db", _FakeDb({"artisan": [_artisan_row()]}))
+    picture = await ep.canonical_divergence([row])
+
+    assert picture["ent_1"]["name"]["recordDeleted"] is False
+    assert picture["ent_1"]["name"]["diverged"] is False
+
+
 async def test_the_photograph_is_loaded_so_every_portrait_is_not_reported_as_drift(monkeypatch):
     """**A FALSE POSITIVE THAT WOULD HAVE MADE THE WHOLE DIVERGENCE REPORT UNREADABLE.**
 

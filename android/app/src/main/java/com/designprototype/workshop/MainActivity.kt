@@ -211,6 +211,7 @@ import com.designprototype.workshop.ui.designworkshop.DwIdentityCardControl
 import com.designprototype.workshop.ui.designworkshop.DwIdentityKind
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
+import com.designprototype.workshop.ui.designworkshop.DwProvenanceScreen
 import com.designprototype.workshop.ui.designworkshop.DesignerProfileScreen
 import com.designprototype.workshop.ui.designworkshop.DesignerRosterScreen
 import com.designprototype.workshop.ui.designworkshop.PhotoIntakeScreen
@@ -579,6 +580,30 @@ private sealed interface Screen {
      * left the phone has no row for a grant to point at.
      */
     data class DesignWorkshopViewers(val workshopId: String) : Screen
+
+    /**
+     * The admin authorship & divergence view for one workshop — the phone's `…/provenance` page.
+     *
+     * THE SECOND design-workshop screen a designer may not open, and the second sibling of the
+     * report hanging off the stage index for the same reason as the other three: it is a fact about
+     * the WORKSHOP — every stage entry it holds, compared against the shared records — rather than
+     * about any one of its 22 stages.
+     *
+     * ADMIN ONLY: `workshop_provenance` raises 403 for anyone below ADMIN, because the comparison
+     * crosses OUT of the workshop into the shared record tables and reports one account's data beside
+     * another's. Unlike [DesignWorkshopViewers], whose row on the index shows a non-admin a sentence
+     * (they have a live question the app has to answer), the entry point for this one is HIDDEN: a
+     * designer has lost nothing, because every per-field stamp still renders under their own boxes on
+     * every stage, so an explained-but-refused control would advertise a capability they cannot get
+     * and do not need. Same treatment as the create control.
+     *
+     * The gate is not applied HERE, matching its siblings: [DwProvenanceScreen] re-derives it from
+     * the cached account and issues no request at all when the answer is already known. A router
+     * check would be a third copy of the rule and the one nobody reads when changing the screen.
+     *
+     * Carries the DRAFT STORE's id like its siblings; the screen resolves `remoteId` itself.
+     */
+    data class DesignWorkshopProvenance(val workshopId: String) : Screen
 
     /**
      * The `DesignerProfile` behind every report's cover page.
@@ -1520,6 +1545,10 @@ private fun HomeScreen(
             // all, this says who may open one record. The only route in is the index, so the only
             // route out is back to it.
             is Screen.DesignWorkshopViewers -> Screen.DesignWorkshopStages(s.workshopId)
+            // Back to THIS workshop's index for the same reason as the row above it: the index is the
+            // only route in, so it is the only route out. An admin auditing a workshop is auditing a
+            // workshop, not browsing the list.
+            is Screen.DesignWorkshopProvenance -> Screen.DesignWorkshopStages(s.workshopId)
             // An admin who opened somebody else's profile came from the roster and goes back to it;
             // a designer looking at their own came from the menu and goes back to the dashboard.
             // Sending both to the dashboard would make an admin re-find the row in a list they may
@@ -1573,6 +1602,10 @@ private fun HomeScreen(
         is Screen.DesignWorkshopCodes -> null
         is Screen.DesignWorkshopPhotos -> null
         is Screen.DesignWorkshopViewers -> null
+        // Null for the same reason: the screen draws its own "Authorship & divergence" heading, which
+        // is the web's `<PageHeader title=…>` word for word. A shared header above it would state the
+        // section twice and spend the page's first line saying less than the line under it.
+        is Screen.DesignWorkshopProvenance -> null
         // Null on both for the same reason as the four above: each screen draws its own heading,
         // and the profile's additionally says WHOSE profile it is, which a shared header cannot.
         is Screen.DesignerProfile -> null
@@ -1627,6 +1660,10 @@ private fun HomeScreen(
         // It is not `DESIGNER_ROSTER`: that is the institution's list of who may sign in at all,
         // and this is one workshop's readers.
         is Screen.DesignWorkshopViewers -> NavDestination.DESIGN_WORKSHOPS
+        // Lights the same row as its siblings, for the same reason as the viewer roster above: it is
+        // admin chrome, but it is still a screen INSIDE one design workshop and the row opens the
+        // list the admin is already in.
+        is Screen.DesignWorkshopProvenance -> NavDestination.DESIGN_WORKSHOPS
         // Same reasoning at all three depths: the row opens the list the designer is already inside.
         is Screen.Questionnaires,
         is Screen.QuestionnaireDetail,
@@ -2249,6 +2286,9 @@ private fun HomeScreen(
                 // the cached account on entry and again at the moment of the write. A third check
                 // in the router would be the copy nobody updates.
                 onOpenViewers = { message = null; screen = Screen.DesignWorkshopViewers(s.workshopId) },
+                // Ungated HERE for the same reason as the row above it, and the index HIDES this one
+                // from a non-admin rather than explaining it — see the comment on that control.
+                onOpenProvenance = { message = null; screen = Screen.DesignWorkshopProvenance(s.workshopId) },
                 onError = { showMessage(it) }
             )
 
@@ -2304,6 +2344,22 @@ private fun HomeScreen(
                 repository = repository,
                 workshopId = s.workshopId,
                 onMessage = { showMessage(it) }
+            )
+
+            // NEITHER an `onMessage` NOR an `onError` arm, unlike its siblings. This screen is a READ
+            // and never writes, so it has nothing to report as having landed; and its only failure is
+            // the read itself, which is rendered in place above the "Try again" control rather than
+            // as a message that slides away. It took an `onError` it never called — a channel that
+            // looks live to whoever wires up the next failure path and goes nowhere — so it does not
+            // take one now. No router contract imposes either: the siblings take what they use.
+            //
+            // Ungated HERE, exactly like the viewer roster above: the stage index decides whether to
+            // OFFER the control (admins only), and the screen itself re-derives `is_admin` from the
+            // cached account before it issues a single request. A third check in the router would be
+            // the copy nobody updates.
+            is Screen.DesignWorkshopProvenance -> DwProvenanceScreen(
+                repository = repository,
+                workshopId = s.workshopId
             )
 
             /*

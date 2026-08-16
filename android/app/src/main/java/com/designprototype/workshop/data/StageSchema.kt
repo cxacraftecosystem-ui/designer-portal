@@ -1326,6 +1326,11 @@ data class DwFieldStampDto(
      * do its one job on the rows that DO carry an author.
      */
     fun attribution(): String? {
+        // TRIMMED, AS THE WEB TRIMS IT (`stamp.byName?.trim()` in `FieldProvenance.tsx`). `User.name`
+        // is free text an admin typed, so padding reaches this column, and untrimmed it renders as
+        // "by  Meena Iyer " — a double space and a trailing one, in the label whose whole job is to
+        // name a person properly.
+        val byName = this.byName?.trim()
         if (fromSharedRecord) {
             // A reference stamp that names NEITHER a record nor a person has nothing concrete to
             // say, and "From the linked record" is a vague sentence pretending to be a fact. The
@@ -1372,23 +1377,45 @@ private fun recordLabel(refModel: String?): String = when (refModel) {
 }
 
 /**
- * The day and month of an ISO timestamp, or "" for anything unparseable.
+ * The day and month of an ISO timestamp IN THE READER'S OWN TIME ZONE, or "" for anything
+ * unparseable.
+ *
+ * THE ZONE IS THE WHOLE POINT OF THE CONVERSION AND THIS GOT IT WRONG. The server stamps in UTC and
+ * sends `+00:00`, so reading the date straight off the offset — `OffsetDateTime.parse(iso)
+ * .toLocalDate()` — names the UTC day. For this product's users that is off by one for a third of
+ * the day: a designer in Asia/Kolkata (UTC+5:30) who edits a field at 01:30 on 2 March is stamped
+ * `2026-03-01T20:00:00+00:00`, and the handset said "1 Mar" for something they did on the 2nd. The
+ * browser has always converted (`new Date(iso).toLocaleDateString`), so the same stamp read the same
+ * minute said "2 Mar" on a laptop and "1 Mar" on a phone — one product, two answers, which is the
+ * failure rule 3 of this port exists to prevent. Any stamp between 18:30 and 24:00 UTC hit it.
  *
  * Day and month only, matching the web: a year on every one of forty fields is noise, and where the
  * year matters the provenance view prints it in full. "" rather than an exception for a shape this
  * build does not expect — the API is entitled to send one, and a crash in a label is far worse than
  * a label without a date.
+ *
+ * ONE DIFFERENCE FROM THE BROWSER REMAINS, DELIBERATELY. This orders the parts day-then-month while
+ * the web asks the platform for the locale's own order, so an `en-US` reader sees "8 Mar" here and
+ * "Mar 8" there. Both name the same day, which is what the sentence is for; matching the ORDER would
+ * mean pushing a fixed order onto the browser or a locale-driven one onto forty labels here, and
+ * neither buys anything for a deployment that reads `en-IN`. The DAY had to match. The word order
+ * did not.
+ *
+ * The bare-date fallback takes no zone: `2026-03-01` with no time names a day already, and shifting
+ * it by an offset would invent one.
  */
 private fun shortDay(iso: String): String {
     if (iso.isBlank()) return ""
-    return runCatching {
-        val date = java.time.OffsetDateTime.parse(iso).toLocalDate()
+    fun render(date: java.time.LocalDate): String =
         "${date.dayOfMonth} ${date.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault())}"
+    return runCatching {
+        render(
+            java.time.OffsetDateTime.parse(iso)
+                .atZoneSameInstant(java.time.ZoneId.systemDefault())
+                .toLocalDate()
+        )
     }.getOrElse {
-        runCatching {
-            val date = java.time.LocalDate.parse(iso.take(10))
-            "${date.dayOfMonth} ${date.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault())}"
-        }.getOrDefault("")
+        runCatching { render(java.time.LocalDate.parse(iso.take(10))) }.getOrDefault("")
     }
 }
 
@@ -1419,6 +1446,132 @@ data class DwStageProvenanceDto(
         if (entryId.isNullOrBlank()) emptyMap()
         else collections[entityKey].orEmpty()[entryId].orEmpty()
 }
+
+// --------------------------------------------------------------------------------------
+// The ADMIN authorship & divergence report — `GET /design-workshops/{id}/provenance`
+// --------------------------------------------------------------------------------------
+//
+// THE HALF OF "ADMINS SEE ALL OF IT" THAT NOTHING ELSE CAN ANSWER, and the reason it is a whole
+// endpoint rather than a flag on the stage read. Every designer on a workshop already sees the
+// per-field stamps above — they ride on `GET /stages` and render under each box, because knowing a
+// colleague changed the price is part of working on the record. This report adds, for every value
+// COPIED from a shared canonical record, what that record says TODAY beside what this workshop
+// stored. That comparison is not derivable from anything else on the wire: once hydrated, a value is
+// an ordinary string in `data`, and a hydrated village and a typed village are the same bytes
+// DELIBERATELY (see `REFERENCE_HYDRATION`, which exists so a workshop keeps what the designer saw on
+// the day). Only the `reference` stamp — which names the record and the column — plus a live read of
+// that record can say "this workshop says Barpali and the artisan record now says Bargarh".
+//
+// DIVERGENCE IS NOT AN ERROR AND NOTHING IN THESE TYPES MAY IMPLY IT IS. A workshop is a DATED
+// OBSERVATION and is supposed to keep what was captured; an artisan who moved village after the
+// workshop makes every row that names them differ, and every one of those rows is CORRECT. Nothing
+// here is named `problem`, `stale`, `conflict` or `error`, and nothing counts faults — the reading
+// functions live in `DwProvenanceReport.kt` and are comparative throughout.
+//
+// THE MODELS BELOW ARE BUILT FROM `workshop_provenance` (api/routes/design_workshops.py) AND FROM
+// `canonical_divergence` (services/entry_provenance.py), not from a summary of them. Two things in
+// the real payload are easy to get wrong from a description and are called out on the fields
+// themselves: the entry-level `canonical` is `{}` — never null — for an entry with no hydrated
+// fields, and a DELETED canonical record is signalled by `recordDeleted`, NOT by a null `canonical`.
+
+/**
+ * One hydrated field's stored value beside what its canonical record says TODAY.
+ *
+ * ── FOUR KEYS, AND THE LAST TWO ARE NOT THE SAME QUESTION ────────────────────────────────────────
+ *
+ * `canonical_divergence` emits all four for every field carrying a `reference` stamp:
+ *
+ *   [stored]        what THIS WORKSHOP holds — the value the report prints, for ever.
+ *   [canonical]     what the shared record says now, spelled through the SAME `data` lambda
+ *                   hydration would use, so a masked Pehchan number is compared against a masked one.
+ *   [diverged]      `source is not None and str(stored) != str(canonical)` — the two differ AND the
+ *                   record is still there to differ from.
+ *   [recordDeleted] the record has been deleted, so there was nothing to compare against at all.
+ *
+ * **[recordDeleted] IS THE DELETED-RECORD SIGNAL AND A NULL [canonical] IS NOT.** This is the one
+ * distinction that must not be flattened, and flattening it is a live defect on the web:
+ * `DwCanonicalComparison` in `frontend/lib/designWorkshopProvenance.ts` does not model this key at
+ * all, so the page reads `canonical == null` as "the record no longer exists". A record that is
+ * perfectly present and has simply had a column CLEARED — a phone number the researcher blanked —
+ * also answers `canonical: null`, with `recordDeleted: false`, and the browser tells an admin that
+ * artisan's record has been deleted. That is the more interesting divergence of the two (the web
+ * lib's own comment says so) and it is reported as the wrong thing entirely. The handset therefore
+ * keys the deleted sentence on this flag and renders a null canonical as the em dash, which is what
+ * "this record says nothing here" honestly looks like.
+ *
+ * Both value keys are [JsonElement] because both are ARBITRARY JSON: `spec.data(...)` yields strings,
+ * numbers, booleans and GEO objects depending on the column. Decoding them as `String` would coerce a
+ * `{lat, lng}` into nonsense or throw on the whole report; rendering them is [dwComparisonText]'s job
+ * and there is exactly one of it, so no call site has to grow a `when` over JSON shapes.
+ *
+ * ABSENT AND EXPLICIT-NULL BOTH READ AS `null` HERE, which is the same convention [DwValue] already
+ * uses for every stage value (`null, JsonNull -> …`), and it is safe ONLY because neither means
+ * "deleted": both mean "there is no value on that side", which is what the em dash says. A build that
+ * moved the deleted signal onto this field would reintroduce the web's defect exactly.
+ */
+@Serializable
+data class DwCanonicalComparisonDto(
+    val stored: JsonElement? = null,
+    val canonical: JsonElement? = null,
+    val diverged: Boolean = false,
+    val recordDeleted: Boolean = false,
+)
+
+/**
+ * One stage entry's authorship: who created the ROW, who set each FIELD, and what the shared records
+ * behind the hydrated fields say today.
+ *
+ * [createdById] is reported BESIDE the per-field answers and never instead of them, which is the
+ * route's own note and the thing this feature exists to make visible: a row created by one designer
+ * whose fields are now attributed to three other people.
+ *
+ * [canonical] IS `{}` AND NEVER NULL for an entry with no hydrated fields — the route builds it as
+ * `divergence.get(row.id, {})`, and `canonical_divergence` omits an entry entirely when it has no
+ * `reference` stamps. So "this row copied nothing from a shared record" is an empty map, and the
+ * screen must not distinguish it from a missing key. (`coerceInputValues` on [ApiClient]'s decoder
+ * would fall back to this default even if a future server did answer null, which is the behaviour
+ * we want rather than a crash.)
+ *
+ * [fields] is the SAME [DwFieldStampDto] the stage read already carries, deliberately — one stamp
+ * type on this handset, one `attribution()`, and therefore one sentence under a field name whether
+ * the designer is reading it on their own stage form or an admin is reading it in this report.
+ */
+@Serializable
+data class DwProvenanceEntryDto(
+    val entryId: String = "",
+    val stageKey: String = "",
+    val entityKey: String = "",
+    /**
+     * Zero-based, as `_ordinal` is everywhere else — AND ALWAYS PRESENT, INCLUDING ON A SINGLETON.
+     *
+     * This was declared nullable with a comment saying null meant "a singleton row that has no
+     * position". No such payload exists: `DwStageEntry.ordinal` is `Int @default(0)`, non-nullable
+     * in Postgres, its own schema comment reads "A singleton's is always 0", and the route emits
+     * `"ordinal": row.ordinal` unconditionally. So a singleton arrives as `0`, and code that read
+     * "is there an ordinal?" as "is this a row of a list?" headed every singleton "· row 1" of a
+     * list that does not exist.
+     *
+     * WHETHER A ROW HAS A POSITION IS THE REGISTRY'S ANSWER, NOT THIS FIELD'S — `EntitySpec
+     * .cardinality`. The default stays for a decode of a truncated payload, and it is 0 because
+     * that is what the column's own default is.
+     */
+    val ordinal: Int = 0,
+    val createdById: String? = null,
+    val fields: Map<String, DwFieldStampDto> = emptyMap(),
+    val canonical: Map<String, DwCanonicalComparisonDto> = emptyMap(),
+)
+
+/**
+ * The whole report for one workshop — every stage entry it has, in the server's order.
+ *
+ * EVERY ENTRY, not only the interesting ones. The endpoint reports the workshop's authorship picture;
+ * deciding which rows have something to show is the reader's job and is done by [dwDivergedFields],
+ * which is what lets the summary line count records and fields without a second request.
+ */
+@Serializable
+data class DwProvenanceReportDto(
+    val entries: List<DwProvenanceEntryDto> = emptyList(),
+)
 
 /**
  * One stage's stored data.

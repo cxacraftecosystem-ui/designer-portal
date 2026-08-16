@@ -1,9 +1,13 @@
 import { test, expect } from "@playwright/test";
 
 import {
+  canonicalText,
   comparisonText,
   divergedFields,
   divergenceTally,
+  hasMoved,
+  RECORD_DELETED_TEXT,
+  type DwCanonicalComparison,
   type DwProvenanceReport
 } from "../lib/designWorkshopProvenance";
 import { canAccessRoute } from "../lib/permissions";
@@ -91,17 +95,49 @@ test.describe("the divergence arithmetic", () => {
     // THE CASE REFERENCE HYDRATION EXISTS FOR. The workshop now holds the only copy of what the
     // designer saw, which is the most interesting row on this page — omitting it would make "the
     // record is gone" look identical to "the field was never copied".
+    //
+    // THE FIXTURE IS THE SERVER'S OWN TUPLE, AND IT USED TO BE A FICTION. This wrote
+    // `diverged: true`, which `canonical_divergence` cannot emit for a deleted record: it computes
+    // `diverged = source is not None and str(stored) != str(canonical)`, so with the record gone
+    // there is nothing to compare and the answer is `diverged: FALSE, recordDeleted: true` —
+    // pinned at `backend/tests/test_entry_provenance.py::test_a_deleted_record_reads_as_deleted_
+    // rather_than_disappearing`. `divergedFields` filtered on `diverged` alone, so on real data
+    // this row was silently dropped and the page's deleted-record branch was unreachable in
+    // production. The test passed the whole time, on a payload no server sends.
     const tally = divergenceTally(
       report([
         {
           entryId: "e1",
           stageKey: "S",
           entityKey: "participant",
-          canonical: { name: { stored: "Latha", canonical: null, diverged: true } }
+          canonical: {
+            name: { stored: "Latha", canonical: null, diverged: false, recordDeleted: true }
+          }
         }
       ])
     );
     expect(tally).toEqual({ entries: 1, fields: 1 });
+  });
+
+  test("a cleared column is a divergence, and is not reported as a deleted record", () => {
+    // THE OTHER HALF OF THE SAME DISTINCTION. A record that is perfectly present and has simply had
+    // a column blanked answers `canonical: null` with `recordDeleted: false`. That IS worth listing
+    // — a workshop still holding a phone number the directory has since cleared is one of the more
+    // useful rows here — but it is emphatically not a deleted record, and this page keyed the
+    // deleted sentence on the null, so it told an admin that a record sitting in the directory had
+    // been deleted. The honest rendering is the em dash: "the record says nothing here".
+    const cleared: DwCanonicalComparison = {
+      stored: "98765",
+      canonical: null,
+      diverged: true,
+      recordDeleted: false
+    };
+    expect(hasMoved(cleared)).toBe(true);
+    expect(canonicalText(cleared)).toBe("—");
+    // And the other side of the branch, so neither can be satisfied alone.
+    expect(canonicalText({ stored: "Latha", canonical: null, recordDeleted: true })).toBe(
+      RECORD_DELETED_TEXT
+    );
   });
 
   test("an empty value renders as a dash rather than as the word null", () => {

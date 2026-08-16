@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
@@ -63,6 +64,7 @@ import com.designprototype.workshop.data.DW_CONSENT_ROW_TITLE
 import com.designprototype.workshop.data.DW_CONSENT_YES_LABEL
 import com.designprototype.workshop.data.DW_MAX_HITS
 import com.designprototype.workshop.data.DW_MIN_QUERY_CHARS
+import com.designprototype.workshop.data.DW_PROVENANCE_TITLE
 import com.designprototype.workshop.data.DraftConsent
 import com.designprototype.workshop.data.DwConsentMerge
 import com.designprototype.workshop.data.DwDictationRun
@@ -176,6 +178,14 @@ fun StageIndexScreen(
      * moment a second designer is standing next to them unable to open the record.
      */
     onOpenViewers: () -> Unit,
+    /**
+     * Open the admin authorship & divergence view for this workshop.
+     *
+     * Offered ONLY to an admin, and only for a workshop the server has — and, unlike [onOpenViewers],
+     * with nothing at all in its place for everyone else. See the row this draws for why the two
+     * admin-only controls on this screen are treated differently.
+     */
+    onOpenProvenance: () -> Unit,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -459,6 +469,51 @@ fun StageIndexScreen(
                 color = MaterialTheme.field.muted,
                 fontSize = 12.sp
             )
+        }
+
+        /*
+         * THE ADMIN AUTHORSHIP & DIVERGENCE VIEW — and, for everyone else, NOTHING AT ALL.
+         *
+         * The gate is `is_admin` again: `workshop_provenance` refuses anyone below ADMIN, because the
+         * comparison crosses OUT of this workshop into the shared record tables and reports one
+         * account's data beside another's.
+         *
+         * SO WHY IS THIS ROW HIDDEN WHEN THE ONE ABOVE IT IS A SENTENCE? Because the two refusals
+         * leave a designer in completely different positions, and the treatment follows the position
+         * rather than the rule. A designer refused the viewer roster still HAS the question it
+         * answers — their co-designer is standing next to them unable to open the record — so silence
+         * there leaves a live problem with no answer anywhere on the phone. A designer refused this
+         * has no question at all: they have lost nothing. Every per-field stamp is already under
+         * their own boxes on every one of the 22 stages, off the ordinary stage read, and what this
+         * adds is only the canonical column. A greyed or explained control would advertise a
+         * capability they cannot get and do not need — which is exactly how the create control is
+         * handled, and for the same reason.
+         *
+         * AND ONLY FOR A WORKSHOP THE SERVER HAS. A workshop that has never left this phone has
+         * hydrated nothing through the server, so there is no comparison to make; unlike the viewer
+         * row there is no pending question for silence to leave unanswered, so it says nothing rather
+         * than explaining an absence nobody is waiting on. ([DwProvenanceScreen] still renders that
+         * state in words, for an arrival by any other route.)
+         *
+         * NOT GATED ON `canViewProvenance`. That column is a real grant on this handset and it opens
+         * a DIFFERENT feature — the per-field edit history on the View Data screen, for the record
+         * tables. `workshop_provenance` does not consult it, so ORing it in would put this control in
+         * front of a grantee the API refuses.
+         */
+        if (mayReadWorkshopProvenance(viewer) && onServer) {
+            OutlinedButton(onClick = onOpenProvenance, modifier = Modifier.fillMaxWidth()) {
+                // AutoMirrored: the glyph is two arrows pointing at each other across a divide, and
+                // in an RTL layout it has to flip with the text or it points the wrong way at the
+                // wrong column. The plain `Icons.Filled` variant is deprecated for exactly this.
+                Icon(Icons.AutoMirrored.Filled.CompareArrows, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                // The web's own name for the page, and THE SAME CONSTANT THE SCREEN TITLES ITSELF
+                // WITH — a control whose label drifts from the heading it opens sends a reader
+                // looking for a second feature. NOT "Check for problems" or anything else that would
+                // tell an admin, before they have read a word of it, that what they are about to
+                // look at is a fault list. Divergence is not an error.
+                Text(DW_PROVENANCE_TITLE)
+            }
         }
 
         HorizontalDivider()

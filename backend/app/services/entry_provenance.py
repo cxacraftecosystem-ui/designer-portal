@@ -394,7 +394,22 @@ async def canonical_divergence(
         for key, stamp in entry_provenance(row).items():
             if not isinstance(stamp, dict) or stamp.get("source") != SOURCE_REFERENCE:
                 continue
-            source = resolved.get(str(stamp.get("refModel")), {}).get(str(stamp.get("refId")))
+            model, record_id = stamp.get("refModel"), stamp.get("refId")
+            # THE SAME GUARD THE GATHERING LOOP ABOVE APPLIES, AND ITS ABSENCE HERE WAS A LIE WAITING
+            # FOR ITS DAY. That loop only asks the database about a stamp whose model is in
+            # ``REFERENCE_MODELS`` and which names a record; this one did not, so a stamp naming a
+            # model this build no longer knows found nothing in ``resolved`` and was reported as
+            # ``recordDeleted: True`` — "the record this came from no longer exists" — for a record
+            # nobody ever looked for. Nothing writes such a stamp today, because ``hydrate_entries``
+            # only stamps when ``spec.ref_model in REFERENCE_MODELS``. It goes live the day a model
+            # is renamed or dropped from that table while old stamps remain, which is precisely the
+            # archive this endpoint is read against.
+            #
+            # Reported as NEITHER diverged NOR deleted: an unresolvable reference is a fact about
+            # this build's registry, not about the record, and inventing either answer would send an
+            # admin looking for a deletion that did not happen.
+            looked_up = model in REFERENCE_MODELS and bool(record_id)
+            source = resolved.get(str(model), {}).get(str(record_id)) if looked_up else None
             canonical = None if source is None else source.get(str(stamp.get("refKey")))
             stored = stored_data.get(key)
             per_field[key] = {
@@ -404,7 +419,7 @@ async def canonical_divergence(
                 # the same answer, and reporting them as divergence would fire on every money field
                 # in the archive.
                 "diverged": source is not None and str(stored) != str(canonical),
-                "recordDeleted": source is None,
+                "recordDeleted": looked_up and source is None,
             }
         if per_field:
             out[row.id] = per_field

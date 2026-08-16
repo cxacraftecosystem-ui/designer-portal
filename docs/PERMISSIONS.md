@@ -458,6 +458,13 @@ database write is invisible to it, as it is to everything else in this document.
 Who may *see* provenance is `canViewProvenance`: admins always, plus anyone the master admin grants
 it. The admin-view toggle can hide it from an admin browsing as an ordinary user; a grantee keeps it.
 
+**`canViewProvenance` does not open the design-workshop divergence view**, despite the shared word.
+That flag gates the record tables' edit history on View Data; `/design-workshops/:id/provenance` is
+`isAdmin` and its route never consults the flag (§5). Granting it to a researcher therefore opens the
+first and not the second, and a client that OR'd the flag into its own gate would offer a grantee a
+screen the API refuses. The two are different questions: one is "may this account see who edited a
+record", the other is "may this account read one account's workshop beside another account's records".
+
 ---
 
 ## 4.4 Design-workshop viewer grants — the fourth access system

@@ -8,10 +8,12 @@ import { fieldProvenanceLine } from "@/components/designworkshop/FieldProvenance
 import type { DwRegistry } from "@/lib/designWorkshops";
 import { loadRegistry } from "@/lib/designWorkshopStore";
 import {
+  canonicalText,
   comparisonText,
   divergedFields,
   divergenceTally,
   fetchWorkshopProvenance,
+  RECORD_DELETED_TEXT,
   type DwProvenanceEntry,
   type DwProvenanceReport
 } from "@/lib/designWorkshopProvenance";
@@ -50,20 +52,17 @@ import {
 /** One entry's diverged fields, or null when it has none. */
 function DivergenceCard({
   entry,
-  entityTitle
+  entryTitle
 }: {
   entry: DwProvenanceEntry;
-  entityTitle: (stageKey: string, entityKey: string) => string;
+  entryTitle: (entry: DwProvenanceEntry) => string;
 }) {
   const diverged = divergedFields(entry);
   if (!diverged.length) return null;
 
   return (
     <li className="panel p-4">
-      <h3 className="font-display text-sm font-bold text-ink-900">
-        {entityTitle(entry.stageKey, entry.entityKey)}
-        {typeof entry.ordinal === "number" ? ` · row ${entry.ordinal + 1}` : ""}
-      </h3>
+      <h3 className="font-display text-sm font-bold text-ink-900">{entryTitle(entry)}</h3>
       <table className="mt-3 w-full text-sm">
         <thead>
           <tr className="text-left text-xs uppercase tracking-wide text-ink-500">
@@ -86,13 +85,19 @@ function DivergenceCard({
               </td>
               <td className="py-1.5 pr-3 text-ink-900">{comparisonText(comparison.stored)}</td>
               <td className="py-1.5 text-ink-900">
-                {comparison.canonical === null || comparison.canonical === undefined ? (
+                {comparison.recordDeleted ? (
                   // NOT AN ERROR, AND THE MOST INTERESTING STATE ON THIS PAGE. A deleted canonical
                   // record is precisely the case reference hydration exists for: the workshop still
                   // holds what the designer saw, and it is now the only copy.
-                  <span className="text-ink-500">The record this came from no longer exists</span>
+                  //
+                  // KEYED ON THE FLAG, NOT ON `canonical === null`. This page keyed it on the null
+                  // and was therefore wrong about a case it had a name for: a record that is
+                  // present with a blanked column answers `canonical: null, recordDeleted: false`,
+                  // and this cell told an admin that record had been deleted. That one renders as
+                  // the em dash — "the record says nothing here" — via `canonicalText`.
+                  <span className="text-ink-500">{RECORD_DELETED_TEXT}</span>
                 ) : (
-                  comparisonText(comparison.canonical)
+                  canonicalText(comparison)
                 )}
               </td>
             </tr>
@@ -136,13 +141,30 @@ export default function DesignWorkshopProvenancePage({ params }: { params: Promi
     };
   }, [id]);
 
-  /** A stage/entity key pair as the words the registry gives them, falling back to the keys. */
-  const entityTitle = useMemo(() => {
-    return (stageKey: string, entityKey: string) => {
-      const stage = registry?.stages?.find((s) => s.key === stageKey);
-      const entity = stage?.entities?.find((e) => e.key === entityKey);
-      if (!stage) return `${stageKey} · ${entityKey}`;
-      return `${stage.title} · ${entity?.title ?? entityKey}`;
+  /**
+   * One entry's heading: the stage and entity in the registry's words, plus the row number.
+   *
+   * THE ROW CLAUSE IS FOR COLLECTIONS ONLY, AND THE ORDINAL CANNOT TELL YOU WHICH IT IS. This read
+   * `typeof entry.ordinal === "number"`, which is true for `0` — and `DwStageEntry.ordinal` is
+   * `Int @default(0)`, non-nullable, emitted unconditionally by the route, with the schema's own
+   * comment reading "A singleton's is always 0". So EVERY singleton entry was headed "· row 1" of
+   * a list that does not exist. The registry knows the difference and is already loaded, so ask it.
+   *
+   * The clause is one-based because it is shown to a person: `_ordinal` is zero-based everywhere in
+   * the protocol, and "row 0" is a sentence no admin counting participants down a table will match
+   * against what is in front of them. A stage or entity the registry has never heard of falls back
+   * to the key — the registry is fetched separately and may be a release behind the server — and an
+   * unknown entity gets no row clause, since nothing here can say whether it repeats.
+   */
+  const entryTitle = useMemo(() => {
+    return (entry: DwProvenanceEntry) => {
+      const stage = registry?.stages?.find((s) => s.key === entry.stageKey);
+      const entity = stage?.entities?.find((e) => e.key === entry.entityKey);
+      const head = stage
+        ? `${stage.title} · ${entity?.title ?? entry.entityKey}`
+        : `${entry.stageKey} · ${entry.entityKey}`;
+      if (entity?.cardinality !== "COLLECTION" || typeof entry.ordinal !== "number") return head;
+      return `${head} · row ${entry.ordinal + 1}`;
     };
   }, [registry]);
 
@@ -189,7 +211,7 @@ export default function DesignWorkshopProvenancePage({ params }: { params: Promi
           {tally.fields > 0 ? (
             <ul className="grid gap-4">
               {report.entries.map((entry) => (
-                <DivergenceCard key={entry.entryId} entry={entry} entityTitle={entityTitle} />
+                <DivergenceCard key={entry.entryId} entry={entry} entryTitle={entryTitle} />
               ))}
             </ul>
           ) : null}
