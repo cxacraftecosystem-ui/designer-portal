@@ -633,6 +633,7 @@ note under the table about why a partial list here is worse than no list at all.
 | `/admin` | `isAdmin` | `require_admin` |
 | `/admin/analytics` | `isAdmin` — a **designer is refused**, because this aggregates clusters and workshops beyond their own | `require_admin` |
 | `/admin/designers` | `canManageDesignerRoster` | `require_designer_roster_manager` |
+| `/admin/access` | `canManageAccessRoster` — **admin and above**, deliberately not master-admin-only: the master-admin exemption in the sign-in gate is the break-glass, and a queue only one account can clear would make that exemption a single point of failure | `require_access_manager` |
 | `/settings/api-keys` | `isAdmin` (key **values** are master-admin inside the page) | `require_admin` / `require_master_admin` |
 | `/settings/tasks` | `canAssignTasks` | `require_admin` |
 | `/review` | `canReview` | `require_reviewer` |
