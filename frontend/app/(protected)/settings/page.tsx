@@ -9,6 +9,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { AppSettingsPanel } from "@/components/settings/AppSettingsPanel";
 import { GetTheAppPanel } from "@/components/settings/GetTheAppPanel";
 import { PublishAppUpdatePanel } from "@/components/settings/PublishAppUpdatePanel";
+import { MyAiKeysPanel } from "@/components/settings/MyAiKeysPanel";
 import { AccessibilityCard, AppearanceCard } from "@/components/settings/PersonalSettingsCards";
 import { WorkshopAccessRequestPanel } from "@/components/settings/WorkshopAccessRequestPanel";
 import { isAdmin, isMasterAdmin } from "@/lib/permissions";
@@ -121,6 +122,11 @@ export default function SettingsPage() {
         <GetTheAppPanel />
 
         <WorkshopAccessRequestPanel />
+
+        {/* Personal, not deployment-wide: this is the caller's own provider key, billed to
+            them. It sits above the administration links for that reason — the panel that
+            manages the ORGANISATION's keys is behind the master-admin link below. */}
+        <MyAiKeysPanel />
 
         {links.length ? (
           <section className="panel p-5">

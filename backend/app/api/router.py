@@ -28,6 +28,7 @@ from app.api.routes import (
     reference,
     review,
     search,
+    ai_keys,
     secrets,
     settings,
     tasks,
@@ -93,6 +94,7 @@ api_router.include_router(asr_models.router)
 api_router.include_router(feedback.router)
 api_router.include_router(preferences.router)
 api_router.include_router(settings.router)
+api_router.include_router(ai_keys.router)
 api_router.include_router(secrets.router)
 api_router.include_router(data_access.router)
 api_router.include_router(tasks.router)
