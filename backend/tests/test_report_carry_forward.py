@@ -363,11 +363,27 @@ def _source_rows() -> dict[str, _SourceRow]:
             dos="Address him as Guruji\nAllow time for the tying to be explained",
             donts="Do not photograph the loom shed without asking",
             recordedAt="2025-03-12T09:15:00+05:30",
+            # ── THE TWO COLUMNS THAT REPLACED THE LEGACY METADATA BELOW ──────────────────────
+            #
+            # `Artisan.dateOfBirth` and `Artisan.experienceYears` exist now, and the participant
+            # table reads them in preference to `extraMetadata`. A DATE rather than an age: the
+            # workshop prints an age and the server derives it, so a stored number cannot go stale.
+            #
+            # Chosen so the derived age is unambiguous whenever this suite runs — a birthday in
+            # January means the age is the same all year, where a September date would make this
+            # fixture's assertion depend on the month the test happened to run in.
+            dateOfBirth="1971-01-08T00:00:00+05:30",
+            experienceYears=31,
             craft=_SourceRow(name="Sambalpuri Ikat"),
             location=_SourceRow(
                 village="Barpali", district="Bargarh", state="Odisha", pincode="768029",
                 address="Weavers' Lane, Barpali", subjectLatitude=21.1857, subjectLongitude=83.5876,
             ),
+            # THE LEGACY KEYS STAY, and they deliberately DISAGREE with the columns above (27/54 vs
+            # 31 and a 1971 birthday). Matching values would let a reader believe either source was
+            # being used; disagreeing ones mean the assertions can only pass if the COLUMN won,
+            # which is the precedence the readers promise. The metadata fallback itself is covered
+            # in tests/test_reference_carry.py, on a row that has no columns.
             extraMetadata={"experienceYears": 27, "age": 54},
         ),
         "ProductDocumentation": _SourceRow(
