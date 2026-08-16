@@ -912,9 +912,15 @@ class _AsDesigner:
     accounts deliberately (the designer creates and edits; the ADMIN does the soft delete).
     """
 
-    def __init__(self, client: Any, token: str) -> None:
+    def __init__(self, client: Any, token: str, user_id: str = "", email: str = "") -> None:
         self._client = client
         self._headers = {"Authorization": f"Bearer {token}"}
+        # WHO THIS IS, not just how to authenticate as them. The admin now has to name this account
+        # in two bodies the designer cannot send for themselves — the designer roster row and the
+        # workshop's viewer set — and both take an identifier rather than a token. Carried here so
+        # the tests do not re-derive it from a response they no longer hold.
+        self.user_id = user_id
+        self.email = email
 
     def _send(self, method: str, url: str, **kwargs: Any) -> Any:
         headers = {**self._headers, **(kwargs.pop("headers", None) or {})}
@@ -987,7 +993,10 @@ def designer_client(client):
     })
     assert created.status_code == 201, created.text
     return _AsDesigner(
-        client, create_access_token(subject=created.json()["id"])
+        client,
+        create_access_token(subject=created.json()["id"]),
+        user_id=created.json()["id"],
+        email=email,
     )
 
 
@@ -1007,11 +1016,33 @@ async def test_a_designer_editing_a_deleted_workshop_is_told_it_is_deleted(
     answer that caused it is corrected — this is not a connection problem". One red line per stage,
     sending the designer to audit answers nothing had objected to.
     """
-    mine = designer_client.post(
-        "/api/design-workshops", json={"title": "Designer's own workshop"}
-    )
+    # OPENED BY THE ADMIN AND GRANTED TO THE DESIGNER, which is the only way a designer comes by a
+    # workshop now: only admins and the master admin may START one
+    # (``can_create_design_workshops``), because a workshop is the container a fortnight of records
+    # lives in and the unit the ministry indexes, not a record. This test used to post as the
+    # designer and would now die on that line with a 403 about the create rule — which would look
+    # exactly like the defect it exists to pin (a designer refused on their own workshop) while
+    # being something else entirely.
+    #
+    # THE GRANT IS WHAT KEEPS THE TEST HONEST, and it is not a way round the gate. The 409 is only
+    # reachable by an account that ``load_workshop_or_404`` admits with ``for_edit=True`` and that
+    # is NOT an admin, and after this change a granted designer is the only such account there is —
+    # so this is now the precise population the regression was about, rather than a near-enough one.
+    # The roster row is what lets `replace_viewers` accept them; without it the PUT is a 422.
+    rostered = client.post("/api/designers/roster", json={
+        "email": designer_client.email,
+        "fullName": "Sync Designer",
+        "institution": "Directorate of Handicrafts",
+    })
+    assert rostered.status_code in (201, 409), rostered.text
+    mine = client.post("/api/design-workshops", json={"title": "Designer's own workshop"})
     assert mine.status_code == 201, mine.text
     workshop_id = mine.json()["id"]
+    granted = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [designer_client.user_id]},
+    )
+    assert granted.status_code == 200, granted.text
     assert _sketches(designer_client, workshop_id, [A]).status_code == 200
 
     assert client.delete(f"/api/design-workshops/{workshop_id}").status_code == 204

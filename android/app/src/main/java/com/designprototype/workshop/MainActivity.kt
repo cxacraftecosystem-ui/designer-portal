@@ -6232,6 +6232,48 @@ private fun ArtisanForm(
     val canReadIdentityCards = remember {
         repository.cachedUser()?.let { FieldPermissions.canRunDesignWorkshops(it) } == true
     }
+    /**
+     * Somewhere for a KEPT identity-card photograph to go — and only when there is one.
+     *
+     * ── WHY THIS IS NULL ON CREATE, WHICH IS NOT A GAP ──────────────────────────────────────────
+     *
+     * A kept photograph is attached to a RECORD, and on create the record does not exist yet: this
+     * form is most often bringing the very artisan into being that the photograph would hang off.
+     * There is nothing to link it to, so no choice is offered and `DwIdentityCardControl` says
+     * plainly that the photograph is not kept — which is true, and is now confirmed by the server's
+     * own `photograph.stored: false` rather than asserted by this app. The browser's artisan form
+     * makes the identical call for the identical reason.
+     *
+     * ── WHAT IT DOES ON EDIT ────────────────────────────────────────────────────────────────────
+     *
+     * The ordinary media flow, unchanged — the same `uploadMedia` every attachment on this screen
+     * goes through, linked to this artisan — and then the media id is handed back so the caller can
+     * stamp the retention decision onto it. Two steps rather than one because they answer different
+     * questions: the upload is "is the file on the record", and the stamp is "who decided it should
+     * be". A row with the first and not the second is indistinguishable from any other photograph,
+     * which is exactly the state this feature exists to end.
+     *
+     * `titleHint` and the caption are set deliberately. An identity-card photograph filed under
+     * `artisan-image-3.jpg` among the loom photographs is one nobody reviewing this record later can
+     * pick out — and picking it out is the whole point of being allowed to keep it.
+     */
+    val keepIdentityPhotograph: (suspend (android.net.Uri) -> String?)? =
+        if (isEdit && canReadIdentityCards) {
+            { uri ->
+                repository.uploadMedia(
+                    context = context,
+                    uri = uri,
+                    linkedRecordType = "artisan",
+                    linkedRecordId = editing!!.id,
+                    caption = "Identity card — kept on this record by the designer's decision",
+                    location = null,
+                    titleHint = editing.name,
+                    overrideBaseName = "identity-card",
+                ).id
+            }
+        } else {
+            null
+        }
     var name by remember(editing) { mutableStateOf(editing?.name ?: prefill?.artisanName ?: "") }
     var localName by remember(editing) { mutableStateOf(editing?.localName ?: "") }
     var gender by remember(editing) { mutableStateOf(editing?.gender?.takeIf { it.isNotBlank() } ?: "Male") }
@@ -6619,7 +6661,15 @@ private fun ArtisanForm(
          * is the only route from the reader into `aadhaar`, it is reached from that tap alone, and
          * the value it carries has been through the same Verhoeff check the box below it applies —
          * see DwIdentityCardControl for why an auto-filled deduplication key is worse than an empty
-         * box. The photograph is not kept, on this device or on the server.
+         * box.
+         *
+         * THE PHOTOGRAPH IS NOT KEPT UNLESS A PERSON ASKS FOR IT — and on CREATE it cannot be, so
+         * no choice is offered here at all. This sentence used to read "The photograph is not kept,
+         * on this device or on the server" without qualification; that stopped being the whole truth
+         * when [keepIdentityPhotograph] gave the edit form somewhere to put one, and a comment
+         * promising something the switch above it can override is how the next reader comes to trust
+         * the wrong half. The server's side of the promise is unchanged and is now READ out of the
+         * reply rather than asserted — `photograph.stored` is a literal `false` on that route.
          *
          * OFFERED TO THE DESIGNER SET ONLY — see [canReadIdentityCards] above, which is a different
          * rule from the one that opened this screen.
@@ -6632,6 +6682,7 @@ private fun ArtisanForm(
                 enabled = !saving,
                 onUse = { digits -> aadhaar = digits; aadhaarError = null },
                 onError = onError,
+                onKeepPhotograph = keepIdentityPhotograph,
             )
         }
         DropdownField(
@@ -6683,6 +6734,7 @@ private fun ArtisanForm(
                 // two differently-punctuated records of it.
                 onUse = { value -> pehchanNumber = value; pehchanError = null },
                 onError = onError,
+                onKeepPhotograph = keepIdentityPhotograph,
             )
         }
         NumberedListInput(

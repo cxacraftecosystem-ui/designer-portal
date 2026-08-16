@@ -98,23 +98,40 @@ async def test_removing_a_colleague_who_did_work_says_what_is_in_the_way(client,
     Any colleague who did any work at all is undeletable, so the only accounts the endpoint could
     actually delete were the ones that never did anything — precisely backwards from what an admin
     does when a designer leaves the project.
+
+    THE WORK IS A QUESTIONNAIRE AND NOT A DESIGN WORKSHOP, AND THAT CHANGED WITH THE CREATE RULE.
+    This test used to have the departing designer POST a design workshop; only admins and the master
+    admin may start one now (``can_create_design_workshops``), so that line answers 403 and the
+    account under test would own nothing at all — the 409 this exists to pin would never be reached
+    and the test would fail on its setup rather than on its subject.
+
+    A questionnaire is the right substitute rather than a convenient one. It is a research
+    instrument a designer builds for their own workshop, ``Questionnaire.ownerId`` is in
+    ``_CREATOR_RELATIONS`` exactly as ``DesignWorkshop.createdById`` is, and it is precisely the
+    "records under existing workshops" that designers still create. The assertion moved from
+    "1 design workshop" to "1 questionnaire" for that reason and for no other: what is being pinned
+    — that the 409 names what is in the way, how much of it, and what to do instead — is unchanged.
     """
     account = await _designer(world, "worked")
     token = create_access_token(subject=account["id"])
     made = client.post(
-        "/api/design-workshops",
-        json={"title": f"Their fieldwork {world['stamp']}"},
+        "/api/questionnaires",
+        json={
+            "title": f"Their fieldwork {world['stamp']}",
+            "sections": [
+                {"code": "A", "title": "About the loom", "questions": [{"prompt": "How many looms?"}]}
+            ],
+        },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert made.status_code == 201, made.text
-    workshop_id = made.json()["id"]
 
     refused = client.delete(f"/api/users/{account['id']}")
     assert refused.status_code == 409, refused.text
     detail = refused.json()["detail"]
     # The three things the message has to carry: what is in the way, HOW MUCH of it (three
     # records is a reassignment, four hundred is a deactivation), and what to do instead.
-    assert "1 design workshop" in detail
+    assert "1 questionnaire" in detail
     assert "deactivate" in detail.lower()
 
     # THE REMEDY THE MESSAGE NAMES MUST BE REAL. Once nothing references the account, the same
@@ -131,7 +148,10 @@ async def test_removing_a_colleague_who_did_work_says_what_is_in_the_way(client,
     own = Prisma()
     await own.connect()
     try:
-        await own.designworkshop.delete(where={"id": workshop_id})
+        # Cascades to the sections and questions the create wrote, which are what actually hold the
+        # foreign keys back — deleting only the questionnaire row would leave them behind and the
+        # second delete would 409 again for a different, unrelated reason.
+        await own.questionnaire.delete(where={"id": made.json()["id"]})
     finally:
         await own.disconnect()
 

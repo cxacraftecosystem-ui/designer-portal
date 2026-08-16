@@ -1361,6 +1361,71 @@ object WorkshopSyncEngine {
 
         // ── 1. The record itself ─────────────────────────────────────────────────────────────────
         if (remoteIdOf(draft) == null) {
+            /*
+              THIS SESSION MAY NOT BRING A WORKSHOP INTO EXISTENCE — so it does not POST one.
+
+              A DESIGNER holding a draft with no server record cannot have that record created, by
+              them, ever: `POST /design-workshops` is admin-and-above (`deps.can_create_design_workshops`).
+              Sending it anyway would spend a request per pass, every forty-five seconds, to collect
+              the same 403 — and, worse, the failure it recorded would be the server's refusal
+              sentence with no route out of it, which is a designer being told to stop rather than
+              being told what to do.
+
+              SO THE FAILURE RECORDED HERE IS A DIFFERENT ONE, AND IT IS PERMANENT ON PURPOSE. It
+              names the control on the workshop list that fixes this — "Move into a workshop" — and
+              it states, first, that nothing on the phone has been deleted. That is the sentence a
+              designer needs before any other: they are looking at a fortnight of fieldwork with a
+              red mark on it.
+
+              [createMustBeDeclined] TAKES BOTH FACTS BECAUSE THE OBVIOUS VERSION OF THIS IS WRONG,
+              and it was written wrongly once on the web before being caught. "Refuse whenever this
+              session may not create" also refuses the draft whose create ALREADY LANDED before the
+              rule shipped — a real workshop the device merely never saw the answer for. That draft
+              needs no create; the pass only has to write the id back. `remoteIdOf` is null for it
+              here, which is exactly why `alreadyOnServer` cannot be derived at this point and is
+              passed as the thing it is: whether a create is owed at all.
+
+              `known = cachedUser() != null` matches the tri-state everywhere else: an unknown
+              session is allowed through and meets the server's gate, which is the one that counts.
+
+              AND ON THIS SURFACE THE LITERAL `false` IS ALWAYS RIGHT, which the paragraph above
+              does not say and a reader is entitled to wonder about. The case it describes — a create
+              that landed before the rule shipped, which needs no second create — is recovered on the
+              WEB, where `designWorkshopStore` carries `resolveInterruptedCreate` and passes
+              `alreadyOnServer: Boolean(resumed)`. Android has no counterpart: this pass is the only
+              thing that creates, and it learns the remote id from its own response, so a draft
+              reaching this line has never been created and `false` is a fact rather than a default.
+              If a recovery path is ever added here, this literal is the line it has to change.
+            */
+            val session = repository.cachedUser()
+            if (createMustBeDeclined(
+                    alreadyOnServer = false,
+                    sessionMayCreate = mayMintLocalWorkshop(
+                        known = session != null,
+                        role = session?.role,
+                    ),
+                )
+            ) {
+                // Written only when it CHANGES, for the reason the owner-mismatch branch above gives:
+                // this runs for every workshop on the device every forty-five seconds, and restamping
+                // the same sentence rewrites a JSON document on the flash storage the photographs
+                // need.
+                if (draft.sync.createFailure != DW_WORKSHOP_CREATE_DECLINED_BY_APP) {
+                    noteSync(context, workshopId) {
+                        it.copy(
+                            createFailure = DW_WORKSHOP_CREATE_DECLINED_BY_APP,
+                            createFailedAt = Instant.now().toString(),
+                            // NOT a schema skew: no future app run clears this, only a person does.
+                            // Marking it as one would make the pass retry the POST on every launch
+                            // for the rest of the handset's life.
+                            createSkewRun = null,
+                        )
+                    }
+                }
+                // TRUE, not false: the connection is fine and every other workshop on this device
+                // should still go. This one is waiting on an admin, not on a network.
+                return true
+            }
             // Waiting on a person, not the network — UNLESS it is waiting on an update instead, in
             // which case this run is the one that gets to find out whether the update has landed.
             if (blocksRetry(draft.sync.createFailure != null, draft.sync.createSkewRun)) return true

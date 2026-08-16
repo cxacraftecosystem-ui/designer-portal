@@ -165,7 +165,15 @@ export function DesignWorkshopDraftBanner() {
    */
   useEffect(() => {
     if (!sessionResolved) return;
-    setDraftSessionUser(user?.id ?? null);
+    /*
+      THE ROLE GOES WITH THE ID, and it answers a second question the store cannot answer alone: may
+      this session MINT a workshop the server has never heard of? `createLocalDraft` is the offline
+      create path, so a designer who is no longer allowed to start a workshop has to be refused HERE,
+      in the courtyard, before twenty-two stages go into a record that can never be accepted — the
+      server's 403 arrives two days too late to be a kindness. See
+      `designWorkshopStore.mayMintLocalWorkshop` for why "nobody has told us yet" is not a refusal.
+    */
+    setDraftSessionUser(user?.id ?? null, user?.role ?? null);
     /*
       AND ON THE WAY OUT, BECAUSE SIGNING OUT UNMOUNTS THIS COMPONENT BEFORE THE EFFECT ABOVE CAN RUN.
 
@@ -189,8 +197,11 @@ export function DesignWorkshopDraftBanner() {
       depend on the render tree at all. That is a change to files outside this one and is recorded as
       outstanding.
     */
-    return () => setDraftSessionUser(null);
-  }, [sessionResolved, user?.id]);
+    return () => setDraftSessionUser(null, null);
+    // `user?.role` joins the dependency list because a role change (an admin demoting an account
+    // mid-session, or a re-auth as somebody else) has to reach the store: without it the effect
+    // would not re-run and the store would go on believing this session may create a workshop.
+  }, [sessionResolved, user?.id, user?.role]);
 
   const drain = useCallback(
     async (trigger: "auto" | "manual") => {

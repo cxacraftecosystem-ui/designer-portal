@@ -14,8 +14,18 @@ Two directions, and they are inverses of each other:
                                  and a worked example on the instructions sheet.
 ``build_questionnaire_workbook`` -> an EXISTING questionnaire as the same workbook, carrying question
                                  IDs and one Answer/Notes column pair per recorded sitting.
-``parse_questionnaire_workbook`` -> either of the above, or something a designer built from scratch,
+``build_question_set_workbook`` -> the same questionnaire's QUESTIONS AND NOTHING ELSE — no answers,
+                                 no respondents, no question IDs. The artefact a designer SENDS to
+                                 another designer; see the block comment above it.
+``parse_questionnaire_workbook`` -> any of the above, or something a designer built from scratch,
                                  read back into sections + questions + answers.
+
+THERE ARE THEREFORE TWO DOWNLOADS OF ONE QUESTIONNAIRE AND THEY ARE NOT INTERCHANGEABLE. The full
+workbook is a LOSSLESS copy of somebody's fieldwork and belongs to the designer who collected it; the
+question set is the INSTRUMENT, which is the part that is meant to travel. Conflating them is how a
+sharing feature becomes a data leak, so they are two functions with two names rather than one
+function with a flag — a flag defaults, and the wrong default here hands over a stranger's
+respondents.
 
 WHAT "FORGIVING" MEANS HERE, precisely, because it is the whole difference between a feature a
 designer uses and one they abandon after the first upload:
@@ -71,6 +81,7 @@ from app.services.xlsx_report import XLSX_MIME, _put, _sanitise
 
 __all__ = [
     "PRO_FORMA_FILENAME",
+    "QUESTION_SET_CONTENTS",
     "XLSX_MIME",
     "ParseProblem",
     "ParsedQuestion",
@@ -78,9 +89,12 @@ __all__ = [
     "ParsedSection",
     "QuestionnaireXlsxError",
     "build_pro_forma",
+    "build_question_set_workbook",
     "build_questionnaire_workbook",
     "derive_section_code",
+    "download_filename",
     "parse_questionnaire_workbook",
+    "question_set_filename",
 ]
 
 PRO_FORMA_FILENAME = "questionnaire-pro-forma.xlsx"
@@ -834,7 +848,37 @@ def _header(ws: Worksheet, row: int, labels: list[tuple[str, str]]) -> None:
     ws.freeze_panes = f"A{row + 1}"
 
 
-def _details_sheet(ws: Worksheet, *, title: str, description: str, questionnaire_id: str, version: int | None) -> None:
+_DETAILS_NOTE = (
+    "Type your questionnaire's name and purpose above. Leave 'Questionnaire ID' exactly as "
+    "you found it — it is how the app recognises this file as an edit of a questionnaire you "
+    "have already uploaded rather than a brand new one."
+)
+
+
+def _details_sheet(
+    ws: Worksheet,
+    *,
+    title: str,
+    description: str,
+    questionnaire_id: str,
+    version: int | None,
+    extra: list[tuple[str, str]] | None = None,
+    note: str = _DETAILS_NOTE,
+) -> None:
+    """The Details sheet: four label/value rows, optionally some more, then one italic note.
+
+    ``extra`` LABELS MUST NOT COLLIDE WITH ``_DETAIL_KEYS`` above, and that is a real constraint
+    rather than a stylistic one — this sheet is parsed back by :func:`_read_details`, which matches
+    the label in column A against a family of aliases. A row labelled "Notes" or "Summary" would be
+    read back as the questionnaire's DESCRIPTION, so a provenance line added here for the reader's
+    benefit would silently overwrite the description of the questionnaire the file is imported into.
+    ``tests/test_questionnaire_interchange.py`` pins that the question set's own extra rows survive
+    the round trip without doing this.
+
+    The note row is placed BELOW whatever rows exist rather than at a fixed row 8, so adding a pair
+    cannot land the paragraph on top of it. With the four base pairs it still lands on row 8, exactly
+    where it always did.
+    """
     ws.sheet_properties.tabColor = f"FF{_BRAND}"
     heading = _put(ws, 1, 1, "Questionnaire details")
     heading.font = Font(bold=True, size=14, color=f"FF{_BRAND}")
@@ -843,23 +887,19 @@ def _details_sheet(ws: Worksheet, *, title: str, description: str, questionnaire
         ("Description", description),
         ("Questionnaire ID", questionnaire_id),
         ("Version", str(version) if version is not None else ""),
+        *(extra or []),
     ]
     for offset, (label, value) in enumerate(pairs):
         row = 3 + offset
         cell = _put(ws, row, 1, label)
         cell.font = Font(bold=True)
-        _put(ws, row, 2, value)
-    note = _put(
-        ws,
-        8,
-        1,
-        "Type your questionnaire's name and purpose above. Leave 'Questionnaire ID' exactly as "
-        "you found it — it is how the app recognises this file as an edit of a questionnaire you "
-        "have already uploaded rather than a brand new one.",
-    )
-    note.alignment = Alignment(wrap_text=True, vertical="top")
-    note.font = Font(italic=True, color="FF6B7280")
-    ws.merge_cells(start_row=8, start_column=1, end_row=10, end_column=4)
+        value_cell = _put(ws, row, 2, value)
+        value_cell.alignment = Alignment(wrap_text=True, vertical="top")
+    note_row = 3 + len(pairs) + 1
+    note_cell = _put(ws, note_row, 1, note)
+    note_cell.alignment = Alignment(wrap_text=True, vertical="top")
+    note_cell.font = Font(italic=True, color="FF6B7280")
+    ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row + 2, end_column=4)
     ws.column_dimensions["A"].width = 24
     ws.column_dimensions["B"].width = 62
 
@@ -878,6 +918,11 @@ _HELP_LINES = [
     ("b", "Change the wording of an answered question and the app keeps the old question and its answers, and adds your new wording as a new question underneath. Nothing is lost and no recorded answer changes meaning."),
     ("b", "Delete a row for an answered question and the app retires it instead: it stops being asked, and its answers stay in the record."),
     ("b", "Questions nobody has answered yet can be reworded, reordered and deleted freely."),
+    ("h", "Sending your questions to another designer"),
+    ("p", "Two different files come out of a questionnaire, and only one of them is meant to be passed on."),
+    ("b", "QUESTION SET — the questions, their order, their help text and their Required flags, and nothing else: no answers, no respondents' names, no sittings. This is the one to send. Whoever receives it uploads it and gets their own empty questionnaire with your questions in it, to run their own fieldwork against."),
+    ("b", "FULL WORKBOOK — the same questions PLUS every sitting recorded against them: each respondent's name, their notes and every answer they gave. That is your fieldwork rather than your instrument, and only you, a designer working on the same design workshop, and an admin can download it."),
+    ("b", "A workbook that came out of the app and still has answers in it imports its QUESTIONS ONLY. Those answers are already recorded in the platform under the names of the people who recorded them, and copying them into a second questionnaire under your name would duplicate the fieldwork and misattribute it. Answers you typed into a blank pro-forma yourself are imported as normal — that file has no Question IDs in it, which is how the app tells the two apart."),
     ("h", "An example"),
 ]
 _HELP_EXAMPLE = [
@@ -1043,8 +1088,112 @@ def build_questionnaire_workbook(
     return buffer.getvalue()
 
 
+QUESTION_SET_CONTENTS = "Questions only — no answers, no respondents' names, no recorded sittings."
+
+_QUESTION_SET_NOTE = (
+    "This is a QUESTION SET: one questionnaire's questions and nothing else. It carries no answers, "
+    "no respondents' names and no recorded sittings, which is what makes it safe to send to another "
+    "designer. 'Questionnaire ID' is blank and the Question ID column is empty ON PURPOSE — "
+    "uploading this file creates a NEW questionnaire that belongs to you, rather than editing the "
+    "one it came from. Type your own answers into the Answer column, or leave it empty and record "
+    "them in the app."
+)
+
+
+def build_question_set_workbook(
+    *,
+    title: str,
+    description: str | None,
+    sections: list[dict[str, Any]],
+    source_title: str | None = None,
+    shared_by: str | None = None,
+    exported_on: str | None = None,
+) -> bytes:
+    """One questionnaire's QUESTIONS, as a workbook a designer may hand to another designer.
+
+    ================================================================================================
+    WHY THIS EXISTS AS A SECOND ARTEFACT RATHER THAN AS A RELAXED PERMISSION ON THE FIRST
+    ================================================================================================
+
+    ``build_questionnaire_workbook`` is deliberately LOSSLESS — every sitting, every respondent's
+    name, every answer, every retired question — because a download-edit-upload round trip has to be.
+    That is why its route refuses anyone but the owner, a designer on its design workshop, or an
+    admin, and that refusal is correct: the artefact really does carry somebody's fieldwork.
+
+    But the thing designers actually want to send each other is the INSTRUMENT — "here are the
+    eighteen questions we ask weavers, use them". There was no way to produce that, so sharing was
+    impossible and the only workaround was to widen the gate on a file full of respondents' names.
+    This is the second artefact instead. It is not the same file with columns blanked out: it is
+    built from a query that never reads an answer at all (see ``load_question_set`` in
+    ``services/questionnaire_forms.py``), so it cannot leak one by omission.
+
+    THREE THINGS ARE DELIBERATELY ABSENT AND EACH OF THEM WOULD CAUSE A DISTINCT BUG IF ADDED BACK:
+
+    * **No Answer/Notes values.** The obvious one, and the point of the artefact.
+    * **No Question IDs.** Those ids belong to the SENDER's questionnaire. Left in, a receiving
+      designer's re-upload would report every row as "Question ID … does not belong to this
+      questionnaire", and — worse — the ids are the signal the import uses to recognise a workbook
+      that came out of the app and therefore to refuse to re-record its answers (see
+      ``create_from_parsed``). A shared question set has to read as what it is: a filled-in
+      pro-forma.
+    * **No Questionnaire ID on the Details sheet.** Same reason from the other side: with one, the
+      receiving designer's ``POST /questionnaires/{id}/upload`` answers 409 "that workbook was
+      downloaded from a different questionnaire", which is exactly right for the full workbook and
+      exactly wrong for a question set they are entitled to use.
+
+    RETIRED QUESTIONS ARE NOT INCLUDED, and that is the one place this differs from the full
+    workbook for a reason other than privacy. A retired question is not part of the instrument any
+    more — it is kept only because answers hang off it. Sending it would plant a question the sender
+    deliberately replaced into the receiver's brand-new form, next to its replacement.
+    """
+    extra = [("Contents", QUESTION_SET_CONTENTS)]
+    if source_title:
+        extra.append(("Exported from", source_title))
+    if shared_by:
+        extra.append(("Shared by", shared_by))
+    if exported_on:
+        extra.append(("Exported on", exported_on))
+
+    wb = Workbook()
+    questions = wb.active
+    questions.title = SHEET_QUESTIONS
+    # `entry_labels=[]` gives ONE blank Answer/Notes pair, exactly as the pro-forma does, so the
+    # receiving designer can record on paper in the same file. It carries no values because every
+    # question handed in below has empty `answers`/`answerNotes`.
+    _write_questions_sheet(questions, sections, [])
+    _details_sheet(
+        wb.create_sheet(title=SHEET_DETAILS),
+        title=_sanitise(title or ""),
+        description=_sanitise(description or ""),
+        questionnaire_id="",
+        version=None,
+        extra=[(label, _sanitise(value)) for label, value in extra],
+        note=_QUESTION_SET_NOTE,
+    )
+    _help_sheet(wb.create_sheet(title=SHEET_HELP))
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def _filename_stem(title: str | None) -> str:
+    stem = re.sub(r"[^A-Za-z0-9 _-]+", "", _sanitise(title or "questionnaire")).strip()
+    return re.sub(r"\s+", "-", stem)[:80].strip("-") or "questionnaire"
+
+
 def download_filename(title: str | None) -> str:
     """A safe, readable filename for a questionnaire download."""
-    stem = re.sub(r"[^A-Za-z0-9 _-]+", "", _sanitise(title or "questionnaire")).strip()
-    stem = re.sub(r"\s+", "-", stem)[:80].strip("-") or "questionnaire"
-    return f"{stem}.xlsx"
+    return f"{_filename_stem(title)}.xlsx"
+
+
+def question_set_filename(title: str | None) -> str:
+    """The same, for the questions-only download.
+
+    The ``-questions`` suffix is not decoration. Both downloads land in the same Downloads folder
+    with the same questionnaire title on them, and the two files are the difference between sending
+    a colleague your question list and sending them every respondent you have ever interviewed. The
+    name is the last thing standing between a designer and that mistake, so it says which one this
+    is.
+    """
+    return f"{_filename_stem(title)}-questions.xlsx"

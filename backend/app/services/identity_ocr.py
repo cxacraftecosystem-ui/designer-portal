@@ -34,6 +34,32 @@ WHAT THIS MODULE NEVER DOES.
   A photograph of a national identity document is retained only when a designer deliberately
   uploads it through the ordinary media flow, where it is an explicit act with a visible record.
 
+WHAT THIS MODULE NOW ALSO OWNS: THE WORD FOR WHAT HAPPENS TO THE PICTURE.
+
+Reading the card and KEEPING the card are two different decisions, and until this section existed
+only one of them was ever made by a person. The bullet above is the whole truth about *this*
+endpoint and it always was — but it is not the whole truth about the feature, because the design
+workshop's stage form reads the number off a photograph the designer has ALREADY attached to a
+media field, which means the ordinary media flow has already put an unmasked identity document in
+S3 and in ``MediaFile`` before the reader is offered at all. Nobody chose that. The app did.
+
+So the retention vocabulary lives here, next to the code that produced the reason to have a
+photograph in the first place, and it has exactly two values. ``DISCARD`` means the bytes are gone
+— the object deleted, the row deleted, nothing left to find. ``STORE`` means a named person
+decided, at a recorded moment, that this repository should hold an unmasked identity document, and
+that decision is written onto the file itself. There is no third value and no absent value:
+:func:`parse_retention` maps everything it does not recognise — missing, blank, misspelt, a client
+sending a boolean — onto ``DISCARD``, because the answer a caller gets for free has to be the one
+that keeps nothing.
+
+WHY THAT DEFAULT AND NOT "ASK LATER". ``mask_aadhaar`` and ``records.mask_identity_number`` mask
+the NUMBER on every exported surface, which is the property this repository has always claimed. A
+photograph of the card is that same number, unmasked, in a form no masking function can reach — it
+is a JPEG. A retention default of "keep" would therefore quietly undo the masking rule for every
+artisan whose card was photographed, and it would do it in the one place a reader checking the
+masking code would never look. Nothing here weakens the masking; the point of the default is that
+the only way past it is a person saying so, with their name against it.
+
 OFF BY DEFAULT, exactly like :mod:`app.ai_features`. Nothing in the API imports this module at
 import time except its own route, every flag defaults to false, and with no provider key the
 endpoint answers 503 naming the setting to configure. A deployment that does not turn this on
@@ -299,6 +325,126 @@ class IdentityOcrResult:
             # written to an artisan without a human confirming it.
             "requiresConfirmation": True,
         }
+
+
+# --------------------------------------------------------------------------------------
+# What happens to the PHOTOGRAPH — the decision this module refuses to make for anybody
+#
+# Read the second half of the module docstring before changing anything below it. In one sentence:
+# the number is masked everywhere, the picture of the number is not maskable at all, so keeping the
+# picture is a decision a person makes and signs, and every other input means "do not keep it".
+# --------------------------------------------------------------------------------------
+
+
+#: Delete the photograph: the stored object AND the row that points at it. Not "hide", not
+#: "soft-delete", not "mark for review" — this repository soft-deletes almost everything it holds
+#: (``design_workshops.py``'s header says so in as many words: *nothing here hard-deletes*), and
+#: that rule is exactly wrong for a regulated identity document a designer has just asked to be rid
+#: of. A ``deletedAt`` on an Aadhaar photograph is a retained Aadhaar photograph with a flag on it.
+DISCARD = "DISCARD"
+
+#: Keep the photograph, on the record, with the name of whoever decided that and the moment they
+#: did. STORE is never a default and never an inference; it exists only where a person pressed it.
+STORE = "STORE"
+
+#: The whole vocabulary. Anything else is not a third option, it is a bug in a client — and
+#: :func:`parse_retention` resolves a bug in a client to DISCARD rather than to an error, for the
+#: reason argued there.
+RETENTION_DECISIONS: tuple[str, ...] = (DISCARD, STORE)
+
+#: Where a kept photograph carries its decision: ``MediaFile.extraMetadata[RETENTION_METADATA_KEY]``.
+#:
+#: On the existing Json column rather than on new ones, and that is a considered choice rather than
+#: an economy. Two columns (``identityRetentionById``, ``identityRetentionAt``) would sit on EVERY
+#: media row in the repository — hundreds of thousands of craft photographs — to describe a property
+#: only identity-card photographs have, and every ``SELECT`` and every export shape would grow them.
+#: ``extraMetadata`` is already the column this codebase uses for exactly this ("a plain dict written
+#: before ``jsonify_metadata``", see ``stamp_workshop_submission``), it is already carried through
+#: ``/media/complete``, and a row without the key simply has not been decided about — which is the
+#: honest reading, and the reading the discard path relies on.
+RETENTION_METADATA_KEY = "identityPhotograph"
+
+
+def parse_retention(raw: Any) -> str:
+    """The retention decision a caller asked for, resolved to one of :data:`RETENTION_DECISIONS`.
+
+    **EVERYTHING THIS FUNCTION DOES NOT RECOGNISE BECOMES ``DISCARD``, AND IT NEVER RAISES.** That
+    is the safety property of the whole feature and it is worth being explicit about why it is not a
+    422 instead, because a refusal is this codebase's usual answer to a malformed value.
+
+    A 422 here would put the decision back in the client's hands at exactly the wrong moment. A phone
+    that sends ``"store "`` with a trailing space, or ``"keep"``, or ``True``, or the string
+    ``"None"``, has told the server nothing it can act on — and the two ways to handle that are
+    "keep the identity document and let the client sort it out" or "keep nothing". Only one of those
+    is recoverable: a photograph that was not kept can be taken again in ten seconds with the card
+    still in the artisan's hand, whereas a photograph kept by accident is a regulated document in a
+    research bucket that nobody knows to go and delete. So an unparseable answer is the same answer
+    as no answer, and no answer is DISCARD.
+
+    Case and surrounding whitespace are forgiven because they are not ambiguity — ``"store"``,
+    ``"STORE"`` and ``" Store "`` are one intention, and refusing them would only teach client
+    authors to send something else.
+    """
+    if isinstance(raw, str):
+        cleaned = raw.strip().upper()
+        if cleaned in RETENTION_DECISIONS:
+            return cleaned
+    return DISCARD
+
+
+def retention_stamp(decision: str, *, user: Any, at: Any) -> dict[str, Any]:
+    """The block written onto a kept photograph: which way, by whom, by what name, and when.
+
+    THE NAME IS COPIED, NOT JOINED TO LATER. ``decidedByName`` duplicates something the ``User`` row
+    already holds, which normally would be a reason not to store it — but this is an accountability
+    record about a regulated document, and it has to survive the account being renamed, disabled, or
+    (once a leaver is processed) removed. A stamp that reads ``decidedById: "usr_7"`` and resolves to
+    nothing is not a record of who decided; it is a record that somebody did.
+
+    ``at`` is passed in rather than read from the clock here so the caller's one ``datetime.now(UTC)``
+    is what lands on the row, and so a test can pin the value instead of asserting around it.
+    """
+    return {
+        "decision": parse_retention(decision),
+        "decidedById": getattr(user, "id", None),
+        # The name as the account carries it, falling back to the email — an account with neither is
+        # not a person this endpoint can name, and "" would read as "nobody decided".
+        "decidedByName": getattr(user, "name", None) or getattr(user, "email", None) or "",
+        "decidedAt": at.isoformat() if hasattr(at, "isoformat") else str(at),
+    }
+
+
+def retention_of(metadata: Any) -> dict[str, Any] | None:
+    """The decision recorded on a media row's ``extraMetadata``, or ``None`` if there is not one.
+
+    ``None`` and ``{"decision": "DISCARD"}`` mean different things and this function keeps them
+    apart: the first is a photograph nobody has been asked about yet, the second cannot occur on a
+    stored row at all, because a DISCARD deletes the row rather than annotating it. A caller that
+    finds a DISCARD stamp on a live row has found a bug — the delete half-ran — not a decision.
+
+    Defensive about the shape because ``extraMetadata`` is a Json column: it can hold a list, a
+    string or a number written by some other feature years ago, and a reader of an identity
+    retention record must not raise on any of them.
+    """
+    if not isinstance(metadata, Mapping):
+        return None
+    found = metadata.get(RETENTION_METADATA_KEY)
+    return dict(found) if isinstance(found, Mapping) else None
+
+
+def with_retention(metadata: Any, stamp: Mapping[str, Any]) -> dict[str, Any]:
+    """``metadata`` with the retention stamp added, leaving every other key exactly as it was.
+
+    A COPY, and everything else survives. ``extraMetadata`` on a workshop upload already carries
+    ``stamp_workshop_submission``'s late-submission record and whatever the client sent with the
+    upload; replacing the column with ``{"identityPhotograph": …}`` would erase an audit record while
+    writing an audit record. A non-mapping value (a list, a string — the column permits it) is
+    replaced rather than merged, because there is nothing there to merge with, and losing a stray
+    non-object is a smaller harm than refusing to record the decision at all.
+    """
+    base = dict(metadata) if isinstance(metadata, Mapping) else {}
+    base[RETENTION_METADATA_KEY] = dict(stamp)
+    return base
 
 
 # --------------------------------------------------------------------------------------

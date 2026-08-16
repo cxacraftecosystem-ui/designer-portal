@@ -34,6 +34,8 @@
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { DwFieldStamp } from "@/lib/designWorkshops";
+import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
 import { Paperclip, X } from "lucide-react";
 
 import { DictationButton } from "@/components/designworkshop/Dictation";
@@ -164,6 +166,14 @@ export type FieldInputProps = {
   place?: { stageKey?: string | null; entityKey?: string | null; rowKey?: string | null };
   /** Where and when this stage is being recorded. Stamped onto every file the field uploads. */
   capture?: StageCaptureContext;
+  /**
+   * WHO LAST SET THIS FIELD, as the server reported it on the stage read.
+   *
+   * Optional and unrendered when absent, which is what lets it be threaded in one surface at a time:
+   * a stage page that does not pass it behaves exactly as it did before this prop existed. See
+   * {@link FieldProvenance} — it is decorative, never part of `aria-describedby`.
+   */
+  stamp?: DwFieldStamp | null;
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -191,12 +201,15 @@ function FieldHint({
   field,
   error,
   hintId,
-  errorId
+  errorId,
+  stamp
 }: {
   field: DwField;
   error?: string | null;
   hintId: string;
   errorId: string;
+  /** Who last set this field. See {@link FieldProvenance} — decorative, never describedby text. */
+  stamp?: DwFieldStamp | null;
 }) {
   const hint = [field.help, field.unit ? `Measured in ${field.unit}.` : ""].filter(Boolean).join(" ");
   return (
@@ -206,6 +219,11 @@ function FieldHint({
           {hint}
         </p>
       ) : null}
+      {/* Under the instruction and above the error, which is the reading order that matters: what
+          to do, then where this came from, then what is wrong with it. It is NOT part of
+          `describedBy` — see FieldProvenance on why forty of these would make the form unusable by
+          voice. */}
+      <FieldProvenance stamp={stamp} />
       {/* error-600 is one of the two literal status colours in the palette — it deliberately does
           not invert, because "this is wrong" must read identically in both themes. The word
           "Error:" is not added: `role="alert"` already announces it as one, and the message is
@@ -278,7 +296,8 @@ export function FieldInput({
   disabled,
   error,
   place,
-  capture
+  capture,
+  stamp
 }: FieldInputProps) {
   const controlId = useId();
   const labelId = `${controlId}-label`;
@@ -328,7 +347,7 @@ export function FieldInput({
         {labelText(field)}
       </label>
       {control}
-      <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} />
+      <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} stamp={stamp} />
     </div>
   );
 
@@ -339,7 +358,7 @@ export function FieldInput({
         {labelText(field)}
       </span>
       {control}
-      <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} />
+      <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} stamp={stamp} />
     </div>
   );
 
@@ -746,7 +765,7 @@ export function FieldInput({
               ternary would have silently suppressed whichever extra lost, on a field where both are
               legitimate, and nothing on screen would have said so.
             */
-            extra={({ files, originals, attach, local }) => (
+            extra={({ files, originals, attach, detach, local }) => (
               <>
                 {signature ? (
                   <SignaturePad
@@ -769,6 +788,12 @@ export function FieldInput({
                     // the candidate against the card in their hand and pressed Confirm. See the
                     // header of IdentityCardReader for why nothing before this point may commit.
                     onConfirm={(digits) => onPatch({ [identityTarget.key]: digits })}
+                    // The photograph the designer chose to DELETE is already gone from S3 and from
+                    // MediaFile by the time this runs — the server deleted both before answering.
+                    // This only stops the field from going on referencing an id that no longer
+                    // resolves, which would otherwise draw a tile reading "this file is no longer
+                    // readable from here" for a file the designer deliberately destroyed.
+                    onDiscard={detach}
                   />
                 ) : null}
                 {measureTargets.length ? (
@@ -1132,6 +1157,17 @@ function MediaField({
     originals: Record<string, File>;
     attach: (file: File) => void;
     /**
+     * Stop referencing one attachment. The counterpart to `attach`, and the same door the tile's
+     * own Remove link goes in by.
+     *
+     * ONE CALLER: the identity-card reader, when a designer has chosen to DELETE the photograph of
+     * an identity document. That deletion has already happened on the server by then — the object
+     * and the `MediaFile` row are both gone — so this is not what destroys anything; it is what
+     * stops the field from holding an id that no longer resolves and drawing a broken tile for a
+     * file somebody deliberately destroyed. See `detach` below for what it does and does not touch.
+     */
+    detach: (id: string) => void;
+    /**
      * Photographs held on THIS DEVICE ONLY — a `dwlocal:` reference whose blob is in the draft store,
      * with the object URL this component already made for its own thumbnail.
      *
@@ -1484,6 +1520,7 @@ function MediaField({
             // Appended rather than replacing the list: a designer may sign, then attach a
             // photograph of the paper sheet as well, and neither may evict the other.
             attach: (file) => setPending((current) => [...current, file]),
+            detach,
             // Only the entries that produced an object URL, which is exactly the image ones: the
             // effect above makes a URL for `image/*` blobs and leaves `url` null for anything else,
             // so an audio file staged offline cannot arrive somewhere expecting to be looked at.

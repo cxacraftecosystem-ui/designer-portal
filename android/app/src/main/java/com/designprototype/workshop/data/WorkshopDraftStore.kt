@@ -1040,6 +1040,51 @@ object WorkshopDraftStore {
     }
 
     /**
+     * Point a device-only workshop at a workshop that exists on the server.
+     *
+     * The transaction half of [adoptedIntoWorkshop], which owns the whole argument for what is
+     * cleared and what would happen if it were not. Kept apart because the DECISION is the defect and
+     * the write is not: everything interesting here can be asserted with no filesystem at all.
+     *
+     * ── ALREADY POINTED SOMEWHERE MEANS LEAVE IT EXACTLY AS IT IS ────────────────────────────────
+     *
+     * Re-pointing a draft that already has a server record would orphan whatever has been pushed into
+     * the old workshop, and there is no reading of a mis-tap that makes that the intended outcome.
+     * The check is [localDraftNeedsAWorkshop] rather than `remoteId == null`, because a workshop
+     * created online is keyed by the SERVER's id with `remoteId` still null — asking the field alone
+     * would let a designer "adopt" a real workshop into a different one.
+     *
+     * ── ALLOWED TO EVERY SESSION THAT HOLDS THE DRAFT, INCLUDING A DESIGNER ──────────────────────
+     *
+     * Deliberately, and it is not a hole in the create rule. Nothing here brings a workshop into
+     * existence: the workshop was created by an admin, through `POST /design-workshops`, under the
+     * gate. All this decides is which EXISTING workshop this device's unsent work belongs to, which is
+     * the designer's own judgement about their own fieldwork. The server still refuses every stage of
+     * it unless the account can open that workshop (`load_workshop_or_404`), so a mistaken adoption is
+     * refused there and costs a correction rather than a record.
+     *
+     * Goes through [update] and NOT [updateBookkeeping]: adopting is an act a person performed, and
+     * the list sorts by `updatedAt` so the row they just moved should be where they look for it.
+     *
+     * @return the re-pointed draft, or null when the draft was already pointed at a workshop.
+     */
+    suspend fun adoptIntoWorkshop(
+        context: Context,
+        workshopId: String,
+        remoteId: String,
+    ): WorkshopDraft? {
+        val current = load(context, workshopId) ?: return null
+        if (!localDraftNeedsAWorkshop(current)) return null
+        return update(context, workshopId) { draft ->
+            if (!localDraftNeedsAWorkshop(draft)) {
+                draft
+            } else {
+                adoptedIntoWorkshop(draft, remoteId, Instant.now().toString())
+            }
+        }
+    }
+
+    /**
      * Save exactly one stage, leaving the other twenty-one exactly as they are on disk.
      *
      * This is what a stage screen should call. Because [WorkshopDraft.stages] is keyed by id the

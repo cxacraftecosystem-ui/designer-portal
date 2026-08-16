@@ -1,31 +1,45 @@
 /**
- * The generator sheet and the manual-entry fallback, driven in a real browser.
+ * The generator sheet and BOTH ways a code gets read back in, driven in a real browser.
  *
- * WHAT THIS SPEC DELIBERATELY DOES NOT DO: pretend to test the camera. `BarcodeDetector` is not
- * implemented in the Chromium that Playwright ships, and Chromium's `--use-fake-device-for-media-
- * stream` only supplies a synthetic video track — there is nothing behind it to read a QR out of a
- * frame. A spec that stubbed `window.BarcodeDetector` would be a test of the stub: it would pass
- * with the scanner deleted. So the camera path is verified by hand on a device, and what is
- * automated here is the half that a CI browser can honestly exercise — and, as it happens, the half
- * that most of the handsets in the field will run:
+ * ── WHAT THIS SPEC CAN NOW DO THAT IT COULD NOT BEFORE ───────────────────────────────────────
  *
- *   - the feature detection reaching the RIGHT conclusion on a browser that genuinely lacks the API
- *     (asserted against `'BarcodeDetector' in window`, not against an assumption about the runner);
- *   - the honest sentence it produces instead of a button that would open a camera and see nothing;
- *   - the typed code doing the whole job on its own, which is what makes that acceptable;
+ * It used to say, in this comment, that it deliberately did not test decoding: `BarcodeDetector` is
+ * absent from the Chromium Playwright ships, so the only way to make the app decode anything was to
+ * stub the API — and a spec that stubs the decoder is a test of the stub, which would pass with the
+ * scanner deleted.
+ *
+ * That is no longer true, and it is no longer true in the way that matters most. The app now carries
+ * its own decoder (`lib/qrDecode.ts`, fed by `lib/qrImageDecode.ts`), so a browser with no
+ * `BarcodeDetector` at all — which is every Windows laptop this client runs on, measured, and also
+ * this runner — decodes a real PNG of a real symbol with nothing stubbed. The upload tests below
+ * therefore exercise the whole chain end to end: the printed code off the sheet, encoded to a symbol,
+ * drawn into a deliberately unkind photograph, written as a PNG, handed to the file input as a file,
+ * decoded, parsed by the payload grammar, and resolved to a named prototype. Every link is real.
+ *
+ * WHAT IT STILL CANNOT DO is point a camera at a card: `--use-fake-device-for-media-stream` supplies
+ * a synthetic video track with nothing in it. So the camera's LIFECYCLE is tested (opening the
+ * device, attaching it, and releasing every track on the way out — the part this repository owns and
+ * gets wrong) and its decoding is not, which is acceptable precisely because the camera and the
+ * upload now run the identical decoder over the identical code path.
+ *
+ * ── AND THE THINGS IT ALWAYS COVERED ─────────────────────────────────────────────────────────
+ *
+ *   - the typed code doing the whole job on its own, which is what makes every other route optional;
  *   - the two refusals that carry the safety property — a mis-typed character, and a code that does
- *     not resolve to anything this caller may see.
- *
- * It also measures the sheet IN MILLIMETRES. "Prints legibly at real size" is not an aesthetic
- * claim: a QR module below about half a millimetre is at the resolution limit of a handset camera,
- * so a sheet that silently rendered at 80% would produce cards that scan for the developer at 8cm
- * and fail for everyone else. The pixel figures below are those millimetres at CSS's fixed 96dpi.
+ *     not resolve to anything this caller may see;
+ *   - the sheet measured IN MILLIMETRES. "Prints legibly at real size" is not an aesthetic claim: a
+ *     QR module below about half a millimetre is at the resolution limit of a handset camera, so a
+ *     sheet that silently rendered at 80% would produce cards that scan for the developer at 8cm and
+ *     fail for everyone else. The pixel figures below are those millimetres at CSS's fixed 96dpi.
  */
 
 import { expect, test, type Page, type APIRequestContext } from "@playwright/test";
 
+import { greyPng, photograph, type Quad } from "./support/qrPhotograph";
 import { signIn } from "./support/session";
 
+import { type GreyPlane } from "@/lib/imageQuality";
+import { encodeQr } from "@/lib/qrEncode";
 import { encodeWorkshopCode, formatWorkshopCodeForPrint } from "@/lib/workshopCodes";
 
 const API = process.env.E2E_API_URL ?? "http://localhost:8000";
@@ -39,9 +53,11 @@ test.skip(!PASSWORD, "Set E2E_PASSWORD to run the signed-in specs.");
  *
  * File-level rather than inside that one describe because Playwright refuses `launchOptions` in a
  * group (it would force a second worker, and this project runs one on purpose — the specs share a
- * session). It changes nothing for the other tests here: none of them opens a camera, and the Scan
- * button they would need does not render unless `BarcodeDetector` exists, which only that test
- * arranges.
+ * session). It changes nothing for the other tests here: none of them presses Scan. The Scan button
+ * is now rendered on every browser (it is not gated on `BarcodeDetector` — see
+ * `WorkshopCodeScanner`'s header for the measurement that removed that gate), so these flags are
+ * what stop an accidental press from hanging on a permission prompt rather than what makes the
+ * button appear.
  */
 test.use({
   launchOptions: { args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] },
@@ -150,20 +166,30 @@ test("the sheet is laid out at the physical size it will be cut to", async ({ pa
   expect(sideMm / 41).toBeGreaterThan(0.5);
 });
 
-test("a browser without the scanning API says so, and the typed code does the whole job", async ({ page }) => {
+test("both ways in are offered on a browser with no scanning API at all, and the typed code still works", async ({
+  page
+}) => {
   await openCodes(page);
+
+  // THE MEASUREMENT THIS TEST EXISTS TO DEFEND. `BarcodeDetector` is absent from this runner, and
+  // from Chrome and Edge on the Windows laptops this client is actually used on. Both controls must
+  // be present ANYWAY, because the app carries its own decoder. Asserted against the real
+  // `'BarcodeDetector' in window` rather than an assumption about the runner, so this stays honest
+  // the day Playwright's Chromium ships the API.
   const nativeScanner = await page.evaluate(() => "BarcodeDetector" in window);
+  expect(
+    nativeScanner,
+    "this runner has grown a native BarcodeDetector — the assertions below are still right, but the " +
+      "'no native API' half of this test is no longer being exercised and needs another way to be"
+  ).toBe(false);
 
-  if (nativeScanner) {
-    // Not the runner we expect, but asserting the opposite would make this spec a lie the day
-    // Playwright's Chromium ships the API.
-    await expect(page.getByRole("button", { name: /scan a code/i })).toBeVisible();
-  } else {
-    await expect(page.getByText(/cannot read a QR code from the camera/i)).toBeVisible();
-    await expect(page.getByRole("button", { name: /scan a code/i })).toHaveCount(0);
-  }
+  await expect(page.getByTestId("workshop-code-scan")).toBeVisible();
+  await expect(page.getByTestId("workshop-code-upload")).toBeVisible();
+  // The sentence the old build showed instead of the buttons. Its presence would mean the capability
+  // gate is back, which is the exact defect that left field laptops with no way in but the keyboard.
+  await expect(page.getByText(/cannot read a QR code from the camera/i)).toHaveCount(0);
 
-  // The fallback is present either way — it is the keyboard route and the answer to a cracked lens.
+  // The keyboard route is present too, on every device — the answer to a cracked lens.
   const box = page.getByLabel(/type the code printed under the QR/i);
   await expect(box).toBeVisible();
 
@@ -173,6 +199,178 @@ test("a browser without the scanning API says so, and the typed code does the wh
   const outcome = page.getByTestId("workshop-code-outcome");
   await expect(outcome).toContainText("Found:");
   await expect(outcome).toContainText("Sambalpuri table runner");
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The upload route, end to end, with nothing stubbed
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Hand a plane to the real file input as a real PNG file, the way choosing one from disk does. */
+async function upload(page: Page, plane: GreyPlane, name: string): Promise<void> {
+  await page.getByTestId("workshop-code-file").setInputFiles({
+    name,
+    mimeType: "image/png",
+    buffer: greyPng(plane)
+  });
+}
+
+test("a photograph of a card decodes from the upload button and names the prototype", async ({ page }) => {
+  await openCodes(page);
+  const code = (await page.getByTestId("workshop-code-qr").first().getAttribute("data-code")) as string;
+
+  // The code taken off the sheet this page just rendered, turned back into a symbol and PHOTOGRAPHED
+  // — skewed, lit from one side, blurred by a lens. This is the case the upload exists for: the card
+  // was photographed in the morning and the artisan has gone home, or it arrived over WhatsApp.
+  const symbol = encodeQr(code, "Q");
+  const plane = photograph(
+    symbol.matrix,
+    900,
+    680,
+    [
+      { x: 176, y: 104 },
+      { x: 712, y: 158 },
+      { x: 676, y: 604 },
+      { x: 214, y: 540 }
+    ],
+    { gradient: true }
+  );
+
+  await upload(page, plane, "card-on-a-table.png");
+
+  const outcome = page.getByTestId("workshop-code-outcome");
+  // The exact record, not merely "something was read". A decoder that returned a near-miss string
+  // would be refused by the grammar and never reach here, which is the property being asserted.
+  await expect(outcome).toContainText("Found:", { timeout: 20_000 });
+  await expect(outcome).toContainText("Sambalpuri table runner");
+});
+
+test("a code occupying a corner of a large photograph is found by looking closer at it", async ({ page }) => {
+  // THE RESOLUTION LADDER IN `lib/qrImageDecode.ts`, exercised through the UI. A designer photographs
+  // a card lying on a table from standing height and the code is a small part of the frame; the whole
+  // picture has to be bounded before it is scanned, and the bounded copy throws away the very detail
+  // the symbol is made of. The fix is to locate the symbol in the bounded copy and then re-cut THAT
+  // rectangle out of the full-resolution original. Delete that second rung and this test goes red
+  // while the one above stays green.
+  await openCodes(page);
+  const code = (await page.getByTestId("workshop-code-qr").first().getAttribute("data-code")) as string;
+
+  const symbol = encodeQr(code, "Q");
+  // 2400x1700 with the symbol 230px across — under 1.5% of the frame's area, and well past the point
+  // where a single bounded pass can read it.
+  const plane = photograph(symbol.matrix, 2400, 1700, [
+    { x: 1780, y: 1170 },
+    { x: 2010, y: 1186 },
+    { x: 1996, y: 1414 },
+    { x: 1768, y: 1398 }
+  ]);
+
+  await upload(page, plane, "workbench-from-standing-height.png");
+
+  const outcome = page.getByTestId("workshop-code-outcome");
+  await expect(outcome).toContainText("Found:", { timeout: 30_000 });
+  await expect(outcome).toContainText("Sambalpuri table runner");
+});
+
+test("a picture with no code in it is refused with advice, and the control still works afterwards", async ({ page }) => {
+  // THE SILENT NO-OP IS THE WORST OUTCOME THIS CONTROL CAN PRODUCE. A designer who uploads the wrong
+  // photograph and sees nothing happen presses the button again with the same file, and then decides
+  // the feature is broken. So the refusal must appear, must say what to do differently, and must not
+  // leave the control wedged — the next attempt has to work.
+  await openCodes(page);
+
+  // Structure, not flat grey: diagonal banding and a soft blob, so this is a real negative rather
+  // than a picture with nothing in it for the detector to consider.
+  const width = 900;
+  const height = 640;
+  const data = new Uint8ClampedArray(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      data[y * width + x] = 120 + 90 * Math.sin((x + y) / 9) + 40 * Math.exp(-(((x - 560) ** 2 + (y - 210) ** 2) / 3600));
+    }
+  }
+  await upload(page, { data, width, height }, "a-photograph-of-a-loom.png");
+
+  const problem = page.getByTestId("workshop-code-problem");
+  await expect(problem).toBeVisible({ timeout: 20_000 });
+  // A sentence that names the next action. "Could not read the image" would send the designer back
+  // to photograph the same thing the same way.
+  await expect(problem).toContainText(/frame|focus|crop/i);
+  expect((await problem.innerText()).length).toBeGreaterThan(40);
+  // And it must not have claimed the code was damaged or foreign — this picture holds no code at all,
+  // and those two refusals send somebody somewhere else entirely.
+  await expect(problem).not.toContainText(/damaged|not one of ours/i);
+
+  // NOT WEDGED. The same control, immediately afterwards, still resolves a real code.
+  const code = (await page.getByTestId("workshop-code-qr").first().getAttribute("data-code")) as string;
+  await page.getByLabel(/type the code printed under the QR/i).fill(code);
+  await page.getByTestId("workshop-code-lookup").click();
+  await expect(page.getByTestId("workshop-code-outcome")).toContainText("Sambalpuri table runner");
+});
+
+test("the repository-wide panel on /search offers both ways in too, and decodes an uploaded card", async ({ page }) => {
+  // THE SECOND SURFACE, ASSERTED AT RUNTIME AND NOT ONLY IN THE IMPORT GRAPH. `qr-surfaces-unit.spec.ts`
+  // proves that both reading surfaces mount the same control and that the control offers both inputs;
+  // that is a claim about the source. This is the claim about the product — that a designer who opens
+  // `/search` on a laptop with no camera can actually get a code in — and the two are worth having
+  // separately, because a page can mount a control and still hide it behind a layout that never
+  // renders, which no amount of reading the imports would catch.
+  //
+  // It uses an ARTISAN card rather than a prototype tag: `/search` resolves against the repository,
+  // and a prototype belongs to one workshop's local draft, so the panel correctly refuses one. That
+  // refusal is itself the assertion — it proves the upload reached the payload grammar and the
+  // grammar identified the record TYPE, which is everything this surface is responsible for. A code
+  // for a record this spec did not create cannot be asserted to resolve without inventing one.
+  await signIn(page);
+  await page.goto("/search");
+
+  await expect(page.getByTestId("workshop-code-scan")).toBeVisible();
+  await expect(page.getByTestId("workshop-code-upload")).toBeVisible();
+
+  const tag = encodeWorkshopCode({ recordType: "prototype", id: "cmzz0000notarealrow00000z" });
+  expect(tag.ok).toBe(true);
+  if (!tag.ok) return;
+  const symbol = encodeQr(tag.code, "Q");
+  const plane = photograph(
+    symbol.matrix,
+    820,
+    600,
+    [
+      { x: 168, y: 92 },
+      { x: 648, y: 132 },
+      { x: 614, y: 536 },
+      { x: 202, y: 486 }
+    ],
+    { gradient: true }
+  );
+  await upload(page, plane, "a-tag-photographed-in-a-courtyard.png");
+
+  // Decoded, parsed, and sent to the one screen that can answer it. Reaching this sentence at all
+  // means every link from the PNG to the grammar worked.
+  await expect(page.getByTestId("workshop-code-outcome")).toContainText(/prototype tag/i, { timeout: 20_000 });
+  await expect(page.getByTestId("workshop-code-outcome")).toContainText(/open that workshop/i);
+});
+
+test("a QR that is not ours is refused as not ours, not as a damaged tag", async ({ page }) => {
+  // A payment code, a shop barcode, a shipping label: the second commonest wrong picture after one
+  // with no code in it, and the one where the two possible refusals lead somewhere completely
+  // different. "This is not a workshop card" means stop trying; "the tag is damaged" means go and
+  // photograph it again, which for somebody holding a payment QR is an instruction to waste an
+  // afternoon. Reaching this refusal at all requires the decoder to READ a foreign symbol, in byte
+  // mode, which our own encoder cannot even produce.
+  await openCodes(page);
+
+  const symbol = encodeQr("HTTPS://EXAMPLE.ORG/PAY/12345", "Q");
+  const plane = photograph(symbol.matrix, 760, 560, [
+    { x: 150, y: 96 },
+    { x: 610, y: 96 },
+    { x: 610, y: 500 },
+    { x: 150, y: 500 }
+  ]);
+  await upload(page, plane, "somebody-elses-code.png");
+
+  const outcome = page.getByTestId("workshop-code-outcome");
+  await expect(outcome).toContainText(/not a workshop card or tag/i, { timeout: 20_000 });
+  await expect(outcome).not.toContainText(/damaged/i);
 });
 
 test("one wrong character is refused rather than resolved, and an unknown code gives nothing away", async ({ page }) => {
@@ -209,13 +407,24 @@ test("one wrong character is refused rather than resolved, and an unknown code g
 /**
  * The camera LIFECYCLE — and precisely what this does and does not claim.
  *
- * It does NOT test decoding. `BarcodeDetector` is stubbed here so that the Scan button appears at
- * all, and a stub can only ever prove the stub works. What is under test is the code this repo
- * actually owns and gets wrong: opening the device, attaching it to the element, and — the
- * requirement that costs a field handset its battery when it is missed — releasing every track on
- * the way out. The stream is captured at `getUserMedia` before the app ever sees it, so the
- * assertion is against the real MediaStreamTracks Chromium handed over, not against a spy on the
- * component. Chromium supplies them from `--use-fake-device-for-media-stream`.
+ * It does NOT test decoding: `--use-fake-device-for-media-stream` supplies a synthetic video track
+ * with no QR code anywhere in it. What is under test is the code this repository actually owns and
+ * gets wrong — opening the device, attaching it to the element, and, the requirement that costs a
+ * field handset its battery when it is missed, releasing every track on the way out. The stream is
+ * captured at `getUserMedia` before the app ever sees it, so the assertion is against the real
+ * `MediaStreamTrack`s Chromium handed over rather than against a spy on the component.
+ *
+ * THE `BarcodeDetector` STUB THIS TEST USED TO INSTALL HAS BEEN REMOVED, and its absence is now part
+ * of what is being asserted. It existed for one reason: the Scan button did not render at all unless
+ * the API was present, so the lifecycle could not be reached without faking it. The button is no
+ * longer gated on anything (see `WorkshopCodeScanner`'s header), so the stub is not merely
+ * unnecessary — keeping it would hide a regression, because the gate could come back and this test
+ * would go on passing by installing the very API whose absence is the field condition.
+ *
+ * What runs against the synthetic frames now is the app's OWN decoder, which finds no symbol in them
+ * and quietly asks for the next frame. That is the correct behaviour for an empty frame and it is
+ * incidentally proved here: an implementation that reported a problem per empty frame would bury the
+ * preview under a wall of amber before this test finished.
  */
 test.describe("camera lifecycle", () => {
   test("the camera is opened, attached, and every track is stopped on the way out", async ({ page, context }) => {
@@ -230,21 +439,10 @@ test.describe("camera lifecycle", () => {
         opened.push(stream);
         return stream;
       };
-      // Present but never asked to decode anything: its only job is to make the app conclude that
-      // this browser can scan, which is the branch whose lifecycle we are here to check.
-      class StubDetector {
-        static async getSupportedFormats() {
-          return ["qr_code"];
-        }
-        async detect() {
-          return [];
-        }
-      }
-      (window as unknown as { BarcodeDetector: unknown }).BarcodeDetector = StubDetector;
     });
 
     await openCodes(page);
-    await page.getByRole("button", { name: /scan a code/i }).click();
+    await page.getByTestId("workshop-code-scan").click();
 
     await expect(page.getByTestId("workshop-code-preview")).toBeVisible();
     await expect(page.getByRole("button", { name: /stop the camera/i })).toBeVisible();
@@ -260,6 +458,13 @@ test.describe("camera lifecycle", () => {
         )
       )
     ).toContain("live");
+
+    // Several frames' worth of the app's own decoder finding nothing in a synthetic video track, and
+    // NOT ONE complaint about it. An empty frame is the normal state of a camera pointed at a room,
+    // and a control that reported each one would bury its own preview in amber within a second.
+    await page.waitForTimeout(1200);
+    await expect(page.getByTestId("workshop-code-problem")).toHaveCount(0);
+    await expect(page.getByTestId("workshop-code-preview")).toBeVisible();
 
     // Leaving the page is the path that matters: a designer scans, is interrupted, and navigates
     // away. React unmounts the component and nothing else will ever come back for the camera.

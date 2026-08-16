@@ -181,9 +181,31 @@ class WorkshopData:
     district_points: dict[str, tuple[float, float]] = field(default_factory=dict)
     generated_at: str = ""
     generated_by: str = ""
+    #: ``entryId -> {fieldKey: stamp}`` — who last set each field, for every row that reached this
+    #: builder. Keyed by entry id and NOT nested inside ``singletons``/``collections`` because those
+    #: dicts are handed to the renderers as the field values themselves; a stamp map inside one
+    #: would be walked as a field and printed as a cell.
+    #:
+    #: THE REPORT DOES NOT PRINT IT TODAY AND THAT IS THE POINT OF CARRYING IT ANYWAY. The .docx is
+    #: a dated observation and prints what was captured; attribution is an editorial decision for a
+    #: template, not a property of the data. But the builder is also the on-device report, and a
+    #: field the server resolves and the phone does not is exactly how the two documents drift —
+    #: so it is loaded on both sides now, while the shape is one line, rather than retrofitted onto
+    #: two builders later. ``services/entry_provenance`` says what a stamp means.
+    field_provenance: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def singleton(self, stage_key: str) -> dict[str, Any]:
         return self.singletons.get(stage_key) or {}
+
+    def provenance(self, entry_id: Any) -> dict[str, Any]:
+        """Who last set each field of one row. ``{}`` for a row nobody recorded authorship for.
+
+        Takes the ``_entryId`` the renderers already carry, so a section that wants to attribute a
+        value asks with the id it is holding rather than tracking a parallel index.
+        """
+        if not entry_id or not isinstance(entry_id, str):
+            return {}
+        return self.field_provenance.get(entry_id) or {}
 
     def rows(self, stage_key: str, entity_key: str) -> list[dict[str, Any]]:
         return (self.collections.get(stage_key) or {}).get(entity_key) or []

@@ -18,13 +18,22 @@
  * `aadhaarValidationError` the box below it uses, and a number reaches the field only from a click
  * on a button that spells it out.
  *
- * ── THE PHOTOGRAPH IS NEVER STORED, ANYWHERE ──────────────────────────────────────────────────
+ * ── THE PHOTOGRAPH IS NOT STORED UNLESS SOMEBODY SAYS SO, AND NOBODY CAN SAY SO HERE YET ──────
  *
  * Not uploaded as media, not staged, not put in the outbox, not kept in state after the read. The
  * `File` comes out of a file input, goes into one request body, and the input is cleared. The server
- * keeps nothing either — `scan_identity_card` has no storage path in it at all and says so. A
- * photograph of a national identity document is retained only when a researcher deliberately uploads
- * one through the ordinary media flow, which is a visible act with a record.
+ * keeps nothing either — `scan_identity_card` has no storage path in it at all, and now says so in
+ * the REPLY as well as in its docstring: `photograph.stored` is `false` on every answer it sends,
+ * which is what the sentence under the buttons here is reading rather than claiming.
+ *
+ * **THAT IS THE DISCARD HALF OF A CHOICE, AND IT IS THE SAFE HALF, AND ON THIS FORM IT IS THE ONLY
+ * HALF.** Worth stating plainly rather than leaving as an absence, because the sibling control on
+ * the stage form (`IdentityCardReader`) offers both: the photographs it reads are already `MediaFile`
+ * rows, so it can and does ask "keep this or delete it" and a delete there is a real one. Here there
+ * is nothing durable to decide about — and nothing to attach a kept photograph TO, since this form
+ * is most often creating the artisan it would be attached to. `onKeepPhotograph` is the seam for a
+ * caller that HAS somewhere to put it; until one passes it, this control says in as many words that
+ * the picture is not kept, which is true and is the outcome a researcher would choose anyway.
  *
  * This is also why the read is NOT queued when the connection is down. A queued identity photograph
  * is one nobody remembers is on the laptop, and this control refuses to create one: with no
@@ -87,6 +96,7 @@ import { useAuth } from "@/components/AuthProvider";
 import {
   DW_OCR_IDENTITY_PATH,
   identityChoices,
+  photographWasNotStored,
   readIdentityCard,
   serverOffersRoute,
   type DwIdentityChoice
@@ -106,6 +116,7 @@ export function IdentityCardCapture({
   currentValue,
   aadhaarProblem,
   onUse,
+  onKeepPhotograph,
   disabled
 }: {
   /** Which list of candidates this field can hold. Never "ANY" here — the artisan form has one box per card. */
@@ -123,6 +134,20 @@ export function IdentityCardCapture({
   /** What the box holds now, so "confirming replaces it" can be said before it happens. */
   currentValue: string;
   onUse: (value: string) => void;
+  /**
+   * Somewhere to put the photograph, for a caller that has one. Absent on the artisan form today.
+   *
+   * WHEN THIS IS SUPPLIED the control offers the choice BEFORE the camera opens — which is the only
+   * place on this surface it can honestly be offered, because after the read the `File` is already
+   * gone (see `read`, which clears the input before its first await and holds nothing afterwards).
+   * A choice offered after the fact would force this component to keep an identity photograph in
+   * state waiting for an answer, which is the one thing the section above promises it does not do.
+   *
+   * WHEN IT IS ABSENT nothing is hidden: the sentence under the buttons states that the photograph
+   * is read and not kept. An unavailable choice said out loud is a different thing from a choice
+   * nobody was offered, and only one of them leaves a researcher wondering.
+   */
+  onKeepPhotograph?: (file: File) => Promise<void> | void;
   disabled?: boolean;
 }) {
   const baseId = useId();
@@ -142,6 +167,17 @@ export function IdentityCardCapture({
   const [readHere, setReadHere] = useState(true);
   /** Named on the candidate panel, so "where was this read" is never a thing to remember. */
   const [readLocally, setReadLocally] = useState(false);
+  /**
+   * Whether the researcher has asked for the photograph to be KEPT after it is read.
+   *
+   * FALSE, always, on every mount — including a re-mount after a keep, so the answer never carries
+   * from one artisan's card to the next. The default is the answer somebody gets by not deciding,
+   * and for a photograph of a national identity document that has to be "it is not kept". Only
+   * offered at all when `onKeepPhotograph` gives it somewhere to go; see the prop.
+   */
+  const [keepPhotograph, setKeepPhotograph] = useState(false);
+  /** Said in the past tense once a kept photograph has actually landed, or failed to. */
+  const [kept, setKept] = useState<string | null>(null);
   // Mirrored from `_require_designer`, never re-derived: the SET, not the rank ladder this form's
   // own guard uses. See the header — a professor passes `canCreateRecords` and fails this one.
   // `user` is null while `/me` is in flight, and `canRunDesignWorkshops(null)` is false, so the
@@ -202,6 +238,9 @@ export function IdentityCardCapture({
   // box never offers it, and never offers the choice either.
   const localUsable = browserReads === true && kind === "AADHAAR";
   const useLocal = localUsable && readHere;
+  /** Whether there is a keep/discard choice to make here at all, or only an outcome to state. */
+  const canKeep = typeof onKeepPhotograph === "function";
+  const willKeep = canKeep && keepPhotograph;
 
   // After every hook, never before one: this component's state and the two file inputs must keep
   // their slots for the life of the mount.
@@ -250,6 +289,28 @@ export function IdentityCardCapture({
     setReading(true);
     setProblem(null);
     setChoices([]);
+    setKept(null);
+    // THE PHOTOGRAPH IS KEPT BEFORE IT IS READ, not after, and the ordering is the point. The
+    // decision was taken before the camera opened; honouring it first means a read that fails —
+    // no connection, an unreadable card, a provider outage — cannot silently turn "keep this" into
+    // "it was not kept", which is a promise broken in the direction the researcher cannot see. The
+    // reverse ordering is safe for DISCARD and unsafe for STORE, and only one of them is optional.
+    if (willKeep && onKeepPhotograph) {
+      try {
+        await onKeepPhotograph(file);
+        setKept("That photograph has been kept on the record, as you asked.");
+      } catch (error) {
+        // NOT FATAL TO THE READ. The card is still in the artisan's hand and the number is still
+        // worth having; failing the whole thing here would cost a re-photograph to fix a storage
+        // problem. But it is said out loud, because "keep it" not happening is exactly the kind of
+        // silence this control exists to end.
+        setKept(
+          error instanceof Error
+            ? `That photograph could NOT be kept: ${error.message} The number can still be read below.`
+            : "That photograph could NOT be kept. The number can still be read below."
+        );
+      }
+    }
     try {
       if (useLocal) {
         const outcome = await readCardTextInBrowser(file);
@@ -274,7 +335,19 @@ export function IdentityCardCapture({
         );
         return;
       }
-      const result = await readIdentityCard(file);
+      // The declared intention travels WITH the bytes. It instructs nothing — this route has no
+      // storage path and answers `stored: false` either way — but it means the one request in
+      // which an unmasked identity document crosses the wire carries the researcher's answer to
+      // "are you keeping this", rather than that answer living only in this tab.
+      const result = await readIdentityCard(file, willKeep ? "STORE" : "DISCARD");
+      // THE SERVER'S OWN WORD FOR IT, not this component's. The paragraph above says the photograph
+      // is not stored, and until the reply carried `photograph.stored` that sentence was a claim on
+      // the strength of a comment in a Python file. Said only when the server actually said it —
+      // `photographWasNotStored` is false for a deployment too old to have the field, and a promise
+      // about regulated data must not be made out of a missing key.
+      if (!willKeep && photographWasNotStored(result)) {
+        setKept("The server confirmed it kept nothing: the photograph was read and discarded.");
+      }
       offer(identityChoices(result, kind, aadhaarProblem), false, result.rejectedAadhaarCount ?? 0);
     } catch (error) {
       setProblem(
@@ -308,10 +381,47 @@ export function IdentityCardCapture({
       <p className="text-xs leading-5 text-ink-500">
         Photograph the card, or choose a photograph of it, and the number is read off it. You check it against the card
         and confirm before anything is written into {targetLabel}.{" "}
-        {useLocal
-          ? "The photograph is read on this computer and is not sent anywhere or stored."
-          : "The photograph is not stored — here or on the server."}
+        {/*
+          WHAT HAPPENS TO THE PICTURE, SAID EVERY TIME AND IN THE PRESENT TENSE. The number itself is
+          masked everywhere this repository shows it; a photograph of the card is that same number in
+          a form no masking function can reach, so what becomes of it is not a detail to leave to a
+          file header. Three outcomes, three sentences, and the one on screen is the one that will
+          happen — a researcher never has to work out which branch they are in.
+        */}
+        {willKeep
+          ? "You have asked for the photograph to be kept on this record. It is a photograph of an identity document, so it is stored unmasked."
+          : useLocal
+            ? "The photograph is read on this computer and is not sent anywhere or stored."
+            : "The photograph is not stored — here or on the server."}
       </p>
+
+      {/*
+        THE CHOICE IS OFFERED ONLY WHERE THERE IS SOMEWHERE TO PUT THE PHOTOGRAPH, and that is the
+        caller's answer rather than this component's — see `onKeepPhotograph`. Made BEFORE the camera
+        opens, like the reader checkbox below it and for a stronger version of the same reason: after
+        the read this control is holding no file at all, so a choice offered afterwards would force
+        it to keep an identity photograph in memory waiting for an answer.
+
+        A CHECKBOX THAT STARTS UNTICKED, not a pair of buttons: the unticked state is a real default
+        that a researcher gets by doing nothing, and the thing they get by doing nothing has to be
+        the photograph not being kept.
+      */}
+      {canKeep ? (
+        <label className="flex items-start gap-2 text-xs leading-5 text-ink-700">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-purple-700"
+            checked={keepPhotograph}
+            disabled={disabled || reading}
+            onChange={(event) => setKeepPhotograph(event.currentTarget.checked)}
+            data-testid="identity-keep-photograph"
+          />
+          <span>
+            Keep the photograph on this record. Left unticked, the card is read and the picture is not stored anywhere —
+            which is what happens if you do not decide.
+          </span>
+        </label>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <button type="button" className="field-button-secondary" disabled={disabled || reading} onClick={() => open(cameraRef)}>
@@ -440,6 +550,15 @@ export function IdentityCardCapture({
             None of these — discard
           </button>
         </div>
+      ) : null}
+
+      {/* Reported separately from `problem`: what happened to the PICTURE is a different subject
+          from whether the number could be read, and a researcher who ticked "keep it" has to be
+          told whether that happened even when the read itself went perfectly. */}
+      {kept ? (
+        <p role="status" className="text-xs leading-5 text-ink-500">
+          {kept}
+        </p>
       ) : null}
 
       {problem ? <p className="text-xs font-medium leading-5 text-error-600">{problem}</p> : null}

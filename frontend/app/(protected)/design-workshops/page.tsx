@@ -22,16 +22,36 @@
  * offline this morning is not shown back as the stale one until it syncs. Every row that has
  * something unsent says so, on the row, in words.
  *
- * CREATING ONE OFFLINE IS ALLOWED. `createLocalDraft` mints a `dwlocal-…` id and the app navigates
- * straight into it; `syncDesignWorkshopDrafts` turns it into a real record on the next connection
- * and the local id keeps resolving afterwards. Refusing to create offline would make the first act
- * of a fortnight in the field the one act that needs signal.
+ * CREATING ONE OFFLINE IS ALLOWED — TO THE ACCOUNTS THAT MAY CREATE ONE AT ALL. `createLocalDraft`
+ * mints a `dwlocal-…` id and the app navigates straight into it; `syncDesignWorkshopDrafts` turns it
+ * into a real record on the next connection and the local id keeps resolving afterwards. Refusing to
+ * create offline would make the first act of a fortnight in the field the one act that needs signal.
+ *
+ * WHO MAY START ONE CHANGED, AND THIS PAGE IS WHERE THAT IS FELT. Only admins and the master admin
+ * (`canCreateDesignWorkshops`) — a workshop is the container a fortnight of records lives in and the
+ * unit the ministry indexes and funds, so opening one belongs to whoever holds the sanction order.
+ * A DESIGNER STILL DOES EVERYTHING ELSE: they open the workshops they have access to, fill all 22
+ * stages, create records inside them and generate the report, which is why the route guard is still
+ * the wider `canRunDesignWorkshops` and why this page is emphatically not hidden from them.
+ *
+ * THREE THINGS FOLLOW, ALL OF THEM ON THIS PAGE:
+ *   1. The create control is gone for a designer, and a SENTENCE takes its place — who can create
+ *      one and what to do instead — rather than a greyed button, which says "no" and answers
+ *      nothing. It appears when they ask for it (`?new=1`, the dashboard's "New workshop") and in
+ *      the empty state, where there is otherwise nothing on screen to explain itself.
+ *   2. The refusal is enforced in `lib/designWorkshopStore.createLocalDraft` too, not only by the
+ *      server, because the offline path is the one that matters: a rule a designer only meets at
+ *      sync time is a rule they meet after two days of fieldwork have gone into a record that can
+ *      never be accepted.
+ *   3. Drafts that were ALREADY on the device when this shipped are adopted, not stranded and never
+ *      deleted — "Move into a workshop" on the row, `AdoptLocalDraftDialog`, and
+ *      `adoptDraftIntoWorkshop` in the store.
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CloudOff, DraftingCompass, Plus } from "lucide-react";
+import { CloudOff, DraftingCompass, Info, Plus } from "lucide-react";
 
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -61,14 +81,21 @@ import {
   draftSummary,
   getDraftsSnapshot,
   getServerDraftsSnapshot,
+  localDraftNeedsAWorkshop,
   refreshDrafts,
   subscribeDrafts,
   type DwDraft,
   type DwDraftHeader
 } from "@/lib/designWorkshopStore";
+import { AdoptLocalDraftDialog } from "@/components/designworkshop/AdoptLocalDraftDialog";
 import { isTransient, isUnreachable } from "@/lib/offline";
 import { formatDate } from "@/lib/format";
-import { canRunDesignWorkshops, isAdmin } from "@/lib/permissions";
+import {
+  DESIGN_WORKSHOP_CREATE_REFUSAL,
+  canCreateDesignWorkshops,
+  canRunDesignWorkshops,
+  isAdmin
+} from "@/lib/permissions";
 import type { PageResult, Workshop } from "@/lib/types";
 import { listResource } from "@/lib/api";
 import { sortWorkshopsByOccurrence } from "@/components/forms/WorkshopSelect";
@@ -106,17 +133,40 @@ function DesignWorkshopsPageBody() {
   const { user } = useAuth();
   const { adminMode } = useAdminView();
   /**
-   * `can_run_design_workshops`, and NOT `canCreateRecords` as this line used to read.
+   * `can_create_design_workshops` — ADMIN and MASTER_ADMIN, and NOT `canRunDesignWorkshops` as this
+   * line used to read.
    *
-   * The looser predicate was dead in practice — `ROUTE_GUARDS` already refuses this whole path to
-   * anyone outside the set, so nobody who failed the real rule ever reached this render — and a
-   * wrong-but-shadowed predicate is exactly how the rule comes back: it survives a correction made
-   * in the guard, reads as authoritative to whoever finds it first, and nothing fails when it
-   * drifts. Android deleted its own second copy for that reason (MainActivity.kt, above
-   * `canManageDesignerRoster`); this is the web's.
+   * A DESIGNER READS THIS PAGE AND MAY NOT START A WORKSHOP FROM IT. That is the rule: designers
+   * create records under existing workshops, and bringing a new workshop into existence is an
+   * administrative act belonging to whoever holds the sanction order. Everything else on this page
+   * — opening a workshop, its 22 stages, its records, its report — is unchanged for them, which is
+   * why `allowWork` below exists and why the route guard is still the wider predicate.
+   *
+   * (The line before this one was `canCreateRecords`, replaced for a different reason worth keeping:
+   * it was dead in practice, and a wrong-but-shadowed predicate is how a rule comes back — it
+   * survives a correction made elsewhere, reads as authoritative to whoever finds it first, and
+   * nothing fails when it drifts.)
    */
-  const allowCreate = canRunDesignWorkshops(user);
+  const allowCreate = canCreateDesignWorkshops(user);
+  /**
+   * May this account do the WORK of a design workshop — everything except starting one.
+   *
+   * Read only to decide what to SAY to somebody who cannot create. A designer needs the sentence
+   * that names the next move; a role that cannot be here at all never reaches this render, because
+   * `ROUTE_GUARDS` refuses the whole path to anyone outside `canRunDesignWorkshops`.
+   */
+  const allowWork = canRunDesignWorkshops(user);
   const allowDelete = isAdmin(user);
+  /**
+   * "You tried to start a workshop and this account cannot" — raised by the `?new=1` intent, which
+   * is the dashboard tile's "New workshop" button.
+   *
+   * A STATE RATHER THAN A DERIVED VALUE, because it records something that HAPPENED. The intent is
+   * spent from the URL the moment it is read (see the effect below), so a value derived from
+   * `searchParams` would vanish on the same tick and the designer would land on an ordinary list
+   * having tapped a button that did nothing at all — the single most confusing possible answer.
+   */
+  const [createRefused, setCreateRefused] = useState(false);
 
   /**
    * Every draft this browser holds, live.
@@ -225,6 +275,14 @@ function DesignWorkshopsPageBody() {
    * whose `allowed` is false: a parameter aimed at a form this viewer cannot see must not survive a
    * refresh or a forwarded link. `scroll: false` because there is nothing to scroll to — the form
    * renders directly under the header the reader is already looking at.
+   *
+   * AND AN ACCOUNT THAT MAY NOT CREATE IS NOW ANSWERED RATHER THAN IGNORED, which is the half this
+   * effect was missing. The dashboard tile still says "New workshop" to every designer — it mirrors
+   * `canRunDesignWorkshops`, and that is the right predicate for a tile whose other destinations
+   * they can all use — so a designer's tap lands HERE. Swallowing it would mean the one control on
+   * the dashboard that promises to start a workshop silently produces an ordinary list, which reads
+   * as a broken button rather than as a rule. `setCreateRefused` puts the sentence on screen
+   * instead: who can create one, and what to do instead.
    */
   const wantsNew = searchParams.get("new") === "1";
   // Depended on as a STRING: the URLSearchParams object is a fresh identity on every navigation, and
@@ -233,6 +291,7 @@ function DesignWorkshopsPageBody() {
   useEffect(() => {
     if (!wantsNew) return;
     if (allowCreate) setFormOpen(true);
+    else setCreateRefused(true);
     const next = new URLSearchParams(searchString);
     next.delete("new");
     const query = next.toString();
@@ -449,6 +508,35 @@ function DesignWorkshopsPageBody() {
     [drafts]
   );
 
+  /**
+   * The workshops that exist ONLY on this device, by the id their row is drawn under.
+   *
+   * WHO THESE ARE, AND WHY THE ROW NEEDS A CONTROL. They are the drafts that were already on the
+   * laptop when starting a workshop became an admin's job: a designer's Monday in a courtyard, 22
+   * stages, photographs and recordings, with no server record and now no way to make one. The sync
+   * pass no longer tries to create them (it would be refused) and instead marks them with a refusal
+   * naming the next move; "Move into a workshop" is that next move, and it has to be ON THE ROW
+   * because the row is where the designer is looking for their work.
+   *
+   * `draftSummary` draws an unsynced draft under its `localId`, so that is the key to match on.
+   */
+  const orphanDrafts = useMemo(() => {
+    const byRowId = new Map<string, DwDraft>();
+    for (const draft of drafts) if (localDraftNeedsAWorkshop(draft)) byRowId.set(draft.localId, draft);
+    return byRowId;
+  }, [drafts]);
+
+  /**
+   * The draft currently being moved, or null.
+   *
+   * OFFERED ONLY TO AN ACCOUNT THAT CANNOT CREATE, which is a deliberate narrowing rather than an
+   * oversight. An admin holding a device-only draft does not need this: their next sync creates the
+   * workshop and the draft resolves itself. Showing them a control that quietly re-files a fortnight
+   * of fieldwork into a DIFFERENT workshop, for no benefit, is a way to lose work by mis-tap.
+   */
+  const [moving, setMoving] = useState<DwDraft | null>(null);
+  const offerMove = !allowCreate && allowWork;
+
   return (
     <>
       <PageHeader
@@ -456,8 +544,10 @@ function DesignWorkshopsPageBody() {
         description="The 22-stage design and prototype workshop record: setup and participants, cluster background, market survey, sketches, prototypes, costing, outcomes and the generated report."
         icon={<DraftingCompass className="h-5 w-5" aria-hidden />}
         actions={
-          // Gated to NOTHING rather than to a disabled button: an ungated "New …" invites a tier to
-          // press a control that lands on a refusal from `_require_designer`.
+          // Gated to NOTHING rather than to a disabled button: an ungated "New …" invites an
+          // account to press a control that lands on a 403, and a GREYED one is worse still — it
+          // says "no" and names neither who can nor what to do instead. A designer who arrives here
+          // wanting to start a workshop is told, in words, by the panel below.
           allowCreate ? (
             <button type="button" className="field-button" onClick={() => setFormOpen((open) => !open)}>
               <Plus className="h-4 w-4" aria-hidden />
@@ -469,6 +559,44 @@ function DesignWorkshopsPageBody() {
 
       {error ? (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      ) : null}
+
+      {/*
+        WHO CAN START A WORKSHOP, AND WHAT TO DO INSTEAD — shown to somebody who can do all the work
+        of a workshop and cannot open one, which since the create rule changed is every designer.
+
+        TWO CONDITIONS, AND BOTH MATTER. `createRefused` is set by the `?new=1` intent, so a designer
+        who actually TAPPED "New workshop" on the dashboard gets an answer to the thing they just
+        did. `allowWork` alone would put a standing notice on the page for everybody, every visit,
+        for a control that is no longer there — a permanent apology, which is how a product teaches
+        people to stop reading its panels. So the notice appears when it is asked for.
+
+        NOT A TOAST AND NOT AN ALERT DIALOG: it is the answer to a navigation, so it belongs on the
+        page the navigation landed on, where it can be read twice and where the list of workshops the
+        designer CAN open is directly beneath it. Dismissible, because it is spent once read.
+
+        `role="status"` rather than `role="alert"` — nothing has gone wrong and nothing was lost.
+      */}
+      {createRefused && allowWork ? (
+        <div
+          role="status"
+          className="mb-4 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-3 text-sm text-amber-900"
+        >
+          <div className="flex items-start gap-3">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <div className="grow">
+              <p className="font-medium">Starting a new design workshop is an admin’s job</p>
+              <p className="mt-1 leading-6">{DESIGN_WORKSHOP_CREATE_REFUSAL}</p>
+            </div>
+            <button
+              type="button"
+              className="shrink-0 rounded px-2 py-1 text-xs font-medium underline-offset-2 hover:underline"
+              onClick={() => setCreateRefused(false)}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {offline ? (
@@ -637,7 +765,12 @@ function DesignWorkshopsPageBody() {
               body={
                 allowCreate
                   ? "Start one with the button above. A workshop can be created with nothing but a title and filled in over the following weeks."
-                  : "Design workshops you have access to will appear here."
+                  : allowWork
+                    ? // An empty list is the worst moment to be vague at a designer: there is nothing
+                      // on screen to explain itself, so this is the whole answer — why there is no
+                      // "New workshop" button, who to ask, and what happens once they have asked.
+                      "Design workshops you have access to will appear here. Starting a new one is done by an admin or the master admin — ask them to create it for your cluster and give you access, and it will show up here ready for all 22 stages."
+                    : "Design workshops you have access to will appear here."
               }
             />
           </div>
@@ -672,6 +805,19 @@ function DesignWorkshopsPageBody() {
                           Saved on this device only
                         </div>
                       ) : null}
+                      {offerMove && orphanDrafts.has(workshop.id) ? (
+                        // A SECOND, DIFFERENT FACT FROM THE CHIP ABOVE, and both are shown because
+                        // they are not the same situation. "Saved on this device only" is true of a
+                        // workshop that will send itself on the next connection; this one will not
+                        // send itself ever, because this account may no longer create a workshop
+                        // for it to become. Saying only the first would leave a designer waiting for
+                        // a sync that is never coming.
+                        <div className="mt-1 text-xs leading-5 text-amber-800">
+                          This workshop was started on this device and has no record in the repository yet. Starting one is
+                          now done by an admin — ask them to create it, then use “Move into a workshop” to send everything
+                          here into it. Nothing has been lost.
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-ink-700">
                       {workshop.craftName ?? "—"}
@@ -695,6 +841,15 @@ function DesignWorkshopsPageBody() {
                         <Link className={rowAction("neutral")} href={`/design-workshops/${workshop.id}/report`}>
                           Report
                         </Link>
+                        {offerMove && orphanDrafts.has(workshop.id) ? (
+                          <button
+                            type="button"
+                            className={rowAction("neutral")}
+                            onClick={() => setMoving(orphanDrafts.get(workshop.id) ?? null)}
+                          >
+                            Move into a workshop
+                          </button>
+                        ) : null}
                         {/* Deleting is stricter than editing everywhere in this app, and the
                             control additionally respects admin view so an admin browsing as an
                             ordinary user is not offered it. */}
@@ -713,6 +868,24 @@ function DesignWorkshopsPageBody() {
         )}
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
+
+      {/*
+        Mounted once for the whole table rather than per row: a dialog per row would build one
+        focus trap and one portal per workshop on the page, and only ever show one of them.
+      */}
+      <AdoptLocalDraftDialog
+        open={moving !== null}
+        onClose={() => setMoving(null)}
+        draft={moving}
+        drafts={drafts}
+        onAdopted={(remoteId) => {
+          setMoving(null);
+          // Straight into the workshop it now belongs to. The designer's next question is "did my
+          // stages arrive", and the workshop is where that is answered — the draft resolves under
+          // either id, so this URL works before the sync as well as after it.
+          router.push(`/design-workshops/${remoteId}`);
+        }}
+      />
     </>
   );
 }

@@ -31,6 +31,7 @@
 
 import { API_BASE, ApiError, apiFetch, assertApiConfigured, buildQuery, describeApiDetail, getToken } from "@/lib/api";
 import { prepareIdentityPhotograph } from "@/lib/identityCardImage";
+import { DW_PHOTO_RETENTION_DEFAULT, type DwPhotoRetention } from "@/lib/identityPhotoRetention";
 import type { MarketFindingsPayload } from "@/lib/marketAnalysis";
 import type { DwReportHistory } from "@/lib/reportDiff";
 import { isStoredRichTextEmpty, richSummary, type StoredRichDoc } from "@/lib/richText";
@@ -309,6 +310,51 @@ export type DwStageCompleteness = {
   missing: string[];
 };
 
+/**
+ * Who last set one field of one stage entry, as the server records it.
+ *
+ * `source` is the whole point and has two values:
+ *
+ * - `"reference"` — the value was COPIED onto this row from a shared canonical record when the
+ *   designer picked it. `by` is then THAT RECORD's author — a researcher who may never have opened
+ *   this workshop — and `refModel`/`refId`/`refKey` name the row and column it came from. This is
+ *   "the provenance stays with the original author", rendered.
+ * - `"designer"` — somebody working on this workshop typed or changed it, and `by` is them.
+ *
+ * Widened to `string` rather than a union of those two on purpose: a server one release ahead may
+ * name a third source, and narrowing it here would make a build error out of a payload the API is
+ * entitled to send. Compare against the constants and fall through to a neutral rendering.
+ *
+ * `byName` is resolved on read, so a researcher who changes their display name is shown under their
+ * current one. It is null when the account has since been deleted — the stamp keeps its `by` id,
+ * because "attributed to somebody no longer on record" is more useful than dropping the attribution
+ * altogether, and far more honest than printing a cuid.
+ */
+export type DwFieldStamp = {
+  by?: string | null;
+  byName?: string | null;
+  at?: string;
+  source?: string;
+  refModel?: string | null;
+  refId?: string | null;
+  refKey?: string | null;
+};
+
+/**
+ * One stage's provenance, mirroring the three data buckets of `DwStageData`.
+ *
+ * `collections` is keyed by entity and then BY ENTRY ID, never by array position. The readers of
+ * this data sort their rows differently — `_stages_payload` sorts by `_ordinal` after grouping, the
+ * report builder sorts before, the handset sorts its own draft — so a positional array would be
+ * misaligned on whichever of them disagreed, and the failure it produces is one participant's edits
+ * shown against another participant's name in the table that proves who attended.
+ */
+export type DwStageProvenance = {
+  singleton?: Record<string, DwFieldStamp>;
+  collections?: Record<string, Record<string, Record<string, DwFieldStamp>>>;
+  custom?: Record<string, DwFieldStamp>;
+};
+
 export type DwStageData = {
   singleton: DwEntryData;
   collections: Record<string, DwRow[]>;
@@ -326,6 +372,29 @@ export type DwStageData = {
    * never "the server forgot".
    */
   custom?: DwEntryData;
+  /**
+   * WHO LAST SET EACH FIELD of the three buckets above — `_stages_payload`'s fourth sibling key.
+   *
+   * A stage entry holds two kinds of value that are indistinguishable once stored: what a designer
+   * typed, and what the reference picker COPIED off a shared record. `hydrate_entries` copies 81
+   * field-pairs — an artisan's name, village, phone, do's and don'ts — the moment the artisan is
+   * chosen, so a participant row on screen mixes one researcher's fieldwork with two designers'
+   * corrections and says nothing about which is which. This is the answer.
+   *
+   * READ-ONLY ON THE CLIENT. The server recomputes the whole map on every save from the values
+   * themselves (`entry_provenance.merge_entry_provenance`) and ignores anything a client sends: a
+   * stamp a client can set is a stamp a client can forge, and this one names a researcher who is
+   * not in the room. Do not put it in a save body.
+   *
+   * A SIBLING KEY AND NEVER NESTED INSIDE THE DATA, for exactly the reason `custom` is one: a key
+   * inside `singleton` that the registry does not declare comes back in `droppedKeys` on every
+   * save — the one registry-drift signal this repository has.
+   *
+   * Optional, and an absent entry means "nobody recorded who set this", never "the server forgot".
+   * Rows written before the column existed are deliberately NOT backfilled; see
+   * `backend/app/services/entry_provenance.py` for why inventing an author would be worse.
+   */
+  provenance?: DwStageProvenance;
   completeness?: DwStageCompleteness | null;
   /**
    * The digest of the custom definition the score beside it was computed under.
@@ -1503,7 +1572,33 @@ export type DwIdentityOcrResult = {
    * read as permission to write an identity number without a person.
    */
   requiresConfirmation?: boolean | null;
+  /**
+   * What the server did with the PICTURE, as opposed to what it read off it.
+   *
+   * `stored` is `false` on every reply this route has ever sent and is a literal on the server
+   * rather than a computed value, so a build that ever sees `true` is talking to a server that
+   * grew a storage path. Absent — an older deployment — is read as "unknown", never as `false`:
+   * see `photographWasStored`, which is where that distinction is enforced rather than remembered.
+   */
+  photograph?: {
+    stored?: boolean | null;
+    retention?: string | null;
+    decisionRoute?: string | null;
+  } | null;
 };
+
+/**
+ * Whether the server has told us, in this reply, that it did not keep the photograph.
+ *
+ * TRUE ONLY FOR AN EXPLICIT `stored: false`. A deployment older than the field sends no `photograph`
+ * block at all, and the temptation is to treat that as "false" because it is what those servers in
+ * fact do. That would be a screen telling a designer "your photograph was not kept" on the strength
+ * of a key that was missing — which is a promise about regulated data made from an absence. Where
+ * the server has not said, the panel says nothing rather than reassuring anybody.
+ */
+export function photographWasNotStored(result: DwIdentityOcrResult): boolean {
+  return result.photograph?.stored === false;
+}
 
 /**
  * Read an identity number off a photograph of a card. The caller must not auto-commit the answer.
@@ -1514,10 +1609,20 @@ export type DwIdentityOcrResult = {
  * the card was photographed) happen once here rather than being remembered at two call sites. A
  * failure to re-encode returns the original file, so this can never be the reason a card "could not
  * be read".
+ *
+ * `retention` DECLARES what the caller intends to do with its own copy of the photograph. It is not
+ * an instruction — this route has no storage path and the reply says `stored: false` regardless —
+ * and it is sent so that the one request in which an unmasked identity document crosses the wire
+ * carries the designer's answer to "are you keeping this". Omitted, the server reads DISCARD, which
+ * is the safe half and the half every build shipped before this parameter existed gets.
  */
-export async function readIdentityCard(file: File): Promise<DwIdentityOcrResult> {
+export async function readIdentityCard(
+  file: File,
+  retention: DwPhotoRetention = DW_PHOTO_RETENTION_DEFAULT
+): Promise<DwIdentityOcrResult> {
   const form = new FormData();
   form.append("file", await prepareIdentityPhotograph(file));
+  form.append("retention", retention);
   return apiFetch<DwIdentityOcrResult>(DW_OCR_IDENTITY_PATH, { method: "POST", body: form });
 }
 

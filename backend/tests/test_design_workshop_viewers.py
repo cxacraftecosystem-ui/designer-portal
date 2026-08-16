@@ -78,12 +78,29 @@ PASSWORD = "viewer-test-password"
 # of quietly testing nothing.
 STAGE_1 = "WORKSHOP_SETUP"
 
-# slug -> (role, display name). The three designers are deliberately distinguished by their ROSTER
-# standing rather than by their role: all three are DESIGNER, and only one of them can actually
+# slug -> (role, display name). The designers are deliberately distinguished by their ROSTER
+# standing rather than by their role: they are all DESIGNER, and only some of them can actually
 # sign in, which is the whole point of the eligibility rule.
+#
+# ``creator`` IS AN ADMIN AND USED TO BE A DESIGNER, and the change is not cosmetic. Only admins and
+# the master admin may START a design workshop (``can_create_design_workshops``): a workshop is the
+# container a fortnight of records lives in and the unit the ministry indexes and funds, not a
+# record, so opening one belongs to whoever holds the sanction order. Every ``_make_workshop`` call
+# in this module posts as this account, so with a DESIGNER here every test in the file died on its
+# first line with a 403 about the create rule.
+#
+# WHAT THAT COSTS, STATED SO NOBODY HAS TO REDISCOVER IT. The workshop's creator is now necessarily
+# an account that `is_admin` admits everywhere, so the ``createdById`` clause of
+# ``load_workshop_or_404`` can no longer be observed on its own through the API — an admin would
+# have reached the workshop anyway. The clause is still there and still the reason a creator keeps
+# their workshop; it simply cannot be isolated by a black-box test any more, and
+# ``test_the_creator_keeps_their_own_workshop_when_the_viewer_set_is_emptied`` says so where it is
+# asserted. Everything this module exists for — that a GRANT admits a colleague, that it carries
+# stage writes and not delete or re-granting, and that an ungranted designer is refused — is
+# untouched, because none of it runs through the creator.
 ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("admin", "ADMIN", "Viewer Admin"),
-    ("creator", "DESIGNER", "Workshop Creator"),
+    ("creator", "ADMIN", "Workshop Creator"),
     ("colleague", "DESIGNER", "Second Designer"),
     ("outsider", "DESIGNER", "Unrelated Designer"),
     ("suspended", "DESIGNER", "Suspended Designer"),
@@ -108,6 +125,10 @@ ACCOUNTS: tuple[tuple[str, str, str], ...] = (
 #: has no row at all. Both are accounts that cannot sign in, by two different routes, and both must
 #: therefore be refused a viewer row.
 ROSTER: tuple[tuple[str, bool], ...] = (
+    # Kept although ``creator`` is now an ADMIN, for whom the roster is not consulted at all
+    # (``_designers_the_roster_still_admits`` only narrows DESIGNERs). Removing it would change
+    # nothing about eligibility and would quietly reduce the number of roster rows this module
+    # exercises the fold over, which is the one thing the shouting-address account is here to test.
     ("creator", True),
     ("colleague", True),
     ("outsider", True),
@@ -256,7 +277,12 @@ def _headers(world: dict[str, Any], slug: str) -> dict[str, str]:
 
 
 def _make_workshop(world: dict[str, Any], title: str) -> str:
-    """A fresh workshop owned by ``creator``, made through the API like a designer would.
+    """A fresh workshop owned by ``creator``, made through the API the way workshops are made.
+
+    ``creator`` is an ADMIN — see ``ACCOUNTS`` for why it had to become one and exactly what that
+    costs. It is a real ``POST /design-workshops`` rather than a Prisma insert so that the create
+    gate is exercised on the way past: if the rule about who may start a workshop ever moves again,
+    this module fails loudly on its first line instead of quietly testing a row nothing could make.
 
     One per test that mutates a viewer set. Sharing a single workshop would make the whole module
     order-dependent, and the failure mode of that is a suite that passes alone and fails in CI.
@@ -417,7 +443,20 @@ def test_a_grant_does_not_carry_the_power_to_re_grant(world, client):
 
 
 def test_the_creator_keeps_their_own_workshop_when_the_viewer_set_is_emptied(world, client):
-    """An empty viewer list must not mean "nobody can see this"."""
+    """An empty viewer list must not mean "nobody can see this".
+
+    THE FIRST ASSERTION IS WEAKER THAN IT LOOKS, AND SAYING SO IS THE POINT OF THIS NOTE. When this
+    was written ``creator`` was a DESIGNER, so "the creator can still open it" isolated the
+    ``createdById`` clause of ``load_workshop_or_404`` — nothing else would have let them in. Only
+    admins may start a workshop now, so the creator is an account ``is_admin`` admits anyway and
+    that line would pass even if the ``createdById`` clause were deleted. It is kept because the
+    behaviour it describes is still the behaviour, and because a passing assertion is not the thing
+    to remove; it simply is not the thing this test is protecting any more.
+
+    THE SECOND ASSERTION IS, and it is untouched: emptying the set really does remove the colleague.
+    That is the half a whole-set replace gets wrong, and it is a designer losing access to a
+    workshop they are working in — the failure this test would actually catch.
+    """
     workshop_id = _make_workshop(world, "Ikat, emptied")
     assert _grant(world, workshop_id, ["colleague"]).status_code == 200
     assert _grant(world, workshop_id, []).status_code == 200
@@ -676,7 +715,7 @@ def test_eligible_viewers_offers_only_accounts_that_could_actually_open_a_worksh
 
     assert offered == {
         world["people"]["admin"].id,
-        world["people"]["creator"].id,      # a DESIGNER the roster admits
+        world["people"]["creator"].id,      # the ADMIN who opens the workshops in this module
         world["people"]["colleague"].id,
         # THE ACCOUNT THIS MODULE FAILED ON. Named here rather than left to the set comparison
         # because the whole defect was this id, and only this id, dropping off the end of the
@@ -1024,14 +1063,23 @@ def test_eligible_viewers_is_not_swallowed_by_the_workshop_id_route(world, clien
     assert "users" in response.json()
 
 
-@pytest.mark.parametrize("slug", ["creator", "colleague", "researcher", "professor"])
+@pytest.mark.parametrize("slug", ["colleague", "outsider", "researcher", "professor"])
 def test_only_an_admin_may_administer_viewers(world, client, slug):
-    """Including the workshop's own CREATOR.
+    """Including every designer who works in the workshop.
 
-    Deliberate, and the one rule here most likely to be argued with. The owner deciding their own
-    readers sounds reasonable until a designer leaves and their workshop's access is frozen in
-    whatever state they left it — which is the handover problem this feature exists to solve,
-    reintroduced one level up. An admin grant has an administrator behind it who is still here.
+    Deliberate, and the one rule here most likely to be argued with. A designer deciding their own
+    readers sounds reasonable until they leave and their workshop's access is frozen in whatever
+    state they left it — which is the handover problem this feature exists to solve, reintroduced
+    one level up. An admin grant has an administrator behind it who is still here.
+
+    ``creator`` USED TO BE IN THIS LIST AND HAS BEEN REPLACED BY ``outsider``, and the reason is
+    that the case it named no longer exists. It read "including the workshop's own creator", on the
+    strength of ``creator`` being a DESIGNER who had made the workshop; only admins and the master
+    admin may start a workshop now, so a workshop's creator is ALWAYS an account ``require_admin``
+    admits and "the creator is refused" is not a state the product can be in. Asserting it would
+    mean asserting that an admin is refused an admin route, which is the opposite of the rule.
+    ``colleague`` (a granted designer) and ``outsider`` (an ungranted one) between them keep every
+    designer-shaped case this parametrize was covering.
 
     AND INCLUDING A PROFESSOR, who outranks every designer in ``ROLE_RANK`` and is still not an
     admin. ``require_admin`` is ``is_admin`` — a two-member set — so the ladder has no say here

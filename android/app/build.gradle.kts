@@ -386,6 +386,47 @@ dependencies {
      */
     implementation(":sherpa-onnx-static-link-onnxruntime-1.13.5@aar")
 
+    /**
+     * READING a QR code — off the camera, and off a screenshot somebody was sent.
+     *
+     * ── THIS IS THE CHOICE `docs/DECISION-qr-scanning-on-android.md` MADE, ARRIVING LATE ────────
+     *
+     * That document decided `com.google.zxing:core` on 2026-08-08 and then recorded, honestly and
+     * at length, that NOTHING was built: the argument was carried one step further by the code —
+     * "if a typed code is a shorter path to the same record, the camera is not worth 0.58 MB
+     * either" — and both read surfaces shipped with a typed box and no scanner at all. Its own
+     * review trigger is "any barcode or QR dependency appearing in `android/app/build.gradle.kts`",
+     * which is this line, so the document has been updated rather than left to rot a third time.
+     *
+     * WHAT REOPENED IT is not a new measurement. It is a requirement: every QR surface is to offer
+     * BOTH the camera and an image the designer already has, because a screenshot or a forwarded
+     * photograph is very often the only thing they hold. A typed box cannot satisfy that at all —
+     * the whole point of the picked-image path is that there is nobody standing in front of the
+     * card to read twenty characters off it.
+     *
+     * ── WHY ZXING AND NOT ML KIT, WHICH IS ALREADY IN THIS BUILD ───────────────────────────────
+     *
+     * `com.google.mlkit:text-recognition` ships here for the identity-card reader, so
+     * `com.google.mlkit:barcode-scanning` would arrive from a vendor already present. It is still
+     * the wrong choice, for the two reasons the decision document gives and one it could not:
+     *
+     *  * SIZE. 9.44 MB against 0.58 MB, for a symbol that is being held still under a lens. The
+     *    unbundled 0.50 MB variant is disqualified outright — it downloads its model on first use,
+     *    and first use is a courtyard that has had no signal for two days.
+     *  * PURE JAVA, WHICH IS THE ONE THIS REPOSITORY GAINS MOST FROM. ML Kit cannot run in a JVM
+     *    unit test — `IdentityCardRecognizer`'s own header states that every accuracy claim about it
+     *    is a hardware claim nobody on this machine can make. ZXing runs on the test classpath, so
+     *    `DwQrDecodeTest` decodes symbols produced by THIS APP'S OWN `DwQrEncode` and asserts the
+     *    round trip. The printer and the reader are checked against each other on every build
+     *    instead of on a handset nobody has.
+     *
+     * THE ACCEPTED REGRESSION, STATED: ML Kit reads a bent, angled or glared code off a live frame
+     * better than ZXing does. That trade is the document's and is unchanged — the typed box stays
+     * on every surface, a photograph can be retaken and re-read, and the decode ladder in
+     * `DwQrDecode` re-tries at higher resolution before giving up.
+     */
+    implementation("com.google.zxing:core:3.5.3")
+
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")

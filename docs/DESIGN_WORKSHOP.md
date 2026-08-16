@@ -329,6 +329,47 @@ take whichever entity was saved last, which is a bug that only shows up as a lis
 disagreeing with the record it links to. `promoted_values` therefore matches on the entity key before
 it looks at the field.
 
+### Who set each field — and the boundary with reference hydration
+
+`DwStageEntry.fieldProvenance` is a **sparse** map, `{fieldKey: {by, byName, at, source, …}}`, written
+by `entry_provenance.merge_entry_provenance` on every save. It answers *who last set THIS field*,
+which `createdById` cannot: a workshop is run by two designers over one shared set of rows
+(`DesignWorkshopViewer`), so the row's creator stops being the truth the moment the second designer
+touches it.
+
+Two sources, and the second is why the column exists:
+
+| `source` | `by` is | when |
+| --- | --- | --- |
+| `designer` | the person working on this workshop | they typed or changed the value |
+| `reference` | the **canonical record's** author | `hydrate_entries` copied the value off a shared `Artisan`, `ProductDocumentation`, `ToolDocumentation`, `Process` or `Craft` row |
+
+An unchanged field carries its stamp forward untouched, so opening a stage and pressing save does not
+make you the author of everything in it. A field that is unchanged **and** carries no stamp gets
+none: rows written before this column exist in every archive, and attributing them to whoever saves
+next would manufacture an audit trail on a document submitted to a ministry.
+
+**The boundary with `REFERENCE_HYDRATION` is the value/authorship line, and both policies are right.**
+Hydration deliberately COPIES 81 field-pairs onto a stage entry so that a report — a dated observation,
+generated months later and kept by an office — is not rewritten by a later correction to a live
+record. The requirement behind `fieldProvenance` is "do not duplicate the record per designer". They
+meet like this: **the value is copied and stays copied; only authorship is attributed.** Nothing
+resolves a hydrated field through its `refId` at render time, and making it do so would reintroduce
+exactly the defect hydration exists to prevent. The full argument is the module docstring of
+`backend/app/services/entry_provenance.py`, which also records the private per-designer overlay that
+was deliberately **not** built and the two written policies it would contradict.
+
+`GET /design-workshops/{id}/provenance` (admin and master admin only) adds the one thing no other
+reader can produce: for every `reference` field, what the canonical record says **today**, beside
+what this workshop stored. Divergence is not an error — the workshop is supposed to keep what the
+designer saw — but before this it was invisible, because a hydrated value and a typed value are the
+same bytes once stored.
+
+The shared record tables need none of this. `records.viewable_where` returns `{}` — every signed-in
+account already reads one canonical `Artisan` row, there is no per-designer duplicate of one, and
+`records.merge_field_provenance` has moved per-field authorship on edit for all six record types
+since long before this feature.
+
 ### Nothing is hard-deleted
 
 `DELETE /api/design-workshops/{id}` sets `deletedAt`; every read filters `deletedAt: null`; an admin
@@ -654,8 +695,9 @@ it would only push people to photograph the screen.
 | `PATCH` | `/design-workshops/{id}` | the updated header |
 | `DELETE` | `/design-workshops/{id}` | `204` — soft delete |
 | `POST` | `/design-workshops/{id}/restore` | admin only |
-| `GET` | `/design-workshops/{id}/stages` | every stage's entries and completeness |
-| `GET` | `/design-workshops/{id}/stages/{stageKey}` | `{singleton, collections, completeness}` |
+| `GET` | `/design-workshops/{id}/stages` | every stage's entries, provenance and completeness |
+| `GET` | `/design-workshops/{id}/stages/{stageKey}` | `{singleton, collections, custom, provenance, completeness}` |
+| `GET` | `/design-workshops/{id}/provenance` | admin only — per field: who set it, and what the canonical record says today |
 | `PUT` | `/design-workshops/{id}/stages/{stageKey}` | `{saved, created, updated, removed, errors, droppedKeys, completeness}` |
 | `GET` | `/design-workshops/{id}/references?model` | the records a `REF` field may point at |
 | `GET` | `/design-workshops/{id}/transcripts` | the stage recordings and their transcripts |

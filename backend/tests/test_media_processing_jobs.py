@@ -162,14 +162,47 @@ def test_every_panel_filter_pill_is_accepted(client, env, job_status):
     """Each pill returns 200 and only jobs in that status.
 
     Against the old code EVERY parametrisation of this test was a 422 — that is the regression.
-    Asserting 200 alone would be enough to catch it, but the row check is what stops a later "fix"
+    Asserting 200 alone would be enough to catch it, but a row check is what stops a later "fix"
     that makes the route accept the value and then ignore it.
+
+    ── IT ASSERTED ON A ROW THE QUEUE IS ENTITLED TO MOVE, AND SO IT FAILED AT RANDOM ────────────
+
+    The row check used to be ``env["own"][job_status] in {ids}``: the fixture's job filed under THIS
+    status must come back on THIS status's page. That is false of exactly one of the five, and the
+    reason is written out one function below in ``test_the_all_pill_still_issues_the_failed_count``:
+    a QUEUED job is by definition work the queue is entitled to pick up, so any other module that
+    reaches ``drain_media_jobs`` — or a worker that happens to be enabled — moves this fixture's
+    QUEUED row to PROCESSING/COMPLETED/FAILED partway through the suite. The test then passed in
+    isolation, passed on a re-run, and failed in the full suite depending on ordering. That sibling
+    test was corrected for this; this one was left one screen higher with the identical defect.
+
+    THE FIX IS TO ASSERT THE ROW UNDER WHATEVER STATUS IT NOW HOLDS, which is the claim actually
+    worth making — "the filter returns this row when this row is in this state" — rather than the
+    claim that the queue has not run. Both halves survive: the page is still proved to be narrowed
+    (nothing of another status comes back), and a row is still proved to reach its own page, so a
+    route that accepted the parameter and ignored it still fails.
     """
     response = client.get(f"/api/media/jobs?statusFilter={job_status}&pageSize=100")
     assert response.status_code == 200, response.text
     items = response.json()["items"]
-    assert {item["status"] for item in items} == {job_status}
-    assert env["own"][job_status] in {item["id"] for item in items}
+    # The narrowing itself. True however the queue has moved anything: a page filtered to one status
+    # may never contain another, whatever else has happened to this fixture's rows.
+    assert {item["status"] for item in items} <= {job_status}, (
+        f"the {job_status} page returned rows of another status"
+    )
+
+    # And the row check, against the status the row is in NOW rather than the one it was filed
+    # under. Read from the unfiltered page, which is the only place its current state is knowable.
+    everything = client.get("/api/media/jobs?pageSize=100")
+    assert everything.status_code == 200, everything.text
+    current = {item["id"]: item["status"] for item in everything.json()["items"]}
+    ours = env["own"][job_status]
+    assert ours in current, "this fixture's own job vanished from the unfiltered page"
+    if current[ours] == job_status:
+        assert ours in {item["id"] for item in items}, (
+            f"job {ours} is {job_status} on the unfiltered page and absent from the {job_status} "
+            f"page — the filter accepted the value and ignored it"
+        )
 
 
 def test_the_all_pill_still_issues_the_failed_count_probe(client, env):

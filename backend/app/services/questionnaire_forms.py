@@ -456,6 +456,117 @@ async def export_payload(questionnaire_id: str) -> dict[str, Any] | None:
     }
 
 
+async def load_question_set(questionnaire_id: str) -> dict[str, Any] | None:
+    """The INSTRUMENT alone: sections, questions, order, help text, required flags. No fieldwork.
+
+    ================================================================================================
+    WHY THIS IS ITS OWN LOADER AND NOT ``load_form`` WITH THE SITTINGS DROPPED
+    ================================================================================================
+
+    Because a filter is a thing somebody can forget, and a query is not. ``load_form`` reads the
+    entries and every answer under them and then hands them to its caller; a questions-only export
+    built on top of it would be one careless ``dict`` spread — or one new key added to ``load_form``
+    for some other screen — away from putting a respondent's name back into a file that is
+    explicitly advertised as carrying none. This function never issues those two queries at all, so
+    the artefact it feeds physically cannot contain an answer. That property is worth three extra
+    lines of Prisma.
+
+    ONLY ACTIVE SECTIONS AND ACTIVE QUESTIONS. A retired question is kept in the database because
+    answers hang off it, not because it is still part of the instrument — see
+    ``build_question_set_workbook`` for why sending one would plant a question the sender
+    deliberately replaced into the receiver's brand-new form.
+
+    THE QUESTIONS ARE RE-BUCKETED BY SECTION, and that is not tidying. ``sortOrder`` is scoped to the
+    SECTION (each section's questions are numbered from 1), so this flat query — ordered by sortOrder
+    across every section at once — comes back INTERLEAVED: A1, B1, A2, B2. ``report_items`` printed a
+    ministry annexure that way once; the fix there is the same one made here, and any future reader
+    of this table has to make it too.
+    """
+    questionnaire = await db.questionnaire.find_unique(where={"id": questionnaire_id})
+    if questionnaire is None:
+        return None
+
+    sections = await db.questionnaireformsection.find_many(
+        where={"questionnaireId": questionnaire_id, "isActive": True},
+        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+    )
+    section_ids = [s.id for s in sections]
+    questions = (
+        await db.questionnaireformquestion.find_many(
+            where={"sectionId": {"in": section_ids}, "isActive": True},
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+        )
+        if section_ids
+        else []
+    )
+    by_section: dict[str, list[Any]] = {}
+    for question in questions:
+        by_section.setdefault(question.sectionId, []).append(question)
+
+    return {
+        "id": questionnaire.id,
+        "title": questionnaire.title,
+        "description": questionnaire.description,
+        "ownerId": questionnaire.ownerId,
+        "version": questionnaire.version,
+        "sections": [
+            {
+                "code": section.code,
+                "title": section.title,
+                "questions": [
+                    {
+                        "id": q.id,
+                        "prompt": q.prompt,
+                        "helpText": q.helpText,
+                        "isRequired": q.isRequired,
+                        "sortOrder": q.sortOrder,
+                    }
+                    for q in by_section.get(section.id, [])
+                ],
+            }
+            for section in sections
+        ],
+    }
+
+
+async def export_question_set_payload(questionnaire_id: str) -> dict[str, Any] | None:
+    """``load_question_set`` reshaped into what ``build_question_set_workbook`` wants.
+
+    THE QUESTION ID IS BLANKED HERE, deliberately and visibly, rather than simply not being fetched.
+    It is fetched — ``load_question_set`` returns it, because a JSON preview of "what is in this
+    file" wants a stable key per row — and it is dropped at exactly the point the WORKBOOK is built.
+    Keeping the drop on this line, next to the empty ``answers``, is what makes the whole rule
+    readable in one place: what leaves this function is prompt, help text, required flag and
+    position, and nothing that ties a row to the sender's database or to anybody's answer.
+    """
+    form = await load_question_set(questionnaire_id)
+    if form is None:
+        return None
+    return {
+        "title": form["title"],
+        "description": form["description"],
+        "source_title": form["title"],
+        "sections": [
+            {
+                "code": section["code"],
+                "title": section["title"],
+                "questions": [
+                    {
+                        "id": "",
+                        "prompt": q["prompt"],
+                        "helpText": q["helpText"],
+                        "isRequired": q["isRequired"],
+                        "answers": {},
+                        "answerNotes": {},
+                    }
+                    for q in section["questions"]
+                ],
+            }
+            for section in form["sections"]
+        ],
+    }
+
+
 def _entry_label(entry: dict[str, Any], taken: list[str]) -> str:
     """A column heading for one sitting, unique within the workbook.
 
@@ -478,6 +589,55 @@ def _entry_label(entry: dict[str, Any], taken: list[str]) -> str:
 # --- Writing: creating a questionnaire from an uploaded workbook --------------------------------
 
 
+def _uploaded_answer_rows(parsed: ParsedQuestionnaire) -> int:
+    """How many answer rows this workbook would write, counted exactly as the writer counts them.
+
+    Derived rather than approximated by ``len(parsed.entryLabels)``: a workbook can carry six answer
+    COLUMNS and one answer, and a number that said "six" would make the provenance sentence below
+    lie about the size of what it just refused to import. ``answerNotes`` counts too — a row with
+    only a note and no answer text still produces a row.
+    """
+    total = 0
+    for label in parsed.entryLabels:
+        for section in parsed.sections:
+            for question in section.questions:
+                if question.answers.get(label) or question.answerNotes.get(label):
+                    total += 1
+    return total
+
+
+def _came_out_of_the_platform(parsed: ParsedQuestionnaire) -> str | None:
+    """Whether this workbook is a DOWNLOAD of a questionnaire rather than a hand-filled pro-forma.
+
+    Returns a short clause naming the evidence, or ``None`` when nothing says it came out of the app.
+
+    TWO SIGNALS, BOTH OF THEM WRITTEN ONLY BY ``build_questionnaire_workbook``:
+
+    1. ``Questionnaire ID`` on the Details sheet.
+    2. Any filled-in cell in the ``Question ID`` column.
+
+    The pro-forma writes both blank and the question-set export writes both blank, so a designer who
+    typed their own paper interviews into a spreadsheet trips neither — which is the ordinary,
+    documented, intended path and it must stay frictionless.
+
+    THE SECOND SIGNAL IS NOT REDUNDANT. A designer who deletes one cell on the Details sheet, or who
+    copies the Questionnaire sheet into a fresh file (losing the Details sheet entirely), would
+    otherwise arrive here looking exactly like somebody's own typing while carrying a stranger's
+    respondents. Neither signal can be removed without re-opening that door, and asking for both is
+    the difference between a rule and a courtesy.
+    """
+    origin = (parsed.questionnaireId or "").strip()
+    if origin:
+        return f"its Details sheet names questionnaire {origin}"
+    if any(
+        (question.questionId or "").strip()
+        for section in parsed.sections
+        for question in section.questions
+    ):
+        return "its Question ID column is filled in"
+    return None
+
+
 async def create_from_parsed(
     parsed: ParsedQuestionnaire,
     *,
@@ -494,6 +654,46 @@ async def create_from_parsed(
     typed their interviews into the spreadsheet and one who typed them into the app end up with the
     same rows, so everything downstream — the edit rules, the export, the answer screen — needs no
     special case for either.
+
+    ================================================================================================
+    …UNLESS THE ANSWERS ARE ALREADY RECORDED SOMEWHERE ELSE. THIS PARAGRAPH IS A BUG FIX.
+    ================================================================================================
+
+    WHAT THIS USED TO DO. It ignored ``parsed.questionnaireId`` entirely and called
+    ``_store_uploaded_answers`` unconditionally, with ``answeredById`` and ``createdById`` both set
+    to the UPLOADER. So designer B, handed designer A's downloaded workbook — the only artefact that
+    existed, because there was no questions-only export — uploaded it and silently acquired A's
+    respondents' answers as B's own recorded fieldwork, under B's name, in B's report annexure. No
+    screen said it had happened. Nobody edited an answer. The interview simply changed hands, and
+    ``QUESTIONNAIRE_ANNEXURE`` is in all six report templates, so it changed hands into a document
+    submitted to a ministry.
+
+    THE RULE NOW, and the reasoning for it rather than a permission check. A workbook that came out
+    of this platform (see ``_came_out_of_the_platform``) imports its QUESTIONS ONLY. Its answers are
+    NOT re-recorded — not refused, not re-attributed, simply not written a second time — because
+    they already exist in the database, attached to the questionnaire the file names, with their
+    true authors on them. Writing them here would not be importing anything; it would be DUPLICATING
+    somebody's fieldwork and stamping a new author on the copy, so the same interview would print
+    twice under two different designers' names.
+
+    NOTE THAT THIS HOLDS FOR THE OWNER TOO, and that is deliberate rather than an oversight about
+    convenience. A designer who downloads their own answered questionnaire and uploads it as a NEW
+    one is FORKING the instrument; the fork's sittings would be a second copy of the same fieldwork
+    with a single re-stamped author, which is the same defect wearing a friendlier hat. A permission
+    test would have admitted exactly that case, which is why the rule is about the DATA rather than
+    about who is holding it.
+
+    WHAT STILL WORKS UNCHANGED is the documented ordinary case: a designer who ran interviews on
+    paper and typed them into a blank pro-forma. That file has no Questionnaire ID and no Question
+    IDs, there is no other recorder anywhere in the picture, and attributing those answers to the
+    person who typed them in is honest. Those imports are stamped with a provenance note on each
+    sitting saying they arrived on a spreadsheet, so "attributed to the uploader" is stated on the
+    record rather than merely being true.
+
+    EITHER WAY THE REPORT SAYS WHICH HAPPENED. ``report["provenance"]`` carries a sentence written to
+    be shown verbatim, and the same sentence is pushed into ``report["problems"]`` so that every
+    client which already renders the parser's problem list tells the designer about this without
+    needing to be changed first. Silence was the whole defect; it is not permitted in either branch.
     """
     questionnaire = await db.questionnaire.create(
         data={
@@ -528,7 +728,64 @@ async def create_from_parsed(
             )
             created_questions[question.row] = row.id
 
-    await _store_uploaded_answers(questionnaire.id, parsed, created_questions, owner_id)
+    problems = [p.payload() for p in parsed.problems]
+    answer_rows = _uploaded_answer_rows(parsed)
+    evidence = _came_out_of_the_platform(parsed) if answer_rows else None
+    entries_created = 0
+    answers_imported = 0
+    provenance: dict[str, Any] | None = None
+
+    if answer_rows and evidence:
+        provenance = {
+            "action": "answersNotImported",
+            "sourceQuestionnaireId": (parsed.questionnaireId or "").strip() or None,
+            "answersSkipped": answer_rows,
+            "reason": (
+                f"This workbook came out of the platform ({evidence}), and the {answer_rows} "
+                "answers in it are fieldwork that is already recorded there, under the names of the "
+                "people who recorded it. Its questions were imported and its answers were NOT: "
+                "copying them into a second questionnaire would duplicate that fieldwork and record "
+                "it under your name. Open the questionnaire they belong to in order to read them, "
+                "or type your own interviews into a blank pro-forma."
+            ),
+        }
+        problems.append(
+            {
+                "sheet": parsed.sheet,
+                "row": None,
+                "severity": "warning",
+                "reason": provenance["reason"],
+                "value": None,
+            }
+        )
+    elif answer_rows:
+        entries_created, answers_imported = await _store_uploaded_answers(
+            questionnaire.id, parsed, created_questions, owner_id, source_filename=source_filename
+        )
+        provenance = {
+            "action": "answersImported",
+            "sourceQuestionnaireId": None,
+            "answersImported": answers_imported,
+            "entriesCreated": entries_created,
+            "reason": (
+                f"{answers_imported} answers were already typed into this workbook, so they were "
+                f"recorded as {entries_created} "
+                + ("sitting" if entries_created == 1 else "sittings")
+                + " and attributed to you. This file carries no Question IDs and no Questionnaire "
+                "ID, which is what says it was filled in by hand rather than downloaded out of the "
+                "platform — if somebody else recorded these interviews, say so in each sitting's "
+                "notes, because the app can only attribute them to whoever uploaded the file."
+            ),
+        }
+        # DELIBERATELY NOT ALSO PUSHED INTO ``problems``, unlike the branch above. A "problem" in this
+        # report means a row of the workbook that could not be read cleanly, or one that was read but
+        # not applied as written — and every client renders the list under headings that say exactly
+        # that. Nothing went wrong here: the file was hand-filled, its answers were imported in full,
+        # and they went to the only person they could honestly go to. Filing that under "rows the
+        # import had to assume something about" would teach designers that a perfectly ordinary
+        # upload produces warnings, which is the fastest way to make them stop reading the list that
+        # does carry the rows they have lost.
+
     return questionnaire.id, {
         "created": len(created_questions),
         "sections": len(parsed.sections[:MAX_SECTIONS]),
@@ -536,9 +793,13 @@ async def create_from_parsed(
         "retired": 0,
         "removed": 0,
         "unchanged": 0,
+        "entriesCreated": entries_created,
+        "answersImported": answers_imported,
+        "answersSkipped": answer_rows if evidence else 0,
+        "provenance": provenance,
         "versionBefore": questionnaire.version,
         "versionAfter": questionnaire.version,
-        "problems": [p.payload() for p in parsed.problems],
+        "problems": problems,
     }
 
 
@@ -562,10 +823,34 @@ async def _store_uploaded_answers(
     parsed: ParsedQuestionnaire,
     question_ids: dict[int, str],
     user_id: str,
-) -> None:
-    """Answers that came in already filled on the spreadsheet, one sitting per answer column."""
+    *,
+    source_filename: str | None = None,
+) -> tuple[int, int]:
+    """Answers that came in already filled on the spreadsheet, one sitting per answer column.
+
+    Returns ``(sittings created, answer rows written)`` so the change report can state what happened
+    with real numbers rather than with the number of answer COLUMNS, which is not the same thing.
+
+    ONLY EVER REACHED FOR A HAND-FILLED WORKBOOK — see the long note in :func:`create_from_parsed`.
+    Its caller decides; this function does not second-guess it, because two places deciding one rule
+    is how the two drift.
+
+    EVERY SITTING IT WRITES CARRIES A PROVENANCE NOTE. ``source = "UPLOAD"`` already records that the
+    answers arrived on a spreadsheet, but only in a column no report prints, and ``answeredById`` is
+    the uploader with nothing next to it to say that the uploader is where the attribution stops.
+    The note names the file, prints in the report annexure beside the answers, and is the one thing a
+    reader has to tell "I interviewed this person" from "I typed up a spreadsheet". It is only ever
+    written where the sitting has no notes of its own — a sitting's notes belong to the interviewer.
+    """
     if not parsed.entryLabels:
-        return
+        return (0, 0)
+    named = f" '{source_filename}'" if source_filename else ""
+    note = (
+        f"These answers arrived already filled in on the uploaded spreadsheet{named} and are "
+        "attributed to the designer who uploaded it."
+    )
+    entries_created = 0
+    answers_written = 0
     for label in parsed.entryLabels:
         rows: list[dict[str, Any]] = []
         for section in parsed.sections:
@@ -574,14 +859,14 @@ async def _store_uploaded_answers(
                 if question_id is None:
                     continue
                 text = question.answers.get(label)
-                note = question.answerNotes.get(label)
-                if not text and not note:
+                note_text = question.answerNotes.get(label)
+                if not text and not note_text:
                     continue
                 rows.append(
                     {
                         "questionId": question_id,
                         "answerText": text,
-                        "notes": note,
+                        "notes": note_text,
                         "answeredById": user_id,
                     }
                 )
@@ -594,12 +879,16 @@ async def _store_uploaded_answers(
                 # A bare "Answer" column names nobody; a labelled one names the respondent.
                 "respondentName": label if label != "Answer" else None,
                 "source": UPLOAD_ENTRY_SOURCE,
+                "notes": note,
                 "createdById": user_id,
             }
         )
         await db.questionnaireformanswer.create_many(
             data=[row | {"entryId": entry.id} for row in rows]
         )
+        entries_created += 1
+        answers_written += len(rows)
+    return (entries_created, answers_written)
 
 
 # --- Writing: applying an edit to a questionnaire that may already have answers ------------------

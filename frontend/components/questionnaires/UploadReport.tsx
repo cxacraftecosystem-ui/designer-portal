@@ -19,7 +19,7 @@
  * say how many of each thing happened.
  */
 
-import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, ShieldAlert } from "lucide-react";
 
 import type { QFormUploadReport } from "@/lib/questionnaireForms";
 
@@ -37,14 +37,28 @@ function tallies(report: QFormUploadReport): Array<{ label: string; value: numbe
     { label: "left unchanged", value: report.unchanged },
     { label: "reworded into new questions", value: report.superseded },
     { label: "retired", value: report.retired },
-    { label: "removed", value: report.removed }
+    { label: "removed", value: report.removed },
+    { label: "sittings recorded from the sheet", value: report.entriesCreated ?? 0 },
+    { label: "answers imported", value: report.answersImported ?? 0 },
+    // Printed as its own count rather than folded into the provenance sentence below, because a
+    // number a designer can compare against what they saw in Excel is what turns "the app decided
+    // something" into "the app decided this much".
+    { label: "answers NOT re-recorded", value: report.answersSkipped ?? 0 }
   ].filter((entry) => entry.value > 0);
 }
 
 export function UploadReport({ report, className }: { report: QFormUploadReport; className?: string }) {
   const counts = tallies(report);
-  const errors = report.problems.filter((problem) => problem.severity === "error");
-  const warnings = report.problems.filter((problem) => problem.severity !== "error");
+  const provenance = report.provenance ?? null;
+  // The provenance sentence is ALSO pushed into `problems` by the server, so that a client which
+  // renders only the problem list still tells the designer about it. This panel renders both, so the
+  // copy in the problem list is dropped here — printing one sentence twice, once in a neutral block
+  // and once under "rows the import had to assume something about", reads as two separate events.
+  const problems = provenance
+    ? report.problems.filter((problem) => problem.reason !== provenance.reason)
+    : report.problems;
+  const errors = problems.filter((problem) => problem.severity === "error");
+  const warnings = problems.filter((problem) => problem.severity !== "error");
   const details = report.details ?? [];
 
   return (
@@ -70,6 +84,57 @@ export function UploadReport({ report, className }: { report: QFormUploadReport;
           </p>
         ) : null}
       </div>
+
+      {/*
+        WHAT HAPPENED TO THE ANSWERS THE WORKBOOK ALREADY CARRIED, and this block is the fix for a
+        data-integrity defect rather than a nicety.
+
+        The import used to write every answer column in an uploaded workbook as a sitting owned by
+        THE UPLOADER. So a designer handed a colleague's downloaded file acquired that colleague's
+        respondents — names, notes and answers — as their own recorded fieldwork, under their own
+        name, in the questionnaire annexure of the report they submit to a ministry. Nothing said so.
+
+        Silence is therefore not an option in EITHER direction now: an import that refused to
+        re-record somebody else's answers has to say it refused, and one that did record them has to
+        say whose name they went under. `reason` is written on the server to be shown as-is; this is
+        the fourth place in the stack that could paraphrase the rule and the one where paraphrasing
+        it would cost a designer their understanding of who owns what.
+      */}
+      {provenance ? (
+        <div
+          className={
+            provenance.action === "answersNotImported"
+              ? "grid gap-2 rounded-md border border-amber-500/30 bg-amber-100 p-3"
+              : "grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3"
+          }
+        >
+          <div className="flex items-start gap-2">
+            {provenance.action === "answersNotImported" ? (
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" aria-hidden />
+            ) : (
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-field-600" aria-hidden />
+            )}
+            <div className="min-w-0">
+              <p
+                className={`text-sm font-semibold ${
+                  provenance.action === "answersNotImported" ? "text-amber-800" : "text-ink-900"
+                }`}
+              >
+                {provenance.action === "answersNotImported"
+                  ? "The answers in this workbook were not recorded against your copy"
+                  : "The answers in this workbook were recorded under your name"}
+              </p>
+              <p
+                className={`mt-1 text-sm leading-6 ${
+                  provenance.action === "answersNotImported" ? "text-amber-800" : "text-ink-700"
+                }`}
+              >
+                {provenance.reason}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/*
         The edit rule's own account of itself, printed VERBATIM.

@@ -14,10 +14,18 @@ The loop a designer walks:
     GET  /questionnaires                      list (the attach-to-a-workshop dropdown reads this)
     GET  /questionnaires/{id}                 read the form, its sittings and its answers
     GET  /questionnaires/{id}/xlsx            download it back, with question ids and answers
+    GET  /questionnaires/{id}/question-set.xlsx   download the QUESTIONS ALONE, to send to somebody
     POST /questionnaires/{id}/upload          re-upload an edited copy  -> an EDIT, under the rule
     PATCH /questionnaires/{id}                rename, attach to a workshop, deactivate
     POST /questionnaires/{id}/entries         start a sitting
     PUT  /questionnaires/{id}/entries/{eid}/answers   record answers
+
+THERE ARE TWO DOWNLOADS AND THEY HAVE TWO DIFFERENT GATES, WHICH IS THE POINT RATHER THAN AN
+INCONSISTENCY. ``/xlsx`` is a LOSSLESS copy of the questionnaire — every sitting, every respondent's
+name, every answer — so it is fieldwork and it is gated like fieldwork. ``/question-set.xlsx`` is the
+INSTRUMENT and nothing else, so it is gated exactly as READING the form is: any designer. Sharing a
+questionnaire with a colleague was impossible before the second one existed, and the only workaround
+was to widen the first gate, which would have moved a leak rather than closing it.
 
 THERE IS NO WAY TO DELETE A QUESTIONNAIRE HERE, and that is the point rather than an omission. A
 questionnaire with answers against it is somebody's fieldwork; ``PATCH {isActive: false}`` takes it
@@ -60,6 +68,7 @@ from app.services.questionnaire_forms import (
     bump_version,
     create_from_parsed,
     export_payload,
+    export_question_set_payload,
     guard_question_edit,
     load_form,
     save_answers,
@@ -70,10 +79,12 @@ from app.services.questionnaire_xlsx import (
     XLSX_MIME,
     QuestionnaireXlsxError,
     build_pro_forma,
+    build_question_set_workbook,
     build_questionnaire_workbook,
     derive_section_code,
     download_filename,
     parse_questionnaire_workbook,
+    question_set_filename,
 )
 from app.services.records import clean_data, public_encode, require_record
 
@@ -375,7 +386,10 @@ async def download_questionnaire(
             detail=(
                 "This workbook carries every sitting recorded against the questionnaire, so it "
                 "belongs to the designer who created it, a designer working on its design "
-                "workshop, or an admin. Record answers from the questionnaire page instead."
+                "workshop, or an admin. If you want the QUESTIONS — to run this instrument "
+                "yourself, or to send it on — download the question set instead: it carries the "
+                "questions and no answers, and any designer may take it. Record answers from the "
+                "questionnaire page."
             ),
         )
     payload = await export_payload(questionnaire_id)
@@ -383,6 +397,60 @@ async def download_questionnaire(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     workbook = build_questionnaire_workbook(**payload)
     return _xlsx_response(workbook, download_filename(payload["title"]))
+
+
+@router.get("/{questionnaire_id}/question-set.xlsx")
+async def download_question_set(
+    questionnaire_id: str, current_user: Any = Depends(get_current_user)
+) -> Response:
+    """This questionnaire's QUESTIONS ALONE — the artefact a designer sends to another designer.
+
+    ================================================================================================
+    WHY THIS IS A SECOND ROUTE AND NOT A QUERY PARAMETER ON ``/xlsx``
+    ================================================================================================
+
+    Because the two files have different gates, and a parameter that changes a gate is a gate one
+    typo away from opening. ``?questionsOnly=true`` would have put the whole decision inside a
+    boolean that defaults, and the wrong default on this particular boolean hands a stranger every
+    respondent's name in the questionnaire. Two paths, two permission blocks, no shared default.
+
+    ================================================================================================
+    WHY ANY DESIGNER MAY TAKE IT, WHICH IS A WIDER GATE THAN ``/xlsx`` AND DELIBERATELY SO
+    ================================================================================================
+
+    ``read_questionnaire`` above already hands the QUESTIONS of any questionnaire to any designer —
+    that is the stated rule ("the form is open to any designer and its sittings are not"), and it is
+    what lets a designer hand a colleague a form to fill in. This file is exactly that openly
+    readable half, written into a spreadsheet. Refusing the file while serving the same content as
+    JSON would protect nothing and would be routed around by copy-and-paste within the hour.
+
+    The SITTINGS are what ``/xlsx`` is gated on, and this endpoint cannot reach one:
+    ``export_question_set_payload`` is built on ``load_question_set``, which never issues the entry
+    or answer queries at all. So the difference between the two endpoints is not a filter that could
+    be forgotten — it is two different reads of the database.
+
+    ``_require_designer`` rather than ``get_current_user`` alone, because a questionnaire is a
+    designer's instrument and a researcher who is not running design workshops has no use for one;
+    that is the same floor every other route in this file stands on.
+    """
+    await _require_questionnaire(questionnaire_id, current_user)
+    payload = await export_question_set_payload(questionnaire_id)
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    workbook = build_question_set_workbook(
+        title=payload["title"],
+        description=payload["description"],
+        sections=payload["sections"],
+        source_title=payload["source_title"],
+        # WHO exported it and WHEN, on the Details sheet. Not decoration: the file's whole purpose is
+        # to travel between people, and a spreadsheet in a shared drive with no idea where it came
+        # from is one a designer re-uploads twice or attributes to the wrong colleague. The NAME is
+        # the exporter's own, which they are entitled to disclose about themselves; nothing here
+        # names anybody who was interviewed.
+        shared_by=getattr(current_user, "name", None) or None,
+        exported_on=datetime.now(UTC).date().isoformat(),
+    )
+    return _xlsx_response(workbook, question_set_filename(payload["title"]))
 
 
 # --- Upload -------------------------------------------------------------------------------------

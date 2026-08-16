@@ -106,7 +106,8 @@ import {
   type DwStageCompleteness,
   type DwStageData,
   type DwSummary,
-  type DwValue
+  type DwValue,
+  type DwStageProvenance
 } from "@/lib/designWorkshops";
 import {
   CUSTOM_ENTITY_KEY,
@@ -117,6 +118,13 @@ import {
   type DwCustomField
 } from "@/lib/customSections";
 import { uploadMediaBatch } from "@/lib/media";
+// THE CREATE RULE IS IMPORTED, NEVER RESTATED HERE. This store is the OFFLINE half of "who may
+// start a design workshop", and a second copy of the role set in a file that runs with no network
+// is the copy that would go on minting workshops for a designer months after the rule changed.
+// One set, in `lib/permissions.ts`, mirrored by `backend/app/core/deps.py` and checked by
+// `backend/tests/test_design_workshop_gate.py`.
+import { DESIGN_WORKSHOP_CREATE_REFUSAL, canCreateDesignWorkshops } from "@/lib/permissions";
+import type { User, UserRole } from "@/lib/types";
 // The one rule for "did anything reach the server" lives in the outbox and is imported rather than
 // restated. Two answers to that question is two different ideas of what "offline" means, and the
 // wrong one either strands a queue for ever or replays a rejection until somebody clears storage.
@@ -274,6 +282,24 @@ export type DwDraftStage = {
    * whole stage is missing. `stage.custom ?? {}` at every read is the rule.
    */
   custom?: DwEntryData;
+  /**
+   * WHO LAST SET EACH FIELD, exactly as the server reported it on the read this stage was adopted
+   * from. Rendered under each box by `FieldProvenance`.
+   *
+   * ── IT IS THE SERVER'S ANSWER AND IT IS NEVER UPDATED LOCALLY ─────────────────────────────────
+   *
+   * A designer typing into a box does NOT restamp it here, and that is deliberate rather than
+   * unfinished. Authorship is decided server-side by `entry_provenance.merge_entry_provenance`,
+   * which ignores anything a client sends — so a locally-invented stamp would be a claim this
+   * device is not entitled to make, and it would be overwritten by the truth on the next read
+   * anyway. The honest local behaviour is to show what the server last said and let the next
+   * adopt correct it.
+   *
+   * OPTIONAL, AND EVERY READ MUST DEFAULT IT. Like `custom`, no migration rung is spent on it: a
+   * stage record written before this existed simply has none, which renders as no attribution
+   * line — the same as a field nobody has set.
+   */
+  provenance?: DwStageProvenance;
   /**
    * What the last {@link foldStageInto} added to this stage, or removed the possibility of, in words.
    *
@@ -846,6 +872,14 @@ export function acknowledgeStoreTrouble(): void {
  */
 let sessionUserId: string | null = null;
 let sessionKnown = false;
+/**
+ * The signed-in account's ROLE, held for exactly one question: may this session mint a workshop
+ * that the server has never heard of? See {@link mayMintLocalWorkshop}.
+ *
+ * The role and not a boolean, so the rule itself stays in `lib/permissions.ts` and this file cannot
+ * develop an opinion of its own about who may create a workshop.
+ */
+let sessionRole: UserRole | null = null;
 
 /**
  * Tell the store who is signed in. Called by `DesignWorkshopDraftBanner`, which is mounted once in
@@ -853,10 +887,26 @@ let sessionKnown = false;
  *
  * Passing `null` means "signed out, and we know it": every owned draft goes quiet and nothing
  * syncs. It does NOT delete anything — the other designer's fortnight has to survive the handover.
+ *
+ * `role` IS PASSED BESIDE THE ID RATHER THAN LOOKED UP, because this store has no network by
+ * design: it is the half of the app that works in a courtyard, and a rule it can only evaluate
+ * after a round trip is a rule it cannot evaluate when it matters. The caller already holds the
+ * whole `User`; handing over the one field the store needs keeps the rule in one place and the
+ * lookup at zero.
  */
-export function setDraftSessionUser(userId: string | null): void {
-  if (sessionKnown && sessionUserId === userId) return;
+/*
+  `role` IS REQUIRED, NOT OPTIONAL, AND THAT IS THE WHOLE POINT OF THE SIGNATURE.
+
+  An optional parameter defaulting to `null` would have been a smaller diff and a worse rule: a call
+  site that forgot it would be read as "signed in, no role", every account would be refused a
+  create, and an ADMIN would find they could not start a workshop — with nothing in the type system
+  saying why. Required, the compiler names every call site that has to think about it, which today
+  is exactly one (`DraftSyncBanner`).
+*/
+export function setDraftSessionUser(userId: string | null, role: UserRole | null): void {
+  if (sessionKnown && sessionUserId === userId && sessionRole === role) return;
   sessionUserId = userId;
+  sessionRole = role;
   sessionKnown = true;
   void refreshDrafts();
 }
@@ -864,6 +914,55 @@ export function setDraftSessionUser(userId: string | null): void {
 /** True while nobody has told this store who is signed in — see {@link setDraftSessionUser}. */
 export function draftSessionUnknown(): boolean {
   return !sessionKnown;
+}
+
+/**
+ * May a session in this state START a design workshop on this device — one with no server row
+ * behind it at all?
+ *
+ * PURE AND EXPORTED SO THE DECISION CAN BE PINNED WITHOUT INDEXEDDB, the same reason
+ * {@link stagesUnreadAfterCreate} is. The transaction is not the interesting part; the tri-state is.
+ *
+ * ── WHY "NOT TOLD YET" IS ALLOWED, AND WHY THAT IS NOT A HOLE ────────────────────────────────────
+ * There are three states, exactly as there are for ownership: nobody has said (`known: false`),
+ * signed out (`known: true`, no role), and signed in as someone. Refusing while nobody has said
+ * would make the store the thing that blocks an ADMIN from starting a workshop in the second
+ * between the tab opening and `GET /me` answering — a refusal for a rule that does not apply to
+ * them, which is exactly the sort of false negative that teaches people to ignore refusals.
+ *
+ * Nothing gets through that window: the create form is not rendered at all until `useAuth` has a
+ * user (`canCreateDesignWorkshops(undefined)` is false), the sync pass refuses to run while the
+ * session is unknown, and `POST /design-workshops` is the gate that is actually load-bearing. This
+ * function exists so a DESIGNER finds out in the courtyard instead of a fortnight later at sync;
+ * it is not, and must never be rewritten as though it were, the security boundary.
+ *
+ * SIGNED OUT IS REFUSED, and that is the state this tri-state is worth having for: `AuthProvider`
+ * does not clear this store on sign-out, so without it a signed-out browser could still write a
+ * workshop into IndexedDB that no account owns and no sync pass will ever be able to send.
+ */
+export function mayMintLocalWorkshop(session: { known: boolean; role: UserRole | null }): boolean {
+  if (!session.known) return true;
+  return canCreateDesignWorkshops(session.role ? ({ role: session.role } as User) : null);
+}
+
+/** {@link mayMintLocalWorkshop} against this module's own session state. */
+export function draftSessionMayCreate(): boolean {
+  return mayMintLocalWorkshop({ known: sessionKnown, role: sessionRole });
+}
+
+/**
+ * Thrown by {@link createLocalDraft} when this session may not start a workshop.
+ *
+ * A NAMED CLASS RATHER THAN A BARE `Error`, so a caller can tell a refusal apart from a storage
+ * failure and say something different about each. `message` is the shared refusal copy verbatim —
+ * every surface says the same sentence, and the create form's catch already renders `err.message`,
+ * so the designer reads the right words with no extra wiring at all.
+ */
+export class DwCreateNotPermittedError extends Error {
+  constructor(message: string = DESIGN_WORKSHOP_CREATE_REFUSAL) {
+    super(message);
+    this.name = "DwCreateNotPermittedError";
+  }
 }
 
 /**
@@ -1149,16 +1248,39 @@ async function mutate<P = undefined>(
 }
 
 /**
- * Start a workshop that exists only on this device.
+ * Start a workshop that exists only on this device — ADMINS AND THE MASTER ADMIN ONLY.
  *
  * The record is complete and openable the moment this returns: 22 stages of nothing is a legitimate
- * workshop on day one, and the whole point is that the designer can start filling it in before the
+ * workshop on day one, and the whole point is that the creator can start filling it in before the
  * server has ever heard of it.
+ *
+ * ── THE REFUSAL, AND WHY IT IS HERE AND NOT ONLY ON THE SERVER ───────────────────────────────────
+ *
+ * This function is the OFFLINE half of "who may start a design workshop", and it is the half that
+ * decides whether the rule is survivable. A permission enforced only by `POST /design-workshops`
+ * reads, from a courtyard with no signal, as no permission at all: the app is designed so that the
+ * first act of a fortnight in the field does not need a connection, so a designer would mint a
+ * workshop on Monday, fill twenty-two stages into it over two days of interviews and photographs,
+ * carry it back to signal on Wednesday — and learn at that moment that the record can never be
+ * accepted. That is not a permission error, it is destroyed fieldwork, and no message shown on
+ * Wednesday can undo it.
+ *
+ * So the refusal happens at the FIRST act instead of the last, with nothing typed and nothing lost,
+ * and it names the next move rather than stating a rule (see `DESIGN_WORKSHOP_CREATE_REFUSAL`).
+ *
+ * IT THROWS RATHER THAN RETURNING NULL. Every caller of this function navigates straight into the
+ * draft it hands back; a null would have to be checked at each of them, and the one that forgot
+ * would land a designer on `/design-workshops/undefined`. A throw lands in the create form's
+ * existing catch, which already renders `err.message`.
+ *
+ * A CALLER MAY NOT OPT OUT. There is deliberately no `options.force`: the whole value of this gate
+ * is that there is exactly one way to mint a local workshop and it asks.
  */
 export async function createLocalDraft(
   header: Partial<DwDraftHeader> & { title: string },
   options?: { ownerUserId?: string | null; registryVersion?: string }
 ): Promise<DwDraft> {
+  if (!draftSessionMayCreate()) throw new DwCreateNotPermittedError();
   const now = Date.now();
   const draft: DwDraft = {
     schemaVersion: DW_DRAFT_SCHEMA_VERSION,
@@ -1189,6 +1311,36 @@ export async function createLocalDraft(
   await transact([STORE_DRAFTS], "readwrite", async (stores) => req(stores[STORE_DRAFTS].put(draft)));
   await refreshDrafts();
   return draft;
+}
+
+/**
+ * Move a workshop that exists only on this device into one that exists on the server.
+ *
+ * THE OTHER HALF OF THE CREATE RULE, and the reason shipping it does not cost anybody a fortnight.
+ * A designer holding a draft they are no longer allowed to create asks an admin to open the
+ * workshop, then points this draft at it; the next sync pass sees a draft with a `remoteId` and
+ * pushes all twenty-two stages, the photographs and the recorded deletions into it by the ordinary
+ * path. The whole argument for what is cleared, and what would happen if it were not, is on
+ * {@link adoptedIntoWorkshop}.
+ *
+ * ALLOWED TO EVERY SESSION THAT OWNS THE DRAFT, INCLUDING A DESIGNER — deliberately, and it is not
+ * a hole in the rule. Nothing here brings a workshop into existence: the workshop was created by an
+ * admin, through `POST /design-workshops`, under the gate. All this does is decide which existing
+ * workshop this device's unsent work belongs to, which is the designer's own judgement about their
+ * own fieldwork and nobody else's. The server still refuses every stage of it unless the account
+ * can open that workshop (`load_workshop_or_404`), so a mistaken adoption is refused there and
+ * costs a correction, not a record.
+ *
+ * @returns the re-pointed draft, or null when the store refused the write or the draft is gone.
+ */
+export async function adoptDraftIntoWorkshop(localId: string, remoteId: string): Promise<DwDraft | null> {
+  return mutate(localId, (draft) => {
+    // ALREADY POINTED SOMEWHERE — leave it exactly as it is. Re-pointing a draft that has a server
+    // record would orphan whatever has already been pushed into the old workshop, and there is no
+    // reading of a mis-tap that makes that the intended outcome.
+    if (!localDraftNeedsAWorkshop(draft)) return draft;
+    return adoptedIntoWorkshop(draft, remoteId);
+  });
 }
 
 /**
@@ -2752,6 +2904,11 @@ export async function adoptServerStage(
           collections: withClientKeys(incoming.collections ?? {}),
           removedFrom: [],
           custom: incoming.custom ?? {},
+          // Straight through, unfiltered, unlike `singletons` above: these are stamps and not
+          // answers, so there is no registry key to check them against and nothing here can be
+          // "unknown" in the sense `unknownSingletonKeys` means. A stamp for a field this build
+          // does not declare simply never gets looked up.
+          provenance: incoming.provenance,
           updatedAt: Date.now(),
           dirtyAt: null,
           serverLoadedAt: Date.now(),
@@ -3715,6 +3872,113 @@ export function stagesUnreadAfterCreate(
 }
 
 /**
+ * A local-only draft re-pointed at a workshop that already exists on the server.
+ *
+ * ── WHY THIS FUNCTION EXISTS AT ALL: THE DRAFTS THAT WERE ALREADY ON THE DEVICE ──────────────────
+ *
+ * The day the create rule shipped, designers' laptops were already holding workshops they had
+ * started under the OLD rule and not yet synced — a courtyard's worth of stages with `remoteId ===
+ * null`. Three answers were possible and two of them are unacceptable:
+ *
+ *   DELETE THEM. Never. It is somebody's fieldwork, and this store's whole discipline is that
+ *   nothing is thrown away — see the quarantine path on a damaged queue.
+ *
+ *   LET THEM SYNC ANYWAY, by exempting drafts created before the rule. That is a permission that
+ *   any device can grant itself by backdating a record, and it leaves the ministry's index filling
+ *   with designer-created workshops for as long as one old laptop stays in a drawer.
+ *
+ *   ADOPT THEM, which is this. The workshop is real and the work in it is real; what it lacks is a
+ *   server record it is allowed to have. An admin creates the workshop — which they were always
+ *   going to have to do — and the designer points their draft at it. Every stage, every photograph
+ *   and every deletion then syncs into that workshop by the ordinary path, because from the store's
+ *   point of view an adopted draft is indistinguishable from one that has already been created.
+ *
+ * ── THE TWO FIELDS THIS CLEARS ARE THE WHOLE CORRECTNESS ARGUMENT ────────────────────────────────
+ *
+ * `serverLoadedAt`, because {@link putDraftStage} stamps it for free on any stage written while
+ * `remoteId` is null, on the true premise that a workshop the server has never heard of has nothing
+ * up there to overwrite. Adoption is the moment that premise expires and it expires HARDER than it
+ * does on a create: the target workshop was created by somebody else, minutes or weeks ago, and
+ * `POST /design-workshops` has already seeded `workshopSetup` and `workshopPlan` singletons into it.
+ * Left standing, the stamp makes the first PUT omit `merge`, and `save_stage` replaces each
+ * singleton's `data` wholesale — destroying the seeded designer block in place, under a 200.
+ *
+ * `removedFrom`, and this one is the dangerous half. It records rows the designer deleted from a
+ * collection, and it arms `replaceCollections` on the sync PUT — the only mechanism by which a
+ * deletion reaches the server. On a never-synced draft every one of those deletions was of a row
+ * that has only ever existed on THIS DEVICE. Carried into an adoption, they would arm a sweep
+ * against a workshop this browser has never read, and `save_stage` would delete rows in the target
+ * that belong to whoever has been working in it. Clearing it is not tidiness; it is the difference
+ * between adopting a workshop and emptying one.
+ *
+ * PURE AND EXPORTED for the same reason as {@link stagesUnreadAfterCreate}: the decision is the
+ * defect and the transaction is not, and both of the paragraphs above can be asserted with no
+ * IndexedDB, no API and no Postgres row.
+ *
+ * `headerDirtyAt` IS DELIBERATELY LEFT ALONE — NOT CLEARED. The local header holds what the designer
+ * typed on the create form (their title, the craft, the cluster, the dates) and the admin's brand
+ * new workshop holds whatever the admin typed. The designer's copy is the one made in the room, so
+ * it stays owed and the ordinary PATCH arm sends it. `headerDirtyKeys` is what keeps that PATCH to
+ * the fields somebody actually touched, and it is preserved with it.
+ */
+export function adoptedIntoWorkshop(draft: DwDraft, remoteId: string): DwDraft {
+  return {
+    ...draft,
+    remoteId,
+    // Nothing is outstanding from a create that is never going to be attempted — see
+    // {@link DwDraft.createSentAt}. Left set, the next pass would go looking on the server for the
+    // answer to a request this device never sent.
+    createSentAt: null,
+    // The draft has been RE-POINTED, not reconciled: this browser still has not read a single row
+    // of the workshop it now names. `neverReconciled` (lib/workshopOpenability.ts) reads exactly
+    // this pair, and claiming a sync here would tell the stage index that a 404 over this id is
+    // about a real workshop the account has lost access to, rather than one it has never opened.
+    lastSyncedAt: null,
+    // The refusal that sent the designer here has been acted on and is no longer true.
+    failure: null,
+    stages: stagesUnreadAfterCreate(draft.stages),
+    updatedAt: Date.now()
+  };
+}
+
+/**
+ * Is this draft a workshop that exists ONLY on this device — one that needs a server workshop
+ * before any of it can be sent?
+ *
+ * The question the list page asks of every row to decide whether to offer "Move into a workshop",
+ * and the question {@link runSync} asks before it declines to create one. `remoteId === null` is the
+ * whole test and it is written as a named function anyway, because the two callers must agree and
+ * because the name is what makes the row's control legible in the UI code.
+ */
+export function localDraftNeedsAWorkshop(draft: DwDraft): boolean {
+  return draft.remoteId === null;
+}
+
+/**
+ * Must this sync pass DECLINE to bring a workshop into existence, rather than POST it?
+ *
+ * PURE AND EXPORTED BECAUSE THIS EXACT DECISION HAS ALREADY BEEN GOT WRONG ONCE, in the change that
+ * introduced it, and the wrong version is not visible by reading it. Written first as "refuse
+ * whenever this session may not create", it also refused the draft whose create had ALREADY LANDED
+ * before the rule shipped — a real workshop on the server that this device merely never saw the
+ * answer for. That draft needs no create at all; the pass only has to write the id back. Refusing it
+ * would have stranded an existing workshop behind a permanent failure and told the designer to go
+ * and ask an admin for a workshop they already had.
+ *
+ * So both facts are named, and neither can be left out by accident:
+ *
+ * @param alreadyOnServer the workshop was found up there by {@link resolveInterruptedCreate} — there
+ *   is nothing to create, so nothing to refuse, whoever is signed in.
+ * @param sessionMayCreate {@link draftSessionMayCreate} for this session.
+ */
+export function createMustBeDeclined(
+  { alreadyOnServer, sessionMayCreate }: { alreadyOnServer: boolean; sessionMayCreate: boolean }
+): boolean {
+  if (alreadyOnServer) return false;
+  return !sessionMayCreate;
+}
+
+/**
  * Does an error thrown by a stage PUT describe the WHOLE WORKSHOP rather than that one stage?
  *
  * Rethrown to the pass-level catch when it does. The set is: anything the server did not answer at
@@ -3810,6 +4074,49 @@ async function runSync(): Promise<DwSyncResult> {
                 "workshop with this title — so this device cannot tell which one is yours, and sending it again could file " +
                 "it twice. Nothing has been thrown away. Open the list, check which of them is the one you started, and " +
                 "either rename this one or delete the copy you do not want, then use Try again.",
+              true,
+              (current.failure?.attempts ?? 0) + 1
+            )
+          }));
+          result.failed += 1;
+          continue;
+        }
+        /*
+          THE SESSION MAY NOT START A WORKSHOP — SAY SO HERE, DO NOT POST AND LET THE SERVER SAY IT.
+
+          This is the arm that catches the drafts that were ALREADY on the device when the create
+          rule shipped: a designer's laptop holding a workshop they started under the old rule, with
+          a fortnight of stages in it and no `remoteId`. Nothing is deleted and nothing is retried
+          into a wall.
+
+          IT SITS AFTER `resolveInterruptedCreate` AND IT READS `resumed`, AND BOTH HALVES MATTER —
+          the decision itself is {@link createMustBeDeclined}, where the trap is written out in full.
+          The short of it: a create that already LANDED needs no create, so refusing it would strand
+          a workshop that exists and send the designer to ask an admin for something they have.
+
+          `permanent: true`, because it is: no amount of waiting for signal changes the answer, and a
+          pass that kept retrying would put this draft's twenty-two stages behind a refusal for ever
+          while the banner reported work in flight. `blocksRetry` then leaves it alone until the
+          designer acts, which is exactly right — the action needed is a conversation with an admin,
+          not a button.
+
+          The message names the next move twice over: what to ask for, and the control that finishes
+          the job once it has been done. `DESIGN_WORKSHOP_CREATE_REFUSAL` is the shared sentence, and
+          the adoption sentence is appended rather than folded into it because it is true only here —
+          on the create form there is no draft to move yet.
+        */
+        if (createMustBeDeclined({
+          alreadyOnServer: Boolean(resumed),
+          sessionMayCreate: draftSessionMayCreate()
+        })) {
+          await mutate(draft.localId, (current) => ({
+            ...current,
+            failure: failure(
+              `${DESIGN_WORKSHOP_CREATE_REFUSAL} This workshop was started on this device and has ` +
+                "not been sent, so nothing has been lost and nothing has been deleted — every stage, " +
+                "photograph and recording is still here. When an admin has created the workshop, open " +
+                'the design workshops list and use "Move into a workshop" on this row to send all of ' +
+                "this into it.",
               true,
               (current.failure?.attempts ?? 0) + 1
             )

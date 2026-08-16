@@ -62,13 +62,29 @@ import retrofit2.HttpException
  * destination has to be invented in the navigation on one client and mirrored on the other — the web
  * puts its own scanner at the top of `/search` for the same reason.
  *
- * ── THERE IS NO CAMERA HERE, AND THAT IS A DECISION ──────────────────────────────────────────
+ * ── THERE IS A CAMERA HERE NOW, AND THERE DID NOT USED TO BE ─────────────────────────────────
  *
- * The same one `WorkshopCodesScreen`'s header records and does not repeat here: Android has no
- * `BarcodeDetector`, decoding a QR needs ML Kit or ZXing, and that is a new transitive dependency in
- * an APK that ships to field handsets over prepaid mobile data. The typed code is a shorter path to
- * the same record and it works on every device today with nothing added, so the typed box is not a
- * fallback — it is the route, and it is never hidden.
+ * WHAT THIS HEADER USED TO SAY, kept so the reversal is legible rather than mysterious:
+ *
+ *     "THERE IS NO CAMERA HERE, AND THAT IS A DECISION. The same one `WorkshopCodesScreen`'s header
+ *      records and does not repeat here: Android has no `BarcodeDetector`, decoding a QR needs ML
+ *      Kit or ZXing, and that is a new transitive dependency in an APK that ships to field handsets
+ *      over prepaid mobile data. The typed code is a shorter path to the same record and it works on
+ *      every device today with nothing added, so the typed box is not a fallback — it is the route,
+ *      and it is never hidden."
+ *
+ * That was a fair reading and it was overtaken by a requirement: every QR surface is to offer the
+ * camera AND a picture the designer already holds. THE SECOND HALF IS WHAT THE OLD ARGUMENT NEVER
+ * COVERED. "Typing is a shorter path" assumes somebody is standing in front of the card — and the
+ * case this feature exists for is a screenshot forwarded on WhatsApp, or a photograph of a tag taken
+ * last week, where there is no card to read from and no shorter path at all.
+ *
+ * ZXing (0.58 MB, pure Java, no Play Services) is the dependency, which is what
+ * `docs/DECISION-qr-scanning-on-android.md` decided in the first place and never built.
+ *
+ * THE TYPED BOX IS STILL THE GUARANTEED PATH and is still never hidden. It needs no permission, no
+ * lens and no library, and it is the only route that works on a card whose QR is smudged while the
+ * characters printed under it are not.
  *
  * ── A REFUSAL NEVER SAYS THE RECORD IS REAL ──────────────────────────────────────────────────
  *
@@ -170,8 +186,15 @@ fun RecordCodeLookupPanel(
     var refusal by remember { mutableStateOf<String?>(null) }
     var found by remember { mutableStateOf<RecordCodeOutcome.Found?>(null) }
 
-    fun lookUp() {
-        val input = typed
+    /**
+     * Resolve whatever was read or typed — ONE route for both.
+     *
+     * A scanned payload goes through [decodeWorkshopCode] exactly as a typed one does. That is the
+     * whole reason this takes a string rather than the scanner calling its own resolver: a payment
+     * QR photographed by mistake must be refused by the same sentence a mistyped code is, and a
+     * second parser is how the two come to disagree about the same card.
+     */
+    fun lookUp(input: String) {
         if (input.isBlank() || busy) return
         busy = true
         // Cleared BEFORE the request, not after it: the seconds a lookup takes are exactly when the
@@ -220,6 +243,24 @@ fun RecordCodeLookupPanel(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
+            // THE SCANNER ABOVE THE BOX, because it is the faster route when it applies and the box
+            // is what you fall back to. Both are always present; neither is hidden by the other.
+            DwQrScanControl(
+                enabled = !busy,
+                onText = { text ->
+                    // The decoded payload is put IN THE BOX as well as resolved. A designer who
+                    // scanned the wrong card can see what was read and correct a character, rather
+                    // than being shown a refusal about a string the app never told them it had.
+                    typed = text
+                    refusal = null
+                    found = null
+                    lookUp(text)
+                },
+                onRefusal = { message ->
+                    found = null
+                    refusal = message
+                },
+            )
             OutlinedTextField(
                 value = typed,
                 onValueChange = {
@@ -239,7 +280,7 @@ fun RecordCodeLookupPanel(
             )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { lookUp() },
+                    onClick = { lookUp(typed) },
                     enabled = typed.isNotBlank() && !busy,
                     // The 48dp floor this app applies wherever a control was thought about — see
                     // ISLAND_TOUCH_TARGET in ui/AppNavigation.kt.

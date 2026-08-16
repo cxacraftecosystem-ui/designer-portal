@@ -72,6 +72,7 @@ import com.designprototype.workshop.data.workshopCardSource
 import com.designprototype.workshop.data.workshopCardSpecs
 import com.designprototype.workshop.data.workshopRecordTypeLabel
 import com.designprototype.workshop.report.renderCardSheetPdf
+import com.designprototype.workshop.ui.DwQrScanControl
 import com.designprototype.workshop.ui.DwQrSymbolImage
 import com.designprototype.workshop.ui.RecordCodeOutcome
 import com.designprototype.workshop.ui.Text
@@ -116,16 +117,36 @@ import java.time.format.DateTimeFormatter
  *     no printer.
  *  3. It reads a code BACK by hand, on every device, with no dependency and no permission.
  *
- *  4. IT DOES NOT OPEN THE CAMERA, and that is a decision rather than a gap. Android has no
- *     `BarcodeDetector`; decoding a QR needs ML Kit or ZXing, which is a new transitive dependency in
- *     an APK that ships to field handsets over a village connection — method count in a 64K-limited
- *     dex, a second implementation of a standard this repository already implements once, and a
- *     download every designer pays for. The web's own scanner header settles the same argument the
- *     same way for the browsers with no native detector: **the typed code is a shorter path to the
- *     same record and it works everywhere, today, with nothing added.** So the manual box is not a
- *     fallback here, it is the route — and it is never hidden, exactly as it is never hidden there.
- *     A camera path is worth adding the day somebody measures how long a designer spends typing; it
- *     is not worth adding on the strength of it being what a scanner usually looks like.
+ *  4. It reads a code back from the CAMERA, or out of a picture the designer was sent.
+ *
+ * ── POINT 4 USED TO BE "IT DOES NOT OPEN THE CAMERA", AND THAT REVERSED ON 2026-08-16 ─────────
+ *
+ * The old text, kept so the change is legible rather than mysterious:
+ *
+ *     "IT DOES NOT OPEN THE CAMERA, and that is a decision rather than a gap. Android has no
+ *      `BarcodeDetector`; decoding a QR needs ML Kit or ZXing, which is a new transitive dependency
+ *      in an APK that ships to field handsets over a village connection — method count in a
+ *      64K-limited dex, a second implementation of a standard this repository already implements
+ *      once, and a download every designer pays for. … So the manual box is not a fallback here, it
+ *      is the route — and it is never hidden … A camera path is worth adding the day somebody
+ *      measures how long a designer spends typing; it is not worth adding on the strength of it
+ *      being what a scanner usually looks like."
+ *
+ * WHAT REOPENED IT IS NOT THE CAMERA HALF. It is the other one: every QR surface is now to accept a
+ * PICTURE the designer already holds — a screenshot forwarded on WhatsApp, a photograph of a tag
+ * taken last week, a card sheet printed in an office two districts away. "Typing is a shorter path"
+ * is true only while somebody is standing in front of the card, and in every one of those cases
+ * nobody is. There is no shorter path; there is no path.
+ *
+ * The dependency is ZXing — 0.58 MB, pure Java, no Play Services, and on the JVM test classpath, so
+ * `DwQrDecodeTest` decodes symbols made by this file's own printer. That is what
+ * `docs/DECISION-qr-scanning-on-android.md` chose in the first place and never built; its own review
+ * trigger was a QR dependency appearing in the build file, and it has been updated rather than left
+ * to rot.
+ *
+ * THE TYPED BOX IS UNCHANGED AND IS STILL NEVER HIDDEN. It needs no permission, no lens and no
+ * library, and it is the only route that works on a card whose QR is smudged while the characters
+ * printed under it are not.
  *
  * ── IT RUNS OFF THE LOCAL DRAFT ───────────────────────────────────────────────────────────────
  *
@@ -497,12 +518,17 @@ sealed interface DwLookupOutcome {
 }
 
 /**
- * The typed-code route — the one that works on every device, and therefore the one that is never
- * hidden. See the screen's header for why there is no camera beside it.
+ * Read one code back: scanned, picked out of a picture, or typed.
  *
- * Tolerant of what a human does to a code and strict about what it means: spaces and capitals are
- * stripped by [decodeWorkshopCode] before the parse, because a designer copying a code off a card
- * under a tin roof will not reproduce them and refusing over a space would be a refusal about nothing.
+ * ALL THREE ROUTES END IN [decodeWorkshopCode], which is the point. A payment QR photographed by
+ * mistake and a mistyped code are refused by the same sentence, because there is one parser and no
+ * second opinion; and the version gate and the check digit apply identically however the characters
+ * arrived.
+ *
+ * The typed box remains tolerant of what a human does to a code and strict about what it means:
+ * spaces and capitals are stripped before the parse, because a designer copying a code off a card
+ * under a tin roof will not reproduce them and refusing over a space would be a refusal about
+ * nothing.
  */
 @Composable
 private fun DwCodeLookupPanel(resolve: suspend (DwWorkshopCodeRef) -> DwLookupOutcome) {
@@ -512,8 +538,7 @@ private fun DwCodeLookupPanel(resolve: suspend (DwWorkshopCodeRef) -> DwLookupOu
     var outcome by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var detail by remember { mutableStateOf<String?>(null) }
 
-    fun lookUp() {
-        val input = typed
+    fun lookUp(input: String) {
         if (input.isBlank() || busy) return
         busy = true
         detail = null
@@ -542,27 +567,42 @@ private fun DwCodeLookupPanel(resolve: suspend (DwWorkshopCodeRef) -> DwLookupOu
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(
-                    Icons.Filled.Keyboard,
+                    // QrCode2, not Keyboard. The heading above this used to be "Type the code printed
+                    // under the QR" and a keyboard was the honest picture of the only route there was;
+                    // over a panel that now leads with a Scan button it would advertise the slowest of
+                    // the three. The record-code panel on Search already uses this icon for the same
+                    // panel, and the two surfaces should look like the one control they now are.
+                    Icons.Filled.QrCode2,
                     contentDescription = null,
                     tint = MaterialTheme.field.muted,
                     modifier = Modifier.size(16.dp)
                 )
                 Text(
-                    "Type the code printed under the QR",
+                    "Open a record from its code",
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
                 )
             }
-            Text(
-                // The honest sentence, in the place the web puts its own. It says what this build does
-                // and does not do, without implying a broken camera or a missing permission.
-                "This app does not read a QR from the camera — reading one needs a scanner library this " +
-                    "build deliberately does not ship. Typing the code does exactly the same thing, and it " +
-                    "is what the code is printed for.",
-                color = MaterialTheme.field.muted,
-                fontSize = 11.sp,
-                lineHeight = 16.sp
+            // THE SENTENCE THAT USED TO BE HERE WAS "This app does not read a QR from the camera —
+            // reading one needs a scanner library this build deliberately does not ship." It was
+            // true and is not any more; leaving it standing above a Scan button would be the screen
+            // contradicting itself about its own feature, which is worse than either state.
+            DwQrScanControl(
+                enabled = !busy,
+                onText = { text ->
+                    // Put in the box as well as resolved, so a designer who scanned the wrong tag
+                    // can see what was read and fix a character rather than meeting a refusal about
+                    // a string the app never showed them.
+                    typed = text
+                    outcome = null
+                    detail = null
+                    lookUp(text)
+                },
+                onRefusal = { message ->
+                    detail = null
+                    outcome = false to message
+                },
             )
             OutlinedTextField(
                 value = typed,
@@ -580,7 +620,7 @@ private fun DwCodeLookupPanel(resolve: suspend (DwWorkshopCodeRef) -> DwLookupOu
             )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { lookUp() },
+                    onClick = { lookUp(typed) },
                     enabled = typed.isNotBlank() && !busy,
                     // The 48dp floor this app applies wherever a control was thought about — see
                     // ISLAND_TOUCH_TARGET in ui/AppNavigation.kt.

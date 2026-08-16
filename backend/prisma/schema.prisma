@@ -958,6 +958,31 @@ model QuestionnaireQuestion {
   prompt      String
   sortOrder   Int
   isActive    Boolean  @default(true)
+  /// When this question stopped being offered. Set together with isActive=false so "retired" is
+  /// distinguishable from "an editor unticked it before anyone answered".
+  retiredAt   DateTime?
+  /// THE QUESTION THAT REPLACED THIS ONE. A plain column and not a Prisma relation, exactly as
+  /// QuestionnaireFormQuestion.supersededById is and for the same reason: it is only ever read to
+  /// render "replaced by", never joined through, and a self-relation would cost every generated
+  /// client an extra recursion level for nothing.
+  ///
+  /// ── THESE TWO COLUMNS AROUND THE WRONG WAY IS A 500, AND IT SHIPPED THAT WAY FOR A WHILE ──
+  ///
+  /// The migration that adds them to the database (20260816200000_questionnaire_question_supersede)
+  /// and the route that reads and writes them both landed while THIS BLOCK DID NOT — four agents
+  /// were editing this file at once and this edit was lost. The generated Prisma client therefore
+  /// had no such fields, and three endpoints answered a bare 500: rewording an answered question,
+  /// deleting one, and deleting a section holding one.
+  ///
+  /// That state was strictly WORSE than the defect being fixed. The old behaviour silently rewrote
+  /// the wording that existing answers had been given under — bad, and quiet. The half-applied fix
+  /// removed the quiet path and put a 500 in its place, so the correction could not be made at all.
+  /// If you are ever tempted to land a migration and a route without the model, this is the note.
+  ///
+  /// What it prevents, stated once: "How many looms?" answered "12", reworded to "How many
+  /// weavers?", and a ministry report now states there are twelve weavers. The answers stay on THIS
+  /// row under the prompt they were given, and the new wording becomes a new row.
+  supersededById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   sectionId   String?
@@ -968,6 +993,7 @@ model QuestionnaireQuestion {
   @@index([sectionCode])
   @@index([sectionId])
   @@index([isActive])
+  @@index([supersededById])
 }
 
 model QuestionnaireInterview {
@@ -1831,6 +1857,34 @@ model DwStageEntry {
   /// Orders a collection's rows. A singleton's is always 0.
   ordinal   Int    @default(0)
   data      Json
+
+  /// WHO LAST SET EACH FIELD OF `data`, sparse: `{fieldKey: {by, byName, at, source, ...}}`.
+  ///
+  /// `createdById` below answers "who created this ROW" and stops being the truth the moment a
+  /// second designer touches it — which is the ordinary case, because `DesignWorkshopViewer`
+  /// exists so that two designers run one workshop over one set of rows. This column answers the
+  /// question that actually gets asked: who set THIS field.
+  ///
+  /// TWO SOURCES, AND THE SECOND IS THE REASON THE COLUMN EXISTS. `source: "designer"` is a person
+  /// on this workshop typing. `source: "reference"` is a value `hydrate_entries` COPIED from a
+  /// shared canonical record — an Artisan, a documented tool — in which case `by` is that RECORD's
+  /// author and not the designer who picked it from the dropdown, and `refModel`/`refId`/`refKey`
+  /// name the row and column it came from. That is what makes "provenance stays with the original
+  /// author unless a field is edited" expressible: 81 field-pairs are copied onto these rows, and
+  /// before this column nothing distinguished a value the designer wrote from a value the picker
+  /// supplied.
+  ///
+  /// SPARSE, AND AN ABSENT KEY IS AN HONEST ANSWER. Every row written before this column has
+  /// values nobody recorded an author for. Backfilling them to whoever saves next would
+  /// manufacture an audit trail on a document submitted to a ministry. See
+  /// `app/services/entry_provenance.py`, whose module docstring also carries the boundary between
+  /// this and `REFERENCE_HYDRATION` — one says do not duplicate, the other deliberately does, and
+  /// both are right for different objects.
+  ///
+  /// NOT INSIDE `data`. `data` is validated against the registry and echoed back to both clients;
+  /// a reserved key in it would be reported in `droppedKeys` on every save, destroying the one
+  /// drift signal this repository has.
+  fieldProvenance Json?
 
   /// Set by the client that created the row, and stable across a sync. It is what lets the
   /// phone match a row it created offline to the row the server now has, without which every

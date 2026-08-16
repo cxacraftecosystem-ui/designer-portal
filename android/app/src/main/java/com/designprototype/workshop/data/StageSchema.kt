@@ -1284,6 +1284,87 @@ data class StageCompletenessDto(
 )
 
 /**
+ * WHO LAST SET ONE FIELD. The server's stamp, read-only on this device.
+ *
+ * [source] is the whole point of the model and has exactly two values, both wire format:
+ *
+ *  * `"reference"` — the value was COPIED onto this row from a shared canonical record (an artisan,
+ *    a documented tool) when the designer picked it. [by] is then THAT RECORD'S author, not the
+ *    designer who chose it, and [refModel]/[refId] name the row it came from. This is what "the
+ *    provenance stays with the original author" means on a handset screen.
+ *  * `"designer"` — somebody working on this workshop typed or changed it, and [by] is them.
+ *
+ * An unrecognised value is kept verbatim rather than coerced to either: a server one release ahead
+ * would otherwise have its third source silently rendered as one of these two, which is worse than
+ * rendering it as unknown.
+ *
+ * EVERY FIELD DEFAULTS, INCLUDING [by]. A stamp is sparse by design — a field nobody recorded an
+ * author for carries no entry at all, and the ones that do exist may name an account that has since
+ * been deleted, in which case the server sends the id with no [byName]. Both are ordinary states
+ * and neither is an error: see `app/services/entry_provenance.py`, which explains why fabricating a
+ * name for either would be worse than showing none.
+ */
+@Serializable
+data class DwFieldStampDto(
+    val by: String? = null,
+    val byName: String? = null,
+    val at: String = "",
+    val source: String = "",
+    val refModel: String? = null,
+    val refId: String? = null,
+    val refKey: String? = null,
+) {
+    /** True when this value came off a shared record rather than out of this workshop. */
+    val fromSharedRecord: Boolean get() = source == "reference"
+
+    /**
+     * What to show beside a field, or null when there is nothing honest to say.
+     *
+     * Null rather than "Unknown" for an unattributed field: eight of the twenty-two stages are full
+     * of rows written before this existed, and a label reading "Unknown" on every one of them is
+     * noise that trains a designer to stop looking at the label entirely — at which point it cannot
+     * do its one job on the rows that DO carry an author.
+     */
+    fun attribution(): String? = when {
+        !byName.isNullOrBlank() && fromSharedRecord -> "From the record, by $byName"
+        !byName.isNullOrBlank() -> "Edited by $byName"
+        by.isNullOrBlank() -> null
+        // An id with no name is an account that has been deleted. Saying so is more useful than
+        // printing a cuid, and more honest than pretending the field was never attributed.
+        fromSharedRecord -> "From the record, by an account no longer on record"
+        else -> "Edited by an account no longer on record"
+    }
+}
+
+/**
+ * One stage's provenance, mirroring the three data buckets of [StageBucketDto].
+ *
+ * [collections] is keyed by entity and then BY ENTRY ID, never by position. The three readers of
+ * this data sort their rows differently — the server's `_stages_payload` sorts by `_ordinal` after
+ * grouping, its report builder sorts before, and this device sorts its own draft — so a positional
+ * list would be misaligned on whichever of them disagreed, and the failure is one participant's
+ * edits shown against another participant's name in the table that proves who attended.
+ */
+@Serializable
+data class DwStageProvenanceDto(
+    val singleton: Map<String, DwFieldStampDto> = emptyMap(),
+    /** entity key -> entry id -> field key -> stamp. Three levels, and the middle one is the point. */
+    val collections: Map<String, Map<String, Map<String, DwFieldStampDto>>> = emptyMap(),
+    val custom: Map<String, DwFieldStampDto> = emptyMap(),
+) {
+    /**
+     * The stamps for one collection row, addressed by the `_entryId` the row already carries.
+     *
+     * Empty for a row this device created offline and has not yet synced: it has no server id, so
+     * there is nothing to look up, and "not yet recorded" is the correct answer for a value that
+     * has never reached the server.
+     */
+    fun forRow(entityKey: String, entryId: String?): Map<String, DwFieldStampDto> =
+        if (entryId.isNullOrBlank()) emptyMap()
+        else collections[entityKey].orEmpty()[entryId].orEmpty()
+}
+
+/**
  * One stage's stored data.
  *
  * Collection rows carry the server's own bookkeeping inside the object — `_entryId`, `_ordinal` and
@@ -1310,6 +1391,31 @@ data class StageBucketDto(
      * reads as "no custom answers", which is the truth for it.
      */
     val custom: JsonObject = JsonObject(emptyMap()),
+    /**
+     * WHO LAST SET EACH FIELD of the three buckets above — `_stages_payload`'s fourth sibling key.
+     *
+     * The phone is a READER in this feature and not a writer: it never computes a stamp and never
+     * sends one. The server recomputes the whole map on every save from the values themselves (see
+     * `merge_entry_provenance`), which is deliberate — a stamp a client could set is a stamp a
+     * client could forge, and this one names a researcher who is not in the room.
+     *
+     * WHY IT IS CARRIED HERE AT ALL, given the phone does not write it. A stage entry holds two
+     * kinds of value that look identical once stored: what the designer typed, and what the artisan
+     * picker COPIED off a shared record (81 field-pairs of it — see `REFERENCE_HYDRATION`). A
+     * designer standing in a cluster looking at a phone-filled participant row has no way to tell
+     * which is which, and the difference decides whether correcting a wrong phone number is
+     * "fix my typo" or "the master record is out of date and somebody should be told".
+     *
+     * SIBLING OF THE DATA AND NEVER NESTED INSIDE IT, for the same reason [custom] is: a key inside
+     * `singleton` that the registry does not declare is reported in `droppedKeys` on every save —
+     * firing "this phone is running a newer field registry than the server" on every workshop that
+     * has ever picked an artisan, which destroys the one drift signal this repository has.
+     *
+     * Defaulted empty, so a payload from a server predating the feature reads as "nobody recorded
+     * who set these", which is the truth for it. No [WORKSHOP_DRAFT_SCHEMA_VERSION] rung is owed:
+     * this is a wire model, additive and defaulted, and nothing on the draft ladder carries it.
+     */
+    val provenance: DwStageProvenanceDto = DwStageProvenanceDto(),
     val completeness: StageCompletenessDto? = null,
     /**
      * The digest of the custom definition the score beside it was computed under — `GET /stages/{key}`.

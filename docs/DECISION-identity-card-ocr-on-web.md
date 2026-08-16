@@ -39,11 +39,34 @@ stable enough across either computing platforms or character sets to be standard
 which is why text detection has been moved to a separate informative specification".
 
 **The second column is the finding that matters, and it is about the QR scanner rather than this
-lane.** `WorkshopCodeScanner`'s header treats a missing `BarcodeDetector` as a normal state and
-keeps the typed code on every surface. That was the right call and this table is how right: on a
-Windows laptop the camera route of the QR scanner does not exist either, and the typed box is not
-the fallback, it is the product. The same is now true of the local card reader, and it is said in
-`lib/identityCardLocal.ts`'s header rather than left for somebody to discover.
+lane.** `WorkshopCodeScanner`'s header treated a missing `BarcodeDetector` as a normal state and
+kept the typed code on every surface. This table is how right that was about the MEASUREMENT: on a
+Windows laptop the camera route of the QR scanner did not exist either. The same is true of the
+local card reader, and it is said in `lib/identityCardLocal.ts`'s header rather than left for
+somebody to discover.
+
+> **Superseded for the QR scanner on 2026-08-16, and the correction is worth reading before this
+> document's own conclusion is applied to anything else.** The sentence that used to end the
+> paragraph above — *"the typed box is not the fallback, it is the product"* — was true of what
+> shipped and was the wrong thing to conclude. Feature-detection was the right instinct and the
+> table is the right measurement; what did not follow is that a missing browser API means a missing
+> FEATURE. The QR scanner has since bundled its own decoder (`frontend/lib/qrDecode.ts`, fed by
+> `frontend/lib/qrImageDecode.ts`), so on that same Windows laptop it now offers both the camera and
+> an uploaded picture, with `BarcodeDetector` used only as a fast path where it exists.
+>
+> **This does not overturn the decision recorded here**, and the difference is the whole reason the
+> correction is a block rather than an edit. §2 weighs a *text* recogniser: Tesseract.js, measured
+> at megabytes, against a task with no verifier. A QR decoder is a different object — its
+> specification (ISO 18004) was frozen in 2000 and cannot move, it shares every table with the
+> encoder already in this repository, and, decisively, **its output is checkable**: a decoded
+> payload is verified by Reed-Solomon and then by the check digit in `lib/workshopCodes.ts`, so a
+> misread fails loudly instead of quietly attaching two days of work to the wrong record. None of
+> those three properties holds for OCR of a handwritten card, which is why the "no" below stands.
+>
+> What DOES carry across is the warning: *"the browser share that does not have it"* was not a
+> minority on this product's machines, it was everybody, and a feature gated on the Shape Detection
+> API is a feature that does not exist in a district office. Weigh a bundle against that, not
+> against a desktop developer's Chrome.
 
 So the local route is shipped — it costs nothing, it is the only reader that sends the photograph
 nowhere and the only one that needs no connection — and it is **not** presented as the answer. The

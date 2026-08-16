@@ -99,16 +99,26 @@ def anyio_backend():
 
 @pytest.fixture(scope="module")
 async def world():
-    """A signed-in designer and a live TestClient sharing the app's Prisma connection.
+    """A signed-in designer, the admin who opens workshops for them, and a live TestClient sharing
+    the app's Prisma connection.
 
-    The account is created here rather than inside a test because the Prisma client is shared with
+    The accounts are created here rather than inside a test because the Prisma client is shared with
     the running app and bound to the TestClient's event loop; touching it from a test's own loop is
     the kind of cross-loop use that fails intermittently rather than honestly. Where a test needs to
     read a row for itself it opens its OWN client — see :func:`stored_fields`, which is the same
     thing ``test_questionnaire_forms`` does for the foreign-key floor.
 
-    The address carries a per-run stamp because ``User.email`` is unique, so a fixed one would pass
+    The addresses carry a per-run stamp because ``User.email`` is unique, so a fixed one would pass
     on a clean database and fail on every run after.
+
+    THE ADMIN AND THE ROSTER ROW ARE BOTH LOAD-BEARING, and both arrived with the create rule.
+    Only admins and the master admin may START a design workshop (``can_create_design_workshops``),
+    so the :func:`workshop` fixture below has to open it as the admin and hand it to the designer;
+    and ``replace_viewers`` refuses to grant an account the ACTIVE designer roster does not admit,
+    so without the roster row the grant 422s and every test here would run against a workshop the
+    designer cannot open. The alternative — running this whole module as an admin — would have been
+    two lines shorter and would have stopped proving that a DESIGNER can define custom sections,
+    which is the only kind of account that ever does it in the field.
     """
     if not _LOCAL:
         pytest.skip("needs a local database")
@@ -125,14 +135,29 @@ async def world():
             "role": "DESIGNER",
             "passwordHash": hash_password("unused"),
         })
+        admin = await db.user.create(data={
+            "email": f"customsections-admin-{stamp}@example.org",
+            "name": "Custom Sections Admin",
+            "role": "ADMIN",
+            "passwordHash": hash_password("unused"),
+        })
+        await db.designerroster.create(data={
+            "email": f"customsections-{stamp}@example.org",
+            "fullName": designer.name,
+            "institution": "Directorate of Handicrafts",
+            "isActive": True,
+            "addedById": admin.id,
+        })
     finally:
         await db.disconnect()
 
     with TestClient(app) as client:
+        # The DESIGNER is the default identity: every test in this module is about what a designer
+        # may do with a workshop's custom sections. The admin is used for exactly one call.
         client.headers.update(
             {"Authorization": f"Bearer {create_access_token(subject=designer.id)}"}
         )
-        yield {"client": client, "designer": designer, "stamp": stamp}
+        yield {"client": client, "designer": designer, "admin": admin, "stamp": stamp}
 
 
 @pytest.fixture
@@ -140,14 +165,35 @@ def client(world):
     return world["client"]
 
 
+def _as_admin(world) -> dict[str, str]:
+    """The header for the one account that may open a workshop."""
+    return {"Authorization": f"Bearer {create_access_token(subject=world['admin'].id)}"}
+
+
 @pytest.fixture
 def workshop(client, world):
-    """A fresh workshop per test, so no test can be made to pass by another one's leftovers."""
+    """A fresh workshop per test, so no test can be made to pass by another one's leftovers.
+
+    OPENED BY THE ADMIN, GRANTED TO THE DESIGNER — the real flow since designers stopped being able
+    to create workshops. The grant is what lets the designer reach it at all: without a
+    ``DesignWorkshopViewer`` row, ``load_workshop_or_404`` answers 404 to anyone but the creator and
+    the admins, and every test in this file would fail on its first request with a message about a
+    missing workshop rather than about custom sections.
+    """
     created = client.post(
-        "/api/design-workshops", json={"title": f"Custom sections {uuid.uuid4().hex[:8]}"}
+        "/api/design-workshops",
+        json={"title": f"Custom sections {uuid.uuid4().hex[:8]}"},
+        headers=_as_admin(world),
     )
     assert created.status_code == 201, created.text
-    return created.json()["id"]
+    workshop_id = created.json()["id"]
+    granted = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [world["designer"].id]},
+        headers=_as_admin(world),
+    )
+    assert granted.status_code == 200, granted.text
+    return workshop_id
 
 
 def put_definition(

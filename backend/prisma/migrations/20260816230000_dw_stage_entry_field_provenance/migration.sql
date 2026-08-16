@@ -1,0 +1,20 @@
+-- Field-level provenance for design-workshop stage entries.
+--
+-- `createdById` on this table answers "who created the row" and stops being the truth as soon as a
+-- second designer touches it, which is the ordinary case: `DesignWorkshopViewer` exists so that two
+-- designers run one workshop over one shared set of rows. This column answers the question that
+-- actually gets asked -- who set THIS field -- and, for the 81 field-pairs that `hydrate_entries`
+-- copies onto these rows from the shared Artisan / ProductDocumentation / ToolDocumentation /
+-- Process / Craft records, records the CANONICAL RECORD'S author rather than the designer who
+-- picked it out of a dropdown.
+--
+-- NULLABLE WITH NO BACKFILL, AND THAT IS THE DECISION RATHER THAN THE DEFAULT. Every row that
+-- already exists has values whose author nobody recorded. The only backfill available would be
+-- `createdById` -- "whoever created the row set every field on it" -- which is false for any row a
+-- co-designer has edited, and a fabricated audit trail is worse than an absent one on a document
+-- that is submitted to a ministry. NULL reads as "not recorded" on every surface; see
+-- `app/services/entry_provenance.py`.
+--
+-- No index. Nothing filters or sorts on this column: it is read only alongside the row it belongs
+-- to, by primary key or by the (designWorkshopId, stageKey, ordinal) read the table already has.
+ALTER TABLE "DwStageEntry" ADD COLUMN "fieldProvenance" JSONB;

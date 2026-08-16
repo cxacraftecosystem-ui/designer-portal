@@ -132,7 +132,31 @@ export function UploadDialog({
             are kept and your new wording is added as a new question — nothing is overwritten and nothing is lost. The
             report afterwards names every question this happened to.
           </p>
-        ) : null}
+        ) : (
+          // THE THREE FILES THIS DOOR ACCEPTS, named before one is chosen, because the third of them
+          // behaves in a way nobody would guess and finding out afterwards reads as the import
+          // having lost data. It has not: a workbook that came out of the app carries answers that
+          // are ALREADY recorded here under the names of the people who recorded them, and writing
+          // them again would duplicate somebody's fieldwork with a new author stamped on the copy.
+          <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
+            <p className="font-medium text-ink-900">Three files work here, and one of them behaves differently.</p>
+            <ul className="mt-1 grid gap-1">
+              <li>
+                <span className="font-medium text-ink-900">The blank pro-forma</span>, with your questions typed into it —
+                and your own answers too, if you ran the interviews on paper. Both are imported.
+              </li>
+              <li>
+                <span className="font-medium text-ink-900">A question set another designer sent you</span> — you get their
+                questions in a new questionnaire of your own, ready for your own fieldwork.
+              </li>
+              <li>
+                <span className="font-medium text-ink-900">A workbook downloaded out of the app</span> — its questions are
+                imported and its answers are not. They are already recorded here, under the names of the people who
+                recorded them.
+              </li>
+            </ul>
+          </div>
+        )}
 
         <FieldBlock label="Workbook" required>
           <label className="file-trigger">

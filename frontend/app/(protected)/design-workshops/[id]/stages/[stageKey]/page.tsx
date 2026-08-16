@@ -86,7 +86,8 @@ import {
   type DwSaveResult,
   type DwStage,
   type DwStageCompleteness,
-  type DwValue
+  type DwValue,
+  type DwStageProvenance
 } from "@/lib/designWorkshops";
 import {
   CUSTOM_ENTITY_KEY,
@@ -262,6 +263,8 @@ function DesignWorkshopStagePageBody({
   // `lib/registryProvenance`, never with a comparison in the JSX. See the banner near the bottom.
   const registryNotice = registryProvenanceNotice(registrySource);
   const [singleton, setSingleton] = useState<DwEntryData>({});
+  /** Who last set each field, as the server reported it. Null until a stage has been adopted. */
+  const [provenance, setProvenance] = useState<DwStageProvenance | null>(null);
   const [collections, setCollections] = useState<Record<string, DwRow[]>>({});
   const [errors, setErrors] = useState<Record<string, Record<string, string>>>({});
   /**
@@ -505,6 +508,11 @@ function DesignWorkshopStagePageBody({
       setSingleton(data.singleton);
       setCollections(data.collections);
       setCustom(held);
+      // FROM THE SAME DRAFT RECORD AS THE BOXES ABOVE, in the same breath. Reading it from
+      // anywhere else — a second fetch, a cached response — would let the value on screen and the
+      // attribution under it come from two different reads of the stage, and the failure that
+      // produces is a colleague's name under a number they never typed.
+      setProvenance(draftStage?.provenance ?? null);
       // No completeness to seed: the bar is derived from the setters above, so it is already
       // right for this stage the moment the boxes are.
       setRemovedFrom(removed);
@@ -1757,6 +1765,7 @@ function DesignWorkshopStagePageBody({
                   stageKey={stageKey}
                   capture={capture}
                   focus={focus}
+                  provenance={provenance?.singleton}
                 />
               ) : (
                 <CollectionTable
@@ -1769,6 +1778,7 @@ function DesignWorkshopStagePageBody({
                   stageKey={stageKey}
                   capture={capture}
                   focus={focus}
+                  provenance={provenance?.collections?.[entity.key]}
                 />
               )}
               {/*

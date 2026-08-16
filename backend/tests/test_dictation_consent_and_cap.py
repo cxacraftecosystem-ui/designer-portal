@@ -658,10 +658,19 @@ def test_a_consent_can_never_be_written_into_a_stage_entry():
     """**THE REGISTRY TEMPTATION, REFUSED BY CONSTRUCTION RATHER THAN BY A DOCSTRING.**
 
     A consent question on stage 1 is the obvious-looking home and it cannot carry who and when:
-    ``save_stage``'s UPDATE writes only {data, ordinal, deletedAt}, ``createdById`` is set on CREATE
-    alone, and a stage row's ``updatedAt`` moves whenever anything in that stage changes. So there is no
-    expressible write from that module into the stage table, and a later change that wants one has to
-    delete this check — a visible act in a diff and a failing test, rather than a quiet new call site.
+    ``save_stage``'s UPDATE writes only {data, ordinal, deletedAt, fieldProvenance}, ``createdById``
+    is set on CREATE alone, and a stage row's ``updatedAt`` moves whenever anything in that stage
+    changes. So there is no expressible write from that module into the stage table, and a later
+    change that wants one has to delete this check — a visible act in a diff and a failing test,
+    rather than a quiet new call site.
+
+    ``fieldProvenance`` JOINED THAT LIST AFTER THIS TEST WAS WRITTEN and does not weaken the
+    argument, which is why the sentence was corrected rather than the test. It answers "who last set
+    each field of ``data``" — see ``services/entry_provenance`` — so it is per-FIELD authorship of
+    workshop answers, not a consent decision by a person about a recording: it has no notion of
+    granting, no expiry, and is rewritten wholesale on every save from the values themselves. A
+    consent parked in it would be erased by the next save of the same stage, which is precisely the
+    failure this guard exists to make unreachable.
     """
     from app.services import dictation_consent as module
 

@@ -100,7 +100,12 @@ DESIGN_WORKSHOP_ROLES = frozenset({"DESIGNER", "ADMIN", "MASTER_ADMIN"})
 
 
 def can_run_design_workshops(user: Any) -> bool:
-    """Create and edit a design & prototype workshop, and generate its report.
+    """RUN a design & prototype workshop: open one, fill its 22 stages, create records inside it,
+    and generate its report.
+
+    NOT "create one". Starting a NEW workshop is :func:`can_create_design_workshops`, which is a
+    strictly narrower set — see there for why the two were split. Everything else a designer has
+    ever been able to do is still this predicate and is deliberately unchanged.
 
     THE ONE CAPABILITY IN THIS FILE THAT IS NOT A RANK THRESHOLD, and it is deliberate. Every
     other predicate here reads "this tier and above", because the ladder is inclusive: a professor
@@ -118,6 +123,76 @@ def can_run_design_workshops(user: Any) -> bool:
     about, and a non-monotonic rule is far easier to let drift than a threshold.
     """
     return role_value(user) in DESIGN_WORKSHOP_ROLES
+
+
+#: Who may bring a NEW design & prototype workshop into existence. A STRICT SUBSET of
+#: :data:`DESIGN_WORKSHOP_ROLES` — see :func:`can_create_design_workshops`.
+DESIGN_WORKSHOP_CREATOR_ROLES = frozenset({"ADMIN", "MASTER_ADMIN"})
+
+
+def can_create_design_workshops(user: Any) -> bool:
+    """Start a NEW design & prototype workshop.
+
+    ── WHY THIS IS NOT ``can_run_design_workshops`` ─────────────────────────────────────────────
+    A DESIGNER may do everything inside a workshop and may no longer open one. Stated as the
+    requirement was: "designers cannot create workshops (only admins/master admins can) —
+    designers create records under existing workshops."
+
+    The reason is that a design workshop is not a record, it is a CONTAINER for a fortnight of
+    them, and it is the unit the ministry indexes, funds and audits. A sanction order authorises a
+    workshop in a named cluster; the admin who holds that order is the person who knows a workshop
+    exists, and creating one is therefore an administrative act, not a capture act. Left open to
+    designers it produced duplicates of the same real workshop under three spellings of its title,
+    each holding part of one fortnight's fieldwork, and nothing in the product could merge them.
+
+    ── WHAT A DESIGNER STILL HAS, WHICH IS ALL OF IT BUT THIS ──────────────────────────────────
+    Open a workshop they created or were granted; fill all 22 stages; create artisans, products,
+    processes, tools and interviews inside it; capture photographs and dictation; generate and
+    submit the report. Every one of those is gated by ``can_run_design_workshops`` or by
+    ``load_workshop_or_404`` and NONE of them is narrowed by this function. Anybody tightening this
+    file should check ``tests/test_design_workshop_gate.py``, which asserts that explicitly: a
+    permission change that quietly cost a designer their stage edits would be far worse than this
+    rule is worth.
+
+    ``is_admin`` rather than a rank floor at ADMIN, so it reads as the same set the rest of this
+    module means by "an admin", and so a PROFESSOR — who is below admin and outside the designer
+    set entirely — is refused here for the same reason they are refused everywhere else in the
+    design-workshop surface.
+
+    ``frontend/lib/permissions.ts::canCreateDesignWorkshops`` and its
+    ``DESIGN_WORKSHOP_CREATOR_ROLES`` carry the identical set and must keep carrying it.
+    """
+    return is_admin(user)
+
+
+#: The refusal a designer reads when they try to start a workshop, in ONE place because it is said
+#: on three surfaces — this module's 403, the web list page, and the offline draft store's refusal —
+#: and a refusal that names a different next move depending on where you met it is not a rule, it is
+#: three rumours. ``frontend/lib/permissions.ts::DESIGN_WORKSHOP_CREATE_REFUSAL`` is its twin.
+#:
+#: IT NAMES THE NEXT MOVE, which is not decoration. Somebody reading this is standing in a courtyard
+#: with participants in front of them; "forbidden" tells them to stop working, and the truth is that
+#: everything they came to do still works as soon as an admin has opened the workshop.
+DESIGN_WORKSHOP_CREATE_REFUSAL = (
+    "Only admins and the master admin can start a new design & prototype workshop. Ask an admin to "
+    "create it for your cluster and give you access — you can then fill in all 22 stages, add "
+    "artisans, products and photographs, and generate the report exactly as before. Any workshop "
+    "you already have access to is open to you now."
+)
+
+
+def assert_can_create_design_workshops(user: Any) -> None:
+    """Refuse anyone but an admin or the master admin, naming what they can do instead.
+
+    A function rather than only a ``Depends`` because the create route already takes
+    ``current_user`` for other reasons and because putting the sentence in one place is the point —
+    see :data:`DESIGN_WORKSHOP_CREATE_REFUSAL`.
+    """
+    if not can_create_design_workshops(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=DESIGN_WORKSHOP_CREATE_REFUSAL,
+        )
 
 
 def can_manage_designer_roster(user: Any) -> bool:

@@ -1,6 +1,7 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +23,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,7 +45,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DW_LOCAL_ID_PREFIX
+import com.designprototype.workshop.data.DW_WORKSHOP_CREATE_REFUSAL
 import com.designprototype.workshop.data.DesignWorkshopCreateBody
+import com.designprototype.workshop.data.mayMintLocalWorkshop
 import com.designprototype.workshop.data.ReportTemplateDto
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.WorkshopDraft
@@ -140,7 +145,38 @@ fun WorkshopListScreen(
     var rows by remember { mutableStateOf<List<WorkshopRow>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var search by remember { mutableStateOf("") }
-    var showCreate by remember(startCreating) { mutableStateOf(startCreating) }
+    /**
+     * May this account start a workshop at all — read from the CACHED user, with no network.
+     *
+     * `remember`ed with no key on purpose, and for the reason `canReadIdentityCards` gives on the
+     * artisan form: a role cannot change while this screen is mounted (it takes a fresh sign-in,
+     * which rebuilds the tree), so the boolean is stable and a control cannot appear and disappear
+     * between frames.
+     *
+     * FAILS OPEN — no cached user reads as "may create" — because that is what [mayMintLocalWorkshop]
+     * decides and it is the deliberate half of its tri-state: refusing an ADMIN in the second before
+     * the cached user is read would be a refusal for a rule that does not apply to them. The gate
+     * that is actually load-bearing is `POST /design-workshops`, and it is not this.
+     */
+    /*
+     * KEYED ON THE CACHED SESSION, not `remember {}` with no key.
+     *
+     * Unkeyed, this is computed once for the life of the composition and never again — so a sign-out
+     * and sign-in as a different role, or an admin's role being lowered while this screen is open,
+     * leaves the New button and the refusal panel showing the OLD account's answer. The web
+     * equivalent re-runs on `user?.role`, and two surfaces disagreeing about who may create is
+     * exactly the kind of difference that gets reported as "the phone let me and the laptop did not".
+     *
+     * The role rather than the whole user object: it is the only field this reads, and keying on the
+     * object would recompute on every unrelated profile change.
+     */
+    val cachedSession = repository.cachedUser()
+    val mayCreate = remember(cachedSession?.id, cachedSession?.role) {
+        mayMintLocalWorkshop(known = cachedSession != null, role = cachedSession?.role)
+    }
+    var showCreate by remember(startCreating) { mutableStateOf(startCreating && mayCreate) }
+    /** The device-only draft the designer is moving into a real workshop, while they choose one. */
+    var adopting by remember { mutableStateOf<WorkshopRow?>(null) }
     var busy by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
     var offline by remember { mutableStateOf(false) }
@@ -289,10 +325,42 @@ fun WorkshopListScreen(
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
-            Button(onClick = { showCreate = true }, enabled = !busy) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("New")
+            // GONE, NOT GREYED, for a designer. A disabled control with its reason somewhere else is
+            // a control people tap repeatedly; and the answer here is not "not yet" but "not you,
+            // and here is who" — which is a sentence, not a tooltip. The refusal panel below carries
+            // it, so nothing is hidden except a dead end.
+            if (mayCreate) {
+                Button(onClick = { showCreate = true }, enabled = !busy) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("New")
+                }
+            }
+        }
+
+        // Answered BY NAME rather than by an absence — and answered here even when the designer
+        // arrived from the dashboard's "New workshop" tile, which passes `startCreating` and would
+        // otherwise land them on a list with nothing to explain why no form opened.
+        if (!mayCreate) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.field.warningContainer, RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    "Starting a workshop is an admin's job",
+                    color = MaterialTheme.field.onWarningContainer,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    DW_WORKSHOP_CREATE_REFUSAL,
+                    color = MaterialTheme.field.onWarningContainer,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
             }
         }
 
@@ -458,7 +526,16 @@ fun WorkshopListScreen(
             }
 
             rows.isEmpty() -> Text(
-                "No design workshops yet. Tap New to start one — you can do it with no connection.",
+                if (mayCreate) {
+                    "No design workshops yet. Tap New to start one — you can do it with no connection."
+                } else {
+                    // A DIFFERENT SENTENCE, because the other one names a button this account does
+                    // not have. "Tap New" over a header with no New in it is the app telling somebody
+                    // their screen is broken.
+                    "No design workshops yet. An admin creates the workshop and gives you access; it " +
+                        "then appears here and everything inside it is yours to fill in, with or " +
+                        "without a connection."
+                },
                 color = MaterialTheme.field.muted,
                 fontSize = 13.sp
             )
@@ -468,6 +545,19 @@ fun WorkshopListScreen(
                     row = row,
                     busy = busy,
                     sending = sendingId == row.localId,
+                    // OFFERED ON EVERY DEVICE-ONLY ROW, to every account that holds the draft —
+                    // INCLUDING a designer, deliberately. Nothing here brings a workshop into
+                    // existence; it decides which EXISTING workshop this device's unsent fortnight
+                    // belongs to, which is the designer's own judgement about their own fieldwork.
+                    // See `WorkshopDraftStore.adoptIntoWorkshop`.
+                    //
+                    // It is the whole reason this rule can ship without costing anybody a fortnight,
+                    // so it is on the row rather than behind a menu.
+                    onAdopt = if (row.localOnly && row.hasLocalDraft) {
+                        { adopting = row }
+                    } else {
+                        null
+                    },
                     onOpen = { onOpen(row.localId) },
                     onSend = {
                         busy = true
@@ -533,6 +623,47 @@ fun WorkshopListScreen(
         Spacer(Modifier.padding(bottom = 8.dp))
     }
 
+    adopting?.let { row ->
+        AdoptIntoWorkshopDialog(
+            repository = repository,
+            row = row,
+            // EVERY WORKSHOP THIS LIST ALREADY KNOWS ABOUT, and no request of its own. A designer
+            // doing this is by definition holding a draft that could not be created, which is very
+            // often because they are in a courtyard — so a picker that needed the network would be
+            // unavailable at exactly the moment it is reached for. The list has already walked every
+            // page this account may see; those rows are the candidates.
+            candidates = rows.filter { !it.localOnly },
+            offline = offline,
+            onDismiss = { adopting = null },
+            onAdopt = { target ->
+                adopting = null
+                busy = true
+                scope.launch {
+                    val moved = runCatching {
+                        WorkshopDraftStore.adoptIntoWorkshop(
+                            context = appContext,
+                            workshopId = row.localId,
+                            remoteId = target,
+                        )
+                    }.getOrNull()
+                    if (moved == null) {
+                        onError(
+                            "That draft could not be moved. If it has since been sent to the server " +
+                                "on its own, nothing needed moving and nothing has been lost."
+                        )
+                    } else {
+                        onMessage(
+                            "“${row.title}” now belongs to the workshop you chose. Everything on this " +
+                                "phone goes up into it on the next sync — nothing has been deleted."
+                        )
+                    }
+                    busy = false
+                    reload++
+                }
+            },
+        )
+    }
+
     if (showCreate) {
         CreateWorkshopDialog(
             repository = repository,
@@ -562,6 +693,8 @@ private fun WorkshopCard(
     onOpen: () -> Unit,
     onSend: () -> Unit,
     onFreeSpace: () -> Unit,
+    /** Non-null only for a draft with no server workshop behind it — see the call site. */
+    onAdopt: (() -> Unit)? = null,
 ) {
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
@@ -617,6 +750,25 @@ private fun WorkshopCard(
                         onFreeSpace = onFreeSpace,
                     )
                 }
+            }
+            // ON THE ROW, NOT IN A MENU. This is the whole route out for a fortnight of fieldwork
+            // captured in a draft that can no longer be created as a workshop of its own, and a
+            // designer looking at a row that will not sync has to be able to see the answer from
+            // here.
+            onAdopt?.let { adopt ->
+                Text(
+                    "This workshop exists only on this phone. Once an admin has created it on the " +
+                        "server, move this draft into it and everything you have captured — every " +
+                        "stage, photograph and recording — goes up into that workshop.",
+                    color = MaterialTheme.field.muted,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+                OutlinedButton(
+                    onClick = adopt,
+                    enabled = !busy && !sending,
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) { Text("Move into a workshop", fontSize = 13.sp) }
             }
         }
     }
@@ -674,9 +826,22 @@ private fun CompletenessRing(percent: Int) {
  * record can exist would make the app unusable at the exact moment it is opened. The Basic-tier
  * fields of stage 1 are what the completeness gate enforces, later.
  *
- * A CREATE THAT CANNOT REACH THE SERVER STILL SUCCEEDS. It becomes a local-only workshop with a
- * [DW_LOCAL_ID_PREFIX] id, fully editable and fully exportable, and the list offers to send it later.
- * Refusing to create offline would mean the app works everywhere except the field.
+ * A CREATE THAT CANNOT REACH THE SERVER STILL SUCCEEDS — FOR AN ACCOUNT THAT MAY CREATE ONE. It
+ * becomes a local-only workshop with a [DW_LOCAL_ID_PREFIX] id, fully editable and fully exportable,
+ * and the list offers to send it later. Refusing to create offline would mean the app works
+ * everywhere except the field.
+ *
+ * ── AND THE ONE ACCOUNT FOR WHICH OFFLINE-STILL-SUCCEEDS WAS A TRAP ──────────────────────────────
+ *
+ * [classifyCreate] below has always refused a 403 correctly and written nothing to the device, for
+ * the reason its own comment gives. But that refusal needs an ANSWER, and a designer in a courtyard
+ * does not get one: the create fails as transient, a local draft is minted by design, twenty-two
+ * stages and a fortnight of photographs go into it, and the 403 arrives at the first bar of signal —
+ * permanently. A designer learning at sync that the fortnight in their hand can never be accepted is
+ * the exact failure the create rule must not cause.
+ *
+ * So [mayMintLocalWorkshop] is asked FIRST, from the cached role, before the request and before a
+ * byte is written. Nothing about the network is consulted, because the answer does not depend on it.
  */
 @Composable
 private fun CreateWorkshopDialog(
@@ -739,6 +904,16 @@ private fun CreateWorkshopDialog(
             TextButton(
                 enabled = !busy && title.isNotBlank(),
                 onClick = {
+                    // BEFORE THE NETWORK AND BEFORE THE DISK. See this dialog's header for the
+                    // fortnight this ordering saves. The cached user is what the whole app already
+                    // gates on offline; `known` is false only when nobody is signed in on this
+                    // device at all, and the tri-state deliberately allows that case through rather
+                    // than refusing an admin over a fact it has not read yet.
+                    val cached = repository.cachedUser()
+                    if (!mayMintLocalWorkshop(known = cached != null, role = cached?.role)) {
+                        onError(DW_WORKSHOP_CREATE_REFUSAL)
+                        onDismiss()
+                    } else {
                     busy = true
                     scope.launch {
                         val body = DesignWorkshopCreateBody(
@@ -778,12 +953,125 @@ private fun CreateWorkshopDialog(
                         busy = false
                         onCreated(id, remote.isFailure)
                     }
+                    }
                 }
             ) { Text(if (busy) "Starting…" else "Start") }
         },
         dismissButton = {
             TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") }
         }
+    )
+}
+
+/**
+ * Move a device-only draft into a workshop that exists on the server.
+ *
+ * ── WHY THE PICKER IS FED FROM THE LIST AND MAKES NO REQUEST OF ITS OWN ─────────────────────────
+ *
+ * A designer reaching this control is, by definition, holding a draft that could not be created —
+ * which very often means they are in the courtyard where they captured it. A picker that needed a
+ * round trip would be empty at exactly the moment it is used. The list screen has already walked
+ * every page the server says this account may see and has merged them with what is on the disk, so
+ * its own rows are the honest candidate set.
+ *
+ * AND IT SAYS WHEN THAT SET IS PARTIAL. If the list could not reach the server this dialog is
+ * offering only the workshops this phone happens to have opened before, which may not include the
+ * one the admin created an hour ago. Saying so is the difference between "your workshop is not here
+ * yet" and "this app has lost your workshop".
+ *
+ * ── WHAT IT WARNS ABOUT BEFORE IT DOES IT ───────────────────────────────────────────────────────
+ *
+ * Adoption is not reversible from this screen: once the draft points at a workshop, the next sync
+ * pushes twenty-two stages into it. Choosing the wrong workshop puts a fortnight of one cluster's
+ * fieldwork inside another cluster's record, and unpicking that is a database job. So the
+ * confirmation names the workshop being moved INTO, in full, rather than saying "this workshop".
+ */
+@Composable
+private fun AdoptIntoWorkshopDialog(
+    repository: WorkshopRepository,
+    row: WorkshopRow,
+    candidates: List<WorkshopRow>,
+    offline: Boolean,
+    onDismiss: () -> Unit,
+    onAdopt: (remoteId: String) -> Unit,
+) {
+    var chosen by remember(row.localId) { mutableStateOf("") }
+    val options = remember(candidates) {
+        candidates.mapNotNull { candidate ->
+            candidate.remoteId?.takeIf { it.isNotBlank() }?.let { id ->
+                com.designprototype.workshop.ui.SelectOption(
+                    value = id,
+                    label = candidate.title,
+                    hint = candidate.subtitle.takeIf { it.isNotBlank() },
+                )
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Move “${row.title}” into a workshop") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Everything captured on this phone under “${row.title}” — every stage, every " +
+                        "photograph, every recording — starts belonging to the workshop you pick, and " +
+                        "goes up into it on the next sync. Nothing is deleted and nothing is sent " +
+                        "anywhere else.",
+                    color = MaterialTheme.field.body,
+                    fontSize = 12.sp
+                )
+                if (options.isEmpty()) {
+                    Text(
+                        if (offline) {
+                            "There are no workshops on this phone to move it into, and the server " +
+                                "could not be reached — so this list may not be the whole story. Ask " +
+                                "an admin to create the workshop, then open this list once with a " +
+                                "connection and try again."
+                        } else {
+                            "You do not have access to any workshop on the server yet. Ask an admin " +
+                                "to create one for your cluster and give you access; it appears here " +
+                                "and this draft can then be moved into it. Nothing on this phone is " +
+                                "at risk in the meantime."
+                        },
+                        color = MaterialTheme.field.warning,
+                        fontSize = 12.sp
+                    )
+                } else {
+                    SearchableSelectField(
+                        label = "Workshop to move it into",
+                        options = options,
+                        selectedValue = chosen,
+                        includeNone = false,
+                        onSelect = { picked -> chosen = picked }
+                    )
+                    if (offline) {
+                        // PARTIAL, AND SAID SO. A designer who cannot find the workshop the admin
+                        // just made would otherwise conclude the admin had not made it.
+                        Text(
+                            "The server could not be reached, so this list holds only the workshops " +
+                                "this phone already knows about. A workshop created for you today may " +
+                                "not be here until you open this list with a connection.",
+                            color = MaterialTheme.field.warning,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Text(
+                        "Check the name. Moving it into the wrong workshop files this fortnight's " +
+                            "fieldwork under another cluster, and this screen cannot move it back.",
+                        color = MaterialTheme.field.muted,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = chosen.isNotBlank(),
+                onClick = { onAdopt(chosen) }
+            ) { Text("Move it") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 

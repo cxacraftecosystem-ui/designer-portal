@@ -1,9 +1,37 @@
-# Scanning a QR code on the handset: ZXing, not ML Kit — and in the end, neither
+# Scanning a QR code on the handset: ZXing, not ML Kit — and in the end, neither, and now ZXing after all
 
-> ## STATUS, 2026-08-15: DECIDED AND NEVER IMPLEMENTED. NO QR DECODER SHIPS.
+> ## STATUS, 2026-08-16: BUILT. ZXing SHIPS, AND BOTH READ SURFACES SCAN AND ACCEPT A PICTURE.
 >
-> **Do not read the next sentence as a description of the handset.** It is the verdict of 2026-08-08
-> and it was overtaken before anything was built.
+> This supersedes the 2026-08-15 banner, which is kept immediately below because the shape of this
+> file's history is most of what makes it useful.
+>
+> * **Shipping:** `com.google.zxing:core:3.5.3` in `android/app/build.gradle.kts`.
+> * **Where:** one shared control, `ui/DwQrScanControl.kt`, mounted on BOTH read surfaces —
+>   `WorkshopCodesScreen.kt` (Cards & tags) and `RecordCodeLookup.kt` (Search). Each offers a camera
+>   photograph AND a picture the designer already holds. The decoding lives in `data/DwQrDecode.kt`.
+> * **The typed box is untouched on both surfaces** and is still never hidden. That was this
+>   document's load-bearing condition and it remains satisfied.
+> * **The camera is a SHUTTER, not a live preview.** No CameraX, no frame loop — a photograph is
+>   taken and decoded, the same shape `DwIdentityCardControl` uses. A live scanner is still the next
+>   thing to add and CameraX is still what it costs.
+>
+> **What reopened the decision was not a new measurement.** It was a requirement: every QR surface is
+> to accept a picture the designer already has, because a screenshot forwarded on WhatsApp or a
+> photograph of a tag taken last week is often the only thing they hold. The argument that closed
+> this file twice — *"the typed code is a shorter path to the same record"* — is true only while
+> somebody is standing in front of the card. In the picked-image case nobody is, and there is no
+> shorter path because there is no path at all. That is the hole the two file headers did not see,
+> and both of them now record their own reversal in place rather than being deleted.
+>
+> **The verdict line below is now right again**, by a route nobody planned: the decision was ZXing,
+> the outcome was nothing, and the implementation is ZXing. The comparison in *The measurement* is
+> what settled it a second time, plus one argument that section could not have made — see
+> *What the second look added*.
+
+> ## SUPERSEDED BANNER — STATUS, 2026-08-15: DECIDED AND NEVER IMPLEMENTED. NO QR DECODER SHIPPED.
+>
+> *Kept verbatim. It was true for a year of this file's life and it is the state anybody reading a
+> commit from before 2026-08-16 is looking at.*
 >
 > * **Decided:** ZXing, on the argument below.
 > * **Built:** *nothing*. `grep -i zxing android/app/build.gradle.kts` returns no line; the only ML
@@ -99,13 +127,52 @@ release build exercised on real hardware — and it is written down here rather 
 
 ---
 
+## What the second look added, 2026-08-16
+
+The 2026-08-08 comparison held up: the unbundled ML Kit variant is still disqualified by the model
+download, and 9.44 MB against 0.58 MB is still the wrong trade for a symbol held still under a lens.
+Two things were added to it, and one of them would have decided the question on its own.
+
+**ZXing is on the JVM test classpath and ML Kit is not.** `IdentityCardRecognizer`'s own header
+states the cost of the other choice in plain terms: ML Kit "cannot run in a JVM unit test … every
+claim about recognition ACCURACY is therefore a hardware claim that has not been made yet", on a
+machine with no device and no emulator. Pure Java changes that completely.
+`android/app/src/test/java/com/designprototype/workshop/data/DwQrDecodeTest.kt` renders symbols
+produced by **this application's own `DwQrEncode`** — a hand-written ISO 18004 encoder with its own
+Reed-Solomon, masking and version tables — and decodes them with the shipping reader and the shipping
+hints. The printer and the reader are checked against each other on every build, not on a handset
+nobody has. `DwQrEncodeTest` could only ever check the encoder against its own arithmetic; "an
+independent decoder can read what I drew" is a different claim and it is the one a designer holding a
+printed card actually needs.
+
+**Two numbers came out of writing that test, both of which contradicted what had been assumed:**
+
+| Assumed | Measured | What it changed |
+|---|---|---|
+| The symbol reads at 1 pixel per module | **It does not. The floor is 2.** | The decode ladder must keep an un-halved rung. Halving is only safe at ≥4 px/module in the original, so a code that is small in frame is destroyed by the fast first pass and rescued by the second. |
+| A symbol with no quiet zone does not scan | **It scans fine when it fills the picture.** | The quiet zone's real job is holding the symbol away from *ink* — a card's printed rule — not away from the image border. The test now frames the symbol in black, which is what a card is, and the claim in `DwQrEncode.svgPath` is checkable at last. |
+
+Both assertions were written the wrong way round first and the test caught both. They were rewritten
+to pin the measured behaviour rather than deleted, and each carries a docstring saying what the old
+assertion claimed and why it went.
+
+**Still not measured, and still the honest gap:** anything involving a lens. There is no perspective,
+no glare and no motion blur in a rendered matrix. "ML Kit is genuinely better at live-frame
+detection" remains received wisdom, and now that there IS a decoder in the build it is finally
+possible to run the comparison — on a bent card in courtyard light, which is where it matters.
+
 ## How this document is kept true
 
 **Two of this document's claims are already false, and naming them is most of the maintenance
 story.** It is a decision record from 2026-08-08; the argument in it is frozen and is not rewritten
 to agree with later code, but a reader has to be told which sentences still describe the handset.
 
-### 1. THE DECISION WAS NOT IMPLEMENTED. No QR decoder ships on Android — not ZXing, not either ML Kit.
+### 1. ~~THE DECISION WAS NOT IMPLEMENTED.~~ **RESOLVED 2026-08-16 — it is implemented now.**
+
+*This section described the state of the tree from 2026-08-08 to 2026-08-16 and is kept because the
+account of how a decision came to be un-built is the most useful thing in this file. Everything below
+this paragraph is history: `com.google.zxing:core:3.5.3` is in the build file, `data/DwQrDecode.kt`
+decodes with it, and `ui/DwQrScanControl.kt` is mounted on both surfaces. See the status banner.*
 
 *Re-checked against the tree on 2026-08-15: still true, still nothing. This finding is now also stated
 in the banner at the top of the file — it was written here first and, being here, it was reaching
@@ -149,10 +216,16 @@ kept because it is the reasoning that led to the work.
 | What actually ships | `android/app/build.gradle.kts`, plus the two file headers named above. **Check the code, not this heading** — that is the lesson of §1. |
 | "The typed code remains on every surface and is the guaranteed path" | `frontend/components/designworkshop/WorkshopCodeScanner.tsx`, `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/WorkshopCodesScreen.kt`, `android/app/src/main/java/com/designprototype/workshop/ui/RecordCodeLookup.kt`. This is now doing more work than it was when it was written: with no camera on Android at all, it is not a safety net, it is the entire feature. A surface that ever hides the typed field invalidates the decision rather than merely degrading it. |
 
-**Review triggers:** any barcode or QR dependency appearing in `android/app/build.gradle.kts`; a
-change to either scanner header above; a measurement of how long designers actually spend typing
-codes, which is the condition both headers name for revisiting the camera.
+**Review triggers:** ~~any barcode or QR dependency appearing in `android/app/build.gradle.kts`~~
+— *this one fired on 2026-08-16 and the document was updated rather than left to rot; it stands for
+any FURTHER change to that dependency*; a change to either scanner header above; the arrival of
+CameraX or any live-preview scanning, which is the one capability deliberately not built here;
+a change to `DW_QR_SAMPLE_LADDER`, whose rungs depend on the 2-pixels-per-module floor measured in
+`DwQrDecodeTest`.
 
 **Known unverified:** "ML Kit is genuinely better at live-frame detection" is received wisdom about
 the libraries, not a measurement made here. Nobody has run the two side by side on a bent card in
-courtyard light, and with no decoder in the build there is nothing on the handset to run.
+courtyard light. ~~and with no decoder in the build there is nothing on the handset to run~~ — that
+half is now false: there IS a decoder on the handset, so the comparison has become possible for the
+first time. Nobody has run it. Nothing about the camera path has been exercised on real hardware at
+all; every claim in `DwQrDecodeTest` is about rendered pixels, and the file says so.
