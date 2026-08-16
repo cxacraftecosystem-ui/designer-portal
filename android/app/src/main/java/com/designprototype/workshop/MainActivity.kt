@@ -176,6 +176,7 @@ import com.designprototype.workshop.data.occurrenceDate
 import com.designprototype.workshop.ui.AccessRosterScreen
 import com.designprototype.workshop.ui.accessRefusalChrome
 import com.designprototype.workshop.ui.ApiKeysScreen
+import com.designprototype.workshop.ui.MyAiKeysScreen
 import com.designprototype.workshop.ui.AppPreferences
 import com.designprototype.workshop.ui.AppPreferencesStore
 import com.designprototype.workshop.ui.AppNavigationDrawerContent
@@ -468,6 +469,10 @@ private sealed interface Screen {
      */
     /** This account's Appearance + Accessibility — /settings on the web. Open to every user. */
     data object Appearance : Screen
+
+    /** This account's OWN provider keys. Personal, not administrative — the
+     *  deployment's keys live behind [Screen.AdminHub]'s API_KEYS entry. */
+    data object MyAiKeys : Screen
     /**
      * THIS PHONE's speech and AI settings, one level below [Appearance].
      *
@@ -1491,6 +1496,7 @@ private fun HomeScreen(
             // One level at a time, exactly as the tool screens below: back from the phone's speech
             // settings lands on the settings screen that offered them, not on the dashboard.
             is Screen.SpeechAndAi -> Screen.Appearance
+            is Screen.MyAiKeys -> Screen.Appearance
             is Screen.DataBrowser -> Screen.Dashboard
             // One level at a time: from a tool back to the tool list, and only then out. This is
             // what lets the single header arrow replace the in-page "All admin tools" button — the
@@ -1551,6 +1557,9 @@ private fun HomeScreen(
         // Null: this screen owns its whole viewport and draws its own heading and back arrow, the
         // same arrangement Appearance has. A shared header above it would state the section twice.
         is Screen.SpeechAndAi -> null
+        // Draws its own TopAppBar, like Speech & AI, so the shared header must not add a
+        // second one above it.
+        is Screen.MyAiKeys -> null
         is Screen.DataBrowser -> "Data Browser"
         // Null on all six: each of these screens draws its own heading, carrying the workshop's own
         // title and its progress bar. A shared header above that would state the section twice and
@@ -1599,6 +1608,7 @@ private fun HomeScreen(
         // The SAME row as its parent, deliberately: a designer inside the phone's speech settings is
         // inside Settings, and dimming the menu row they arrived through would read as having left.
         is Screen.SpeechAndAi -> NavDestination.SETTINGS
+        is Screen.MyAiKeys -> NavDestination.SETTINGS
         is Screen.DataBrowser -> NavDestination.VIEW_DATA
         is Screen.AdminHub -> NavDestination.SETTINGS_HUB
         // Every screen of the 22-stage record lights the one menu row that reaches it. Unlike the
@@ -1730,10 +1740,16 @@ private fun HomeScreen(
                         current = preferences,
                         onChanged = onPreferencesChanged,
                         onBack = { attemptExit { goBack() } },
-                        onOpenSpeechAndAi = { screen = Screen.SpeechAndAi }
+                        onOpenSpeechAndAi = { screen = Screen.SpeechAndAi },
+                        onOpenMyAiKeys = { screen = Screen.MyAiKeys }
                     )
 
                     is Screen.SpeechAndAi -> SpeechAndAiScreen(
+                        onBack = { attemptExit { goBack() } }
+                    )
+
+                    is Screen.MyAiKeys -> MyAiKeysScreen(
+                        repository = repository,
                         onBack = { attemptExit { goBack() } }
                     )
 
@@ -2383,7 +2399,10 @@ private fun HomeScreen(
             )
 
             // Hosted above, outside this scrolling Column, because they own their whole viewport.
-            is Screen.Appearance, is Screen.SpeechAndAi, is Screen.DataBrowser -> Unit
+            // Rendered by the FIRST dispatcher above, which owns the destinations that draw
+            // their own chrome. Listed here only to keep this `when` exhaustive.
+            is Screen.Appearance, is Screen.SpeechAndAi, is Screen.MyAiKeys,
+            is Screen.DataBrowser -> Unit
         }
 
         message?.let {
