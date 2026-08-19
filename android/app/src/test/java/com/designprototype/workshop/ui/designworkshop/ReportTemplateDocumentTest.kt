@@ -1179,7 +1179,16 @@ class ReportTemplateDocumentTest {
         assertEquals(2, artisans.first().count)
         // THE LABEL IS THE PLACE THE ROW NAMES, never the artisan's name: a coordinate carries no
         // name, and a map pinned with people is a different figure under the same heading.
-        assertEquals("Barpali, Bargarh", artisans.first().label)
+        //
+        // AND IT IS THE FINEST SINGLE PART, NOT THE JOINED ADDRESS. This line used to assert
+        // "Barpali, Bargarh", which pinned a divergence rather than the port: `_artisan_points`
+        // labels a surveyed pin with `place_label` — `next((part for part in stated if part), "")`
+        // — under a comment headed "ONE LABEL GRAMMAR PER FIGURE". Its argument is that every other
+        // pin on this figure is named by the atlas, which returns one token, so a map reading
+        // "Barpali" for five artisans and "Barpali, Bargarh" for the sixth reads as two kinds of
+        // pin. The joined string exists on the server only to be handed to a geocoder, and this
+        // device has no atlas to hand it to.
+        assertEquals("Barpali", artisans.first().label)
         assertEquals(21.19580, artisans.first().lat, 1e-9)
         assertEquals(83.58720, artisans.first().lon, 1e-9)
 
@@ -1196,6 +1205,72 @@ class ReportTemplateDocumentTest {
         assertFalse(
             "the caption still claims nothing is plotted: ${map.caption}",
             map.caption.contains("are not plotted on this copy"),
+        )
+    }
+
+    /**
+     * A ROSTER ROW'S STATE REACHES `highlight` EVEN WHEN NOTHING CAN RESOLVE IT.
+     *
+     * THE SIBLING TEST BELOW PINS STAGE 1'S ANSWER; THIS ONE PINS THE ROSTER'S, and they were not
+     * the same code. `rosterPins` read `canonicalState(state)?.takeIf { … }?.let { states += it }`,
+     * which DROPS a spelling the 36-entry table does not know, where `_artisan_points` writes
+     * `canonical_state(state) or state` and carries the raw name into `facts.states` and on into
+     * `highlight`. The venue arm ten lines below in the same function already did
+     * `canonicalState(state) ?: state`, so the file disagreed with itself.
+     *
+     * WHAT THE DROP COSTS IS AN ADMISSION, not a tint. Neither rasteriser can seed a state it has
+     * no seat for — that is true on both surfaces — but both report the failed fill using the RAW
+     * name out of `highlight` and print "Not tinted: …" on the figure. So the office's copy names
+     * the state nobody could resolve and the handset's copy says nothing at all, on a figure whose
+     * tinted region is its entire content. The state column predates its validator and is nullable;
+     * "Orissa" and "Pondicherry" are in the data, which is why `address._ALIASES` exists.
+     */
+    @Test
+    fun `a roster row's unresolvable state still reaches the tint list`() {
+        val document = build(
+            rosterMapSchema(),
+            WorkshopDraft(
+                workshopId = "local-test",
+                title = "Barpali cluster",
+                stages = mapOf(
+                    "WORKSHOP_SETUP" to StageDraft(
+                        stageId = "WORKSHOP_SETUP",
+                        values = mapOf("state" to JsonPrimitive("Odisha")),
+                    ),
+                    "WORKSHOP_PLAN_PARTICIPANTS_OPENING" to StageDraft(
+                        stageId = "WORKSHOP_PLAN_PARTICIPANTS_OPENING",
+                        rows = listOf(
+                            // An alias the table DOES know, to show the canonical form is preferred.
+                            DraftRow(
+                                id = "participant#1",
+                                values = mapOf(
+                                    "name" to JsonPrimitive("Bhikari Meher"),
+                                    "village" to JsonPrimitive("Barpali"),
+                                    "state" to JsonPrimitive("Orissa"),
+                                    "subjectLocation" to DwValues.geoOf(21.19580, 83.58720),
+                                ),
+                            ),
+                            // And one nothing can resolve. It must survive as typed.
+                            DraftRow(
+                                id = "participant#2",
+                                values = mapOf(
+                                    "name" to JsonPrimitive("Kunja Behera"),
+                                    "village" to JsonPrimitive("Sonepur"),
+                                    "state" to JsonPrimitive("Atlantis"),
+                                    "subjectLocation" to DwValues.geoOf(20.83000, 83.91000),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val map = document.blocks.filterIsInstance<MapBlock>().first()
+        assertEquals(
+            "a state spelling the seat table cannot resolve was dropped instead of carried",
+            setOf("Odisha", "Atlantis"),
+            map.highlight,
         )
     }
 

@@ -305,11 +305,18 @@ fun dwConsentMerge(
  * QUESTION ASKS ABOUT. The question is the user's own wording and covers "recordings AND dictation".
  * That is true of the sentence and false of the claim that followed it: `/dictate` stores nothing, but
  * a recording added to a workshop through the MEDIA flow is stored with the workshop and is written
- * down by the very same provider chain (`media_queue.transcribe_media_now` calls the same
- * `transcribe_audio_bytes`). Printing "the server keeps no copy of the audio" above a Yes button was
- * therefore telling an artisan something untrue about the interview recording sitting in the same
- * record — the one claim a consent screen cannot afford to get wrong. Both halves are now named apart,
- * and what this answer does not yet GOVERN is [DW_CONSENT_MEDIA_NOT_GATED]'s job to say.
+ * down by the very same provider chain (`media_queue` hands it to the same `transcribe_audio_bytes`).
+ * Printing "the server keeps no copy of the audio" above a Yes button was therefore telling an artisan
+ * something untrue about the interview recording sitting in the same record — the one claim a consent
+ * screen cannot afford to get wrong.
+ *
+ * THE KEPT/NOT-KEPT SPLIT IS STILL THE SPLIT, AND THE SENT/NOT-SENT ONE HAS SINCE MOVED. This question
+ * is about what is KEPT and needs no change: the dictated passage is not kept and the attached recording
+ * is. What changed underneath it is the GATE — the same answer now governs whether the attached
+ * recording is written down, not only the dictated passage — and saying so is
+ * [DW_CONSENT_MEDIA_GATED_TOO]'s job on the state row rather than this question's. The question asks
+ * about both in one breath already ("recordings and dictation"), so it was never the sentence that
+ * narrowed the answer to rung 2.
  */
 const val DW_CONSENT_QUESTION: String =
     "May recordings and dictation from this workshop leave the phone to be written down by a " +
@@ -342,7 +349,7 @@ fun dwConsentStateSentence(consent: DwTier3Consent, recorded: DraftConsent?): St
         "Recordings from this workshop may NOT be sent out to be written down$who. No dictation from " +
             "it is sent to the transcription service. Dictation still works — it goes to the " +
             "phone's own speech recogniser instead, which has none of the craft vocabulary." +
-            DW_CONSENT_PHONE_RECOGNISER_CAVEAT + DW_CONSENT_MEDIA_NOT_GATED +
+            DW_CONSENT_PHONE_RECOGNISER_CAVEAT + DW_CONSENT_MEDIA_GATED_TOO +
             dwConsentSyncNote(recorded)
     }
 
@@ -354,7 +361,7 @@ fun dwConsentStateSentence(consent: DwTier3Consent, recorded: DraftConsent?): St
             "transcription service. Dictation still works — it goes to the phone's own speech " +
             "recogniser instead, which has none of the craft vocabulary and writes “double” where " +
             "the artisan said “dabu”." + DW_CONSENT_PHONE_RECOGNISER_CAVEAT +
-            DW_CONSENT_MEDIA_NOT_GATED
+            DW_CONSENT_MEDIA_GATED_TOO
 }
 
 /**
@@ -381,29 +388,48 @@ private const val DW_CONSENT_PHONE_RECOGNISER_CAVEAT: String =
         "language pack keeps a voice on the phone entirely."
 
 /**
- * THE SECOND THING A REFUSAL DOES NOT COVER, AND THE ONE THAT SENDS AUDIO OF THE SAME ARTISAN.
+ * THE WORKSHOP'S OWN RECORDINGS, WHICH THIS ANSWER NOW GOVERNS AND ONCE DID NOT.
  *
- * ── THE FALSE SENTENCE THIS REPLACES ────────────────────────────────────────────────────────────
+ * ── THE TWO FALSE SENTENCES THIS HAS NOW OUTLIVED, IN THE ORDER THEY WERE FALSE ─────────────────
  *
- * Both gating sentences above used to read "this app sends nothing from it to the transcription
- * service". That is not true and could not be made true by anything in this lane. The consent column
- * is read in exactly one place on the server — the gate on `POST /{workshop_id}/dictate` — while a
- * recording ATTACHED to a workshop as audio goes through the media queue, which calls the same
- * `transcribe_audio_bytes` provider chain (`media_queue.transcribe_media_now`) and consults no consent
- * at all. So a designer who read that sentence, recorded a refusal, and then uploaded the interview
- * would have sent the very voice they had just been told nothing would be sent — and would have been
- * told so by this screen, on the strength of an answer they took in good faith.
+ * FIRST: both gating sentences above used to read "this app sends nothing from it to the
+ * transcription service". That was false, because the consent column was read in exactly one place on
+ * the server — the gate on `POST /{workshop_id}/dictate` — while a recording ATTACHED to a workshop as
+ * audio went through the media queue, which calls the same `transcribe_audio_bytes` provider chain and
+ * consulted no consent at all. A designer who read that sentence, recorded a refusal and then uploaded
+ * the interview sent the very voice this screen had just told them nothing would send.
  *
- * Widening the gate to the media flow is deliberately out of this lane's scope (it would change an
- * existing capability, and plan §6 answer 3 names rung 2). What is NOT optional is saying so on the
- * screen where the decision is made, with the one instruction that actually holds the line in the
- * meantime — because that instruction is a person's to follow, and nothing in this app enforces it.
+ * SECOND, AND IT IS WHY THIS CONSTANT IS REWRITTEN RATHER THAN LEFT ALONE: the replacement said the
+ * answer "was not given the power to stop that. Until it is, do not attach a recording of anybody who
+ * has said no." That was true when written and is now false in the artisan's favour, which is still
+ * false. `media_queue.queue_media_processing` gates TRANSCRIPTION on
+ * `dictation_consent.transcription_verdict` before any job is created, `_process_job` re-reads the
+ * verdict at the drain, and `transcribe_media_now` raises `SendRefused` — all three against the same
+ * column this screen writes, through the `dictation_consent.MEDIA` send whose consequence reads "this
+ * recording cannot be written down there". The read is fail-closed: `verdict_for` turns an unreadable
+ * consent into NOT_RECORDED's refusal rather than a permission. And `POST /{id}/consent` calls
+ * `cancel_pending_transcriptions` on a REFUSED decision and only on one, so a withdrawal reaches the
+ * clips already queued instead of only the next ones.
+ *
+ * Leaving the old sentence up would now teach a designer to hold back a recording the server would
+ * refuse to send anyway — a caution that costs the workshop its interview and buys nothing — and, worse
+ * on a consent screen, would keep telling an artisan the app cannot honour an answer it now honours.
+ *
+ * ── WHAT IS STILL WORTH SAYING, AND IS THE REASON THE SENTENCE SURVIVES AT ALL ──────────────────
+ *
+ * UPLOAD IS NOT TRANSCRIPTION, and only the second is gated. The clip still leaves the phone for this
+ * project's own server and is kept with the workshop — deliberately, and [DW_CONSENT_QUESTION] tells
+ * the artisan so in those words ("it is there to be listened to again"), which is the same thing
+ * `MEDIA`'s `alternative` tells the designer at the other end. An artisan who understood "no" as
+ * "nothing leaves the phone" has understood something this app does not do, and the sentence has to
+ * carry that distinction or it is the first false sentence again with the polarity flipped.
  */
-private const val DW_CONSENT_MEDIA_NOT_GATED: String =
-    " And one thing this answer does not yet govern: a recording attached to this workshop as audio " +
-        "is still uploaded and written down by the same outside service, because this answer was not " +
-        "given the power to stop that. Until it is, do not attach a recording of anybody who has said " +
-        "no."
+private const val DW_CONSENT_MEDIA_GATED_TOO: String =
+    " This answer covers the workshop's own recordings as well, which it did not before: a recording " +
+        "attached to this workshop as audio is still uploaded and kept with it — it is there to be " +
+        "listened to again — but it is not sent out to be written down while this answer stands, and a " +
+        "refusal recorded here stops the transcriptions already queued for it rather than only the " +
+        "next ones."
 
 /** " — recorded by Meera Joshi on 12 Aug 2026", or as much of it as is actually known. */
 private fun dwConsentAttribution(recorded: DraftConsent?): String {

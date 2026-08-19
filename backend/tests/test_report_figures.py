@@ -346,6 +346,42 @@ def test_a_roster_row_that_states_no_address_falls_back_to_the_referenced_artisa
     assert {p.label for p in homes} == {"Bagru", "Sanganer"}
 
 
+def test_the_fallback_joins_the_village_before_the_district_the_way_the_row_branch_does():
+    """ONE VILLAGE, TWO PINS, DECIDED BY WHEN THE ROW HAPPENED TO BE SAVED.
+
+    The legacy branch built its search string as ``", ".join((ref_district, ref_place))`` — the
+    district FIRST — while the row-first branch above it, ``_venue_point``, and
+    ``MAP_ROSTER_PLACE_KEYS``' own comment all join the finest part first. That is not a matter of
+    taste: ``place_atlas.resolve_place`` scans longest runs first and LEFTMOST WINS AT EQUAL WIDTH
+    ("Rudraprayag, Dehradun" stays on the town the researcher led with), so a district that is also
+    a curated town outranks the village standing beside it. Bargarh and Barpali are both in the
+    atlas and 16 km apart, so a pre-widening row for a Barpali weaver resolved to BARGARH and was
+    labelled Bargarh, while the identical address on a post-widening row took the row-first branch
+    as "Barpali, Bargarh" and resolved to Barpali. Two pins and two labels for one village, in one
+    figure, with nothing on the page to say why.
+
+    Bargarh is chosen deliberately: a district the atlas does NOT hold as a town would let either
+    order pass, which is how this survived.
+    """
+    document = _build(_data(
+        singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
+        collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
+            {"serialNo": 1, "name": "Weaver", "artisanRef": "a1"},
+        ]}},
+        references={"a1": ReferencedRecord(model="Artisan", label="Weaver", place="Barpali",
+                                           district="Bargarh", state="Odisha")},
+    ))
+    home = next(p for p in _maps(document)[0].points if p.kind is MapPointKind.ARTISAN)
+    assert home.label == "Barpali", (
+        f"the pin is labelled {home.label!r}: the district was put in front of the village, so the "
+        f"atlas's leftmost-wins rule answered with the district town instead"
+    )
+    assert (round(home.lat, 3), round(home.lon, 3)) == (21.192, 83.591), (
+        f"the pin sits at {home.lat}, {home.lon} rather than on Barpali — the same artisan is "
+        f"placed somewhere else than an identical post-widening row would put them"
+    )
+
+
 def test_the_row_s_own_district_and_state_are_both_read_not_just_the_village():
     """TWO FIXES IN ONE FIXTURE, because they fail together.
 

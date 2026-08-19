@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi.encoders import jsonable_encoder
@@ -776,7 +775,7 @@ async def _apply_measurement_to_product(
     product = await db.productdocumentation.find_unique(where={"id": product_id})
     if not product:
         return
-    data = _measurement_update_data(media_id, status, analysis, product)
+    data = _measurement_update_data(media_id, status, analysis)
     await db.productdocumentation.update(where={"id": product_id}, data=data)
 
 
@@ -789,7 +788,7 @@ async def _apply_measurement_to_tool(
     tool = await db.tooldocumentation.find_unique(where={"id": tool_id})
     if not tool:
         return
-    data = _measurement_update_data(media_id, status, analysis, tool)
+    data = _measurement_update_data(media_id, status, analysis)
     await db.tooldocumentation.update(where={"id": tool_id}, data=data)
 
 
@@ -797,30 +796,44 @@ def _measurement_update_data(
     media_id: str,
     status: str,
     analysis: dict[str, Any] | None,
-    record: Any,
 ) -> dict[str, Any]:
+    """What a finished MEASUREMENT job writes onto the product or tool: the ANALYSIS, never the columns.
+
+    **THIS FUNCTION USED TO PUT THE MODEL'S NUMBER STRAIGHT INTO A COSTED DIMENSION.** It read
+    ``analysis["lengthInches"]`` / ``["breadthInches"]`` and, whenever the column was empty, wrote them
+    onto ``ProductDocumentation`` / ``ToolDocumentation`` — a background worker filling a printed,
+    costed field with a vision model's estimate that no person had ever seen, let alone accepted.
+    ``api/routes/media.py``'s ``ENQUEUEABLE_PROCESSING_REQUESTS`` had already closed the only route
+    that could ask for such a job, in a refusal whose own sentence is "a dimension no human ever saw
+    must not be written onto a record that is used for costing"; a queue row created before that
+    landed, or by an operator driving the database directly, still reached these two lines. The front
+    door was gated and this side door was not.
+
+    THE OTHER RESOLUTION AND WHY IT WAS REFUSED. The alternative was to keep writing the columns and
+    stamp them ``VISION_MODEL`` with ``by``/``byName`` absent, since no person accepted them. That is
+    honest about the origin but it manufactures a documented dimension that satisfies
+    ``MeasurementMethod.requires_acceptance`` for nobody — a number in a costing field that the law
+    ``services/measurement_provenance`` states ("a method that is irreproducible additionally requires
+    acceptance by a named person") says may not be there at all. Recording it and refusing to write it
+    is strictly better: nothing is lost.
+
+    NOTHING IS LOST, AND THAT IS THE REASON THIS IS SAFE. The reading is still stored in
+    ``measurementAnalysis`` and the job still reports through ``measurementAnalysisStatus``, so both
+    clients show the analysis exactly as before and a person can read it and type or accept the value
+    — which is the gesture that makes the number recordable. Only the silent write is gone, and
+    restoring it is re-adding the two column assignments this docstring describes.
+
+    OWNER DECISION, FLAGGED RATHER THAN ASSUMED: whether this writer should stop entirely (what it now
+    does) or write stamped is a behaviour change for anyone driving the API directly, so it is the repo
+    owner's to confirm. The reversible default is the one that cannot produce a false record.
+    """
     data: dict[str, Any] = {
         "measurementImageId": media_id,
         "measurementAnalysisStatus": status,
     }
     if analysis:
         data["measurementAnalysis"] = Json(jsonable_encoder(analysis))
-        length = _decimal_or_none(analysis.get("lengthInches"))
-        breadth = _decimal_or_none(analysis.get("breadthInches"))
-        if length is not None and _value(record, "lengthInches") is None:
-            data["lengthInches"] = str(length)
-        if breadth is not None and _value(record, "breadthInches") is None:
-            data["breadthInches"] = str(breadth)
     return data
-
-
-def _decimal_or_none(value: Any) -> Decimal | None:
-    if value in (None, ""):
-        return None
-    try:
-        return Decimal(str(value)).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError):
-        return None
 
 
 async def _complete_job(job_id: str, result: dict[str, Any]) -> None:

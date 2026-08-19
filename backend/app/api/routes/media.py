@@ -359,10 +359,18 @@ async def analyze_media_measurement(
     every answer here states its ``method``, ``provider``, ``modelId``, the model's own
     ``selfReportedConfidence`` (labelled ``confidenceIsCalibrated: false``, because nothing in this
     repository has ever calibrated it), and ``requiresAcceptance: true`` — plus a ``methodMarker`` the
-    client sends back with the confirmed value. ``services/measurement_provenance`` holds the argument
-    and the specification for the client half, which is not implemented: both clients still auto-fill
-    the field. This endpoint is now capable of being used honestly; making it so is four client edits
-    named in that module.
+    client sends back with the confirmed value.
+
+    THE OTHER END OF THAT MARKER NOW EXISTS. ``records.merge_field_provenance`` reads it off the save
+    body and writes the method BESIDE ``{by, byName, at}``, so an accepted reading is stored as *a
+    vision model estimated this, and this person accepted it into the record at that moment* rather
+    than as a measurement they took — and ``record_fields.dims_with_method`` prints that on the record
+    sheet, in the workbook and in the CSV downloads. What still has to be built is the gesture in the
+    middle: a client that shows the number as a proposal, writes nothing into form state until
+    somebody presses a button, and sends the marker back with the value.
+    ``services/measurement_provenance`` holds the argument, the exact marker shape and the call sites.
+    Nothing on this route depends on that having landed: a save carrying no marker is recorded as
+    UNRECORDED, which is honest, is distinguishable, and is never the false human claim.
 
     THE FOUR REFUSALS ARE THE IDENTITY ENDPOINT'S, and the 503 is the one worth arguing. An unconfigured
     provider used to answer 200 with ``available: false``, which a client cannot tell from "the grid was
@@ -441,20 +449,24 @@ async def _finish_pending_media(existing: Any, processing_requests: list[str] | 
 #: Processing requests ``POST /media/complete`` will enqueue. TRANSCRIPTION and nothing else.
 #:
 #: MEASUREMENT IS DELIBERATELY ABSENT, AND THIS IS THE SHARPEST FORM OF THE PROVENANCE DEFECT.
-#: ``media_queue._measurement_update_data`` takes the model's ``lengthInches`` / ``breadthInches`` and
-#: writes them onto ``ProductDocumentation`` / ``ToolDocumentation`` if the column is empty — a
-#: background worker putting a vision model's estimate into a costed, printed dimension field with no
-#: person in the loop at any point, and no client involved to even show it to anybody. It bypasses
-#: ``merge_field_provenance``, so unlike the synchronous path it tells no lie about who measured it; it
-#: simply writes, and ``record_fields.py`` then prints the number with no reference to
-#: ``measurementAnalysisStatus``, so nobody reading the record can see where it came from.
+#: A queued measurement is a background worker reading a photograph with no person in the loop at any
+#: point and no client involved to show the answer to anybody. Until this refusal existed,
+#: ``media_queue._measurement_update_data`` wrote the model's ``lengthInches`` /
+#: ``breadthInches`` straight onto ``ProductDocumentation`` / ``ToolDocumentation`` whenever the
+#: column was empty — a vision model's estimate landing in a costed, printed dimension field that
+#: nobody had ever seen.
 #:
 #: NO SHIPPED CLIENT ASKS FOR IT. The web's ``resolveProcessing`` adds only TRANSCRIPTION and no
 #: component passes ``processingRequests``; Android's ``uploadMeasurement`` sets it but has no call
-#: site anywhere in the tree. So the path is dead from both clients and live in the API — any
-#: authenticated caller of this route could drive it. Refused here rather than by deleting the queue's
-#: writer, because ``services/media_queue`` belongs to another lane this week: closing the only door
-#: that reaches it is the change available to this one, and it is the door that matters.
+#: site anywhere in the tree. So the path was dead from both clients and live in the API — any
+#: authenticated caller of this route could drive it.
+#:
+#: BOTH HALVES ARE NOW SHUT, AND THIS ONE IS STILL THE ONE THAT MATTERS. The queue's writer has since
+#: stopped writing the two columns and keeps only ``measurementAnalysis`` /
+#: ``measurementAnalysisStatus`` (its docstring carries the argument and the alternative it refused),
+#: so a legacy job row queued before this refusal landed, or one inserted by an operator driving the
+#: database directly, can no longer fill a dimension either. This refusal stays because it is the
+#: door: a request that never becomes a job cannot depend on the worker being careful.
 #:
 #: The refusal is a 422 rather than a silent drop. Dropping it would return 201 to a caller that
 #: believes an analysis is coming and will wait for a ``measurementAnalysisStatus`` that never moves.

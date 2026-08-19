@@ -43,7 +43,8 @@ start claiming what actually happened::
 Read aloud: *a vision model estimated this, and R. Menon accepted it into the record at that moment.*
 That is a true sentence, it is the sentence an auditor needs, and it needs no acceptance column and
 no migration — ``extraMetadata`` is an existing Json column. The acceptance IS the save, once the
-method sits next to the signature.
+method sits next to the signature. That is what ``records.merge_field_provenance`` writes today; see
+THE RECORD HALF below for the one call it makes and the one thing still missing in front of it.
 
 **WHY THIS IS NOT A ``DwAiLayer``, THOUGH THAT IS THE OBVIOUS-LOOKING HOME.** ``services/ai_layers``
 is this repository's machinery for exactly this shape of problem — model output as a row with
@@ -86,10 +87,10 @@ nobody recorded is stated as unknown, never guessed, and never left as a null th
 a CLAIM, not a proof. A client could send ``TYPED`` for a number Gemini produced, and this server
 cannot tell — exactly as it cannot tell whether a typed 12 was read off a tape or invented. The
 marker is precisely as trustworthy as every other value in the form body it rides on, which is the
-level of trust this whole API already runs on. What it is not is *worse* than what came before:
-today's record asserts the false thing BY CONSTRUCTION, for every machine-filled dimension, with no
-client involved at all. Moving from "always wrong" to "as reliable as the rest of the body" is the
-whole of the available improvement, and it is worth having.
+level of trust this whole API already runs on. What it is not is *worse* than what came before: the
+record asserted the false thing BY CONSTRUCTION, for every machine-filled dimension, with no client
+involved at all. Moving from "always wrong" to "as reliable as the rest of the body" is the whole of
+the available improvement, and it is worth having.
 
 **NOTHING IN THIS MODULE WRITES ANYTHING.** No ``db`` import, no Prisma, no network — the same
 discipline ``ai_layers`` holds and for the same reason: these are the rules, and rules that cannot be
@@ -100,10 +101,36 @@ behaviour is asserted in ``tests/test_measurement_provenance.py`` on a laptop wi
 THE CLIENT SPECIFICATION — what Android and the web must do, neither of which is implemented here
 --------------------------------------------------------------------------------------------------
 
-The server half is done (this module, ``services/ai.py``, ``api/routes/media.py``). The client half is
-four edits in files this change deliberately does not touch. Written down here rather than in a
-planning document because this is the file whose vocabulary they have to speak, so this is where
-whoever picks it up will already be looking.
+The server half is done: this module, ``services/ai.py`` and ``api/routes/media.py`` produce the
+marker, and ``records.merge_field_provenance`` / ``record_fields.dims_with_method`` store and print
+it. The client half is four edits in files this change deliberately does not touch. Written down here
+rather than in a planning document because this is the file whose vocabulary they have to speak, so
+this is where whoever picks it up will already be looking.
+
+**READ THE ONE BLOCKER FIRST.** ``measurementMethods`` is not declared on ``ProductCreate`` /
+``ProductUpdate`` / ``ToolCreate`` / ``ToolUpdate``, and their shared ``APIModel`` is
+``ConfigDict(extra="forbid")`` — so a client that starts sending the marker today has its ENTIRE save
+rejected with a 422 naming a key the researcher has never heard of, and the web's ``saveOrQueue``
+refuses to queue a 4xx ("the server saw it and said no"), so the save does not happen and is not
+retried. ``offline.isSchemaRefusal`` at least names that shape of failure honestly — it exists
+because a client sent a then-new ``merge`` flag to an API that predated it and every stage save came
+back refused — but the work is still not saved. Deploy the schema BEFORE EITHER CLIENT, and never the
+other way round. (That sentence used to read "deploy the schema first", full stop, and the next
+paragraph is what it cost.)
+
+**THE SCHEMA IS NOT THE FIRST STEP THOUGH, AND LANDING IT FIRST CORRUPTS AN AUDIT TRAIL.**
+``access.REVISION_SKIP_FIELDS`` has to gain :data:`MARKER_BODY_KEY` BEFORE this schema declaration,
+not after it. The schema is precisely what makes the marker SENDABLE, and a sendable marker with no
+skip entry makes ``guard_record_edit`` write a ``RecordRevision`` nobody made on every save that
+carries one — the mechanism is in §THE RECORD HALF below, and the row it writes is in an immutable
+audit table that cannot be un-written by landing the skip entry afterwards. So the order is
+``access.py``, then the four schemas, then the clients. Each step is inert until the one after it
+lands — the skip entry alone can skip nothing, because nothing can send the key yet — which is what
+makes this order free to obey and the other one expensive.
+
+Declare it on all four as ``dict[str, Any] | None = None`` — not a pydantic model, because
+:func:`provenance_of_marker` is the single validator and it deliberately degrades anything unreadable
+to :data:`UNRECORDED` rather than raising — and deploy that before either client ships its half.
 
 **1. Stop auto-filling. Propose, then let a person confirm.**
 
@@ -182,28 +209,71 @@ analysis is simply lost. Re-reading it later is a client decision and this modul
 it, beyond the note in ``api/routes/media.py`` about why the queued path is refused.
 
 --------------------------------------------------------------------------------------------------
-THE RECORD HALF — one call, in a file this change does not own
+THE RECORD HALF — where the false attribution was written, and what is there now
 --------------------------------------------------------------------------------------------------
 
-``records.merge_field_provenance`` is where the false human attribution is written, and it belongs to
-another lane this week. The integration is :func:`method_stamps` plus a dict merge::
+``records.merge_field_provenance`` is where the record asserted that a named human had measured a
+model's guess. It now pops the marker off the save body and merges :func:`method_stamps` into the
+stamp it was already writing::
 
-    stamps = method_stamps(new_data.pop(MARKER_BODY_KEY, None))
+    stamps = method_stamps(new_data.pop(MARKER_BODY_KEY, None), fields=new_data.keys())
     ...
     for field, value in new_data.items():
         ...
-        provenance[field] = stamp | stamps.get(field, {})   # inside the existing loop
+        provenance[field] = stamp | stamps.get(field, {})   # inside the existing changed-fields loop
 
-with ``MARKER_BODY_KEY`` added to ``PROVENANCE_SKIP_FIELDS`` so the marker object itself is never
-attributed as though it were a field somebody filled in, and accepted on ``ProductUpdate`` /
-``ToolUpdate`` (whose ``APIModel`` sets ``extra="forbid"``, so an unaccepted key 422s the whole save).
-:func:`method_stamps` already defaults every dimension column it is asked about to ``UNRECORDED``, so
-that one line makes every dimension save state its method, including the ones that state that nobody
-recorded one.
+Four properties of those two lines, each of which is load-bearing and each of which has a test:
 
-Then ``record_fields.py``'s "Dimensions (LxBxH in)" line should print it, for the same reason
-``aiLayers.ts``'s ``layerKindLabel`` prints "Machine transcript" rather than "Transcript": a reader
-who cannot see the difference has not been told it.
+* the ``pop`` is what keeps a non-column out of the Prisma ``data`` dict. ``clean_data`` only drops
+  ``None``, so a marker that is actually sent would otherwise reach
+  ``db.productdocumentation.create(data=...)`` as an unknown column — a 500 on the save, not a
+  validation error a researcher could act on;
+* ``MARKER_BODY_KEY`` is also in ``PROVENANCE_SKIP_FIELDS``, so the marker object can never be
+  attributed as though it were a field somebody filled in;
+* the merge sits INSIDE the existing changed-fields loop, which never fires for an unchanged value.
+  Both web forms re-send every dimension on every save, so a client that blanket-sent ``TYPED`` for
+  every box would otherwise launder every accepted machine measurement on a record into an apparent
+  human one the next time somebody fixed a typo in ``remarks``;
+* ``stamp | stamps.get(...)`` and not the reverse, so the method joins ``{by, byName, at}`` instead of
+  replacing them. Stripping the name would delete the most useful fact on the row.
+
+:func:`method_stamps` defaults every dimension column it is asked about to :data:`UNRECORDED`, so a
+save from a client that has not implemented its half writes an explicit "nobody recorded a method"
+rather than nothing — honest, distinguishable, and never the false human claim. Expect a burst of
+those from the installed fleet and read them as the design.
+
+ONE KEY STILL HAS TO BE ADDED IN A FILE THIS MODULE DOES NOT OWN. ``access.REVISION_SKIP_FIELDS``
+does not list ``measurementMethods``, and ``guard_record_edit`` runs ``record_revision`` on the raw
+``data`` BEFORE ``merge_field_provenance`` pops the key. So every marker-bearing PATCH currently
+diffs ``measurementMethods`` from ``None`` and writes a ``RecordRevision`` — which breaks
+``record_revision``'s own contract ("No-op when nothing meaningful changed") and fills an admin audit
+trail with an edit nobody made. Moving the pop earlier is not available: the merge must still see the
+marker. The marker is a hint about how a value was produced, not a value.
+
+THIS IS THE FIRST STEP OF THE ROLLOUT, NOT A FOLLOW-UP TO IT. §THE CLIENT SPECIFICATION says "deploy
+the schema first" and means schema-before-client; it does not mean schema-before-this. Land this skip
+entry, then the four schema declarations, then the clients — because the schema is what makes the key
+sendable, and every marker-bearing save between the two lands a revision row that no later edit can
+retract.
+
+``record_fields.dims_with_method`` then prints the method on the "Dimensions (LxBxH in)" cell — and
+therefore in the data browser, every .xlsx sheet and the ``/export/products.csv`` /
+``/export/tools.csv`` downloads, none of which is permission-gated. That placement is deliberate and
+is not decoration: the provenance panel that shows who stamped what is gated on
+``adminMode || canViewProvenance``, so a method shown only there would leave the researcher, the
+reviewer and the ministry officer all reading an unqualified measurement. Only ``VISION_MODEL`` and
+``PHOTO_GEOMETRY`` print a clause, for the same reason ``aiLayers.ts``'s ``layerKindLabel`` prints
+"Machine transcript" rather than "Transcript": a reader who cannot see the difference has not been
+told it. TYPED and :data:`UNRECORDED` print nothing, because appending "method not recorded" to the
+majority of the rows in this database is noise that would train a reader to skip the clause on the
+row where it matters.
+
+WHAT THE RECORD HALF STILL CANNOT REACH, stated here so nobody reports it as a half-finished rollout:
+``ToolDocumentation`` has no ``heightInches``. The grid control's height reading lands in the plain
+``height`` column, which is not in :data:`DIMENSION_FIELDS`, so a marker naming it is dropped — an
+accepted vision-model tool height is gated by the button on both clients and recorded as nothing.
+Widening :data:`DIMENSION_FIELDS` is not free (``width`` beside it is a plain typed input) and is the
+repo owner's call.
 
 --------------------------------------------------------------------------------------------------
 THE MIGRATION THIS DOES NOT REPLACE

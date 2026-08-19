@@ -1021,19 +1021,44 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # somebody took. Some of these numbers are: `GridMeasurement.tsx` auto-fills the inches
             # box from a vision model's reading of a photograph of the object on graph paper, and
             # the researcher then saves the form. `measurement_provenance.py` states the law this
-            # falls short of in its opening line — "EVERY STORED DIMENSION STATES ITS METHOD" —
-            # and calls that save the acceptance, "once the method sits next to the signature".
+            # falls short of in the block at the top of its module docstring — "EVERY STORED
+            # DIMENSION STATES ITS METHOD" — and calls that save the acceptance: "The acceptance IS
+            # the save, once the method sits next to the signature."
             #
             # `hydrate_entries` stamps every value it writes with `HydrationSource(..., author_id=
             # row.createdById)`. THAT ID IS THE PERSON WHO SAVED THE RECORD, and the field-provenance
             # views on web and handset show their name. It is not, and must not be read as, a claim
             # that they held a tape against the saree.
             #
-            # THE MISSING HALF IS NOT THIS LANE'S TO LAND. `records.merge_field_provenance` does not
-            # yet call `measurement_provenance.method_stamps`, and that module's own §THE RECORD HALF
-            # says the call "belongs to another lane". Once per-field method stamps are stored,
-            # `hydrate_entries` can read them off the source row it ALREADY HAS IN HAND and add
-            # method/provider/modelId to the `HydrationSource` it writes. Copied AT SAVE, like every
+            # THE MISSING HALF IS NO LONGER THE RECORD SIDE — THAT ONE LANDED, and this paragraph is
+            # rewritten rather than deleted because it used to name the record side and a reader who
+            # remembers it would otherwise go looking for work that is done.
+            # `records.merge_field_provenance` now calls `measurement_provenance.method_stamps` and
+            # merges `method` — plus `methodProvider` / `methodModelId` / `methodConfidence` /
+            # `methodTechnique` when the marker carries them — onto each dimension column BESIDE the
+            # `{by, byName, at}` described above. The source row does now state how each inch figure
+            # was arrived at.
+            #
+            # WHAT IS STILL MISSING IS THIS SIDE. `hydrate_entries` never reads those stamps, so the
+            # method stops at the record and the centimetre figure still arrives with no statement of
+            # it — which is why the paragraphs above are still the operative description of what a
+            # ministry officer reads. Do NOT implement it "off the source row": at the
+            # `HydrationSource(...)` construction there is no row in hand. That loop holds
+            # `spec.ref_model`, `ref_id`, `source_key`, and the payload out of `resolved` — which is
+            # this very mapping, already renamed AND unit-converted — plus the `authors` map. Build a
+            # second precomputed map beside `authors`, in the same loop over `wanted` that builds it,
+            # and pair it with an EXPLICIT payload-key -> source-column table: `lengthCm` <-
+            # `lengthInches`, `widthCm` <- `breadthInches`, `heightCm` <- `heightInches`, with
+            # `ToolDocumentation`'s own pairing written out separately. No key match can be inferred,
+            # because this payload renames the keys and changes their unit in the same step.
+            # `dimensionsNote` (<- `size`) is free text and carries no method; do not invent one.
+            # `entry_provenance.HydrationSource` is frozen and has no method fields yet, so it gains
+            # them in the same change or there is nowhere to put the answer.
+            #
+            # AND THE CENTIMETRE FIGURE'S METHOD IS INHERITED, NOT MEASURED. It is `_inches_to_cm` of
+            # a column whose method was recorded, so the strongest true sentence about it is the
+            # method of the inch figure it was derived from — never a stronger one, and never
+            # "converted" as though the conversion were the measurement. Copied AT SAVE, like every
             # other hydrated value — never re-resolved from the live record at render time, or a
             # submitted document changes the day somebody re-measures.
             "lengthCm": _inches_to_cm(r.lengthInches),
@@ -1446,10 +1471,15 @@ async def _artisan_id_behind(workshop_id: str, candidate: str) -> str | None:
 #: paper, taken so a dimension can be read off it. It is a WORKING image and never a picture of the
 #: subject, and because both record forms upload it before anything else it is the oldest image row
 #: on its parent — which is the row :func:`_reference_photos` picks. So the uploading client writes
-#: ``extraMetadata.purpose = "MEASUREMENT_GRID"`` on the media row and the server excludes any
-#: candidate carrying it. The web record forms, the handset's grid section and the statement below
-#: must spell it IDENTICALLY: the symptom of a mismatch is not an error but a report that prints a
-#: ruled sheet as the photograph of a tool, which is the failure nobody noticed for a year.
+#: ``extraMetadata.purpose = "MEASUREMENT_GRID"`` on the media row and the server SORTS any
+#: candidate carrying it LAST. It does not exclude one, and this line said "excludes" while the
+#: statement's own docstring said "NOTHING IS EVER EXCLUDED INTO A BLANK": a product whose ONLY image
+#: is a grid shot must still hydrate that picture rather than an empty gallery. (That sentence used to
+#: be located here as "fifteen lines further down", which was wrong by sixty — a distance is a line
+#: pin with the digits spelled out, and it rots the same way for the same reason. Name the sentence;
+#: it is greppable and a count is not.) The web record forms, the handset's grid section and the statement below must
+#: spell the marker IDENTICALLY: the symptom of a mismatch is not an error but a report that prints
+#: a ruled sheet as the photograph of a tool, which is the failure nobody noticed for a year.
 #:
 #: IT IS INTERPOLATED INTO RAW SQL, so it is a module constant and must stay one. If it ever has to
 #: come from config or from a request, bind it instead — :func:`_reference_photos` vets it on every
@@ -1495,8 +1525,18 @@ async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, R
     the tool, and it was the thumbnail every picker showed as well.
 
     THE MARKER IS STRUCTURAL AND IT IS A THREE-SURFACE CONTRACT: the uploading client writes
-    ``extraMetadata.purpose = "MEASUREMENT_GRID"`` on the media row and this statement excludes any
-    candidate carrying it. The two web record forms and the handset's grid section all write it; the
+    ``extraMetadata.purpose = "MEASUREMENT_GRID"`` on the media row and this statement SORTS any
+    candidate carrying it LAST — see "NOTHING IS EVER EXCLUDED INTO A BLANK" below, which this
+    paragraph flatly contradicted while saying "excludes any candidate carrying it". A reader who
+    took the earlier wording as the design would have written the marker into the ``WHERE``, and a
+    record whose only image is a grid shot would then hydrate an empty gallery. The three writing
+    surfaces already describe the behaviour correctly — ``GridMeasurement.tsx`` says "the server
+    SORTS any candidate carrying it LAST" and ``ProductForm``/``ToolForm`` say "MARKED SO IT SORTS
+    LAST AND NEVER OUTRANKS A REAL PHOTOGRAPH" — so it was only the server's own prose that was
+    wrong, which is the direction that costs the most, because the server is where a reader goes to
+    settle it.
+
+    The two web record forms and the handset's grid section all write the marker; the
     spelling is :data:`MEASUREMENT_GRID_PURPOSE` and it must not be "tidied", because a marker only
     one end writes is not a marker. ``measurementImageId`` is deliberately NOT the signal, which was
     the first proposal: no shipped web path writes that column at all — ``GridMeasurement.tsx``

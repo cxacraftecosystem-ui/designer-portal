@@ -4294,9 +4294,53 @@ private suspend fun uploadAttachments(
 /**
  * "Document using grid": pick which dimensions to capture (length / breadth / height); each enabled
  * dimension gets its own grid-photo capture. On capture the photo is sent to the vision model for
- * that one dimension and the returned inches auto-fill the matching field; the photo is ALSO pushed
- * into the shared [media] attach-media batch so it is eager-uploaded, shown in the upload progress
- * list, and saved as media for this record (no separate, invisible grid-upload path).
+ * that one dimension and the returned inches are OFFERED as a reading for the designer to accept;
+ * the photo is ALSO pushed into the shared [media] attach-media batch so it is eager-uploaded, shown
+ * in the upload progress list, and saved as media for this record (no separate, invisible
+ * grid-upload path).
+ *
+ * ── IT PROPOSES; IT NO LONGER WRITES BY ITSELF, AND THAT IS A CORRECTNESS FIX ────────────────────
+ *
+ * `onLengthBreadth` / `onHeight` used to be called straight out of the `onSuccess` block, so a
+ * number Gemini ESTIMATED — the prompt's own verb — landed in the form's length/breadth/height boxes
+ * with nobody having looked at it. What made that more than a UX preference is where the number went
+ * next: `records.merge_field_provenance` stamps every changed non-empty field with the `{by, byName,
+ * at}` of the account that pressed Save, and the dimension columns are not in its
+ * `PROVENANCE_SKIP_FIELDS`. So the record did not merely fail to say a machine produced the number —
+ * it positively asserted that a NAMED HUMAN had measured it. `services/measurement_provenance.py`'s
+ * module docstring is written about exactly this and names this function as one of the four call
+ * sites that had to change: *"the four places a model's number currently lands in form state with
+ * nobody's consent"*.
+ *
+ * The shape is the one this app already uses twice for machine output, and both say so of
+ * themselves. `DwPhotoMeasureField`, under a heading reading "IT NEVER WRITES A DIMENSION BY
+ * ITSELF": *"Every path ends at a button the designer presses … the number is a proposal from an
+ * inference a person can check against the object in their hands"* — and the web's
+ * `IdentityCardReader` call site in `FieldInput.tsx`: *"The ONLY write in the whole OCR path, and it
+ * happens because a person read the candidate against the card in their hand and pressed Confirm."*
+ * Acceptance IS the signature — once a person has pressed the button, `{by, byName, at}` is a true
+ * sentence about the row again.
+ *
+ * WHAT IS NOT DONE HERE, so nobody reads this as the whole feature: the accepted reading is still
+ * saved with NO `measurementMethods` marker on the request body, which the server reads as
+ * `UNRECORDED` — honest, and never the false human claim. Sending the marker is blocked on a server
+ * change this file cannot make: `measurementMethods` is not declared on `ProductCreate` /
+ * `ProductUpdate` / `ToolCreate` / `ToolUpdate`, whose shared `APIModel` is
+ * `ConfigDict(extra="forbid")`, so a handset that started sending it today would have every product
+ * and tool save rejected with a 422. `measurement_provenance`'s module docstring is explicit about
+ * the ordering — *"Deploy the schema BEFORE EITHER CLIENT, and never the other way round"* — and it
+ * records that it once read "deploy the schema first", full stop, with the paragraph beneath it
+ * describing what that shorter phrasing cost. This KDoc quoted the RETIRED sentence back at it, which
+ * is how a lesson gets un-learned: "first" says nothing about which client, and the failure being
+ * guarded against is a schema that lands after one of the two.
+ *
+ * THE ORDERING HAS A THIRD STEP AHEAD OF BOTH, and dropping it is the same mistake one layer down:
+ * `access.REVISION_SKIP_FIELDS` must gain `MARKER_BODY_KEY` BEFORE the schema declares the field, or
+ * the first marker a client sends writes a `RecordRevision` for a key that is bookkeeping rather than
+ * a documented answer. So: skip-list, then schema, then either client.
+ *
+ * The acceptance step is worth having on its own regardless, because it is what makes the
+ * `{by, byName, at}` stamp the server ALREADY writes a true sentence rather than a false human claim.
  *
  * ── THE SECOND GRID PATH HAS BEEN DELETED, WHICH IS WORTH RECORDING ──────────────────────────────
  *
@@ -4330,6 +4374,13 @@ private fun GridMeasurementSection(
     var status by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var pendingGroup by remember { mutableStateOf<String?>(null) }
     var pendingCaptureUri by remember { mutableStateOf<Uri?>(null) }
+    // WHAT THE MODEL SAID, HELD UNTIL SOMEBODY ACCEPTS IT. Two separate values rather than a map
+    // keyed by group, because the two carry different shapes and the group keys are a closed set of
+    // two — a map would need a wrapper type whose only purpose is to be unwrapped by a `when` over
+    // the same two strings. Null means "nothing on offer": either nothing has been read yet, or the
+    // reading has been accepted, or the photo behind it was discarded.
+    var proposedLengthBreadth by remember { mutableStateOf<Pair<Double?, Double?>?>(null) }
+    var proposedHeight by remember { mutableStateOf<Double?>(null) }
 
     // group keys: "lengthBreadth" (one photo → both length & breadth) and "height" (one photo).
     fun analyze(group: String, uri: Uri) {
@@ -4363,25 +4414,34 @@ private fun GridMeasurementSection(
         */
         media.purposes = media.purposes + (uri to MEASUREMENT_GRID_PURPOSE)
         status = status + (group to "Analyzing…")
+        // A RE-CAPTURE RETRACTS THE PREVIOUS OFFER BEFORE IT ASKS FOR A NEW ONE. Leaving the old
+        // reading on screen while the new photo is analysed would put an Accept button under a
+        // figure that belongs to a photograph the designer has just replaced.
+        if (group == "lengthBreadth") proposedLengthBreadth = null else proposedHeight = null
         scope.launch {
             if (group == "lengthBreadth") {
                 runCatching { repository.analyzeMeasurementLengthBreadth(context, uri) }
                     .onSuccess { (length, breadth) ->
-                        onLengthBreadth(length, breadth)
                         val parts = buildList {
                             if (length != null && length > 0) add("L ${"%.2f".format(length)}\"")
                             if (breadth != null && breadth > 0) add("B ${"%.2f".format(breadth)}\"")
                         }
-                        status = status + (group to if (parts.isEmpty()) "Couldn't read a value — enter it manually"
-                        else "Measured ${parts.joinToString(" · ")} — fields filled")
+                        if (parts.isEmpty()) {
+                            status = status + (group to "Couldn't read a value — enter it manually")
+                        } else {
+                            // OFFERED, NOT WRITTEN — see this section's header for the record the old
+                            // straight-to-form call was making about who measured the object.
+                            proposedLengthBreadth = length to breadth
+                            status = status + (group to "Read ${parts.joinToString(" · ")} — check it against the object")
+                        }
                     }
                     .onFailure { status = status + (group to "Analysis failed — enter it manually") }
             } else {
                 runCatching { repository.analyzeMeasurement(context, uri, "height") }
                     .onSuccess { value ->
                         if (value != null && value > 0.0) {
-                            onHeight(value)
-                            status = status + (group to "Measured ${"%.2f".format(value)} in — field filled")
+                            proposedHeight = value
+                            status = status + (group to "Read ${"%.2f".format(value)} in — check it against the object")
                         } else {
                             status = status + (group to "Couldn't read a value — enter it manually")
                         }
@@ -4407,6 +4467,10 @@ private fun GridMeasurementSection(
         AppScope.io.launch { runCatching { deferred?.await()?.let { repository.deleteStaged(it.objectKey) } } }
         capturedUris = capturedUris - group
         status = status - group
+        // The offer dies with the photograph it was read off. An Accept button surviving the discard
+        // would write a figure whose evidence the designer has just deleted, and nothing on the
+        // record would afterwards say where the number came from.
+        if (group == "lengthBreadth") proposedLengthBreadth = null else proposedHeight = null
     }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -4451,6 +4515,37 @@ private fun GridMeasurementSection(
                 ) { Text("Pick photo", maxLines = 1, softWrap = false, fontSize = 12.sp) }
             }
             status[key]?.let { Text(it, color = Muted, fontSize = 11.sp) }
+            // THE BUTTON THAT MAKES THE RECORD'S SIGNATURE TRUE. It names the figure it will write,
+            // which is [DwPhotoMeasureField]'s rule for the same class of control — "the button says
+            // the figure it will write" — so a designer who has stopped reading the status line still
+            // cannot accept a number without seeing it.
+            if (key == "lengthBreadth") {
+                proposedLengthBreadth?.let { (length, breadth) ->
+                    val parts = buildList {
+                        if (length != null && length > 0) add("L ${"%.2f".format(length)}\"")
+                        if (breadth != null && breadth > 0) add("B ${"%.2f".format(breadth)}\"")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            onLengthBreadth(length, breadth)
+                            proposedLengthBreadth = null
+                            status = status + (key to "Filled ${parts.joinToString(" · ")} — still editable")
+                        },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+                    ) { Text("Use ${parts.joinToString(" · ")}", fontSize = 12.sp) }
+                }
+            } else {
+                proposedHeight?.let { value ->
+                    OutlinedButton(
+                        onClick = {
+                            onHeight(value)
+                            proposedHeight = null
+                            status = status + (key to "Filled ${"%.2f".format(value)} in — still editable")
+                        },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+                    ) { Text("Use ${"%.2f".format(value)} in", fontSize = 12.sp) }
+                }
+            }
             capturedUris[key]?.let { uri ->
                 AndroidUriPreview(context = context, uri = uri, onRemove = { discardGroup(key) })
             }
@@ -4460,15 +4555,27 @@ private fun GridMeasurementSection(
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HorizontalDivider()
         Text("Document using grid", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+        // THE COPY MOVED WITH THE BEHAVIOUR, in the same edit. It used to say "The measured inches
+        // auto-fill the fields (still editable)", which described the write this section no longer
+        // makes, and a hint that promises a fill the app does not perform reads as a broken control
+        // rather than as a deliberate one.
+        //
+        // AND IT NOW SAYS THAT IT NEEDS A CONNECTION. `POST /media/analyze-measurement` is
+        // network-only — no queue, no outbox, no retry; `StagedJournal` covers the photo upload and
+        // not the analysis — so in a courtyard with no signal this control fails every time, and
+        // until this sentence existed the failure was a surprise at the end rather than a fact
+        // before the capture.
         Text(
             "Place the object on a 1-inch grid sheet. Length and breadth are read from a single top-down " +
-                "photo; height needs its own side-on photo. The measured inches auto-fill the fields (still editable).",
+                "photo; height needs its own side-on photo. Reading the photo needs a connection, and the " +
+                "inches it returns are offered for you to check and accept — nothing is written into a " +
+                "field until you press the button.",
             color = Muted,
             fontSize = 12.sp
         )
-        GridGroupRow("lengthBreadth", "Length & breadth (one photo)", "Top-down photo of the object on the grid — fills both length and breadth.")
+        GridGroupRow("lengthBreadth", "Length & breadth (one photo)", "Top-down photo of the object on the grid — offers both length and breadth.")
         if (includeHeight) {
-            GridGroupRow("height", "Height (one photo)", "Side-on photo of the object against the grid — fills height.")
+            GridGroupRow("height", "Height (one photo)", "Side-on photo of the object against the grid — offers a height.")
         }
     }
 }

@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**251 operations** in the working tree — 116 GET, 76 POST, 25 DELETE,
+**250 operations** in the working tree — 116 GET, 75 POST, 25 DELETE,
 20 PATCH, 14 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -54,9 +54,9 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `secrets.py` | 5 |
 | `settings.py` | 5 |
 | `users.py` | 5 |
-| `auth.py` | 4 |
 | `app_release.py` | 3 |
 | `asr_models.py` | 3 |
+| `auth.py` | 3 |
 | `design_workshop_viewers.py` | 3 |
 | `export.py` | 3 |
 | `feedback.py` | 3 |
@@ -110,9 +110,9 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 109 | 2396 `def test_` | `python -m pytest -q` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 103 | 774 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 124 | 1450 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Backend unit (`backend/tests/`) | 112 | 2436 `def test_` | `python -m pytest -q` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 107 | 824 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 126 | 1478 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
@@ -129,13 +129,21 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 162 | 85,384 | 162 | 85,384 |
-| `frontend/app` | 62 | 26,462 | 62 | 26,462 |
-| `frontend/components` | 185 | 56,298 | 185 | 56,298 |
-| `frontend/lib` | 49 | 30,191 | 49 | 30,191 |
-| `android/app/src/main/java` | 150 | 130,629 | 152 | 131,446 |
+| `backend/app` | 162 | 86,171 | 162 | 86,171 |
+| `frontend/app` | 62 | 26,560 | 62 | 26,560 |
+| `frontend/components` | 188 | 58,212 | 188 | 58,212 |
+| `frontend/lib` | 50 | 31,150 | 50 | 31,150 |
+| `android/app/src/main/java` | 151 | 132,032 | 151 | 132,032 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
 reproducible from a clone. **Tree** includes files not yet committed, which is the figure to use when
 reasoning about what is running locally. Neither is wrong; they answer different questions.
+
+**REGENERATE THIS ON A CLEAN TREE.** Only the *file* columns come from the index; every *line* count
+is read off disk, so `--write` on a dirty working copy writes uncommitted lines into the Tracked
+column and quietly destroys the one property that column is for. It has already happened: the Android
+row sat at 150 tracked files against 152 in the tree from the commit that added the divergence view
+until 2026-08-19, because nobody re-ran `--write` after `git add`. **Two file columns that disagree
+are the tell** — tracked and tree must be equal at a clean HEAD, so any gap between them means this
+file was generated mid-change and its line counts belong to somebody's working copy.

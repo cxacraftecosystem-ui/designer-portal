@@ -40,6 +40,7 @@ import { Paperclip, X } from "lucide-react";
 
 import { DictationButton } from "@/components/designworkshop/Dictation";
 import { IdentityCardReader } from "@/components/designworkshop/IdentityCardReader";
+import { MediaAiVerbs } from "@/components/designworkshop/MediaAiVerbs";
 import { RichTextEditor } from "@/components/designworkshop/RichTextEditor";
 import { deriveValue, isDerived } from "@/lib/derivedFields";
 import {
@@ -816,6 +817,19 @@ export function FieldInput({
                     onPropose={(key, proposed) => onPatch({ [key]: proposed })}
                   />
                 ) : null}
+                {/*
+                  CAPTION AND SUBTITLES, THROUGH THE SAME DOOR EVERY OTHER EXTRA GOES IN BY.
+
+                  Composed with the others rather than chosen between — see the note above: a
+                  ternary would silently suppress whichever extra lost, and a stage-13 prototype
+                  photograph is legitimately both measurable and describable.
+
+                  It uses NEITHER `attach` NOR `onPatch`, and that is the whole point of it: a verb's
+                  output is a layer over this file, read and accepted by a named person on the AI
+                  layers screen, and it never becomes a value in this field or in the caption box
+                  beside it. `MediaAiVerbs` has nothing that could write one.
+                */}
+                <MediaAiVerbs workshopId={workshopId} files={files} local={local} disabled={disabled} />
                 {sketchSources.length ? (
                   <SketchRectifyField
                     sources={sketchSources}

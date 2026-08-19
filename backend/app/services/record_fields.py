@@ -26,9 +26,14 @@ added by the table/sheet builders rather than the spec, because the info panel
 deliberately omits them.
 
 Value coercion lives here too (:func:`num`, :func:`money`, :func:`dims`, :func:`date_str`,
-:func:`enum_label`). Prisma ``Decimal`` columns arrive as objects that stringify with
-trailing zeros, and Prisma enums stringify as ``MediaType.AUDIO``; both are normalised
-before they ever reach a cell.
+:func:`enum_label`) — and with it :func:`dims_with_method`, which says in the dimensions cell itself
+when a number was a vision model's estimate rather than a tape reading. It lives here rather than in
+the provenance panel precisely BECAUSE of the four-surface rule above: the panel is gated on
+``canViewProvenance``, and the people who most need to know a costed number is an estimate are the
+researcher, the reviewer and the ministry officer, none of whom hold that permission.
+
+Prisma ``Decimal`` columns arrive as objects that stringify with trailing zeros, and Prisma enums
+stringify as ``MediaType.AUDIO``; both are normalised before they ever reach a cell.
 
 And so does the RICH-TEXT read boundary. The larger free-text columns can now hold a formatted
 document rather than a bare paragraph, and :func:`cell` flattens it — one call, at the one place
@@ -146,6 +151,101 @@ def meta_val(meta: dict[str, Any], *keys: str) -> Any:
         if isinstance(value, (str, int, float)) and str(value).strip():
             return value
     return None
+
+
+#: How a stored measurement method reads in a cell somebody costs a production run from.
+#:
+#: ONLY THE TWO METHODS THAT CHANGE WHAT A READER MAY DO WITH THE NUMBER APPEAR HERE. ``TYPED`` is
+#: what the overwhelming majority of dimensions in this repository are and needs no ceremony — a cell
+#: reading "8.5 (typed)" tells a reader nothing they did not assume. ``UNRECORDED`` is deliberately
+#: silent too, and that is the sharper decision: every row written before ``measurement_provenance``
+#: existed carries it, so appending "method not recorded" to most of the database would be noise that
+#: trains readers to skip the clause on the one row where it matters. The honest rendering of a legacy
+#: row is the bare number. ``services/measurement_provenance`` argues both, and ``aiLayers.ts``'s
+#: refusal to print the token ``UNRECORDED`` at a reader is the same rule one lane over.
+#:
+#: THE WORDS ARE A CROSS-SURFACE CONTRACT, AND THE OTHER TWO SURFACES HAVE NOT WRITTEN THEIR HALF YET.
+#: When the web and the handset grow a method label of their own, it must print these same two phrases
+#: (sentence-capitalised), or the record sheet and the form describe one stamp in two vocabularies —
+#: the drift ``designworkshop/FieldProvenance.tsx`` calls "a requirement rather than a nicety" for its
+#: own attribution sentence. This block is the source those two must be written against.
+#:
+#: An earlier draft of this comment named ``methodLabel`` as an existing web symbol that had to be kept
+#: in sync. It exists nowhere in the repository, and a reader who greps for it concludes the contract
+#: is already held up at both ends. A named symbol reads as a promise that something is there; write
+#: the phrases down as the thing to be matched, not as a thing already matching.
+_METHOD_CLAUSES = {
+    "VISION_MODEL": "vision model estimate",
+    "PHOTO_GEOMETRY": "photo measurement",
+}
+
+
+def field_method(record: Any, column: str) -> str | None:
+    """The method stamped on one column by ``records.merge_field_provenance``, or None.
+
+    Reads the stamp rather than the value: ``extraMetadata.fieldProvenance[column]["method"]``, which
+    is where the record half writes it and the only place it exists — there is no method column and
+    this change deliberately did not add one.
+    """
+    provenance = meta_of(record).get("fieldProvenance")
+    if not isinstance(provenance, dict):
+        return None
+    stamp = provenance.get(column)
+    if not isinstance(stamp, dict):
+        return None
+    method = stamp.get("method")
+    return method if isinstance(method, str) else None
+
+
+def dims_with_method(record: Any, *columns: str) -> str | None:
+    """``dims(...)`` plus a clause naming any dimension in the cell a machine produced.
+
+    **THIS IS THE WHOLE READ SIDE OF THE MEASUREMENT RECORD HALF, AND IT IS NOT COSMETIC.** The
+    provenance panel that shows who stamped what is gated on ``adminMode || canViewProvenance``, so if
+    the method were shown only there, the researcher who accepted the number, the reviewer who
+    approves the record and the officer reading the export would all still read an unqualified
+    measurement. This cell is not gated: it reaches the data browser's info panel, every .xlsx sheet
+    and the ``/export/products.csv`` / ``/export/tools.csv`` downloads through the one registry, so a
+    clause added here is visible to everybody entitled to see the record at all — which is the correct
+    audience for "this number is an estimate".
+
+    THE CLAUSE NAMES WHICH NUMBER WHEN THE NUMBERS DISAGREE. A trailing "(vision model estimate)" on a
+    cell whose breadth was typed off a tape would overstate the machine's part, so the initials of the
+    columns are printed instead — "8.5 x 4 (L: vision model estimate)". The initial is derived from
+    the column name rather than transcribed, so a fourth dimension column added later cannot get the
+    wrong letter. Only when every printed number shares one machine method does the clause collapse to
+    the short form, because then there is nothing to distinguish.
+    """
+    # ``is not None`` and a truthy ``num`` — the same two conditions :func:`dims` applies, spelled out
+    # so a zero-length dimension is printed by one and counted by the other rather than falling
+    # between them.
+    printed = [
+        (column, raw)
+        for column in columns
+        if (raw := getattr(record, column, None)) is not None and num(raw)
+    ]
+    # The numbers still come from :func:`dims`, so the "8.5 x 4" join has one definition and this
+    # helper only ever adds to it.
+    text = dims(*(raw for _, raw in printed))
+    if not text:
+        return None
+
+    labelled = [
+        (column, clause)
+        for column, _ in printed
+        if (clause := _METHOD_CLAUSES.get(field_method(record, column) or ""))
+    ]
+    if not labelled:
+        return text
+    if len(labelled) == len(printed) and len({clause for _, clause in labelled}) == 1:
+        return f"{text} ({labelled[0][1]})"
+
+    grouped: dict[str, list[str]] = {}
+    for column, clause in labelled:
+        # "lengthInches" -> "L". Derived, so the letters cannot drift from the column list.
+        grouped.setdefault(clause, []).append(column.removesuffix("Inches")[:1].upper())
+    parts = [f"{', '.join(initials)}: {clause}" for clause, initials in grouped.items()]
+    return f"{text} ({'; '.join(parts)})"
 
 
 def _rel(record: Any, relation: str, attr: str) -> Any:
@@ -353,9 +453,12 @@ PRODUCT = RecordSpec(
         _f("Artisan", lambda p: p.artisanName),
         _f("Place", lambda p: p.place),
         _f("Type", lambda p: enum_label(p.productType)),
+        # Named columns rather than values, because the cell now says HOW each number was measured
+        # and the method is stamped per column in ``extraMetadata.fieldProvenance``. See
+        # :func:`dims_with_method`.
         _f(
             "Dimensions (LxBxH in)",
-            lambda p: dims(p.lengthInches, p.breadthInches, p.heightInches),
+            lambda p: dims_with_method(p, "lengthInches", "breadthInches", "heightInches"),
         ),
         _f("Size", lambda p: p.size),
         _f("Time to complete", lambda p: p.timeTakenToCompleteProduct),
@@ -385,7 +488,16 @@ TOOL = RecordSpec(
         _f("Usage", lambda t: t.processUsedIn),
         _f("Material", lambda t: t.material),
         _f("Years in use", lambda t: t.yearsInUse),
-        _f("Dimensions (LxB in)", lambda t: dims(t.lengthInches, t.breadthInches)),
+        _f("Dimensions (LxB in)", lambda t: dims_with_method(t, "lengthInches", "breadthInches")),
+        # A TOOL'S HEIGHT PRINTS BARE AND CANNOT YET DO OTHERWISE, which matters because the grid
+        # control fills exactly this cell. ``ToolDocumentation`` has no ``heightInches``: the reading
+        # lands in the plain ``height`` column, which is not in
+        # ``measurement_provenance.DIMENSION_FIELDS``, so ``method_stamps`` drops a marker naming it —
+        # silently and by design, since failing somebody's record edit over a stray provenance key
+        # would trade a real loss for a cosmetic one. So an accepted vision-model tool height is gated
+        # by the button on both clients and recorded as nothing. Widening ``DIMENSION_FIELDS`` to
+        # ``height`` is the repo owner's call and is not free: ``width`` beside it is a plain typed
+        # input, so the same widening starts stamping hand-typed widths too.
         _f("Height", lambda t: num(t.height)),
         _f("Width", lambda t: num(t.width)),
         _f("Thickness", lambda t: num(t.thickness)),

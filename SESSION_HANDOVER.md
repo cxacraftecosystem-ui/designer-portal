@@ -1020,10 +1020,18 @@ Recorded because the instinct to defer to the brief is the failure mode here.
    > not the first**: the 795-district anchor table in `WorkshopData.district_points` is positioned
    > from `geography.DistrictAnchors` over live `Location` rows, so it is derived rather than
    > shippable, and a phone that had the district names but not the anchors would still have to
-   > invent the coordinate. Anyone reopening this should argue about the ANCHORS. The stale-premise
-   > version of this claim also survives in `ui/designworkshop/ReportFigures.kt`'s `renderMap` KDoc
-   > ("the cached artisan record on this device carries a `village` and no district and no state"),
-   > which is Android-owned and needs the same correction.
+   > invent the coordinate. Anyone reopening this should argue about the ANCHORS.
+   >
+   > **AND THE ANDROID SIDE IS ALREADY CORRECTED — this sentence used to send a reader there to fix
+   > it, which was wrong on 2026-08-20 and is the reason it is being written a third time.**
+   > `renderMap`'s KDoc in `ui/designworkshop/ReportFigures.kt` carries its own retraction: "The
+   > premise this paragraph used to rest on has gone false and is recorded here so nobody argues
+   > from it again … Both halves are now wrong." The old sentence about the cached record carrying
+   > "a `village` and no district and no state" is STILL FINDABLE THERE BY GREP, because the
+   > retraction quotes it in order to strike it — so a grep hit on that string is evidence the
+   > correction landed, not evidence it is missing. Open the KDoc, do not grep it. The same trap,
+   > and the other four sites it applies to, is written up in the "Where the artisan lives is only
+   > on `ReferencedRecord`" row of `docs/REPORT-DATA-WIRING.md`.
 
 ## The verifier that caught its own fixer
 
@@ -1061,40 +1069,81 @@ with file:line evidence is in the session scratchpad. The ones that matter most:
 
 # The wave of 2026-08-19/20, and the ONE thing that has to happen in the right order
 
-## `docs/REPO_FACTS.md` must be regenerated BEFORE the new Checks workflow is trusted
+## `docs/REPO_FACTS.md` has been regenerated — 2026-08-20, from a pristine export of `329a616`
+
+**DONE, and the section below is kept because it is the reasoning, not the task.** The file in the
+tree is now what a clone of `329a616` reproduces: `250 operations / 75 POST`, `auth.py | 3`, and
+every row of the size table has **tracked equal to tree**, including
+`| android/app/src/main/java | 151 | 132,032 | 151 | 132,032 |` — the genuine stale-at-HEAD row
+named at the foot of this section is closed.
+
+**It was NOT produced by `--write` on this working copy, because this working copy is not clean** —
+four agents were mid-edit when it was run, and `--write` here would have written their uncommitted
+lines into the Tracked column, which is the one failure the file's own header exists to prevent. It
+was produced instead by exporting `HEAD` with `git archive` into a scratch directory and running
+`node docs/tools/check-docs.mjs --write` there, with `GIT_DIR`/`GIT_WORK_TREE` pointed at the real
+`.git` so that the script's single `git ls-files` still answered from the index. Nothing was staged,
+so that index IS `329a616`. **If you need to redo this, redo it that way or on a genuinely clean
+tree; do not run `--write` in a dirty checkout to "fix" the complaint below.**
+
+**`node docs/tools/check-docs.mjs` in the dirty tree still reports one problem, and that is correct
+rather than a regression:** `docs/REPO_FACTS.md is out of date`, listing one drifting row per area
+still being edited — LINE counts read off somebody's working copy, plus the test counts this wave is
+adding to, plus a FILE count for every area holding untracked new work.
+
+**Read the rows the checker actually emits; do not trust a list written earlier, including this one.**
+The paragraph that stood here named a single area whose two FILE counts disagreed and said no other
+file column had moved. That was wrong within hours — three areas disagreed by the time it was read
+(`frontend/components`, `frontend/lib` and `android/app/src/main/java`, each carrying untracked new
+files), and it is the exact species of frozen count the rest of this wave was spent removing. A
+diagnostic that teaches a maintainer to check one row when three have moved is worse than no
+diagnostic, because it is read as coverage.
+
+The rule instead of the instance: **an area with untracked new work shows a tree FILE count above its
+tracked one, and that disagreement is the tell doing its job.** It vanishes the moment those files are
+committed. Run the checker and read what it says.
+
+**Do not run `--write` to silence this listing.** It is a report about the working copy, not about the
+file; the file is right for `329a616` and should be regenerated once more on a clean tree after the
+merge, not before — which is what the checker's own message means by "ON A CLEAN TREE (line counts are
+read from disk, not from the index)".
+
+## Why it had to be regenerated BEFORE the new Checks workflow is trusted
 
 `.github/workflows/checks.yml` landed in this wave with a `Docs check` job that runs
-`node docs/tools/check-docs.mjs`. **On the commit that introduces it, that job is RED**, and one of
-the reasons is a change in the same wave: deleting `@router.post("/google")` from
+`node docs/tools/check-docs.mjs`. **On the commit that introduced it, that job was RED**, and one of
+the reasons was a change in the same wave: deleting `@router.post("/google")` from
 `backend/app/api/routes/auth.py` moved the generated route counts in `docs/REPO_FACTS.md`
 (`251 operations / 76 POST` → `250 / 75`, and `auth.py | 4` → `auth.py | 3`), and new test files
 under `backend/tests/`, `frontend/e2e/` and `android/app/src/test/` moved the generated test counts.
 
-**The fix is one command and it must be run on a CLEAN tree:**
+**The fix was one command, and it had to be run against a CLEAN tree:**
 
 ```bash
 node docs/tools/check-docs.mjs --write
 ```
 
-**It was NOT run in this wave, deliberately.** Only the *file* columns of the size table come from
+**It was not run in the wave that raised this, deliberately.** Only the *file* columns of the size table come from
 `git ls-files`; every *line* count is read off disk. With five agents mid-edit, `--write` writes
 uncommitted work into the Tracked column, whose entire promise is that it is reproducible from a
 clone — the exact failure this file's own regenerated header now warns about. Running it early is
 worse than leaving the job red for one commit, because a red job announces itself and a poisoned
 generated column does not.
 
-**So this is a merge-ORDER dependency, not a follow-up:** land the wave, get to a clean tree, run
-`--write`, commit that diff on its own, and only then treat `Docs check` as a signal. If the wave
+**So this was a merge-ORDER dependency, not a follow-up:** land the wave, get to a clean tree, run
+`--write`, commit that diff on its own, and only then treat `Docs check` as a signal. The export
+route described at the top of this section is what discharged it without waiting for the merge. If the wave
 merges without it, the honest interim is `continue-on-error: true` on the `docs` job with a comment
 naming the commit that removes the flag — not a red-and-silent gate, which is precisely what
 `android-build.yml`'s lint step already argues against in this repository ("Making lint a hard gate
 today would fail every run and train everyone to ignore red").
 
-**There is one genuine stale-at-HEAD row underneath all the in-flight noise**, and it is the reason
-to bother: `| android/app/src/main/java | 150 | 130,629 | 152 | 131,446 |`. Tracked and tree file
-counts CANNOT differ at a clean HEAD, so this file was last generated while two Kotlin files were
-still untracked — commit 1716641 added them without re-running `--write`. It must regenerate to
-equal counts. `checkFacts` now prints the differing rows and **emits the rows whose two file counts
+**There was one genuine stale-at-HEAD row underneath all the in-flight noise**, and it is the reason
+it was worth bothering: `| android/app/src/main/java | 150 | 130,629 | 152 | 131,446 |`. Tracked and
+tree file counts CANNOT differ at a clean HEAD, so the file was last generated while two Kotlin files
+were still untracked — commit 1716641 added them without re-running `--write`. **It now reads
+`| android/app/src/main/java | 151 | 132,032 | 151 | 132,032 |`, equal as it must be.**
+`checkFacts` prints the differing rows and **emits the rows whose two file counts
 disagree FIRST**, ahead of the line-count noise, so that row cannot fall off the end of the listing
 however many agents are mid-edit; `selfTestFactsDrift` in `docs/tools/check-docs.mjs` holds that
 ordering to account.

@@ -82,8 +82,11 @@ their area is untouched.
 
 The Checks column has no "skipped" cell and that is the design: it has no `paths:` filter, because a
 filter is exactly how `android-build.yml` ended up unreachable from a backend pull request. It also
-runs on **pull requests**, which none of the three deploy stages do — that is the gap it was written
-for. **Its result does not hold any of the other three back**; see the note under the pipeline
+runs on **pull requests with no path filter at all**, which is the gap it was written for. Stages 1
+and 2 have no `pull_request` trigger whatever; stage 3 does, but filtered to `android/**` and its own
+workflow file — **so before `checks.yml` a pull request touching only `backend/` and `frontend/` ran
+nothing**, which is the hole, stated the way `android-build.yml`'s own header states it rather than
+as "none of the three run on PRs". **Its result does not hold any of the other three back**; see the note under the pipeline
 diagram.
 
 Anything the diff cannot be computed for — manual dispatch, the first push of a branch, a force-push
@@ -208,7 +211,7 @@ same value in two places. Change one there and re-run this workflow (or push) to
 | Build the APK now | Actions → *Android build* → **Run workflow**, or open a PR touching `android/**`. |
 | Re-deploy after changing a Vercel env var | Re-run *Deploy frontend to Vercel*. `NEXT_PUBLIC_*` values are baked at build time; changing them in the dashboard does nothing until something rebuilds. |
 | Get the APK | The run's **Artifacts** section → `app-debug-<sha>`. Debug-signed: sideload-only, and Android will refuse to install it over a release-signed build. |
-| Run the Checks suite now | Actions → *Checks* → **Run workflow**. Or locally, which is faster and is what the jobs run verbatim: `PYTHONUTF8=1 python -m pytest -q` from `backend/` (see [QA_AUDIT.md §5](QA_AUDIT.md) — an empty environment does **not** give you the pure core, it gives 70 collection errors); `npx tsc --noEmit && npx eslint . --max-warnings=0 && npm run test:unit` from `frontend/`; `node docs/tools/check-docs.mjs` from the repo root **on a clean tree**, since `REPO_FACTS.md`'s line counts are read off disk. |
+| Run the Checks suite now | Actions → *Checks* → **Run workflow**. Or locally, which is faster — `PYTHONUTF8=1 python -m pytest -rf --durations=15` from `backend/` (see [QA_AUDIT.md §5](QA_AUDIT.md) — an empty environment does **not** give you the pure core, it gives 70 collection errors); `npx tsc --noEmit && npx eslint . --max-warnings=0 && npm run test:unit` from `frontend/`; `node docs/tools/check-docs.mjs` from the repo root **on a clean tree**, since `REPO_FACTS.md`'s line counts are read off disk. **`-q` is what this row used to prescribe and it is now the one flag that must not be used** — under `-q` pytest never writes `conftest.pytest_report_header`, so the `database:` sentence saying whether the database-backed modules ran or skipped is absent, and the job's own grep counts it and goes red. **The backend job has a SECOND step that is not in the list above on purpose:** *Prove the database gate on a runner that has only a dotenv* writes `backend/.env` and deletes it again, and it refuses to start if that file already exists. Do not paste it into a terminal on a machine that has real credentials there. |
 
 ---
 
@@ -239,8 +242,21 @@ same value in two places. Change one there and re-run this workflow (or push) to
   failed, in four to five minutes. Standing up Postgres in that job would run the other ~28 as well
   and is a second, larger decision — worth taking, but not this bullet's.
 - **The Playwright suite is HALF a gate — corrected 2026-08-20.** `checks.yml` runs
-  `npm run test:unit`, the `*-unit.spec.ts` selection: pure-function specs, no dev server, no
-  browser download, 536 tests in about 31 s. **The specs that drive a screen are still gated by
+  `npm run test:unit`, the `*-unit.spec.ts` selection minus two files excluded by name: pure-function
+  specs, no dev server, no browser download, seconds rather than minutes. **No count and no duration
+  is written down here, deliberately, and putting one back is the repair to refuse** — Playwright
+  prints "N passed" in the step's own log on every run, so a total kept in prose can only ever be
+  wrong between edits. This bullet carried "536 tests in about 31 s" long enough for both halves to
+  go stale, and a replacement figure was then written here — on the same day, and it is gone again,
+  because the number had already moved: `checks.yml`'s `Unit specs` comment records **550** for this
+  exact selection on 2026-08-20, and running it here on 2026-08-20 with nothing on :3000 gives **564
+  passed**. Nobody was wrong; sibling lanes were adding `*-unit.spec.ts` files between the two. That
+  is the whole argument for keeping no total in prose, and it is why the two numbers in this sentence
+  are the last ones — they are evidence that the figure rots within a day, not a figure to quote.
+  `checks.yml`'s `Unit specs` step takes the same line and says why; the one measurement it does keep
+  is of the EXCLUSION — what the pattern collects without the two excluded files, and how they fail —
+  which is there to justify the exclusion list and not to describe the suite's size. **The specs that
+  drive a screen are still gated by
   nothing**, and neither is `frontend/scripts/pw-smoke.mjs`. Those need a running app and a
   database, so they remain a genuinely larger job — but the cheap half is no longer an argument for
   postponing it, because the cheap half is done.
@@ -350,8 +366,8 @@ parts that are not are exactly the parts that were wrong before.
 
 | Claim class | Kept true by |
 |---|---|
-| The three workflows, their triggers and their step order | `.github/workflows/*.yml`. `grep -n "^name:\|^on:\|    - name:" .github/workflows/deploy-frontend.yml` renders the shape of a workflow in one command. |
-| **"Runs" versus "gates"** | **Not checkable from a checkout, which is why §1 and §5 now say it in words rather than leaving it implied.** A workflow file proves a job RUNS; nothing in `.github/` proves it BLOCKS anything, because required status checks live in the repository's branch-protection settings (`gh api repos/:owner/:repo/branches/main/protection`, or the Settings page). `checks.yml` landed on 2026-08-20 with a long header about what it stops and no sentence about what it does not, and a reader who takes a green Checks tick as protection for `main` is wrong today. Whenever a bullet in §5 moves from "not a gate" to built, say which of the two it became. |
+| The workflows, their triggers and their step order | `.github/workflows/*.yml`. `grep -n "^name:\|^on:\|    - name:" .github/workflows/deploy-frontend.yml` renders the shape of a workflow in one command. **This row said "the three workflows" and there are five**, named rather than counted because a count is what went stale: `android-build.yml`, `checks.yml`, `deploy-backend.yml`, `deploy-frontend.yml`, `keep-supabase-active.yml`. Re-derive them with `ls .github/workflows/` rather than from this sentence; the same stale count was just repaired in `checks.yml`'s own header, which now NAMES the workflows beside it for exactly this reason ("a count is the one fact in this header that a new file falsifies silently and nobody re-reads"). |
+| **"Runs" versus "gates"** | **Not checkable from a checkout, which is why §1 and §5 say it in words rather than leaving it implied.** A workflow file proves a job RUNS; nothing in `.github/` proves it BLOCKS anything, because required status checks live in the repository's branch-protection settings (`gh api repos/:owner/:repo/branches/main/protection`, or the Settings page). A reader who takes a green Checks tick as protection for `main` is wrong today. **The gap this row used to record is CLOSED and the row is kept for the rule, not the complaint:** `checks.yml` landed on 2026-08-20 with a long header about what it stops and no sentence about what it does not, and it now carries one — the `THIS WORKFLOW RUNS. IT DOES NOT, BY ITSELF, GATE ANYTHING` block, which names the two specific things it does not do (block a merge without the three job names set as required checks, and block a deploy, since `deploy-backend.yml` fires on its own `push: main` trigger and the two RACE). Whenever a bullet in §5 moves from "not a gate" to built, say which of the two it became — and say it in the workflow as well as here, because a reader who opens the YAML rarely opens this file. |
 | The secrets **table** (names and purposes) | `grep -ho 'secrets\.[A-Z_]*' .github/workflows/*.yml \| sort -u` lists every secret the workflows read. Anything in that output missing from §2 is undocumented. |
 | Which secrets **exist** | **Not checkable from a checkout, and deliberately not stated.** `gh secret list`, or the Actions settings page. A previous version asserted an inventory here and it went stale within days. |
 | The §5 non-gates | The absence of a job. A row leaves that list when a workflow gains the step — so re-read §5 against the workflow files, not against memory. **This row is not enough on its own and 2026-08-19 proved it:** the Android bullet went stale not because a workflow changed but because the *tree* did — the step was already there, branching on whether `app/src/test` had sources, and the sources arrived. A non-gate bullet that describes the CODE as well as the workflow has two ways to rot, and only one of them is visible in `.github/`. |

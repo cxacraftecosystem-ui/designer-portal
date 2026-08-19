@@ -1520,10 +1520,16 @@ class _CapturingDb:
 
     WHAT THIS CANNOT SEE, STATED SO NOBODY READS MORE INTO A GREEN RUN THAN IS THERE. ``query_raw``
     records the string and answers ``[]``; nothing here parses it. As of 2026-08-20 the statement
-    has NEVER been executed against a Postgres by any suite on this machine — the compose stack is
-    down, so ``test_reference_resolver.py`` and every other DB-backed test are skipped, and a syntax
-    error, a bad CTE/``DISTINCT ON`` interaction or a type error in the boolean expression would
-    ship with this file green. It was read closely instead: ``extraMetadata`` is JSONB in the init
+    has NEVER been executed against a Postgres by any suite on this machine, and the reason is NOT
+    that the DB-backed tests are skipped — this paragraph said that, and it is the comfortable
+    version. ``backend/.env`` names ``127.0.0.1:55442``, ``conftest`` publishes it and prints
+    "database: local DSN resolved — database-backed tests WILL run", and
+    ``test_reference_resolver.py``'s ``pytestmark`` skips only a NON-local DSN — so those tests are
+    SELECTED and then fail to connect, because the compose stack is down. Either way nothing sends
+    this SQL to a server, and a syntax error, a bad CTE/``DISTINCT ON`` interaction or a type error
+    in the boolean expression would ship with this file green.
+
+    It was read closely instead: ``extraMetadata`` is JSONB in the init
     migration so ``->>`` on a non-object answers NULL rather than raising, ``originalFilename`` is
     NOT NULL so ``is_grid`` can never be NULL and sort ahead of a real candidate on NULLS LAST, and
     ``DISTINCT ON`` permits ordering by a CTE column absent from the select list. Reading is the
@@ -1928,6 +1934,17 @@ def _governing_widths(entity):
     prints as a key-value line beneath each row instead. ``existingProduct`` declares seven and its
     first six add to exactly 100, which is somebody having done this arithmetic on purpose; two of
     the entities in the exemption above declare seven and did not.
+
+    THIS IS A TRANSCRIPTION AND IT DELIBERATELY OMITS TWO OF ``_table_columns``' FILTERS, so read
+    the vectors below as recorded AT FULL TIER and not as tier-independent. ``_table_columns``
+    filters ``self._visible(f)`` — ``not deprecated`` AND ``spec.tier.rank <= template.max_tier.rank``
+    — and ``not f.type.is_media``; this function keeps only the ``not deprecated`` half. Both
+    omissions are no-ops as the registry stands: no field is declared both TABLE_COLUMN and
+    media-typed (``test_a_media_field_is_never_a_table_column_whatever_role_it_declares`` drives a
+    synthetic entity precisely because none exists), and the tier filter drops nothing under a
+    template that admits every tier. A template with a LOWER ``max_tier`` would drop columns and
+    re-weight the survivors, and this parity test cannot see that — so a divergence introduced at
+    BASIC would pass here. Widen the transcription, not the exemption list, if that day comes.
     """
     columns = [f for f in entity.fields
                if f.report_role.value == "TABLE_COLUMN" and not f.deprecated][:6]
@@ -2028,7 +2045,8 @@ def test_the_two_surfaces_lay_out_the_same_table_the_same_way():
     is the owner of the printed page's call and needs a changelog note. What a test can do is fail
     the moment the set changes or a recorded vector moves, which is what this does. The six-column
     cap is the part the two surfaces DO agree on and must keep agreeing on — ``_governing_widths``
-    takes the same first six as ``_table_columns`` and ``tableColumns``' callers.
+    takes the same first six as ``_table_columns`` and ``tableColumns``' callers, AT FULL TIER;
+    its docstring names the two filters it omits and why they are no-ops today.
     """
     disagreed = []
     for _stage, entity in all_entities():

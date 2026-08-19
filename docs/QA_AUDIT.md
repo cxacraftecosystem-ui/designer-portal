@@ -185,8 +185,10 @@ There is also the older `frontend/scripts/pw-smoke.mjs`, a login-and-visit-every
 
 ~~**Neither runs in CI.**~~ **Half true as of 2026-08-20, and the half that changed is the half that
 proves least.** `checks.yml`'s `Web typecheck, lint and unit specs` job runs `npm run test:unit`,
-which is every `*-unit.spec.ts` except the two that navigate — pure functions, no dev server, no
-browser. **Nothing runs a spec that drives a screen**, and `frontend/scripts/pw-smoke.mjs` is still
+which is every `*-unit.spec.ts` except the two that navigate — `access-refusal-unit.spec.ts` and
+`login-credential-floor-unit.spec.ts`, named here because "the two that navigate" is not something a
+reader can grep for — pure functions, no dev server, no browser. §5's command block records how those
+two fail, which is the test for whether a new spec belongs beside them. **Nothing runs a spec that drives a screen**, and `frontend/scripts/pw-smoke.mjs` is still
 run by hand only. So the specs listed in the paragraph above — location fields, the date picker, nav
 sheet scrolling, sharing multi-select — are exactly the ones CI does not touch. See §4.
 
@@ -363,7 +365,7 @@ under the table before treating any of them as closed.**
 | Not gated | Consequence |
 |---|---|
 | ~~**Backend tests**~~ | ~~Not in any workflow — `grep -rn pytest .github/workflows/*.yml` is empty.~~ **Struck 2026-08-20.** That grep now returns `checks.yml`. The `Backend tests` job runs the whole suite with a `ci.invalid` DSN, so the database-backed modules skip by design: 2862 passed, 381 skipped. The ~28 modules that need Postgres are still ungated, and adding a service container is a separate decision (§1). |
-| ~~**Web e2e / smoke**~~ | ~~Playwright specs exist and nothing runs them.~~ **Half struck 2026-08-20.** `npm run test:unit` runs the `*-unit.spec.ts` selection in the `Web typecheck, lint and unit specs` job — 536 tests, no dev server, no browser. **The server-dependent specs and `frontend/scripts/pw-smoke.mjs` are still gated by nothing**, and they are the ones that drive screens. |
+| ~~**Web e2e / smoke**~~ | ~~Playwright specs exist and nothing runs them.~~ **Half struck 2026-08-20.** `npm run test:unit` runs the `*-unit.spec.ts` selection — minus two files excluded by name — in the `Web typecheck, lint and unit specs` job: no dev server, no browser download, seconds not minutes. **No total is written here on purpose**; this row said "536 tests" after the number had moved, and Playwright prints the count in the step's own log every run. **The server-dependent specs and `frontend/scripts/pw-smoke.mjs` are still gated by nothing**, and they are the ones that drive screens. |
 | ~~**Web typecheck / lint as a separate step**~~ | ~~`next build` fails on TS and ESLint errors … but it fails **after the backend has already deployed**.~~ **Struck 2026-08-20.** The same job runs `npx tsc --noEmit` and `npx eslint . --max-warnings=0` on the PR, before any deploy. |
 | **Android lint** | Advisory. One pre-existing error (`PermissionImpliesUnsupportedChromeOsHardware` — `CAMERA` with no matching optional `<uses-feature>`) would fail every run if it were a gate. |
 | ~~**Android tests**~~ | ~~None exist.~~ **This row is wrong and is struck rather than removed, because it was quoted onward.** The Android unit suite is a gate (§1.3). What is not gated is the **instrumented** set — it exists and needs an emulator, and no job provides one. |
@@ -423,11 +425,23 @@ cd backend && ./.venv/Scripts/ruff.exe check app
 # what the `web` job sees.
 cd frontend && npx tsc --noEmit && npx eslint . --max-warnings=0
 
-# The web specs that need NO dev server and NO browser download: every `*-unit.spec.ts` except the
-# two that navigate. 536 tests in ~31 s. The selection lives in package.json's `test:unit`, and the
-# reasoning for it is in the `Unit specs` step of checks.yml, because package.json cannot hold a
-# comment.
+# The web specs that need NO dev server and NO browser download: every `*-unit.spec.ts` except
+# access-refusal-unit.spec.ts and login-credential-floor-unit.spec.ts, which are excluded by name.
+# NO TOTAL IS PRINTED HERE ON PURPOSE — this line carried "536 tests in ~31 s" past the day that
+# stopped being true, and Playwright prints "N passed" itself on every run. The selection lives in
+# package.json's `test:unit`, and the reasoning for it is in the `Unit specs` step of checks.yml,
+# because package.json cannot hold a comment.
 cd frontend && npm run test:unit
+
+# If you drop the exclusion and run the whole `*-unit.spec.ts` pattern, the two excluded files fail
+# and the rest are green. WHAT THEY FAIL WITH IS THE RULE, so read it rather than the count: every
+# failure is inside `page.goto` with `net::ERR_CONNECTION_REFUSED at http://localhost:3000/login`.
+# Connection refused (or a navigation timeout, where something answers :3000 but does not serve) is
+# a spec asking for a dev server, and that spec is misnamed and belongs on the exclusion list. A
+# failing `expect(source).toContain(…)` is NOT that: those assertions inspect source for a symbol a
+# component is supposed to have, no dev server would change the answer, and excluding one would be
+# silencing the check rather than scoping it. Measured 2026-08-20 with nothing listening on :3000.
+cd frontend && npx playwright test ".*-unit\.spec\.ts"
 
 # Android compiles, and its unit tests run.
 cd android && ./gradlew :app:compileDebugKotlin -q

@@ -277,35 +277,61 @@ class DwDictationConsentTest {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * NO SENTENCE ON THIS SCREEN MAY CLAIM MORE THAN THE GATE DELIVERS.
+     * NO SENTENCE ON THIS SCREEN MAY CLAIM MORE THAN THE GATE DELIVERS — OR LESS THAN IT DOES.
      *
-     * THE SENTENCE THIS PINS OUT. Both gating states used to read "this app sends nothing from it to the
-     * transcription service", which is false and cannot be made true in this lane: the consent column is
-     * read in exactly one place on the server — the gate on `POST /{workshop_id}/dictate` — while a
-     * recording ATTACHED to a workshop as audio goes through the media queue, which calls the same
-     * `transcribe_audio_bytes` chain and consults no consent at all. A designer who read that sentence,
-     * recorded the artisan's refusal and then uploaded the interview would have sent the very voice this
+     * TWO SENTENCES ARE PINNED OUT HERE, AND THE SECOND IS WHY THIS TEST WAS REWRITTEN.
+     *
+     * The first: both gating states used to read "this app sends nothing from it to the transcription
+     * service", while a recording ATTACHED to a workshop as audio went through the media queue to the
+     * same `transcribe_audio_bytes` chain with no consent read anywhere on that path. A designer who
+     * read it, recorded the artisan's refusal and then uploaded the interview sent the very voice this
      * screen had just told them nothing would send.
      *
-     * So both gating sentences have to name what the answer does NOT govern, and the caveat has to carry
-     * the instruction that actually holds the line — because in this version nothing in the app enforces
-     * it and a person following it is the whole mechanism.
+     * The second, which replaced it and has since gone false in the other direction: "this answer was
+     * not given the power to stop that. Until it is, do not attach a recording of anybody who has said
+     * no." The server now reads this same column before a transcription job is created
+     * (`media_queue.queue_media_processing` → `dictation_consent.transcription_verdict`), again at the
+     * drain (`_process_job`), and again in `transcribe_media_now`; and `POST /{id}/consent` calls
+     * `cancel_pending_transcriptions` on a REFUSED decision, so a withdrawal reaches the clips already
+     * queued. An UNDERclaim is not the safe direction on a consent screen: it tells a designer to hold
+     * back an interview the server would refuse to send anyway, and tells the artisan the app cannot
+     * honour an answer it now honours.
+     *
+     * WHAT MUST STILL BE SAID IS THE UPLOAD, because only the transcription is gated: the clip does
+     * leave the phone for this project's server and is kept with the workshop, which is what
+     * `DW_CONSENT_QUESTION` promises the artisan and what `dictation_consent.MEDIA`'s `alternative`
+     * tells the designer at the other end.
      */
     @Test
     fun `the gating sentences do not promise more than the gate does`() {
         listOf(DwTier3Consent.NOT_RECORDED, DwTier3Consent.REFUSED).forEach { state ->
             val sentence = dwConsentStateSentence(state, null)
             assertFalse(
-                "The media flow is not gated, so this may not be said: $sentence",
+                "The dictation gate is not the only gate, but it is still not everything: $sentence",
                 sentence.contains("sends nothing"),
             )
             assertTrue(
-                "It has to name the audio this answer does not govern: $sentence",
+                "It has to name the audio the answer reaches: $sentence",
                 sentence.contains("attached to this workshop as audio"),
             )
+            // THE UNDERCLAIM, WHICH IS THE HALF THIS TEST GAINED. The retired sentence told a designer to
+            // withhold the recording because the answer had no power over it. It has that power now, and
+            // saying otherwise costs the workshop its interview for nothing.
+            assertFalse(
+                "The media flow IS gated now, so this may not be said: $sentence",
+                sentence.contains("not given the power to stop that") ||
+                    sentence.contains("do not attach a recording of anybody who has said no"),
+            )
             assertTrue(
-                "And the one instruction that holds the line meanwhile: $sentence",
-                sentence.contains("do not attach a recording of anybody who has said no"),
+                "A refusal stops the writing-down, and the sentence has to say so: $sentence",
+                sentence.contains("not sent out to be written down"),
+            )
+            // AND THE HALF THAT IS STILL NOT GATED. Upload is not transcription; the clip is kept with
+            // the workshop deliberately, and an artisan who reads "no" as "nothing leaves the phone" has
+            // been told something this app does not do.
+            assertTrue(
+                "The upload is not gated and the sentence may not imply it is: $sentence",
+                sentence.contains("still uploaded and kept with it"),
             )
             // The platform recogniser is a network service on most of this fleet, so no sentence here may
             // imply a refusal keeps the voice on the phone.

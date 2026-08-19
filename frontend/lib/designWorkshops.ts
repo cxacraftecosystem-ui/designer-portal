@@ -438,6 +438,33 @@ export type DwSummary = {
   sponsor: string | null;
   notes: string | null;
   workshopId: string | null;
+  /**
+   * MAY THIS WORKSHOP'S MATERIAL BE SENT OUT TO A PROVIDER — the artisan's own answer, on record.
+   *
+   * ── IT HAS BEEN ON THE WIRE ALL ALONG AND THIS CLIENT DID NOT DECODE IT ────────────────────────
+   * `dictation_consent.consent_keys` is spread into `workshop_summary`, so these three arrive on the
+   * LIST and on the single read. The web carried none of them and had no screen that could record
+   * one, while Android has had both since the consent landed — so on the web every server dictation
+   * and every AI verb refused with a 409 whose next move is *"Open the workshop's own screen and
+   * record the artisan's answer to that question"*, and there was no such screen to open. A refusal
+   * that names a control which does not exist is worse than the capability being absent.
+   *
+   * ── THE THREE STATES ARE A STATE MACHINE AND NOT A BOOLEAN ─────────────────────────────────────
+   * `NOT_RECORDED` is what a workshop says before anybody has been asked. `REFUSED` is an answer
+   * somebody gave. Both close the gate and they are NOT the same sentence: one is answered by asking
+   * the artisan, and telling somebody to go and ask again when the answer is already on record is
+   * the sort of instruction that teaches a designer to stop reading these messages.
+   *
+   * Widened with `string` for the reason `DwStatus` is: it arrives through `_enum_str`, and a server
+   * one release ahead can legitimately send a value this build has never heard of. Never null —
+   * `consent_of` fails closed to `NOT_RECORDED`, so a client renders a state rather than inferring
+   * one from an absence.
+   */
+  dictationConsent: "NOT_RECORDED" | "GRANTED" | "REFUSED" | string;
+  /** When the ARTISAN answered — the courtyard moment, which can precede the sync by a fortnight. */
+  dictationConsentAt: string | null;
+  /** A user id and NOT a name; the LIST resolves no accounts. See {@link DwDetail.dictationConsentByName}. */
+  dictationConsentById: string | null;
   createdById: string;
   createdAt: string | null;
   updatedAt: string | null;
@@ -445,6 +472,16 @@ export type DwSummary = {
 };
 
 export type DwDetail = DwSummary & {
+  /**
+   * Who recorded the current answer, resolved. **The single-record read only**, deliberately:
+   * `consent_keys` leaves it out of the list because serialising it there would be a name lookup per
+   * row in a paged endpoint, to print something the list does not show.
+   *
+   * Optional so that a server predating the key reads as absent rather than as a type error at a
+   * boundary the compiler cannot police; absent and null both mean "this screen cannot name them",
+   * which is what it must then say instead of guessing.
+   */
+  dictationConsentByName?: string | null;
   stages: Record<string, DwStageData>;
   completeness: Record<string, DwStageCompleteness>;
   schemaVersion: string;
@@ -1580,6 +1617,184 @@ export function forgetDictationAllowanceInFlight(): void {
   dictationAllowanceInFlight = null;
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * May this workshop's material be sent out — the artisan's own answer
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The two answers somebody can record, and there is deliberately no third.
+ *
+ * `NOT_RECORDED` IS NOT ONE OF THEM. `DictationConsentIn` refuses it by name — *"somebody
+ * deliberately wrote down that nobody has been asked" is not a state anybody is in* — and the
+ * service refuses it again behind the schema. Taking a consent back is recording REFUSED, which is a
+ * decision with a next move and a row in the log; un-recording one would leave the gate unable to
+ * tell a withdrawn consent from a workshop nobody has opened.
+ */
+export type DwConsentDecision = "GRANTED" | "REFUSED";
+
+/** One recorded answer, exactly as `dictation_consent.decision_payload` serialises it. */
+export type DwConsentDecisionRecord = {
+  id: string;
+  designWorkshopId: string;
+  decision: DwConsentDecision | string;
+  note: string | null;
+  /** A user id, not a name. */
+  actorId: string | null;
+  /** When the ARTISAN answered. Null when the answer was taken straight against the server. */
+  recordedAt: string | null;
+  /** When the SERVER heard it. A fortnight of no signal makes the two differ by a fortnight. */
+  createdAt: string | null;
+};
+
+/**
+ * The answer's new state, and the whole history that produced it.
+ *
+ * **THE `workshop` HALF IS THE SUMMARY AND NOT THE DETAIL, AND THIS TYPE SAID `DwDetail`.**
+ * `record_dictation_consent` builds its answer as `workshop_summary(updated)` and then sets
+ * `dictationConsentByName` on it — the single-record read is where the actor's NAME is resolved,
+ * because the paged list serialises `workshop_summary` per row and a name lookup there would be a
+ * query per workshop to print something the list does not show. What it never adds is `stages`,
+ * `completeness` or `schemaVersion`.
+ *
+ * So a caller reaching for `result.workshop.stages` got `undefined` with no compile error — which is
+ * the `DwIdentityOcrResult` defect this file's own header is written against, in the opposite
+ * direction: there a type declared five keys the endpoint never sent and a perfect read was reported
+ * as unreadable; here it declared three, and the next caller would have decided a workshop had no
+ * stages. Latent when written — the consent card discards the result and the sync push does
+ * `.then(() => true)` — and latent is exactly when a wrong type is cheapest to correct.
+ */
+export type DwConsentResult = {
+  workshop: DwSummary & { dictationConsentByName?: string | null };
+  decisions: DwConsentDecisionRecord[];
+};
+
+/**
+ * Put the artisan's answer on record.
+ *
+ * **ITS OWN ROUTE AND NEVER `PATCH /{id}`**, which is the most important fact about this call.
+ * `PATCH`'s writable set is a hand-written tuple copied in a loop that records neither the actor nor
+ * the moment, and a value whose entire point is who set it and when cannot ride a generic field-copy
+ * loop.
+ *
+ * `recordedAt` IS THE COURTYARD MOMENT AND IS WORTH SENDING. A consent recorded with no signal
+ * reaches the server on the next sync, which on this fleet can be a fortnight later; the moment that
+ * matters is when the artisan actually answered, and the server keeps `createdAt` separately for
+ * when it heard. A time in the FUTURE is refused rather than corrected — a corrected stamp is a
+ * fabricated fact about when somebody agreed — so a laptop whose clock is ahead gets a 422, which is
+ * the honest outcome and is why the offline path records the answer on this device first.
+ *
+ * ⚠ RECORDING **REFUSED** ALSO STOPS WORK ALREADY IN THE QUEUE. `cancel_pending_transcriptions`
+ * marks every QUEUED or PROCESSING transcription of this workshop's recordings as FAILED and writes
+ * the refusal sentence into each clip's `transcriptError`. That is the difference between a consent
+ * and a preference, and a surface should say it before the press rather than let a designer discover
+ * that nine clips stopped.
+ */
+export function recordDesignWorkshopDictationConsent(
+  id: string,
+  decision: DwConsentDecision,
+  options: { note?: string | null; recordedAt?: string | null } = {}
+): Promise<DwConsentResult> {
+  return apiFetch<DwConsentResult>(`/design-workshops/${id}/dictation-consent`, {
+    method: "POST",
+    body: JSON.stringify({
+      decision,
+      note: (options.note ?? "").trim() || null,
+      // Omitted rather than sent as null when there is nothing to say: the field's own description
+      // is that omitting it means "record this against the server now", which is exactly right for
+      // an answer typed while online.
+      ...(options.recordedAt ? { recordedAt: options.recordedAt } : {})
+    })
+  });
+}
+
+/**
+ * What the current answer MEANS, in one sentence, for the workshop it is on.
+ *
+ * ONE FUNCTION FOR ALL THREE STATES, mirroring Android's `dwConsentStateSentence`, so that the two
+ * clients cannot describe one state two ways. Each names the CONSEQUENCE and not merely the state:
+ * "not recorded" on its own tells a designer nothing about why the microphone and the AI controls on
+ * the stage they have just left behaved as they did.
+ *
+ * **THE WEB'S SENTENCES DIVERGE FROM ANDROID'S IN EXACTLY ONE PLACE AND IT IS A PLATFORM FACT, NOT A
+ * PARAPHRASE.** The handset's copy goes on to explain that dictation still works because it falls
+ * back to the phone's own speech recogniser, and warns that the recogniser is Google's over the
+ * network. A browser has no such fallback worth naming — `OnDeviceDictationButton` is the Web Speech
+ * API and is absent from Firefox, which is the entire reason the server rung exists — so repeating
+ * Android's clause here would promise a capability this client cannot offer. What IS the same is the
+ * fact that matters: what is on record, and what it stops.
+ */
+export function dictationConsentSentence(consent: string | null | undefined): string {
+  const token = (consent ?? "").trim().toUpperCase();
+  if (token === "GRANTED") {
+    return (
+      "Recordings and material from this workshop may be sent out to be written down and worked on. " +
+      "Dictation here uses the craft-aware transcription — the one that writes “dabu” rather than " +
+      "“double” — and the AI verbs on the stages are available."
+    );
+  }
+  if (token === "REFUSED") {
+    return (
+      "Recordings and material from this workshop may NOT be sent out — that is the answer on " +
+      "record. Nothing from it is sent to a transcription service or to a writing model, so " +
+      "dictation, proofreading, translation, captions and subtitles are all unavailable here. " +
+      "Recording a new answer of “they agreed” is what re-opens them."
+    );
+  }
+  // NOT the same sentence as REFUSED, and the difference is the entire reason this is three states:
+  // one is an answer and the other is the absence of one. Both close the gate; only this one is
+  // answered by somebody asking.
+  return (
+    "Nobody has answered this for this workshop yet, so nothing from it is sent out. Dictation, " +
+    "proofreading, translation, captions and subtitles are all unavailable until somebody puts the " +
+    "question to the artisan and records what they say."
+  );
+}
+
+/**
+ * THE QUESTION ITSELF, in the words it has to be put to the artisan in.
+ *
+ * **COPIED FROM ANDROID'S `DW_CONSENT_QUESTION` AND NOT REWRITTEN**, because the person who ASKS is
+ * whoever is holding the device: if the screen says only "allow cloud dictation" then what the
+ * artisan is actually asked is whatever that designer improvises, no two artisans are asked the same
+ * thing, and there is no way afterwards to know what any of them agreed to. So it is on screen in
+ * full, above the buttons, and the buttons are worded as the ARTISAN'S answer rather than as a
+ * setting the designer is choosing for them.
+ *
+ * Two words differ from the handset's string and both are platform facts rather than edits: "the
+ * phone" is "this device", because this one runs on a laptop. Nothing else moves — in particular the
+ * clause distinguishing a passage dictated into a field (not kept) from a recording attached to the
+ * workshop (kept, because it is there to be listened to again) stays exactly as it is. That
+ * distinction was added to Android after the screen was found claiming "the server keeps no copy of
+ * the audio", which was true of `/dictate` and false of the interview recording sitting in the same
+ * record — the one claim a consent screen cannot afford to get wrong.
+ */
+export const DW_CONSENT_QUESTION =
+  "May recordings and dictation from this workshop leave this device to be written down by a " +
+  "transcription service outside it? The recording goes to this project's server and on to the " +
+  "service that turns it into words. A passage dictated into a field is not kept afterwards — the " +
+  "words come back and the server stores no audio; a recording attached to this workshop as audio " +
+  "is kept with the workshop, because it is there to be listened to again. Ask the artisan whose " +
+  "voice it is, and record their answer here.";
+
+/** Android's `DW_CONSENT_ROW_TITLE`, so somebody told "it is on the workshop screen" can find it. */
+export const DW_CONSENT_ROW_TITLE = "Sending recordings out to be written down";
+
+/**
+ * The two buttons, worded as the ARTISAN'S answer rather than as a setting the designer is choosing.
+ *
+ * `DW_CONSENT_YES_LABEL` is Android's string character for character. `DW_CONSENT_NO_LABEL` is
+ * Android's with one substitution, the same one `DW_CONSENT_QUESTION` above makes and for the same
+ * platform reason: the handset's reads *"They did not agree — keep it on the phone"*, and this runs
+ * on a laptop. Nothing else about it moves.
+ *
+ * The distinction is worth the four lines because an earlier version of this comment claimed both
+ * were verbatim, and a claim of verbatim is one a later reader checks by diffing rather than by
+ * reading — so the one place the two clients legitimately differ has to be named where the strings
+ * are, not left for that diff to look like drift.
+ */
+export const DW_CONSENT_YES_LABEL = "They agreed — may be sent out";
+export const DW_CONSENT_NO_LABEL = "They did not agree — keep it on this device";
+
 /**
  * What `POST /design-workshops/dictate` actually returns — all NINE keys, and only those.
  *
@@ -1965,8 +2180,14 @@ export async function downloadDesignWorkshopReport(id: string, body: DwReportBod
  * Worth honouring rather than inventing one: `_report_file_name` strips the nine characters Windows
  * forbids outright, and a report named after a craft is routinely saved onto a departmental share,
  * where a name that fails to save is a report that was not delivered.
+ *
+ * EXPORTED FOR THE SUBTITLE DOWNLOAD, which has a second reason of its own and a sharper one:
+ * `download_subtitles` distinguishes the speaker-labelled file from the anonymised one by NAME
+ * alone (`subtitles-{id}.speakers.srt` against `subtitles-{id}.srt`), and confusing those two is
+ * how a ministry is emailed the version that attributes an artisan's words to a machine's guess.
+ * See `lib/aiVerbs.downloadDesignWorkshopSubtitles`.
  */
-function fileNameFromDisposition(header: string | null): string | null {
+export function fileNameFromDisposition(header: string | null): string | null {
   if (!header) return null;
   const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
   if (!match) return null;

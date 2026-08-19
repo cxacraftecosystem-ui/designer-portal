@@ -171,9 +171,20 @@ _UNPLACEABLE_MEDIA = frozenset(
 def test_a_media_field_is_never_a_table_column_whatever_role_it_declares():
     """THE OTHER HALF OF A DIVERGENCE THE HANDSET CLOSED ALONE.
 
-    ``ReportScreen.kt``'s ``renderCollection`` filters ``!isMedia`` out of its columns and its note
-    ends "one of the two, not one each", naming ``_table_columns`` as the half still open. A
-    picture cannot be a table cell — ``format_value`` prints "" for IMAGE and IMAGE_LIST — so the
+    ``ReportScreen.kt``'s ``renderCollection`` filters ``!isMedia`` out of its columns. Its note on
+    the divergence named ``_table_columns`` as the half still open and said the agreement "has to
+    be made on the server side first"; that note now records the divergence as closed and points at
+    ``_table_columns``' docstring, so those nine words are the only ones still quotable from it and
+    they are the Kotlin quoting its own older self.
+
+    TWO EARLIER VERSIONS OF THIS PARAGRAPH PUT WORDS IN THAT FILE'S MOUTH. The first ended the
+    Kotlin note at "one of the two, not one each", which is ``docs/AUDIT-2026-08-15.md``'s Remedy
+    paragraph and has never been in any file under ``android/``; the second replaced it with a
+    sentence beginning "Closing it properly means the two surfaces agreeing on ONE answer", which
+    is not in the Kotlin either. Both sent a maintainer grepping ``android/`` for a string no file
+    in it contains.
+
+    A picture cannot be a table cell — ``format_value`` prints "" for IMAGE and IMAGE_LIST — so the
     column would have been blank while eating one of the six slots a real answer needed, and the
     two surfaces would have printed different column COUNTS for one workshop.
 
