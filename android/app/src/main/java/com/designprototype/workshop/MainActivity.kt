@@ -210,6 +210,7 @@ import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.ui.designworkshop.DwIdentityCardControl
 import com.designprototype.workshop.ui.designworkshop.DwIdentityKind
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
+import com.designprototype.workshop.ui.designworkshop.DwInlineSeed
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
 import com.designprototype.workshop.ui.designworkshop.DwProvenanceScreen
 import com.designprototype.workshop.ui.designworkshop.DesignerProfileScreen
@@ -319,6 +320,8 @@ import com.designprototype.workshop.data.LocationDto
 import com.designprototype.workshop.data.AppReleaseDto
 import com.designprototype.workshop.data.FeedbackDto
 import com.designprototype.workshop.data.FeedbackUpsertRequest
+import com.designprototype.workshop.data.MEASUREMENT_GRID_PURPOSE
+import com.designprototype.workshop.data.mediaPurposeMetadata
 import com.designprototype.workshop.data.MediaFileDto
 import com.designprototype.workshop.data.AppSettingUpdateRequest
 import com.designprototype.workshop.data.PendingReviewDto
@@ -678,6 +681,8 @@ private data class InlineRecordRequest(
     val model: String,
     /** Null creates a record; non-null opens that one for editing. */
     val recordId: String?,
+    /** What the picker already knew about the record - see [DwInlineSeed]. */
+    val seed: DwInlineSeed,
     val onFinished: (DwInlineRecordOutcome) -> Unit,
 )
 
@@ -1013,6 +1018,36 @@ private fun RepositoryApp(
     }
 }
 
+/**
+ * THE SIGN-IN SCREEN. There is one, and this is it.
+ *
+ * ── A SECOND ONE EXISTED AND HAS BEEN DELETED, WHICH IS WORTH RECORDING ──────────────────────────
+ *
+ * `ui/AuthScreen.kt` was 756 lines of a sign-in screen rebuilt against the web login
+ * (`frontend/app/login/page.tsx`): a purple brand band with the logo tile, a gold eyebrow, a
+ * gold-gradient headline and the three `BRAND_POINTS` bullets; a frosted card on a mesh backdrop; a
+ * 52dp/12dp control system; and Microsoft and Yahoo buttons that raised a "coming soon" toast. Its
+ * own header enumerated four deliberate phone-versus-web differences, so it was finished work.
+ * NOTHING EVER CALLED IT. `MainActivity` has rendered this composable the whole time, a repo-wide
+ * grep for the name returned the declaration and one comment, and no comment anywhere deferred its
+ * wiring.
+ *
+ * It was deleted rather than wired up, and the reason is the parameter list. `AuthScreen` took
+ * `accessRefused: Boolean`; this screen takes [AccessRefusal], and the KDoc on that parameter below
+ * records the production failure the enum exists for. Swapping the screens as they stood would have
+ * regressed five distinct refusals back into one boolean and re-opened it — a designer who has not
+ * been approved YET being told their access was WITHDRAWN, and both being told to check a password
+ * that was never wrong. A plausible-looking screen carrying that trap, sitting uncalled in the tree
+ * for the next person to "just wire up", is worse than not having the brand treatment at all.
+ *
+ * SO THE BRAND PARITY IS A GAP AND IS NAMED AS ONE. Anyone bringing it back should port `BrandBand`,
+ * `BRAND_POINTS`, the `AuthControlHeight`/`AuthControlShape`/`AuthCardShape` system and the provider
+ * buttons INTO this function — keeping [refusal] and the panel below untouched, and keeping the two
+ * dead providers visibly badged unavailable as the web's `ComingSoonBadge` does rather than looking
+ * live. The deleted file is in this repository's history under
+ * `android/app/src/main/java/com/designprototype/workshop/ui/AuthScreen.kt` and is the starting
+ * point; it is not a thing to resurrect wholesale.
+ */
 @Composable
 private fun LoginScreen(
     error: String?,
@@ -1205,8 +1240,8 @@ private fun HomeScreen(
      * rebuild that bundle — and with it the reference bridge — on every keystroke in the stage.
      */
     val inlineRecordHost = remember {
-        DwInlineRecordHost { model, recordId, onFinished ->
-            inlineRecord = InlineRecordRequest(model, recordId, onFinished)
+        DwInlineRecordHost { model, recordId, seed, onFinished ->
+            inlineRecord = InlineRecordRequest(model, recordId, seed, onFinished)
         }
     }
     // "I can no longer see this record" and "there is no signal" are different answers, and the
@@ -2492,6 +2527,7 @@ private fun HomeScreen(
                         repository = repository,
                         model = request.model,
                         recordId = request.recordId,
+                        seed = request.seed,
                         crafts = crafts,
                         artisans = artisans,
                         lookupState = lookupState,
@@ -3865,11 +3901,10 @@ internal fun RegisterUnsavedGuard(dirty: Boolean, onSave: () -> Unit) {
     }
 }
 
-/** Shared holder for media attachments, captured GPS, and an optional measurement-grid image. */
+/** Shared holder for media attachments, captured GPS, and what each attachment is for. */
 private class MediaCaptureState {
     var uris by mutableStateOf<List<Uri>>(emptyList())
     var location by mutableStateOf<LocationRequest?>(null)
-    var measurementUri by mutableStateOf<Uri?>(null)
 
     // Eager-upload bookkeeping. `stagedDeferred` is the in-flight pre-upload per uri; `staged`
     // mirrors the completed results for UI status; `stagedProgress` is 0..1 per uri for the progress
@@ -3880,22 +3915,43 @@ private class MediaCaptureState {
     var stagedProgress by mutableStateOf<Map<Uri, Float>>(emptyMap())
     var stagedFailed by mutableStateOf<Set<Uri>>(emptySet())
 
+    /**
+     * WHAT A PARTICULAR ATTACHMENT IS FOR, where it is not just another photograph of the record.
+     *
+     * Only [GridMeasurementSection] writes into it, and only [MEASUREMENT_GRID_PURPOSE] goes in. It
+     * is a per-URI map rather than a flag on the batch because the grid shots travel in the SAME
+     * `uris` list as the designer's ordinary photographs — that is deliberate and is what makes them
+     * visible in the upload progress list and stored on the record — so the batch cannot say what
+     * one file is. [uploadAttachments] reads it per file as it registers each row.
+     *
+     * BOTH SAVE PATHS READ IT, and for a while only one did. [uploadAttachments] is the ONLINE path;
+     * a new record saved with no signal goes to [trySaveOffline] instead, which now carries this map
+     * into the outbox as `OfflineMediaSpec.purpose`. Offline is this app's primary field path — the
+     * designer measuring an object on graph paper is in a cluster with no bars — so a marker only the
+     * online path sent left the defect standing for the majority of grid shots.
+     *
+     * Empty for every form that has no grid section and for every capture in one that does, so the
+     * body every other upload sends is unchanged.
+     */
+    var purposes by mutableStateOf<Map<Uri, String>>(emptyMap())
+
     /** Forget all eager-upload state for one uri (used when the user discards a single attachment). */
     fun forget(uri: Uri) {
         stagedDeferred.remove(uri)
         staged = staged - uri
         stagedProgress = stagedProgress - uri
         stagedFailed = stagedFailed - uri
+        purposes = purposes - uri
     }
 
     fun reset() {
         uris = emptyList()
         location = null
-        measurementUri = null
         stagedDeferred.clear()
         staged = emptyMap()
         stagedProgress = emptyMap()
         stagedFailed = emptySet()
+        purposes = emptyMap()
     }
 }
 
@@ -4184,6 +4240,13 @@ private suspend fun uploadAttachments(
         // Prefer the eagerly pre-uploaded object (awaiting any still-in-flight transfer); only fall
         // back to a fresh upload if pre-upload never started or failed.
         val staged = media.stagedDeferred[uri]?.let { runCatching { it.await() }.getOrNull() } ?: media.staged[uri]
+        // WHAT THIS PARTICULAR FILE IS FOR, if the form said. A grid shot travels in this same list
+        // as an ordinary photograph — see [MediaCaptureState.purposes] — so the marker has to be
+        // read per file here, and both arms below must carry it: which one runs depends only on
+        // whether the eager pre-upload had finished, which is a matter of signal.
+        // Through the ONE builder every path that sends this marker uses — see [mediaPurposeMetadata]
+        // — so the key cannot be spelled one way here and another on the outbox path.
+        val purpose = mediaPurposeMetadata(media.purposes[uri])
         val result = runCatching {
             if (staged != null) {
                 repository.completeStaged(
@@ -4194,7 +4257,8 @@ private suspend fun uploadAttachments(
                     caption = caption,
                     location = media.location,
                     batchIndex = index + 1,
-                    customSegment = customSegment
+                    customSegment = customSegment,
+                    extraMetadata = purpose
                 )
             } else {
                 repository.uploadMedia(
@@ -4206,7 +4270,8 @@ private suspend fun uploadAttachments(
                     location = media.location,
                     titleHint = titleHint,
                     batchIndex = index + 1,
-                    customSegment = customSegment
+                    customSegment = customSegment,
+                    extraMetadata = purpose
                 )
             }
         }
@@ -4226,34 +4291,29 @@ private suspend fun uploadAttachments(
     }
 }
 
-private suspend fun uploadMeasurement(
-    repository: WorkshopRepository,
-    context: Context,
-    media: MediaCaptureState,
-    recordType: String,
-    recordId: String,
-    titleHint: String?
-) {
-    val uri = media.measurementUri ?: return
-    repository.uploadMedia(
-        context = context,
-        uri = uri,
-        linkedRecordType = recordType,
-        linkedRecordId = recordId,
-        caption = "Measurement grid image for ${titleHint.orEmpty()}".trim(),
-        location = media.location,
-        titleHint = "${titleHint.orEmpty()} measurement grid".trim(),
-        batchIndex = 1,
-        processingRequests = listOf("MEASUREMENT")
-    )
-}
-
 /**
  * "Document using grid": pick which dimensions to capture (length / breadth / height); each enabled
  * dimension gets its own grid-photo capture. On capture the photo is sent to the vision model for
  * that one dimension and the returned inches auto-fill the matching field; the photo is ALSO pushed
  * into the shared [media] attach-media batch so it is eager-uploaded, shown in the upload progress
  * list, and saved as media for this record (no separate, invisible grid-upload path).
+ *
+ * ── THE SECOND GRID PATH HAS BEEN DELETED, WHICH IS WORTH RECORDING ──────────────────────────────
+ *
+ * `uploadMeasurement` was a private suspend function that uploaded `MediaCaptureState.measurementUri`
+ * with a "Measurement grid image for X" caption and a `MEASUREMENT` processing request. NOTHING
+ * CALLED IT: a repo-wide grep for the name returned the declaration and nothing else, and the only
+ * writer of `measurementUri` was the `enableMeasurement` block of [MediaCaptureSection], whose
+ * parameter defaults to false and is passed `true` by no call site in the application. So a designer
+ * could not reach the capture, and if they had, the file would have been shown as "Grid image ready"
+ * and then silently dropped at save.
+ *
+ * It was deleted rather than wired, because wiring it would restore exactly what this section
+ * replaced — a grid upload that does NOT appear in the attach-media list, is not eager-uploaded, and
+ * has its own caption and its own marker to keep in step with the web's. One grid path with the
+ * marker on it is the whole design; two were how the marker came to be argued about per-path. The
+ * `enableMeasurement` UI it was fed by went with it in the same edit, so nothing is left offering a
+ * capture that leads nowhere.
  */
 @Composable
 private fun GridMeasurementSection(
@@ -4287,6 +4347,21 @@ private fun GridMeasurementSection(
         // Route the grid photo into the shared attach-media batch — this is what makes it visible in
         // the upload progress list and persisted as media on save (in addition to auto-filling dims).
         if (uri !in media.uris) media.uris = media.uris + uri
+        /*
+          AND MARK IT AS A GRID SHOT, so it can never become the record's photograph.
+
+          Routing these into the shared batch is right and stays — a grid photo IS media of the
+          record and belongs in the upload list — but it is the reason this marker is needed. The
+          server picks a product's or a tool's photograph with `createdAt ASC, id ASC`, and the grid
+          shot is almost always the OLDEST image on the record because the designer measures the
+          object before photographing it properly. So the .docx handed to a Development
+          Commissioner's office printed a sheet of graph paper captioned as the tool.
+
+          THE STRING IS A THREE-SURFACE CONTRACT and the web already writes it; see
+          [MEASUREMENT_GRID_PURPOSE] for why a marker rather than a rule about captions, and for what
+          the server does when a record has nothing but grid shots on it.
+        */
+        media.purposes = media.purposes + (uri to MEASUREMENT_GRID_PURPOSE)
         status = status + (group to "Analyzing…")
         scope.launch {
             if (group == "lengthBreadth") {
@@ -4324,6 +4399,9 @@ private fun GridMeasurementSection(
     fun discardGroup(group: String) {
         val uri = capturedUris[group] ?: return
         val deferred = media.stagedDeferred[uri]
+        // `forget` drops the grid marker with the rest of this uri's bookkeeping — see
+        // [MediaCaptureState.forget]. It has to, or a re-capture that reused a uri would leave a
+        // marker behind on a file that is no longer a grid shot.
         media.forget(uri)
         media.uris = media.uris.filterNot { it == uri }
         AppScope.io.launch { runCatching { deferred?.await()?.let { repository.deleteStaged(it.objectKey) } } }
@@ -5202,7 +5280,6 @@ private fun StopSquareLabel(text: String = "Stop") {
 private fun MediaCaptureSection(
     repository: WorkshopRepository,
     media: MediaCaptureState,
-    enableMeasurement: Boolean = false,
     emphasizeVideo: Boolean = false,
     // Optional content rendered between the media controls and the location editor (used by process
     // steps for the "record additional information" notes box).
@@ -5216,7 +5293,6 @@ private fun MediaCaptureSection(
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var pendingCaptureUri by remember { mutableStateOf<Uri?>(null) }
-    var pendingMeasurement by remember { mutableStateOf(false) }
 
     // Eager upload: as soon as a file is attached, start streaming it to object storage — every file,
     // any size (no client-side splitting) — so the slow transfer overlaps the time the user spends
@@ -5247,19 +5323,13 @@ private fun MediaCaptureSection(
     }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         val uri = pendingCaptureUri
-        if (success && uri != null) {
-            if (pendingMeasurement) media.measurementUri = uri else media.uris = media.uris + uri
-        }
+        if (success && uri != null) media.uris = media.uris + uri
         pendingCaptureUri = null
-        pendingMeasurement = false
     }
     val takeVideo = rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo()) { success ->
         val uri = pendingCaptureUri
         if (success && uri != null) media.uris = media.uris + uri
         pendingCaptureUri = null
-    }
-    val pickMeasurement = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) media.measurementUri = uri
     }
 
     LaunchedEffect(Unit) { permissionLauncher.launch(requiredAndroidPermissions()) }
@@ -5278,7 +5348,6 @@ private fun MediaCaptureSection(
                 onClick = {
                     permissionLauncher.launch(requiredAndroidPermissions())
                     val uri = createAppFileUri(context, "field-photo-", ".jpg")
-                    pendingMeasurement = false
                     pendingCaptureUri = uri
                     takePhoto.launch(uri)
                 },
@@ -5294,8 +5363,7 @@ private fun MediaCaptureSection(
                     onClick = {
                         permissionLauncher.launch(requiredAndroidPermissions())
                         val uri = createAppFileUri(context, "field-video-", ".mp4")
-                        pendingMeasurement = false
-                        pendingCaptureUri = uri
+                            pendingCaptureUri = uri
                         takeVideo.launch(uri)
                     },
                     modifier = Modifier.weight(1f),
@@ -5306,8 +5374,7 @@ private fun MediaCaptureSection(
                     onClick = {
                         permissionLauncher.launch(requiredAndroidPermissions())
                         val uri = createAppFileUri(context, "field-video-", ".mp4")
-                        pendingMeasurement = false
-                        pendingCaptureUri = uri
+                            pendingCaptureUri = uri
                         takeVideo.launch(uri)
                     },
                     modifier = Modifier.weight(1f),
@@ -5355,40 +5422,6 @@ private fun MediaCaptureSection(
             onChange = { media.location = it },
             onMessage = onMessage
         )
-        if (enableMeasurement) {
-            HorizontalDivider()
-            Text("Grid-sheet measurement image (optional)", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            Text(
-                "If the server has GEMINI_API_KEY, dimensions are estimated from the grid and fill empty length/breadth. Otherwise enter them manually.",
-                color = Muted,
-                fontSize = 11.sp
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = {
-                        permissionLauncher.launch(requiredAndroidPermissions())
-                        val uri = createAppFileUri(context, "measure-grid-", ".jpg")
-                        pendingMeasurement = true
-                        pendingCaptureUri = uri
-                        takePhoto.launch(uri)
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Capture grid") }
-                OutlinedButton(onClick = { pickMeasurement.launch("image/*") }, modifier = Modifier.weight(1f)) { Text("Pick grid") }
-            }
-            media.measurementUri?.let { uri ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    AsyncImage(
-                        model = uri,
-                        contentDescription = "Measurement grid",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(56.dp).background(SurfaceCard, RoundedCornerShape(8.dp))
-                    )
-                    Text("Grid image ready", color = Body, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { media.measurementUri = null }) { Text("Remove") }
-                }
-            }
-        }
         if (media.uris.isNotEmpty()) {
             Column(
                 modifier = Modifier
@@ -5749,6 +5782,16 @@ private fun DwInlineRecordDialog(
     model: String,
     /** Null creates; non-null opens that record for editing. */
     recordId: String?,
+    /**
+     * What the picker that opened this dialog already knew - see [DwInlineSeed].
+     *
+     * It becomes an ordinary [Prefill], which is the same channel the "carry forward" handoff uses,
+     * so every seeded value lands in a control the designer can see and change. The dialog has no
+     * query string; the full-page routes seed the same two boxes from one (`/products/new?artisanId=`)
+     * and before this the dialog's only source was the carry bag - the LAST artisan documented
+     * anywhere, which is not the artisan on the row the picker sits in.
+     */
+    seed: DwInlineSeed = DwInlineSeed.NONE,
     crafts: List<CraftDto>,
     artisans: List<ArtisanDto>,
     lookupState: CarryScopeState,
@@ -5771,6 +5814,16 @@ private fun DwInlineRecordDialog(
         else -> "record"
     }
     val editing = !recordId.isNullOrBlank()
+    // NEVER ON AN EDIT: that record already has its own artisan, and a seed on top of it would
+    // silently re-file somebody else's product under the row this picker happens to sit in.
+    val prefill = if (editing || seed.isEmpty) {
+        null
+    } else {
+        Prefill(
+            artisanId = seed.artisanId.ifBlank { null },
+            artisanName = seed.artisanName.ifBlank { null },
+        )
+    }
     val abandon = { onOutcome(DwInlineRecordOutcome(saved = false)) }
     val saved = { onOutcome(DwInlineRecordOutcome(saved = true)) }
 
@@ -5893,6 +5946,7 @@ private fun DwInlineRecordDialog(
                                 artisans = artisans,
                                 lookupState = lookupState,
                                 adminView = adminView,
+                                prefill = prefill,
                                 onCreated = { id, label, hint ->
                                     onOutcome(DwInlineRecordOutcome(true, id, label, hint))
                                 },
@@ -5905,6 +5959,7 @@ private fun DwInlineRecordDialog(
                                 artisans = artisans,
                                 lookupState = lookupState,
                                 adminView = adminView,
+                                prefill = prefill,
                                 onCreated = { id, label, hint ->
                                     onOutcome(DwInlineRecordOutcome(true, id, label, hint))
                                 },
@@ -6216,7 +6271,7 @@ private fun CraftForm(
     val initialSig = remember(editing) { listOf(name, localName, category, place, description).joinToString("") }
     val dirty = !saving && (
         listOf(name, localName, category, place, description).joinToString("") != initialSig ||
-            workshop.isDirty() || media.uris.isNotEmpty() || media.measurementUri != null
+            workshop.isDirty() || media.uris.isNotEmpty()
     )
 
     RecordCard(title = if (isEdit) "Edit craft" else "Add craft") {
@@ -6601,7 +6656,7 @@ private fun ArtisanForm(
     val initialSig = remember(editing) { formSignature() }
     val dirty = !saving && (
         formSignature() != initialSig ||
-            workshop.isDirty() || media.uris.isNotEmpty() || media.measurementUri != null
+            workshop.isDirty() || media.uris.isNotEmpty()
     )
 
     RecordCard(title = if (isEdit) "Edit artisan" else "Add artisan") {
@@ -6932,7 +6987,7 @@ private fun WorkshopForm(
     val dirty = !saving && (
         listOf(workshopType, title, place, description, notes, status, startDate?.toString() ?: "", endDate?.toString() ?: "",
             selectedArtisans.sorted().joinToString(","), selectedCrafts.sorted().joinToString(",")).joinToString("") != initialSig ||
-            media.uris.isNotEmpty() || media.measurementUri != null
+            media.uris.isNotEmpty()
     )
 
     // WHY THIS SITS ON THE WORKSHOP SCREEN and not in Settings, matching the web's /workshops page: what it
@@ -7208,7 +7263,7 @@ private fun ProductForm(
     }
     val initialSig = remember(editing) { productSig() }
     val dirty = !saving && (
-        productSig() != initialSig || workshop.isDirty() || media.uris.isNotEmpty() || media.measurementUri != null
+        productSig() != initialSig || workshop.isDirty() || media.uris.isNotEmpty()
     )
 
     RecordCard(title = if (isEdit) "Edit product" else "Add product") {
@@ -7466,9 +7521,19 @@ private fun ToolForm(
             if (!isEdit && !repository.isOnline(context)) {
                 val ok = runCatching {
                     val items = media.uris.mapIndexed { i, uri ->
-                        com.designprototype.workshop.data.OfflineMediaSpec(uri = uri, caption = "Field media for ${toolkitName.trim()}", recordName = toolkitName.trim(), batchIndex = i + 1)
+                        // `purpose` CARRIES THE GRID MARKER INTO THE OUTBOX. This form has a
+                        // [GridMeasurementSection] and it routes its graph-paper shots into this
+                        // same `media.uris` list, so without this the queued grid photo reaches the
+                        // server indistinguishable from a photograph of the tool — and, being the
+                        // oldest image on the record, wins `createdAt ASC, id ASC` and prints as the
+                        // tool. See [com.designprototype.workshop.data.PendingMedia.purpose].
+                        com.designprototype.workshop.data.OfflineMediaSpec(uri = uri, caption = "Field media for ${toolkitName.trim()}", recordName = toolkitName.trim(), batchIndex = i + 1, purpose = media.purposes[uri])
                     } + stages.uris.mapIndexed { i, uri ->
-                        com.designprototype.workshop.data.OfflineMediaSpec(uri = uri, caption = "Process stage step ${i + 1} for ${toolkitName.trim()}", recordName = toolkitName.trim(), stageStep = i + 1)
+                        // Empty today — the stage-step capture has no grid section — and read anyway,
+                        // because the rule is "the marker travels with the FILE". A spec built from a
+                        // [MediaCaptureState] that reads `uris` and not `purposes` is exactly how this
+                        // marker was lost on the product path.
+                        com.designprototype.workshop.data.OfflineMediaSpec(uri = uri, caption = "Process stage step ${i + 1} for ${toolkitName.trim()}", recordName = toolkitName.trim(), stageStep = i + 1, purpose = stages.purposes[uri])
                     }
                     repository.queueOfflineEntry(context, "tool", offlineFormJson.encodeToString(body), toolkitName.trim(), items)
                 }.isSuccess
@@ -7534,7 +7599,7 @@ private fun ToolForm(
     val initialSig = remember(editing) { toolSig() }
     val dirty = !saving && (
         toolSig() != initialSig || workshop.isDirty() ||
-            media.uris.isNotEmpty() || media.measurementUri != null || stages.uris.isNotEmpty()
+            media.uris.isNotEmpty() || stages.uris.isNotEmpty()
     )
 
     RecordCard(title = if (isEdit) "Edit tool" else "Add tool") {
@@ -7972,9 +8037,13 @@ private fun ProcessForm(
                     val items = mutableListOf<com.designprototype.workshop.data.OfflineMediaSpec>()
                     if (preProcessAvailable) {
                         preMedia.uris.forEachIndexed { i, uri ->
+                            // `purpose` for the same reason the tool form reads it: a spec built from
+                            // a [MediaCaptureState]'s `uris` alone is how the grid marker was lost.
+                            // Empty on this form today, which has no grid section.
                             items.add(com.designprototype.workshop.data.OfflineMediaSpec(
                                 uri = uri, caption = "Pre-process media for ${name.trim()}", recordName = name.trim(),
-                                customSegment = "PRE", batchIndex = i + 1, linkedType = "process"))
+                                customSegment = "PRE", batchIndex = i + 1, linkedType = "process",
+                                purpose = preMedia.purposes[uri]))
                         }
                     }
                     steps.forEachIndexed { index, local ->
@@ -7982,7 +8051,8 @@ private fun ProcessForm(
                             items.add(com.designprototype.workshop.data.OfflineMediaSpec(
                                 uri = uri, caption = "Process step ${local.name.trim()}", recordName = name.trim(),
                                 customSegment = processStepSegment(index + 1, local.stepType, fileIndex),
-                                batchIndex = fileIndex + 1, linkedType = "processstep", stepIndex = index))
+                                batchIndex = fileIndex + 1, linkedType = "processstep", stepIndex = index,
+                                purpose = local.media.purposes[uri]))
                         }
                     }
                     repository.queueOfflineEntry(context, "process", offlineFormJson.encodeToString(body), name.trim(), items)
@@ -11133,6 +11203,13 @@ private fun RecordCollabSection(
     var revisions by remember(recordId) { mutableStateOf<List<RecordRevisionDto>?>(null) }
     var draft by remember(recordId) { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    // The signed-in account, read once: the delete affordance below is offered on the same
+    // author-or-admin test `data_access.delete_comment` enforces.
+    val me = remember { repository.cachedUser() }
+    fun canRemoveComment(comment: EntryCommentDto): Boolean {
+        val myId = me?.id.orEmpty()
+        return myId.isNotBlank() && (comment.authorId == myId || me?.isAdminUser() == true)
+    }
 
     fun reload() {
         scope.launch {
@@ -11149,9 +11226,39 @@ private fun RecordCollabSection(
         Text("Comments", display = true, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
         if (comments.isEmpty()) Text("No comments yet.", color = Muted, fontSize = 12.sp)
         comments.forEach { c ->
-            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Text(c.body, color = Body, fontSize = 13.sp)
-                Text("${c.author?.name ?: "Someone"} · ${c.createdAt.take(10)}", color = Muted, fontSize = 11.sp)
+            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(1.dp), modifier = Modifier.weight(1f)) {
+                    Text(c.body, color = Body, fontSize = 13.sp)
+                    Text("${c.author?.name ?: "Someone"} · ${c.createdAt.take(10)}", color = Muted, fontSize = 11.sp)
+                }
+                /*
+                  WITHDRAWING ONE, WHICH THIS HANDSET COULD NOT DO WHILE IT COULD POST.
+
+                  `DELETE /data-access/comments/{id}` has existed the whole time and the browser has
+                  offered it; only this client had no declaration for it, so a comment typed on the
+                  phone — on the wrong artisan, or naming somebody it should not — could be removed
+                  only by finding a laptop. Posting without unposting is the asymmetry that matters
+                  for the one free-text a designer writes ABOUT a record rather than into it.
+
+                  OFFERED ON THE SERVER'S OWN TEST AND NOT A LOOSER ONE: `delete_comment` allows the
+                  AUTHOR or an admin and 403s everybody else. Showing the control to everyone would
+                  buy most people a refusal for a thing they were invited to do; the server still
+                  decides, exactly as it does on the web.
+                */
+                if (canRemoveComment(c)) {
+                    TextButton(
+                        enabled = !busy,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                runCatching { repository.deleteEntryComment(c.id) }
+                                    .onSuccess { reload() }
+                                    .onFailure { onError(it.message ?: "Unable to remove the comment") }
+                                busy = false
+                            }
+                        }
+                    ) { Text("Remove", fontSize = 12.sp) }
+                }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -12518,7 +12625,10 @@ private fun QuestionnaireForm(
                                     uri = uri,
                                     caption = "Field media for ${title.trim().ifBlank { "interview" }}",
                                     recordName = title.ifBlank { "Interview" },
-                                    batchIndex = i + 1))
+                                    batchIndex = i + 1,
+                                    // Empty on this form — no grid section — and read anyway, so the
+                                    // rule holds everywhere a spec is built from a capture state.
+                                    purpose = media.purposes[uri]))
                             }
                             repository.queueOfflineEntry(context, "questionnaire", offlineFormJson.encodeToString(request),
                                 title.trim().ifBlank { "Interview" }, items)
@@ -14574,6 +14684,12 @@ private val offlineFormJson = Json { ignoreUnknownKeys = true; encodeDefaults = 
  * to the local outbox and return true so the form can confirm "saved on device" and navigate. Returns
  * false when online (the form should take its normal upload path). Only for NEW records — edits need
  * the existing server record. The outbox auto-syncs on reconnect.
+ *
+ * IT PASSES [MediaCaptureState.purposes] DOWN, and that is not bookkeeping. This is the path a new
+ * product takes when the designer is standing in a cluster with no signal — which is the normal case
+ * and the very case a grid shot is taken in. Queuing the uris alone dropped the grid marker at the
+ * outbox and uploaded a sheet of graph paper on reconnect as the product's photograph; see
+ * [com.designprototype.workshop.data.PendingMedia.purpose] for the whole path.
  */
 private suspend fun trySaveOffline(
     repository: WorkshopRepository,
@@ -14587,7 +14703,10 @@ private suspend fun trySaveOffline(
     caption: String?
 ): Boolean {
     if (isEdit || repository.isOnline(context)) return false
-    repository.queueOffline(context, type, payloadJson, label, media.uris, recordName, caption)
+    repository.queueOffline(
+        context, type, payloadJson, label, media.uris, recordName, caption,
+        purposes = media.purposes,
+    )
     return true
 }
 

@@ -50,6 +50,21 @@ class SpecialSection(str, Enum):
     ACKNOWLEDGEMENT = "ACKNOWLEDGEMENT"
     SUMMARY_METRICS = "SUMMARY_METRICS"
     SIGNATURES = "SIGNATURES"
+    # PHOTOGRAPHS ONLY, AND THERE IS NO SIBLING FOR THE OTHER MEDIA. ``_render_media_annexure``
+    # gathers through ``ReportBuilder._images``, which filters on IMAGE and IMAGE_LIST, so the
+    # seventeen FILE, AUDIO and VIDEO fields the registry declares reach no contact sheet and
+    # cannot: a .docx has nothing to draw for a sanction order PDF or a fifteen-minute recording.
+    #
+    # They are named where they were captured instead — ``report_builder.format_value`` prints "1
+    # document attached" in the field's own key-value line — rather than gathered into a new
+    # special section here, and that is a decision rather than an omission. Two reasons. Only
+    # DETAILED_TECHNICAL carries ANNEXURE_MEDIA at all, so an annexure would leave the sanction
+    # order unmentioned in the five other templates, including the DCH_STANDARD copy a ministry
+    # actually receives; and a new member of this enum has to be added to every surface at once —
+    # ``android/app/src/test/resources/report_templates_pin.json`` is a 485 KB by-value diff of
+    # this module against its Kotlin port and can only be regenerated inside the API container.
+    # A line beside the field also answers the question the designer is actually asking, which is
+    # "did my upload reach the report", in the place they look for it.
     ANNEXURE_MEDIA = "ANNEXURE_MEDIA"
     # Every recording the workshop collected, transcribed, printed in full at the back. The blocks
     # are built by app/services/report_annexures.py rather than by the builder, which reaches them

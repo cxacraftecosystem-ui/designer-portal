@@ -58,7 +58,7 @@ import com.designprototype.workshop.data.DwCustomCache
 import com.designprototype.workshop.data.DwCustomSectionStore
 import com.designprototype.workshop.data.customFieldsForStage
 import com.designprototype.workshop.data.customSectionEntity
-import com.designprototype.workshop.data.customStageBlocks
+import com.designprototype.workshop.data.customSectionsForReport
 import com.designprototype.workshop.data.dwCustomCopy
 import com.designprototype.workshop.data.dwCustomDefinition
 import com.designprototype.workshop.data.dwCustomSectionWarnings
@@ -111,6 +111,7 @@ import com.designprototype.workshop.report.TocBlock
 import com.designprototype.workshop.report.cleanText
 import com.designprototype.workshop.report.fieldCopyNote
 import com.designprototype.workshop.report.formatReportDate
+import com.designprototype.workshop.report.groupIndian
 import com.designprototype.workshop.report.normaliseHex
 import com.designprototype.workshop.report.plainRuns
 import com.designprototype.workshop.report.resolveAccent
@@ -132,8 +133,12 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
+import java.math.BigDecimal
+import java.math.MathContext
+import java.math.RoundingMode
 import java.time.Instant
 import java.util.Locale
+import kotlin.math.abs
 
 /**
  * Choose a template, read the completeness warnings, and export a .docx or a .pdf — all of it on the
@@ -447,6 +452,11 @@ fun ReportScreen(
                     // the section in the file cannot come from two different answers to "does this
                     // phone have the answers".
                     questionnaires = dwQuestionnaireCopy(questionnaires),
+                    // The same definition the document is drawn from, for the same reason the
+                    // questionnaire copy is threaded here: the template this plan resolves is what
+                    // decides WHERE each of the designer's blocks prints, and a second read could
+                    // straddle a definition edit.
+                    customSections = customSections,
                 )
                 exportNotes = plan.warnings
                 // Collected on the render thread and read back on this one AFTER `withContext`
@@ -1110,6 +1120,11 @@ internal fun buildWorkshopDocument(
         requestedAccent = accent,
         format = format,
         generatedAt = generatedAt,
+        // WITHOUT THIS THE FALLBACK PLAN SPLICES NO CUSTOM SECTION, so a caller that hands over a
+        // definition but no plan — every test, and the internal overload's own default — would build
+        // a template with no CUSTOM_SECTION in it and the designer's questions would be missing from
+        // exactly the documents nothing else checks.
+        customSections = customSections,
     )
     val template = resolved.template
     val builder = DocumentBuilder(meta = resolved.meta, theme = resolved.theme)
@@ -1157,7 +1172,6 @@ internal fun buildWorkshopDocument(
             stages[section.stageKey]?.let { stage ->
                 renderStageSection(
                     builder, stage, section, resolved, schema, draft, resolveImage, refs, figures,
-                    customSections,
                 )
             }
         }
@@ -1241,8 +1255,6 @@ private fun renderStageSection(
     imageFor: (String) -> ImageRef?,
     refs: DwRefLabels,
     figures: DwFigures,
-    /** This workshop's custom definition, or null when this device has never read one. */
-    customSections: DwCustomCache? = null,
 ) {
     val template = plan.template
     val options = RenderOptions(
@@ -1287,35 +1299,22 @@ private fun renderStageSection(
       with an underscore.
      */
     val answered = singletonValues.filterKeys { !it.startsWith("_") }
-    val customValues = stored?.custom.orEmpty()
     val hasCollections = stage.collections.any { stored?.rowsFor(it.key).orEmpty().isNotEmpty() }
-    // The designer's own blocks for this stage, resolved once. Empty for every stage of every
-    // workshop with no definition, which is most of them, and for every stage the definition says
-    // nothing about - so nothing below this line runs on the ordinary report.
-    val customBlocks = customStageBlocks(customSections, stage.key)
     /*
-      THE TEMPLATE'S TIER CAP IS ASKED WHEREVER THIS FILE DECIDES WHETHER SOMETHING IS EMPTY, OR THE
-      EMPTINESS TEST IS ANSWERING A DIFFERENT QUESTION FROM THE ONE THE WRITER ANSWERS.
+      A STAGE WITH NOTHING IN IT IS SKIPPED ENTIRELY. Printing 22 headings with nothing under them
+      turns a five-page report into a twenty-page one that says the same amount.
 
-      `renderEntity` prints only `tier <= options.maxTier` — COMPACT_SUMMARY caps at BASIC — while
-      both tests below asked whether ANY custom field held an answer at ANY tier. STANDARD is the
-      server's DEFAULT tier for a custom field, so the ordinary section is entirely STANDARD: under
-      that template a stage whose only content was custom printed a numbered stage heading, then a
-      section heading, then its description, and then nothing at all — the "heading over nothing" the
-      custom block below says in as many words that it exists to prevent.
+      A DESIGNER'S OWN QUESTIONS ARE NOT COUNTED HERE ANY MORE, AND THAT IS THE POINT RATHER THAN A
+      REGRESSION. This test used to carry a third term, `hasCustom`, because the custom questions
+      were drawn INSIDE this function — so a collections-only stage whose only content was custom
+      would have been dropped, heading and all. They are now their own [SpecialSection.CUSTOM_SECTION]
+      spliced by `applyReportSettings`, which is where the server puts them and which is the only
+      placement that can also reach a stage this template does not print at all. So the stage section
+      is empty in exactly the way `_render_stage` means it — `has_any` there asks about singleton and
+      collection data and knows nothing about custom sections either — and the designer's block still
+      prints, under its own level-1 heading, immediately after.
     */
-    fun withinTier(tier: String): Boolean = DwTier.of(tier).ordinal <= options.maxTier.ordinal
-    val hasCustom = customBlocks.any { block ->
-        block.fields.any { withinTier(it.tier) && DwValues.isFilled(customValues[it.key]) }
-    }
-    // A stage with nothing in it is skipped entirely. Printing 22 headings with nothing under
-    // them turns a five-page report into a twenty-page one that says the same amount.
-    //
-    // `hasCustom` counted with the other two, and it is not defensive: EIGHT of the twenty-two stages
-    // declare no singleton entity at all, so a stage whose only content is a designer's own answers
-    // is exactly the case this omission would silently drop - the whole section gone from the file,
-    // under `omitIfEmpty`, with nothing anywhere saying a heading had been skipped.
-    if (answered.isEmpty() && !hasCollections && !hasCustom && section.omitIfEmpty) return
+    if (answered.isEmpty() && !hasCollections && section.omitIfEmpty) return
 
     if (section.pageBreakBefore) builder.add(PageBreakBlock)
     builder.heading(
@@ -1360,85 +1359,40 @@ private fun renderStageSection(
     var wrote = false
     stage.singleton?.let { entity ->
         if (answered.isNotEmpty()) {
-            wrote = renderEntity(builder, entity, answered, imageFor, refs, options) || wrote
+            // THE ONE PLACE A METRIC ROW IS ASKED FOR — `_render_stage` is the only renderer on the
+            // server that builds one. See [RenderOptions.metricRow].
+            wrote = renderEntity(builder, entity, answered, imageFor, refs, options.copy(metricRow = true)) || wrote
         }
     }
 
     /*
-      THE DESIGNER'S OWN QUESTIONS, BETWEEN THE STAGE'S SINGLETON AND ITS COLLECTIONS.
+      THE DESIGNER'S OWN QUESTIONS ARE NOT DRAWN HERE ANY MORE. They are their own template section,
+      spliced by `applyReportSettings` and drawn by [renderCustomSection], which is where the server
+      puts them and — more importantly — the only placement that can reach a section whose anchor
+      stage this template does not print at all.
 
-      THE POSITION IS THE SCORER'S. `computeStageCompleteness` counts custom fields between the two,
-      the completeness annexure prints `missing.take(3)` in that order, and the stage form draws them
-      in that order - so a document that printed them last would put the questions in an order that
-      matches neither the form the answers were typed into nor the Outstanding column three pages
-      later.
+      THE ARGUMENT THAT USED TO STAND HERE WAS "THE POSITION IS THE SCORER'S": `computeStageCompleteness`
+      counts custom fields between the singleton and the collections, the completeness annexure prints
+      `missing.take(3)` in that order, and the stage form draws them in that order, so printing them
+      last would put the questions in an order matching neither. That is true of the SCORER and it is
+      still true — nothing about `computeStageCompleteness` moved — but it was never an argument about
+      the DOCUMENT, and it was made without reference to the surface it had to agree with. The server
+      scores in exactly the same order and still prints the block after the whole stage section, at
+      level 1, because `apply_report_settings` is the single arbiter of the running order and was made
+      one after three call sites decided for themselves and disagreed. A fourth arbiter on the handset
+      gave one workshop two documents with different heading numbers, different contents pages and
+      different pagination from the first custom section onwards.
 
-      RENDERED THROUGH [renderEntity] AND NOT BY A SECOND WRITER. `customSectionEntity` turns one
-      section into a synthetic SINGLETON [EntityDto] carrying only its live, drawable fields, so a
-      custom answer gets the identical label/value grid, tier cap, unit suffix, enum-label lookup and
-      MONEY formatting the stage's own answers get. A second writer would be a second set of answers
-      to all of that, and the day the two disagreed one question would print unlike every other
-      question in the same table.
+      WHAT WAS PRESERVED FROM THE INLINE VERSION is the drawing: [renderCustomSection] still renders
+      through [renderEntity] over `customSectionEntity`'s synthetic singleton, still prints retired
+      answers under their marker, still names an undrawable type rather than faking it, and still
+      applies the template's tier cap to all three. Only WHERE the block sits changed in that edit.
 
-      A SECTION IS SKIPPED WHEN NOTHING UNDER IT IS ANSWERED. `renderEntity` already omits an unfilled
-      field, so an untouched section would otherwise print a level-2 heading over nothing - which, in
-      a generated report, is the commonest way a file looks broken.
-
-      RETIRED FIELDS ARE PRINTED WHERE THEY HOLD AN ANSWER, under their own note, because that answer
-      was given under a wording that appears nowhere else and dropping it is how two copies of one
-      report come to disagree about the fieldwork.
+      TWO DRAWING DIFFERENCES HAVE SINCE BEEN CORRECTED THERE, and neither was the inline version's
+      invention to keep: the section description prints at `ParaStyle.LEAD` as `append_custom_section`
+      writes it (it was NOTE), and the heading has no third `definition.key` fallback (the server has
+      none, and a stored section's title is `min_length=1`). See [renderCustomSection].
     */
-    // The cap is applied to the retired and unreadable notes as well as to the grid, so that one
-    // export cannot omit a live STANDARD answer while printing a retired one beside it — see
-    // [withinTier] above.
-    customBlocks.forEach { block ->
-        val entity = customSectionEntity(block.section)
-        val retired = retiredCustomFieldsWithAnswers(block.section, customValues)
-            .filter { withinTier(it.tier) }
-        val anyLive = entity.fields.any {
-            withinTier(it.tier) && DwValues.isFilled(customValues[it.key])
-        }
-        if (!anyLive && retired.isEmpty()) return@forEach
-        builder.heading(
-            block.section.title.ifBlank { block.section.key },
-            level = 2,
-            numbered = template.numberHeadings,
-        )
-        if (block.section.description.isNotBlank()) {
-            builder.para(block.section.description, style = ParaStyle.NOTE)
-        }
-        if (anyLive) {
-            // The designer's own section carries its own level-2 heading two lines above, so its
-            // questions head at 3 — one below the thing they are part of, the same rule the stage
-            // singleton follows against the stage's level-1 heading.
-            wrote = renderEntity(builder, entity, customValues, imageFor, refs, options.copy(level = 2)) || wrote
-        }
-        retired.forEach { field ->
-            builder.para(
-                (field.label.ifBlank { field.key }) + ": " +
-                    DwValues.text(customValues[field.key]) +
-                    " (recorded under a wording this workshop no longer asks)",
-                style = ParaStyle.NOTE,
-            )
-            wrote = true
-        }
-        // NAMED RATHER THAN DROPPED, and its VALUE deliberately not printed. This build has no way to
-        // read a type it does not know, so anything it printed here would be a raw stored shape an
-        // officer would read as the designer's words. Saying the question exists and that this copy
-        // cannot carry its answer is the honest version — and it is the same register the export
-        // screen's own unsupported-section sentences use.
-        undrawableCustomFieldsWithValues(block.section, customValues)
-            .filter { withinTier(it.tier) }
-            .forEach { field ->
-            builder.para(
-                (field.label.ifBlank { field.key }) + ": recorded, but this version of the app " +
-                    "cannot read an answer of this kind (" + field.type + "), so it is not " +
-                    "reproduced here. The office's copy of this report carries it.",
-                style = ParaStyle.NOTE,
-            )
-            wrote = true
-        }
-    }
 
     stage.collections.forEach { entity ->
         if (section.entities.isNotEmpty() && entity.key !in section.entities) return@forEach
@@ -1558,9 +1512,10 @@ private fun recordingPlaceLine(stored: JsonElement?): String? {
 /**
  * The sections that are not one of the 22 stages.
  *
- * TEN OF THE ELEVEN ARE BUILT HERE — the cover, the contents, the metric row, the acknowledgement,
- * the photographic record, the completeness table, the sign-off, the locator map, the infographics
- * and, since this device gained a copy of the answers, the questionnaire annexure. The eleventh, the
+ * ELEVEN OF THE TWELVE ARE BUILT HERE — the cover, the contents, the metric row, the acknowledgement,
+ * the photographic record, the completeness table, the sign-off, the locator map, the infographics,
+ * the questionnaire annexure since this device gained a copy of the answers, and now the designer's
+ * own custom sections. The twelfth, the
  * transcript annexure, is SKIPPED IN SILENCE HERE AND NAMED IN THE WARNINGS, which [reportPlanFor]
  * assembled from this same template. That split is deliberate: a warning belongs to the act of
  * generating and not to the document, so the officer who opens the .docx next month does not find a
@@ -1580,7 +1535,10 @@ private fun renderSpecialSection(
     refs: DwRefLabels,
     figures: DwFigures,
     questionnaires: DwQuestionnaireCache?,
-    /** This workshop's custom definition - the completeness annexure counts the same things. */
+    /**
+     * This workshop's custom definition - the completeness annexure counts the same things, and
+     * [SpecialSection.CUSTOM_SECTION] draws one block out of it.
+     */
     customSections: DwCustomCache? = null,
 ) {
     when (special) {
@@ -1649,7 +1607,145 @@ private fun renderSpecialSection(
         // unconditional there because, unlike a transcript or a questionnaire copy, there is no
         // action on this phone that could ever close this gap.
         SpecialSection.ANNEXURE_AI_LAYERS -> Unit
+
+        // THE DESIGNER'S OWN BLOCK, wherever `applyReportSettings` decided it belongs. Drawn here
+        // rather than inside `renderStageSection` because that is the only position that can also be
+        // a back annexure — see [SpecialSection.CUSTOM_SECTION] for what the inline version dropped.
+        SpecialSection.CUSTOM_SECTION ->
+            renderCustomSection(builder, section, plan, draft, imageFor, refs, customSections)
     }
+}
+
+/**
+ * One block of questions a designer added to this workshop — `report_custom_sections.append_custom_section`.
+ *
+ * AT LEVEL 1, which is the whole placement half of this port: the server draws
+ * `doc.heading(heading or item.title, 1, numbered=numbered)`, so the designer's "Loom audit" is a
+ * top-level numbered section with a contents-page entry of its own. It used to be a level-2
+ * sub-heading buried inside the stage, which gave one workshop two documents with different heading
+ * numbers and different pagination for everything after them.
+ *
+ * NOTHING IS APPENDED FOR A SECTION WITH NOTHING TO SAY — not even the page break, which is why the
+ * emptiness test sits above `section.pageBreakBefore` exactly as `append_custom_section`'s does. A
+ * workshop that never reached those questions produces exactly the report it would have produced
+ * without them, and a blank page before a heading that is not there is worse than either.
+ *
+ * A KEY THAT NAMES NOTHING IS AN ORDINARY OUTCOME AND NOT AN ERROR. `applyReportSettings` built the
+ * template from the definition it was handed; a definition that changed between the plan and the
+ * render — or a section retired while a report was being generated — leaves a section naming
+ * nothing, and the silence here is the same silence a stage section with no data produces.
+ *
+ * ── ONE DIFFERENCE FROM THE SERVER THAT THIS EDIT DID NOT CLOSE ───────────────────────────────────
+ *
+ * The server's `section_prints` is `has_content_at`, which is true for an answered section OR one
+ * carrying a LIVE REQUIRED field — deliberately, so an unanswered required question prints
+ * "Not recorded." and its absence is visible in the document. This handset has always required an
+ * actual answer (or a retired one), so a section whose only question is required and unanswered
+ * prints nothing here and a heading plus "Not recorded." at the office. That predicate is older than
+ * this change and is left exactly as it was: moving it in the same edit as the placement would have
+ * made two behaviours change under one test, and it deserves its own case.
+ */
+private fun renderCustomSection(
+    builder: DocumentBuilder,
+    section: TemplateSection,
+    plan: ReportPlan,
+    draft: WorkshopDraft?,
+    imageFor: (String) -> ImageRef?,
+    refs: DwRefLabels,
+    customSections: DwCustomCache?,
+) {
+    val template = plan.template
+    // Through the same door the form and the scorer read the definition by, so a retired section's
+    // fields are forced retired here too — see `sectionsForStage`.
+    val definition = customSectionsForReport(customSections) { stageKey ->
+        draft?.stages?.get(stageKey)?.custom.orEmpty()
+    }.firstOrNull { it.key == section.customKey } ?: return
+
+    val values = draft?.stages?.get(definition.stageKey)?.custom.orEmpty()
+    /*
+      THE TEMPLATE'S TIER CAP IS ASKED WHEREVER THIS FILE DECIDES WHETHER SOMETHING IS EMPTY, OR THE
+      EMPTINESS TEST IS ANSWERING A DIFFERENT QUESTION FROM THE ONE THE WRITER ANSWERS.
+
+      [renderEntity] prints only `tier <= maxTier` — COMPACT_SUMMARY caps at BASIC — while the test
+      below could easily ask whether ANY custom field holds an answer at ANY tier. STANDARD is the
+      server's DEFAULT tier for a custom field, so the ordinary section is entirely STANDARD: under
+      that template the two questions have different answers, and the cap-blind one produces a
+      numbered heading, a description, and then nothing at all.
+    */
+    fun withinTier(tier: String): Boolean = DwTier.of(tier).ordinal <= template.maxTier.ordinal
+
+    val entity = customSectionEntity(definition)
+    val retired = retiredCustomFieldsWithAnswers(definition, values).filter { withinTier(it.tier) }
+    val anyLive = entity.fields.any { withinTier(it.tier) && DwValues.isFilled(values[it.key]) }
+    if (!anyLive && retired.isEmpty()) return
+
+    if (section.pageBreakBefore) builder.add(PageBreakBlock)
+    // `heading or item.title`, with NO third fallback — the server has none, and the key can never be
+    // reached anyway: `CustomSectionIn.title` is `min_length=1`, so a stored section always has one.
+    // The `.ifBlank { definition.key }` that used to sit here was therefore a divergence that could
+    // only ever have printed a different heading from the office's if it fired at all.
+    builder.heading(
+        section.heading.ifBlank { definition.title },
+        level = 1,
+        numbered = template.numberHeadings,
+    )
+    if (definition.description.isNotBlank()) {
+        // LEAD, which is `append_custom_section`'s style and the same one [renderStageSection] gives
+        // a stage's `section.intro` directly above. NOTE is the register this file uses for a
+        // statement ABOUT the document — "Not recorded.", the retired-wording marker, the provenance
+        // line — and a designer's own description of their section is not that; it is the section's
+        // opening sentence, and it printed a size and a colour smaller here than at the office.
+        builder.para(definition.description, style = ParaStyle.LEAD)
+    }
+    if (anyLive) {
+        // RENDERED THROUGH [renderEntity] AND NOT BY A SECOND WRITER. `customSectionEntity` turns one
+        // section into a synthetic SINGLETON [EntityDto] carrying only its live, drawable fields, so
+        // a custom answer gets the identical label/value grid, tier cap, unit suffix, enum-label
+        // lookup, date formatting and MONEY grouping the stage's own answers get — which is exactly
+        // what `report_custom_sections.display_value` buys by handing everything but its own ENUM
+        // lists to `format_value`. A second writer would be a second set of answers to all of that,
+        // and the day the two disagreed one question would print unlike every other question beside
+        // it.
+        //
+        // `level = 1` because the section's own heading is now level 1, so its questions head at 2 —
+        // the same rule the stage singleton follows under the stage's level-1 heading.
+        val options = RenderOptions(
+            maxTier = template.maxTier,
+            includePhotos = false,   // a v1 custom question has no media type; nothing can be gathered
+            numbered = template.numberHeadings,
+            showEmptyNote = template.showEmptyNote,
+            level = 1,
+        )
+        renderEntity(builder, entity, values, imageFor, refs, options)
+    }
+    // RETIRED FIELDS ARE PRINTED WHERE THEY HOLD AN ANSWER, under their own note, because that answer
+    // was given under a wording that appears nowhere else and dropping it is how two copies of one
+    // report come to disagree about the fieldwork. The cap is applied to these and to the unreadable
+    // notes below as well as to the grid, so one export cannot omit a live STANDARD answer while
+    // printing a retired one beside it.
+    retired.forEach { field ->
+        builder.para(
+            (field.label.ifBlank { field.key }) + ": " +
+                DwValues.text(values[field.key]) +
+                " (recorded under a wording this workshop no longer asks)",
+            style = ParaStyle.NOTE,
+        )
+    }
+    // NAMED RATHER THAN DROPPED, and its VALUE deliberately not printed. This build has no way to
+    // read a type it does not know, so anything it printed here would be a raw stored shape an
+    // officer would read as the designer's words. Saying the question exists and that this copy
+    // cannot carry its answer is the honest version — and it is the same register the export
+    // screen's own unsupported-section sentences use.
+    undrawableCustomFieldsWithValues(definition, values)
+        .filter { withinTier(it.tier) }
+        .forEach { field ->
+            builder.para(
+                (field.label.ifBlank { field.key }) + ": recorded, but this version of the app " +
+                    "cannot read an answer of this kind (" + field.type + "), so it is not " +
+                    "reproduced here. The office's copy of this report carries it.",
+                style = ParaStyle.NOTE,
+            )
+        }
 }
 
 /**
@@ -2108,7 +2204,35 @@ internal data class RenderOptions(
      * file has a tidier rule than `report_builder.py`.
      */
     val photosFirst: Boolean = false,
+    /**
+     * Whether a [MetricRowBlock] is emitted for this record's METRIC fields.
+     *
+     * ONLY A STAGE SINGLETON GETS ONE, which is where the server puts it: `_render_stage` builds the
+     * metric row itself, from `_printable(single, …, {METRIC})`, and NEITHER `_render_cards` nor
+     * `_render_narrative` nor the per-row block under `_render_table` emits one for a collection row.
+     * [renderEntity] emitted it for every record it drew, so the day a METRIC field is declared on a
+     * collection the office's copy would print an ordinary key-value pair and the handset's a band of
+     * big numbers per row — different heights, different page boundaries, one workshop, two files.
+     *
+     * DEFAULTED FALSE, i.e. to the collection behaviour, so the divergence cannot come back by
+     * omission at a call site added later; the ONE place that wants a metric row asks for it. Latent
+     * today — all four METRIC fields in the shipped registry are on SINGLETON entities — which is
+     * exactly why it is worth pinning before it is not.
+     */
+    val metricRow: Boolean = false,
 )
+
+/**
+ * The two media types that have a PICTURE path, as against the three that only have a sentence.
+ *
+ * [DwFieldType.isMedia] answers for all five and is the right question when the subject is capture —
+ * a FILE, an AUDIO clip and a VIDEO are all drawn by the capture surface. It is the WRONG question in
+ * the report, and asking it here is what dropped seventeen fields off the phone's copy: `_images`
+ * filters on IMAGE and IMAGE_LIST, and `format_value` prints a count and a noun for the other three.
+ * Anywhere this renderer means "can be placed as a plate", it must ask this and not [isMedia].
+ */
+private val DwFieldType.isPicture: Boolean
+    get() = this == DwFieldType.IMAGE || this == DwFieldType.IMAGE_LIST
 
 /**
  * Every resolvable image on one record, paired with its caption — `ReportBuilder._images`.
@@ -2158,7 +2282,11 @@ private fun imagesOf(
     visible.forEach { field ->
         if (field.reportRole == "HIDDEN" || field.captionFor.isNotBlank()) return@forEach
         val type = DwFieldType.of(field.type)
-        if (!type.isMedia) return@forEach
+        // [isPicture] AND NOT `isMedia` — `_images` filters on IMAGE and IMAGE_LIST. Asking `isMedia`
+        // offered a FILE's, an AUDIO clip's and a VIDEO's media ids to [imageFor] as though they were
+        // photographs, so a stage-1 sanction order resolving in the media cache would have been
+        // placed as a plate in the report with the field's label under it.
+        if (!type.isPicture) return@forEach
         val stored = values[field.key]
         if (!DwValues.isFilled(stored)) return@forEach
         val caption = captionByTarget[field.key]?.let { DwValues.text(values[it.key]) }.orEmpty()
@@ -2174,10 +2302,7 @@ private fun imagesOf(
             if (DwFieldType.of(field.type) != DwFieldType.REF) return@forEach
             val refId = dwRefId(values[field.key]).trim()
             val photo = refs.photoOf(refId)?.takeIf { it.isNotBlank() } ?: return@forEach
-            // THE REFERENCE'S OWN LABEL, because the field's label is the relationship and not the
-            // subject: "Sketch" under a photograph is a category, "SK-04 — bandha runner" is a
-            // caption. The field label is the fallback for a row whose label never resolved.
-            wanted.putIfAbsent(photo, refs.label(refId).ifBlank { field.label })
+            wanted.putIfAbsent(photo, referenceCaption(entity, field, values, refs, refId))
         }
     }
 
@@ -2196,6 +2321,72 @@ private fun imagesOf(
     // the rest of its unresolvable ids would go unmentioned. The cost is a `HashMap` lookup per
     // extra id; the benefit is that "3 photographs are missing" means three photographs.
     return if (limit > 0) gathered.take(limit) else gathered
+}
+
+/**
+ * Reference model -> the extra hydration SOURCE keys under which it publishes its DISPLAY NAME —
+ * `report_builder._REFERENCE_NAME_SOURCES`.
+ *
+ * `"name"` is always accepted and is not repeated here; this table is only for a model whose `data`
+ * payload calls the label column something else.
+ *
+ * ONE MODEL NEEDS IT AND IT IS THE ONE THAT REACHES THE COVER PAGE. `REFERENCE_MODELS["Craft"].data`
+ * emits `{"craftName": …, "craftLocalName": …}` while its label is the craft's `name` — the same
+ * column under a different key, because stage 1's cover asks for "Craft name" and the mapping is
+ * one-to-one with the boxes it fills rather than with the record's columns. `Craft` also declares a
+ * `media_field`, so a craft photograph really does reach [imagesOf]'s second pass; matching the
+ * literal "name" alone left that one picture captioned from the LIVE record while
+ * `workshopSetup.craftName` — a COVER_FIELD — printed the frozen copy, on the same page.
+ *
+ * Declared here rather than derived, exactly as the server declares it: neither surface may reach
+ * the reference models to ask, and this one has no network at all.
+ */
+private val REFERENCE_NAME_SOURCES: Map<String, List<String>> = mapOf("Craft" to listOf("craftName"))
+
+/**
+ * What to print under a photograph borrowed from the record a REF field points at —
+ * `ReportBuilder._reference_caption`.
+ *
+ * ── THE ROW'S OWN FROZEN NAME FIRST ───────────────────────────────────────────────────────────────
+ *
+ * This used to be `refs.label(refId).ifBlank { field.label }` — and it carried, verbatim, the very
+ * Python comment the server deleted when it stopped doing that. [DwRefLabels.label] resolves out of
+ * the picker's cached snapshot of the referenced record AS IT STANDS TODAY, which is not the row's
+ * frozen copy, so this was the single place on this surface where a live re-resolved name reached a
+ * printed page. The visible failure has one page carrying both answers: a prototype's sub-section
+ * printing "Developed from: Sambalpuri Saree" out of the frozen `productName` that hydration copied
+ * at save time, and directly beneath it the borrowed catalogue photograph captioned "Sambalpuri Ikat
+ * Saree — revised 2027", because somebody renamed the product record after the workshop closed. One
+ * product, two names, and nothing on the page to say which the workshop actually worked from.
+ *
+ * GENERIC, WITH NO PER-ENTITY CODE. [FieldDto.refHydration] is the server's own
+ * `REFERENCE_HYDRATION` mapping, published per field by `field_to_dict` precisely so the clients need
+ * no copy of it — it already says which box on THIS row the referenced record's `name` was copied
+ * into, so the caption asks it rather than guessing.
+ *
+ * THE FALLBACKS ARE THE SERVER'S, IN ORDER. Where the mapping seeds no name — and where it seeded one
+ * into a box the designer left the picker to fill and it never arrived — the reference's own label is
+ * still the right caption, for the reason the line it replaced gave: the field's label is the
+ * RELATIONSHIP and not the subject, so "Artisan" under a photograph is a category where "Bhikari
+ * Meher" is a caption. The field label remains the last resort, for a row whose label never loaded.
+ */
+private fun referenceCaption(
+    entity: EntityDto,
+    spec: FieldDto,
+    values: Map<String, JsonElement>,
+    refs: DwRefLabels,
+    refId: String,
+): String {
+    val sources = setOf("name") + REFERENCE_NAME_SOURCES[spec.refModel].orEmpty()
+    for ((source, target) in spec.refHydration) {
+        if (source !in sources) continue
+        val targetSpec = entity.field(target) ?: continue
+        // Through [displayValue] and not `DwValues.text`, exactly as the server goes through
+        // `_value`: the frozen box can itself be a REF, and a caption is not a place for a cuid.
+        val frozen = displayValue(targetSpec, values[target], refs)
+        if (frozen.isNotBlank()) return frozen
+    }
+    return refs.label(refId).ifBlank { spec.label }
 }
 
 /**
@@ -2313,7 +2504,10 @@ internal class DwRefLabels(
         val (entity, row) = rowsById[refId] ?: return null
         entity.liveFields.forEach { spec ->
             val type = DwFieldType.of(spec.type)
-            if (!type.isMedia || spec.reportRole == "HIDDEN") return@forEach
+            // A PHOTOGRAPH, which is what this function's name promises: `isMedia` would have let the
+            // referenced record's attached PDF stand in as its picture, whichever media field the
+            // registry happens to declare first.
+            if (!type.isPicture || spec.reportRole == "HIDDEN") return@forEach
             val stored = row[spec.key]
             if (!DwValues.isFilled(stored)) return@forEach
             val ids = if (type == DwFieldType.IMAGE_LIST) DwValues.list(stored) else listOf(DwValues.text(stored))
@@ -2417,14 +2611,23 @@ private fun renderEntity(
       wants the note, or with nothing at all. Printing "Not recorded." for every unfilled ADVANCED
       field would bury the report in negatives, which is why the substitution keys on `required`.
 
-      MEDIA-TYPED FIELDS ARE NEVER ASKED. `_images` never substitutes and `_printable` is only ever
-      asked for non-media roles on the server; a photograph that was not taken is a gap in a contact
-      sheet, not a sentence in a grid. They are gathered by [imagesOf] below instead.
+      MEDIA-TYPED FIELDS ARE ASKED, AND [displayValue] DECIDES WHAT THEY SAY. This used to skip them
+      wholesale, under a comment asserting that "`_printable` is only ever asked for non-media roles
+      on the server". That was false when it was written — `_printable` applies no type filter at all
+      and leans entirely on `format_value` to answer "" for a picture — and once the server grew its
+      count-and-noun branch for FILE/AUDIO/VIDEO, the skip became a straight divergence: the office
+      printed "Sanction order: 1 document attached" and the phone printed nothing, for all seventeen
+      such fields in the registry. A designer attaching the ministry's sanction order at stage 1 got
+      two documents that disagree about whether it exists.
+
+      IMAGE and IMAGE_LIST still reach paper only through [imagesOf] — [displayValue] answers "" for
+      them, so a photograph that WAS taken adds nothing here. What the substitution below now also
+      covers is a REQUIRED media field that is EMPTY, which `_printable` has always said
+      [NOT_RECORDED] for: a photograph that was not taken is a gap the reviewing officer must see.
      */
     fun printable(match: (String) -> Boolean): List<Pair<FieldDto, String>> = visible.mapNotNull { field ->
         if (field.reportRole == "HIDDEN" || !match(field.reportRole)) return@mapNotNull null
         if (field.captionFor.isNotBlank()) return@mapNotNull null   // placed with their image
-        if (DwFieldType.of(field.type).isMedia) return@mapNotNull null
         val text = displayValue(field, values[field.key], refs)
         when {
             text.isNotBlank() -> field to text
@@ -2529,7 +2732,9 @@ private fun renderEntity(
         builder.bullets(text.replace(";", "\n").split("\n").map { it.trim() })
     }
 
-    if (metrics.isNotEmpty()) {
+    // [RenderOptions.metricRow] gates this, and it is off by default: `_render_stage` is the only
+    // renderer on the server that builds a metric row, so a collection row must not grow one here.
+    if (options.metricRow && metrics.isNotEmpty()) {
         // FOUR, as the server caps it. A metric row is a band of big numbers across the text column
         // and the fifth one is unreadable at any width the page can give it.
         builder.add(
@@ -2658,28 +2863,45 @@ private fun renderCollection(
       `_render_table` says the same thing with `skip=column_keys`: what the narrative block prints is
       everything the TABLE did not.
 
-      NOTE ONE DELIBERATE DIVERGENCE FROM THE SERVER, which keeps a raw id off paper. `_table_columns`
-      applies no media filter, so a media TABLE_COLUMN would become a column there and print through
-      `format_value` — i.e. as a media id. Here it stays out of the table and prints as a photograph
-      underneath instead. That is one of the two answers the audit's remedy asked for ("one of the
-      two, not one each"); the other half — adding the media filter to `_table_columns` — belongs to
-      whoever owns `report_builder.py` and is recorded as a follow-up.
+      NOTE ONE DELIBERATE DIVERGENCE FROM THE SERVER, AND ITS REASON HAS CHANGED. `_table_columns`
+      applies no media filter, so a media TABLE_COLUMN becomes a column there while `columns` above
+      keeps it out and prints it underneath instead. The old reason for the exclusion was that the
+      server would print a raw media id into the cell; that is no longer true — `format_value` now
+      answers "" for a picture and a count-and-noun for FILE/AUDIO/VIDEO — so what is left is a
+      SHAPE difference: a media column would be a blank (or count-bearing) column at the office and
+      no column at all here. It is kept as it stands because the registry declares no media
+      TABLE_COLUMN today, so nothing prints differently, and because adding one to `columns` would
+      move the drawn column set and with it every width in that table — which
+      `test_the_tables_whose_declared_widths_govern_still_do` pins deliberately. Closing it properly
+      means the two surfaces agreeing on ONE answer, and that agreement has to be made on the server
+      side first.
     */
     val leftovers = visible.filter {
         it.key !in columnKeys && it.reportRole != "HIDDEN" && it.captionFor.isBlank()
     }
     if (leftovers.isEmpty()) return true
-    // A media leftover in a section that prints no photographs is not a leftover at all. Counting it
-    // would head a sub-section for every row of a photographs-off table and then print nothing in it.
-    val carried = leftovers.filter { options.includePhotos || !DwFieldType.of(it.type).isMedia }
+    // A PICTURE leftover in a section that prints no photographs is not a leftover at all. Counting
+    // it would head a sub-section for every row of a photographs-off table and then print nothing.
+    //
+    // [isPicture] AND NOT [DwFieldType.isMedia], which is the same correction the `printable` walk
+    // above needed. `includePhotographs = false` is a statement about PLATES — the price list a buyer
+    // sees, the compact summary's narrative stages — and it has never had anything to say about
+    // whether a sanction order is attached. Asking `isMedia` here withheld the FILE/AUDIO/VIDEO
+    // sentence from exactly the templates that print the least, which are the ones an officer is most
+    // likely to be handed.
+    val carried = leftovers.filter { options.includePhotos || !DwFieldType.of(it.type).isPicture }
     rows.forEachIndexed { index, row ->
         // A REQUIRED leftover that is unfilled IS something to print — it prints [NOT_RECORDED] —
         // so it has to count here too, or the heading is suppressed over the one note the reviewing
         // officer needs. `_render_table` computes `has_extra` from `_printable`, which is the same
         // statement: the substitution is part of what a row has to say.
+        // NO TYPE GUARD ON THE SUBSTITUTION. It used to read `&& !isMedia`, which meant a required
+        // photograph or a required sanction order that was never attached suppressed the very heading
+        // its [NOT_RECORDED] note needed. `_render_table` computes `has_extra` straight from
+        // `_printable`, which substitutes for a required media field like any other; the
+        // photographs-off case is already handled one line up, by [carried].
         val hasExtra = carried.any { field ->
-            DwValues.isFilled(row[field.key]) ||
-                (field.required && options.showEmptyNote && !DwFieldType.of(field.type).isMedia)
+            DwValues.isFilled(row[field.key]) || (field.required && options.showEmptyNote)
         }
         if (!hasExtra) return@forEachIndexed
         builder.heading(rowHeading(entity, row, index, refs), level = rowLevel, numbered = options.numbered)
@@ -2771,6 +2993,24 @@ private fun cellRuns(
  * `columnWidthPct` is a HINT (0 means "share the remainder"), so the hints are honoured, the
  * remainder is split evenly, and the last column absorbs the rounding error rather than letting a
  * 33.33 × 3 = 99.99 fail the export a designer has been waiting on.
+ *
+ * ── THIS IS NOT THE SERVER'S ALGORITHM, AND THAT IS AN OPEN DIVERGENCE ────────────────────────────
+ *
+ * `report_builder._render_table` does something else: when the six drawn columns' declared widths do
+ * not sum to 100 it DISCARDS every declared width and re-weights, 2.0 for a free-text column and 1.0
+ * for everything else. The two agree only where the declared sum is already 100, and for five
+ * entities it is not — prototype is 25/25/12.5/12.5/12.5/12.5 at the office and 10.7/21.4/14.3/17.9/
+ * 25/10.7 on the handset; finalProduct, sketch, prototypeValidation and followUp diverge the same
+ * way. Same workshop, same registry, same six columns, two documents that paginate differently and
+ * wrap different cells.
+ *
+ * IT IS LEFT ALONE ON PURPOSE. Converging costs one surface its already-printed layout whichever way
+ * it goes — porting this to the server, porting the free-text fallback here, or rebalancing the five
+ * entities to 100 — and `tests/test_reference_carry.py`'s `_WIDTHS_THAT_DO_NOT_GOVERN` records that
+ * those five are knowingly on the server's fallback and pins them there. That is the owner of the
+ * printed page's decision, not a renderer's. What both surfaces DO agree on is the six-column cap
+ * ([tableColumns]'s callers `.take(6)`, `_table_columns`' `columns[:6]`), which is this divergence's
+ * twin and was closed after stage 22 printed as seven columns on the phone and six at the office.
  */
 private fun tableColumns(fields: List<FieldDto>): List<TableColumn> {
     val hinted = fields.sumOf { it.columnWidthPct.toDouble() }
@@ -2790,7 +3030,18 @@ private fun tableColumns(fields: List<FieldDto>): List<TableColumn> {
     return fields.mapIndexed { index, field ->
         val numeric = DwFieldType.of(field.type).isNumeric
         TableColumn(
-            header = field.label + if (field.unit.isNotBlank()) " (${field.unit})" else "",
+            // THE BARE LABEL, AND THE UNIT IS IN THE CELL. This used to be
+            // `field.label + " (${field.unit})"`, which was a reasonable compensation while
+            // [displayValue] dropped `field.unit` altogether — but the server's header is
+            // `TableColumn(header=spec.label, …)` and its CELLS carry the unit, so the compensation
+            // was itself a second divergence: one workshop's two .docx files headed the same column
+            // "Cost (INR)" and "Cost". Nineteen of the twenty-two unit-bearing TABLE_COLUMNs are
+            // MONEY with unit "INR", which `format_value` never suffixes on either surface, so those
+            // headers simply stop shouting a currency the "₹" in every cell below already states.
+            //
+            // MOVED IN THE SAME EDIT THAT PUT THE UNIT IN THE CELL AND NEVER BEFORE IT: taken out
+            // first, a measurement table would have lost "hours" and "cm" from both places at once.
+            header = field.label,
             widthPct = adjusted[index].toFloat(),
             align = if (numeric) Align.RIGHT else Align.LEFT,
             numeric = numeric,
@@ -2813,6 +3064,47 @@ private fun tableColumns(fields: List<FieldDto>): List<TableColumn> {
  * JsonObject a rich value is. Callers that can carry more than one string reach past this function —
  * [cellRuns] for a cell's runs, [renderEntity] for a narrative's blocks — exactly as the server's
  * renderers reach past `format_value`.
+ *
+ * ── THE FOUR ARMS THIS FUNCTION USED TO BE MISSING ────────────────────────────────────────────────
+ *
+ * The paragraph above says this IS the port of `format_value`, and for a long time it was not: there
+ * was no DATE arm, no INT/DECIMAL arm and no read of [FieldDto.unit] anywhere in it, and MONEY was
+ * `"₹" + DwValues.text(value)` — the stored string, verbatim, with no grouping and no decimals. So
+ * one workshop's two .docx files disagreed in every table and grid carrying a date, a price or a
+ * measurement. The office printed "Documented on: 10 Feb 2026", "Age: 45 years", "Length: 12.5 cm",
+ * "Cost: ₹ 1,20,000.00"; the handset printed "2026-02-10", "45", "12.5", "₹120000". Counted off the
+ * shipped registry that is 25 DATE, 34 MONEY and 36 unit-bearing INT/DECIMAL fields, plus every
+ * MONEY, DATE and measurement question a designer adds themselves — `report_custom_sections`'
+ * `display_value` hands everything but its own ENUM lists to this same `format_value`, and
+ * [com.designprototype.workshop.data.customFieldToFieldDto] already carries `unit` into the
+ * [FieldDto], so the two halves close together.
+ *
+ * THE UNIT LOSS WAS THE DANGEROUS HALF. A bare "12.5" in a dimensions row is unreadable as
+ * centimetres and "45" under a column headed Age is ambiguous where the office copy says years. The
+ * table header used to carry `label + " (unit)"` as a partial compensation; that suffix is gone in
+ * the same edit that put the unit in the cell (see [tableColumns]), because the server's header is a
+ * bare `spec.label` and leaving both would have made the two documents' HEADERS differ instead. Only
+ * 22 of the 70 unit-bearing fields are TABLE_COLUMNs in any case, so the header trick never reached
+ * the other 48.
+ *
+ * ── AND THE MEDIA SPLIT, WHICH IS THE FIFTH ─────────────────────────────────────────────────────
+ *
+ * There was no media arm at all, and [renderEntity]'s `printable` compensated by dropping every
+ * media-typed field before it got here — under a comment claiming `_printable` is "only ever asked
+ * for non-media roles on the server", which was never true: `_printable` applies no type filter and
+ * leans on `format_value` to answer "" for a picture. Once the server split its own media branch,
+ * that compensation became a divergence: the office's copy prints "Sanction order: 1 document
+ * attached" and the handset's printed nothing, for the seventeen FILE/AUDIO/VIDEO fields the
+ * registry declares. See the two arms below.
+ *
+ * NOTHING HERE RE-READS A LIVE ROW. Formatting is applied to the value already stored on the entry —
+ * hydration's copy included — so a record edited after submission still cannot move a printed
+ * document.
+ *
+ * A METRIC field's unit is passed SEPARATELY to [MetricRowBlock] as well, and that double is the
+ * server's: `_render_stage` builds `(s.label, v, s.unit)` where `v` already went through
+ * `format_value`. It is invisible today because no METRIC field in the registry declares a unit;
+ * reproduced rather than tidied away, because the point of this file is that the two copies agree.
  */
 private fun displayValue(field: FieldDto, value: JsonElement?, refs: DwRefLabels): String {
     if (!DwValues.isFilled(value)) return ""
@@ -2851,11 +3143,174 @@ private fun displayValue(field: FieldDto, value: JsonElement?, refs: DwRefLabels
             field.options.firstOrNull { it.value == token }?.label ?: token
         }
         DwFieldType.TAGS -> DwValues.list(value).joinToString(", ")
+
+        // A PICTURE NEVER PRINTS AS TEXT; it is placed by [imagesOf]. `format_value`'s own arm, and
+        // the reason the `else` below must never be allowed to catch a media type: [DwValues.text]
+        // of a media value is a media id, and a cuid in a ministry's grid is the defect [OPAQUE_ID]
+        // exists to keep off paper.
+        DwFieldType.IMAGE, DwFieldType.IMAGE_LIST -> ""
+
+        /*
+          A COUNT AND A NOUN FOR THE THREE MEDIA TYPES THAT HAVE NO PICTURE PATH.
+
+          FILE, AUDIO and VIDEO are not gathered by [imagesOf] — it filters on IMAGE and IMAGE_LIST —
+          so before the server grew this arm they printed on NO surface at all: a designer attached
+          the ministry's sanction order at stage 1 and the .docx the officer received did not mention
+          that a sanction order existed. The registry declares eight FILE, five AUDIO and four VIDEO
+          fields, and the tier warning made it worse rather than better, naming a field that no
+          template could carry.
+
+          THE NOUN AND THE STRINGS ARE `format_value`'s, EXACTLY. "1 document attached" /
+          "2 documents attached", "recording(s)" for AUDIO, "video(s)" for VIDEO, and everything else
+          in the media family is a document. A different word here is a different sentence in one of
+          the two copies of one workshop's report.
+
+          NOT A FILENAME, for the same reason the server gives: the stored value is a media id and
+          the name the designer uploaded lives on the `MediaFile` row, which neither this renderer nor
+          `report_builder` may query — this one has no network at all when it matters. The honest
+          minimum is that an attachment exists and how many.
+        */
+        DwFieldType.FILE, DwFieldType.AUDIO, DwFieldType.VIDEO -> {
+            val count = DwValues.list(value).size
+            if (count == 0) {
+                ""
+            } else {
+                val singular = when (type) {
+                    DwFieldType.AUDIO -> "recording"
+                    DwFieldType.VIDEO -> "video"
+                    else -> "document"
+                }
+                "$count ${if (count == 1) singular else singular + "s"} attached"
+            }
+        }
+
         DwFieldType.GEO -> DwValues.geo(value)?.let { (lat, lon) ->
             String.format(java.util.Locale.ROOT, "%.5f, %.5f", lat, lon)
         }.orEmpty()
-        DwFieldType.MONEY -> "₹" + DwValues.text(value)
-        DwFieldType.PERCENT -> DwValues.text(value) + "%"
-        else -> DwValues.text(value)
+        // ₹ 1,20,000.00 — two decimals, Indian grouping, a space after the sign. A cost sheet is
+        // read by an officer who writes lakhs, and a Western-grouped figure is misread at a glance;
+        // for a number that becomes a sanctioned amount that is a real error, not a stylistic one.
+        //
+        // A VALUE THAT IS NOT A NUMBER FALLS THROUGH WITHOUT THE RUPEE SIGN, which is the server's
+        // arm and not a shortcut. MONEY is stored as a string, so a stage saved before `coerce_value`
+        // rejected non-finite input holds the literal "nan" — and "₹ nan." on a document submitted to
+        // a ministry dresses an unreadable cell up as an amount. The charts have always dropped those
+        // rows ([asFiniteNumber] is what they use), so printing the stored text as the unreadable
+        // thing it is makes the table and the figure beside it agree.
+        DwFieldType.MONEY -> {
+            val amount = asFiniteNumber(value)
+            if (amount == null) {
+                DwValues.text(value)
+            } else {
+                // The sign comes off the FORMATTED string in Python (`whole.startswith("-")`), so a
+                // value that rounds to zero from below still prints "-₹ 0.00". [BigDecimal] has no
+                // negative zero to carry that, hence the explicit test.
+                val negative = amount < 0.0 || (amount == 0.0 && 1.0 / amount < 0.0)
+                val fixed = pyFixed(abs(amount), 2)
+                (if (negative) "-" else "") + "₹ " +
+                    groupIndian(fixed.substringBefore('.')) + "." + fixed.substringAfter('.')
+            }
+        }
+
+        DwFieldType.PERCENT -> asFiniteNumber(value)?.let { pyGeneral(it) + "%" } ?: DwValues.text(value)
+
+        // `2026-02-10` -> `10 Feb 2026`, through the port that already exists. NOT a second date
+        // formatter: [formatReportDate] reproduces `_format_date` by value INCLUDING the negative
+        // index that makes month 0 print "Dec", and that quirk is pinned by a case table — a
+        // bounds-checked rewrite here would put a different month on the phone's cover.
+        DwFieldType.DATE -> formatReportDate(DwValues.text(value))
+
+        DwFieldType.INT, DwFieldType.DECIMAL -> {
+            val number = asFiniteNumber(value)
+            if (number == null) {
+                DwValues.text(value)
+            } else {
+                // GROUPED ONLY FROM FIVE FIGURES UP, which is the server's threshold and not a
+                // rounded-off version of it: 9,999 pieces reads as a count and 1,00,000 reads as a
+                // quantity, and grouping the small ones would have made every four-digit answer in
+                // the report look like money.
+                var text = if (type == DwFieldType.INT) pyFixed(number, 0) else pyGeneral(number)
+                if (abs(number) >= 10000) {
+                    val fixed = pyFixed(abs(number), 2)
+                    text = (if (number < 0) "-" else "") + groupIndian(fixed.substringBefore('.'))
+                    val frac = fixed.substringAfter('.').trimEnd('0')
+                    if (type != DwFieldType.INT && frac.isNotEmpty()) text += ".$frac"
+                }
+                if (field.unit.isNotBlank()) "$text ${field.unit}".trim() else text
+            }
+        }
+
+        // The trailing `return f"{text} {spec.unit}".strip() if spec.unit and text else text`. No
+        // field in the shipped registry reaches it — all 70 unit-bearing ones are numeric — but a
+        // designer's own TEXT question may declare a unit, and this is the arm it lands in.
+        else -> {
+            val text = DwValues.text(value)
+            if (field.unit.isNotBlank() && text.isNotEmpty()) "$text ${field.unit}".trim() else text
+        }
     }
+}
+
+/**
+ * A double as Python's `f"{value:.<places>f}"` renders it — half-to-EVEN on the exact binary value.
+ *
+ * NOT `String.format("%.2f", value)`. Java's `Formatter` rounds the shortest decimal representation
+ * half AWAY from zero and Python rounds the exact binary value half to EVEN, so a cost of 1500.5
+ * prints as "1,501" on the phone and "1,500" on the server — one figure, two numbers, in two
+ * documents for the same workshop. Constructing the [BigDecimal] from the DOUBLE rather than from
+ * its string form is equally deliberate: it takes the exact binary value, which is the value
+ * Python's formatter is also looking at, so the two agree on which side of a tie a
+ * representable-looking number such as 2.675 actually falls.
+ *
+ * ONE KNOWN DIVERGENCE, STATED RATHER THAN HIDDEN: [BigDecimal] has no negative zero, so a stored
+ * INT of `-0` prints "0" here and "-0" on the server. Every other numeric path in this file routes
+ * the sign around this function for exactly that reason (see the MONEY arm); the INT arm does not,
+ * because "-0" is not a number a designer types into a count and inventing a sign test for it would
+ * cost more than the character it saves.
+ *
+ * A THIRD COPY OF THE SAME TWO LINES, and knowingly. `ReportChart.fixed` and `ReportFigures.fixedZero`
+ * are the other two, each private to the file that draws with it. Sharing one would mean either a
+ * public helper in the report package that every caller must remember to reach for, or an import
+ * from `ui.designworkshop` into `report` that inverts this port's dependency direction. The rule is
+ * the comment on all three, not the function.
+ */
+private fun pyFixed(value: Double, places: Int): String =
+    BigDecimal(value).setScale(places, RoundingMode.HALF_EVEN).toPlainString()
+
+/**
+ * A double as Python's `f"{value:g}"` renders it — the format `format_value` gives every DECIMAL.
+ *
+ * `:g` is not "drop the trailing zeros". It rounds to six SIGNIFICANT digits, then prints fixed
+ * notation while the decimal exponent is in `-4 <= x < 6` and exponential notation outside it, and
+ * strips trailing zeros from whichever it chose. `12.50` is "12.5", `1234567.0` is "1.23457e+06",
+ * and `0.00001` is "1e-05" — a naive `trimEnd('0')` port agrees on the first and disagrees on the
+ * other two.
+ *
+ * IN PRACTICE THE EXPONENTIAL BRANCH IS ALMOST UNREACHABLE HERE, because `format_value` re-formats
+ * anything of magnitude 10,000 or more through the Indian grouping and throws this result away. It
+ * is written out in full anyway: the reachable half is the tiny values (a decimal below 0.0001 — a
+ * per-unit material rate in a costing sheet is exactly that shape), and a port that got the
+ * unreachable half wrong would be a trap for whoever changes the grouping threshold.
+ */
+private fun pyGeneral(value: Double): String {
+    // Python prints "0" for 0.0 and "-0" for -0.0; BigDecimal has no negative zero to represent the
+    // second, so it is decided here before the rounding.
+    if (value == 0.0) return if (1.0 / value < 0.0) "-0" else "0"
+    val rounded = BigDecimal(value).round(MathContext(6, RoundingMode.HALF_EVEN))
+    // The decimal exponent of the ROUNDED value — BigDecimal's own "adjusted exponent", which it
+    // does not expose. Rounding first is what makes 999999.5 exponential rather than fixed, exactly
+    // as Python decides it.
+    val exponent = rounded.precision() - rounded.scale() - 1
+    if (exponent >= -4 && exponent < 6) {
+        val fixed = rounded.setScale(maxOf(0, 5 - exponent), RoundingMode.HALF_EVEN).toPlainString()
+        if (!fixed.contains('.')) return fixed
+        return fixed.trimEnd('0').trimEnd('.')
+    }
+    val digits = rounded.unscaledValue().abs().toString().trimEnd('0').ifEmpty { "0" }
+    val mantissa = StringBuilder()
+    if (rounded.signum() < 0) mantissa.append('-')
+    mantissa.append(digits[0])
+    if (digits.length > 1) mantissa.append('.').append(digits, 1, digits.length)
+    // Python's exponent is always signed and at least two digits: "1e+20", "1.5e-07".
+    val sign = if (exponent < 0) "-" else "+"
+    return mantissa.toString() + "e" + sign + abs(exponent).toString().padStart(2, '0')
 }

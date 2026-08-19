@@ -173,21 +173,42 @@ fun dwDictationCapView(
 /**
  * The allowance one dictation's answer reported, or null when it reported none.
  *
- * A SERVER THAT SENT NO DAY IS NOT AN ALLOWANCE, and this is where that is enforced rather than at
- * three call sites. `dictationDay` is the key the mirror's whole freshness rule turns on, so a payload
- * without one — an older deployment that predates the cap, or a build of the DTO reading a response
- * that never carried it — must leave whatever is stored alone rather than overwrite it with a record
- * that can never be matched against a day.
+ * A SERVER THAT SENT NO DAY IS NOT AN ALLOWANCE, and that is enforced in the private overload below
+ * rather than at three call sites — see it for why `dictationDay` is the load-bearing key.
  */
-fun dwDictationAllowanceOf(dto: DwDictateDto, userId: String?): DwDictationAllowance? {
-    val day = dto.dictationDay?.trim().orEmpty()
+fun dwDictationAllowanceOf(dto: DwDictateDto, userId: String?): DwDictationAllowance? =
+    dwDictationAllowanceOf(dto.dictationDay, dto.dictationsLimit, dto.dictationsRemaining, userId)
+
+/**
+ * The same, from the ALLOWANCE ROUTE's answer — `GET /design-workshops/dictation-allowance`.
+ *
+ * TWO WAYS TO LEARN THE NUMBER, ONE RULE ABOUT WHAT COUNTS AS HAVING LEARNED IT. The route exists so
+ * a phone can know the ceiling BEFORE it spends a six-megabyte upload to be refused — which is the
+ * failure `DwDictationRun` records for the 503, "a six-megabyte upload per field, each one spending
+ * mobile data to be told the same thing" — and a handset opened for the first time this morning knows
+ * nothing until it is told. Both readings go through [allowanceRecord] rather than repeating the
+ * `dictationDay` test, because the day is what the whole freshness rule turns on and two spellings of
+ * it is how one of them comes to accept a payload the other rejects.
+ */
+fun dwDictationAllowanceOf(dto: DwDictationAllowanceDto, userId: String?): DwDictationAllowance? =
+    dwDictationAllowanceOf(dto.dictationDay, dto.dictationsLimit, dto.dictationsRemaining, userId)
+
+/**
+ * A SERVER THAT SENT NO DAY IS NOT AN ALLOWANCE — the one place that decides it.
+ *
+ * `dictationDay` is the key the mirror's freshness rule turns on, so a payload without one (an older
+ * deployment that predates the cap, or a DTO reading a response that never carried it) must leave
+ * whatever is stored alone rather than overwrite it with a record that can never match a day.
+ */
+private fun dwDictationAllowanceOf(
+    dictationDay: String?,
+    limit: Int?,
+    remaining: Int?,
+    userId: String?,
+): DwDictationAllowance? {
+    val day = dictationDay?.trim().orEmpty()
     if (day.isEmpty() || userId.isNullOrBlank()) return null
-    return DwDictationAllowance(
-        userId = userId,
-        day = day,
-        limit = dto.dictationsLimit,
-        remaining = dto.dictationsRemaining,
-    )
+    return DwDictationAllowance(userId = userId, day = day, limit = limit, remaining = remaining)
 }
 
 /**

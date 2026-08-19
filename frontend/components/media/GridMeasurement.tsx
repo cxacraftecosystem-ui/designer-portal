@@ -9,6 +9,42 @@ export type GridGroup = "lengthBreadth" | "height";
 export type GridFiles = Partial<Record<GridGroup, File>>;
 
 /**
+ * What every measurement-grid photograph writes into its media row's `extraMetadata.purpose`.
+ *
+ * ── THE DEFECT THIS ENDS ──────────────────────────────────────────────────────────────────────
+ * A grid shot is the FIRST photograph most products and toolkits ever get: a designer opens the
+ * form, checks "Document using grid", lays the object on the ruled sheet and photographs it before
+ * they have taken a single presentation picture. The server's `_reference_photos` picks a record's
+ * photograph deterministically by `createdAt ASC, id ASC` — oldest first — so the oldest image is
+ * the one that becomes `photo` in the reference payload, gets hydrated onto a stage entry, and is
+ * printed in the .docx handed to a Development Commissioner's office. The ministry report showed a
+ * sheet of graph paper captioned as the tool.
+ *
+ * ── WHY A MARKER AND NOT A RULE ABOUT CAPTIONS ────────────────────────────────────────────────
+ * The captions these uploads carry ("Height grid (measurement) for …") do identify a grid shot, and
+ * the server keeps a transitional clause matching them so the photographs ALREADY in the bucket
+ * sort last too. But a caption is prose: it is translated, edited by a reviewer, and re-typed on the
+ * handset, and a report that starts printing graph paper again because somebody tidied a sentence
+ * is not a failure anybody would connect back to this. A machine-readable purpose written by the
+ * uploading client is the durable half; the caption clause is the backfill for what predates it.
+ *
+ * ── THE STRING IS A THREE-SURFACE CONTRACT ────────────────────────────────────────────────────
+ * The web writes it here, Android writes the identical string on its own grid captures, and the
+ * server SORTS any candidate carrying it LAST. Change it in one place and the other two stop
+ * agreeing silently — nothing errors, the report just starts printing ruled paper again.
+ *
+ * A SORT KEY AND NOT A `WHERE`, which is worth reading off `_reference_photos` rather than assumed:
+ * the statement computes an `is_grid` boolean in a CTE and orders by
+ * `parent, is_grid ASC, created_at ASC, id ASC`. Nothing is ever excluded into a blank and there is
+ * no fallback branch — sorting last is itself why a product whose ONLY image is a grid shot still
+ * gets that picture instead of an empty gallery. The backend docstring says so in those words
+ * ("NOTHING IS EVER EXCLUDED INTO A BLANK"); this comment claimed a WHERE clause and an
+ * every-candidate-excluded fallback, and a reader sent looking for either would find neither and
+ * would be left believing there is a second code path to maintain.
+ */
+export const MEASUREMENT_GRID_PURPOSE = "MEASUREMENT_GRID";
+
+/**
  * "Document using grid": length and breadth are read from a single top-down photo of the object on a
  * 1-inch grid sheet; height (optional) is read from its own side-on photo. The vision model's estimate
  * auto-fills the matching field(s). Captured files are reported up so the parent can also store them as

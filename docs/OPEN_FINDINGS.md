@@ -1,6 +1,33 @@
 # Open findings
 
-**Status: 0 open, 51 closed.** Last re-checked against the tree on 2026-08-15.
+**Status: 1 open, 51 closed.** Last re-checked against the tree on 2026-08-19.
+
+**The open count was wrong, and it was wrong in the direction this file says is the dangerous one.**
+It read "0 open" from 2026-08-15 while `## Open` below carried the `[MEDIUM]` in-memory-`Blob`
+entry, which has no `— CLOSED` suffix and whose three `JSZip.generateAsync({ type: "blob" })` sites
+were re-checked on 2026-08-19 and are all still live. A reader who trusts the header never scrolls
+the twelve lines to the entry. **The closed count did NOT move**: counting the section headings
+gives 7 + 12 + 3 + 1 + 28 = 51, not 52 — the eighth heading under *Closed on 2026-08-15* is the
+frontend half of the refused-save mismatch already counted under *Closed on 2026-08-13*, one defect
+recorded twice as it was part-closed and then closed. That is the identical double-count the
+paragraph below records as this file's 40-versus-41 error, so **dedupe before you recount.**
+
+**An adversarial audit ran against this tree on 2026-08-19, and its findings are NOT in the count
+above.** Method, because it decides how much the pass is worth: ten independent lenses were run over
+the repository, and every finding one lens raised was then handed to a second agent whose job was to
+REFUTE it against the code — several were refuted and dropped, and several survived in a narrower
+form than they were raised in. **This paragraph carried a total ("69 findings") until 2026-08-20 and
+it is withdrawn rather than updated, because there is nothing in the repository to count it against.**
+Every other figure in this file is either counted against the section headings below or pinned by a
+named test, and the 2026-08-15 audit's equivalent claim points at `docs/AUDIT-2026-08-15.md`. This
+one pointed at nothing — the same defect as a closed entry whose test does not exist, which the
+maintenance table at the foot calls "the exact defect this register was written to stop shipping".
+**Put a number back when there is a write-up file or a list of fix commits to count.** A wave of
+fixes was in flight while this line was written, so **treat this register as being worked rather than
+clean**:
+"1 open" is this file's own accounting of items that have been through the fix-and-pin cycle it
+records, not a statement about the tree. Findings are promoted in here as they are taken on, exactly
+as the 2026-08-15 audit's were.
 
 **All seven items that stood open on 2026-08-13 were closed on 2026-08-15**, each with the test that
 would have caught it, and the whole of both suites re-run against a live database afterwards. They
@@ -63,6 +90,13 @@ A separate audit of the whole application — frontend, backend and Android, exc
 surfaces — was run on 2026-08-15 and its findings are written up in `docs/AUDIT-2026-08-15.md`
 rather than here, because they have not been through the fix-and-pin cycle this file records. Items
 from it are promoted into this register as they are taken on.
+
+**A second such audit ran on 2026-08-19, and none of its findings are in this section.** Same one-way
+rule, for the same reason: ten independent lenses over the tree, every finding then handed to a second
+agent to REFUTE against the code, and only what survived that refutation counted. Some were dropped
+outright and some survived narrower than they were raised. **It has no write-up file, which is why
+this paragraph no longer states a total** — see the header. Promote an item in only after it has a
+fix and a test that fails without the fix.
 
 ### [MEDIUM] The browser assembles the whole archive as one in-memory `Blob` — three `JSZip.generateAsync({type:"blob"})` sites (frontend)
 
@@ -1290,9 +1324,10 @@ and the note explaining it, are kept in the body as the warning.
 | Claim class | Kept true by |
 |---|---|
 | Whether an entry is open or closed | **A re-read of the named code, on a date, by a person.** Nothing else. When you re-check, move the entry and update *Last re-checked against the tree* in the header — a stale date is honest, an unchanged date over changed content is not. |
-| The **Status** line's two numbers | Counted against the section headings below, which is how the 40-versus-41 discrepancy was found. Recount when you move an entry; do not increment. |
+| The **Status** line's two numbers | Counted against the section headings below, which is how the 40-versus-41 discrepancy was found. Recount when you move an entry; do not increment. **Dedupe first**: a defect that was part-closed in one pass and closed in the next has a heading in BOTH sections, and counting both is exactly how 40 became 41. The one live instance is the refused-save mismatch, whose 2026-08-15 heading closes the frontend half of its own 2026-08-13 heading. **This row failed on 2026-08-19**: it says to recount when you move an entry, an entry was promoted into `## Open` and the header still read "0 open" for four days. A number that contradicts a heading twelve lines below it is the one kind of rot a reader cannot be expected to catch, because they stop reading at the number. |
 | Every **Where** in an entry | `node docs/tools/check-docs.mjs`, which resolves every repository path in this file. It cannot tell you the path is the *right* one, only that it exists. |
 | Every **Pinned by** in a closed entry | The named test, actually run. A closed entry whose test does not exist, or exists and cannot fail, is the exact defect this register was written to stop shipping — several entries above say so explicitly, including one that records mutating the fix to prove the test went red. |
+| Any total quoted for an audit that is not this register's own | **Something in the repository that can be counted, named on the same line.** The 2026-08-15 pass is safe because [AUDIT-2026-08-15.md](AUDIT-2026-08-15.md) holds its findings and a reader can count the headings. The 2026-08-19 pass was written up here as a confirmed count of 69 with the sentence "It has no write-up file of its own here yet, so do not go looking for one — the record of it is the fixes themselves", i.e. an unfalsifiable number in a file whose discipline is that every number is checkable. **Withdrawn 2026-08-20.** State the audit, its date and its method with no total until there is a file or a commit list; a number nobody can check is indistinguishable from a number that has drifted, and this file has already shipped one of those. |
 | The relationship to [AUDIT-2026-08-15.md](AUDIT-2026-08-15.md) | Deliberate and one-way: the audit is a register of what was *found* and is not rewritten. Items are promoted from it into this file as they are taken on. Do not copy findings here that have not been through the fix-and-pin cycle, or this document stops meaning what its header says it means. |
 | Line numbers in entries | **Do not add any.** By 2026-08-15 seven of this file's citations had rotted onto unrelated code — `StageScreen.kt:1320-1325` <!-- rotted -->, `WorkshopSync.kt:810-821` <!-- rotted -->, `StageSchema.kt:1310` <!-- rotted -->, and four more that were removed the same day: `CustomSectionsIn` cited 28 lines above the class, `patchDraftHeader` 279 lines above the function, a `designWorkshopStore.ts` pin on a comment in an unrelated function, and a `stage_schema.py` range 50 lines short of `validate_entry`. Every one of them passed the checker, because all it asked was whether the number was inside the file. **It now also tests drift**, wherever a backticked symbol sits on the same line as the pin — see `checkCitations` in `docs/tools/check-docs.mjs` — but that check is deliberately silent on a pin that names no symbol, so it cannot rescue a bare number. Name the symbol; a symbol that moves is still greppable and a line number that moves is a confident lie. |
 | Paths written in full | Same run of `check-docs.mjs`. The `android/…` shorthand this file used ten times resolved for nobody — not the checker, not a reader trying to open the file. All ten were expanded on 2026-08-15; the note in the viewer-picker entry explains the convention and it is now the rule for this file. |

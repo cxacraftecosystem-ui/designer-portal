@@ -23,9 +23,17 @@ import java.io.File
  * differently in the last digit, which is exactly where money lives. So there is one case table
  * (`dw-analysis-cases.json`), it is fed to `backend/app/services/{market_analysis,cost_integrity}.py`
  * verbatim, and the payload Python produced for every case is frozen into `dw-analysis-expected.json`.
- * This test recomputes all 59 cases here and DIFFS the two documents leaf by leaf. When it fails it
- * names the case, the JSON path, and both values, because "the Kotlin is wrong somewhere" is not a
- * finding anybody can act on.
+ * This test recomputes THE WHOLE CASE TABLE here and DIFFS the two documents leaf by leaf. When it
+ * fails it names the case, the JSON path, and both values, because "the Kotlin is wrong somewhere" is
+ * not a finding anybody can act on.
+ *
+ * NO COUNT IS STATED, deliberately. This header said "all 59 cases" for as long as the table held 62
+ * (29 market + 5 competitor positions + 28 cost), and the figure was then copied out of here into
+ * three places in `docs/COMPUTED_FINDINGS.md` as a measured fact. A number in prose beside a table
+ * that grows is a claim that rots on the next commit and buys nothing: the cases are enumerated from
+ * the JSON below, and the first assertion in `every case matches the payload the Python produced for
+ * it` — "the case table and the golden must describe the same cases" — is what pins that the two
+ * files agree about which cases those are. That is the only thing a reader needed the number for.
  *
  * THE TABLE IS ITSELF TESTED, by breaking each guard in turn and checking that a case notices. Every
  * guard below is one an idiomatic port would not have written, so a table that still passed without it

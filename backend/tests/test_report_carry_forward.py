@@ -150,10 +150,23 @@ def test_every_carried_field_has_a_role_the_report_prints(entity_key, target, so
     entity, one line away, when somebody declares the box the value lands on.
     """
     spec = _spec(entity_key, target)
-    if spec.type.is_media:
-        # Media is placed by ``_images``, which reads the field TYPE and not the role, so the role
-        # on a media field is documentation. ``test_a_carried_photograph_is_placed`` covers the
-        # actual placement.
+    if spec.type in (FieldType.IMAGE, FieldType.IMAGE_LIST):
+        # A PICTURE is placed by ``_images``, which reads the field TYPE and not the role, so the
+        # role on an image field is documentation. ``test_a_carried_photograph_is_placed`` covers
+        # the actual placement.
+        #
+        # THIS USED TO SAY "media" AND EXEMPT ALL FIVE MEDIA TYPES, which was true of the role and
+        # false about the outcome: ``_images`` filters on IMAGE and IMAGE_LIST, so a carried FILE,
+        # AUDIO or VIDEO was placed by nothing and printed by nothing, and this test waved it
+        # through. ``format_value`` now prints "1 document attached" for those from their
+        # KEY_VALUE role, so the role on them is load-bearing again and the assertion below
+        # applies to them exactly as it does to a text field.
+        #
+        # AND TODAY IT APPLIES TO NO PARAMETER, WHICH IS WHY THE NARROWING IS RECORDED HERE RATHER
+        # THAN CLAIMED AS A GUARD. Every media target in ``REFERENCE_HYDRATION`` is ``photo`` ->
+        # ``photo`` / ``productPhotos``, and no FILE, AUDIO or VIDEO field is a hydration target at
+        # all — so narrowing the exemption changed the outcome for zero cases. It is the shape the
+        # rule will have when one is added, not evidence that anything is currently covered.
         return
     if spec.report_role is ReportRole.CAPTION:
         # A caption is printed UNDER ITS PICTURE by ``_images`` and is deliberately withheld from
@@ -646,9 +659,18 @@ def test_a_carried_photograph_is_placed(template_id):
 
     Two routes reach one assertion: ``participant.photo`` and ``tool.photo`` are seeded onto the
     row by hydration, while ``prototype.productRef`` and ``existingProduct.artisanRef`` copy only a
-    name — their entities own galleries of the designer's OWN photographs that a seeded picture
-    must never overwrite — so the referenced record's photograph is placed by ``_images``' second
-    pass instead. Both end with the file in the document, which is what a reader cares about.
+    name, so for those the referenced record's photograph is placed by ``_images``' second pass
+    instead. Both end with the file in the document, which is what a reader cares about.
+
+    THIS USED TO SAY "their entities own galleries of the designer's OWN photographs that a seeded
+    picture must never overwrite", WHICH IS NOT THE RULE — the same wrong reason was corrected in
+    ``report_builder.ReferencedRecord``, in ``design_workshops.load_report_references`` and in
+    ``test_report_figures.test_a_ref_to_a_documented_product_pulls_the_catalogue_photograph``, and
+    survived here. ``hydrate_entries`` seeds a gallery WHEN EMPTY and never overwrites one, and
+    ``existingProduct.productRef`` maps ``photo`` -> ``productPhotos`` on purpose, because the
+    documented product's own photograph IS a photograph of the documented product. Only
+    ``prototype``'s gallery is left unseeded, for the reason written at ``prototype.productRef``:
+    a prototype is defined by how it DIFFERS from the product it was based on.
     """
     document, _warnings = _render(template_id)
     assert PHOTO_ID in _image_sources(document)

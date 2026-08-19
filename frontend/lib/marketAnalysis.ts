@@ -226,7 +226,24 @@ export function pySum(values: Iterable<number>): number {
  */
 export function pyRound(value: number, digits: number): number {
   if (!Number.isFinite(value)) return value;
-  const negative = value < 0;
+  /*
+    TWO EXITS BEFORE THE DECIMAL EXPANSION, EACH FOR A VALUE THIS FUNCTION USED TO GET WRONG.
+
+    ABOVE 2^53 EVERY DOUBLE IS AN INTEGER, so rounding one to any number of decimal places is the
+    identity — which is exactly what `round(1e308, 2)` answers in Python. The expansion below could
+    not reach that answer: `toFixed` is specified to fall back to `ToString(x)` at 1e21 and above, so
+    `(1e308).toFixed(27)` is the string "1e+308", the digit-walking then builds "1e+308.00", and
+    `Number` of that is NaN. It reached a real caution — a cost line entered as `1e308` printed
+    "₹nan" where the server prints "₹inf" — and it is pinned by `k28-orphan-total-overflows`.
+
+    NEGATIVE ZERO IS A DISTINCT VALUE AND PYTHON KEEPS IT: `round(-0.0, 2)` is `-0.0`, and the JSON
+    a client compares against carries `-0`. `value < 0` is false for `-0`, so the sign was dropped
+    and a difference of exactly zero on a sheet whose declared figure is below its computed one came
+    out as `0` where the server says `-0`. `money0` and `fixed0` beside this already made the same
+    distinction; this did not. Pinned by `k26-live-workshop`.
+  */
+  if (Math.abs(value) >= Number.MAX_SAFE_INTEGER) return value;
+  const negative = value < 0 || Object.is(value, -0);
   const text = Math.abs(value).toFixed(Math.min(100, digits + 25));
   const dot = text.indexOf(".");
   const whole = dot < 0 ? text : text.slice(0, dot);

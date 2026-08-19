@@ -32,6 +32,7 @@
 import { API_BASE, ApiError, apiFetch, assertApiConfigured, buildQuery, describeApiDetail, getToken } from "@/lib/api";
 import { prepareIdentityPhotograph } from "@/lib/identityCardImage";
 import { DW_PHOTO_RETENTION_DEFAULT, type DwPhotoRetention } from "@/lib/identityPhotoRetention";
+import type { CostFindingsPayload } from "@/lib/costIntegrity";
 import type { MarketFindingsPayload } from "@/lib/marketAnalysis";
 import type { DwReportHistory } from "@/lib/reportDiff";
 import { isStoredRichTextEmpty, richSummary, type StoredRichDoc } from "@/lib/richText";
@@ -991,6 +992,25 @@ export function getDesignWorkshopMarketAnalysis(id: string) {
 }
 
 /**
+ * Stage 17's cost-integrity findings, as the SERVER sees them.
+ *
+ * THE ENDPOINT'S FIRST CALLER ON ANY SURFACE. `GET /design-workshops/{id}/cost-integrity` has been
+ * deployed since the service was written and its own docstring said so plainly — "**So no designer
+ * sees a cost-integrity finding on any surface today**: this endpoint is the whole of the feature,
+ * and nothing consumes it." The handset has since grown a local port and a card; the browser had
+ * neither, so a self-contradicting cost sheet reached a ministry unchallenged from the one surface
+ * a designer is most likely to be typing the sheet on.
+ *
+ * THE FALLBACK, NOT THE SOURCE, exactly as the market analysis beside it. `lib/costIntegrity.ts` is
+ * a port of the same pure arithmetic and runs off the rows on the screen, which is the only way the
+ * check exists in a courtyard. This answers the one case the port cannot: a device that has never
+ * downloaded stage 17 and so has no rows to compute from.
+ */
+export function dwCostIntegrity(id: string) {
+  return apiFetch<CostFindingsPayload>(`/design-workshops/${id}/cost-integrity`);
+}
+
+/**
  * Save one whole stage in one write.
  *
  * `replaceCollections` defaults to FALSE here, which is the opposite of the API's own default. The
@@ -1461,7 +1481,107 @@ export function dwDictatePathFor(workshopId: string): string {
 export const DW_OCR_IDENTITY_PATH = "/design-workshops/ocr/identity";
 
 /**
- * What `POST /design-workshops/dictate` actually returns — all five keys, and only those.
+ * How many server dictations this account has left today, and where the day ends.
+ *
+ * ── THE ROUTE EXISTED AND NOBODY CALLED IT ────────────────────────────────────────────────────
+ * `GET /design-workshops/dictation-allowance` has been deployed all along and its docstring opens
+ * "**THIS ROUTE IS WHY THE CAP IS NOT JUST A 429**": a client that can only learn the ceiling by
+ * being refused has to spend a multi-megabyte upload to learn it, on a metered connection, and then
+ * spend another one tomorrow. Both clients did exactly that — the browser handled the cap purely
+ * reactively in `Dictation.tsx` and the handset only ever wrote its allowance store downstream of a
+ * request that had already paid. So the pre-flight the route exists to provide never happened.
+ *
+ * ── THE FOUR KEYS ARE THE SERVER'S, NOT GUESSED ───────────────────────────────────────────────
+ * They are exactly `dictation_cap.allowance_payload`, which is the same object the 200 on a
+ * successful dictation and the 429 refusal both carry — so one shape describes the allowance
+ * wherever a client meets it.
+ *
+ * `dictationsLimit` and `dictationsRemaining` are BOTH null when there is no cap, deliberately:
+ * "0 remaining" and "no ceiling" must not look alike. `dictationDay` is the SERVER's India-time
+ * date, and it is what makes a cached spend safe to hold — a cached count whose day no longer
+ * matches is stale rather than authoritative, and must resolve to "not spent" so the client tries
+ * once and learns the truth here rather than withholding a capability at the wrong midnight.
+ */
+export type DwDictationAllowance = {
+  /** The daily ceiling, or null when this deployment sets none. */
+  dictationsLimit: number | null;
+  dictationsUsed: number;
+  /** What is left today, or null when uncapped. Never conflate a null with a zero. */
+  dictationsRemaining: number | null;
+  /** The server's India-time date the count belongs to, e.g. "2026-08-19". */
+  dictationDay: string;
+};
+
+/**
+ * The request that is in the air right now, if one is, so that a screen full of microphones asks
+ * this question ONCE between them.
+ *
+ * ── THE DEFECT THIS ENDS, WHICH A COMMENT ONCE CLAIMED WAS ALREADY CLOSED ─────────────────────
+ * `Dictation.tsx` gates its pre-flight on `mode === "server"` and its comment read "NOT ON EVERY
+ * MOUNT OF EVERY MICROPHONE". `mode` is PER-BUTTON state, resolved by each button's own effect, so
+ * on a browser with no native recogniser — Firefox, which is the entire reason the server rung
+ * exists — every button on the stage resolves to `server`. Stage 13 draws eleven microphones, so
+ * eleven of these fired on mount: exactly the eleven round trips the comment said it avoided. The
+ * gate saved the request only on Chrome, where the readout is not drawn anyway.
+ *
+ * The dedupe is here rather than in the component because the component cannot see its siblings.
+ * `serverOffersRoute` above solves the identical problem the identical way, and the two probes are
+ * issued from the same eleven effects.
+ *
+ * ── WHY THE ANSWER IS NOT KEPT AFTER IT ARRIVES ──────────────────────────────────────────────
+ * Only the IN-FLIGHT promise is held; it is released once it settles. A retained answer would be
+ * "asked once per session", which sounds stronger and is worse in two ways this application really
+ * meets: a designer who spends four dictations on stage 13 and then opens stage 14 would be shown
+ * the count from before those four, and a field laptop is SHARED — `AuthProvider.logout` clears the
+ * token and deliberately nothing else, so a retained count would follow the previous designer's
+ * account into the next one's session. Releasing it costs one request per stage the microphones are
+ * drawn on, and never eleven.
+ *
+ * A second property falls out of it and is worth as much as the saved round trips: the eleven
+ * readouts on one stage are the SAME answer, so they cannot disagree with each other about how many
+ * dictations are left.
+ */
+let dictationAllowanceInFlight: Promise<DwDictationAllowance | null> | null = null;
+
+/**
+ * Ask, before spending an upload to find out.
+ *
+ * It NEVER throws: a caller drawing a microphone must not lose the microphone because a courtesy
+ * request failed, and the reactive 429 handling that has always been there is still the authority
+ * on a refusal. Null means "this deployment does not answer, or the network did not" — the two are
+ * one answer here because the caller has nothing different to do about either.
+ *
+ * Concurrent callers share one request — see {@link dictationAllowanceInFlight}.
+ */
+export function dwDictationAllowance(): Promise<DwDictationAllowance | null> {
+  if (dictationAllowanceInFlight) return dictationAllowanceInFlight;
+  const asking: Promise<DwDictationAllowance | null> = apiFetch<DwDictationAllowance>(
+    "/design-workshops/dictation-allowance"
+  )
+    .catch(() => null)
+    .finally(() => {
+      // Identity-checked rather than blanked: a later call may already have replaced this one, and
+      // clearing that one instead would leave a promise nothing can ever release.
+      if (dictationAllowanceInFlight === asking) dictationAllowanceInFlight = null;
+    });
+  dictationAllowanceInFlight = asking;
+  return asking;
+}
+
+/**
+ * Forget any answer in the air, so the next caller asks the server again.
+ *
+ * FOR TESTS, and named so rather than hidden behind a flag: the dedupe above is module state, and a
+ * spec that could not clear it would be asserting on whatever the spec before it happened to leave
+ * behind. Nothing in the app calls it — the promise releases itself the moment it settles, which is
+ * the whole reason there is no stale answer for production code to have to clear.
+ */
+export function forgetDictationAllowanceInFlight(): void {
+  dictationAllowanceInFlight = null;
+}
+
+/**
+ * What `POST /design-workshops/dictate` actually returns — all NINE keys, and only those.
  *
  * THIS DECLARED A `language` KEY THE ROUTE HAS NEVER SENT. The echo is named `languageHint`, and the
  * type carried neither `status` nor `provider` at all. It is the same defect the REQUEST half of
@@ -1473,6 +1593,14 @@ export const DW_OCR_IDENTITY_PATH = "/design-workshops/ocr/identity";
  * `status` is the one that earns its place: without it the caller cannot tell EMPTY from
  * RATE_LIMITED from FAILED, and those are three different next moves — see
  * {@link dictationAnswerSentence}.
+ *
+ * AND THE SAME DEFECT HAD A SECOND ROUND, WHICH IS WHY THE COUNT ABOVE MOVED FROM FIVE TO NINE.
+ * The route spreads `dictation_cap.allowance_payload` into its 200 — `dictationsLimit`,
+ * `dictationsUsed`, `dictationsRemaining`, `dictationDay` — and has done all along. This type named
+ * none of them, so every browser client threw the server's own post-spend count away and could
+ * learn the ceiling only by being refused, which is precisely what
+ * {@link dwDictationAllowance}'s route exists to prevent. `language`/`languageHint` was a name the
+ * two ends spelled differently; this was four names one end never wrote down at all.
  */
 export type DwDictationResult = {
   /** COMPLETED | EMPTY | FAILED | RATE_LIMITED, as `ai.transcribe_audio_bytes` resolved the chain. */
@@ -1483,6 +1611,23 @@ export type DwDictationResult = {
   /** The tag we sent, echoed. It steers nothing today — see the note in `dictateAudio`. */
   languageHint?: string | null;
   message?: string | null;
+  /**
+   * THE ALLOWANCE, ON THE SUCCESS PATH — the four keys of `dictation_cap.allowance_payload`, spread
+   * into this response by the route itself.
+   *
+   * They were on the wire all along and this type did not name them, so every client threw them
+   * away and could only learn the ceiling by being refused. Carrying them here is what lets the
+   * microphone's readout age by at most one dictation instead of by a whole session: the count is
+   * the server's, taken after the spend, and no extra round trip pays for it.
+   *
+   * Optional because a deployment that predates the cap sends none of them, and because the same
+   * type describes a response this build may meet from an older server. `dictationsRemaining` null
+   * means UNCAPPED and never "none left".
+   */
+  dictationsLimit?: number | null;
+  dictationsUsed?: number | null;
+  dictationsRemaining?: number | null;
+  dictationDay?: string | null;
 };
 
 /**

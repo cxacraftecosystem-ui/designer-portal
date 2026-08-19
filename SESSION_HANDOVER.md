@@ -263,16 +263,31 @@ one-line `title .... page` regex silently matches nothing and reports success.
 
 ### Still open
 
-- **`EntitySpec.parent` is still unread by any renderer.** Child collections print as flat tables
-  with no link to their parent, so a reader cannot tell which material lines belong to which cost
-  sheet. Two agents have now declined it as too risky for the budget they had; it rewrites
-  `_render_stage`, the path every stage of every report goes through. It is genuinely worth doing
-  and genuinely worth doing carefully. Nothing is half-changed.
+- ~~**`EntitySpec.parent` is still unread by any renderer.**~~ **CLOSED ON BOTH SURFACES —
+  re-checked 2026-08-19.** `ReportBuilder._parent_groups` reads it and `_render_stage` calls it, so
+  the office's .docx splits material lines under the cost sheet each belongs to; the phone's half is
+  `ui/designworkshop/DwParentGroups.kt`'s `dwParentGroups`, called from `ReportScreen`. Both
+  docstrings record what the flat version cost, and it is worth keeping in view because it is the
+  argument for doing this kind of work at all: `costSheetRef` is `report_role=HIDDEN`, so the
+  submitted document contained no way whatsoever to tell which materials cost which product — the
+  one question a cost sheet exists to answer, in a file an officer reads as the basis of a
+  sanctioned amount. Pinned by `backend/tests/test_report_child_grouping.py`.
 - `scripts/build_boundaries.py` still does not write `backend/app/data/boundaries/`, the copy that
   lands in the image. `tests/test_report_map_assets.py` fails loudly if they diverge, so the trap is
   fenced but not removed.
-- Android: `report_templates` + `apply_report_settings` have no Kotlin port, so the on-device report
-  ignores the chosen template and 21 of the 22 stage-20 settings.
+- ~~Android: `report_templates` + `apply_report_settings` have no Kotlin port, so the on-device
+  report ignores the chosen template and 21 of the 22 stage-20 settings.~~ **CLOSED — re-checked
+  2026-08-19, and this was the most consequential wrong sentence in the file, because "the handset
+  ignores the chosen template" means two files off one desk are different documents.** The port is
+  `report/ReportTemplates.kt`, whose `applyReportSettings` `ui/designworkshop/ReportPlan.kt` calls
+  when it builds the plan, and `ReportTemplatePinTest`'s *"applyReportSettings agrees with the
+  server over the whole case table"* pins it against the server case-for-case. What the handset
+  still cannot honour is narrow and is declared rather than silent — `ReportSettings.UNSUPPORTED_SECTIONS`
+  names three special sections and the sentence a designer reads for each: transcripts (guarded — a
+  transcript is produced server-side), questionnaire answers (guarded — drawn from
+  `DwQuestionnaireStore` once this handset has read the list even once, so the warning fires only on
+  a device that never has), and AI layers (unconditional — nothing under `data/` holds one). Quote
+  that map, not "21 of 22 settings".
 
 ### Test-data residue — deliberately NOT cleaned
 
@@ -946,8 +961,27 @@ gone.
 | `DwQrEncode.kt` | port + 11 tests. Verified against the TS under `node --experimental-strip-types`: 80/80 mask matrices, 80/80 penalties, 3/3 SVG paths character-for-character |
 | report lane | media + completeness annexures, REACHED (every hop walked from the export button) |
 
-**Four of the five are dark code and said so.** Nothing calls them yet; wiring was explicitly out of
-scope. The adversarial reviewer confirmed it per worktree rather than taking their word.
+**Four of the five WERE dark code and said so** — wiring was explicitly out of scope for those
+lanes, and the adversarial reviewer confirmed it per worktree rather than taking their word.
+**All four have been wired since, and this paragraph stood unchanged while they were.** Re-checked
+2026-08-19, one call site each:
+
+| module | reached from |
+|---|---|
+| `DwWorkshopCodes` | `ui/designworkshop/WorkshopCodesScreen.kt`, which `MainActivity` routes to on `Screen.DesignWorkshopCodes` |
+| `DwSubmissionReadiness` | `ReportScreen`'s `reportChecks(...)`, and `StageIndexScreen`'s `addressBook(assess(...))` — computed off disk before the network call, and again only if the custom-section digest moved |
+| `DwPhotoMeasure` | `ui/designworkshop/DwPhotoMeasureField.kt`, whose `dwOffersPhotoMeasure` / `dwMeasurableLengthFields` `FieldRenderer` consults on every image field; `DwSketchRectify` also reuses its `solveHomography` and `jsRound` |
+| `DwQrEncode` | `data/DwWorkshopCards.kt` and `ui/RecordCodeCard.kt` |
+
+**Do not read a non-empty grep for these as unwanted wiring.** That is the live handset surface —
+a designer standing in a village with no signal gets the codes sheet, the readiness list and the
+photo-measure offer from exactly these call sites.
+
+**The one module that IS still legitimately dark is `data/DwTier2Layer.kt`**, and it is dark on
+purpose: its header argues that the layering law should be written down, with tests, BEFORE any
+device can run a model, "because the order the brief gives is deliberate: the runtime is a Kotlin
+upgrade away and the write path is a decision nobody has taken, and of the two the decision is the
+one that gets made badly under time pressure". Its only references are its own tests. Leave it.
 
 ## Where agents were RIGHT and my instructions were WRONG
 
@@ -956,9 +990,15 @@ Recorded because the instinct to defer to the brief is the failure mode here.
 1. **The Android writers can already draw charts and maps.** I briefed a design agent that they
    could not. `PdfWriter.kt:1290-1291` and `DocxWriter.kt:1252-1253` already dispatch both, the
    rasterisers are ~2,300 lines, and the India boundary data is a **91 KB offline APK asset**, not a
-   fetch. The real gap is that nothing ever CONSTRUCTS a `ChartBlock` or `MapBlock` — this repo's
-   signature defect, for the fourth time today. That makes it ~350 lines of arithmetic, not an
+   fetch. The real gap was that nothing ever CONSTRUCTED a `ChartBlock` or `MapBlock` — this repo's
+   signature defect, for the fourth time that day. That made it ~350 lines of arithmetic, not an
    engine.
+   **CLOSED, verified 2026-08-19, and the sentence above is left in the past tense rather than
+   deleted because the shape of the mistake is the point of the entry.** Those ~350 lines are
+   `ui/designworkshop/ReportFigures.kt`: five `ChartBlock` constructions and one `MapBlock`, reached
+   from `ReportScreen`'s `SpecialSection.MAP -> renderMap(...)` and
+   `SpecialSection.CHART -> renderCharts(...)` arms, with `figures.chartsFor(stage.key)` per stage.
+   The on-device report draws infographics today; do not design around a capability that is live.
 2. **`DwPy.round` was the wrong instruction for `photoMeasure`.** I told the lane to use it. The
    agent checked, found there is no `photo_measure` under `backend/` at all — so the TypeScript is
    the authority, not Python — and confirmed on the running TS that the web proposes 201 mm where
@@ -969,6 +1009,21 @@ Recorded because the instinct to defer to the brief is the failure mode here.
    live `Location` rows, not a shippable table. Porting it would fold twenty Bargarh artisans onto
    Bhubaneswar — the exact defect the server fixed last month — into the copy least likely to be
    checked against anything.
+   > **HALF OF THAT PREMISE IS NO LONGER TRUE — re-checked 2026-08-19, and the conclusion is left
+   > standing on the OTHER half rather than being quietly kept on a dead argument.** The device does
+   > have the administrative hierarchy now: `LocationDto` declares `state`, `district`, `village`,
+   > `pincode`, `subjectLatitude` and `subjectLongitude` (the KDoc there records that all four of
+   > district/village/subject-lat/lon were missing and that their absence was silent data loss), and
+   > on the server `REFERENCE_HYDRATION["participant.artisanRef"]` now copies `state`, `district`,
+   > `pincode`, `address` and `subjectLocation` onto the roster row itself, so the frozen copy is in
+   > the draft the phone already holds. **What still argues for server-only is the second clause,
+   > not the first**: the 795-district anchor table in `WorkshopData.district_points` is positioned
+   > from `geography.DistrictAnchors` over live `Location` rows, so it is derived rather than
+   > shippable, and a phone that had the district names but not the anchors would still have to
+   > invent the coordinate. Anyone reopening this should argue about the ANCHORS. The stale-premise
+   > version of this claim also survives in `ui/designworkshop/ReportFigures.kt`'s `renderMap` KDoc
+   > ("the cached artisan record on this device carries a `village` and no district and no state"),
+   > which is Android-owned and needs the same correction.
 
 ## The verifier that caught its own fixer
 
@@ -1001,3 +1056,62 @@ with file:line evidence is in the session scratchpad. The ones that matter most:
   done.
 - **A11Y (HIGH, web)** — `CollabDialog` on six list pages and "Assign researchers" have no dialog
   role, no focus trap and no Escape handling.
+
+---
+
+# The wave of 2026-08-19/20, and the ONE thing that has to happen in the right order
+
+## `docs/REPO_FACTS.md` must be regenerated BEFORE the new Checks workflow is trusted
+
+`.github/workflows/checks.yml` landed in this wave with a `Docs check` job that runs
+`node docs/tools/check-docs.mjs`. **On the commit that introduces it, that job is RED**, and one of
+the reasons is a change in the same wave: deleting `@router.post("/google")` from
+`backend/app/api/routes/auth.py` moved the generated route counts in `docs/REPO_FACTS.md`
+(`251 operations / 76 POST` → `250 / 75`, and `auth.py | 4` → `auth.py | 3`), and new test files
+under `backend/tests/`, `frontend/e2e/` and `android/app/src/test/` moved the generated test counts.
+
+**The fix is one command and it must be run on a CLEAN tree:**
+
+```bash
+node docs/tools/check-docs.mjs --write
+```
+
+**It was NOT run in this wave, deliberately.** Only the *file* columns of the size table come from
+`git ls-files`; every *line* count is read off disk. With five agents mid-edit, `--write` writes
+uncommitted work into the Tracked column, whose entire promise is that it is reproducible from a
+clone — the exact failure this file's own regenerated header now warns about. Running it early is
+worse than leaving the job red for one commit, because a red job announces itself and a poisoned
+generated column does not.
+
+**So this is a merge-ORDER dependency, not a follow-up:** land the wave, get to a clean tree, run
+`--write`, commit that diff on its own, and only then treat `Docs check` as a signal. If the wave
+merges without it, the honest interim is `continue-on-error: true` on the `docs` job with a comment
+naming the commit that removes the flag — not a red-and-silent gate, which is precisely what
+`android-build.yml`'s lint step already argues against in this repository ("Making lint a hard gate
+today would fail every run and train everyone to ignore red").
+
+**There is one genuine stale-at-HEAD row underneath all the in-flight noise**, and it is the reason
+to bother: `| android/app/src/main/java | 150 | 130,629 | 152 | 131,446 |`. Tracked and tree file
+counts CANNOT differ at a clean HEAD, so this file was last generated while two Kotlin files were
+still untracked — commit 1716641 added them without re-running `--write`. It must regenerate to
+equal counts. `checkFacts` now prints the differing rows and **emits the rows whose two file counts
+disagree FIRST**, ahead of the line-count noise, so that row cannot fall off the end of the listing
+however many agents are mid-edit; `selfTestFactsDrift` in `docs/tools/check-docs.mjs` holds that
+ordering to account.
+
+## Checks is not a gate on `main`, and nothing in `.github/` can say so
+
+`deploy-backend.yml` and `deploy-frontend.yml` fire on `push: branches: [main]` on their own, and a
+GitHub workflow cannot `needs:` a job in another workflow file — so on `main` a red Checks run RACES
+the deploy instead of blocking it. The only mechanism that would make it a gate is **required status
+checks in branch protection**, which is repository configuration and lives nowhere in this
+repository. The three job names to add there, exactly as written:
+
+- `Backend tests`
+- `Web typecheck, lint and unit specs`
+- `Docs check`
+
+Until somebody does that, Checks is a real gate on a pull request (a human reads the tick before
+merging) and advisory on `main`. [docs/CI.md](docs/CI.md) §1 and §5 say this at the point a reader
+decides what to trust; the workflow's own header explains at length what it stops and needs the same
+sentence about what it does not.

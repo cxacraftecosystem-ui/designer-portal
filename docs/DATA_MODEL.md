@@ -174,6 +174,24 @@ in lock-step (`link_workshop_artisan` / `link_workshop_craft` in
 `backend/app/services/workshop_access.py`), and the column is nullable so rows recorded before it
 existed keep working.
 
+**`Craft.workshopId` is live, and one migration's header says it is not — do not follow it.**
+`backend/prisma/migrations/20260729120000_map_legacy_records_to_their_workshop` backfills every model
+EXCEPT `Craft`, on the stated ground that "a craft is taxonomy … and **no screen narrows crafts by
+workshop**, so filling the column would invent a fact". The second clause is stale: `GET /crafts`
+takes a `workshopId` parameter, and `REFERENCE_MODELS["Craft"].workshop_where` in
+`backend/app/services/design_workshops.py` narrows the design-workshop craft picker by it. An
+engineer who reads the migration and believes it concludes the column has no consumers and deletes
+them.
+
+**The migration's CONCLUSION still holds, which is why the SQL is left exactly as it is.** Both of
+those readings are `OR`ed with the `WorkshopCraft` join (`{"OR": [{"workshopId": wid}, {"workshops":
+{"some": {"workshopId": wid}}}]}`), so a legacy craft with a NULL column still appears under every
+workshop that links it — the backfill would buy nothing — and inferring the column from a craft's
+neighbours would assert that the craft was *documented at* that workshop, which is a documentation
+event that never happened. **Never edit the SQL of an applied migration**: Prisma checksums them and
+a rewritten file makes the whole history unapplyable. Repeat this pointer in the header of the next
+migration that touches `Craft`, where the next reader will actually be standing.
+
 ### 2.2 One tool, many artisans
 
 The same documented tool recurs across crafts. `ToolArtisan` exists so it is entered once and then

@@ -306,8 +306,16 @@ def test_a_sheet_that_has_not_synced_yet_claims_none_of_the_orphans():
     dict: the orphan bucket is keyed by the empty string and an unsynced row's ``_entryId`` IS the
     empty string. Popping it for that sheet printed every unattributed line as that one product's
     material cost — a fabricated number in the column an officer sanctions against, arrived at by
-    the same code that exists to prevent fabrications. ``cost_integrity.summarise_sheets`` guards
-    the identical join and the two must not disagree about what is attributable.
+    the same code that exists to prevent fabrications. ``cost_integrity.analyse_cost_integrity``
+    guards the identical join and the two must not disagree about what is attributable.
+
+    THE FUNCTION NAMED IN THAT SENTENCE USED TO BE ONE THIS REPOSITORY DOES NOT DEFINE. It was the
+    last copy of a citation already corrected in ``cost_integrity`` and in
+    ``report_builder._parent_groups``, and it is why a maintainer grepping for the sibling guard
+    found only this test, could conclude the guard had been deleted, and would then edit one side
+    of a join whose disagreement prints a fabricated material-cost breakdown under the wrong
+    product. The invented name is deliberately not repeated here: the closure check for it is a
+    grep, and a comment that quotes the wrong symbol keeps that grep permanently non-empty.
 
     Fails before the guard with "Zari thread" — a line naming no sheet at all — heading up as the
     Sambalpuri stole's breakdown.

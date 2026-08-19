@@ -190,6 +190,58 @@ data class MediaPresignResponse(
     val publicUrl: String? = null
 )
 
+/**
+ * `extraMetadata.purpose` on a graph-paper measurement shot, so it never becomes a record's
+ * photograph.
+ *
+ * ── WHAT WENT WRONG ───────────────────────────────────────────────────────────────────────────
+ * The grid shot is usually the OLDEST image on a product or a tool — a designer photographs the
+ * object on the 1-inch sheet to get its dimensions BEFORE taking any presentable picture of it. The
+ * server picks a record's photograph with `createdAt ASC, id ASC`, so the ruled sheet won, and the
+ * .docx handed to a Development Commissioner's office showed a page of graph paper captioned as the
+ * tool.
+ *
+ * ── WHY A MARKER AND NOT A RULE ABOUT CAPTIONS ────────────────────────────────────────────────
+ * The captions these uploads carry do identify a grid shot, and the server keeps a transitional
+ * clause matching them so the photographs ALREADY in the bucket are excluded too. But a caption is
+ * prose: it is translated, edited by a reviewer, and re-typed on the handset, and a report that
+ * starts printing graph paper again because somebody tidied a sentence is not a failure anybody
+ * would connect back to this. A machine-readable purpose written by the uploading client is the
+ * durable half; the caption clause is the backfill for what predates it. The filename half of that
+ * clause (`grid-…`, `measure-grid-…`) only covers a CAMERA capture — a designer who picks the grid
+ * photo out of the gallery keeps its gallery filename — so the marker is the only thing that covers
+ * both.
+ *
+ * ── THE STRING IS A THREE-SURFACE CONTRACT ────────────────────────────────────────────────────
+ * The web writes it (`frontend/components/media/GridMeasurement.tsx`'s `MEASUREMENT_GRID_PURPOSE`),
+ * this client writes the identical string on its own grid captures, and the server excludes any
+ * candidate whose `extraMetadata->>'purpose'` is this value. Change it in one place and the other
+ * two stop agreeing SILENTLY — nothing errors, the report just starts printing ruled paper again.
+ * If every candidate on a record is excluded the server falls back to the deterministic
+ * `createdAt ASC, id ASC`, so a product whose only image is a grid shot still gets a picture rather
+ * than a blank.
+ */
+const val MEASUREMENT_GRID_PURPOSE: String = "MEASUREMENT_GRID"
+
+/**
+ * The `extraMetadata` object a marked file travels with, or NULL for an ordinary upload.
+ *
+ * ONE BUILDER FOR EVERY PATH THAT SENDS THE MARKER, and there are three: the two arms of
+ * `uploadAttachments` (which of them runs depends only on whether the eager pre-upload had finished,
+ * i.e. on signal) and `WorkshopRepository.uploadLocalFile`, which replays the offline outbox. Three
+ * hand-written `buildJsonObject { put("purpose", …) }` blocks are three chances to spell the key
+ * differently, and nothing would fail if one of them did — the report would simply start printing
+ * graph paper again for whichever path drifted. See [MEASUREMENT_GRID_PURPOSE] for why the whole fix
+ * is one string agreeing across three codebases.
+ *
+ * A BLANK PURPOSE IS NOT A PURPOSE. It answers null rather than `{"purpose": ""}`, because the
+ * server's exclusion compares the value and an empty string matches nothing — sending the key anyway
+ * would put a new field on the wire that says nothing at all.
+ */
+internal fun mediaPurposeMetadata(purpose: String?): JsonObject? =
+    purpose?.takeIf { it.isNotBlank() }
+        ?.let { buildJsonObject { put("purpose", JsonPrimitive(it)) } }
+
 @Serializable
 data class MediaCompleteRequest(
     val originalFilename: String,
@@ -205,7 +257,21 @@ data class MediaCompleteRequest(
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
     val location: LocationRequest? = null,
-    val processingRequests: List<String> = emptyList()
+    val processingRequests: List<String> = emptyList(),
+    /**
+     * Free-form metadata stored on the media row — today only `{"purpose": …}`, see
+     * [MEASUREMENT_GRID_PURPOSE].
+     *
+     * THE SERVER HAS ACCEPTED THIS KEY SINCE BEFORE THIS CLIENT SENT IT: `MediaCompleteRequest` in
+     * `backend/app/schemas/media.py` declares `extraMetadata: dict[str, Any] | None`, and
+     * `complete_media_upload` persists it through `payload.model_dump()`.
+     *
+     * DELIBERATELY NOT [EncodeDefault]. `ApiClient.json` leaves `encodeDefaults` at false, so a null
+     * here is simply absent from the body and every upload that has no purpose to declare sends
+     * exactly the bytes it always sent. That is what keeps this a zero-risk addition rather than a
+     * new key on every media upload in the app.
+     */
+    val extraMetadata: JsonObject? = null,
 )
 
 // --- S3 multipart upload (large files: chunk for transfer, S3 stitches into one object) ---

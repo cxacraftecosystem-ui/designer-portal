@@ -20,7 +20,13 @@ assertion below is a statement about what the handset must be made to do:
   would bury the report in them);
 * the note reaches all three presentations — prose, key-value grid and table cell — because a
   required blank hidden in a table is exactly as invisible as one hidden in prose;
-* media-typed fields are exempt, because a missing photograph is not a sentence.
+* a PHOTOGRAPH is exempt, because a missing photograph is not a sentence. The exemption is by ROLE
+  and by IMAGE-ness and NOT by ``is_media``, and the difference is now visible: IMAGE and IMAGE_LIST
+  carry GALLERY, a role ``_printable`` is never asked for, and ``format_value`` prints nothing for
+  them in any case. The seventeen FILE, AUDIO and VIDEO fields carry the KEY_VALUE default and now
+  print "1 document attached" through ``_value``, so an unfilled REQUIRED one prints the note like
+  any text field — which is the correct outcome and not an oversight: "the sanction order is
+  missing" is exactly the sentence an officer needs.
 
 ``show_empty_note`` is not a per-template escape hatch in practice: it is declared once on each side
 (``report_templates.ReportTemplate.show_empty_note`` and ``ReportTemplates.kt``'s ``showEmptyNote``)
@@ -131,10 +137,20 @@ def test_a_filled_field_prints_its_value_and_never_the_note():
 
 def test_an_unfilled_required_photograph_prints_no_note():
     """A missing photograph is not a sentence. Images go through ``_images``, which never
-    substitutes, and ``_printable`` is only ever asked for the non-media roles — so a required IMAGE
-    field left empty prints nothing at all. The handset must keep this exemption when it adopts the
-    rest of the rule; substituting here would put "Not recorded." where a picture belongs, in a
-    gallery, under a heading that promises photographs."""
+    substitutes, and ``_printable`` is asked for NARRATIVE, KEY_VALUE, COVER_FIELD, TABLE_COLUMN,
+    BULLETS and METRIC — never for the GALLERY role every IMAGE and IMAGE_LIST field in the
+    registry carries. So a required IMAGE field left empty prints nothing at all. The handset must
+    keep this exemption when it adopts the rest of the rule; substituting here would put
+    "Not recorded." where a picture belongs, in a gallery, under a heading that promises
+    photographs.
+
+    THE EXEMPTION IS BY ROLE AND BY IMAGE-NESS, NOT BY ``is_media``, and this docstring used to
+    read "``_printable`` is only ever asked for the non-media roles" — false since FILE, AUDIO and
+    VIDEO started printing "1 document attached" from their KEY_VALUE default. Those seventeen
+    fields DO reach ``_printable``, and a required one left blank now prints the note, which is
+    right: an absent sanction order is a gap an officer must see, while an absent photograph is a
+    gap the gallery already shows by being empty.
+    """
     builder = _builder()
     entity = _entity(ReportRole.GALLERY, required=True, ftype=FieldType.IMAGE, label="Photograph")
     builder._render_narrative(entity, {}, 1)

@@ -37,7 +37,9 @@ import kotlinx.serialization.json.JsonElement
  * that draws on the phone and not at the office (or draws differently) is the exact divergence the
  * whole report port exists to end.
  *
- * WHAT IS DELIBERATELY NOT PORTED: the map's artisan pins. See [renderMap].
+ * WHAT IS DELIBERATELY NOT PORTED: the map's GEOCODED artisan pins — the ones the office resolves
+ * from a typed address through a district anchor table that cannot ship in an APK. The SURVEYED ones
+ * are drawn. See [renderMap].
  */
 
 // --------------------------------------------------------------------------------------
@@ -389,9 +391,37 @@ internal fun renderCharts(
 /** The stage whose singleton says where the workshop was — `report_builder.MAP_VENUE_STAGE`. */
 private const val MAP_VENUE_STAGE = "WORKSHOP_SETUP"
 
-/** The roster whose rows the OFFICE's copy turns into home-district pins. */
+/** The roster whose rows become the artisans' home pins. */
 private const val MAP_ROSTER_STAGE = "WORKSHOP_PLAN_PARTICIPANTS_OPENING"
 private const val MAP_ROSTER_ENTITY = "participant"
+
+/**
+ * The roster columns naming where an artisan lives — `report_builder.MAP_ROSTER_PLACE_KEYS`.
+ *
+ * They are the pin's LABEL here and nothing more. The office also hands the joined string to a
+ * geocoder; this device has no atlas, so a row that states a place and drops no pin contributes
+ * nothing but a line in the caption.
+ */
+private val MAP_ROSTER_PLACE_KEYS = listOf("village", "district")
+
+/** The roster column holding the artisan's stated STATE — `report_builder.MAP_ROSTER_STATE_KEY`. */
+private const val MAP_ROSTER_STATE_KEY = "state"
+
+/**
+ * The roster column holding the pin a researcher dropped on the artisan's OWN place —
+ * `report_builder.MAP_ROSTER_PIN_KEY`.
+ *
+ * THE STATED PIN, NOT THE CAPTURED ONE, and the distinction is the whole reason the column exists.
+ * `design_workshops._subject_point` will not let `latitude`/`longitude` cross into a stage entry,
+ * because on this database those are the desk the record was typed at — routinely ~1,500 km from the
+ * village named on the same row. A map drawn from those would put every artisan in the office.
+ *
+ * It is hydrated from the `Artisan`'s `Location.subjectLatitude/subjectLongitude` at save time, so
+ * what is read here is THE ROW'S OWN FROZEN COPY and not a live lookup — which is why the phone can
+ * draw it at all, and why an artisan record edited after submission cannot move a pin on a document
+ * already handed to an officer.
+ */
+private const val MAP_ROSTER_PIN_KEY = "subjectLocation"
 
 /**
  * A stored GEO value as `(lat, lon)`, or null for anything that is not a real fix — `_geo_point`.
@@ -432,21 +462,112 @@ private fun geoFix(value: JsonElement?): Pair<Double, Double>? {
  * the office cannot reproduce is worse than no pin, because the two copies of one report would then
  * disagree about where the workshop was.
  *
- * THE ARTISANS' HOME DISTRICTS ARE NOT DRAWN, deliberately, and this is the one place the phone's
- * figure is a subset of the office's rather than a copy of it. The office resolves each roster row
- * through the `Artisan` record it was picked from; the cached artisan record on this device carries
- * a `village` and no district and no state, and the district anchors the server geocodes against are
- * a running average over live `Location` rows rather than a table that could ship in an APK.
- * Approximating those pins from what IS here would fold twenty Bargarh artisans onto Bhubaneswar —
- * the precise defect the server fixed by refusing to fall back to the state capital — in the copy
- * least likely to be checked against anything. The caption says so instead, in the sentence slot the
- * server uses for the same class of fact.
+ * THE ARTISANS' SURVEYED HOME PINS ARE DRAWN; THE GEOCODED ONES ARE NOT, and that split is the one
+ * place the phone's figure is a subset of the office's rather than a copy of it.
  *
- * THE HEADING IS THE TEMPLATE'S, UNCHANGED, even though DCH_STANDARD's names the artisans this
- * device does not place. A heading rewritten here would renumber nothing but WOULD put a different
- * line in the contents page of the phone's copy than in the office's, which is the divergence an
- * office notices first when it matches two files. The caption is where the difference belongs.
+ * The premise this paragraph used to rest on has gone false and is recorded here so nobody argues
+ * from it again: it said "the office resolves each roster row through the `Artisan` record it was
+ * picked from; the cached artisan record on this device carries a `village` and no district and no
+ * state". Both halves are now wrong. `_artisan_points` reads THE ROW's own frozen copy first and
+ * treats the live `Artisan` as a legacy fallback, and `REFERENCE_HYDRATION["participant.artisanRef"]`
+ * copies `village`, `district`, `state`, `pincode`, `address` and `subjectLocation` down onto the
+ * roster row at save time — every one of which this device holds in full, in the draft it is printing
+ * from. There was never a district missing from the handset.
+ *
+ * WHAT IS ACTUALLY MISSING IS THE ATLAS, and only that. `WorkshopData.district_points` is 795 anchors
+ * derived by `geography.DistrictAnchors` from live `Location` rows; it is a running average over the
+ * database, not a table that could ship in an APK. So a row that STATES a place and drops no pin
+ * cannot be placed here, and approximating it from what is present would fold twenty Bargarh artisans
+ * onto Bhubaneswar — the precise defect the server fixed by refusing to fall back to a state capital —
+ * in the copy least likely to be checked against anything. Those rows are counted in the caption
+ * instead, in the sentence slot the server uses for the same class of fact.
+ *
+ * A ROW CARRYING [MAP_ROSTER_PIN_KEY] NEEDS NO ATLAS AT ALL. It is a coordinate a researcher stood
+ * on and dropped, frozen onto the row by hydration, and `_artisan_points` draws it in preference to
+ * any name lookup — so the pin this file emits for such a row is byte-identical to the office's, the
+ * same way the venue pin already is. Withholding it was the divergence, not the caution.
+ *
+ * THE HEADING IS THE TEMPLATE'S, UNCHANGED, even where DCH_STANDARD's names artisans some of whom
+ * this device still cannot place. A heading rewritten here would renumber nothing but WOULD put a
+ * different line in the contents page of the phone's copy than in the office's, which is the
+ * divergence an office notices first when it matches two files. The caption is where the difference
+ * belongs, and it now states the residue exactly: how many rows were placed, of how many.
  */
+/**
+ * The artisans' own pins, folded by coordinate — the surveyed half of `_artisan_points`.
+ *
+ * [placed] and [total] are what the caption is built from: a map showing four pins for a workshop of
+ * thirty artisans is not wrong, but a reader who cannot see that twenty-six were never placed reads
+ * it as a workshop of four. The arithmetic has to survive the walk that produced the pins, which is
+ * what `_MapFacts` exists for on the other side.
+ */
+private class RosterPins(
+    val points: List<MapPoint> = emptyList(),
+    val states: Set<String> = emptySet(),
+    val placed: Int = 0,
+    val total: Int = 0,
+)
+
+/**
+ * Where each participating artisan lives, for the rows that carry a surveyed pin — `_artisan_points`.
+ *
+ * ONLY [MAP_ROSTER_PIN_KEY] IS READ, and the rest of `_artisan_points` is deliberately absent: its
+ * geocoding branch needs the 795-anchor district table, which is a running average over live
+ * `Location` rows and cannot ship in an APK. See [renderMap] for the whole argument. A row with no
+ * pin is counted in [RosterPins.total] and not in [RosterPins.placed], so the caption can say so.
+ *
+ * THE LABEL IS WHAT THE ROW SAYS THE PLACE IS, never the artisan's name — `_artisan_points` says the
+ * same in as many words. A coordinate carries no name, and a map pinned with people's names is a
+ * different figure from a map pinned with places, printed under the same heading.
+ *
+ * FOLDED TO FIVE DECIMALS, about a metre, exactly as `_fold_points` does — six weavers from one
+ * hamlet are one pin as far as any reader can tell, so the pin says six. HALF_EVEN through
+ * [java.math.BigDecimal] because that is what Python's `round()` does to a binary double, and the
+ * emitted coordinate is the ROUNDED one on both sides.
+ */
+private fun rosterPins(draft: WorkshopDraft?, stateHint: String): RosterPins {
+    val rows = draft?.stages?.get(MAP_ROSTER_STAGE)?.rowsFor(MAP_ROSTER_ENTITY).orEmpty()
+    if (rows.isEmpty()) return RosterPins()
+
+    fun round5(value: Double): Double =
+        java.math.BigDecimal(value).setScale(5, java.math.RoundingMode.HALF_EVEN).toDouble()
+
+    // Insertion-ordered, and the first label for a coordinate wins — `_fold_points`' dict.
+    val folded = LinkedHashMap<Pair<Double, Double>, Pair<String, Int>>()
+    val states = LinkedHashSet<String>()
+    var placed = 0
+    rows.forEach { row ->
+        val values = row.values
+        val fix = geoFix(values[MAP_ROSTER_PIN_KEY]) ?: return@forEach
+        val text = MAP_ROSTER_PLACE_KEYS
+            .map { DwValues.text(values[it]).trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString(", ")
+        // The row's own state, with the workshop's as the last resort — a hint for naming the region
+        // the pin fell in, never a position. `_artisan_points` reads it in the same order.
+        val state = DwValues.text(values[MAP_ROSTER_STATE_KEY]).trim().ifEmpty { stateHint }
+        canonicalState(state)?.takeIf { it.isNotEmpty() }?.let { states += it }
+        val key = round5(fix.first) to round5(fix.second)
+        val existing = folded[key]
+        folded[key] = (existing?.first ?: text.ifEmpty { "Artisan's home" }) to ((existing?.second ?: 0) + 1)
+        placed++
+    }
+    return RosterPins(
+        points = folded.map { (key, value) ->
+            MapPoint(
+                label = value.first,
+                lat = key.first,
+                lon = key.second,
+                kind = MapPointKind.ARTISAN,
+                count = value.second,
+            )
+        },
+        states = states,
+        placed = placed,
+        total = rows.size,
+    )
+}
+
 internal fun renderMap(
     builder: DocumentBuilder,
     section: TemplateSection,
@@ -465,7 +586,7 @@ internal fun renderMap(
         .firstOrNull { it.isNotEmpty() }
         .orEmpty()
     val fix = geoFix(setup["venueLocation"])
-    val points = if (fix == null) {
+    val venuePoints = if (fix == null) {
         emptyList()
     } else {
         listOf(
@@ -477,11 +598,14 @@ internal fun renderMap(
             )
         )
     }
+    val artisans = rosterPins(draft, state)
+    val points = venuePoints + artisans.points
 
-    // The state stage 1 typed, canonicalised. The server also adds every state a PIN landed in; the
-    // only pin this device can draw is the venue, whose state is the one already added, so the two
-    // sets are the same here.
-    val highlight = if (state.isEmpty()) emptySet() else setOf(canonicalState(state) ?: state)
+    // EVERY STATE A PIN LANDED IN, PLUS THE ONE STAGE 1 TYPED — `_render_map`'s `set(facts.states)`
+    // union the venue's. Both halves matter: a workshop whose artisans came from the next state over
+    // must tint both, and a workshop whose addresses resolved to nothing at all must still tint its
+    // own, because that tinted region is the entire content of the figure in the empty case.
+    val highlight = artisans.states + if (state.isEmpty()) emptySet() else setOf(canonicalState(state) ?: state)
 
     // The venue sentence names the place THE RECORD names, not a place an atlas resolved. A reader
     // who typed "Barpali" and reads "Workshop venue at Odisha" concludes the report lost their
@@ -491,12 +615,24 @@ internal fun renderMap(
         .filter { it.isNotEmpty() }
         .joinToString(", ")
 
-    val roster = draft?.stages?.get(MAP_ROSTER_STAGE)?.rowsFor(MAP_ROSTER_ENTITY).orEmpty().size
     val sentences = ArrayList<String>()
-    if (points.isNotEmpty() && statedVenue.isNotEmpty()) sentences += "Workshop venue: $statedVenue."
-    if (roster > 0) {
-        sentences += "The home places of the $roster participating artisan(s) are not plotted on " +
-            "this copy, which was generated on a handset; the office's copy of this report maps them."
+    if (venuePoints.isNotEmpty() && statedVenue.isNotEmpty()) sentences += "Workshop venue: $statedVenue."
+    // `_render_map`'s sentence, word for word, so a reader matching the two copies is matching the
+    // same claim about the same rows.
+    if (artisans.placed > 0) {
+        sentences += "Home places of ${artisans.placed} of ${artisans.total} participating " +
+            "artisans, at ${artisans.points.size} location(s)."
+    }
+    // WHERE THE SERVER SAYS "recorded no address that could be placed", THIS COPY HAS TO SAY MORE.
+    // The office's unplaced rows are ones that stated nothing; this copy's also include every row
+    // that stated an address and no coordinate, because the district anchor table is not in the APK.
+    // Printing the server's shorter sentence here would tell a reader those addresses are missing
+    // from the RECORD, which would be false and is exactly the kind of quiet difference between two
+    // copies of one report this file exists to prevent.
+    if (artisans.total > artisans.placed) {
+        sentences += "${artisans.total - artisans.placed} participant(s) have no surveyed position " +
+            "on this copy, which was generated on a handset; the office's copy resolves their stated " +
+            "addresses through a place atlas this device does not carry."
     }
     if (points.isEmpty()) {
         sentences += "No address in the record could be resolved to a position; the map shows the " +

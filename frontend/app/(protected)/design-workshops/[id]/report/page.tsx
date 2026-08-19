@@ -1109,6 +1109,51 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         ) : (
           <p className="text-sm text-ink-700">Every required field in all 22 stages is filled in.</p>
         )}
+
+        {/*
+          A WAY BACK INTO A STAGE THAT IS FILLED IN AND WRONG.
+
+          Until this block the ONLY link out of this screen into a stage was the list above, and that
+          list is rendered inside the `incomplete.length ?` branch — so it names stages with a
+          MISSING answer and nothing else. The case a designer reads a preview to catch is the
+          opposite one: the participant table prints the wrong village for Kamla Devi, every required
+          box on that stage is filled, and the screen whose whole job is "is this the document?"
+          could not answer "and how do I change this?". They had to remember which of the
+          twenty-two stages owns the participant table and find it from the index.
+
+          A LIST OF STAGES AND NOT AN EDITABLE SHEET, and that is a rule rather than an economy. An
+          edit has to land on the STAGE ENTRY so `merge_entry_provenance` moves authorship to the
+          designer and the printed value stays the entry's own frozen copy. A preview that wrote
+          through to the repository record behind a reference would re-resolve a document that may
+          already be in an officer's hands, which is the one thing this application must never do.
+          Where a value came from a reference, the route in is the same picker and inline dialog the
+          stage already has.
+
+          Collapsed, because twenty-two links between the completeness bar and the sheet would push
+          the thing this page exists to show below the fold.
+        */}
+        <details className="border-t border-line-200 pt-3">
+          <summary className="cursor-pointer text-sm font-medium text-purple-700">
+            Open a stage to correct something the preview shows
+          </summary>
+          <p className="mt-2 text-xs leading-5 text-ink-500">
+            The pages below print each stage&rsquo;s own saved answers, not the repository records they were
+            copied from — so a value that is filled in but wrong is corrected on its stage, and a report already
+            handed over is never changed by editing an artisan or a product afterwards.
+          </p>
+          <ul className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+            {(registry?.stages ?? []).map((stage) => (
+              <li key={stage.key} className="text-sm">
+                <Link
+                  href={`/design-workshops/${id}/stages/${stage.key}`}
+                  className="text-purple-700 underline-offset-2 hover:underline"
+                >
+                  {stage.number}. {stage.title}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </details>
       </section>
 
       {preview?.warnings.length ? (

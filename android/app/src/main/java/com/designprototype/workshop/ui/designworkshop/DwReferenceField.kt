@@ -139,11 +139,80 @@ data class DwInlineRecordOutcome(
 @Immutable
 class DwInlineRecordHost(
     /**
-     * [recordId] null creates; non-null edits that record. [onFinished] fires exactly once, when the
+     * [recordId] null creates; non-null edits that record. [seed] is what the picker already knows
+     * about the record being created — see [DwInlineSeed]. [onFinished] fires exactly once, when the
      * form is done with — saved or abandoned.
      */
-    val open: (model: String, recordId: String?, onFinished: (DwInlineRecordOutcome) -> Unit) -> Unit,
+    val open: (
+        model: String,
+        recordId: String?,
+        seed: DwInlineSeed,
+        onFinished: (DwInlineRecordOutcome) -> Unit,
+    ) -> Unit,
 )
+
+/**
+ * What the picker that opened a record form already knows about the record being created.
+ *
+ * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────────
+ *
+ * A product created from `existingProduct.productRef` is created from a row that has ALREADY named
+ * its artisan, in the picker directly above. Nothing carried that across, so the form opened with the
+ * carry bag's artisan — the LAST artisan this designer documented anywhere, which is not the artisan
+ * on the row they pressed "Create a new product" from — or with nothing at all. `artisanId` is
+ * optional on save while `artisanName` is a required free-text box, so the product saved happily
+ * filed under nobody; the server then narrows this very picker on that column, so the record was
+ * invisible in the control that made it, seconds after the designer created it.
+ *
+ * ── NOT SET FOR A ROSTER CASCADE, AND THAT IS THE WHOLE OF THE RULE ───────────────────────────
+ *
+ * Two fields in the registry cascade and they hold DIFFERENT KINDS OF ID. `existingProduct.productRef`
+ * filters by `existingProduct.artisanRef`, which is an `Artisan` id. `prototype.productRef` filters by
+ * `prototype.artisanRef`, which is a `DwParticipant` ROSTER ENTRY id — the maker was chosen from stage
+ * 3's list of who was in the room. The SERVER resolves the second back to an artisan
+ * (`_artisan_id_behind`) and deliberately spares the clients that rule; this one cannot follow it, and
+ * filing a product under a roster-entry id would be worse than filing it under nobody. So the FILTER
+ * FIELD'S OWN `refModel` decides, exactly as `StageReferenceSelect`'s `inlineSeed` decides on the web.
+ *
+ * ── EVERY SEEDED VALUE IS VISIBLE AND EDITABLE ────────────────────────────────────────────────
+ *
+ * Nothing here is written into a hidden box. A seed lands in the same control a designer would have
+ * used, showing the same name, and they can change it before saving. The comment this replaces —
+ * "asserting a parent this picker never saw the form choose would be a claim about whose product it
+ * is" — was right about a claim made BEHIND a form, and it stays right: what changed is that the
+ * picker now DOES see the form choose it, and shows it.
+ *
+ * ── WHAT IS DELIBERATELY NOT HERE ─────────────────────────────────────────────────────────────
+ *
+ * No identity number of any kind, for `sanitizeCarryContext`'s reason: a seed is copied from a stage
+ * row that everyone who can open the workshop can read. Nothing regulated may travel this way.
+ *
+ * The linked `Workshop` is not here either, and the web's seed carries it. That half is NOT
+ * implemented on this client: `StageScreen` is handed a design-workshop ID and nothing else — it
+ * never loads the summary that names the linked `Workshop` — so seeding it would mean a fetch from
+ * inside a field renderer, which is a decision about where that id comes from rather than a wiring
+ * change. Until then the workshop picker keeps `applyMostRecentSubmittable`'s default, which is what
+ * it has always done and is visible and editable in the same dropdown.
+ */
+@Immutable
+data class DwInlineSeed(
+    /** The artisan the row cascades from, ONLY where the filter field's own `refModel` is `Artisan`. */
+    val artisanId: String = "",
+    /**
+     * That artisan's name AS THE ROW ALREADY SHOWS IT — hydration's frozen copy, so it is the
+     * server's own spelling and not anything this file invented. It fills the REQUIRED free-text box
+     * on the product and tool forms, which would otherwise open blank beside an artisan the designer
+     * has already chosen.
+     */
+    val artisanName: String = "",
+) {
+    val isEmpty: Boolean get() = artisanId.isBlank() && artisanName.isBlank()
+
+    companion object {
+        /** The picker knows nothing worth seeding — a roster cascade, or no cascade at all. */
+        val NONE = DwInlineSeed()
+    }
+}
 
 /**
  * The reference models this picker may offer to CREATE, and the word it calls each one.
@@ -327,9 +396,26 @@ internal fun DwReferenceSelectField(
      * That matters for the hydration bookkeeping: a stale `lastHydration` would decide it may
      * overwrite a value the designer has since typed by hand.
      */
+    /**
+     * What this picker already knows about a record created from it — see [DwInlineSeed].
+     *
+     * The name is read out of THIS ROW through the PARENT field's own hydration mapping, which is the
+     * same dictionary the picker above used to write it there. Asking the mapping rather than
+     * guessing a key is what keeps this from inventing a second, client-side copy of the reference
+     * models — the mistake [pendingHydration]'s KDoc records in full.
+     */
+    fun inlineSeed(): DwInlineSeed {
+        if (parentField?.refModel != "Artisan" || parentId.isBlank()) return DwInlineSeed.NONE
+        val nameKey = parentField.refHydration.entries.firstOrNull { it.key == "name" }?.value
+        val name = nameKey?.let { DwValues.text(rowValues[it]).trim() }.orEmpty()
+        return DwInlineSeed(artisanId = parentId, artisanName = name)
+    }
+
     fun openInlineRecord(recordId: String?) {
         val host = inlineHost ?: return
-        host.open(field.refModel, recordId) { outcome ->
+        // NOTHING IS SEEDED INTO AN EDIT. The record already has its own answers, and a seed landing
+        // on top of them would silently re-file somebody else's product under this row's artisan.
+        host.open(field.refModel, recordId, if (recordId == null) inlineSeed() else DwInlineSeed.NONE) { outcome ->
             // Backed out. Nothing was written, so nothing here may change — least of all the field,
             // which at this point still holds a perfectly good link.
             if (!outcome.saved) return@open
@@ -343,10 +429,15 @@ internal fun DwReferenceSelectField(
                     id = newId,
                     label = outcome.createdLabel,
                     hint = outcome.createdHint,
-                    // Left BLANK rather than set to the current parent. `narrowedTo` keeps an option
-                    // with no filter value — its own comment says why — so blank shows the record in
-                    // a cascading list, whereas asserting a parent this picker never saw the form
-                    // choose would be a claim about whose product it is.
+                    // STILL LEFT BLANK, though the reason has narrowed. It used to be "asserting a
+                    // parent this picker never saw the form choose would be a claim about whose
+                    // product it is"; the picker now DOES offer the parent, visibly, as a seed (see
+                    // [DwInlineSeed]) — but a seed is a DEFAULT and the designer may have changed it
+                    // in the form, and this option is built from an outcome that reports the id, the
+                    // label and the hint and not the artisan finally saved. `narrowedTo` keeps an
+                    // option with no filter value — its own comment says why — so blank shows the
+                    // record in a cascading list until the refreshed list arrives carrying the
+                    // server's own answer, which is the only authority on what it was filed under.
                     filterValue = "",
                 )
             ) + locallyCreated.filterNot { it.id == newId }
@@ -566,7 +657,11 @@ internal fun DwReferenceMultiSelectField(
              */
             createAction = if (noun != null && inlineHost != null) {
                 SelectCreateAction("Create a new $noun") {
-                    inlineHost.open(field.refModel, null) { outcome ->
+                    // NOTHING TO SEED FROM A MULTI-SELECT, and the web's roster picker seeds nothing
+                    // either. This control has no `rowValues` and its cascade — where it has one at
+                    // all — is the roster's, whose ids are `DwParticipant` entries and not artisans:
+                    // the very case [DwInlineSeed] refuses to guess at.
+                    inlineHost.open(field.refModel, null, DwInlineSeed.NONE) { outcome ->
                         if (!outcome.saved) return@open
                         refreshTick++
                         val newId = outcome.createdId

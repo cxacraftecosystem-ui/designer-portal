@@ -10,7 +10,7 @@ import { GUIDE_STEPS } from "@/components/guide/steps";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 
 /**
- * The journey: the ten steps threaded onto a scroll-linked spine, with the sticky rail
+ * The journey: every step in GUIDE_STEPS threaded onto a scroll-linked spine, with the sticky rail
  * alongside on large screens.
  *
  * The spine is the page's organising animation. `useScroll` measures how far the reader has
@@ -21,7 +21,7 @@ import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
  *
  * Horizontally, ONE thing owns the axis: `--guide-rail`, the width of the list's first grid
  * column. The spine is centred in a box of that width and every step's numbered bubble is a grid
- * item in that same column, so the track, the fill, the node and the ten numbers share a centre
+ * item in that same column, so the track, the fill, the node and the numbers share a centre
  * line by construction. They used to be independent guesses (`absolute left-4 sm:left-6` in two
  * places plus `pl-12 sm:pl-16` in a third, reconciled by `-translate-x-1/2`), which is a
  * three-way agreement that has to be re-derived by hand every time a size or a breakpoint moves —
@@ -75,7 +75,7 @@ export function GuideJourney() {
           // `--guide-rail` is the single owner of the spine's horizontal axis. It is the width of
           // the list's first grid column (see `GuideStepCard`), and the spine below is centred in
           // a box of exactly that width anchored to the same `left-0`. Track, fill, travelling
-          // node and all ten numbered bubbles therefore share one centre line by construction —
+          // node and every numbered bubble therefore share one centre line by construction —
           // change the rail width or the bubble size and they still cannot drift apart.
           className="relative grid gap-4 [--guide-rail:2rem] sm:[--guide-rail:3rem]"
         >

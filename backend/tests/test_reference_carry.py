@@ -39,6 +39,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NamedTuple
 
 import pytest
 
@@ -112,6 +113,34 @@ def _columns(model: str) -> set[str]:
     return out
 
 
+def _relations(model: str) -> set[str]:
+    """The RELATION fields of a model — exactly the ones :func:`_columns` throws away.
+
+    Written because `_columns`' own docstring ("relations, ids and index directives excluded") is
+    the ledger's one structural blind spot, and something real was sitting in it:
+    `ToolDocumentation.artisanLinks` — the whole tool-assignment feature, with a form, four routes
+    and a data-browser filter behind it — reached no workshop and no report, and
+    `test_no_source_column_is_unaccounted_for` could not see it to say so. Same rule as `_columns`,
+    read the other way round: a field whose type is another model.
+    """
+    scalars = {"String", "Int", "Float", "Boolean", "DateTime", "Decimal", "Json", "BigInt", "Bytes"}
+    enums = set(re.findall(r"^enum\s+(\w+)\s*\{", _schema_text(), re.MULTILINE))
+    out: set[str] = set()
+    for line in _block("model", model).splitlines():
+        line = line.strip()
+        if not line or line.startswith("@@"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        name, type_name = parts[0], parts[1].rstrip("?[]")
+        if not name[0].islower():
+            continue
+        if type_name not in scalars and type_name not in enums:
+            out.add(name)
+    return out
+
+
 def _enum_members(name: str) -> set[str]:
     return {m.strip() for m in _block("enum", name).splitlines() if m.strip()}
 
@@ -135,6 +164,42 @@ def _enum_members(name: str) -> set[str]:
 #    accuracy/capturedAt are a fix of the desk the record was typed at, 1,500 km from the village
 #    on the same row on every live record. Copying them would put a report's map pin on a desk.
 #  * "identity" — see `aadhaarNumber`, which is the one column here refused on policy grounds.
+#  * "a form default, not an answer" — a Prisma enum member that is ALSO the column's `@default`
+#    and has no blank alternative in any record form. `ProductType.OTHER`, `MarketDemand.UNKNOWN`
+#    and `MakerType.UNKNOWN` are the three, and the argument is written out above the translation
+#    tables in `design_workshops`. THE COLUMNS ARE STILL CARRIED and stay in the CARRIED lists —
+#    it is the individual MEMBER that translates to nothing, so the box arrives blank for the
+#    designer to answer instead of pre-answered on nobody's behalf. `productType` keeps even the
+#    unmappable member, on `existingProduct.recordType`; `marketDemand` and `maker` have no such
+#    second box, so their default token reaches nothing at all, which is the honest state.
+#
+# RELATIONS ARE LEDGERED SEPARATELY, BELOW, AND THAT IS THE ONE BLIND SPOT THIS FILE HAD.
+# `_columns` is scalars-only by design, so `test_no_source_column_is_unaccounted_for` structurally
+# cannot see a relation — and `ToolDocumentation.artisanLinks`, the entire tool-assignment feature,
+# sat in exactly that gap: built end to end (a form, four routes, a data-browser filter) and
+# reaching no workshop and no report, with the mechanism that promises "nothing was missed" unable
+# to say so. `RELATION_LEDGER` closes it; see `test_no_source_relation_is_unaccounted_for`.
+
+# `status` IS NOT BOOKKEEPING, AND IT USED TO BE FILED AS IF IT WERE — in a line beside
+# `createdAt`, `updatedAt` and `createdById`. `enum RecordStatus { DRAFT PENDING APPROVED REJECTED
+# NEEDS_REVISION }` is a named reviewer's verdict on whether the record is fit to be used;
+# `NEEDS_REVISION`'s schema comment reads "Reviewer sent the record back with comments
+# (reviewNotes); creator edits and resubmits". Filing that as a timestamp is how a REJECTED
+# ToolDocumentation came to sit in the stage-5 picker looking exactly like an approved one, and to
+# hydrate all twenty-four of its fields into a document handed to a ministry officer.
+#
+# IT IS STILL NOT CARRIED, and the reason is the opposite of "it does not matter". It is MUTABLE
+# and a hydrated value is a PERMANENT copy: a tool picked while PENDING is approved the following
+# week, and a frozen "Pending review" in the report would then be a false statement about a named
+# reviewer's decision — worse than the silence it replaced. The verdict is surfaced where it is
+# LIVE instead, in the picker's sublabel at the moment of choosing. See
+# `design_workshops._review_flag` and
+# `test_a_reviewers_verdict_is_visible_while_choosing_and_is_never_copied_onto_the_entry`.
+_MUTABLE_VERDICT = (
+    "a reviewer's verdict, and MUTABLE — not bookkeeping. Frozen into a permanent copy it would "
+    "assert a stale verdict for ever, so it is shown live in the picker's sublabel "
+    "(design_workshops._review_flag) and never written onto an entry."
+)
 
 ARTISAN_CARRIED = {
     "name": "participant.name",
@@ -160,7 +225,7 @@ ARTISAN_CARRIED = {
     # it could not parse ("30+", "about 30") in the JSON rather than guessing at them.
     "extraMetadata": "participant.experienceYears + participant.age + specialisation (legacy)",
     "craftId": "participant.specialisation",
-    "locationId": "participant.village/state/district/pincode/address/subjectLocation",
+    "locationId": "participant.village/state/district/pincode/subjectLocation",
 }
 ARTISAN_NOT_CARRIED = {
     "aadhaarNumber": (
@@ -169,7 +234,7 @@ ARTISAN_NOT_CARRIED = {
         "participant table answers no question a design report asks, and the artisan is already "
         "identified by name, Pehchan card and phone."
     ),
-    "status": "bookkeeping — the source record's moderation state, not a fact about the artisan",
+    "status": _MUTABLE_VERDICT,
     "reviewNotes": "bookkeeping — internal moderation",
     "reviewedById": "bookkeeping — internal moderation",
     "reviewedAt": "bookkeeping — internal moderation",
@@ -185,7 +250,6 @@ LOCATION_CARRIED = {
     "district": "participant.district",
     "village": "participant.village",
     "pincode": "participant.pincode",
-    "address": "participant.address (fallback when Artisan.address is empty)",
     "subjectLatitude": "participant.subjectLocation",
     "subjectLongitude": "participant.subjectLocation",
 }
@@ -196,6 +260,15 @@ LOCATION_NOT_CARRIED = {
     "accuracy": "provenance, not stated",
     "capturedAt": "provenance, not stated",
     "placeName": "provenance, not stated — derived from the device fix, not from the artisan",
+    # MOVED HERE FROM CARRIED, and it sat one line above `placeName` contradicting it. It read
+    # "participant.address (fallback when Artisan.address is empty)", and that fallback printed the
+    # reverse-geocoded street of the DESK under an artisan's name, beside a village, district and
+    # state 1,500 km away. `Location`'s own docstring, `LocationInput` and `LocationFields.tsx`
+    # (which labels the box "GPS address") all file it in the PROVENANCE group beside `placeName`.
+    "address": (
+        "provenance, not stated — the address of the desk the record was typed at, derived from "
+        "the same device fix placeName is. Artisan.address is the STATED one and still carries."
+    ),
     "extraMetadata": "bookkeeping",
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
@@ -228,8 +301,14 @@ PRODUCT_CARRIED = {
 PRODUCT_NOT_CARRIED = {
     "measurementImageId": (
         "a working image from the grid-measurement pipeline, not a catalogue photograph. It would "
-        "arrive in the report's product gallery as a picture of a ruler. The catalogue shot is "
-        "carried through _reference_photos."
+        "arrive in the report's product gallery as a picture of a ruler. This entry used to end "
+        "'The catalogue shot is carried through _reference_photos', which was FALSE about the "
+        "tree it was written in: _reference_photos took the OLDEST image and both record forms "
+        "upload the grid frames first, so the grid shot reached the gallery anyway, by the path "
+        "this entry named as the safe one. Refusing the column achieved nothing until "
+        "_reference_photos learned to sort a MEASUREMENT_GRID-marked row last — which is what "
+        "now makes the sentence true. See test_the_measurement_grid_shot_is_not_the_records_"
+        "photograph."
     ),
     "measurementAnalysis": (
         "machine output. report_templates.py:69-84 requires a reader to be able to tell model "
@@ -237,7 +316,7 @@ PRODUCT_NOT_CARRIED = {
         "ANNEXURE_AI_LAYERS gets."
     ),
     "measurementAnalysisStatus": "queue state of the above",
-    "status": "bookkeeping",
+    "status": _MUTABLE_VERDICT,
     "reviewNotes": "bookkeeping",
     "reviewedById": "bookkeeping",
     "reviewedAt": "bookkeeping",
@@ -277,10 +356,13 @@ TOOL_CARRIED = {
     "locationId": "carried by value as place",
 }
 TOOL_NOT_CARRIED = {
-    "measurementImageId": "a working image from the measurement pipeline; see the product note",
+    "measurementImageId": (
+        "a working image from the measurement pipeline; see the product note, including why that "
+        "note's claim about _reference_photos was false until the MEASUREMENT_GRID marker existed"
+    ),
     "measurementAnalysis": "machine output; see the product note",
     "measurementAnalysisStatus": "queue state of the above",
-    "status": "bookkeeping",
+    "status": _MUTABLE_VERDICT,
     "reviewNotes": "bookkeeping",
     "reviewedById": "bookkeeping",
     "reviewedAt": "bookkeeping",
@@ -300,7 +382,7 @@ PROCESS_CARRIED = {
     "productId": "processStep.documentedFor + traditionalProcess.documentedFor (the product name)",
 }
 PROCESS_NOT_CARRIED = {
-    "status": "bookkeeping",
+    "status": _MUTABLE_VERDICT,
     "reviewNotes": "bookkeeping",
     "reviewedById": "bookkeeping",
     "reviewedAt": "bookkeeping",
@@ -344,6 +426,106 @@ CRAFT_NOT_CARRIED = {
     "workshopId": "join key",
 }
 
+# ── THE RELATION LEDGER — the blind spot, ledgered ────────────────────────────────────────────
+#
+# Same contract as the scalar lists above and for the same reason: a relation that reaches nothing
+# must be a decision somebody wrote down, not something nobody looked at. Every relation of every
+# model a REF field can point at appears here exactly once, with what happens to it.
+#
+# THE WORDS THAT RECUR:
+#  * "read by the picker" — the relation is in `REFERENCE_MODELS[…].include` and a lambda reads it.
+#  * "reached by its own picker" — the related records are chosen through a REF field of their own,
+#    so pulling them in through this side would print the same rows twice.
+#  * "bookkeeping" / "join key" — as in the scalar lists.
+#  * "NOT BUILT" — the honest answer, and the one this ledger exists to make sayable.
+RELATION_LEDGER = {
+    "Artisan": {
+        "craft": "read by the picker — participant.specialisation, via include={'craft': True}",
+        "location": (
+            "read by the picker — the STATED address columns and the subject pin, via "
+            "include={'location': True}. The PROVENANCE half of the same row does not cross."
+        ),
+        "createdBy": "bookkeeping — the researcher who typed the record",
+        "workshop": "join key — the design workshop already knows which workshop it belongs to",
+        "workshops": "join key — the WorkshopArtisan reading of 'was at this workshop'",
+        "products": "reached by its own picker (existingProduct.productRef)",
+        "tools": "reached by its own picker (tool.toolRef)",
+        "toolLinks": "the tool-assignment join; see ToolDocumentation.artisanLinks below",
+        "media": "one photograph per record, through _reference_photos",
+        "questionnaireInterviews": "a different feature; the report reaches questionnaires directly",
+        "sectionStatuses": "bookkeeping — questionnaire progress",
+    },
+    "Location": {
+        "artisans": "the back-reference of the relation the Artisan picker includes",
+        "workshops": "join key",
+        "products": "back-reference",
+        "tools": "back-reference",
+        "media": "back-reference",
+        "questionnaireInterviews": "a different feature",
+    },
+    "ProductDocumentation": {
+        "artisan": (
+            "NOT INCLUDED, deliberately: every value the picker needs is on the denormalised "
+            "scalar columns (artisanName, craftName, place). include={'artisan': True} used to be "
+            "declared here and no lambda ever read it — a join per picker keystroke for nothing."
+        ),
+        "craft": "carried by value as craftName",
+        "workshop": "join key",
+        "location": (
+            "NOT INCLUDED, and NOT a tidy-up to make. _reference_place prefers location.village "
+            "over the free-text place and runs at REPORT time, so turning this on would change the "
+            "place string printed in documents already submitted. See ReferenceModel.include."
+        ),
+        "createdBy": "bookkeeping",
+        "media": "one photograph per record, through _reference_photos (media_field='productId')",
+        "mediaProcessingJobs": "queue state; see measurementAnalysisStatus in the scalar list",
+        "processes": "reached by its own picker (processStep.processRef / traditionalProcess)",
+    },
+    "ToolDocumentation": {
+        "artisan": "NOT INCLUDED — see the identical note on ProductDocumentation.artisan",
+        "craft": "carried by value as craftName",
+        "workshop": "join key",
+        "location": "NOT INCLUDED — see the identical note on ProductDocumentation.location",
+        "createdBy": "bookkeeping",
+        "media": "one photograph per record, through _reference_photos (media_field='toolId')",
+        "mediaProcessingJobs": "queue state",
+        "artisanLinks": (
+            "NOT BUILT, and this entry is the reason this ledger exists. ToolArtisan is the whole "
+            "tool-assignment feature — ToolAssignmentSection.tsx, four routes in tools.py, a "
+            "data_browser filter — and none of it reaches a workshop or a report: tool.toolRef "
+            "prints 'Documented for: <the one denormalised artisanName>' and the artisans a "
+            "researcher assigned by hand appear nowhere. Carrying them is a PRODUCT decision and "
+            "not a bug fix, and it is not cheap: it needs a bounded 'assignedArtisans' join, a new "
+            "fromref() declared KEY_VALUE and never a sixth TABLE_COLUMN (the tool table's five "
+            "widths already sum to exactly 100), a label saying 'as documented' because the value "
+            "is frozen at pick time, a registry_version() bump, a regenerated "
+            "design-workshop-schema.json and the matching pair in DW_REFERENCE_HYDRATION."
+        ),
+    },
+    "Process": {
+        "product": "read by the picker — processStep.documentedFor, via include={'product': True}",
+        "createdBy": "bookkeeping",
+        "workshop": "join key",
+        "steps": (
+            "read by the picker — _step_lines flattens the ordered sequence onto "
+            "traditionalProcess.documentedSteps, via include={'steps': True}"
+        ),
+    },
+    "ProcessStep": {
+        "process": "join key — the step rows are reached through Process.steps",
+    },
+    "Craft": {
+        "createdBy": "bookkeeping",
+        "workshop": "join key",
+        "artisans": "reached by its own picker (participant.artisanRef)",
+        "products": "reached by its own picker",
+        "tools": "reached by its own picker",
+        "media": "media_field='craftId', but no Craft mapping carries a photograph",
+        "workshops": "join key — the WorkshopCraft reading of workshop scope",
+    },
+}
+
+
 LEDGER = [
     ("Artisan", ARTISAN_CARRIED, ARTISAN_NOT_CARRIED),
     ("Location", LOCATION_CARRIED, LOCATION_NOT_CARRIED),
@@ -375,6 +557,39 @@ def test_no_source_column_is_unaccounted_for(model, carried, refused):
     )
     stale = sorted(accounted - columns)
     assert not stale, f"{model} no longer has these columns: {stale}"
+
+
+@pytest.mark.parametrize("model", sorted(RELATION_LEDGER), ids=sorted(RELATION_LEDGER))
+def test_no_source_relation_is_unaccounted_for(model):
+    """THE ONE SHAPE OF OMISSION THE SCALAR LEDGER IS STRUCTURALLY UNABLE TO SEE.
+
+    `_columns` excludes relations by design, so `test_no_source_column_is_unaccounted_for` — the
+    mechanism whose docstring promises "a column exists in the Prisma schema and is not in either
+    list => this fails" — was blind to every many-to-many in the schema. `ToolDocumentation`
+    `artisanLinks` sat in that blind spot for the whole life of the tool-assignment feature: built,
+    shipped, reaching no workshop and no report, and looking to this file exactly like something
+    that had been considered.
+
+    A relation added to any of these seven models now fails here until somebody writes down what
+    happens to it — including, and especially, "nothing".
+
+    IT IS A TRIPWIRE AND IT PASSES BY CONSTRUCTION TODAY, which is worth stating so that a green run
+    is not read as evidence that anything in this lane works. Nothing it asserts can be broken by a
+    source change; it fires on the next SCHEMA change. Its negative control is therefore on itself:
+    deleting ``artisanLinks`` from ``RELATION_LEDGER["ToolDocumentation"]`` must fail it, which is
+    what shows ``_relations`` really parses a many-to-many out of ``schema.prisma`` rather than
+    quietly returning an empty set and passing every model.
+    """
+    declared = _relations(model)
+    accounted = set(RELATION_LEDGER[model])
+    missing = sorted(declared - accounted)
+    assert not missing, (
+        f"{model} has relations this repository has never decided about: {missing}. Add each to "
+        f"RELATION_LEDGER[{model!r}] with what reaches the workshop through it, or with the reason "
+        "nothing does."
+    )
+    stale = sorted(accounted - declared)
+    assert not stale, f"{model} no longer has these relations: {stale}"
 
 
 @pytest.mark.parametrize(("model", "carried", "refused"), LEDGER, ids=[m for m, _c, _r in LEDGER])
@@ -695,6 +910,48 @@ def test_the_device_fix_never_reaches_the_workshop_and_the_subject_pin_does():
     assert dw.REFERENCE_MODELS["Artisan"].data(no_pin, None)["subjectLocation"] is None
 
 
+async def test_the_gps_address_never_becomes_the_artisans_stated_address(monkeypatch):
+    """THE FOURTH LINE OF THE ROSTER USED TO CONTRADICT THE THREE ABOVE IT.
+
+    `participant.address` read `r.address or _rel(r, "location", "address")`. `Location.address` is
+    a PROVENANCE column by three independent declarations — the `Location` docstring, `LocationInput`
+    and `LocationFields.tsx`, which renders it in a box labelled "GPS address" inside a panel
+    captioned "Provenance, not an address. These values say where the device was" — and it is
+    derived from the same device fix `placeName` is, which this file already refused on exactly
+    that ground.
+
+    So an artisan whose own Address box a researcher left blank, while letting the device fill the
+    GPS one (which is automatic), printed in a submitted report as "Village: Barpali / District:
+    Bargarh / State: Odisha / Address: <a street in Kharagpur, West Bengal>". Only-fill-blanks then
+    made it permanent: no re-pick could clear it, and nothing on the page said the value was
+    machine-derived.
+    """
+    no_stated_address = _artisan_row(
+        address=None,
+        location=_location_row(address="Plot 14, campus road, Kharagpur"),
+    )
+    data = await _hydrate(
+        monkeypatch, "participant", {"artisanRef": "art_1"},
+        rows={"artisan": [no_stated_address]},
+    )
+    assert "address" not in data, (
+        f"the desk's address reached the participant roster as {data.get('address')!r}"
+    )
+    assert "Kharagpur" not in str(data), (
+        "nothing derived from the device fix may cross — placeName is refused for the same reason"
+    )
+    # The three STATED columns beside it still do cross, which is the half that must not be lost.
+    assert data["village"] == "Barpali"
+    assert data["district"] == "Bargarh"
+    assert data["state"] == "Odisha"
+
+    # And the artisan's OWN address is unaffected: it is a stated column and it still carries.
+    stated = await _hydrate(
+        monkeypatch, "participant", {"artisanRef": "art_1"}, rows={"artisan": [_artisan_row()]},
+    )
+    assert stated["address"] == "House 4, Weavers' lane"
+
+
 # --------------------------------------------------------------------------------------
 # The round trip: a fully populated record through the REAL hydrate_entries
 # --------------------------------------------------------------------------------------
@@ -714,7 +971,12 @@ def _entity(entity_key: str):
 def _location_row(**overrides):
     fields = dict(
         state="Odisha", district="Bargarh", village="Barpali", pincode="768029",
-        address="Weavers' lane, near the tank", placeName="Kharagpur",
+        # A DESK-SHAPED VALUE ON PURPOSE. This used to read "Weavers' lane, near the tank" — a
+        # subject-shaped address on a PROVENANCE row — which made every assertion about it read
+        # as though the two groups of Location columns said the same kind of thing. `placeName`
+        # below is Kharagpur against an Odisha village, ~1,500 km, which is the state of every
+        # live row and is the whole reason neither of these two crosses.
+        address="Plot 14, campus road, Kharagpur", placeName="Kharagpur",
         subjectLatitude=21.2, subjectLongitude=83.6,
         latitude=22.314, longitude=87.311, altitude=32.0, accuracy=26.0,
         capturedAt=datetime(2025, 3, 12, 9, 0),
@@ -791,6 +1053,20 @@ def _process_row(**overrides):
     return SimpleNamespace(**fields)
 
 
+def _craft_row(**overrides):
+    """The fifth reference model's row fixture, and the one that was missing.
+
+    `Craft` carries two columns and both print on the COVER PAGE of every submitted report, which
+    made it the highest-visibility carry of the five and the only one with no database-free round
+    trip: `craftLocalName` was asserted by no backend test at all, and Craft's only executing round
+    trip lived in `test_reference_resolver.py` behind a Postgres skip that nobody's machine
+    satisfies. See `test_a_documented_craft_reaches_the_cover_page_whole`.
+    """
+    fields = dict(id="crf_1", name="Sambalpuri Ikat", localName="ସମ୍ବଲପୁରୀ ବନ୍ଧ")
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
 class _Delegate:
     def __init__(self, rows):
         self._rows = rows
@@ -815,7 +1091,14 @@ class _FakeDb:
     def __getattr__(self, name):
         return _Delegate(self._rows.get(name, []))
 
-    async def query_raw(self, _sql, ids):
+    async def query_raw(self, _sql, ids, *_binds):
+        # ``*_binds`` AND NOT A FIXED ARITY, because pinning the call shape here is a cost paid by
+        # tests that have nothing to say about it: binding the measurement-grid marker as `$2` — the
+        # tidier form of the interpolation `_reference_photos` guards instead, and the one its guard
+        # says to move to — turned eighteen hydration tests red on the argument count alone. Two
+        # more stubs in `test_entry_provenance.py` are still on the fixed shape and are why that
+        # move has not happened. What a bind MEANS is `_CapturingDb`'s job; here the rows come from
+        # `photos` and the statement is never read.
         return [
             {"parent": parent, "id": media_id, "caption": caption}
             for parent, (media_id, caption) in self._photos.items()
@@ -914,6 +1197,68 @@ async def test_a_product_type_with_no_honest_category_leaves_the_category_blank(
     assert mapped["category"] == "PACKAGING" and mapped["recordType"] == "PACKAGING"
 
 
+async def test_an_enum_member_that_is_only_ever_a_form_default_is_not_carried_as_an_answer(
+    monkeypatch,
+):
+    """"THE RESEARCHER CHOSE THIS" AND "NOBODY WAS ASKED" WERE THE SAME STORED TOKEN.
+
+    Three Prisma columns declare a member as their `@default` and no record form offers a blank
+    alternative: `productType ProductType @default(OTHER)`, `marketDemand MarketDemand
+    @default(UNKNOWN)` and `maker MakerType @default(UNKNOWN)`. `ProductForm.tsx` and `ToolForm.tsx`
+    render each select with `defaultValue={initial?.x ?? "<DEFAULT>"}` over a list with no empty
+    member and submit `requiredText(form, "x") || "<DEFAULT>"`; the handset builds the same
+    dropdowns with `includeNone = false`. So an untouched form stores the token and nothing can
+    separate it from a deliberate pick.
+
+    Two of the three PRINT. `existingProduct.category` is one of the six columns the Existing
+    products table lays out, so every uncategorised product asserted "Other" in a ministry report;
+    `existingProduct.marketDemand` has the DEFAULT report_role — KEY_VALUE — so "Market demand: Not
+    known" stood in the per-row extras beneath that table. Only-fill-blanks then made both look
+    answered to the designer as well.
+
+    The record's own answer is not lost: `existingProduct.recordType` still receives OTHER through
+    `_PRODUCT_TYPE_TO_MEMBER`, which is the entire reason that box exists.
+    """
+    untouched = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [
+            _product_row(productType="OTHER", marketDemand="UNKNOWN")
+        ]},
+    )
+    assert "category" not in untouched, (
+        f"an unanswered product type asserted a category: {untouched.get('category')!r}"
+    )
+    assert "marketDemand" not in untouched, (
+        f"an unanswered market demand arrived as {untouched.get('marketDemand')!r}"
+    )
+    assert untouched["recordType"] == "OTHER", "the record's own answer must still cross"
+
+    untouched_tool = await _hydrate(
+        monkeypatch, "tool", {"toolRef": "tul_1"},
+        rows={"tooldocumentation": [_tool_row(maker="UNKNOWN")]},
+    )
+    assert "maker" not in untouched_tool, (
+        f"an unanswered maker arrived as {untouched_tool.get('maker')!r}"
+    )
+
+    # AND THE OTHER HALF, which is what stops this becoming "blank everything vague". A token a
+    # researcher had to open the dropdown to reach is an answer and still crosses — including
+    # MakerType.OTHER, which reads like MarketDemand.UNKNOWN and is nothing like it, because
+    # nothing on the tool form defaults to it.
+    chosen = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [
+            _product_row(productType="PACKAGING", marketDemand="SEASONAL")
+        ]},
+    )
+    assert chosen["category"] == "PACKAGING" and chosen["marketDemand"] == "SEASONAL"
+    chosen_tool = await _hydrate(
+        monkeypatch, "tool", {"toolRef": "tul_1"},
+        rows={"tooldocumentation": [_tool_row(maker="OTHER")]},
+    )
+    assert chosen_tool["maker"] == "OTHER"
+
+
 async def test_a_fully_documented_tool_arrives_whole(monkeypatch):
     data = await _hydrate(
         monkeypatch, "tool", {"toolRef": "tul_1"},
@@ -978,6 +1323,44 @@ async def test_a_documented_process_reaches_the_overview_whole_including_its_sub
     ], "the sub-steps must arrive in sortOrder, numbered by position, with notes and group marks"
 
 
+def test_a_step_with_two_notes_is_still_one_bullet_in_the_report():
+    """THREE DOCUMENTED STEPS USED TO PRINT AS FIVE BULLETS, TWO OF THEM UNNUMBERED.
+
+    `documentedSteps` is a LONG_TEXT with `report_role=BULLETS`, and the renderer's pre-promotion
+    path for one of those replaces every semicolon with a newline and then splits on newlines,
+    one bullet per piece; the Android report screen is a port of the same line. `_step_lines`
+    embedded the note verbatim and `.strip()` cannot touch a newline INSIDE a string, so a step
+    whose note came from `MultiNoteInput` — which joins a researcher's several notes with a
+    blank line, on the web form and on the handset alike — split at the blank line and printed
+    its second note as its own bullet, with no number in
+    front of it. `DocumentBuilder.bullets` drops the empty item between them, so there was not even
+    a gap to notice. A ministry officer counted more steps than the researcher documented.
+
+    THE ASSERTION THAT MATTERS IS THE LAST ONE: it re-runs the renderer's own split over the value
+    and requires the count to be unchanged. Anything else would pass while the report still broke.
+    """
+    process = _process_row(steps=[
+        SimpleNamespace(name="Tying", stepType="SEQUENTIAL", sortOrder=0,
+                        notes="Use cotton thread\n\nKnots must be tight"),
+        SimpleNamespace(name="Dyeing", stepType="GROUP", sortOrder=1, notes=None),
+        SimpleNamespace(name="Washing", stepType="SEQUENTIAL", sortOrder=2,
+                        notes="Rinse in the tank; then dry in shade"),
+    ])
+    value = dw._step_lines(process)
+    lines = value.split("\n")
+    assert lines == [
+        "1. Tying — Use cotton thread · Knots must be tight",
+        "2. Dyeing (group)",
+        "3. Washing — Rinse in the tank · then dry in shade",
+    ], "one documented step must be one line, whatever its note contains"
+
+    rendered = [piece.strip() for piece in value.replace(";", "\n").split("\n")]
+    assert len([piece for piece in rendered if piece]) == 3, (
+        f"report_builder would print {rendered} — a bullet per piece, and the unnumbered ones read "
+        "to a ministry officer as steps in the sequence"
+    )
+
+
 async def test_the_overview_narrative_the_designer_writes_is_never_overwritten(monkeypatch):
     """``processOverview`` is the DESIGNER's required narrative about what they observed.
 
@@ -1001,6 +1384,39 @@ async def test_a_process_step_row_still_receives_only_the_three_it_should(monkey
         rows={"process": [_process_row()]},
     )
     assert "documentedSteps" not in data and "preProcessAvailable" not in data
+
+
+async def test_a_documented_craft_reaches_the_cover_page_whole(monkeypatch):
+    """THE COVER PAGE'S CARRY WAS THE ONE NOBODY EXECUTED.
+
+    `workshopSetup.craftName` is `required=True` and `report_role=COVER`, and `craftLocalName` is
+    COVER beside it — the craft's name in the local script, printed on the front of every document
+    handed to a ministry officer. Both were pinned only by STATIC checks: the mapping table, the
+    `fromref` marker and the browser mirror. Nothing executed them. So a `coerce_value` change, a
+    `_reference_data` change or a rename of the target would have left the whole developer-machine
+    suite green while the local-script name went blank on the cover — and the more severe variant
+    is a strict save refused on stage 1 for a box the picker was supposed to fill.
+
+    Written in the same generic shape as its four siblings, so a pair added to the mapping is
+    covered the moment it is added.
+
+    WHAT IT PROVES AND WHAT IT DOES NOT, because "it passed" means less here than elsewhere in this
+    file. It pins no behaviour this lane INTRODUCED — the craft carry already worked — so reverting
+    any source change made alongside it leaves this green. What it does is execute a path that was
+    only ever checked statically: its negative control is on the declarations it reads, and
+    deleting the ``craftLocalName`` pair from ``REFERENCE_HYDRATION["workshopSetup.craftRef"]``, or
+    renaming the target field, fails it here rather than on a ministry's cover page. Do not
+    "strengthen" it by asserting on something this lane changed; it is a coverage test and saying so
+    is the honest version.
+    """
+    data = await _hydrate(
+        monkeypatch, "workshopSetup", {"craftRef": "crf_1"}, rows={"craft": [_craft_row()]},
+    )
+    blank = sorted(t for t in _targets("workshopSetup.craftRef") if not data.get(t))
+    assert blank == [], f"a documented craft left these cover-page boxes empty: {blank}"
+
+    assert data["craftName"] == "Sambalpuri Ikat"
+    assert data["craftLocalName"] == "ସମ୍ବଲପୁରୀ ବନ୍ଧ"
 
 
 async def test_re_pointing_at_a_thinly_documented_record_clears_all_of_the_new_fields(
@@ -1088,6 +1504,188 @@ def test_every_carried_photograph_carries_its_caption():
         assert spec.caption_for == photo_target, (
             f"{entity_key}.{caption_target} is not declared as the caption of {photo_target}"
         )
+
+
+class _CapturingDb:
+    """Enough Prisma client to see the statement ``_reference_photos`` actually sends.
+
+    THE ASSERTION HAS TO BE ON THE SQL AND NOT ON A RESULT, and that is worth saying out loud.
+    Which MediaFile row wins is decided by Postgres — ``DISTINCT ON`` over a computed sort key —
+    and there is no database on a developer machine. Re-implementing the selection in Python to
+    "test" it would test the re-implementation, which is exactly the toothless shape this file
+    warns about elsewhere. So what is pinned here is the CONTRACT the statement expresses: the
+    marker the three uploading clients write, the transitional clause for rows written before it,
+    and — the part that is easy to get wrong — that the exclusion is a SORT KEY and not a WHERE,
+    so a record whose only image is a grid shot still gets a picture.
+
+    WHAT THIS CANNOT SEE, STATED SO NOBODY READS MORE INTO A GREEN RUN THAN IS THERE. ``query_raw``
+    records the string and answers ``[]``; nothing here parses it. As of 2026-08-20 the statement
+    has NEVER been executed against a Postgres by any suite on this machine — the compose stack is
+    down, so ``test_reference_resolver.py`` and every other DB-backed test are skipped, and a syntax
+    error, a bad CTE/``DISTINCT ON`` interaction or a type error in the boolean expression would
+    ship with this file green. It was read closely instead: ``extraMetadata`` is JSONB in the init
+    migration so ``->>`` on a non-object answers NULL rather than raising, ``originalFilename`` is
+    NOT NULL so ``is_grid`` can never be NULL and sort ahead of a real candidate on NULLS LAST, and
+    ``DISTINCT ON`` permits ordering by a CTE column absent from the select list. Reading is the
+    whole of the evidence. Replace this paragraph with "executed on <date> against <version>" the
+    first time an ``EXPLAIN`` of it runs, and not before.
+
+    ``*args`` rather than a fixed arity, and ``sql`` starts EMPTY on purpose: the marker guard in
+    ``_reference_photos`` is asserted by proving no statement was sent at all, so a stub that
+    recorded nothing until the call succeeded could not tell "refused" from "sent and ignored".
+    """
+
+    def __init__(self):
+        self.sql = ""
+        self.args = ()
+
+    async def query_raw(self, sql, *args):
+        self.sql = sql
+        self.args = args
+        return []
+
+
+@pytest.mark.parametrize(
+    ("model", "column"),
+    [("ToolDocumentation", "toolId"), ("ProductDocumentation", "productId")],
+)
+async def test_the_measurement_grid_shot_is_not_the_records_photograph(monkeypatch, model, column):
+    """THE MINISTRY REPORT PRINTED A SHEET OF GRAPH PAPER CAPTIONED AS THE TOOL.
+
+    ``_reference_photos`` picks the OLDEST IMAGE on the parent, and its docstring justified the
+    ``createdAt, id`` tiebreak only as STABILITY — it never claimed the row was a picture of the
+    subject. Both record forms await their grid-measurement uploads FIRST, before the numbered
+    process captures and before the batch of field photographs, so on any measured product or tool
+    the oldest image is deterministically the calibration frame. That id and its caption are what
+    ``photo``/``photoCaption`` carried, into ``tool.photo`` and into ``existingProduct.productPhotos``
+    — both declared ``report_role=GALLERY`` — so the .docx handed to an officer showed a ruled
+    measurement sheet captioned "Length & breadth grid (measurement) for Pit loom" while the
+    catalogue photographs sat one row later in the same table, unused.
+
+    ``PRODUCT_NOT_CARRIED["measurementImageId"]`` claimed the opposite in this very file ("The
+    catalogue shot is carried through _reference_photos"), which is why nobody looked: refusing the
+    column achieved nothing while the same image reached the same gallery by the path the refusal
+    named as safe.
+
+    THIS QUERY IS ALSO ON THE RENDER PATH, so the fix is not confined to rows saved after it:
+    ``load_report_references`` calls it through ``_load_one_reference_model`` and
+    ``ReferencedRecord.photo`` re-resolves on every generate. A row hydrated BEFORE the fix keeps
+    the frozen grid id in its gallery while the reference now answers the catalogue id, and
+    ``report_builder.ReportBuilder._images`` dedupes by media id, so that row prints BOTH. Pinning
+    that pairing is report_builder's to do — see ``_reference_photos``' docstring, which names it
+    as an open decision rather than a surprise.
+    """
+    fake = _CapturingDb()
+    monkeypatch.setattr(dw, "db", fake)
+    await dw._reference_photos(dw.REFERENCE_MODELS[model], ["rec_1"])
+    sql = fake.sql
+
+    assert f'm."{column}"' in sql, "the statement must still group by this model's parent key"
+
+    # 1. THE MARKER, WHICH IS A CONTRACT WITH THREE UPLOADING CLIENTS. The two web record forms and
+    # the handset's grid section write extraMetadata.purpose = "MEASUREMENT_GRID"; if this spelling
+    # is ever "tidied" on one side the report silently goes back to printing the grid sheet.
+    assert dw.MEASUREMENT_GRID_PURPOSE == "MEASUREMENT_GRID"
+    assert '"extraMetadata"' in sql and "'purpose'" in sql
+    assert "'MEASUREMENT_GRID'" in sql
+
+    # 1b. AND IT IS INTERPOLATED INTO RAW SQL, WHICH IS WHY IT IS VETTED FIRST. The statement was
+    # interpolating two values and validating one — the column name through `_PHOTO_PARENT_COLUMNS`,
+    # the marker not at all — and "it is a module constant" is a property of today's code that no
+    # test held. This pins the guard: a marker carrying a quote must never reach the statement,
+    # whatever future call site supplies it.
+    with pytest.raises(ValueError, match="measurement-grid marker"):
+        bad = _CapturingDb()
+        monkeypatch.setattr(dw, "db", bad)
+        monkeypatch.setattr(dw, "MEASUREMENT_GRID_PURPOSE", "GRID' OR TRUE--")
+        await dw._reference_photos(dw.REFERENCE_MODELS[model], ["rec_1"])
+    assert bad.sql == "", "the unvetted marker reached the statement before the guard ran"
+
+    # 2. THE TRANSITIONAL CLAUSE, for the rows already in the table when the marker shipped. A
+    # caption or a filename is a string a researcher can also type, which is why it is the fallback
+    # and not the rule — and why it may be deleted once the pre-marker rows are gone.
+    assert "grid (measurement) for" in sql
+    assert "'grid-%'" in sql and "'measure-grid-%'" in sql
+
+    # 3. NOT A `WHERE`. A product whose ONLY image is a grid shot must still get a picture rather
+    # than a blank gallery, so nothing about the grid may narrow the candidate set.
+    where = sql[sql.index("WHERE"):sql.index(") SELECT DISTINCT ON (parent)")]
+    assert "MEASUREMENT_GRID" not in where and "grid-" not in where and "$2" not in where, (
+        f"the grid rule leaked into the WHERE clause, so a grid-only record now hydrates a blank "
+        f"gallery: {where}"
+    )
+    assert "is_grid" not in where, f"the computed flag must stay a sort key: {where}"
+
+    # 4. AND THE DIRECTION, WHICH IS THE ENTIRE FIX AND THE ONE THING POSITION ALONE CANNOT PIN.
+    # Postgres sorts false before true, so `is_grid ASC` is what puts the grid frame LAST. This
+    # block used to assert only that is_grid outranked created_at and that the clause ended
+    # "created_at ASC, id ASC" — both of which `is_grid DESC` also satisfies, and DESC is the exact
+    # inversion that makes the graph paper win on every measured record deterministically, i.e. the
+    # original defect promoted from an accident of upload order to a rule. The whole clause is
+    # pinned rather than a substring, so the stability tiebreak this docstring argues for — two
+    # renders of one report cannot swap photographs — is pinned in the same line.
+    order = sql[sql.rindex("ORDER BY"):].strip()
+    assert order == "ORDER BY parent, is_grid ASC, created_at ASC, id ASC", (
+        f"the grid frame no longer sorts last, or the deterministic tiebreak is gone: {order}"
+    )
+
+
+def test_a_reviewers_verdict_is_visible_while_choosing_and_is_never_copied_onto_the_entry():
+    """A REJECTED RECORD LOOKED EXACTLY LIKE AN APPROVED ONE IN THE PICKER.
+
+    `reference_options` has no `status` clause, deliberately — the pooling philosophy documented
+    above `records.viewable_where` is that every signed-in account may read every row, and a
+    rejected tool's measurements are still the measurements that were recorded. What was missing was
+    that the designer could not SEE the verdict while choosing, so a tool a reviewer had rejected as
+    a duplicate hydrated all twenty-four of its fields into a document handed to a ministry officer
+    with nothing on the page or in the picker to distinguish it.
+
+    SHOWN, NOT CARRIED. `status` is mutable and a hydrated value is a permanent copy: a tool picked
+    while PENDING is approved the following week, and a frozen "Pending review" would then be a
+    false statement about a named reviewer's decision. The sublabel is recomposed on every picker
+    call, so it is always the current verdict, and nothing about it is written onto the entry.
+    """
+    spec = dw.REFERENCE_MODELS["ToolDocumentation"]
+
+    assert "Rejected" in spec.sublabel(_tool_row(status="REJECTED"))
+    assert "Sent back" in spec.sublabel(_tool_row(status="NEEDS_REVISION"))
+    assert "Awaiting review" in spec.sublabel(_tool_row(status="PENDING"))
+
+    # APPROVED is the ordinary case and says nothing: a badge on every row would hide the four
+    # rows that are not approved, which is the whole point of the badge.
+    approved = spec.sublabel(_tool_row(status="APPROVED"))
+    assert approved == spec.sublabel(_tool_row()), "an approved record must read as it always did"
+    assert "Rejected" not in approved and "review" not in approved
+
+    # The verdict reaches the picker and nothing else: it is not a key of the carried data, and
+    # `status` stays in every model's NOT_CARRIED list.
+    assert "status" not in dw.REFERENCE_MODELS["ToolDocumentation"].data(_tool_row(), None)
+    assert "REJECTED" not in str(
+        dw.REFERENCE_MODELS["ToolDocumentation"].data(_tool_row(status="REJECTED"), None)
+    )
+
+
+def test_no_reference_model_joins_a_relation_none_of_its_lambdas_reads():
+    """A JOIN PER PICKER KEYSTROKE FOR A VALUE NOBODY LOOKS AT, ON A ~756 ms LINK.
+
+    `ProductDocumentation` and `ToolDocumentation` both declared `include={"artisan": True}` while
+    their label, sublabel and data lambdas read only the denormalised scalars (`r.artisanName`,
+    `r.craftName`, `r.place`) — there is no `_rel(r, "artisan", …)` anywhere in either. The include
+    was issued on every `reference_options` call, every `hydrate_entries` save and every
+    `load_report_references`, and discarded.
+
+    THE OBVIOUS "FIX" IS THE DANGEROUS ONE AND THIS TEST PINS AGAINST IT TOO. Swapping in
+    `include={"location": True}` — because `_reference_place` reads `row.location` — would change
+    the place string PRINTED IN DOCUMENTS ALREADY SUBMITTED: `_reference_place` prefers
+    `location.village` over the free-text `place`, and `load_report_references` runs at REPORT time,
+    not at save time. That is the one thing the never-re-resolve rule exists to forbid.
+    """
+    assert dw.REFERENCE_MODELS["ProductDocumentation"].include == {}
+    assert dw.REFERENCE_MODELS["ToolDocumentation"].include == {}
+
+    # The two that DO declare one are read, which is what makes the rule a rule and not a ban.
+    assert dw.REFERENCE_MODELS["Artisan"].include == {"craft": True, "location": True}
+    assert dw.REFERENCE_MODELS["Process"].include == {"product": True, "steps": True}
 
 
 def test_the_photograph_lookup_carries_nothing_a_media_entitlement_would_gate():
@@ -1296,13 +1894,30 @@ def test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full(
 # CAN do is stop the set growing and stop any of these drifting further, which is what
 # :func:`test_the_tables_whose_declared_widths_govern_still_do` does.
 #
-# To retire an entry: rebalance that entity's first six widths to 100 and delete its line.
+# THE SAME FIVE ENTITIES ARE WHERE THE TWO SURFACES DRAW DIFFERENT TABLES, and that is one fact and
+# not two, which is why the handset's answer is recorded on the SAME line as the declared sum rather
+# than in a second table that can drift out of step with this one. `ReportScreen.tableColumns` on the
+# phone NORMALISES the declared hints — scale them to 100, last column absorbs the residue — where
+# `_render_table` DISCARDS them and re-weights 2.0 for free text against 1.0 for everything else. The
+# two agree wherever the declared sum is already 100, which is twenty-four of the twenty-nine tabular
+# entities; for these five the same workshop's .docx paginates and wraps differently depending on
+# which machine built it. `handset` below is what the phone lays out today, to 4 decimal places.
+#
+# To retire an entry: rebalance that entity's first six widths to 100 and delete its line — both
+# halves of it, because at 100 the two rules coincide and there is nothing left to record.
+class _NonGoverning(NamedTuple):
+    declared_sum: float
+    handset: tuple[float, ...]
+
+
 _WIDTHS_THAT_DO_NOT_GOVERN = {
-    "sketch": 88.0,
-    "prototype": 112.0,
-    "prototypeValidation": 86.0,
-    "finalProduct": 120.0,
-    "followUp": 88.0,
+    "sketch": _NonGoverning(88.0, (13.6364, 27.2727, 20.4545, 20.4545, 18.1818)),
+    "prototype": _NonGoverning(112.0, (10.7143, 21.4286, 14.2857, 17.8571, 25.0, 10.7143)),
+    "prototypeValidation": _NonGoverning(
+        86.0, (23.2558, 16.2791, 15.1163, 15.1163, 15.1163, 15.1163)
+    ),
+    "finalProduct": _NonGoverning(120.0, (10.0, 20.0, 15.0, 18.3333, 20.0, 16.6667)),
+    "followUp": _NonGoverning(88.0, (22.7273, 13.6364, 15.9091, 22.7273, 13.6364, 11.3636)),
 }
 
 
@@ -1326,7 +1941,8 @@ def test_the_tables_whose_declared_widths_govern_still_do():
     widths do not EXCEED 100 — so a table that drifted DOWN to 88 passed it while being laid out by
     the proportional fallback, and the twenty-six entities it does not name were never checked at
     all. Five of them are in that state right now and are listed in ``_WIDTHS_THAT_DO_NOT_GOVERN``
-    with the sum each reaches.
+    with the sum each reaches — and, on the same line, the layout the handset draws for it instead,
+    which :func:`test_the_two_surfaces_lay_out_the_same_table_the_same_way` pins.
 
     Every other tabular entity must either declare nothing (proportional by design) or add up.
     """
@@ -1348,13 +1964,107 @@ def test_the_tables_whose_declared_widths_govern_still_do():
         if recorded is None:
             drifted.append(f"{entity.key} (sums to {total})")
         else:
-            assert abs(total - recorded) < 0.5, (
-                f"{entity.key}'s widths have moved from {recorded} to {total} while still not "
-                "governing — rebalance them to 100 rather than to another number nothing reads"
+            assert abs(total - recorded.declared_sum) < 0.5, (
+                f"{entity.key}'s widths have moved from {recorded.declared_sum} to {total} while "
+                "still not governing — rebalance them to 100 rather than to another number "
+                "nothing reads"
             )
     assert drifted == [], (
         "these tables' declared widths have stopped governing, so report_builder is laying them "
         f"out proportionally and the percentages beside their fields do nothing: {drifted}"
+    )
+
+
+def _server_table_widths(columns):
+    """The widths ``report_builder._render_table`` hands ``TableBlock``, as it computes them.
+
+    A transcription of that branch and not a call into it, because ``_render_table`` needs a
+    ``ReportBuilder``, a ``TemplateSection`` and rows to reach the four lines that matter. It is
+    six lines long and pinned by :func:`test_the_two_surfaces_lay_out_the_same_table_the_same_way`
+    against the Android rule; if it ever stops matching the source, that test is the one that has
+    to be re-read rather than repaired.
+    """
+    declared = sum(c.column_width_pct for c in columns)
+    if declared and abs(declared - 100.0) < 0.5:
+        return [c.column_width_pct for c in columns]
+    # Free text gets twice the share of a number or a date, and every declared width is discarded.
+    weights = [2.0 if c.is_free_text else 1.0 for c in columns]
+    widths = [100.0 * w / sum(weights) for w in weights]
+    widths[-1] += 100.0 - sum(widths)
+    return widths
+
+
+def _handset_table_widths(columns):
+    """The widths ``ReportScreen.tableColumns`` hands ``TableBlock`` on the phone, in Python.
+
+    NORMALISE AND ABSORB, which is a different rule and not a rounding difference: a declared width
+    above zero is a HINT that is kept and scaled, an unhinted column takes an even share of the
+    remainder with a 4% floor, the vector is scaled to 100 and the last column absorbs the residue.
+    Nothing is ever discarded, which is exactly where it parts company with the server.
+    """
+    hinted = sum(c.column_width_pct for c in columns)
+    unhinted = sum(1 for c in columns if c.column_width_pct <= 0)
+    share = max((100.0 - hinted) / unhinted, 4.0) if unhinted else 0.0
+    widths = [c.column_width_pct if c.column_width_pct > 0 else share for c in columns]
+    scaled = [w * 100.0 / sum(widths) for w in widths]
+    scaled[-1] = 100.0 - sum(scaled[:-1])
+    return scaled
+
+
+def test_the_two_surfaces_lay_out_the_same_table_the_same_way():
+    """ONE WORKSHOP, ONE REGISTRY, TWO .docx FILES THAT PAGINATE DIFFERENTLY.
+
+    The server and the handset both draw the same six columns from the same registry and then
+    compute their widths by DIFFERENT RULES — ``_render_table`` discards the declared widths and
+    re-weights free text at 2.0, ``ReportScreen.tableColumns`` keeps them and normalises. Where the
+    declared sum is already 100 the two coincide exactly, and for twenty-four of the twenty-nine
+    tabular entities it is. For the other five the same stage prints at one width at the office and
+    another in the field, and until this test existed that divergence was written down only in a
+    KDoc on ``tableColumns`` — so nothing failed when it widened, and nothing failed when a sixth
+    entity joined the five.
+
+    THIS IS THE SAFE HALF AND IT IS DELIBERATELY NOT THE FIX. Converging costs one surface the
+    layout of documents already printed and filed whichever direction it goes, so which rule wins
+    is the owner of the printed page's call and needs a changelog note. What a test can do is fail
+    the moment the set changes or a recorded vector moves, which is what this does. The six-column
+    cap is the part the two surfaces DO agree on and must keep agreeing on — ``_governing_widths``
+    takes the same first six as ``_table_columns`` and ``tableColumns``' callers.
+    """
+    disagreed = []
+    for _stage, entity in all_entities():
+        columns, declared = _governing_widths(entity)
+        if not columns or not declared:
+            continue
+        server = _server_table_widths(columns)
+        handset = _handset_table_widths(columns)
+        recorded = _WIDTHS_THAT_DO_NOT_GOVERN.get(entity.key)
+        if recorded is None:
+            if any(abs(a - b) > 0.1 for a, b in zip(server, handset, strict=True)):
+                disagreed.append(
+                    f"{entity.key}: server {[round(x, 4) for x in server]} vs handset "
+                    f"{[round(x, 4) for x in handset]}"
+                )
+            continue
+        # A recorded divergence is pinned to the number it actually reaches, both sides. Widening
+        # it is the failure this exists to catch: "these five differ" is not a fact anybody can act
+        # on, "prototype's first column moved from 10.7 to 6.0 on the phone" is.
+        assert len(recorded.handset) == len(columns), (
+            f"{entity.key} now draws {len(columns)} columns and _WIDTHS_THAT_DO_NOT_GOVERN records "
+            f"{len(recorded.handset)} — re-record the handset vector beside its declared sum"
+        )
+        assert all(abs(a - b) < 0.01 for a, b in zip(recorded.handset, handset, strict=True)), (
+            f"{entity.key}'s handset layout has moved to {[round(x, 4) for x in handset]}; the "
+            f"office still draws {[round(x, 4) for x in server]}, so the gap between the two "
+            "documents has changed size. Re-record it here or close it on the printed page."
+        )
+        assert any(abs(a - b) > 0.1 for a, b in zip(server, handset, strict=True)), (
+            f"{entity.key}'s two surfaces now agree — rebalance is done, so delete its line from "
+            "_WIDTHS_THAT_DO_NOT_GOVERN"
+        )
+    assert disagreed == [], (
+        "these entities' tables are now laid out differently by the server and the handset, and "
+        "the divergence is not recorded in _WIDTHS_THAT_DO_NOT_GOVERN, so one workshop's report "
+        f"wraps different cells depending on which machine built it: {disagreed}"
     )
 
 

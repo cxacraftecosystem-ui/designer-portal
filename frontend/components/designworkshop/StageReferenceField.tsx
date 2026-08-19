@@ -40,6 +40,8 @@ import {
   isInlineCreatable,
   type InlineCreatableModel
 } from "@/components/designworkshop/InlineRecordDialog";
+import { useLinkedWorkshopId } from "@/components/designworkshop/LinkedWorkshop";
+import type { InlineHostSeed } from "@/components/forms/inlineRecordHost";
 import {
   hydrateFromReference,
   inputValue,
@@ -145,18 +147,57 @@ function useReferenceOptions({
   return state;
 }
 
-/** The line under the list that says what the list actually is. Never omitted when it has something to say. */
-function ScopeNotice({ field, payload }: { field: DwField; payload: DwReferencePayload | null }) {
-  if (!payload) return null;
+/**
+ * WHAT THE LIST ACTUALLY IS, in sentences, given the field and what the server answered.
+ *
+ * LIFTED OUT OF THE COMPONENT SO IT CAN BE EXECUTED BY A TEST. There is no React renderer in this
+ * repository's devDependencies, so a rule that stays inside a component body can only ever be
+ * asserted as a SUBSTRING of this file — which pins the spelling of a sentence and not the condition
+ * that decides whether a designer is shown it. `inlineSeed` was lifted for the same reason and the
+ * same test file covers both. The component below is what is left: `lines.join(" ")` in a `<p>`.
+ */
+export function scopeNoticeLines(field: DwField, payload: DwReferencePayload | null): string[] {
+  if (!payload) return [];
   const lines: string[] = [];
   if (field.refScope === "WORKSHOP" && !payload.scopedToWorkshop) {
     lines.push(
       "This design workshop is not linked to a workshop record yet, so every documented record is offered rather than only this workshop's."
     );
   }
+  /*
+    THE OTHER HALF OF THE SAME SENTENCE, AND THE ONE THAT COSTS A DESIGNER AN AFTERNOON.
+
+    This notice only ever spoke when the design workshop was UNLINKED. A LINKED one with nothing
+    attached to its workshop record is the commoner case and said nothing at all: the list came back
+    empty and the picker printed its generic "No records to choose from yet.", which is a claim about
+    the REPOSITORY when the truth is a claim about the FILTER. A designer reads it as "nothing has
+    been documented", closes the picker and types thirty products in by hand — the exact behaviour
+    this whole feature exists to end — while the records sit in the repository one unticked link
+    away.
+
+    NOT SAID WHEN THE CASCADE EMPTIED THE LIST (`payload.filtered`): the picker's own empty line
+    already names the parent row as the reason, and two competing explanations of one empty list is
+    worse than the generic one.
+
+    IT CHANGES NO SCOPING, deliberately. Whether WORKSHOP scope should widen when the linked
+    workshop holds nothing is a server-side decision shared with four other screens; this says what
+    the list IS and what the designer can do about it, and leaves that decision to be made
+    deliberately. `DwReferenceField.kt`'s empty state carries the same sentence.
+  */
+  if (field.refScope === "WORKSHOP" && payload.scopedToWorkshop && !payload.filtered && !payload.options.length) {
+    lines.push(
+      "Nothing is documented under this design workshop’s linked workshop yet — this list is narrowed to that workshop rather than to the whole repository. Create the record here, or link the existing one to the workshop and it will appear."
+    );
+  }
   if (payload.truncated) {
     lines.push(`Only the first ${REFERENCE_PAGE} matches are listed — type more of the name to narrow them.`);
   }
+  return lines;
+}
+
+/** The line under the list. Never omitted when {@link scopeNoticeLines} has something to say. */
+function ScopeNotice({ field, payload }: { field: DwField; payload: DwReferencePayload | null }) {
+  const lines = scopeNoticeLines(field, payload);
   if (!lines.length) return null;
   return <p className="px-3 pb-2 text-xs leading-5 text-ink-500">{lines.join(" ")}</p>;
 }
@@ -282,6 +323,94 @@ async function describeRecord(
   }
 }
 
+/**
+ * WHAT THIS PICKER ALREADY KNOWS ABOUT A RECORD IT IS ABOUT TO OPEN A CREATE FORM FOR.
+ *
+ * ── THE DEFECT THIS ENDS ──────────────────────────────────────────────────────────────────────
+ * `InlineRecordDialog` was rendered with nothing but `{ open, model, onClose, onCreated }` while
+ * this component was holding the row's artisan and the workshop the whole time. The full-page
+ * routes seed the same boxes from the query string; a dialog has none, so what actually filled them
+ * was the carry bag — the last artisan this designer documented ANYWHERE. The product was then
+ * filed under the wrong artisan or under nobody, the server's cascade excluded it from this very
+ * list, `describeCreated` could not describe it, and the required Name and Price boxes stayed
+ * blank until the stage 422'd. The one record that held both answers had just been created.
+ *
+ * ── THE CASCADE VALUE IS NOT ALWAYS AN ARTISAN ID ─────────────────────────────────────────────
+ * Two fields in the registry cascade, and they hold different kinds of id. `existingProduct
+ * .productRef` filters by `existingProduct.artisanRef`, which is an `Artisan` id. `prototype
+ * .productRef` filters by `prototype.artisanRef`, which is a `DwParticipant` ROSTER ENTRY id — the
+ * maker was chosen from stage 3's list of who was in the room. The server resolves the second back
+ * to an artisan (`_artisan_id_behind`, one indexed primary-key read) and deliberately spares the
+ * clients that rule; a browser cannot follow it, and filing a product under a roster-entry id would
+ * be worse than filing it under nobody. So the filter field's OWN `refModel` decides: an artisan id
+ * is seeded, a participant id is not, and the stage-13 create falls back to exactly the behaviour
+ * it has today rather than to a fabricated parent.
+ *
+ * ── THE WORKSHOP IS SEEDED WHEREVER THERE IS ONE, NOT ONLY WHERE IT IS REQUIRED ───────────────
+ * Five REF fields are WORKSHOP-scoped and the server narrows them on the linked Workshop, so for
+ * those the seed is the difference between a record that appears in the list it was made from and
+ * one that never does. It is seeded on the unscoped pickers too — the stage-3 roster above all,
+ * which is the likeliest place of all to discover an artisan is missing — because the claim it
+ * makes is simply true: this designer is standing at that workshop filling in its stages. The
+ * alternative is not "no claim"; it is `useWorkshopSelection`'s probe picking THE MOST RECENT
+ * WORKSHOP THIS ACCOUNT MAY SUBMIT TO, which has no connection to the room at all. Either way the
+ * value lands in a visible dropdown the designer can change.
+ *
+ * NOTHING IS GUESSED WHEN THE DESIGN WORKSHOP HAS NO LINKED WORKSHOP. `useLinkedWorkshopId` answers
+ * null there — the same state the references endpoint reports as `scopedToWorkshop: false` and
+ * `ScopeNotice` prints out loud — and the key is simply omitted.
+ */
+/*
+  EXPORTED SO IT CAN BE TESTED, the same reason `hasUnsavedWork` is exported from `ProcessForm`.
+  This repository has no React renderer in its devDependencies, so a rule left inside a component
+  body can only ever be READ by a test; the rule about which kind of id may be seeded is exactly the
+  kind that must be EXECUTED, because getting it wrong files a product under a roster entry and
+  nothing on any screen would say so. See `inline-record-host-unit.spec.ts`.
+*/
+export function inlineSeed({
+  entity,
+  field,
+  row,
+  filterValue,
+  linkedWorkshopId
+}: {
+  /** Omitted by the roster picker, which has no row and no cascade. */
+  entity?: DwEntity;
+  field: DwField;
+  row?: DwEntryData;
+  filterValue?: string;
+  linkedWorkshopId: string | null;
+}): InlineHostSeed {
+  const seed: InlineHostSeed = {};
+  const filterField =
+    entity && field.refFilterBy ? entity.fields.find((candidate) => candidate.key === field.refFilterBy) : undefined;
+  if (entity && row && filterField && filterValue && filterField.refModel === "Artisan") {
+    seed.artisanId = filterValue;
+    // The name the row already shows for that artisan — hydrated onto it when they were picked, so
+    // it is the server's own spelling rather than anything this file invented. It fills a REQUIRED
+    // free-text box on the product and tool forms, which would otherwise open blank beside an
+    // artisan the designer has already chosen.
+    const name = referenceDisplayHint(entity, filterField, row);
+    if (name) seed.artisanName = name;
+  }
+  if (linkedWorkshopId) seed.workshopId = linkedWorkshopId;
+  return seed;
+}
+
+/**
+ * What the picker says when an inline create went into the offline outbox instead of the database.
+ *
+ * ONE SENTENCE IN ONE PLACE because both pickers need it and the two must not drift. It says three
+ * things, and all three are load-bearing: the record IS saved (or the designer creates it again and
+ * banks a duplicate); the row is NOT linked (or they submit the stage believing it is); and what to
+ * do when signal returns. It deliberately does not offer a retry — there is nothing to retry, the
+ * outbox owns the entry now.
+ */
+const QUEUED_OFFLINE_NOTICE =
+  "There is no connection, so this record has been saved on this device and will be sent when there is signal. " +
+  "It has no repository id yet, so nothing could be linked here — reopen this list once it has been sent and " +
+  "choose it then.";
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Single select
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -355,6 +484,18 @@ export function StageReferenceSelect({
    * Nothing is fetched and the panel says which box to answer first.
    */
   const awaitingCascade = Boolean(field.refFilterBy) && !filterValue;
+  /**
+   * The context an inline create is opened with — see {@link inlineSeed}.
+   *
+   * Recomputed rather than captured when the button is pressed, because the cascade above can clear
+   * the artisan out from under it: a seed frozen at the moment the panel opened would hand the form
+   * a parent the row no longer names.
+   */
+  const linkedWorkshopId = useLinkedWorkshopId();
+  const seed = useMemo(
+    () => inlineSeed({ entity, field, row, filterValue, linkedWorkshopId }),
+    [entity, field, row, filterValue, linkedWorkshopId]
+  );
   const { payload, loading, problem } = useReferenceOptions({
     workshopId,
     field,
@@ -779,6 +920,35 @@ export function StageReferenceSelect({
                   : `Create a new ${INLINE_MODEL_NOUN[field.refModel as InlineCreatableModel]}`}
               </button>
             ) : null}
+            {/*
+              THE CRAFT PICKER'S ANSWER TO THE SAME QUESTION, WHICH IS NOT A CREATE BUTTON.
+
+              A craft is a shared taxonomy row rather than something a designer observed, and a
+              per-workshop create is how near-duplicate crafts multiply — `INLINE_CREATABLE`'s
+              docstring carries that argument in full. But stage 1 is the first control a designer
+              ever touches in this app, and until this line it was the only picker in the product
+              that offered nothing at all when the craft was missing or misspelt: the remedy existed
+              on /crafts and nothing said so.
+
+              A NEW TAB, deliberately, and it is the whole point of this lane rather than a
+              stylistic choice: the stage stays open behind it, exactly as `InlineRecordDialog`
+              keeps it open for the other four models. Navigating in place would be the same defect
+              this file's Cancel button had.
+
+              `craftRef` is OPTIONAL and stage 1's `craftName` is typeable, so this is a way
+              forward and never a gate.
+            */}
+            {field.refModel === "Craft" && !disabled ? (
+              <a
+                href="/crafts"
+                target="_blank"
+                rel="noopener"
+                className="flex w-full items-center gap-2 border-t border-line-200 px-3 py-2.5 text-left text-sm font-medium text-purple-700 transition hover:bg-purple-50"
+              >
+                <Plus className="h-4 w-4 shrink-0" aria-hidden />
+                Add or correct a craft on the crafts page (opens in a new tab)
+              </a>
+            ) : null}
             <ScopeNotice field={field} payload={payload} />
           </div>
         ) : null}
@@ -873,6 +1043,18 @@ export function StageReferenceSelect({
           recordId={inlineDialog.mode === "edit" ? inlineDialog.id : undefined}
           onClose={() => setInlineDialog(null)}
           /*
+            THE ROW'S OWN ARTISAN AND THIS WORKSHOP, HANDED TO THE FORM — see {@link inlineSeed} for
+            the record filed under the wrong artisan that this closes, and for why a roster-entry id
+            is deliberately not passed as one.
+
+            Only on a CREATE. An edit opens the record that already exists, and seeding a parent
+            over it would rewrite a link the designer never touched. This ternary is now BELT AND
+            BRACES rather than the guard: it used to be the only place in the tree that enforced the
+            rule, while the dialog handed `seed` to all three forms unconditionally. The enforcement
+            lives in `InlineRecordDialog`'s `seedForForm`, where the rule is documented.
+          */
+          seed={inlineDialog.mode === "create" ? seed : undefined}
+          /*
             LINKED FROM THE CREATE, DESCRIBED FROM THE SERVER — see `adoptCreated` and
             `describeCreated` for the defect that split those two apart. What used to be here was a
             `DwReferenceOption` assembled out of the raw repository row, whose column names are not
@@ -898,6 +1080,40 @@ export function StageReferenceSelect({
             }
             void adoptCreated(record);
           }}
+          /*
+            SAID, NOT SWALLOWED. Offline the save is banked in the outbox and there is no server id,
+            so `onCreated` never fires: before this the dialog stayed open, the button flipped back
+            from "Saving…" to "Save artisan", and nothing else on screen changed — the page host's
+            answer, `OutboxBanner`, sits outside this dialog's portal on a body whose scroll the
+            dialog has locked. A designer read that as a failed save and pressed the button again,
+            banking three copies of one artisan.
+
+            NOTHING IS LINKED, DELIBERATELY. A REF must hold a real server id — `hydrate_entries`,
+            `canonical_divergence` and the report's `ReferencedRecord` join all resolve on it — so a
+            client-invented placeholder would print for ever as a reference to a deleted record.
+            The link is left unmade and the sentence says so.
+          */
+          onQueued={() => {
+            supersede();
+            setNotice(QUEUED_OFFLINE_NOTICE);
+          }}
+          /*
+            THE DUPLICATE PROMPT'S "OPEN THE EXISTING RECORD", ANSWERED HERE INSTEAD OF BY LEAVING.
+
+            Inside this dialog a duplicate is the ordinary outcome: the designer pressed "Create a
+            new artisan" because the search did not show the person in front of them, and the
+            deduplication key matched anyway. `ArtisanForm` used to `router.push` to that record's
+            edit page, taking the stage with it — so acting on the very thing the prompt exists to
+            surface cost them their place.
+
+            It goes through `adoptCreated` like any other new link, which means the row is hydrated
+            from `describeCreated`'s SERVER payload and from nothing else. The conflict object also
+            carries `maskedValue`, and a masked Aadhaar or Pehchan string must never be written onto
+            a stage entry; only the id and the name cross, and the name only as a search term.
+          */
+          onUseExisting={(artisan) => {
+            void adoptCreated({ id: artisan.id, name: artisan.name });
+          }}
         />
       ) : null}
     </div>
@@ -921,6 +1137,21 @@ export function StageReferenceSelect({
  * its reference: by the second day it carries days attended, a photograph, and notes from an
  * interview. So this control only ADDS — already-chosen records are shown ticked and disabled, and
  * removal stays where a row is removed, next to the row, where what is about to be lost is visible.
+ *
+ * WHY IT DOES NOT ALSO EDIT, which is the same argument one step further and is worth stating
+ * because the single picker DOES have a pencil beside it and the asymmetry reads like an omission.
+ * This panel is a BUILD-A-SELECTION control: thirty rows are ticked in one pass and confirmed once,
+ * and every option in it is a name and a village on one line. Correcting a record from here would
+ * mean opening the full artisan form over a half-ticked list to change a value the panel is not
+ * showing — the designer would be editing something they cannot see, and then returning to a
+ * selection they have to remember the state of. The single picker's pencil is gated on
+ * `selectedId`, and a multi-select has no analogue of "the one that is chosen".
+ *
+ * The edit path is one row-expansion away and it is the better one: `bulkField` resolves to
+ * `participant.artisanRef` and to nothing else on the current registry, and every roster ROW renders
+ * its own `StageReferenceSelect` through `FieldInput`'s REF branch — pencil included — beside the
+ * days attended and the notes that say which participant is being corrected. Android's roster
+ * picker is the same shape, and the two must stay that way.
  */
 export function StageReferenceMultiPicker({
   workshopId,
@@ -946,9 +1177,19 @@ export function StageReferenceMultiPicker({
   const [creating, setCreating] = useState(false);
   /** The label of a record just created, while the server is being asked to describe it. */
   const [describing, setDescribing] = useState<string | null>(null);
-  /** Said inside the panel when that description could not be got. */
+  /** Said inside the panel when that description could not be got, or when a save went to the outbox. */
   const [createProblem, setCreateProblem] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * This workshop, handed to an inline create — see {@link inlineSeed}.
+   *
+   * No `entity`, `row` or `filterValue`: `EntityForm` only offers this control for a REF field with
+   * no `refFilterBy` at all, so the roster's list is never a cascaded one and there is no parent
+   * artisan to carry. The workshop is the whole of what this picker knows, and it is the half that
+   * matters here — the roster IS the record of who was in that room.
+   */
+  const linkedWorkshopId = useLinkedWorkshopId();
+  const seed = useMemo(() => inlineSeed({ field, linkedWorkshopId }), [field, linkedWorkshopId]);
 
   const { payload, loading, problem } = useReferenceOptions({
     workshopId,
@@ -1184,8 +1425,36 @@ export function StageReferenceMultiPicker({
             What it is ticked WITH is the server's description of the record and never the raw row
             the create returned; `tickCreated` and `describeCreated` carry that argument.
           */
+          /*
+            UNGATED, AND SAFE BECAUSE THE GATE IS IN THE DIALOG. A multi-select has no edit path — it
+            never passes `recordId` — so there is no record here for a seed to overwrite. The
+            create-only rule is enforced once, in `InlineRecordDialog`'s `seedForForm`, precisely so
+            that this line staying as it is cannot break it, and so that the day this picker does
+            grow an edit path the rule does not have to be remembered again here.
+          */
+          seed={seed}
           onCreated={(record) => {
             void tickCreated(record);
+          }}
+          /*
+            Nothing is ticked, and the panel says why. A queued save has no server id, so there is no
+            record for `describeCreated` to read back and nothing a roster row could point at — and a
+            roster row carrying a link to nothing is indistinguishable in the participant table from a
+            blank row somebody added by accident. The same sentence the single picker uses, so a
+            designer meets one explanation of this state rather than two.
+          */
+          onQueued={() => {
+            setDescribing(null);
+            setCreateProblem(QUEUED_OFFLINE_NOTICE);
+          }}
+          /*
+            The duplicate prompt found the artisan already in the repository — tick THEM rather than
+            navigating to their edit page and losing the half-ticked roster. `tickCreated` describes
+            them through the server exactly as it does a genuinely new record; nothing from the
+            conflict payload, which carries a masked identity number, is read here.
+          */
+          onUseExisting={(artisan) => {
+            void tickCreated({ id: artisan.id, name: artisan.name });
           }}
         />
       ) : null}

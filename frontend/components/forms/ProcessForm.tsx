@@ -288,7 +288,8 @@ export function ProcessForm({
   initial,
   onDone,
   onCancel,
-  onCreated
+  onCreated,
+  onQueued
 }: {
   initial?: ProcessRecord;
   onDone: () => void;
@@ -309,6 +310,17 @@ export function ProcessForm({
    * form directly and wants exactly the old behaviour.
    */
   onCreated?: (record: ProcessRecord) => void;
+  /**
+   * The save was banked in the offline outbox instead of sent — see `InlineRecordHostProps.onQueued`.
+   *
+   * This form was the only one of the four that already CLOSED on a queued save (through `onDone`),
+   * and closing was never the missing half: the dialog shut, the picker was left empty, and nothing
+   * anywhere said why. `OutboxBanner`, which is what the page host relies on, is mounted outside
+   * `FieldDialog`'s portal and is unreachable from a modal, so a designer offline saw a dialog
+   * vanish and a row that was still blank — the same reading as a save that failed. When this is
+   * supplied it replaces `onDone` on that branch, so the host can close AND say so in one act.
+   */
+  onQueued?: () => void;
 }) {
   const { user } = useAuth();
   const isEdit = Boolean(initial);
@@ -753,7 +765,10 @@ export function ProcessForm({
         // three steps to arrive at the same place the outbox banner already says plainly.
         setGuardOpen(false);
         setSaving(false);
-        onDone();
+        // `onQueued` when the host offered one — it closes the dialog exactly as `onDone` did AND
+        // gets to put an honest sentence where the designer is looking. See the prop's own note.
+        if (onQueued) onQueued();
+        else onDone();
         return;
       }
       const saved = outcome.saved;

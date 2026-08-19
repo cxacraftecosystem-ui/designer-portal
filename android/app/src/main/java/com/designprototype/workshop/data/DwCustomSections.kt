@@ -345,9 +345,51 @@ fun sectionsForStage(cache: DwCustomCache?, stageKey: String): List<DwCustomSect
     return cache.sections
         .filter { it.stageKey == stageKey }
         .sortedWith(compareBy({ it.sortOrder }, { it.key }))
-        .map { section ->
-            if (!section.retired || section.fields.none { !it.retired }) section
-            else section.copy(fields = section.fields.map { if (it.retired) it else it.copy(retired = true) })
+        .map(::withSectionRetirementForced)
+}
+
+/** The one implementation of the rule [sectionsForStage] states at length. */
+private fun withSectionRetirementForced(section: DwCustomSectionDto): DwCustomSectionDto =
+    if (!section.retired || section.fields.none { !it.retired }) section
+    else section.copy(fields = section.fields.map { if (it.retired) it else it.copy(retired = true) })
+
+/**
+ * Every section of the whole workshop that the REPORT should carry — the port of the loop in
+ * `design_workshops.attach_report_custom_sections`.
+ *
+ * WHY THE REPORT NEEDS A WORKSHOP-WIDE LIST AT ALL, when the form only ever needs one stage's. The
+ * template decides where each block prints, and `applyReportSettings` is the single arbiter of that:
+ * a section is spliced after its anchor stage's section when the template carries that stage, and as
+ * a back annexure when it does not. The second placement cannot be reached from a per-stage walk,
+ * which is exactly how the handset came to drop a designer's questions out of PHOTO_CATALOGUE
+ * entirely — see [com.designprototype.workshop.report.SpecialSection.CUSTOM_SECTION].
+ *
+ * A RETIRED SECTION NOBODY EVER ANSWERED IS LEFT OUT, and that one drop is the server's: it is not
+ * evidence of anything, and printing an empty heading for every block a designer thought better of
+ * would fill a submitted report with the history of its own form. Asked through [DwValues.isFilled]
+ * and never through the truthiness of the stored value — a retired "How many looms?" answered "0" is
+ * a finding, and an ordinary one in a cluster where the looms have been sold.
+ *
+ * A retired section that WAS answered stays, with every field forced retired, so the answers still
+ * print under the marker that says they are no longer asked.
+ *
+ * @param answersFor the `_custom` bucket of one stage, as the draft holds it. A LOOKUP rather than a
+ *   `WorkshopDraft`, so this file keeps knowing only about definitions: it is already the one place
+ *   that decides what a custom section IS, and giving it an opinion about where the answers are
+ *   stored would make the next storage change a change to this file as well. The two callers (the
+ *   plan and the renderer) pass the same one-line lambda for exactly that reason.
+ */
+fun customSectionsForReport(
+    cache: DwCustomCache?,
+    answersFor: (stageKey: String) -> Map<String, JsonElement>,
+): List<DwCustomSectionDto> {
+    if (cache == null) return emptyList()
+    return cache.sections
+        .map(::withSectionRetirementForced)
+        .filter { section ->
+            if (!section.retired) return@filter true
+            val values = answersFor(section.stageKey)
+            section.fields.any { DwValues.isFilled(values[it.key]) }
         }
 }
 
@@ -564,6 +606,39 @@ fun dwCustomUnsupportedNote(type: String): String =
  * and [DwCustomCopy.DEFINED] warns about nothing because the questions and their answers are printed.
  * Warning on all three is what would put an apology on the majority of exports; the guard is
  * [DwQuestionnaireStore]'s, applied to the same shape of fact.
+ *
+ * **THAT SECOND CLAUSE WAS FALSE FOR AS LONG AS THE HANDSET DREW CUSTOM QUESTIONS INSIDE THE STAGE
+ * SECTION, AND IT IS THE REASON THE LOSS WAS SILENT.** A section whose anchor stage the template
+ * does not print — PHOTO_CATALOGUE carries three of the twenty-two, and stage 20's `excludedStages`
+ * can remove any of the rest — had no code path to a renderer at all, so the .docx came off the
+ * phone with the designer's own questions absent, this function said nothing because the copy was
+ * DEFINED, and the export screen said nothing either. THE PLACEMENT HALF IS TRUE AGAIN NOW:
+ * `report.applyReportSettings` splices an orphaned section in as its own back annexure, exactly as
+ * `apply_report_settings` does, so every section a DEFINED copy holds now REACHES a renderer. What
+ * the renderer then decides to print is a separate question, and two of its answers are still gaps —
+ * see the numbered list below, which is what this claim must be read against.
+ *
+ * TWO STATES ARE STILL NOT COVERED, and this sentence named only the first for a while — which is
+ * the failure the house style singles out, a comment reporting a gap as closed when it is not:
+ *
+ *  1. THE TIER CAP. A section whose every question sits ABOVE the template's cap prints nothing and
+ *     warns nothing. This is the server's own uncovered state rather than a new one — `section_prints`
+ *     names the same gap on the other side ("the quiet direction of the two") — and closing it means
+ *     giving this function a template to ask, which it does not have and which the server's loader
+ *     does not have either.
+ *
+ *  2. THE `section_prints` PREDICATE ITSELF, which is a HANDSET-ONLY gap and the sharper of the two.
+ *     The server's `section_prints` is `has_content_at`: true for an answered section OR one carrying
+ *     a LIVE REQUIRED question, so an unanswered required question prints a heading and
+ *     "Not recorded." at the office. `renderCustomSection` returns early on `!anyLive &&
+ *     retired.isEmpty()`, i.e. it has always demanded an actual answer — so that section prints
+ *     NOTHING on this device, and a DEFINED copy really does not print every section it holds. It is
+ *     left for its own change deliberately, and `renderCustomSection`'s KDoc argues why: moving the
+ *     predicate in the same edit as the placement would have put two behaviours under one test.
+ *
+ * The paragraph above is still true of PLACEMENT, which is the claim it makes: an orphaned section
+ * reaches the document. Neither of these is a section going missing because no renderer can be
+ * reached; both are a renderer deciding, on a rule, to print nothing.
  *
  * **IT IS CONDITIONAL IN ITS WORDING ("if this workshop has questions of its own") FOR THE REASON THE
  * QUESTIONNAIRE ENTRY IN `UNSUPPORTED_SECTIONS` IS**: a device in this state cannot tell a workshop

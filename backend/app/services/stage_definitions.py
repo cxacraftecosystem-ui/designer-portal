@@ -404,9 +404,18 @@ STAGE_3 = StageSpec(
             fromref("documentedOn", "Artisan documented on", DATE, S),
             f("attendedDays", "Days attended", INT, S, min_value=0),
             fromref("photo", "Photograph", IMG, S, report_role=GALLERY),
-            # The caption the researcher typed against that photograph in the repository. It used
-            # to stop at the join and the designer was asked to retype it for a photograph they
-            # had never seen taken — see `ReferencePhoto` in `design_workshops`.
+            # WHATEVER THE REPOSITORY HOLDS AGAINST THE CHOSEN PHOTOGRAPH, which is not always a
+            # sentence somebody wrote about that picture. `MediaFile.caption` is typed once per
+            # UPLOAD on the /media page and machine-composed by the record forms ("Field media for
+            # <artisan>"), so it may caption a whole batch rather than one image. Carrying it is
+            # still right — it used to stop at the join and the designer was asked to retype a
+            # caption that already existed one row away, for a photograph they had never seen
+            # taken (see `ReferencePhoto` in `design_workshops`) — and only-fill-blanks means a
+            # designer can overtype it here when the batch caption does not fit this picture.
+            #
+            # Do NOT answer the batch-caption problem by adding a caption box to one record form:
+            # every gallery in this registry pairs its images with a `caption_for` field, and the
+            # fix belongs where the caption is stored, not on one of the forms that stores it.
             fromref("photoCaption", "Photograph caption", T, S, caption_for="photo",
                     report_role=CAP),
         ), label_field="name"),
@@ -827,8 +836,15 @@ STAGE_6 = StageSpec(
                          "from the linked record’s “size”."),
             fromref("price", "Selling price", MONEY, B, required=True, unit="INR", min_value=0,
                     report_role=COL, column_width_pct=16.0),
-            # The other half of the cost question, and the one stage 17's cost sheet actually
-            # needs. The product record has held it all along.
+            # The other half of the cost question, and the product record has held it all along:
+            # the BASELINE cost of a product the cluster already sells, printed beside the selling
+            # price above it as the comparison figure a reader needs to judge the workshop's own.
+            #
+            # NOT AN INPUT TO STAGE 17'S COST SHEET, which this comment used to claim ("the one
+            # stage 17's cost sheet actually needs"). That sheet's `productRef` points at
+            # `DwFinalProduct` — the thing the workshop MADE — and no mapping hydrates it from
+            # here, so a reader who follows that sentence goes looking for wiring that does not
+            # exist. Nothing to add: KEY_VALUE is the default role and the field already prints.
             fromref("costOfMaking", "Cost of making", MONEY, S, unit="INR", min_value=0),
             fromref("material", "Material", T, S, report_role=COL, column_width_pct=16.0),
             f("materialFamily", "Material family", ENUM, S, enum="MATERIAL_FAMILY"),
@@ -846,10 +862,16 @@ STAGE_6 = StageSpec(
             fromref("productionTimeNote", "Time to make (as recorded)", T, S,
                     help="As written on the product record, in the researcher’s own words."),
             f("monthlyCapacity", "Monthly capacity", INT, S, unit="pieces", min_value=0),
-            # MarketDemand and DEMAND_LEVEL share all five tokens; the translation is still an
-            # explicit total table in `design_workshops` rather than a passthrough, because the
-            # two lists are versioned separately and "they match today" is not a thing a mapping
-            # may rely on silently. NOT the same question as `marketChannel` below.
+            # FOUR OF THE FIVE MarketDemand TOKENS CROSS. `UNKNOWN` is the source column's
+            # `@default` with no blank option on either form, so an untouched product record says
+            # UNKNOWN about a market nobody was asked about — it translates to None rather than to
+            # this field's "Not known" label, which used to PRINT under every imported product. See
+            # the second rule above the translation tables in `design_workshops`.
+            #
+            # The remaining four are written out as an explicit total table there rather than a
+            # passthrough, because the two lists are versioned separately and "they match today" is
+            # not a thing a mapping may rely on silently. NOT the same question as `marketChannel`
+            # below.
             fromref("marketDemand", "Market demand", ENUM, S, enum="DEMAND_LEVEL"),
             f("marketChannel", "Market channel", MENUM, S, enum="MARKET_CHANNEL"),
             f("problems", "Problems reported", RICH, S, report_role=NARR),

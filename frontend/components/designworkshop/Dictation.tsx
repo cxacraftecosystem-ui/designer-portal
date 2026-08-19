@@ -60,7 +60,14 @@ import {
 } from "@/components/dictation/onDeviceSpeech";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { ApiError } from "@/lib/api";
-import { DW_DICTATE_PATH, dictateAudio, dictationAnswerSentence, serverOffersRoute } from "@/lib/designWorkshops";
+import {
+  DW_DICTATE_PATH,
+  dictateAudio,
+  dictationAnswerSentence,
+  dwDictationAllowance,
+  serverOffersRoute,
+  type DwDictationAllowance
+} from "@/lib/designWorkshops";
 import { isLocalWorkshopId } from "@/lib/designWorkshopStore";
 import { pickAudioRecorderMimeType, SPEECH_AUDIO_CONSTRAINTS } from "@/lib/media";
 
@@ -110,6 +117,22 @@ export function DictationButton({
   /** Set while the server fallback is transcribing a finished recording. */
   const [transcribing, setTranscribing] = useState(false);
   const [showLanguages, setShowLanguages] = useState(false);
+  /**
+   * WHAT THE DAY'S ALLOWANCE IS, ASKED BEFORE A RECORDING IS SPENT RATHER THAN AFTER.
+   *
+   * ── THE DEFECT THIS ENDS ────────────────────────────────────────────────────────────────────
+   * The cap was handled purely reactively: a designer in a courtyard on a metered connection
+   * recorded a note, uploaded several megabytes of it, and was told only then that the day's
+   * allowance was gone — and reopening the app the next morning it still could not say how many
+   * were left, or when the day rolls over, until another upload had been spent to find out. The
+   * server has had a route for exactly this the whole time, and its docstring says so in its first
+   * line: "**THIS ROUTE IS WHY THE CAP IS NOT JUST A 429** … Two primary-key reads and no upload."
+   *
+   * Null while it is being asked AND for ever afterwards on a deployment that does not answer —
+   * `dwDictationAllowance` never throws, and the reactive 429 handling below is still the authority
+   * on a refusal. A courtesy request must not be able to take the microphone away.
+   */
+  const [allowance, setAllowance] = useState<DwDictationAllowance | null>(null);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -195,6 +218,39 @@ export function DictationButton({
     // decided once at mount would go on refusing a workshop that has since been sent up.
   }, [workshopId]);
 
+  /**
+   * The pre-flight, run once the server rung is the one this control would actually use.
+   *
+   * TWO GATES, AND ONLY THE SECOND ONE SAVES THE ROUND TRIPS. The comment that used to stand here
+   * read "NOT ON EVERY MOUNT OF EVERY MICROPHONE" and credited that to the first gate alone, which
+   * does not deliver it on the one browser this control was built for:
+   *
+   *  - `mode === "server"` is a gate on RELEVANCE, not on volume. A browser recogniser spends no
+   *    server allowance at all, so there is nothing to read out and nothing to ask. But `mode` is
+   *    this button's own state: on Firefox — which has no `SpeechRecognition` and is the entire
+   *    reason the server rung exists — every microphone on the stage resolves to `server`, and
+   *    stage 13 draws eleven of them. This gate alone therefore saved the request only on Chrome,
+   *    where the readout is not drawn anyway.
+   *  - The eleven are collapsed into ONE request by `dwDictationAllowance` itself, which shares a
+   *    single in-flight promise between concurrent callers exactly as `serverOffersRoute` does for
+   *    the probe these same eleven effects issue one line above. That is where the property lives,
+   *    because a component cannot see its siblings. It also makes the eleven readouts on one stage
+   *    the same answer rather than eleven answers that may disagree.
+   *
+   * The count is then refreshed after each upload from what the 200 itself carries, so the number
+   * on screen ages by at most one dictation without a second round trip.
+   */
+  useEffect(() => {
+    if (mode !== "server") return;
+    let cancelled = false;
+    void dwDictationAllowance().then((answer) => {
+      if (!cancelled) setAllowance(answer);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
+
   const stopEverything = useCallback(() => {
     recognitionRef.current?.abort();
     recognitionRef.current = null;
@@ -276,6 +332,21 @@ export function DictationButton({
         setTranscribing(true);
         try {
           const result = await dictateAudio(blob, languageRef.current, workshopId);
+          /*
+            The count the SERVER stands behind, taken after it recorded the spend, for no extra
+            round trip. `dictation_cap.allowance_payload` is spread into this 200 by the route
+            itself, so the readout beside the button never lags by more than the dictation that
+            just happened. An older deployment sends none of these keys and the readout simply
+            keeps what the pre-flight said.
+          */
+          if (typeof result.dictationDay === "string") {
+            setAllowance({
+              dictationsLimit: result.dictationsLimit ?? null,
+              dictationsUsed: result.dictationsUsed ?? 0,
+              dictationsRemaining: result.dictationsRemaining ?? null,
+              dictationDay: result.dictationDay
+            });
+          }
           const text = (result.text ?? "").trim();
           if (text) commitRef.current(text);
           // NOT `result.message`, which is what this line used to be. The provider chain composes
@@ -393,6 +464,23 @@ export function DictationButton({
           // arrive when they press Stop.
           <span className="text-xs text-ink-500">
             This browser has no built-in dictation, so the recording is transcribed after you press Stop.
+          </span>
+        ) : null}
+
+        {/*
+          THE CEILING, IN WORDS, BEFORE THE UPLOAD RATHER THAN AFTER IT.
+
+          `dictationsRemaining` is null on an uncapped deployment and that is NOT the same as zero —
+          the server keeps the two apart deliberately, so nothing is printed there rather than "0
+          left", which would turn "no ceiling" into "you are out". `dictationDay` is the server's
+          own India-time date and is named beside the count because "3 left" is only meaningful with
+          the boundary it resets on; a designer refused at nine in the evening needs to know when it
+          lifts, and the handset's refusal wording says the same thing.
+        */}
+        {mode === "server" && allowance && allowance.dictationsRemaining !== null ? (
+          <span className="text-xs text-ink-500">
+            {allowance.dictationsRemaining} server dictation
+            {allowance.dictationsRemaining === 1 ? "" : "s"} left today ({allowance.dictationDay}).
           </span>
         ) : null}
       </div>

@@ -1,5 +1,6 @@
 package com.designprototype.workshop.report
 
+import com.designprototype.workshop.data.DwCustomSectionDto
 import com.designprototype.workshop.data.DwTier
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -105,6 +106,38 @@ enum class SpecialSection {
     COMPLETENESS,
     MAP,
     CHART,
+
+    /**
+     * ONE BLOCK OF QUESTIONS A DESIGNER ADDED TO THIS WORKSHOP, named by [TemplateSection.customKey].
+     *
+     * NO TEMPLATE IN THE CATALOGUE CARRIES IT and none ever can: which sections exist is a fact about
+     * one workshop's own definition, not about a format. [applyReportSettings] splices them in, which
+     * is the same shape [ANNEXURE_AI_LAYERS] takes and for the same fixture reason — a workshop with
+     * no custom sections gets a byte-identical template, so all 116 pinned sections and all 38 pinned
+     * `apply_report_settings` cases stay exactly as they are.
+     *
+     * ── WHAT DECLARING IT ENDED ──────────────────────────────────────────────────────────────────
+     *
+     * This member did not exist, and neither did the splice, so the handset had a FOURTH arbiter of
+     * where a designer's block prints: `renderStageSection` drew the questions inline, at heading
+     * level 2, between the stage's singleton and its collections. The server splices them as level-1
+     * sections AFTER the whole stage section, which the Python `apply_report_settings` calls itself
+     * "the single arbiter of the running order … made one because three call sites used to
+     * disagree". Two consequences, and the second is the serious one:
+     *
+     *   * the office copy numbers "Loom audit" as its own top-level section with a contents-page
+     *     entry; the handset buried it as a sub-heading. Different heading numbers, different
+     *     contents page, different pagination for everything after it.
+     *   * a section whose ANCHOR STAGE the template does not print vanished completely. The stage
+     *     loop is `stages[section.stageKey]?.let { renderStageSection(…) }` and the custom blocks
+     *     were resolved INSIDE that call, so PHOTO_CATALOGUE (three of the twenty-two stages) and
+     *     any template whose stage-20 `excludedStages` names the anchor produced a .docx with the
+     *     designer's own questions absent — with nothing in the file or on the export screen saying
+     *     so, because `dwCustomSectionWarnings` warns for UNKNOWN only on the stated ground that a
+     *     DEFINED copy prints everything. The server appends exactly those as a back annexure before
+     *     the completeness section.
+     */
+    CUSTOM_SECTION,
 }
 
 /**
@@ -136,6 +169,18 @@ data class TemplateSection(
     val includeFigures: Boolean = true,
     /** For a CHART section: which figures, by the ids the builder's figure catalogue declares. */
     val figures: List<String> = emptyList(),
+    /**
+     * For a [SpecialSection.CUSTOM_SECTION]: WHICH designer-defined block this prints, by its
+     * [com.designprototype.workshop.data.DwCustomSectionDto.key].
+     *
+     * THE KEY AND NOT THE SECTION ITSELF, which is `TemplateSection.custom_key`'s rule on the server
+     * and matters here for a second reason it does not have: a template is a compile-time constant
+     * on this device, pinned by value against a 485 KB fixture, and a template that carried loaded
+     * ROWS could not be compared to anything. The renderer looks the key up in the definition it was
+     * handed, so a definition that changed between the two reads leaves a section naming nothing —
+     * which appends nothing, exactly as a stage section with no data does.
+     */
+    val customKey: String = "",
 ) {
     init {
         // The server raises the same ValueError. It can only fire on an edit to this file, which is
@@ -143,6 +188,12 @@ data class TemplateSection(
         // renders as nothing at all, silently, in the one document a designer is waiting on.
         require(stageKey.isNotEmpty() != (special != null)) {
             "a TemplateSection needs exactly one of stageKey or special"
+        }
+        // The server's second `ValueError`, and it is checked in BOTH directions. A CUSTOM_SECTION
+        // naming no key prints nothing and says nothing about why; a `customKey` on a stage section
+        // is a key that drifted onto the wrong section and would be quietly ignored for ever.
+        require((special == SpecialSection.CUSTOM_SECTION) == customKey.isNotEmpty()) {
+            "a CUSTOM_SECTION names exactly one customKey, and only a CUSTOM_SECTION may carry one"
         }
     }
 }
@@ -615,8 +666,25 @@ fun applyReportSettings(
     template: ReportTemplate,
     settings: Map<String, JsonElement>?,
     includePhotographs: Boolean? = null,
+    /**
+     * THIS WORKSHOP'S OWN SECTIONS, and this function is the single arbiter of where each one prints
+     * — exactly as it is already the single arbiter of which sections survive.
+     *
+     * TAKEN AS THE DTO RATHER THAN AS A NARROW VALUE TYPE, which is where this deliberately differs
+     * from the server. `apply_report_settings` takes a `Sequence[Any]` and reads four attributes by
+     * name, because the Python module must not import `custom_sections`, which reads the database.
+     * `DwCustomSections.kt` reads nothing — its own header makes "no Android imports, no I/O" a rule
+     * — so the import costs nothing and a second value type here would be one more shape to keep in
+     * step with the payload. Only `key`, `title`, `stageKey` and `sortOrder` are read.
+     *
+     * EMPTY IS THE ORDINARY CASE and returns the template untouched, including the identity return
+     * below. That is not a nicety: `report_templates_pin.json` is 485 KB of by-value comparison over
+     * 38 calls of this function, none of which passes a definition, and it can only be regenerated
+     * inside the API container.
+     */
+    customSections: List<DwCustomSectionDto> = emptyList(),
 ): ReportTemplate {
-    if (settings.isNullOrEmpty() && includePhotographs == null) return template
+    if (settings.isNullOrEmpty() && includePhotographs == null && customSections.isEmpty()) return template
 
     var sections = template.sections
 
@@ -634,6 +702,71 @@ fun applyReportSettings(
         if (drop.isNotEmpty()) {
             sections = sections.filter { !(it.stageKey.isNotEmpty() && it.stageKey in drop) }
         }
+    }
+
+    /*
+      ── the designer's own sections, spliced where they were asked ────────────────────────────
+
+      AFTER THE EXCLUSION FILTERING ABOVE AND NOT BEFORE, which is the whole reason this block sits
+      here rather than three lines up. A section attached to a stage the designer excluded would
+      otherwise be inserted after a stage section that is then removed from under it, leaving the
+      designer's questions stranded in the middle of somebody else's narrative with no heading above
+      them to say what stage they belong to.
+
+      TWO PLACEMENTS, AND THE SECOND IS NOT A FALLBACK SO MUCH AS THE OTHER HALF OF THE RULE
+      (docs/PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md §4: "a custom section names the stage section it
+      belongs after, and its own annexure if it belongs nowhere"):
+
+        * the template prints that stage  ->  immediately after that stage's section, where a reader
+          meets the designer's extra questions in the context they were asked in;
+        * it does not (excluded, or a template that never carried the stage — PHOTO_CATALOGUE prints
+          three of the twenty-two)  ->  appended at the back as its own annexure, BEFORE the
+          completeness section, because completeness is a statement ABOUT the document and belongs
+          after everything the document contains.
+
+      THIS HANDSET IMPLEMENTED ONLY THE FIRST HALF, AND NOT EVEN AS A SECTION. `renderStageSection`
+      drew the questions inline at level 2 between the stage's singleton and its collections, so the
+      second half was not a fallback that fired wrongly — there was no code path to it at all, and a
+      buyer-facing PHOTO_CATALOGUE came off the phone with the designer's own questions simply gone.
+      See [SpecialSection.CUSTOM_SECTION].
+
+      In `sortOrder` then `key`, so the running order is the designer's own and is stable across two
+      reports of one workshop rather than following whatever order the rows came back in.
+    */
+    if (customSections.isNotEmpty()) {
+        val ordered = customSections.sortedWith(compareBy({ it.sortOrder }, { it.key }))
+        val spliced = sections.toMutableList()
+        ordered.forEach { definition ->
+            val key = definition.key
+            if (key.isEmpty()) return@forEach
+            val block = TemplateSection(
+                special = SpecialSection.CUSTOM_SECTION,
+                customKey = key,
+                heading = definition.title,
+            )
+            val anchor = spliced.indexOfFirst {
+                it.stageKey.isNotEmpty() && it.stageKey == definition.stageKey
+            }
+            if (anchor >= 0) {
+                // AFTER THE BLOCKS ALREADY PLACED FOR THIS STAGE, not immediately after the stage
+                // section. Inserting at `anchor + 1` every time REVERSED the designer's own running
+                // order for the second and every later section asked at one stage — two sections on
+                // stage 13 came out as 2, 1 — which is precisely what the ordering above exists to
+                // decide, and it would have been read as the sort order not working at all. A
+                // CUSTOM_SECTION can only ever sit directly after the stage it belongs to, so
+                // walking past them cannot walk past anybody else's.
+                var at = anchor + 1
+                while (at < spliced.size && spliced[at].special == SpecialSection.CUSTOM_SECTION) at++
+                spliced.add(at, block)
+            } else {
+                val at = spliced.indexOfFirst { it.special == SpecialSection.COMPLETENESS }
+                spliced.add(
+                    if (at >= 0) at else spliced.size,
+                    block.copy(pageBreakBefore = true),
+                )
+            }
+        }
+        sections = spliced
     }
 
     // ── how the surviving sections print ──────────────────────────────────────────────────────

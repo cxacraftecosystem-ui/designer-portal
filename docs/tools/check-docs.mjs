@@ -337,6 +337,14 @@ Two columns because the two numbers get quoted interchangeably and disagree by h
 uncommitted. **Tracked** is \`git ls-files\`, which is the figure to use in a write-up — it is
 reproducible from a clone. **Tree** includes files not yet committed, which is the figure to use when
 reasoning about what is running locally. Neither is wrong; they answer different questions.
+
+**REGENERATE THIS ON A CLEAN TREE.** Only the *file* columns come from the index; every *line* count
+is read off disk, so \`--write\` on a dirty working copy writes uncommitted lines into the Tracked
+column and quietly destroys the one property that column is for. It has already happened: the Android
+row sat at 150 tracked files against 152 in the tree from the commit that added the divergence view
+until 2026-08-19, because nobody re-ran \`--write\` after \`git add\`. **Two file columns that disagree
+are the tell** — tracked and tree must be equal at a clean HEAD, so any gap between them means this
+file was generated mid-change and its line counts belong to somebody's working copy.
 `;
 }
 
@@ -361,9 +369,108 @@ function checkFacts() {
     fail("docs/REPO_FACTS.md is missing — run `node docs/tools/check-docs.mjs --write`");
     return;
   }
-  if (read(FACTS_FILE).trim() !== rendered.trim()) {
-    fail("docs/REPO_FACTS.md is out of date — run `node docs/tools/check-docs.mjs --write`");
+  const current = read(FACTS_FILE).trim();
+  if (current !== rendered.trim()) {
+    // NAME THE ROWS THAT DRIFTED, because "out of date" on its own is an instruction to run
+    // `--write` and commit whatever comes out, and this file has already been regenerated on a
+    // DIRTY tree once — which bakes working-copy line counts into the column whose entire promise
+    // is that it is reproducible from a clone. A reader who can see that the only drifting row is
+    // `android/app/src/main/java` knows the tracked file count moved and can check whether their
+    // own uncommitted work explains it. A reader who sees one sentence cannot.
+    //
+    // Line-by-line rather than a real diff: the file is a fixed set of tables in a fixed order, so
+    // positional comparison names the right row, and pulling in a diff library for a 140-line
+    // generated file would be the more fragile choice.
+    fail(
+      "docs/REPO_FACTS.md is out of date — run `node docs/tools/check-docs.mjs --write`" +
+        " ON A CLEAN TREE (line counts are read from disk, not from the index)\n" +
+        factsDrift(current.split("\n"), rendered.trim().split("\n")).join("\n"),
+    );
   }
+}
+
+/** Does a size-table row disagree with itself about how many FILES there are?
+ *
+ *  The size table's rows are `| `path` | tracked files | tracked lines | tree files | tree lines |`.
+ *  Tracked and tree file counts CANNOT differ at a clean HEAD, so a row where they do is drift a
+ *  clone reproduces — somebody generated the file while a source file was still untracked. Every
+ *  other kind of difference in this file (line counts, test counts, endpoint totals) can be
+ *  manufactured by uncommitted work sitting in the tree, so it tells the reader far less.
+ *
+ *  Read off the printed row rather than recomputed, because this runs on the version ON DISK as
+ *  well as on the freshly rendered one, and the whole question is what the stale file claims. */
+function fileCountsDisagree(line) {
+  if (typeof line !== "string") return false;
+  const cells = line.split("|").map((c) => c.trim());
+  // ["", "`path`", tracked files, tracked lines, tree files, tree lines, ""]
+  if (cells.length !== 7) return false;
+  const n = (c) => (/^[\d,]+$/.test(c) ? Number(c.replace(/,/g, "")) : null);
+  const trackedFiles = n(cells[2]);
+  const treeFiles = n(cells[4]);
+  return trackedFiles !== null && treeFiles !== null && trackedFiles !== treeFiles;
+}
+
+/** The drift listing, as a pure function so `--self-test` below can hold the ORDERING to account.
+ *
+ *  THE ORDER IS THE POINT, AND THE CAP IS NOT ENOUGH ON ITS OWN. The first version of this listing
+ *  capped at twelve rows in file order and reproduced, one level down, the exact defect it was
+ *  written to close: `android/app/src/main/java` — the only drifting row a clean checkout also shows
+ *  — sat twelfth and last, one more in-flight edit away from vanishing behind a counter that reports
+ *  a NUMBER rather than a row. So the rows a clone would reproduce are emitted FIRST (see
+ *  `fileCountsDisagree`), and the cap is raised well past what five concurrent agents produce. The
+ *  boundary can no longer swallow the row that matters, because that row is never near the boundary.
+ *
+ *  WHAT THE TRAILING COUNTER DOES AND DOES NOT DO. It says how many differing lines were not
+ *  printed, and nothing about which — it is a "there is more here" signal, not a summary, and it can
+ *  never be relied on to disclose a row. That is why ordering rather than counting is the guarantee.
+ *  Within each of the two groups the order is positional, so a reader can still find a row by
+ *  scrolling REPO_FACTS.md. */
+function factsDrift(was, now, cap = 120) {
+  const differing = [];
+  for (let i = 0; i < Math.max(was.length, now.length); i += 1) {
+    if (was[i] !== now[i]) differing.push(i);
+  }
+  const reproducible = (i) => fileCountsDisagree(was[i]) || fileCountsDisagree(now[i]);
+  differing.sort((a, b) => Number(reproducible(b)) - Number(reproducible(a)) || a - b);
+  const drift = [];
+  let hidden = 0;
+  for (const i of differing) {
+    if (drift.length >= cap) { hidden += 1; continue; }
+    drift.push(`  line ${i + 1}: have ${was[i] ?? "(nothing)"}`, `           want ${now[i] ?? "(nothing)"}`);
+  }
+  if (hidden) drift.push(`  …and ${hidden} more differing line(s) — not named, and not summarised`);
+  return drift;
+}
+
+/** Does the ordering above actually bite? Same reasoning as `selfTestDrift`: the guarantee this
+ *  listing makes is about which row survives a cap, and a guarantee nobody tests is how the twelve-
+ *  line window shipped in the first place. */
+function selfTestFactsDrift() {
+  const cases = [];
+  const ok = (what, cond) => { cases.push(what); if (!cond) fail(`check-docs self-test: ${what}`); };
+
+  const row = (path, tf, tl, ef, el) => `| \`${path}\` | ${tf} | ${tl} | ${ef} | ${el} |`;
+  const clean = row("android/app/src/main/java", 150, "130,629", 152, "131,446");
+  const fixed = row("android/app/src/main/java", 151, "131,331", 151, "131,331");
+
+  ok("a row whose tracked and tree file counts differ is what a clone reproduces", fileCountsDisagree(clean));
+  ok("...and one where they agree is not", !fileCountsDisagree(fixed));
+  ok("a line-count-only change is not counted as reproducible",
+    !fileCountsDisagree(row("backend/app", 162, "85,384", 162, "85,975")));
+  ok("a non-table line is not misread as a row", !fileCountsDisagree("have **251 operations** — 116 GET"));
+
+  // THE ACTUAL DEFECT: the row that matters sits last, behind more in-flight noise than the cap.
+  const noise = (n) => Array.from({ length: n }, (_, i) => `| \`lib/${i}\` | 9 | ${i} | 9 | ${i} |`);
+  const wasLines = [...noise(40), clean];
+  const nowLines = [...noise(40).map((l) => l.replace(/\| (\d+) \|$/, "| 999 |")), fixed];
+  const listed = factsDrift(wasLines, nowLines, 4).join("\n");
+  ok("the clean-tree row is printed even when the cap is smaller than the noise above it",
+    listed.includes("android/app/src/main/java"));
+  ok("...and it is printed FIRST, so no cap can reach it", listed.startsWith(`  line 41: have ${clean}`));
+  ok("the counter says how many were withheld", listed.includes("more differing line(s)"));
+  ok("nothing is hidden when the cap is not reached", !factsDrift(wasLines, nowLines).join("\n").includes("more differing"));
+
+  note(`${cases.length} self-test cases for the REPO_FACTS drift listing`);
 }
 
 /** 2. The web client's role ladder still matches the backend's. */
@@ -906,6 +1013,7 @@ function checkCrossLinks() {
 /* ── run ────────────────────────────────────────────────────────────────────────────────────── */
 
 selfTestDrift();
+selfTestFactsDrift();
 selfTestExemptions();
 checkFacts();
 checkRoleParity();

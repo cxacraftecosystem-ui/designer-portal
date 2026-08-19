@@ -1,0 +1,337 @@
+name: Checks
+
+# ─── WHAT THIS EXISTS TO STOP ────────────────────────────────────────────────────────────
+# Until this file landed, a pull request that touched only `backend/` and `frontend/` started
+# NO WORKFLOW AT ALL. The three workflows beside this one are deploy stages: deploy-backend.yml
+# and deploy-frontend.yml fire on `push: main` (never on a PR), and android-build.yml's
+# `pull_request` trigger is path-filtered to `android/**`. So every guard this repository has
+# written for the server and the web ran only when a human remembered to type the command.
+#
+# That is not an abstract gap. The carry rules exist because a stage row that points at an
+# artisan has to copy that artisan's values at SAVE time, and the table saying WHICH values move
+# is written out three times: `REFERENCE_HYDRATION` in the backend, `DW_REFERENCE_HYDRATION`
+# hand-copied into `frontend/lib/designWorkshops.ts`, and — on Android — nothing, because
+# `DwReferenceField` reads the server's table off the shipped `design-workshop-schema.json`.
+# Android therefore CANNOT drift, and Android was the one surface with a CI job. The two copies
+# that can drift were the two with no automation. Widen the server's table, forget the web's,
+# and `test_the_web_carries_the_same_hydration_table` is what catches it — a test nothing ran.
+# The failure it prevents is not a blank box: for the `existingProduct` shape the web table is
+# explicit about, `data.name` under `artisanRef` is the ARTISAN's name, so a wrong entry writes
+# a person's name into a product column, only-fill-blanks then refuses to correct it at save,
+# and the .docx handed to a ministry officer names a person in its product table.
+#
+# `test_controlled_vocabularies.py` is in the same unrun suite and carries the OTHER guard worth
+# naming here: `test_the_bundled_android_asset_is_the_registry_it_claims_to_be` is the only thing
+# anywhere that checks the shipped `android/app/src/main/assets/design-workshop-schema.json`
+# still equals `registry_to_dict()`. A `stage_definitions` edit that does not regenerate the
+# asset is otherwise completely invisible until a handset in a village renders the wrong form.
+#
+# ─── THIS WORKFLOW RUNS. IT DOES NOT, BY ITSELF, GATE ANYTHING ───────────────────────────
+# Nothing in `.github/` can prove a job BLOCKS a merge or a deploy: required status checks live in
+# the repository's branch-protection settings, not in a workflow file. Read a green Checks tick as
+# "the guards were asked", not as "main is protected" — the header above says at length what this
+# stops, and this paragraph exists because saying that without saying this misleads.
+#
+# Two specific things it does NOT do. It does not block a merge unless `Backend tests`, `Web
+# typecheck, lint and unit specs` and `Docs check` are named as required checks on `main`. And it
+# does not block a deploy: deploy-backend.yml fires on its own `push: main` trigger and one workflow
+# cannot `needs:` a job in another, so on main the two RACE. A `needs:` inside deploy-backend.yml
+# was considered and rejected — that workflow never fires on a pull request, which is where the
+# drift these jobs catch is introduced, so it would have gated the wrong half. See docs/CI.md §5.
+#
+# ─── WHY NO `paths:` FILTER ──────────────────────────────────────────────────────────────
+# Deliberate, and it is the specific mistake this file was written to not repeat. A path filter
+# is how android-build.yml ended up unreachable from a backend PR. The three jobs below are
+# cheap and independent; a filter would buy a few minutes and cost the property that makes this
+# workflow worth having — that EVERY pull request runs it. Do not add one.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Safe to cancel, unlike the deploy workflows: nothing outside the runner is mutated here, and
+  # a superseded commit's result is noise. Keyed per PR (or per branch on a push) so two open PRs
+  # never cancel each other.
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  # 1 · The backend suite
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # ─── THE DATABASE, AND WHY THESE VALUES LOOK LIKE THAT ───────────────────────────────
+    # THERE IS NO DATABASE IN THIS JOB AND THERE MUST NOT BE ONE. Twenty-six test modules under
+    # backend/tests/ gate themselves on the DSN naming `localhost` or `127.0.0.1`, and that gate
+    # is not fussiness: those tests create users, workshops and stage entries and delete them
+    # again, so pointing them at any database that is not a scratch one is how field data gets
+    # destroyed. The DSN below names `ci.invalid` — RFC 2606 reserves `.invalid` precisely so it
+    # can never resolve — which means the gate reads "not local", every database-backed test
+    # skips BY DESIGN, and nothing can accidentally connect to anything even if a gate is wrong.
+    #
+    # It is set at all only because `app.core.config.Settings` declares DATABASE_URL, JWT_SECRET,
+    # the three AWS values and MASTER_ADMIN_EMAIL as REQUIRED fields, with `.env` (absent here —
+    # it is gitignored) as their only other source. With them unset `Settings()` refuses to build,
+    # and a plain `pytest` in this job dies with 70 COLLECTION ERRORS rather than skipping: among
+    # them `test_reference_carry.py`, which is the entire carry-fidelity suite and the main reason
+    # this workflow exists. Measured on this tree, not assumed — `pytest --collect-only` with a
+    # completely empty environment collects 1244 tests and ERRORS ON 70 MODULES; with the
+    # placeholders below it collects the whole suite and errors on none. "Leave DATABASE_URL unset"
+    # was the first thing tried here, and that is what it does.
+    #
+    # So these are placeholders that let the pure-Python suite IMPORT, and every one of them is
+    # chosen to be unusable: an unresolvable host, a secret that is obviously not a secret, an
+    # `.invalid` address. Do not "improve" any of them into something real, and do not add a
+    # Postgres service container — a database here would silently promote twenty-six modules from
+    # "skipped by design" to "running against whatever CI happens to have", which is a different
+    # suite with different failure modes, unreviewed.
+    env:
+      PYTHONUTF8: "1"
+      DATABASE_URL: "postgresql://ci:ci@ci.invalid:5432/no_such_database"
+      JWT_SECRET: "ci-placeholder-not-a-secret-0123456789abcdef"
+      AWS_ACCESS_KEY_ID: "ci-placeholder"
+      AWS_SECRET_ACCESS_KEY: "ci-placeholder"
+      AWS_S3_BUCKET: "ci-placeholder"
+      MASTER_ADMIN_EMAIL: "ci@example.invalid"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.12 because that is what the EC2 box runs (`python3.12 -m venv .venv` in
+          # deploy-backend.yml). A test suite that passes on a version production does not have
+          # is a weaker statement than it looks. pyproject allows >= 3.11.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install the backend and its test extras
+        # `[dev]`, not a bare install: pytest-asyncio lives there, and `asyncio_mode = "auto"` is
+        # INERT without it — pytest collects the async tests, finds no runner, warns, and reports
+        # green. That has already happened once on this project (see the note beside the pin in
+        # pyproject.toml), and it would happen here in the one place nobody is watching the output.
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+
+      - name: Generate the Prisma client
+        # `from prisma import Prisma` in app/core/db.py resolves against code that `prisma
+        # generate` writes into the installed package; without this step every module that
+        # reaches app.core.db fails to import. It talks to the schema and to the engine download,
+        # NOT to a database — no migration runs and nothing connects.
+        run: python -m prisma generate --schema prisma/schema.prisma
+
+      - name: Run the suite
+        # THE WHOLE SUITE, not a hand-written selection, and that is the point: a `-k` expression
+        # is a list that goes stale the day somebody adds a file, and the guards this workflow
+        # exists for are exactly the kind nobody remembers to add to a list. The database-backed
+        # modules take themselves out via the gate described in the `env:` block above, so "what
+        # runs here" is decided by the tests themselves rather than by this file.
+        #
+        # NO `-q`, AND THAT IS THE POINT OF THE FLAGS RATHER THAN A TASTE IN LOG VOLUME. This step
+        # ran `-q -rf` for its whole first life, and under `-q` pytest drops verbosity to -1 and
+        # `TerminalReporter.pytest_sessionstart` returns before `_write_report_lines_from_hooks`, so
+        # `conftest.pytest_report_header` — the one line this comment used to promise was here,
+        # saying whether the database-backed tests ran or skipped — was never printed at all.
+        # Measured on this tree, same interpreter: without `-q` the sentence appears, with `-q` the
+        # log is dots and a count. The reader was left with the bare skip number the sentence was
+        # written to replace, which is this repository's own named failure mode — a green skip that
+        # cannot be told apart from a test nobody ever wrote.
+        #
+        # `-rfs`, ONE FLAG, NOT `-rf -rs`. A second `-r` REPLACES the first rather than adding to
+        # it; measured here, `pytest -rf -rs` on a run with a failure and a skip prints the SKIPPED
+        # lines and silently drops the FAILED ones. Spelling it as one flag is the difference
+        # between a summary that names the failures and one that hides them.
+        #
+        # The grep below is a gate, not decoration. Belt and braces on the same sentence: conftest
+        # also prints it from `pytest_terminal_summary`, which survives any verbosity, so if
+        # somebody re-adds `-q` here for log volume the sentence still reaches the log — and if the
+        # hook is ever deleted or renamed, THIS STEP GOES RED instead of quietly reverting to the
+        # bare count. pytest's pass/fail verdict is carried across the check in `status` — the grep
+        # can only ADD a failure, never mask one, so a red suite is still what the job reports.
+        #
+        # MEASURED, not estimated, and RE-MEASURED after the flags above changed, with exactly the
+        # environment of the `env:` block and no database anywhere: 381 skipped, in four to six
+        # minutes. The totals move as tests are added — do not treat them as a target — but THE SKIP
+        # COUNT IS THE ONE TO WATCH, and the terminal summary now breaks it down by reason so the
+        # watching is possible rather than a matter of trust. The breakdown printed by that run,
+        # verbatim, which is the shape to compare against:
+        #     skipped 381 tests, by reason:
+        #         339 × needs a LOCAL database; refuses to run against a remote DATABASE_URL
+        #          36 × needs a LOCAL database
+        #           6 × (six one-offs: Pillow, a tz database, a Windows st_ctime case, …)
+        # So 375 of the 381 are the database gate and the remaining six are named individually. If
+        # the 375 collapses toward zero without the `database:` sentence changing, a gate has been
+        # inverted and this job is quietly running far less than its green tick claims.
+        #
+        # THE PASS COUNT IN THE PREVIOUS VERSION OF THIS COMMENT ("2862 passed, 0 failed") IS NOT
+        # RE-ASSERTED, because it is no longer true and the reason is worth the line: the same
+        # invocation now reports 31 failed in test_entry_provenance.py and test_reference_carry.py,
+        # every one of which PASSES when its module is run alone. That is cross-module pollution
+        # arriving with in-flight work in those files, not something this workflow can fix, and
+        # writing a green number here that the job will not reproduce is how a comment starts lying.
+        run: |
+          set -uo pipefail
+          status=0
+          if ! python -m pytest -rfs --durations=15 | tee pytest-output.log; then
+            status=1
+          fi
+          if ! grep -q '^database: ' pytest-output.log; then
+            echo "::error::conftest no longer printed its 'database:' line. The skip count in this log is now unreadable — see pytest_report_header / pytest_terminal_summary in backend/tests/conftest.py."
+            exit 1
+          fi
+          exit "$status"
+
+      - name: Prove the database gate on a runner that has only a dotenv
+        # THE FOUR TESTS IN test_conftest_database_gate.py HAVE NO TEETH IN THE STEP ABOVE, and this
+        # step is what gives them some. The job exports a placeholder DATABASE_URL (it has to — see
+        # the `env:` block), so up there a module-scope `os.environ` read finds a DSN whether or not
+        # the conftest published one, and the two tests that measure the publish either pass
+        # vacuously or skip themselves outright. The accident they guard — twenty-six modules whose
+        # gate is correct only because an `app.…` import happens to sit above it and load `.env` as
+        # a side effect — lives on a machine where the DSN exists ONLY in `backend/.env`. So this
+        # step builds that machine: blank the exported DSN, write a `.env`, and run from the
+        # REPOSITORY ROOT, which is also the only invocation that reaches `_dotenv_database_url` at
+        # all (both real loaders are CWD-relative and find nothing from here).
+        #
+        # It found a live bug the first time it was run, which is the argument for keeping it: the
+        # publish was `os.environ.setdefault`, and setdefault tests key PRESENCE, so a DATABASE_URL
+        # exported as an empty string left the key set, the publish a no-op, and every gated module
+        # reading "". See the note beside the publish in conftest.py.
+        #
+        # ONLY THAT ONE FILE RUNS HERE, and that is a safety property, not tidiness. The `.env`
+        # written below names a loopback DSN, so `HAS_LOCAL_DATABASE` is TRUE for the duration —
+        # pointing the whole suite at it would promote all twenty-six database-backed modules from
+        # "skipped by design" to "connecting to whatever is on 127.0.0.1 of a CI runner". Do not
+        # widen the path below. The trap removes the file even if pytest fails, so the step above
+        # (which runs first, and must keep seeing no `.env`) is unaffected either way.
+        working-directory: .
+        env:
+          # YAML cannot unset a job-level variable, and it does not need to: every read of this in
+          # the resolution path is a truthiness test, so "" is indistinguishable from absent there.
+          # Proving that is half the point of the step.
+          DATABASE_URL: ""
+        run: |
+          set -euo pipefail
+          trap 'rm -f backend/.env' EXIT
+          echo 'DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/nothing_is_listening' > backend/.env
+          python -m pytest backend/tests/test_conftest_database_gate.py -rfs
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  # 2 · The web checks
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  web:
+    name: Web typecheck, lint and unit specs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # 22 to match deploy-frontend.yml, which matches Vercel's current build image. A
+          # typecheck that passes on a different major than the one that builds production is
+          # not the check anybody thinks it is.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        # `npm ci` only. NO `npx playwright install` — MEASURED: the selected specs run to
+        # completion in 34 s with PLAYWRIGHT_BROWSERS_PATH pointed at an empty directory, because
+        # not one of them asks for the `page` fixture; Playwright launches a browser lazily and
+        # never gets asked to. Downloading Chromium would add about a minute to every run of this
+        # job to serve nothing. If a spec ever does need one, the failure says exactly that
+        # ("Executable doesn't exist… run npx playwright install"), which is a better signpost
+        # than a browser sitting there letting a screen-driving spec time out against no server.
+        run: npm ci
+
+      - name: Typecheck
+        # `next build` also fails on a type error, but only during the deploy — i.e. AFTER the
+        # backend has already shipped. Running it here moves the answer to before the merge.
+        run: npx tsc --noEmit
+
+      - name: Lint
+        # --max-warnings=0 on purpose: the config's warnings are the ones that describe real
+        # accessibility and hook defects, and a warning nobody fails on is a warning nobody reads.
+        # This passes on the tree it landed with; if it starts failing, something new was added.
+        run: npx eslint . --max-warnings=0
+
+      - name: Unit specs
+        # ONLY the specs that need no dev server and no database. The rest of frontend/e2e/ signs in
+        # against a real API and drives real records; standing the compose stack up on a runner is a
+        # much larger job and a separate decision.
+        #
+        # `test:unit` in frontend/package.json is where the selection lives, and package.json cannot
+        # hold a comment, so the reasoning is here. The rule is "every `*-unit.spec.ts`", because
+        # that suffix is this repository's own convention for a spec that exercises a pure function
+        # rather than a screen — `reference-hydration-unit.spec.ts` says so in its header ("PURE ON
+        # PURPOSE, so this costs no dev server"). TWO FILES CARRY THE SUFFIX AND BREAK THE RULE, and
+        # they are excluded by name rather than by hope:
+        #   • access-refusal-unit.spec.ts        — page.route() stubs the API, but it still
+        #   • login-credential-floor-unit.spec.ts  page.goto()s the real login screen.
+        # MEASURED: running all `*-unit.spec.ts` with nothing listening on :3000 fails exactly the
+        # six tests in those two files and nothing else; the selection that remains is 536 tests in
+        # ~31 s. If a new `-unit` spec starts failing here with a NAVIGATION TIMEOUT, it belongs in
+        # that list — or, better, does not belong under the `-unit` name.
+        #
+        # Re-measured with no server running: 536 tests, ~45 s, of which 3 FAIL — in
+        # inline-record-host-unit, record-form-dictation-unit and web-surface-gaps-unit. Read the
+        # distinction above before adding them to the exclusion list, because they are the OTHER
+        # kind: every one is a source-inspection assertion (`expect(source).toContain(…)`) that
+        # names a symbol the component or `lib/designWorkshops.ts` does not currently have. Nothing
+        # about a dev server would change the answer. That is real web-surface drift arriving with
+        # in-flight work in files this job only reads, and excluding it would be silencing the
+        # check rather than scoping it.
+        run: npm run test:unit
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  # 3 · The documentation checks
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  docs:
+    name: Docs check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        # Full history is NOT needed, but a git checkout is: check-docs shells out to
+        # `git ls-files` to decide which paths a document is allowed to name.
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify the documentation set
+        # No `npm ci` anywhere: the script imports nothing outside node: builtins, deliberately,
+        # so it can run from a bare checkout.
+        #
+        # WHAT FAILS HERE AND HOW TO FIX IT. The usual failure is not prose at all — it is
+        # `docs/REPO_FACTS.md is out of date`, because that file is GENERATED from the repository
+        # (model counts, endpoint counts, per-surface test counts) and any change to a route, a
+        # Prisma model or the number of test files moves it. The fix is one command, and it is a
+        # documented, reviewable diff rather than a number somebody retyped:
+        #     node docs/tools/check-docs.mjs --write
+        run: node docs/tools/check-docs.mjs

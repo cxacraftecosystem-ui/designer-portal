@@ -413,9 +413,30 @@ test("every qualifying record-form box has a control, and the skipped ones stay 
   // are here so that "somebody adds a toolbar to the Aadhaar box" fails a test rather than a review.
   expect(ARTISAN_FORM, "dos/donts stay the numbered-list control").toMatch(/<DosDontsField/);
   expect(ARTISAN_FORM, "no editor on an identity number").not.toMatch(/<RichTextField[\s\S]{0,200}?name="aadhaarNumber"/);
-  expect(PROCESS_FORM, "step notes must NOT become a document — Android splits that column").not.toMatch(
+  /*
+    NARROWED TO THE STEP-NOTES ROWS, WHICH IS WHAT THE SENTENCE WAS EVER ABOUT.
+
+    This read `not.toMatch(/<RichTextField/)` over the WHOLE of ProcessForm, and it began failing
+    when another lane gave the form a PROCESS-level "What happens in this process" editor. The
+    invariant it names is untouched by that: `ProcessStep.notes` is a different column from
+    `Process.notes`, the several per-step rows are joined with a blank line into the one step column,
+    and Android’s `MultiNoteInput` splits that column back apart on blank lines — a document in
+    THERE would be one note containing JSON. A narrative box on the process itself is exactly the
+    "formatting on the LARGER boxes only" rule the rest of this sweep applies, so the assertion was
+    over-broad rather than the code wrong.
+
+    Asserting on the control instead of on the absence of a string is what makes it stay true: the
+    step rows render `MultiNoteInput`, whose own definition is checked below for the same thing.
+  */
+  const stepNotes = PROCESS_FORM.slice(PROCESS_FORM.indexOf("{step.recordAdditional ? ("));
+  expect(stepNotes.slice(0, 400), "the step-notes rows are the plain multi-note control").toContain(
+    "<MultiNoteInput"
+  );
+  expect(stepNotes.slice(0, 400), "step notes must NOT become a document — Android splits that column").not.toMatch(
     /<RichTextField/
   );
+  const multiNote = PROCESS_FORM.slice(PROCESS_FORM.indexOf("function MultiNoteInput"), PROCESS_FORM.indexOf("// The process form (create + edit)"));
+  expect(multiNote, "and no editor inside the control itself either").not.toMatch(/<RichTextField/);
 });
 
 /*

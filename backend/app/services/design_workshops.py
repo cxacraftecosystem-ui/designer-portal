@@ -30,6 +30,7 @@ are one feature and neither works alone — see the long note above ``REFERENCE_
 """
 
 import logging
+import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field as dataclass_field, replace
 from datetime import UTC, datetime
@@ -297,6 +298,38 @@ def _subject_point(location: Any) -> dict[str, float] | None:
         return None
 
 
+#: What the pieces of one step's own text are joined with once its interior breaks are flattened
+#: out of it. A middot and not a comma or a semicolon: a comma reads as part of the sentence, and a
+#: semicolon is one of the two characters the bullet renderer splits on, so joining with one would
+#: put the break straight back in.
+_LINE_JOIN = " · "
+
+
+def _one_line(value: Any) -> str:
+    """One free-text answer as a SINGLE printed line, with the renderer's split characters gone.
+
+    THE BULLET RENDERER SPLITS ON NEWLINES AND ON SEMICOLONS. `report_builder`'s pre-promotion
+    path for a `report_role=BULLETS` LONG_TEXT replaces every semicolon with a newline and then
+    splits on newlines, one bullet per piece, and the handset's `ReportScreen` is a port of that
+    same line. So anything embedded INSIDE one of `_step_lines`' numbered lines that carries either
+    character stops being part of that line and becomes a bullet of its own — unnumbered, and
+    reading to a ministry officer as one more step in the sequence.
+
+    That is not hypothetical, and it is not the semicolon that caused it. `ProcessStep.notes` is
+    written by `MultiNoteInput` on the web form and by its namesake on the handset, and BOTH join
+    a researcher's several notes with a blank line; the handset splits the column back apart on
+    blank lines to edit it. So a step carrying two notes printed as two bullets — "1. Tying — Use
+    cotton thread" and then a bare "Knots must be tight" — and three documented steps printed as
+    five. `DocumentBuilder.bullets` drops the empty item between them, so not even a gap showed.
+
+    Nothing is dropped or truncated: the split characters are turned INTO the separator the reader
+    was going to see anyway, and the researcher's second note still prints, on the line of the step
+    it belongs to.
+    """
+    parts = [part.strip() for part in re.split(r"[\n;]+", str(value or ""))]
+    return _LINE_JOIN.join(part for part in parts if part)
+
+
 def _step_lines(process: Any) -> str | None:
     """A documented process's own ordered sub-steps, as one newline-separated bulleted list.
 
@@ -318,23 +351,32 @@ def _step_lines(process: Any) -> str | None:
     A TAGS field reaches `report_builder.format_value` as `", ".join(...)`, so the whole documented
     sequence would have printed as a single run-on line — "1. Tying, 2. Dyeing, 3. Washing" — under
     a heading that promises a list. A LONG_TEXT with `report_role=BULLETS` goes down the renderer's
-    pre-promotion path, which splits on newlines and prints one bullet per step. It also splits on
-    semicolons, which is deliberate elsewhere in the registry and means a step note containing one
-    breaks into two bullets; that is the renderer's documented behaviour for every BULLETS field
-    here and is not worth a special case.
+    pre-promotion path, which splits on newlines and prints one bullet per step.
+
+    AND THAT SPLIT IS WHY EVERY PIECE OF A LINE GOES THROUGH `_one_line` FIRST. This note used to
+    end by saying the renderer also splits on semicolons, that a step note containing one therefore
+    breaks into two bullets, and that this "is the renderer's documented behaviour for every BULLETS
+    field here and is not worth a special case". The behaviour was described correctly and the cost
+    was mis-measured, because only the semicolon was considered. The character that actually appears
+    in this column is the NEWLINE: `MultiNoteInput` joins a researcher's several notes with a blank
+    line on both clients, so a step with two notes printed as an extra unnumbered bullet that a
+    reader counts as a step. One documented step is now one bullet whatever its note contains.
     """
     steps = getattr(process, "steps", None) or []
     ordered = sorted(steps, key=lambda s: (getattr(s, "sortOrder", 0) or 0,
                                            str(getattr(s, "name", "") or "")))
     lines: list[str] = []
     for index, step in enumerate(ordered, start=1):
-        name = str(getattr(step, "name", "") or "").strip()
+        # The NAME goes through `_one_line` as well as the note, and not out of symmetry: it is
+        # free text from the same form, and once the two are one string the renderer cannot tell
+        # which half a stray newline came from.
+        name = _one_line(getattr(step, "name", None))
         if not name:
             continue
         line = f"{index}. {name}"
         if _enum_token(getattr(step, "stepType", None)) == "GROUP":
             line += " (group)"
-        note = str(getattr(step, "notes", "") or "").strip()
+        note = _one_line(getattr(step, "notes", None))
         if note:
             line = f"{line} — {note}"
         lines.append(line)
@@ -515,6 +557,27 @@ def _enum_token(value: Any) -> str:
 # entry, and `test_reference_carry.py` reads `prisma/schema.prisma` and fails if a member exists
 # that these tables do not name. Adding a token to the schema now breaks a test instead of quietly
 # hydrating nothing. DO NOT "tidy" these into `.get()` over a short dict again.
+#
+# ── AND THE SECOND RULE, WHICH THE TABLES BELOW USED TO SPLIT ON ───────────────────────────
+#
+# A PRISMA ENUM MEMBER THAT IS ALSO THE COLUMN'S @default AND HAS NO BLANK ALTERNATIVE IN ANY
+# RECORD FORM IS NOT AN ANSWER. It is what the row holds when nobody was asked, and it is
+# INDISTINGUISHABLE from a researcher who deliberately chose it — the two states are the same
+# stored token and no query can separate them. Carrying it fills a workshop box, and in two cases a
+# printed line, with an assertion nobody made.
+#
+# `_TRADITION_TYPE_TO_TRADITION` already said this ("an unanswered ENUM is expressed by leaving the
+# box empty, not by a token that means 'empty'") while `_MAKER_TYPE_TO_MAKER` argued the opposite
+# one table away ("'Not known' is a real answer a researcher chose") — a claim `ToolForm.tsx`
+# contradicts, since it renders the select with `defaultValue={initial?.maker ?? "UNKNOWN"}` over a
+# list with no blank member and submits `requiredText(form,"maker") || "UNKNOWN"`. The handset does
+# the same with `includeNone = false`. All three tables now apply the one rule, and each names the
+# schema default and the missing blank option as its reason rather than restating the rule.
+#
+# THE RULE IS ABOUT THE SOURCE FORM, NOT ABOUT THE WORD. `MakerType.OTHER` and `ProductType.OTHER`
+# read alike and are not alike: nothing defaults to OTHER on the tool form, so a maker of "Other"
+# WAS chosen and is carried. The question to ask of a member is always "could a row hold this
+# without anybody having looked at the question?".
 
 # ProductType and PRODUCT_CATEGORY answer two different questions and only two of their tokens
 # mean the same thing. ProductType asks what KIND OF THING a documented record is — a finished
@@ -528,8 +591,23 @@ def _enum_token(value: Any) -> str:
 # ProductType, so the record's answer reaches the workshop and the report intact — it simply
 # reaches its own box instead of being mistranslated into somebody else's.
 _PRODUCT_TYPE_TO_CATEGORY: dict[str, str | None] = {
+    # PACKAGING stays, and it is the only token here that can: it is reachable ONLY by a researcher
+    # opening the dropdown and picking it, so "PACKAGING" on a row is somebody's answer.
     "PACKAGING": "PACKAGING",
-    "OTHER": "OTHER",
+    # OTHER USED TO BE CARRIED AND IT IS THE COLUMN'S @default. `schema.prisma` declares
+    # `productType ProductType @default(OTHER)`, `ProductForm.tsx` renders the select with
+    # `defaultValue={initial?.productType ?? "OTHER"}` over a six-member list with no blank option
+    # and submits `requiredText(form,"productType") || "OTHER"`, and the Android form does the same
+    # with `includeNone = false`. So "the researcher chose Other" and "nobody answered the type
+    # question" are the same stored token. `existingProduct.category` is one of the six columns the
+    # Existing products table actually prints, so the carry filled a ministry report's Category
+    # column with "Other" for every product nobody categorised — a plausible wrong value nobody
+    # would think to check, which is the outcome this table's own header says it exists to prevent.
+    # Only-fill-blanks then made the box look answered to the designer too.
+    #
+    # The record's answer is NOT lost by this: `_PRODUCT_TYPE_TO_MEMBER` still carries OTHER into
+    # `existingProduct.recordType`, which is the box that exists for exactly that.
+    "OTHER": None,
     # No honest counterpart: none of these says what the product IS. A finished good may be a
     # saree or a bag; a sample is a saree that happens not to be for sale.
     "FINISHED_GOOD": None,
@@ -552,16 +630,26 @@ _PRODUCT_TYPE_TO_MEMBER: dict[str, str | None] = {
     "OTHER": "OTHER",
 }
 
-#: MarketDemand -> DEMAND_LEVEL. Five members, five identical tokens, and the identity is written
-#: out rather than assumed: the two lists live in two repositories that are versioned separately,
-#: and "they happen to match today" is not something a mapping may depend on silently. If either
-#: side gains a member the test that walks this table says so.
+#: MarketDemand -> DEMAND_LEVEL. Four of the five members are identical tokens, and the identity is
+#: written out rather than assumed: the two lists live in two repositories that are versioned
+#: separately, and "they happen to match today" is not something a mapping may depend on silently.
+#: If either side gains a member the test that walks this table says so.
 _MARKET_DEMAND_TO_DEMAND_LEVEL: dict[str, str | None] = {
     "LOW": "LOW",
     "MEDIUM": "MEDIUM",
     "HIGH": "HIGH",
     "SEASONAL": "SEASONAL",
-    "UNKNOWN": "UNKNOWN",
+    # THE DEFAULT, NOT AN ANSWER — see the second rule in the block header above.
+    # `marketDemand MarketDemand @default(UNKNOWN)`, and `ProductForm.tsx` renders
+    # `defaultValue={initial?.marketDemand ?? "UNKNOWN"}` over a five-token list with no blank
+    # member, submitting `requiredText(form,"marketDemand") || "UNKNOWN"`. An untouched form stores
+    # UNKNOWN, so the token says nothing about the market. It used to carry into
+    # `existingProduct.marketDemand`, whose registry label for that token is "Not known" — and that
+    # field has the DEFAULT report_role, KEY_VALUE, so it PRINTS: "Market demand: Not known" stood
+    # in the per-row extras beneath the Existing products table of a submitted report for every
+    # imported product, answering a question nobody was asked. Blank is the honest state and the
+    # designer can still say it.
+    "UNKNOWN": None,
 }
 
 #: TraditionType -> TRADITION_TYPE. The names collide and the tokens do not: the source says
@@ -592,11 +680,21 @@ _MAKER_TYPE_TO_MAKER: dict[str, str | None] = {
     "CARPENTER": "CARPENTER",
     "WORKSHOP": "WORKSHOP",
     "FACTORY": "FACTORY",
+    # Carried, and not in tension with UNKNOWN below: nothing on the tool form defaults to OTHER,
+    # so a maker of "Other" is a pick somebody made.
     "OTHER": "OTHER",
-    # Carried, unlike TraditionType's UNKNOWN, because the registry list mirrors this enum and so
-    # HAS an UNKNOWN member: "Not known" is a real answer a researcher chose, and blanking it
-    # would turn it into "not asked".
-    "UNKNOWN": "UNKNOWN",
+    # THIS ENTRY USED TO READ: "Carried, unlike TraditionType's UNKNOWN, because the registry list
+    # mirrors this enum and so HAS an UNKNOWN member: 'Not known' is a real answer a researcher
+    # chose, and blanking it would turn it into 'not asked'." The premise about the registry list is
+    # true; the premise about the researcher is not, and the form is what refutes it.
+    # `schema.prisma` declares `maker MakerType @default(UNKNOWN)`, `ToolForm.tsx` renders
+    # `defaultValue={initial?.maker ?? "UNKNOWN"}` over a list with no blank option and submits
+    # `requiredText(form,"maker") || "UNKNOWN"`, and the handset builds the dropdown with
+    # `includeNone = false`. There is no state of that form in which UNKNOWN was chosen rather than
+    # left alone — so the token IS "not asked", and `tool.maker` was answering it "Not known" in the
+    # designer's form and in the report. The registry list keeps its UNKNOWN member for a designer
+    # who wants to state it; what is refused is the CARRY.
+    "UNKNOWN": None,
 }
 
 
@@ -626,6 +724,61 @@ def _translated(table: Mapping[str, str | None], value: Any) -> str | None:
         )
         return None
     return table[token]
+
+
+#: RecordStatus -> what the picker says beside the record's name. APPROVED is deliberately absent:
+#: an approved record is the ordinary case and a badge on every row would be noise that hides the
+#: four rows that are not.
+#:
+#: LONGER THAN THE RECORD PAGE'S WORDING, ON PURPOSE. ``StatusBadge`` prints the same five tokens as
+#: "Draft / Pending / Approved / Rejected / Needs revision", so a designer does see two spellings of
+#: one status, and the difference is deliberate rather than drift: the badge is a coloured pill on a
+#: row that is ABOUT that record, and colour plus shape carry half its meaning. This is a bare
+#: sublabel under a name in a dropdown, with no chip, no colour and no context saying whose verdict
+#: it is, so "Pending" alone reads as the designer's own unfinished work rather than as a reviewer
+#: not having looked yet. Keep the phrasing self-explanatory here; if the picker ever gains a chip,
+#: collapse it onto ``StatusBadge``'s words rather than inventing a third set.
+#:
+#: NOT ``ENUMS["REVIEW_DECISION"]``, WHICH IS A DIFFERENT QUESTION WITH SIMILAR WORDS. That table
+#: ("Selected", "Rejected", "Revise and resubmit", "Pending review") is the WORKSHOP's decision on
+#: its own prototype and carries a SELECTED member this vocabulary has no equivalent for. Unifying
+#: the two would put a repository reviewer's verdict and a design review's outcome behind one set of
+#: labels, and they are not the same fact about the same row.
+_REVIEW_FLAGS: dict[str, str] = {
+    "DRAFT": "Draft",
+    "PENDING": "Awaiting review",
+    "REJECTED": "Rejected by a reviewer",
+    "NEEDS_REVISION": "Sent back for revision",
+}
+
+
+def _review_flag(row: Any) -> str:
+    """A reviewer's verdict on a repository record, FOR THE PICKER'S SUBLABEL AND NOWHERE ELSE.
+
+    THE PROBLEM THIS ANSWERS. `reference_options` builds its `where` from the workshop scope
+    clause, the artisan filter and the search term, and from nothing else — there is no `status`
+    clause and no `records.viewable_where` call — and `hydrate_entries` re-reads by id with no
+    clause at all. That is right for VISIBILITY, and `entry_provenance` documents why: every
+    signed-in account may read every row, because the whole point of pooling the fieldwork is that
+    everyone can see the pool. A reviewer's VERDICT is a different question, and it had no answer
+    anywhere: a `ToolDocumentation` a reviewer rejected as a duplicate, or sent back because its
+    measurements cannot be right, sat in the stage-5 picker looking exactly like an approved one,
+    and picking it copied all twenty-four fields into a report handed to a ministry officer.
+
+    IT IS SHOWN AND NOT CARRIED, AND THAT IS THE WHOLE DESIGN. `status` is MUTABLE: a tool picked
+    while PENDING is approved the following week, and one picked while NEEDS_REVISION is corrected
+    and resubmitted. Hydration copies at SAVE time and the copy is permanent by design, so a
+    `fromref("recordStatus", …)` would freeze a verdict that has since changed and print a false
+    statement about a named reviewer for ever — worse than the silence it replaced, and it would
+    cost a `registry_version()` bump, a schema-JSON regeneration and a new ENUM for a label. The
+    sublabel is LIVE: it is composed on every `reference_options` call, at the moment of choosing,
+    on the web picker and in `DwReferenceField` alike, and nothing about it is written onto an
+    entry.
+
+    A model with no `status` column answers None here and gets no suffix — `Craft` is the one,
+    and taxonomy has no reviewer.
+    """
+    return _REVIEW_FLAGS.get(_enum_token(getattr(row, "status", None)), "")
 
 
 @dataclass(frozen=True, slots=True)
@@ -662,6 +815,20 @@ class ReferenceModel:
     data: Callable[[Any, ReferencePhoto | None], dict[str, Any]]
     order: dict[str, str]
     search_fields: tuple[str, ...]
+    # THE RELATIONS `label`, `sublabel`, `data` AND `_reference_place` READ, AND NOTHING ELSE.
+    # An include with no reader is a join issued on every picker keystroke, every `hydrate_entries`
+    # save and every `load_report_references` for a value nobody looks at, on a link this module
+    # measures at ~756 ms a hop. `ProductDocumentation` and `ToolDocumentation` both carried
+    # `{"artisan": True}` that way: their lambdas read the DENORMALISED `r.artisanName` column and
+    # never `_rel(r, "artisan", …)`, so the row was fetched and discarded. Both are gone.
+    #
+    # THE MIRROR-IMAGE TRAP IS LIVE AND IS DELIBERATELY LEFT ALONE — see `_reference_place`, which
+    # reads `row.location` for every model while only `Artisan` includes it. Turning the location
+    # include on for the two documentation models would CHANGE WHAT ALREADY-SUBMITTED REPORTS
+    # PRINT, because `_reference_place` prefers `location.village` over the free-text `place` and
+    # `load_report_references` runs at RENDER time, not at save time. That is the one thing the
+    # never-re-resolve rule exists to forbid. If a district or state is genuinely wanted for a tool
+    # or a product it is a deliberate change with a test pinning what the printed place becomes.
     include: dict[str, Any] = dataclass_field(default_factory=dict)
     # None when the model has no notion of a workshop, in which case a WORKSHOP-scoped field
     # falls back to the whole table rather than to nothing.
@@ -692,7 +859,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         workshop_where=_artisan_workshop_where,
         media_field="artisanId",
         label=lambda r: str(r.name or ""),
-        sublabel=lambda r: _joined(_rel(r, "craft", "name"), r.place),
+        sublabel=lambda r: _joined(_rel(r, "craft", "name"), r.place, _review_flag(r)),
         data=lambda r, photo: {
             "name": r.name,
             "localName": r.localName,
@@ -764,12 +931,34 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # groups of columns and the model's own docstring explains at length why reading one as
             # the other is a bug: `latitude`/`longitude`/`altitude`/`accuracy`/`capturedAt` are
             # PROVENANCE — a real GPS fix of the desk the record was typed at, 1,500 km from the
-            # village named beside it on every live row — and `placeName` is derived from that fix.
-            # None of those five crosses. `state`, `district`, `pincode` and the SUBJECT pin do.
+            # village named beside it on every live row — and `placeName` AND `address` are the two
+            # strings DERIVED from that fix. NONE OF THOSE SEVEN CROSSES. `state`, `district`,
+            # `pincode` and the SUBJECT pin do.
+            #
+            # `address` IS NAMED HERE BECAUSE IT IS THE ONE THIS NOTE USED TO LEAVE OUT OF BOTH
+            # LISTS, and leaving it out was how it got carried. The value read
+            # `r.address or _rel(r, "location", "address")`, so an artisan whose own Address box a
+            # researcher left empty — while letting the device fill the GPS one, which is what the
+            # form does automatically — printed in the participant roster of a submitted report as
+            # "Village: Barpali / District: Bargarh / State: Odisha / Address: <a street in
+            # Kharagpur, West Bengal>": four adjacent key-value lines contradicting each other under
+            # one artisan's name. `LocationFields.tsx` labels that box "GPS address" and files it in
+            # the panel captioned "Provenance, not an address. These values say where the device
+            # was"; `LocationInput` and the `Location` model docstring both list it in the
+            # PROVENANCE group, verbatim, beside `placeName`. It is derived from the same fix
+            # `placeName` is, and `placeName` was already refused on exactly that ground three lines
+            # from here. Only-fill-blanks made it unrecoverable as well: once the desk's street was
+            # written onto the row, no re-pick could clear it — a designer had to notice and overtype
+            # a value nothing on the page said was machine-derived.
+            #
+            # THE ANSWER TO "then the device address reaches nothing" is that it should not: it is a
+            # permanent copy on a submitted roster, and a reverse-geocoded street for a laptop
+            # answers no question the participant table asks. It stays on the `Location` row, where
+            # the provenance view reads it as provenance.
             "state": _rel(r, "location", "state"),
             "district": _rel(r, "location", "district"),
             "pincode": _rel(r, "location", "pincode"),
-            "address": r.address or _rel(r, "location", "address"),
+            "address": r.address,
             "subjectLocation": _subject_point(_rel_obj(r, "location")),
             "notes": r.notes,
             # Newline-separated, numbered guidance for working with THIS artisan — a positive
@@ -787,14 +976,14 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
     ),
     "ProductDocumentation": ReferenceModel(
         delegate="productdocumentation",
-        include={"artisan": True},
         order={"productName": "asc"},
         search_fields=("productName", "localName", "artisanName", "craftName"),
         workshop_where=lambda wid: {"workshopId": wid},
         artisan_field="artisanId",
         media_field="productId",
         label=lambda r: str(r.productName or ""),
-        sublabel=lambda r: _joined(r.artisanName, r.craftName, _money(r.sellingPrice)),
+        sublabel=lambda r: _joined(r.artisanName, r.craftName, _money(r.sellingPrice),
+                                   _review_flag(r)),
         data=lambda r, photo: {
             "name": r.productName,
             "localName": r.localName,
@@ -821,6 +1010,32 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # differently for exactly that reason — see `ToolDocumentation` below.)
             #
             # `weightG` has no source column at all and stays a workshop-only answer.
+            #
+            # ── AND WHAT DOES NOT CROSS WITH THE NUMBER: HOW IT WAS ARRIVED AT ──────────────
+            #
+            # WRITTEN DOWN BECAUSE NOTHING IN THIS LANE SAID IT AND A READER WOULD ASSUME A HAND
+            # AND A TAPE. `measurementImageId`, `measurementAnalysis` and `measurementAnalysisStatus`
+            # deliberately do not cross — the ledger in `tests/test_reference_carry.py` gives the
+            # reason for each — so the centimetre figure arrives with NO STATEMENT OF ITS METHOD,
+            # and a designer, a reviewer and a ministry officer all read it as a measurement
+            # somebody took. Some of these numbers are: `GridMeasurement.tsx` auto-fills the inches
+            # box from a vision model's reading of a photograph of the object on graph paper, and
+            # the researcher then saves the form. `measurement_provenance.py` states the law this
+            # falls short of in its opening line — "EVERY STORED DIMENSION STATES ITS METHOD" —
+            # and calls that save the acceptance, "once the method sits next to the signature".
+            #
+            # `hydrate_entries` stamps every value it writes with `HydrationSource(..., author_id=
+            # row.createdById)`. THAT ID IS THE PERSON WHO SAVED THE RECORD, and the field-provenance
+            # views on web and handset show their name. It is not, and must not be read as, a claim
+            # that they held a tape against the saree.
+            #
+            # THE MISSING HALF IS NOT THIS LANE'S TO LAND. `records.merge_field_provenance` does not
+            # yet call `measurement_provenance.method_stamps`, and that module's own §THE RECORD HALF
+            # says the call "belongs to another lane". Once per-field method stamps are stored,
+            # `hydrate_entries` can read them off the source row it ALREADY HAS IN HAND and add
+            # method/provider/modelId to the `HydrationSource` it writes. Copied AT SAVE, like every
+            # other hydrated value — never re-resolved from the live record at render time, or a
+            # submitted document changes the day somebody re-measures.
             "lengthCm": _inches_to_cm(r.lengthInches),
             "widthCm": _inches_to_cm(r.breadthInches),
             "heightCm": _inches_to_cm(r.heightInches),
@@ -841,14 +1056,13 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
     ),
     "ToolDocumentation": ReferenceModel(
         delegate="tooldocumentation",
-        include={"artisan": True},
         order={"toolkitName": "asc"},
         search_fields=("toolkitName", "localName", "englishName", "artisanName"),
         workshop_where=lambda wid: {"workshopId": wid},
         artisan_field="artisanId",
         media_field="toolId",
         label=lambda r: str(r.toolkitName or ""),
-        sublabel=lambda r: _joined(r.englishName, r.artisanName, r.place),
+        sublabel=lambda r: _joined(r.englishName, r.artisanName, r.place, _review_flag(r)),
         data=lambda r, photo: {
             "name": r.toolkitName,
             "localName": r.localName,
@@ -880,6 +1094,11 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # would turn an unknown unit into a stated wrong one. Inventing a unit is the failure
             # `_inches_to_cm` exists to prevent, and guessing one is the same failure with a
             # shrug in front of it.
+            #
+            # WHAT CROSSES WITH THE TWO CONVERTED NUMBERS, AND WHAT DOES NOT: see the same note on
+            # `ProductDocumentation` above. The method is not carried, and the `HydrationSource`
+            # author is the record's `createdById` — the person who saved it, not a claim that they
+            # measured it.
             "lengthCm": _inches_to_cm(r.lengthInches),
             "breadthCm": _inches_to_cm(r.breadthInches),
             "heightAsRecorded": _decimal(r.height),
@@ -893,6 +1112,23 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         },
     ),
     "Process": ReferenceModel(
+        # NO `media_field`, UNLIKE THE FOUR MODELS AROUND IT, AND IT IS NOT AN OVERSIGHT — it is
+        # not currently possible. `_reference_photos` groups by a FOREIGN KEY on `MediaFile` and
+        # `MediaFile` has no `processId`: `api/routes/processes.py` says so out loud — "Media is
+        # linked purely through `linkedRecordType`/`linkedRecordId` (`process` for the pre-process
+        # clips, `processstep` for each step) so no MediaFile foreign keys are needed". So a
+        # process's photographs — including the pre-process media the record form requires whenever
+        # the box is ticked, and every step's own capture — reach no report: `ReferencedRecord.photo`
+        # is "" for a process and `report_builder._images` PASS TWO finds nothing to place.
+        #
+        # THE COST IS REAL AND THE FIX IS NOT FREE. Giving `MediaFile` a `processId` is a migration
+        # plus a backfill from the existing `linkedRecordType='process'` tags, plus `processId` in
+        # `_PHOTO_PARENT_COLUMNS`, plus moving `process` from the tag-only list to the FK list in
+        # `media.py`'s orphan recovery. If it is done it must stop at ONE record photograph flowing
+        # through `ReferencedRecord.photo`, and it must not seed any stage gallery — the designer's
+        # own workshop photographs live there and there is no second copy of them. Step-level media
+        # stays out either way: `processstep` has no parent row in `REFERENCE_MODELS` and a
+        # step-level key would invite the per-row carry the `steps` refusal below already rules out.
         delegate="process",
         # `steps` JOINED HERE, AND IT COSTS ONE EXTRA READ PER PICKER CALL. A `Process` owns an
         # ordered list of `ProcessStep` rows — the sequence a researcher actually documented — and
@@ -905,7 +1141,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         search_fields=("name",),
         workshop_where=lambda wid: {"workshopId": wid},
         label=lambda r: str(r.name or ""),
-        sublabel=lambda r: _joined(_rel(r, "product", "productName")),
+        sublabel=lambda r: _joined(_rel(r, "product", "productName"), _review_flag(r)),
         # THREE KEYS, NOT ONE, and the third is what the sublabel above already shows.
         #
         # This lambda used to return the name alone, which made the traditional-process stage —
@@ -1127,6 +1363,20 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
             "OR": [{f: {"contains": term, "mode": "insensitive"}} for f in spec.search_fields]
         })
 
+    # ── AND NOTHING ELSE: NO STATUS CLAUSE, AND THAT IS A DECISION RATHER THAN AN OMISSION ────
+    #
+    # The three clauses above are the whole `where`. A REJECTED or NEEDS_REVISION record is still
+    # offered, and it is offered because the pooling philosophy `records.viewable_where` is written
+    # under applies here too — every signed-in account may read every row — and because a rejected
+    # tool's measurements are still the measurements that were recorded. The designer is choosing a
+    # row deliberately, in the room, and the verdict is now VISIBLE while they choose it: see
+    # `_review_flag`, which appends it to the sublabel on every model that has a `status` column.
+    #
+    # IF THAT IS EVER REVERSED, THE EXCLUSION MUST BE REPORTED AND NOT SILENT. `_reference_payload`
+    # already tells the client about `scoped`, `filtered` and `truncated` precisely so that a
+    # shortened list never reads as an empty repository, and a status filter belongs in the same
+    # payload. A picker that quietly drops rows is how a designer concludes the record was never
+    # made and types the whole thing in by hand.
     where: dict[str, Any] = {"AND": clauses} if clauses else {}
     # take + 1, not a second COUNT: every search here is a case-insensitive `contains`, which
     # Postgres runs as ILIKE '%…%' and no index can answer, so counting the matches costs a
@@ -1190,6 +1440,22 @@ async def _artisan_id_behind(workshop_id: str, candidate: str) -> str | None:
     return str(linked) if linked else None
 
 
+#: THE MEASUREMENT-GRID MARKER, AND IT IS A CONTRACT WITH THREE CLIENTS RATHER THAN A CONSTANT.
+#:
+#: A grid-measurement capture is a photograph of the product or tool lying on a sheet of graph
+#: paper, taken so a dimension can be read off it. It is a WORKING image and never a picture of the
+#: subject, and because both record forms upload it before anything else it is the oldest image row
+#: on its parent — which is the row :func:`_reference_photos` picks. So the uploading client writes
+#: ``extraMetadata.purpose = "MEASUREMENT_GRID"`` on the media row and the server excludes any
+#: candidate carrying it. The web record forms, the handset's grid section and the statement below
+#: must spell it IDENTICALLY: the symptom of a mismatch is not an error but a report that prints a
+#: ruled sheet as the photograph of a tool, which is the failure nobody noticed for a year.
+#:
+#: IT IS INTERPOLATED INTO RAW SQL, so it is a module constant and must stay one. If it ever has to
+#: come from config or from a request, bind it instead — :func:`_reference_photos` vets it on every
+#: call for exactly that day, and the guard there says what to do.
+MEASUREMENT_GRID_PURPOSE = "MEASUREMENT_GRID"
+
 #: The parent foreign keys :func:`_reference_photos` is allowed to group by.
 #:
 #: It interpolates the column name into SQL, so the name must come from here and not from the
@@ -1216,6 +1482,67 @@ async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, R
     ``createdAt, id`` tiebreak keeps the answer STABLE: two records photographed in the same second
     would otherwise swap portraits between two renders of the same report.
 
+    THE OLDEST IMAGE ON A MEASURED PRODUCT OR TOOL IS A SHEET OF GRAPH PAPER, AND IT WAS WINNING.
+    The stability argument above says nothing about SUBJECT MATTER, and for a year nothing else did
+    either — this query's only filter was ``mediaType = 'IMAGE'``. Both record forms upload the
+    grid-measurement frames FIRST, in their own awaited loop, before the numbered process captures
+    and before the batch of field photographs, so the grid frame is deterministically the oldest
+    image row on its parent. ``ToolDocumentation.data``'s ``photo``/``photoCaption`` — and through
+    ``REFERENCE_HYDRATION`` the ``tool.photo`` gallery and ``existingProduct.productPhotos`` — were
+    therefore seeded with the calibration shot, captioned "Length & breadth grid (measurement) for
+    Pit loom", while the catalogue photographs the researcher uploaded sat one row later in the same
+    table, unused. A ministry officer read a ruled measurement sheet presented as a photograph of
+    the tool, and it was the thumbnail every picker showed as well.
+
+    THE MARKER IS STRUCTURAL AND IT IS A THREE-SURFACE CONTRACT: the uploading client writes
+    ``extraMetadata.purpose = "MEASUREMENT_GRID"`` on the media row and this statement excludes any
+    candidate carrying it. The two web record forms and the handset's grid section all write it; the
+    spelling is :data:`MEASUREMENT_GRID_PURPOSE` and it must not be "tidied", because a marker only
+    one end writes is not a marker. ``measurementImageId`` is deliberately NOT the signal, which was
+    the first proposal: no shipped web path writes that column at all — ``GridMeasurement.tsx``
+    analyses the raw file and never creates a ``MediaFile`` — so keying on it would have been inert
+    on the very surface the defect lives on.
+
+    THE CAPTION AND FILENAME CLAUSE IS TRANSITIONAL AND IS NOT A SECOND DESIGN. Every grid frame
+    already in the table was written before the marker existed and carries no ``purpose``; the only
+    things that distinguish it are the caption the form composes and the filename the capture
+    control generates. Both are strings a researcher could also type by hand, which is exactly why
+    they are the fallback and not the rule. Delete this clause once the pre-marker rows are gone.
+
+    NOTHING IS EVER EXCLUDED INTO A BLANK. The exclusion is a SORT KEY and not a ``WHERE``: grid
+    shots sort last, so a record whose ONLY image is a grid shot still gets that picture instead of
+    an empty gallery, chosen among the grid shots by the same ``createdAt ASC, id ASC`` as before —
+    the stability guarantee above survives intact in that case too.
+
+    THE DIRECTION IS THE WHOLE OF IT AND ``ASC`` IS NOT A TIDY DEFAULT. Postgres sorts ``false``
+    before ``true``, so ``is_grid ASC`` is what puts the grid frame last; ``is_grid DESC`` would
+    make it win on EVERY measured record deterministically — the original defect, promoted from an
+    accident of upload order to a rule.
+
+    THIS DOES CHANGE WHAT AN ALREADY-SUBMITTED REPORT PRINTS, AND AN EARLIER VERSION OF THIS
+    PARAGRAPH FLATLY DENIED IT. It said "already-saved entries are not touched", on the reasoning
+    that this function runs only at save time and ``report_builder.ReferencedRecord`` is the frozen
+    copy. Both halves are wrong. This function has a THIRD caller and it is on the render path:
+    ``_load_one_reference_model`` -> ``load_report_references`` -> ``attach_report_references``, so
+    ``ReferencedRecord.photo`` is RE-RESOLVED every time a document is generated. ``ReferencedRecord``
+    is that re-resolution, not the freeze — what is frozen is the row's OWN gallery, ``tool.photo``
+    and ``existingProduct.productPhotos``, which ``hydrate_entries`` filled at save time.
+
+    THE CONSEQUENCE, WHICH IS A SECOND PICTURE AND NOT A REPLACED ONE. For any row hydrated BEFORE
+    this change, the gallery holds the frozen GRID media id while this statement now answers the
+    CATALOGUE id. ``report_builder.ReportBuilder._images`` collects both — its PASS ONE takes the
+    row's media fields and its PASS TWO takes ``reference.photo`` — and dedupes with
+    ``wanted.setdefault(reference.photo, …)``, i.e. BY MEDIA ID. Two different ids do not collapse,
+    so re-rendering a report already handed to an officer prints the graph-paper sheet AND the
+    catalogue photograph on the same row where it used to print the graph paper alone.
+
+    IT IS STILL RIGHT NOT TO BACKFILL. Rewriting the frozen gallery is the prose-level edit that
+    ``REFERENCE_HYDRATION``'s note forbids, so those rows keep the grid shot until the designer
+    clears the box and re-picks. Whether ``_images`` should SUPPRESS a REF photograph when the row's
+    own gallery already holds a picture of the same parent record is a report_builder decision and
+    is handed to its owner; until it is answered, the pairing above is the known behaviour of a
+    re-render and not a surprise.
+
     THE CAPTION TRAVELS WITH THE PICTURE and is selected in the same statement rather than in a
     second read — it is a column of the row already being chosen, so it is free. See
     :class:`ReferencePhoto` for why it was missing and what that cost the designer. Nothing else
@@ -1231,12 +1558,36 @@ async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, R
         # new media_field fails loudly on the first call instead of interpolating an unreviewed
         # name into the statement below.
         raise ValueError(f"Unsupported reference photo column: {column}")
+    if not MEASUREMENT_GRID_PURPOSE.isidentifier():
+        # THE SECOND INTERPOLATION, HELD TO THE SAME STANDARD AS THE FIRST, and it was not for one
+        # revision: the marker went into the statement as an f-string three lines under the guard
+        # above, so the file interpolated two things and vetted one. Safe today because the marker
+        # is a module constant that nothing else writes — and the moment somebody moves it to
+        # config, to a request or to a per-deployment override, "safe today" stops being a property
+        # of the code and becomes a property of a comment. `isidentifier()` admits exactly the
+        # SCREAMING_SNAKE token the three uploading clients write and refuses anything holding a
+        # quote, a space or a semicolon. Binding it as `$2` would be better still and is deliberately
+        # not done here: two `query_raw` stubs in `tests/test_entry_provenance.py` pin the
+        # two-argument call shape, and turning eighteen unrelated hydration tests red to tidy an
+        # interpolation is the wrong order to do it in. Bind it in the edit that widens those stubs.
+        raise ValueError(f"Unsafe measurement-grid marker: {MEASUREMENT_GRID_PURPOSE!r}")
     rows = await db.query_raw(
-        f'SELECT DISTINCT ON (m."{column}") m."{column}" AS parent, m."id" AS id, '
-        f'm."caption" AS caption '
+        f'WITH candidate AS ('
+        f'SELECT m."{column}" AS parent, m."id" AS id, m."caption" AS caption, '
+        f'm."createdAt" AS created_at, ('
+        # INTERPOLATED, AND VETTED FIRST — see the marker guard above, which is why. This is the
+        # statement's SECOND interpolation and it went in unchecked, three lines under a guard whose
+        # whole reason for existing is to stop unvetted strings reaching this SQL.
+        f'COALESCE(m."extraMetadata"->>\'purpose\', \'\') = \'{MEASUREMENT_GRID_PURPOSE}\' '
+        f'OR COALESCE(m."caption", \'\') LIKE \'% grid (measurement) for %\' '
+        f'OR m."originalFilename" LIKE \'grid-%\' '
+        f'OR m."originalFilename" LIKE \'measure-grid-%\''
+        f') AS is_grid '
         f'FROM "MediaFile" m '
-        f'WHERE m."mediaType" = \'IMAGE\'::"MediaType" AND m."{column}" = ANY($1::text[]) '
-        f'ORDER BY m."{column}", m."createdAt" ASC, m."id" ASC',
+        f'WHERE m."mediaType" = \'IMAGE\'::"MediaType" AND m."{column}" = ANY($1::text[])'
+        f') '
+        f'SELECT DISTINCT ON (parent) parent, id, caption FROM candidate '
+        f'ORDER BY parent, is_grid ASC, created_at ASC, id ASC',
         ids,
     )
     return {
@@ -2458,6 +2809,21 @@ def _reference_place(row: Any) -> tuple[str, str, str]:
 
     ``place`` is the free-text fallback the artisan table carried before the stated-address
     columns existed, and it is still the only thing filled in on the older half of the corpus.
+
+    ONLY ``Artisan`` CAN ANSWER THE DISTRICT AND THE STATE, AND THAT IS DELIBERATE. This function
+    is called for EVERY model, but it reads ``row.location`` and only ``REFERENCE_MODELS["Artisan"]``
+    includes that relation — so for a product, a tool, a process or a craft the last two elements
+    are always ``""`` and the first falls through to the denormalised ``place`` string. Nobody sees
+    it today: ``report_builder._artisan_points`` is the sole consumer of the district and state and
+    it filters to ``ref_model == "Artisan"``.
+
+    DO NOT "FIX" IT BY ADDING ``include={"location": True}`` to the other models. The first element
+    prefers ``location.village`` over ``place``, and ``load_report_references`` runs at RENDER time
+    — so switching the include on would change the place string printed in documents that have
+    already been submitted, which is exactly what the never-re-resolve rule forbids. The reason the
+    include is not there is written out on :class:`ReferenceModel`'s ``include`` field. If a
+    district is genuinely wanted for a tool or a product, it is a deliberate change with a test
+    pinning what the printed place becomes.
     """
     location = getattr(row, "location", None)
     village = str(getattr(location, "village", "") or "") if location is not None else ""
@@ -2494,13 +2860,31 @@ async def load_report_references(entries: list[Any]) -> dict[str, ReferencedReco
 
     Two facts, and neither of them can come from the stage entry itself:
 
-    * THE PHOTOGRAPH OF A RECORD HYDRATION DOES NOT SEED. ``prototype.productRef`` and
-      ``existingProduct.artisanRef`` copy a name and nothing else, deliberately, because the
-      entities they write onto own a gallery of the designer's photographs that a seeded picture
-      would overwrite. Without this load the report described a prototype of a documented product
-      with the product's photograph nowhere in it, one join away in the media table.
-    * WHERE AN ARTISAN LIVES. No roster field holds a district — the participant row records a
-      village as free text — so the map of who came from where cannot be drawn from the entries.
+    * THE PHOTOGRAPH OF A RECORD *THESE TWO MAPPINGS* DO NOT SEED. ``prototype.productRef`` and
+      ``existingProduct.artisanRef`` copy a name and nothing else, deliberately: the parent
+      product's photograph is not a photograph of the PROTOTYPE, and an artisan's portrait is not a
+      photograph of a product. Without this load the report described a prototype of a documented
+      product with the product's photograph nowhere in it, one join away in the media table.
+
+      THIS USED TO SAY "a gallery of the designer's photographs that a seeded picture would
+      overwrite", AND THAT OVERWRITE CANNOT HAPPEN. ``hydrate_entries`` never overwrites a gallery
+      — "A gallery is never overwritten, only seeded when empty" — and its clear-on-re-point loop
+      skips ``target.type.is_multi`` for exactly that reason. What a seeded picture would do is
+      STAND IN FOR the designer's photographs while the gallery is still empty, which is a weaker
+      claim and the true one. It is also worth knowing while reading this that hydration DOES seed
+      one gallery: ``existingProduct.productRef`` maps ``photo`` -> ``productPhotos``, because the
+      documented product's own photograph IS a photograph of the documented product.
+    * WHERE AN ARTISAN LIVED, FOR THE ROWS WHOSE OWN COPY IS NOT THERE. This bullet used to say
+      "No roster field holds a district — the participant row records a village as free text — so
+      the map of who came from where cannot be drawn from the entries", and reading that as true
+      is what kept the ministry's map wrong. ``REFERENCE_HYDRATION["participant.artisanRef"]``
+      copies ``village``, ``district``, ``state``, ``pincode`` and ``address`` onto the roster row
+      at SAVE time and ``participant`` declares all five, so the row carries a frozen stated
+      address and ``report_builder.ReportBuilder._artisan_points`` reads that first. What this load
+      carries is the FALLBACK: rows hydrated before that mapping widened, and rows where the
+      picker was never used because the artisan walked in on day two and was typed by hand. Do not
+      delete it — those rows drop off the map — and do not promote it back to first choice, which
+      is what let the map and the participant table two pages earlier disagree about one artisan.
 
     One ``find_many`` per model, not one per row: a roster of forty artisans is one query. The
     three models are then GATHERED rather than walked in sequence — see the comment below. Failure
