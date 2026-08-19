@@ -1235,8 +1235,43 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
 };
 
 /** MULTI_ENUM, TAGS and IMAGE_LIST hold a list; everything else holds one value. */
-function isMultiField(field: DwField): boolean {
+export function isMultiField(field: DwField): boolean {
   return field.type === "MULTI_ENUM" || field.type === "TAGS" || field.type === "IMAGE_LIST";
+}
+
+/**
+ * The mapping one REF field hydrates through, or an empty object when it hydrates nothing.
+ *
+ * EXPORTED SO THAT NOBODY OUTSIDE THIS FILE HAS TO KNOW THE KEY SHAPE. The table is keyed by
+ * `"entityKey.fieldKey"` because a field key is unique only within an entity, and a caller that
+ * builds that string itself is a caller that can build it wrong — silently, because a miss is
+ * indistinguishable from a field that legitimately hydrates nothing.
+ *
+ * Empty is the FAIL-CLOSED answer, exactly as it is on the server (`reference_hydration_for` in
+ * `stage_schema.py` says so in the same words): a field with no entry writes nothing, the designer
+ * types one box, and the server fills it at save regardless. A guessed entry costs a wrong value
+ * nobody can see is wrong.
+ */
+export function referenceHydrationFor(entity: DwEntity, refField: DwField): Record<string, string> {
+  return DW_REFERENCE_HYDRATION[`${entity.key}.${refField.key}`] ?? {};
+}
+
+/**
+ * One value out of a reference payload, as the string a single-value box may hold — or null.
+ *
+ * THE TYPE GUARD IS THE POINT AND IT IS `hydrateFromReference`'s, restated: only the two JSON
+ * scalars a display field can legitimately be are accepted. Anything else — an object the payload
+ * grew later, a nested record — becomes null rather than being stringified, because
+ * `"[object Object]"` in a participant table is a value that looks answered and is not.
+ *
+ * Null means BOTH "the record says nothing here" and "the record says something this box cannot
+ * hold", and the two are deliberately one answer: in each case the honest state of the box is
+ * unanswered, and the caller has nothing different to do about them.
+ */
+export function stringifyRefValue(raw: unknown): string | null {
+  if (typeof raw === "string") return raw.trim() ? raw : null;
+  if (typeof raw === "number") return String(raw);
+  return null;
 }
 
 /**

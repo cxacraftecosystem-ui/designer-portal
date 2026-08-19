@@ -325,14 +325,23 @@ STAGE_3 = StageSpec(
                     column_width_pct=24.0),
             fromref("localName", "Name in the local language", T, S),
             fromref("gender", "Gender", T, S, max_length=20),
-            # AGE IS HYDRATED AND IS STILL MOSTLY BLANK, AND BOTH HALVES OF THAT ARE DELIBERATE.
-            # `Artisan` has no age column. The value comes from the one legacy `extraMetadata`
-            # spelling researchers used before the record registry existed — the same key
-            # `record_fields.py` reads for the artisan record sheet — so old records fill in and
-            # records created since the artisan form stopped writing free metadata do not. Marked
-            # `fromref` because it genuinely is filled in from the record when the record has it.
-            # The fix is a `dateOfBirth` column on Artisan and a derivation, NOT an `age` column:
-            # an age stored in 2024 is wrong in 2026 and nothing would ever say so.
+            # AGE IS DERIVED FROM A DATE OF BIRTH, NEVER STORED AS A NUMBER — which is the fix the
+            # paragraph that used to stand here was asking for, and it has since landed. That
+            # paragraph said "`Artisan` has no age column … the fix is a `dateOfBirth` column on
+            # Artisan and a derivation": `Artisan.dateOfBirth` and `Artisan.experienceYears` both
+            # exist now, the artisan form collects both, and `REFERENCE_MODELS["Artisan"].data`
+            # calls `derive_age(r.dateOfBirth)`. It is left recorded rather than deleted because a
+            # comment describing a gap that has been closed is worse than no comment: the next
+            # reader plans work around it, which is precisely the rot this file's own citation rules
+            # were written to keep out.
+            #
+            # An age is stored NOWHERE because an age written down in 2024 is wrong in 2026 and
+            # nothing would ever say so. The date is the fact; the number is a view of it.
+            #
+            # THE LEGACY `extraMetadata` READ SURVIVES BEHIND THE DERIVATION and is not dead code —
+            # see the note on the `age` key in `REFERENCE_MODELS["Artisan"].data` for why the
+            # migration deliberately refused to guess at "30+" and "about 30", and why those rows
+            # are the oldest and most thoroughly documented ones.
             fromref("age", "Age", INT, S, unit="years", min_value=10, max_value=110,
                     help="Recorded against the artisan when they were documented."),
             # THE PM VISHWAKARMA CARD, MASKED. See the note beside `pehchanCardNumber` in

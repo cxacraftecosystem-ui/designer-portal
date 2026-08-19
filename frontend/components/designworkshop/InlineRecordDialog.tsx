@@ -176,10 +176,21 @@ export function InlineRecordDialog({
         <ToolForm initial={(initial as ToolDocumentation) ?? undefined} onCreated={finish} />
       ) : null}
       {model === "Process" ? (
-        // ProcessForm already had this shape — it takes `onDone`/`onCancel` because it is embedded
-        // on its own page too. It reports completion rather than the record, so the picker
-        // re-fetches its options instead of selecting straight away.
-        <ProcessForm initial={(initial as ProcessRecord) ?? undefined} onDone={onClose} onCancel={onClose} />
+        /*
+          `onCreated` LIKE ITS THREE SIBLINGS, which it did not used to have.
+          `ProcessForm` takes `onDone`/`onCancel` as well because it is embedded on its own page too,
+          and both are still handed `onClose` for the paths where there is no record to report — the
+          designer cancelling, and an offline save that is queued with no server id yet. What is new
+          is that a process saved ONLINE now comes back here and gets selected and hydrated, the way
+          an artisan, a product and a tool always did. Before this, the button offering to "create
+          this as a new process" made one and left the picker empty.
+        */
+        <ProcessForm
+          initial={(initial as ProcessRecord) ?? undefined}
+          onDone={onClose}
+          onCancel={onClose}
+          onCreated={finish}
+        />
       ) : null}
         </>
       ) : null}

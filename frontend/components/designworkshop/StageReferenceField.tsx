@@ -43,8 +43,11 @@ import {
 import {
   hydrateFromReference,
   inputValue,
+  isMultiField,
   listStageReferences,
   referenceDisplayHint,
+  referenceHydrationFor,
+  stringifyRefValue,
   type DwEntity,
   type DwEntryData,
   type DwField,
@@ -241,16 +244,39 @@ async function describeCreated(
   filterValue: string,
   record: CreatedRecord
 ): Promise<DwReferenceOption | null> {
-  const search = createdLabel(record);
+  return describeRecord(workshopId, field, filterValue, record.id, createdLabel(record));
+}
+
+/**
+ * What the server would say about ONE record, found by searching for the name it goes by.
+ *
+ * The body {@link describeCreated} used to hold, lifted out because the EDIT path needs the same
+ * question asked twice — once before the record changes and once after — and a second copy of a
+ * search that has to use the picker's own scope and filter is a second place for that to be got
+ * wrong. See {@link describeCreated} for why the round trip exists at all rather than a renaming
+ * table in the browser, and why the scope and filter are not negotiable.
+ *
+ * `label` is the search term and it must be the name the record goes by AT THE MOMENT OF ASKING:
+ * before an edit that is the name already hydrated onto the row, and after one it is the name the
+ * form just saved. Searching after an edit with the name from before it is how a renamed record
+ * becomes undescribable.
+ */
+async function describeRecord(
+  workshopId: string,
+  field: DwField,
+  filterValue: string,
+  recordId: string,
+  label: string
+): Promise<DwReferenceOption | null> {
   try {
     const payload = await listStageReferences(workshopId, {
       model: field.refModel as string,
       scope: field.refScope,
       filterBy: field.refFilterBy ? filterValue || null : null,
-      search: search || null,
+      search: label.trim() || null,
       limit: REFERENCE_PAGE_MAX
     });
-    return payload.options.find((option) => option.id === record.id) ?? null;
+    return payload.options.find((option) => option.id === recordId) ?? null;
   } catch {
     return null;
   }
@@ -474,6 +500,94 @@ export function StageReferenceSelect({
    * designer creates the same record a second time. So the link lands immediately, the control says
    * what it is waiting for, and the boxes fill when the answer arrives.
    */
+  /**
+   * WHAT THE LINKED RECORD SAID BEFORE THE DESIGNER STARTED EDITING IT.
+   *
+   * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────────
+   * The edit button beside this picker exists so that "a designer who spots that the artisan's
+   * village is wrong while filling stage 13 should not have to abandon the stage to fix one field"
+   * — {@link InlineRecordDialog}'s own words. It saved the repository record and did nothing else.
+   * `onCreated` handed the saved row to {@link adoptCreated}, which computes
+   * `previous === record.id`, so `hydrateFromReference` sees `replaced === false` and skips every
+   * box that is already filled. The corrected village therefore reached the repository and never
+   * reached the row — and because a submitted report reads the COPY and never re-resolves, the old
+   * village went on printing in the .docx for ever. The designer watched themselves fix it.
+   *
+   * ── WHY A "BEFORE" SNAPSHOT AND NOT SIMPLY OVERWRITING ────────────────────────────────────────
+   * Clearing and refilling the mapped boxes — what a re-POINT does — would be wrong here for the
+   * reason that rule is right there and wrong here: on a re-point every value belongs to a record
+   * this row no longer names, so keeping any of it fabricates a person. On an edit the record is
+   * the SAME one, so a value the designer corrected by hand at the keyboard is still theirs, and a
+   * reference record is not more authoritative than the person standing in front of the artisan.
+   *
+   * So a box is refreshed only where it still holds exactly what this picker last filled in, which
+   * needs the record's PREVIOUS answer. The handset reaches the same rule from the other side —
+   * `hydrationPatch` in `DwReferenceField.kt` keeps a `lastHydration` map and its middle rule is
+   * "a key whose value equals what the PREVIOUS pick wrote is overwritten" — so this is the web
+   * being brought into line with the client that got it right, not a new policy.
+   *
+   * Captured when the dialog OPENS rather than when it closes, because after the save the record no
+   * longer holds the old answer anywhere. Null when the fetch failed or has not landed; see
+   * {@link adoptEdited} for what is said out loud in that case rather than guessed at.
+   */
+  const beforeEdit = useRef<DwReferenceOption | null>(null);
+
+  /**
+   * Take up an edit made to the record this row already names.
+   *
+   * Deliberately NOT {@link adoptCreated}: that function's whole shape is about a record the row
+   * does not name yet — it re-points the field, arms a pending label, and clears the previous
+   * record's values when the link moves. None of that applies. The link is unchanged, the id is
+   * unchanged, and the only question is which boxes may take up the new answer.
+   */
+  const adoptEdited = useCallback(
+    async (recordId: string, label: string) => {
+      const before = beforeEdit.current;
+      const after = await describeRecord(workshopId, field, filterValue, recordId, label);
+      beforeEdit.current = null;
+      if (!after) {
+        // Said rather than silently skipped. The record HAS changed — the designer just changed it
+        // — so leaving the row alone without a word is the state that reads as "the edit did not
+        // save", and the next move is to edit it again.
+        setNotice(
+          "Your changes were saved to the record, but this list cannot describe it just now, so the boxes on this row still show what it said before. Re-open the list and pick it again to refresh them."
+        );
+        return;
+      }
+      const mapping = referenceHydrationFor(entity, field);
+      const patch: Record<string, DwValue> = {};
+      for (const [sourceKey, targetKey] of Object.entries(mapping)) {
+        const target = entity.fields.find((candidate) => candidate.key === targetKey);
+        if (!target || target.deprecated) continue;
+        // A GALLERY IS SEEDED AND NEVER REPLACED, on every surface and in every one of these three
+        // rules. It holds the photographs the designer took in the room and there is no second copy
+        // of those anywhere; an edit to the record's own catalogue shot must not reach them.
+        if (isMultiField(target)) continue;
+        const current = inputValue(row[targetKey]).trim();
+        const was = before ? stringifyRefValue(before.data?.[sourceKey]) : null;
+        // Blank fills, as always. Otherwise only a box still holding exactly what this picker last
+        // put there may move — a designer's correction outranks the record it came from.
+        const mayWrite = !current || (was !== null && current === was);
+        if (!mayWrite) continue;
+        const next = stringifyRefValue(after.data?.[sourceKey]);
+        // `null` and not `""`: "the record no longer says anything here" and "the record says it is
+        // empty" are the same answer on the wire, and both mean the box goes back to unanswered.
+        if (next === current) continue;
+        patch[targetKey] = next === null ? null : next;
+      }
+      if (Object.keys(patch).length) onPatch(patch);
+      if (!before) {
+        // The snapshot never arrived, so only blanks could be filled and a corrected value the row
+        // already held has been left standing. Better to say so than to overwrite a designer's own
+        // words on a guess.
+        setNotice(
+          "Your changes were saved. Boxes on this row that were already filled in have been left as they are — check them against the record if you changed something they show."
+        );
+      }
+    },
+    [entity, field, filterValue, onPatch, row, workshopId]
+  );
+
   const adoptCreated = useCallback(
     async (record: CreatedRecord) => {
       const label = createdLabel(record);
@@ -704,7 +818,26 @@ export function StageReferenceSelect({
             <button
               type="button"
               className="inline-flex items-center gap-1 rounded-md border border-line-200 px-2 py-1 text-xs font-medium text-ink-700 transition hover:border-purple-300 hover:bg-purple-50"
-              onClick={() => setInlineDialog({ mode: "edit", id: selectedId })}
+              onClick={() => {
+                /*
+                  THE SNAPSHOT IS TAKEN HERE, BEFORE THE FORM CAN CHANGE ANYTHING, and it is the
+                  whole of what makes {@link adoptEdited} able to tell a value this picker filled in
+                  from one the designer corrected by hand. A moment later the record no longer holds
+                  its old answer anywhere.
+
+                  Fired and not awaited: the designer is opening a form they will spend a while in,
+                  and blocking the dialog on a search would make the button feel broken. The armed
+                  request lands long before there is anything to save. If it never lands,
+                  `adoptEdited` says so out loud rather than guessing.
+                */
+                beforeEdit.current = null;
+                void describeRecord(workshopId, field, filterValue, selectedId, chosenLabel).then(
+                  (option) => {
+                    beforeEdit.current = option;
+                  }
+                );
+                setInlineDialog({ mode: "edit", id: selectedId });
+              }}
             >
               <Pencil className="h-3 w-3" aria-hidden />
               Edit this {INLINE_MODEL_NOUN[field.refModel as InlineCreatableModel]}
@@ -749,7 +882,20 @@ export function StageReferenceSelect({
             becomes active again, so the next open shows the record in its proper place with the
             server's own label and sublabel.
           */
+          /*
+            TWO ADOPTERS, ONE CALLBACK, AND THE MODE DECIDES — because a create and an edit are not
+            the same act on this row. A create RE-POINTS the field, so `adoptCreated` clears what the
+            previous record wrote and fills from the new one. An edit leaves the link exactly where
+            it is, so `adoptEdited` refreshes only the boxes still holding what this picker last put
+            there. Running the create path over an edit is what left a corrected village in the
+            repository and the old one in the report; running the edit path over a create would
+            leave the previous record's values standing under the new record's id.
+          */
           onCreated={(record) => {
+            if (inlineDialog.mode === "edit") {
+              void adoptEdited(inlineDialog.id, createdLabel(record) || chosenLabel);
+              return;
+            }
             void adoptCreated(record);
           }}
         />

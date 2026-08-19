@@ -8152,6 +8152,23 @@ private fun ProcessForm(
         }
         if (productError != null) Text(productError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
 
+        // WHAT HAPPENS, FOR THE PROCESS AS A WHOLE, and until this box existed there was nowhere on
+        // either surface to type it. `notes` was declared, carried through on edit and sent on every
+        // save, and nothing ever let anybody change it — so it stayed null on every process this app
+        // created, on the handset and in the browser alike, writable only through the API.
+        //
+        // It is the one process column the design-workshop report leans on hardest:
+        // `REFERENCE_HYDRATION["processStep.processRef"]` maps it to `description`, the TABLE COLUMN
+        // the registry labels "What happens", and `traditionalProcess.processRef` maps it to
+        // `documentedProcessNotes` above that same table. With no way to type the paragraph, every
+        // one of those rows printed the process's one-word name and nothing else.
+        //
+        // `rich = true` for the same reason the product form's four narrative boxes and the tool
+        // form's two carry it — this is a paragraph about a sequence, not a label — and the web's
+        // `ProcessForm` gained the matching `RichTextField` in the same change. A box on one surface
+        // and not the other is the cross-surface divergence the whole reference lane exists to end.
+        TextInput("What happens in this process", notes, minLines = 3, dictate = true, rich = true, resetKey = editing?.id) { notes = it }
+
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Checkbox(checked = preProcessAvailable, onCheckedChange = { preProcessAvailable = it })
             Text("Pre-processes available", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
