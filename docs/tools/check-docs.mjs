@@ -575,6 +575,44 @@ const NOT_A_PATH = new Map([
   ["frontend/frontend", "CI.md names it as the wrong path a misconfiguration produces"],
 ]);
 
+/**
+ * Paths a clone is EXPECTED not to contain, because the developer creates them.
+ *
+ * ── WHY THIS EXISTS, AND WHY THE CHECK COULD NEVER PASS IN CI WITHOUT IT ────────────────────────
+ *
+ * `checkPaths` asserts that every repository path a document names exists on disk. That is the
+ * right question on a working machine and the WRONG one on a fresh checkout: `backend/.env`,
+ * `frontend/.env.local`, `android/local.properties` and `backend/.venv/` are gitignored by design —
+ * the environment documents exist precisely to tell somebody to create them — so they are present
+ * for every developer and absent for every runner.
+ *
+ * The result was a checker that passed locally and could not pass in CI. It reported 35 failures on
+ * the first run of `.github/workflows/checks.yml`, every one of them a document correctly naming a
+ * file the reader is being told to make. A gate that fails for a reason the author cannot reproduce
+ * is a gate that gets switched off, so this is the fix rather than an exemption list of individual
+ * documents.
+ *
+ * MATCHED BY PREFIX, so `backend/.venv/Lib/site-packages/prisma/` is covered by `backend/.venv/`
+ * without enumerating what a virtualenv happens to contain this week.
+ *
+ * A path listed here is still checked in one direction: if it EXISTS it is fine, and if it does not
+ * that is expected. What this cannot catch is a typo inside one of these prefixes, which is the
+ * price of the rule and is cheaper than the alternative.
+ */
+const CREATED_BY_THE_DEVELOPER = [
+  ["backend/.env", "gitignored — ENVIRONMENT.md tells the reader to create it from .env.example"],
+  ["backend/.venv", "gitignored — the virtualenv a developer builds, named in setup instructions"],
+  ["frontend/.env.local", "gitignored — DEPLOYMENT_VERCEL.md and ENVIRONMENT.md tell the reader to create it"],
+  ["frontend/node_modules", "gitignored — produced by npm install"],
+  ["android/local.properties", "gitignored — written by Android Studio on first open"],
+  ["android/app/libs/", "gitignored — the sherpa-onnx AAR the CI workflow fetches at build time"],
+  ["infra/terraform/fieldrepo-deploy.pem", "a private key, never committed — CI.md names it as the file an operator holds"],
+];
+
+function expectedAbsent(p) {
+  return CREATED_BY_THE_DEVELOPER.some(([prefix]) => p === prefix || p.startsWith(prefix));
+}
+
 function resolveRepoPath(p) {
   return PATH_ROOTS.some((root) => existsSync(join(root, p)));
 }
@@ -589,7 +627,7 @@ function checkPaths() {
       if (p.includes("*") || p.includes("…")) continue; // globs and elisions are prose, not paths
       if (NOT_A_PATH.has(p)) continue;
       checked += 1;
-      if (!resolveRepoPath(p)) fail(`${rel}: path does not exist — ${p}`);
+      if (!resolveRepoPath(p) && !expectedAbsent(p)) fail(`${rel}: path does not exist — ${p}`);
     }
   }
   note(`${checked} repository paths resolved`);

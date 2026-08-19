@@ -94,7 +94,7 @@ the one failure mode this index cannot check for itself.
 
 | Document | What it actually is |
 |---|---|
-| [TRANSCRIPTION_SERVICE.md](TRANSCRIPTION_SERVICE.md) | A **portable pattern reference** for rebuilding queued audio transcription in another project. For this deployment's live provider chain, read [ARCHITECTURE.md](ARCHITECTURE.md) instead |
+| `TRANSCRIPTION_SERVICE.md` *(local-only — gitignored, see `.gitignore`; not present in a clone)* | A **portable pattern reference** for rebuilding queued audio transcription in another project. For this deployment's live provider chain, read [ARCHITECTURE.md](ARCHITECTURE.md) instead |
 | [DESIGN-claude.md](DESIGN-claude.md) | A design-system extraction of an **external** product surface, kept as a visual-language reference. It is not a specification of this app's UI |
 
 Also in the repository, outside `docs/`: [`../README.md`](../README.md) (orientation and local
