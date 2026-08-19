@@ -124,6 +124,57 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ─── OPEN A DEPLOY WINDOW ON PORT 22, FOR THIS RUNNER ONLY ───────────────────────────────
+      #
+      # THE DEFECT THIS EXISTS FOR. `infra/terraform/main.tf` allows SSH from a single
+      # `var.ssh_ingress_cidr`, and the box was provisioned with the operator's home address of the
+      # day (`49.47.131.192/32`). GitHub's runners come from Azure ranges, so every scheduled deploy
+      # died at `ssh-keyscan` with exit 1 — before rsync, before the .env write, before the service
+      # stop. That is a fail-SAFE failure and it is why nothing was ever half-deployed, but it also
+      # meant this workflow had NEVER successfully run: the box has only ever been updated by hand,
+      # from whichever network the operator was on.
+      #
+      # It is worse than a one-off. A pinned home IP makes deployability a property of where a person
+      # is standing — the operator travels, the address changes, and the pipeline silently stops
+      # working again with a red mark nobody reads as "you moved".
+      #
+      # SO THE RUNNER AUTHORISES ITSELF, NARROWLY AND BRIEFLY. `AWS_SG_ID` names one security group;
+      # the IAM user behind `AWS_ACCESS_KEY_ID` is `designrepo-ci-sg`, whose inline policy allows
+      # exactly `ec2:AuthorizeSecurityGroupIngress` and `ec2:RevokeSecurityGroupIngress` on that one
+      # group ARN and nothing else in the account. The rule it adds is a /32 for THIS runner and is
+      # revoked in an `if: always()` step below, so the window closes on success, on failure, and on
+      # cancellation. Port 22 is never open to the world, and no human IP is ever written into it.
+      #
+      # WHY NOT THE ALTERNATIVES: GitHub publishes thousands of runner CIDRs and a security group
+      # takes 60 rules, so the range cannot simply be allow-listed. `0.0.0.0/0` would trade a travel
+      # problem for a permanently exposed port. SSM Session Manager removes inbound SSH entirely and
+      # is the better end state, but it needs an instance profile and an agent on a box that is
+      # currently serving traffic — a migration, not a workflow edit.
+      - name: Open the deploy window for this runner
+        id: sgwindow
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          SG_ID: ${{ secrets.AWS_SG_ID }}
+        run: |
+          set -euo pipefail
+          # checkip is AWS's own and answers the address AWS will see, which is the one that has to
+          # match the rule. Reading it from the runner rather than from a range list is what makes
+          # this independent of where anybody is.
+          ip="$(curl -fsS --max-time 15 https://checkip.amazonaws.com | tr -d '[:space:]')"
+          case "$ip" in
+            *[!0-9.]*|"") echo "refusing to authorise a malformed address: '$ip'"; exit 1 ;;
+          esac
+          echo "runner=$ip"
+          echo "cidr=${ip}/32" >> "$GITHUB_OUTPUT"
+          # Idempotent: a duplicate rule left by a killed run makes this call fail, and that must not
+          # fail the deploy — the rule being present is the state we wanted.
+          aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${ip}/32,Description='github-actions deploy window'}]" \
+            2>&1 | tail -5 || echo "authorize returned non-zero (likely InvalidPermission.Duplicate) — continuing"
+
       - name: Start ssh-agent with the deploy key
         uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -228,3 +279,22 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8000/health
           REMOTE
+
+      # ─── CLOSE IT AGAIN, WHATEVER HAPPENED ───────────────────────────────────────────────────
+      #
+      # `if: always()` is the whole point: a deploy that fails at migrate, or is cancelled between
+      # the stop and the restart, must not leave port 22 standing open to a runner address that will
+      # be recycled to somebody else. The revoke is best-effort — if the rule is already gone the
+      # call errors and that is the desired state, so it must not turn a green deploy red.
+      - name: Close the deploy window
+        if: always() && steps.sgwindow.outputs.cidr != ''
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          SG_ID: ${{ secrets.AWS_SG_ID }}
+          CIDR: ${{ steps.sgwindow.outputs.cidr }}
+        run: |
+          aws ec2 revoke-security-group-ingress             --group-id "$SG_ID"             --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${CIDR}}]"             2>&1 | tail -5 || echo "revoke returned non-zero — the rule is already absent, which is the intended end state"
+          echo "--- port 22 rules remaining on ${SG_ID} ---"
+          aws ec2 describe-security-groups --group-ids "$SG_ID"             --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\`].IpRanges[].CidrIp" --output text || true

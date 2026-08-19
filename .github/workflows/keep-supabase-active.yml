@@ -1,9 +1,33 @@
+# ─── DORMANT ON THIS PORTAL, AND KEPT WHOLE ON PURPOSE ──────────────────────────────────────
+#
+# THE SCHEDULE IS REMOVED; NOTHING ELSE IS. The designer portal's database is Neon, whose compute
+# suspends when idle and wakes on the next connection, so a nightly ping buys it nothing. A Supabase
+# project is the case this was written for — a free-tier project PAUSES after a stretch of inactivity
+# and needs a human to restore it — and that argument is still sound wherever it applies.
+#
+# So this is dormant rather than deleted, and the Supabase path is deliberately intact: the step, its
+# two environment variables and the `npm run keep-alive` script all remain, and `SUPABASE_DATABASE_URL`
+# still takes precedence over `DATABASE_URL` so a deployment backed by Supabase — or a portal that
+# moves onto one later — re-enables this by restoring the two `schedule:` lines below and adding the
+# secret. Deleting the file would mean rebuilding it from memory at exactly the moment somebody
+# discovers a paused project.
+#
+# WHAT IT WAS ACTUALLY DOING HERE: failing, every night, since at least 9 August. `gh secret list` on
+# this repository returns BACKEND_ENV, EC2_HOST and EC2_SSH_KEY and nothing else, so neither
+# `SUPABASE_DATABASE_URL` nor `DATABASE_URL` was ever present and the run could only ever end in the
+# failure notice at the foot of this file. A workflow that fails nightly for a week trains everybody
+# to ignore a red mark on this repository, which is the cost worth removing even though the ping
+# itself was harmless.
+#
+# `workflow_dispatch` is KEPT so the ping can still be fired by hand against whichever URL the secrets
+# name — useful for confirming a database is reachable from a runner without deploying anything.
+
 name: Keep Supabase Active
 
 on:
-  schedule:
-    # Run every day at 8:00 PM UTC (1:30 AM IST).
-    - cron: "0 20 * * *"
+  # Re-enable by restoring these two lines. Every day at 8:00 PM UTC (1:30 AM IST).
+  #   schedule:
+  #     - cron: "0 20 * * *"
   workflow_dispatch:
 
 jobs:
