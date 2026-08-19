@@ -21,6 +21,14 @@ name: Android build
 # a PR, so there is nothing to order against, and a contributor should get the compile
 # result on the PR itself rather than after their merge lands on main.
 #
+# THE `paths:` FILTER ON THAT PR TRIGGER IS NARROW ON PURPOSE — a backend-only change cannot
+# break a Kotlin compile — but for a long time it was also the reason a PR touching only
+# `backend/` and `frontend/` ran NOTHING: this was the only workflow with a `pull_request`
+# trigger at all, and it declined. That hole is now covered by `checks.yml`, which runs the
+# backend suite and the web checks on every pull request with no path filter. Keep it that way:
+# if you ever find yourself widening the filter below to get some non-Android guard to run, the
+# guard belongs in checks.yml, not in a job that installs an Android SDK to reach it.
+#
 # No repository secrets are required by this workflow.
 
 on:
@@ -132,25 +140,35 @@ jobs:
 
       - name: Unit tests
         id: tests
-        # HONEST STATUS, measured on this tree (not assumed): android/app/src contains only
-        # `main/` — no `src/test/`, no `src/androidTest/`. Running the task locally prints
+        # HONEST STATUS, re-measured on this tree: `android/app/src/test` now holds well over a
+        # hundred Kotlin test files (the step prints the exact count on every run, so no number is
+        # written down here to rot) and `app/src/androidTest` holds 8. This step ASSERTS THINGS. It did not
+        # when it was written — `src/` contained only `main/`, the task printed
         #   > Task :app:compileDebugUnitTestKotlin NO-SOURCE
-        #   > Task :app:testDebugUnitTest NO-SOURCE
-        # so it passes without asserting anything. It is wired up anyway so that the first
-        # unit test anyone adds is enforced the moment it lands, with no CI change needed.
-        # The step below prints which case you are in so the green tick is never mistaken
-        # for "the tests passed".
+        # and this comment used to say so. It was wired up anyway precisely so that the first
+        # test anyone added would be enforced the moment it landed, with no CI change; that is
+        # what happened, and the note is updated rather than left describing a closed gap.
+        #
+        # The probe below stays, and stays worded both ways round. It is cheap, and the case it
+        # guards against is not hypothetical for a source set Gradle skips SILENTLY: a build-file
+        # edit that stops the test source set being seen turns this step green in seconds while
+        # asserting nothing at all, which is indistinguishable from "the tests passed" in the tick
+        # on the PR. The warning is the only thing that would tell you.
         run: |
           set -euo pipefail
           if [ -d app/src/test ] && [ -n "$(find app/src/test -name '*.kt' -o -name '*.java' 2>/dev/null | head -1)" ]; then
-            echo "Unit-test sources found — running them for real."
+            echo "Unit-test sources found — running them for real ($(find app/src/test \( -name '*.kt' -o -name '*.java' \) | wc -l) files)."
           else
             echo "::warning::No app/src/test sources exist; :app:testDebugUnitTest is a placeholder (NO-SOURCE) and asserts nothing."
           fi
           ./gradlew :app:testDebugUnitTest --console=plain
-          # Instrumented tests (src/androidTest) are NOT run: there are none, and they would
-          # need an emulator/AVD on the runner. Add a separate job with an emulator action
-          # if that ever changes — do not bolt it onto this one.
+          # Instrumented tests (app/src/androidTest, 8 files) are NOT run here: they need an
+          # emulator/AVD on the runner, which this job has not got. They are device PROBES —
+          # DwAsrEngineProbeTest and friends measure the on-device speech engine — so they are
+          # not a substitute for the unit set and are not silently missing coverage. Add a
+          # separate job with an emulator action if they are ever to run; do not bolt them
+          # onto this one, which would put a 10-minute emulator boot in front of the compile
+          # result every contributor is actually waiting for.
 
       - name: Android Lint (debug)
         # Non-blocking ON PURPOSE, and this is a measured decision, not a guess: running
@@ -206,8 +224,10 @@ jobs:
         with:
           name: android-unit-test-results
           path: android/app/build/reports/tests/
-          # `warn`, not `error`: with no test sources there is no report to upload, and
-          # that is the expected state today.
+          # `warn`, not `error`. There ARE test sources now, so a report is expected — but this
+          # step runs with `always()`, including on a run where compileDebugKotlin failed and the
+          # test task never started. Failing the upload there would replace the compile error on
+          # the PR with a missing-artifact error, which is the wrong thing to be reading.
           if-no-files-found: warn
           retention-days: 14
 
@@ -220,7 +240,7 @@ jobs:
             echo "| step | result |"
             echo "|---|---|"
             echo "| compileDebugKotlin | ${{ steps.compile.outcome }} |"
-            echo "| testDebugUnitTest | ${{ steps.tests.outcome }} (no test sources yet) |"
+            echo "| testDebugUnitTest | ${{ steps.tests.outcome }} |"
             echo "| lintDebug | ${{ steps.lint.outcome }} (advisory, does not fail the build) |"
             echo "| assembleDebug | ${{ steps.assemble.outcome }} |"
             echo "| APK | \`app-debug.apk\` — debug-signed, NOT an OTA release |"

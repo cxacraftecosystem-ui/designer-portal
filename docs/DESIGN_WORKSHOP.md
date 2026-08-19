@@ -749,12 +749,30 @@ falls back to the built-in Helvetica if none are present, which is legal and cov
 deployment that needs Indic PDF output **must ship a font**; the function returns which family it
 actually bound, so the caller can log it once at start-up rather than discover it in a report.
 
-**There is no `test_report_pdf.py`.** The DOCX path is covered by
-`backend/tests/test_report_docx.py`, which parses every part of the produced package; the document
-model by `backend/tests/test_report_model.py`; the registry by
-`backend/tests/test_stage_schema.py`. The PDF renderer and the Kotlin ports have **no automated
-test** — nothing proves the five outputs agree beyond the discipline of the shared model. This is
-the largest known gap in this area; see [QA_AUDIT.md](QA_AUDIT.md).
+**What is covered, and the one hole that is left — re-checked 2026-08-19.** *This paragraph used to
+say "There is no `test_report_pdf.py`" and "the PDF renderer and the Kotlin ports have no automated
+test". Both files exist. The correction is not that the gap closed — it is that the gap MOVED, and
+naming the wrong gap sends the next person to write a harness twice.*
+
+- The DOCX path: `backend/tests/test_report_docx.py`, which parses every part of the produced
+  package. The document model: `backend/tests/test_report_model.py`. The registry:
+  `backend/tests/test_stage_schema.py`.
+- **The PDF renderer: `backend/tests/test_report_pdf.py`**, and it asserts on the FILE rather than on
+  the renderer's state — the bytes are read back with `pypdf` and the drawing operators read out of
+  the content stream. Its header says why: both failures it was opened for produced a PDF that opens
+  perfectly, raises nothing, and is wrong — a contents page whose every number was ten pages short,
+  and a table header underlined in the download and not on the phone. Neither is visible from any
+  assertion about the model.
+- **Server-versus-Kotlin: `backend/tests/test_report_parity.py`**, which reads the Kotlin SOURCE as
+  text and asserts that the values that must match the Python do. It skips rather than fails when
+  the Android tree is absent, because the backend deploys without it.
+
+**The residual gap, stated exactly, because the old sentence overstated it and an overstated gap is
+ignored:** `test_report_parity.py` is a blunt instrument on purpose. It catches somebody editing
+`45.0` to `40.0` in one of the two files; it does not run the Kotlin, so **a LOGIC divergence
+between `report_docx.py` and `DocxWriter.kt` — the same constants, different behaviour — is still
+invisible to every test in this repository.** Closing it would need a JVM in CI. That, and not "no
+automated test", is the largest known gap in this area; see [QA_AUDIT.md](QA_AUDIT.md).
 
 > **Two limitations that stood here until 2026-08-08 are now false, and are recorded rather than
 > deleted** — because both were quoted elsewhere and somebody will meet the old wording again. This
@@ -769,16 +787,39 @@ the largest known gap in this area; see [QA_AUDIT.md](QA_AUDIT.md).
 > section is the part of a document that rots first and most misleadingly, because nothing about a
 > confidently-worded "not built yet" looks stale.
 
-**The on-device report ignores the template and most of stage 20's settings.**
-`report_templates.py` and `apply_report_settings` have no Kotlin port, so a report generated on the
-handset does not honour the template a designer chose at stage 20 or the settings beside it. The
-server's copy of the same workshop does. Two files, one desk, different documents — the same failure
-shape the parent-grouping work closed, still open here.
+> **A THIRD limitation joined those two on 2026-08-19, in the same shape and for the same reason.**
+> This section said "**The on-device report ignores the template and most of stage 20's settings** —
+> `report_templates.py` and `apply_report_settings` have no Kotlin port … Two files, one desk,
+> different documents". The port is `android/…/report/ReportTemplates.kt`; its `applyReportSettings`
+> is called by `ui/designworkshop/ReportPlan.kt` when it builds the plan, and
+> `ReportTemplatePinTest`'s *"applyReportSettings agrees with the server over the whole case table"*
+> pins it against the server case-for-case. The claim was the most consequential one in this
+> document — "two files, one desk, different documents" is the failure this whole area is designed
+> to prevent — and it was false while it was being read.
 
-**Two of the computed-findings modules are built and reach no designer.** `DwMarketAnalysis.kt` and
-`DwCostIntegrity.kt` compile and are referenced by no other Kotlin file, and there is no
-cost-integrity port or UI in the browser at all. See
-[COMPUTED_FINDINGS.md](COMPUTED_FINDINGS.md) §3.6 for exactly what is surfaced where.
+**What the handset genuinely cannot honour is three special sections, and it says so on the file.**
+`ReportSettings.UNSUPPORTED_SECTIONS` is the list, with the sentence a designer reads for each, and
+two of the three are CONDITIONAL rather than absolute:
+
+- **Transcripts** — the recordings are on the phone; transcription happens after they reach the
+  server, so the office's copy carries them.
+- **Questionnaire answers** — drawn on the device from `DwQuestionnaireStore` once this handset has
+  read the workshop's questionnaire list even once. The warning fires only on a device that never
+  has, which is why it is phrased conditionally: an unconditional "the answers are missing" would be
+  a false alarm on most exports, and that is how a designer learns to stop reading warnings.
+- **AI layers** — unconditional. A layer is a server row carrying which model produced it and who
+  accepted it; nothing under `data/` on the handset holds one and no screen offers to fetch them.
+
+Quote that map rather than a count of settings. A section that becomes renderable is deleted from it
+in the same edit, so the map cannot silently outlive its own truth the way the paragraph above did.
+
+**One computed-findings module reaches no designer, and it is the BROWSER half.** `DwMarketAnalysis.kt`
+and `DwCostIntegrity.kt` are both surfaced on the handset now, through
+`ui/designworkshop/DwFindingsPanel.kt`, which `StageScreen` mounts on every stage form — that half of
+this entry was false and is corrected here. What remains true is that there is **no cost-integrity
+port or UI in the browser at all**: no module under `frontend/lib/`, no panel, and nothing calling
+`GET /design-workshops/{id}/cost-integrity`. See [COMPUTED_FINDINGS.md](COMPUTED_FINDINGS.md) §3.6
+for exactly what is surfaced where.
 
 ---
 
@@ -798,7 +839,7 @@ them:
 | The template table | `TEMPLATES` in `backend/app/services/report_templates.py` | Diff against `template_choices()` output |
 | The parent-grouping invariants | `ReportBuilder._parent_groups` in `backend/app/services/report_builder.py`, and `DwParentGroups.kt` | `backend/tests/test_report_child_grouping.py` — every invariant in that subsection is one named test there, including the "renders exactly as before" comparison and the guard listing which stages declare a parent |
 | The endpoint table | `backend/app/api/routes/design_workshops.py` **and** `backend/app/api/routes/design_workshop_viewers.py` | Compare against the `@router` decorators in **both** files. The viewer routes live in their own module and are registered first in `backend/app/api/router.py`, because `GET /design-workshops/{workshop_id}` would otherwise swallow `/design-workshops/eligible-viewers` |
-| §10's limitations | Nothing. **This is the section that rots.** Each entry names a file or a symbol; re-check the two client entries by listing `frontend/app/(protected)/design-workshops/` and grepping `WorkshopRepositoryApi.kt`, which is what showed that the previous two were false |
+| §10's limitations | Nothing. **This is the section that rots**, and it has now rotted three times — the two client entries retracted on 2026-08-08, and the template entry on 2026-08-19. Each entry names a file or a symbol, so each is one grep. List `frontend/app/(protected)/design-workshops/` and grep `WorkshopRepositoryApi.kt` for the client entries; grep `android/…/report/ReportTemplates.kt` for `applyReportSettings` and `ui/designworkshop/ReportPlan.kt` for its call before repeating anything about the handset and templates; grep `android/app/src/main` for `DwCostIntegrity`/`DwMarketAnalysis` before repeating anything about the ports being unsurfaced. **A grep that comes back NON-empty is the alarm here** — every one of these entries asserts an absence, which is the class of claim a reader cannot falsify by reading the document |
 | The offline story | `WorkshopDraftStore.kt`, `Offline.kt`, `ReportExport.kt` under `android/app/src/main/java/com/designprototype/workshop/` | Read the KDoc on each |
 
 No count appears in this document's prose. The stage and template tables are enumerations — the rows

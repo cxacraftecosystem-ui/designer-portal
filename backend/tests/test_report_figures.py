@@ -17,6 +17,11 @@ once; every test below names the one it prevents.
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.services.report_builder import (
     FIGURES,
+    MAP_ROSTER_ENTITY,
+    MAP_ROSTER_PIN_KEY,
+    MAP_ROSTER_PLACE_KEYS,
+    MAP_ROSTER_STAGE,
+    MAP_ROSTER_STATE_KEY,
     ReferencedRecord,
     ReportBuilder,
     WorkshopData,
@@ -32,6 +37,7 @@ from app.services.report_model import (
     ReportMeta,
 )
 from app.services.report_templates import TEMPLATES, SpecialSection, template
+from app.services.stage_schema import FieldType, stages
 
 # --------------------------------------------------------------------------------------
 # Fixtures
@@ -232,10 +238,97 @@ def test_a_zero_zero_fix_falls_back_to_the_address_rather_than_the_gulf_of_guine
     assert (round(venue.lat, 3), round(venue.lon, 3)) == (26.815, 75.545)
 
 
-def test_artisan_homes_come_from_the_referenced_artisan_record():
-    """No roster field holds a district. The participant row records a village as free text and
-    the administrative hierarchy lives on the ``Artisan``'s ``Location`` — so a map of who came
-    from where cannot be drawn without the reference, which is why one is loaded."""
+def test_every_roster_map_key_is_a_real_participant_field():
+    """``MAP_ROSTER_PLACE_KEYS`` named ``block`` for a long time, which is a ``workshopSetup``
+    field and not a participant one, so a third of the map's roster read had never returned
+    anything but ``None``.
+
+    Nothing catches that at import and nothing can. ``validate_registry`` does check
+    ``caption_for``, ``ref_filter_by``, ``label_field``, promoted paths and hydration targets
+    against real fields — but it lives in ``stage_schema``, which ``report_builder`` imports, so it
+    cannot see these constants without an import cycle. The check has to be a test instead.
+    """
+    entity = next(e for s in stages() if s.key == MAP_ROSTER_STAGE
+                  for e in s.entities if e.key == MAP_ROSTER_ENTITY)
+    for key in (*MAP_ROSTER_PLACE_KEYS, MAP_ROSTER_STATE_KEY, MAP_ROSTER_PIN_KEY):
+        assert entity.field(key) is not None, (
+            f"report_builder reads {MAP_ROSTER_ENTITY}.{key} for the map, and the registry "
+            f"declares no such field — that read is dead and silently contributes nothing"
+        )
+    assert entity.field(MAP_ROSTER_PIN_KEY).type is FieldType.GEO, \
+        "the roster pin key must name a coordinate field, or _geo_point will refuse every row"
+
+
+def test_the_map_reads_the_roster_row_s_own_frozen_address():
+    """THE ROW DECIDES. ``REFERENCE_HYDRATION["participant.artisanRef"]`` copies village,
+    district, state, pincode and address onto the roster row at save time, so the frozen copy the
+    participant table prints is sitting right beside the ref — and the map must print the same
+    answer that table does, from the same bytes.
+
+    The row here has no ``artisanRef`` at all, which is also the hand-typed case: a participant
+    who walked in on day two, whose village the designer wrote down themselves.
+    """
+    document = _build(_data(
+        singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
+        collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
+            {"serialNo": 1, "name": "One", "village": "Barpali", "district": "Bargarh",
+             "state": "Odisha"},
+        ]}},
+    ))
+    homes = [p for p in _maps(document)[0].points if p.kind is MapPointKind.ARTISAN]
+    assert [p.label for p in homes] == ["Barpali"]
+
+
+def test_a_live_artisan_record_never_moves_a_pin_the_roster_row_has_already_frozen():
+    """THE ONE PLACE A SUBMITTED REPORT RE-RESOLVED A LIVE ROW, and this is the test for it.
+
+    ``_artisan_points`` used to build every pin from ``self.data.reference(...)`` first and read
+    the row's own keys only ``if not text``. ``WorkshopData.references`` is filled by
+    ``design_workshops.load_report_references``, which issues an unqualified ``find_many`` against
+    the CURRENT ``Artisan`` table at render time and reads the district off the live ``Location``.
+    So a researcher correcting an artisan's address in June — or a co-designer merging the record
+    into a duplicate — moved a pin in a February report that had already been handed to an
+    officer, while the participant table two pages earlier went on printing the frozen copy. One
+    document, two answers about where one person lives, and nothing on the page to say why.
+
+    It never even needed an edit: hydration is only-fill-blanks, so a designer who OVERTYPED the
+    roster row's district got the same disagreement on the day they typed it.
+
+    The fixture makes the disagreement total — the row froze Barpali in Odisha, the live record
+    now says Bhuj in Gujarat — so restoring the old precedence fails both assertions rather than
+    shifting a pin by a few kilometres.
+    """
+    document = _build(_data(
+        singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
+        collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
+            {"serialNo": 1, "name": "One", "artisanRef": "a1", "village": "Barpali",
+             "district": "Bargarh", "state": "Odisha"},
+        ]}},
+        references={"a1": ReferencedRecord(model="Artisan", label="One", place="Bhuj",
+                                           district="Kachchh", state="Gujarat")},
+    ))
+    block = _maps(document)[0]
+    homes = [p for p in block.points if p.kind is MapPointKind.ARTISAN]
+    assert [p.label for p in homes] == ["Barpali"], \
+        "the map printed the live record's district where the table beside it prints the frozen one"
+    assert "Gujarat" not in block.highlight, \
+        "a state nothing in the submitted record names was tinted because a live row was re-read"
+
+
+def test_a_roster_row_that_states_no_address_falls_back_to_the_referenced_artisan_record():
+    """Rows saved before the artisan hydration mapping widened carry no stated address at all, and
+    for those the ``Artisan`` record is still the only place the address exists. That is why
+    ``ReferencedRecord.place/district/state`` are kept and why deleting them would drop those rows
+    off the map.
+
+    THIS TEST WAS ``test_artisan_homes_come_from_the_referenced_artisan_record`` AND ITS DOCSTRING
+    PINNED A BUG. It asserted the reference-first precedence as though it were the design, on the
+    stated ground that "No roster field holds a district. The participant row records a village as
+    free text" — which stopped being true when ``REFERENCE_HYDRATION["participant.artisanRef"]``
+    began copying village, district, state, pincode and address onto the row. The fixture is
+    unchanged, because a row with no stated address is exactly what the fallback is for; only the
+    claim about the tree is corrected, and the row-first case is asserted above it.
+    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Rajasthan", "district": "Jaipur"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -251,6 +344,183 @@ def test_artisan_homes_come_from_the_referenced_artisan_record():
     ))
     homes = [p for p in _maps(document)[0].points if p.kind is MapPointKind.ARTISAN]
     assert {p.label for p in homes} == {"Bagru", "Sanganer"}
+
+
+def test_the_row_s_own_district_and_state_are_both_read_not_just_the_village():
+    """TWO FIXES IN ONE FIXTURE, because they fail together.
+
+    The row-side read used to take the FIRST non-empty of ``MAP_ROSTER_PLACE_KEYS`` and never
+    looked at the row's ``state`` at all — the state came from stage 1, always. So an artisan who
+    travelled in from the next state, and whose hamlet this build's atlas has never heard of, was
+    geocoded as "hamlet, the workshop's state": the district they actually named was never
+    consulted and neither was the state they actually named, and the pin landed on the WORKSHOP's
+    state capital. Joining the row's village and district the way ``_venue_point`` joins the
+    venue's address, and reading the row's own state before stage 1's, is what places them.
+
+    The village here is invented on purpose. A hamlet the atlas knows would resolve from its own
+    name whatever state was passed, and the test would pass against the old code by luck.
+    """
+    document = _build(_data(
+        singletons={"WORKSHOP_SETUP": {"state": "Rajasthan", "district": "Jaipur"}},
+        collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
+            {"serialNo": 1, "name": "Visitor", "village": "Kusumpur Tola",
+             "district": "Bargarh", "state": "Odisha"},
+        ]}},
+    ))
+    block = _maps(document)[0]
+    assert "Odisha" in block.highlight, (
+        "the artisan's pin landed in the workshop's state; the district and state frozen on their "
+        "own roster row were never read"
+    )
+    home = next(p for p in block.points if p.kind is MapPointKind.ARTISAN)
+    assert home.label != "Rajasthan"
+
+
+def test_a_row_that_froze_a_village_but_no_state_is_placed_from_the_record_not_the_workshop():
+    """THE ROW SHAPE THE ROW-FIRST PRECEDENCE PINNED 1,300 KM AWAY, and the reason the legacy gate
+    asks about the STATE and not only about the address text.
+
+    ``"village": "village"`` has been in ``REFERENCE_HYDRATION["participant.artisanRef"]`` since the
+    initial commit; ``district`` and ``state`` were added much later. A roster row saved in between
+    carries a village and NOTHING that can place it — so while the gate read ``if not text`` those
+    rows took the row-first branch, never reached their ``Artisan`` record, fell through to the
+    WORKSHOP's state, and were geocoded as "hamlet, Rajasthan": one pin on Jaipur, with Odisha not
+    tinted at all. A row carrying MORE frozen data drew a worse pin than one carrying none — delete
+    the ``village`` key from this fixture and the old code placed it correctly.
+
+    The village is invented on purpose. A hamlet the atlas knows would resolve from its own name
+    whatever state was passed and the test would pass against the old code by luck.
+    """
+    document = _build(_data(
+        singletons={"WORKSHOP_SETUP": {"state": "Rajasthan", "district": "Jaipur"}},
+        collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
+            {"serialNo": 1, "name": "One", "artisanRef": "a1", "village": "Kusumpur Tola"},
+        ]}},
+        references={"a1": ReferencedRecord(model="Artisan", label="One",
+                                           district="Bargarh", state="Odisha")},
+    ))
+    block = _maps(document)[0]
+    assert "Odisha" in block.highlight, (
+        "a roster row that froze a village but no state was geocoded against the WORKSHOP's state, "
+        "so the artisan's own state was never tinted"
+    )
+    home = next(p for p in block.points if p.kind is MapPointKind.ARTISAN)
+    assert home.label == "Bargarh", (
+        f"the pin is labelled {home.label!r}: the row's village was placed against the workshop's "
+        f"state instead of the district and state the artisan record states"
+    )
+    assert round(home.lat, 1) != 26.9 or round(home.lon, 1) != 75.8, \
+        "the pin is sitting on Jaipur, the workshop's state capital"
+
+
+def test_a_pin_dropped_on_the_artisan_s_own_place_is_drawn_where_it_was_dropped():
+    """``participant.subjectLocation`` is the pin a researcher dropped on the artisan's OWN place,
+    hydrated onto the roster row at save time — and no renderer read it.
+
+    The map geocoded the district NAME instead, so a report holding an exact coordinate for an
+    artisan drew them on a district centroid or, where the atlas knew only the state, on the state
+    capital — and then counted them in the caption's "drawn at its state capital" sentence, exactly
+    as if no pin had ever been dropped. The pin did print, as a raw "21.20411, 83.60122" key-value
+    line under the participant table, where no reader can use it.
+
+    The fixture's coordinate is deliberately NOT Barpali's atlas position (21.1918, 83.5906), so a
+    fix that quietly went on geocoding the village name fails on the numbers rather than passing by
+    coincidence. It is the STATED pin: ``_subject_point`` is the only coordinate allowed to cross
+    onto a stage entry, because the device's own fix is the desk the record was typed at.
+    """
+    document = _build(_data(
+        singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
+        collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
+            {"serialNo": 1, "name": "One", "village": "Barpali", "district": "Bargarh",
+             "state": "Odisha", "subjectLocation": {"lat": 21.20411, "lon": 83.60122}},
+        ]}},
+    ))
+    block = _maps(document)[0]
+    home = next(p for p in block.points if p.kind is MapPointKind.ARTISAN)
+    assert (round(home.lat, 5), round(home.lon, 5)) == (21.20411, 83.60122)
+    assert "drawn at its state capital" not in block.caption, \
+        "a surveyed pin must never be described as an unresolvable place standing in on a capital"
+    assert "Odisha" in block.highlight
+    # ONE LABEL GRAMMAR PER FIGURE, pinned rather than left incidental. Every other pin on this map
+    # is named by the atlas, which returns one token; this pin is named from the row, and the first
+    # version of it carried the whole joined address ("Barpali, Bargarh"). A figure with two kinds
+    # of label invites a reader to look for the distinction between them, and there is none.
+    assert home.label == "Barpali", (
+        f"the surveyed pin is labelled {home.label!r} where every geocoded pin beside it carries a "
+        f"single place name"
+    )
+
+
+def test_a_zero_zero_subject_pin_falls_back_to_the_stated_address():
+    """``0, 0`` is the Gulf of Guinea and is what a form that never obtained a fix writes. The
+    artisan still has a stated village, and losing them off the map for a null pin would be the
+    same regression ``_geo_point`` was written to prevent for the venue."""
+    document = _build(_data(
+        singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
+        collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
+            {"serialNo": 1, "name": "One", "village": "Barpali", "district": "Bargarh",
+             "state": "Odisha", "subjectLocation": {"lat": 0.0, "lon": 0.0}},
+        ]}},
+    ))
+    home = next(p for p in _maps(document)[0].points if p.kind is MapPointKind.ARTISAN)
+    assert home.label == "Barpali"
+
+
+def test_a_surveyed_pin_on_an_unplaceable_village_is_not_counted_as_approximate():
+    """THE CAPTION HALF OF THE SURVEYED PIN, on a fixture where the sentence would actually print.
+
+    ``test_a_pin_dropped_on_the_artisan_s_own_place_is_drawn_where_it_was_dropped`` also asserts
+    the caption, but its village resolves precisely through the atlas, so that assertion would hold
+    with the fix reverted too and proves nothing on its own. Here the village is one this build has
+    never heard of: without the ``subjectLocation`` branch the row falls to the state seat, counts
+    as approximate, and the report tells a reader that an artisan whose home was SURVEYED WITH A
+    GPS was "drawn at its state capital" — the one sentence on the figure that a reader uses to
+    decide how much of it to believe.
+    """
+    document = _build(_data(
+        singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
+        collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
+            {"serialNo": 1, "name": "One", "village": "Kusumpur Tola", "state": "Odisha",
+             "subjectLocation": {"lat": 21.20411, "lon": 83.60122}},
+        ]}},
+    ))
+    block = _maps(document)[0]
+    home = next(p for p in block.points if p.kind is MapPointKind.ARTISAN)
+    assert (round(home.lat, 5), round(home.lon, 5)) == (21.20411, 83.60122)
+    assert home.label == "Kusumpur Tola"
+    assert "drawn at its state capital" not in block.caption, (
+        "a home the researcher stood in and surveyed was reported to the reader as a village the "
+        "atlas could not place, standing in on a capital city"
+    )
+
+
+def test_a_surveyed_pin_keeps_a_state_spelling_the_canonicaliser_does_not_know():
+    """A PIN WHOSE STATE IS DROPPED IS A PIN ON AN UNTINTED REGION, with nothing saying why.
+
+    Every other pin on this map carries ``canonical_state(found.state) or found.state`` — the
+    canonical name where the closed list knows it, the record's own spelling where it does not.
+    The surveyed pin was built with ``canonical_state(state) or ""``, so a state the list has never
+    learned became the empty string, ``_render_map`` filtered it out of ``highlight``, and the
+    figure drew a pin in a region it did not tint. Carried through, ``report_map._tint_states``
+    still cannot seed the fill — but it returns the name in ``missed`` and the figure prints
+    "Not tinted: …" beneath itself, which is a statement a reader can act on.
+
+    "Kalinga" is not on the closed list under any alias (the renames it does carry are Orissa,
+    Pondicherry and Uttaranchal), so it stands for the free-text spellings the older half of the
+    corpus holds.
+    """
+    document = _build(_data(
+        singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
+        collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
+            {"serialNo": 1, "name": "One", "village": "Kusumpur Tola", "state": "Kalinga",
+             "subjectLocation": {"lat": 21.20411, "lon": 83.60122}},
+        ]}},
+    ))
+    block = _maps(document)[0]
+    assert "Kalinga" in block.highlight, (
+        "the surveyed pin's state was dropped because the canonicaliser did not recognise the "
+        "spelling, so the map drew a pin and tinted nothing under it"
+    )
 
 
 def test_artisans_from_one_place_fold_into_one_pin_that_counts_them():
@@ -603,10 +873,15 @@ def test_the_photograph_is_captioned_with_the_record_s_name_not_the_field_s_labe
 
 
 def test_a_ref_to_a_documented_product_pulls_the_catalogue_photograph():
-    """``prototype.productRef`` seeds only a NAME, deliberately: the prototype owns a gallery of
-    the designer's own progress photographs and hydration must never overwrite those. The
-    consequence was a report describing a prototype of a documented product with the product's
-    photograph nowhere in it."""
+    """``prototype.productRef`` seeds only a NAME, deliberately, and this docstring used to give
+    the wrong reason for it — "hydration must never overwrite a gallery", which is not the rule.
+    ``hydrate_entries`` seeds a gallery WHEN EMPTY and never overwrites one, and
+    ``existingProduct.productPhotos`` is seeded from the product's own photograph on purpose. The
+    prototype's gallery is left unseeded for the separate reason written at
+    ``prototype.productRef``: a prototype is defined by how it DIFFERS from the product it derives
+    from. Either way the picture has no copy on the row, so without the reference carrier the
+    report described a prototype of a documented product with the product's photograph nowhere in
+    it."""
     document = _in_place(_data(
         collections={"PROTOTYPE_DEVELOPMENT": {"prototype": [
             {"prototypeCode": "PR-01", "name": "Table runner", "productRef": "p1"},
@@ -615,6 +890,140 @@ def test_a_ref_to_a_documented_product_pulls_the_catalogue_photograph():
                                            label="Pasapalli runner", photo="media-catalogue")},
     ))
     assert ("media-catalogue", "Pasapalli runner") in _placed(document)
+
+
+def test_a_borrowed_photograph_is_captioned_with_the_name_the_row_froze():
+    """THE ONE PLACE A LIVE RE-RESOLVED NAME REACHED PAPER.
+
+    Every external REF in the registry is ``report_role=HIDDEN`` and none is any entity's
+    ``label_field``, so a reference's ``label`` printed in exactly one position: the caption under
+    the photograph borrowed from the record it points at. That label is
+    ``REFERENCE_MODELS[model].label(row)`` evaluated against the record as it stands TODAY, while
+    ``prototype.productName`` two lines up the same page is the frozen copy hydration wrote at save
+    time. Rename the product record after the workshop closes and one page carries both answers:
+    "Developed from: Sambalpuri Saree" above a photograph captioned "Sambalpuri Ikat Saree —
+    revised 2027", with nothing to say which the workshop actually worked from.
+
+    Generic, not per-entity: the caption follows ``reference_hydration_for``'s own ``"name"``
+    mapping to whichever box on this row the name was copied into.
+    """
+    document = _in_place(_data(
+        collections={"PROTOTYPE_DEVELOPMENT": {"prototype": [
+            {"prototypeCode": "PR-01", "name": "Table runner", "productRef": "p1",
+             "productName": "Sambalpuri Saree"},
+        ]}},
+        references={"p1": ReferencedRecord(model="ProductDocumentation",
+                                           label="Sambalpuri Ikat Saree — revised 2027",
+                                           photo="media-catalogue")},
+    ))
+    assert dict(_placed(document))["media-catalogue"] == "Sambalpuri Saree", (
+        "the borrowed photograph was captioned with the product record's CURRENT name while the "
+        "row beside it printed the name frozen at save time"
+    )
+
+
+def test_every_photographable_record_can_be_captioned_from_the_name_its_row_froze():
+    """THE CENSUS THAT MAKES THE FROZEN-NAME CAPTION STAY CLOSED, AND IT FOUND ``Craft``.
+
+    ``_reference_caption`` walked the hydration mapping looking for the literal source key
+    ``"name"``. Four of the five reference models publish their display column under that key and
+    the fifth does not: ``REFERENCE_MODELS["Craft"].data`` emits ``{"craftName": r.name, …}`` while
+    its ``label`` is ``r.name`` — the same column, a different key, because stage 1's cover asks
+    for "Craft name". ``Craft`` also declares ``media_field="craftId"``, so a craft photograph
+    really does reach ``_images``' second pass, and it was captioned from the LIVE record while
+    ``workshopSetup.craftName`` — a COVER_FIELD — printed the copy frozen at save time. Rename a
+    craft after the workshop closes and the COVER PAGE and the picture beneath it carry two names
+    for one craft.
+
+    DERIVED, NOT ENUMERATED, so the next model whose ``data`` lambda renames its key fails here
+    instead of on a ministry's cover page: the name key is found by asking each model which of its
+    published keys carries the same value its ``label`` reads, over a probe row that answers every
+    column with its own name. Nothing in this test consults
+    ``report_builder._REFERENCE_NAME_SOURCES``, which is the table under test.
+    """
+    import logging
+
+    from app.services import design_workshops as dw
+    from app.services.stage_schema import reference_hydration_for
+
+    class _Echo:
+        """A record whose every column answers with its own name, so ``label`` and ``data`` can be
+        compared BY VALUE without a database. ``__getattr__`` rather than fixed attributes: a
+        lambda that starts reading a new column must not make the probe raise."""
+
+        def __getattr__(self, name: str) -> str:
+            return f"<{name}>"
+
+    builder = ReportBuilder(_data(), template("DETAILED_TECHNICAL"), _resolver, meta=_meta())
+    checked = 0
+    for model, spec in dw.REFERENCE_MODELS.items():
+        if not spec.media_field:
+            # No photograph can be borrowed from this model at all — ``Process`` says at length why
+            # it has none — so there is no caption to get wrong.
+            continue
+        probe = _Echo()
+        label = spec.label(probe)
+        # THE PROBE TRIPS THE CARRY WARNINGS, WHICH IS NOISE AND NOT A FINDING. Four of these
+        # lambdas run an ENUM token through ``_translated``, which logs an ERROR naming a token no
+        # translation table carries — true of "<productType>" and of nothing a real record holds.
+        # Left to print, this test emits five ERROR lines on every green run, which is how a suite
+        # teaches its readers that ERROR lines mean nothing.
+        logging.disable(logging.ERROR)
+        try:
+            published = spec.data(probe, None)
+        finally:
+            logging.disable(logging.NOTSET)
+        name_keys = {key for key, value in published.items() if value == label}
+        assert name_keys, (
+            f"REFERENCE_MODELS[{model!r}].data publishes nothing equal to its own label, so no "
+            f"hydration mapping can carry the record's name onto a row and every borrowed "
+            f"photograph of one is captioned from the live record"
+        )
+        for stage in stages():
+            for entity in stage.entities:
+                for field in entity.fields:
+                    if field.type is not FieldType.REF or field.ref_model != model:
+                        continue
+                    mapping = reference_hydration_for(entity.key, field.key)
+                    if not mapping:
+                        continue
+                    targets = [mapping[key] for key in sorted(name_keys) if key in mapping]
+                    assert targets, (
+                        f"{entity.key}.{field.key} hydrates from {model} but copies none of "
+                        f"{sorted(name_keys)} — the record's own name — onto the row, so its "
+                        f"borrowed photograph can only be captioned from the live record"
+                    )
+                    checked += 1
+                    frozen = "The name this row froze"
+                    caption = builder._reference_caption(
+                        entity, field, {targets[0]: frozen},
+                        ReferencedRecord(model=model, label="RENAMED AFTER SUBMISSION",
+                                         photo="media-1"),
+                    )
+                    assert caption == frozen, (
+                        f"the photograph borrowed through {entity.key}.{field.key} is captioned "
+                        f"{caption!r} — the {model} record's name AS IT STANDS TODAY — while the "
+                        f"row beside it prints {frozen!r}"
+                    )
+    assert checked >= 6, (
+        f"only {checked} REF field(s) reached the caption assertion; this census was written "
+        f"against six and a shrinking count means a photographable model stopped being covered"
+    )
+
+
+def test_a_borrowed_photograph_still_falls_back_to_the_record_s_own_name():
+    """Where the mapping seeds no name — ``existingProduct.artisanRef`` writes ``artisanName`` and
+    a row saved before that mapping existed carries none — the reference's label is still the right
+    caption, for the reason the replaced line gave: the field's label is the RELATIONSHIP and not
+    the subject, so "Artisan" under a photograph is a category where "Sunita Bag" is a caption."""
+    document = _in_place(_data(
+        collections={"EXISTING_PRODUCTS_BASELINE": {"existingProduct": [
+            {"name": "Cotton saree", "artisanRef": "a1"},
+        ]}},
+        references={"a1": ReferencedRecord(model="Artisan", label="Sunita Bag",
+                                           photo="media-portrait")},
+    ))
+    assert dict(_placed(document))["media-portrait"] == "Sunita Bag"
 
 
 def test_the_designer_s_own_photographs_come_before_the_borrowed_one():

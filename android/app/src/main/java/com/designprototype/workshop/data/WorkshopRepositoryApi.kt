@@ -530,6 +530,20 @@ interface WorkshopRepositoryApi {
     @POST("data-access/comments")
     suspend fun addEntryComment(@Body body: EntryCommentBody): EntryCommentDto
 
+    /**
+     * Withdraw a comment. 204, or 403 when it is somebody else's and this account is not an admin.
+     *
+     * THE HANDSET COULD POST AND NOT UNPOST, which is a worse asymmetry than it sounds. A comment is
+     * the only free-text a designer writes ABOUT a record rather than into it, and the one written by
+     * mistake — on the wrong artisan, or naming somebody — could be removed in a browser and not on
+     * the device it was typed on. The route has existed the whole time; only this declaration was
+     * missing, so the two surfaces disagreed about whether a comment can be taken back.
+     *
+     * `delete_comment` returns 204 for an id that does not exist, so a double tap is not an error.
+     */
+    @DELETE("data-access/comments/{id}")
+    suspend fun deleteEntryComment(@Path("id") id: String)
+
     @GET("data-access/revisions")
     suspend fun recordRevisions(
         @Query("recordType") recordType: String,
@@ -1068,6 +1082,20 @@ interface WorkshopRepositoryApi {
     // same reason: an optional id would make "the call site that forgot" indistinguishable from "the
     // call site that meant it", and the forgotten one is the one that sends an artisan's recorded voice
     // through the ungated door.
+    /**
+     * How many server dictations this designer has left today, and where the day ends.
+     *
+     * ASKED WITHOUT SPENDING ANYTHING — two primary-key reads on the server and no upload. Without
+     * it, a handset opened for the first time this morning learns the ceiling only by uploading six
+     * megabytes to be refused, which is the exact failure `DwDictationUpload` records for the 503,
+     * once per prose field on the stage.
+     *
+     * NOT WORKSHOP-SCOPED, deliberately: the allowance is a fact about the signed-in account, and the
+     * route takes no user parameter for the reason its own docstring gives.
+     */
+    @GET("design-workshops/dictation-allowance")
+    suspend fun designWorkshopDictationAllowance(): DwDictationAllowanceDto
+
     @Multipart
     @POST("design-workshops/{id}/dictate")
     suspend fun designWorkshopDictate(

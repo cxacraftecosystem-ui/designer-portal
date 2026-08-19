@@ -33,6 +33,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import okhttp3.Call
@@ -836,6 +837,27 @@ class WorkshopRepository(
      * exists only on this device HAS no server id; the ladder refuses rung 2 for it before a microphone
      * is ever opened ([DwDictationConditions.workshopOnServer]), so no caller has to invent one.
      */
+    /**
+     * Ask the server for this designer's dictation ceiling and write it into the local mirror.
+     *
+     * WHAT IT BUYS: the refusal happening BEFORE the microphone opens, on a phone that has learned
+     * nothing yet. `DwDictationRun.learnAllowance` writes the mirror from the 200 of a dictation, so
+     * until this existed the FIRST dictation of every day — on every handset — paid a six-megabyte
+     * upload to discover a number the server would have given for two primary-key reads. In a
+     * district town the connection is scarcer than the provider credit the cap is about.
+     *
+     * EVERY FAILURE IS SWALLOWED AND NOTHING IS WRITTEN ON ONE. A 404 is a deployment that predates
+     * the route, a 403 is an account that is not a designer, and no signal is the ordinary case; all
+     * three mean "we were not told", which is exactly what an untouched mirror already says. Writing
+     * anything here on a failure would be inventing an allowance, and a fabricated `dictationDay`
+     * would then be compared against a real one.
+     */
+    suspend fun refreshDictationAllowance(context: Context) {
+        val userId = cachedUser()?.id?.takeIf { it.isNotBlank() } ?: return
+        val dto = runCatching { api.designWorkshopDictationAllowance() }.getOrNull() ?: return
+        dwDictationAllowanceOf(dto, userId)?.let { DwDictationAllowanceStore.write(context, it) }
+    }
+
     suspend fun designWorkshopDictate(
         workshopId: String,
         clip: File,
@@ -1755,6 +1777,15 @@ class WorkshopRepository(
         api.entryComments(recordType, recordId)
     suspend fun addEntryComment(recordType: String, recordId: String, body: String): EntryCommentDto =
         api.addEntryComment(EntryCommentBody(recordType = recordType, recordId = recordId, body = body))
+
+    /**
+     * Withdraw a comment. The server allows the AUTHOR or an admin, and refuses anyone else with 403.
+     *
+     * The screen offers the control on the same test rather than letting everybody try and be
+     * refused — see `RecordCollabSection` — but the server's rule is the one that decides, exactly as
+     * it does on the web.
+     */
+    suspend fun deleteEntryComment(commentId: String) = api.deleteEntryComment(commentId)
     suspend fun recordRevisions(recordType: String, recordId: String): List<RecordRevisionDto> =
         api.recordRevisions(recordType, recordId)
 
@@ -3077,6 +3108,8 @@ class WorkshopRepository(
         stageStep: Int? = null,
         customSegment: String? = null,
         overrideBaseName: String? = null,
+        /** Stored verbatim on the media row. Today only `{"purpose": …}` - see [MEASUREMENT_GRID_PURPOSE]. */
+        extraMetadata: JsonObject? = null,
         onProgress: ((sent: Long, total: Long) -> Unit)? = null
     ): MediaFileDto {
         val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
@@ -3098,6 +3131,7 @@ class WorkshopRepository(
             stageStep = stageStep,
             customSegment = customSegment,
             overrideBaseName = overrideBaseName,
+            extraMetadata = extraMetadata,
             onProgress = onProgress
         )
     }
@@ -3119,6 +3153,7 @@ class WorkshopRepository(
         stageStep: Int?,
         customSegment: String?,
         overrideBaseName: String? = null,
+        extraMetadata: JsonObject? = null,
         onProgress: ((sent: Long, total: Long) -> Unit)?
     ): MediaFileDto {
         val resolvedProcessing = processingRequests
@@ -3163,7 +3198,8 @@ class WorkshopRepository(
                     linkedRecordId = linkedRecordId.blankToNull(),
                     recordedAt = Instant.now().toString(),
                     location = location,
-                    processingRequests = resolvedProcessing
+                    processingRequests = resolvedProcessing,
+                    extraMetadata = extraMetadata
                 ),
                 target.checksum
             )
@@ -3459,7 +3495,17 @@ class WorkshopRepository(
         stageStep: Int? = null,
         customSegment: String? = null,
         processingRequests: List<String>? = null,
-        overrideBaseName: String? = null
+        overrideBaseName: String? = null,
+        /**
+         * Stored verbatim on the media row - see [MEASUREMENT_GRID_PURPOSE].
+         *
+         * IT HAS TO BE HERE AS WELL AS ON [uploadMedia], and this is the arm that actually carries
+         * the grid marker in practice: an attachment is eagerly pre-uploaded the moment it is picked,
+         * so by the time the record saves the bytes are already staged and this is the call that
+         * registers the row. A marker only the fresh-upload path wrote would fire only when the eager
+         * upload had failed.
+         */
+        extraMetadata: JsonObject? = null
     ): MediaFileDto {
         val filename = mediaFilename(
             recordType = linkedRecordType,
@@ -3488,7 +3534,8 @@ class WorkshopRepository(
                 linkedRecordId = linkedRecordId.blankToNull(),
                 recordedAt = Instant.now().toString(),
                 location = location,
-                processingRequests = resolvedProcessing
+                processingRequests = resolvedProcessing,
+                extraMetadata = extraMetadata
             ),
             StagedJournal.checksumFor(staged.objectKey)
         )
@@ -3560,6 +3607,16 @@ class WorkshopRepository(
      * Save a new record to the local outbox (no network). Copies the attached media into app storage so
      * nothing is lost, then enqueues the serialized create request. [payloadJson] is the record's
      * create request serialized with [offlineJson]. Synced later by [syncOutbox].
+     *
+     * [purposes] IS THE PER-FILE MARKER MAP THE FORM HOLDS — `MediaCaptureState.purposes`, keyed by
+     * the same [Uri]s in [mediaUris]. It is passed as a plain map rather than as the capture state
+     * itself because that class is private to the UI layer; the map is the whole of what this layer
+     * needs. Empty for every form with no grid section, so nothing changes for them.
+     *
+     * WITHOUT IT THE GRID MARKER DIED AT THE OUTBOX. `uploadAttachments` reads the purposes map on
+     * the online path; this is the offline one, and it used to build its specs from the uris alone —
+     * so a product photographed on graph paper in a cluster with no signal uploaded that sheet
+     * unmarked on reconnect and the report printed it as the product. See [PendingMedia.purpose].
      */
     suspend fun queueOffline(
         context: Context,
@@ -3568,11 +3625,18 @@ class WorkshopRepository(
         label: String,
         mediaUris: List<Uri>,
         recordName: String?,
-        caption: String?
+        caption: String?,
+        purposes: Map<Uri, String> = emptyMap()
     ) = queueOfflineEntry(
         context, type, payloadJson, label,
         mediaUris.mapIndexed { index, uri ->
-            OfflineMediaSpec(uri = uri, caption = caption, recordName = recordName, batchIndex = index + 1)
+            OfflineMediaSpec(
+                uri = uri,
+                caption = caption,
+                recordName = recordName,
+                batchIndex = index + 1,
+                purpose = purposes[uri],
+            )
         }
     )
 
@@ -3596,7 +3660,8 @@ class WorkshopRepository(
                 processing = spec.processing,
                 stageStep = spec.stageStep,
                 linkedType = spec.linkedType,
-                stepIndex = spec.stepIndex
+                stepIndex = spec.stepIndex,
+                purpose = spec.purpose
             )
         }
         OfflineOutbox.enqueue(
@@ -3642,6 +3707,12 @@ class WorkshopRepository(
         if (sweptStagedObjects.compareAndSet(false, true)) {
             AppScope.io.launch { runCatching { sweepStagedObjects(context) } }
         }
+        // THE DICTATION CEILING, LEARNED BEFORE IT IS SPENT — on the same hook and for the same
+        // reason. This runs on app open and whenever the network comes back, which is exactly when a
+        // handset's mirror is either empty (first open of the day, or a cold start after a
+        // swipe-away) or belongs to yesterday. Detached and swallowing every failure, because a
+        // number that is only an optimisation must never delay or fail the queued records beside it.
+        AppScope.io.launch { runCatching { refreshDictationAllowance(context) } }
         val synced = syncMutex.withLock {
             val queue = OfflineOutbox.all(context)
             // Read first, then reported, and reported before the connection is even checked: a queue
@@ -4132,21 +4203,17 @@ class WorkshopRepository(
             linkedRecordId = linkedRecordId,
             onProgress = null
         )
-        val resolvedProcessing = pm.processing ?: if (pm.mediaType == "AUDIO") listOf("TRANSCRIPTION") else emptyList()
         completeUpload(
-            MediaCompleteRequest(
-                originalFilename = filename,
-                mediaType = pm.mediaType,
-                mimeType = pm.mimeType,
-                sizeBytes = file.length(),
-                objectKey = target.objectKey,
-                bucket = target.bucket,
-                url = target.publicUrl,
-                caption = pm.caption.blankToNull(),
+            pendingMediaCompleteRequest(
+                pm = pm,
+                filename = filename,
                 linkedRecordType = linkedRecordType,
                 linkedRecordId = linkedRecordId,
+                objectKey = target.objectKey,
+                bucket = target.bucket,
+                publicUrl = target.publicUrl,
+                sizeBytes = file.length(),
                 recordedAt = Instant.now().toString(),
-                processingRequests = resolvedProcessing
             ),
             target.checksum
         )
@@ -4371,6 +4438,58 @@ class WorkshopRepository(
 }
 
 private fun String?.blankToNull(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+
+/**
+ * The `/media/complete` body for one file replayed out of the offline outbox.
+ *
+ * SPLIT OUT OF [WorkshopRepository.uploadLocalFile] SO IT CAN BE ASSERTED WITHOUT A NETWORK. Every
+ * other property of this request has a live analogue in `uploadMedia` that a person would notice
+ * going wrong; [PendingMedia.purpose] does not. Nothing errors when the marker stops being sent — no
+ * build breaks, no request fails, no log line appears — the .docx handed to a Development
+ * Commissioner's office simply starts printing a sheet of graph paper captioned as the tool again.
+ * A function returning a request is something a unit test can hold; the eight lines inside a private
+ * suspend function that also does a multipart PUT is not, which is why the queued path shipped
+ * without the marker in the first place. See `MeasurementGridMarkerTest`.
+ *
+ * THE TRANSCRIPTION DEFAULT IS PART OF THE BODY AND SO LIVES HERE TOO: an artisan explaining a
+ * technique into the phone is an interview recording like any other, and the queued path must ask for
+ * the same processing the live one asks for or a fortnight offline costs a fortnight of transcripts.
+ * An explicit [PendingMedia.processing] wins, because a caller that named the list meant it.
+ */
+internal fun pendingMediaCompleteRequest(
+    pm: PendingMedia,
+    filename: String,
+    linkedRecordType: String,
+    linkedRecordId: String,
+    objectKey: String,
+    bucket: String?,
+    publicUrl: String?,
+    sizeBytes: Long,
+    recordedAt: String,
+): MediaCompleteRequest = MediaCompleteRequest(
+    originalFilename = filename,
+    mediaType = pm.mediaType,
+    mimeType = pm.mimeType,
+    sizeBytes = sizeBytes,
+    objectKey = objectKey,
+    bucket = bucket,
+    url = publicUrl,
+    caption = pm.caption.blankToNull(),
+    linkedRecordType = linkedRecordType,
+    linkedRecordId = linkedRecordId,
+    recordedAt = recordedAt,
+    processingRequests = pm.processing
+        ?: if (pm.mediaType == "AUDIO") listOf("TRANSCRIPTION") else emptyList(),
+    // THE MARKER THE FORM WROTE, CARRIED ACROSS THE OUTBOX — see [PendingMedia.purpose].
+    //
+    // Nothing else on this path can tell the server what the file is. The filename is built by
+    // `mediaFilename(...)` and never starts `grid-`/`measure-grid-`, and the caption is "Field media
+    // for X", so NEITHER of the server's transitional clauses matches a queued grid shot: without
+    // this the graph paper is still the oldest image on the record and still wins
+    // `createdAt ASC, id ASC`. Null for every other queued file, and `ApiClient.json` leaves
+    // `encodeDefaults` false, so those bodies are byte-identical to what they always were.
+    extraMetadata = mediaPurposeMetadata(pm.purpose),
+)
 
 /**
  * Comma-join a list-shaped query parameter, the way every route in the shared filter vocabulary reads

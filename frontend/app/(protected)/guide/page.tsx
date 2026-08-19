@@ -14,7 +14,7 @@ import { PageHeader } from "@/components/PageHeader";
  * Walkthrough — the in-app guide that teaches a new researcher the entire documentation
  * process, in the order it happens in the field.
  *
- * The page is a single scroll: an opening band, the ten steps threaded onto a scroll-linked
+ * The page is a single scroll: an opening band, the steps threaded onto a scroll-linked
  * spine (`components/guide/GuideJourney`), and a closing checklist. Every step names the real
  * screen it teaches, uses the Android-parity feature name for it, and links straight there —
  * so the guide is a launcher as well as a lesson.

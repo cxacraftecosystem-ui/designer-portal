@@ -39,7 +39,7 @@ const NEXT: Array<{ label: string; href: string; icon: LucideIcon; note: string 
 ];
 
 /**
- * The closing section: a compact recap of the ten steps as a single readable line, the
+ * The closing section: a compact recap of the steps as a single readable line, the
  * pre-departure checklist, and the screens a researcher goes to once the walkthrough is done.
  *
  * Everything here reveals on scroll with the same staggered vocabulary as the step cards, so

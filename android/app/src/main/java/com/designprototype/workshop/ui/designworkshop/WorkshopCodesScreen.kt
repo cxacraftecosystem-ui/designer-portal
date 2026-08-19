@@ -105,8 +105,11 @@ import java.time.format.DateTimeFormatter
  *
  * The tags are wanted in the room, on the afternoon the prototypes are made, and that room has no
  * signal and no laptop. The web's sheet is unreachable there. Everything the codes need — the
- * grammar, the check digit and the whole QR encoder — has been on this device the entire time in
- * [DwWorkshopCodes] and [DwQrEncode], with nothing calling either of them.
+ * grammar, the check digit and the whole QR encoder — was already on this device in
+ * [DwWorkshopCodes] and [DwQrEncode] BEFORE THIS SCREEN EXISTED, with nothing calling either of
+ * them; this screen is what calls them, and it is reached from `MainActivity`'s
+ * `Screen.DesignWorkshopCodes` arm. (The clause used to read "with nothing calling either of them"
+ * in the present tense, in the file that is their caller.)
  *
  * ── THREE THINGS THIS SCREEN DOES AND ONE IT HONESTLY DOES NOT ────────────────────────────────
  *

@@ -3,23 +3,26 @@
  *
  * WHY THIS EXISTS, because it is the whole point of the file.
  *
- * A design workshop is currently visible to exactly ONE account. `load_workshop_or_404` in
- * `backend/app/services/design_workshops.py` reads
+ * A design workshop USED TO BE visible to exactly ONE account: `load_workshop_or_404` in
+ * `backend/app/services/design_workshops.py` refused anybody but the creator and an admin, so a
+ * colleague who opened the same workshop was told it did not exist — not that they may not see it,
+ * which would at least be actionable, but that there was nothing there. That is the correct refusal
+ * for a stranger and the wrong one for the room the workshop is actually run in. A real Design &
+ * Prototype Development Workshop is a fortnight of work by TWO designers alongside a master
+ * craftsperson and a reviewing officer, all four of whom have to read the same 22 stages; the
+ * second designer could not open it at all, and there was no handover whatsoever when a designer
+ * left mid-season — the record simply became unreadable to everyone but an admin, with the
+ * fortnight's fieldwork inside it.
  *
- *     if record.createdById != user.id and not admin:
- *         raise HTTPException(404, "Record not found")
+ * THAT IS NOW CLOSED ON BOTH HALVES, and the `if record.createdById != user.id and not admin:` this
+ * paragraph used to quote no longer exists anywhere in the tree. The live condition also consults
+ * `has_viewer_grant(workshop_id, user.id)`, and its own docstring calls that "THREE WAYS IN, not
+ * two": the creator, an admin, and anybody an admin has granted a `DesignWorkshopViewer` row.
  *
- * so a colleague who opens the same workshop is told it does not exist — not that they may not see
- * it, which would at least be actionable, but that there is nothing there. That is the correct
- * refusal for a stranger and the wrong one for the room the workshop is actually run in. A real
- * Design & Prototype Development Workshop is a fortnight of work by TWO designers alongside a
- * master craftsperson and a reviewing officer, all four of whom have to read the same 22 stages;
- * today the second designer cannot open it at all, and there is no handover whatsoever when a
- * designer leaves mid-season — the record simply becomes unreadable to everyone but an admin, with
- * the fortnight's fieldwork inside it.
- *
- * This module is the client half of the fix: an admin names the accounts that may see one
- * workshop, and the server widens `load_workshop_or_404` for exactly those accounts.
+ * This module is the client half — an admin names the accounts that may see one workshop, and the
+ * server admits exactly those accounts. What a grant buys stops at the LOAD: it is read, and the
+ * stage writes that go through the same helper. It is not delete and it is not re-granting, both
+ * of which are gated separately in `app/services/design_workshop_viewers.py`.
  *
  * FOUR THINGS ABOUT THIS WIRE WILL TRIP A READER WHO ASSUMES THE REST OF THE REPOSITORY'S
  * CONVENTIONS.
@@ -63,11 +66,13 @@
  *    in it, which is this codebase's most repeated bug class.
  *
  * A 404 FROM THESE ROUTES MEANS THE DEPLOYMENT PREDATES THE FEATURE, and that is a real state
- * rather than a hypothetical: they are being built in parallel with this screen, and this repository
- * ships its two halves separately. `/design-workshops/eligible-viewers` is the honest probe —
- * FastAPI matches it against `/design-workshops/{id}` on a server without the route, which answers
- * 404 "Record not found" — so {@link viewerAdministrationMissing} exists to tell that apart from a
- * workshop that genuinely is not there, and the panel says which rather than rendering a dead form.
+ * rather than a hypothetical. The routes are IN THE TREE — that half is no longer pending — but this
+ * repository ships the browser bundle and the API separately, so a deployment that has not been
+ * rolled forward answers exactly this and the screen must be able to tell it apart.
+ * `/design-workshops/eligible-viewers` is the honest probe — FastAPI matches it against
+ * `/design-workshops/{id}` on a server without the route, which answers 404 "Record not found" — so
+ * {@link viewerAdministrationMissing} exists to tell that apart from a workshop that genuinely is
+ * not there, and the panel says which rather than rendering a dead form.
  */
 
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";

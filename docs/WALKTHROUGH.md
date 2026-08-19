@@ -4,9 +4,24 @@ This is the whole capture process, in the order you actually perform it: from op
 prototype development workshop, through each stage of it, to generating the report and exporting
 the finished dataset.
 
+> **That sentence promised more than the body delivered, from the day it was written until
+> 2026-08-19.** The ten numbered steps below are the REPOSITORY RECORD forms — Craft, Artisan,
+> Product, Process, Tool, Questionnaire, Miscellaneous Media — and they never once mentioned the
+> 22-stage design & prototype workshop, the stage form, the readiness check, the code cards or
+> generating the report for the ministry officer. That is the one deliverable the fortnight exists
+> to produce. It now has a section of its own, *[The design & prototype workshop
+> itself](#the-design--prototype-workshop-itself)*, which comes AFTER the ten steps because that is
+> the order you work in: the records exist first, and the stage form points at them.
+
 The same guide is available inside the app at **`/guide`** ("Walkthrough"), where each step links
 straight to the screen it describes. This document is the version you can print, email, or read on
 the bus on the way to the village.
+
+> **The in-app `/guide` still carries only the ten record steps.** `frontend/components/guide/steps.ts`
+> declares exactly the ids `workshop`, `craft`, `artisan`, `product`, `process`, `tool`,
+> `questionnaire`, `media`, `review`, `view-data`. The two renderings are therefore **out of step as
+> of 2026-08-19**, which the maintenance rule at the foot of this file forbids; the workshop arc
+> belongs in `steps.ts` in the next change that touches it, and this note comes out then.
 
 The screens carry the **same names on the web and in the Android app**. Wherever this document
 names a screen — *Artisan*, *Product*, *Process*, *Tool*, *Questionnaire*, *Miscellaneous Media*,
@@ -333,6 +348,94 @@ artisan is still in front of you.
 
 ---
 
+## The design & prototype workshop itself
+
+Everything above fills the **repository** — the artisans, products, processes and tools that exist
+independently of any one fortnight. This section is the **workshop**: the 22-stage form you fill in
+the field, and the report that comes out of it and goes to a ministry officer. It is the deliverable.
+
+**Where the two meet:** a stage field marked as a reference asks you to *choose* a repository record,
+and choosing it **copies** that record's display values onto the stage there and then. The report
+prints the copy. So a record edited or deleted next month cannot change a document already handed
+over — and, the other way round, a correction you make on the Artisan form after you have picked it
+does **not** reach a stage you already filled. Re-pick the record if you need the new values, or type
+them.
+
+Two rules worth knowing before you open stage 1:
+
+- **You cannot make the form shorter by leaving things out.** Only **Basic** fields are scored and
+  only Basic fields can be required; **Standard** and **Advanced** are shown but never block a
+  submission. A workshop held with no power and no measuring equipment can still produce a complete
+  report — that is what the tiers are for. Advanced fields sit behind a *More detail* disclosure.
+- **Everything on these screens works with no signal.** The stage form, the readiness list and the
+  code sheets are all built from the local draft on the device; the server read that follows only
+  refreshes it.
+
+### Step A — Open the workshop
+
+**Screen: Design workshops** (`/design-workshops`) · Android: *Design workshops*
+
+Create the workshop, or open the one you are working on. Everything below hangs off it.
+
+### Step B — Fill the stages
+
+**Screen: the workshop** (`/design-workshops/[id]`) → **a stage** (`/design-workshops/[id]/stages/[stageKey]`)
+Android: the stage index, then the stage screen.
+
+The stage index lists all 22 stages with a completeness figure against each. Open one and you get a
+form built from the registry the server publishes, which is why the web and the phone show the same
+boxes in the same order.
+
+Some stages compute a finding beside what you typed rather than instead of it: stage 9 holds your
+declared price bands up against the stage-8 survey, and stage 17 checks each cost sheet against its
+own line items. **Nothing there ever overwrites what you wrote** — you were in the room and the
+arithmetic was not. On the handset both appear on the stage form itself; in the browser, only the
+stage-9 market findings do today.
+
+### Step C — Print the code cards
+
+**Screen: Cards & tags** (`/design-workshops/[id]/codes`) · Android: *Cards & tags*, from the stage index
+
+Prints a code for every artisan on the roster and every prototype in the workshop, to tie to the
+object. Stages 14, 15 and 16 each begin by choosing a prototype from a list of twenty-five; scanning
+a tag removes the choosing, and choosing wrong is how two days of measurements end up attached to
+somebody else's work with nothing downstream able to tell.
+
+### Step D — Check what still blocks submission
+
+**Screen: Readiness** (`/design-workshops/[id]/readiness`) · Android: the same list, on the stage
+index rather than a separate screen.
+
+One screen answering *what still stops this workshop being submitted?* Unfilled Basic fields first,
+because they are the only things that refuse a submit; the report's own checks next, because they
+change the delivered file without refusing it; Standard and Advanced gaps last, as counts behind a
+disclosure. Use it instead of opening 22 stages on the last afternoon.
+
+### Step E — Configure and generate the report
+
+**Screen: Report** (`/design-workshops/[id]/report`) · Android: *Report*
+
+Choose the template, set what the document contains, read it back as **pages** — laid out at real A4
+or Letter dimensions, with the breaks the template declares marked — and download the file. The
+preview is drawn from the same document model the .docx and .pdf writers consume, so what you read
+is what is generated.
+
+A report generated **on the phone** honours the same template and settings. Three annexures it
+cannot draw are named on the file itself when they are missing: recorded transcripts (produced after
+the audio reaches the server), questionnaire answers (drawn on the device only once that handset has
+opened the workshop's questionnaire list at least once with a connection), and machine-assisted text.
+
+### Step F — Look at what you have already produced
+
+**Screen: Report history** (`/design-workshops/[id]/report/history`)
+
+Every file ever generated for this workshop, including ones a phone produced offline, with its
+checksum, size, page count, template and timestamp — and a diff between any two. A report submitted
+to a ministry comes back for revision three or four times, and "did you update the cost sheet before
+you resubmitted?" needs an answer.
+
+---
+
 ## Where to go next
 
 | Screen | What it is for |
@@ -345,6 +448,7 @@ artisan is still in front of you.
 | **Workshop access** (`/workshop-access`) | Request access to a workshop, or (admins) decide requests. |
 | **Tasks** (`/tasks`) | What you have been asked to document. |
 | **Map** (`/map`) | The repository plotted geographically. |
+| **Design workshops** (`/design-workshops`) | The 22-stage workshop form and the report that comes out of it — see *[The design & prototype workshop itself](#the-design--prototype-workshop-itself)* above. It was missing from this table until 2026-08-19, which meant every route this guide offered led back to a repository record form. |
 | **Give app feedback** (`/feedback`) | Tell us what slowed you down. |
 
 For installing the app, getting an account, working offline and getting the data back out, see
@@ -363,7 +467,8 @@ It is maintained by walking it.
 | The field list on each step | The form component: `frontend/components/forms/ArtisanForm.tsx`, `ProductForm.tsx`, `ToolForm.tsx`, `ProcessForm.tsx`, and the questionnaire page. `grep -oP 'label="[^"]+"'` over a form gives its labels in one command; diff that against the step's field list. |
 | Which fields are **required** | The same components' validation, and the Pydantic schemas in `backend/app/schemas/records.py`. A field marked *(required)* here that is optional there is the error to look for — it makes the guide stricter than the product, which reads as a bug to the researcher. |
 | The route in each **Screen:** heading | The `(protected)` route tree. `docs/tools/check-docs.mjs` does not check these (they are app routes, not files), so they are the most likely thing here to be stale after a page moves. |
-| The ten-step order | `frontend/app/(protected)/guide/page.tsx` — the in-app Walkthrough. **These two must not diverge**, because a researcher may read either. |
+| The ten-step order | `frontend/components/guide/steps.ts`, which is what `frontend/app/(protected)/guide/page.tsx` renders — the in-app Walkthrough. **These two must not diverge**, because a researcher may read either. **They DO diverge as of 2026-08-19**: the workshop arc below is here and is not in `steps.ts`. That is a known debt, written down rather than left for a reader to discover, and it closes when the arc is added there. |
+| The design & prototype workshop steps | The `(protected)/design-workshops/` route tree for the routes, [DESIGN_WORKSHOP.md](DESIGN_WORKSHOP.md) §3 for the tier rule, and each page's own file header for what the screen is for — those headers are unusually full and are the source this section was written from. **The one claim here that is not a screen description is the reference rule** ("choosing a record copies its values; the report prints the copy"); its authority is `REFERENCE_HYDRATION` in `backend/app/services/stage_schema.py` and [REPORT-DATA-WIRING.md](REPORT-DATA-WIRING.md). Do not soften it into "the report shows the linked record" — that is the opposite of what the system does, and the difference is a document already handed to an officer changing under him. |
 | Statuses in step 9 | `RecordStatus` in `backend/prisma/schema.prisma`; the authority on who may set which is [PERMISSIONS.md](PERMISSIONS.md). |
 
 **The real maintenance procedure:** this document and the in-app `/guide` are two renderings of one

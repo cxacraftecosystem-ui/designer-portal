@@ -382,6 +382,15 @@ async def login_with_google(token: str) -> tuple[Any, Any | None]:
 
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest) -> dict[str, Any]:
+    # ONE SIGN-IN DOOR, FOR BOTH CREDENTIALS. There used to be a `POST /auth/google` beside this —
+    # four lines that rejected a body without a `googleIdToken` and then called straight into here.
+    # No client ever called it: `AuthProvider.loginWithGoogle` posts `{ googleIdToken }` to
+    # `/auth/login`, and `WorkshopRepositoryApi` declares `@POST("auth/login")` for both the
+    # password and the Google sign-in. An uncalled second door is not free — everything below this
+    # line is admission policy (the platform allow-list, the designer roster, the "first seen"
+    # stamp), and the next refusal or audit write added here would have been added to the door
+    # somebody uses and not to the one nobody exercises or tests. So it was removed rather than
+    # kept in step by hand. Do not re-add an alias: add the client, not the route.
     if payload.googleIdToken:
         # The allow-list is consulted INSIDE this call, before it writes anything. See its
         # docstring: on the Google path admission is what decides whether an account exists at all,
@@ -426,13 +435,6 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
         extra_claims={"email": user.email, "role": enum_value(user.role)},
     )
     return {"accessToken": access_token, "tokenType": "bearer", "user": serialize_user(user)}
-
-
-@router.post("/google", response_model=TokenResponse)
-async def google_login(payload: LoginRequest) -> dict[str, Any]:
-    if not payload.googleIdToken:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Missing Google ID token")
-    return await login(payload)
 
 
 @router.post("/logout")

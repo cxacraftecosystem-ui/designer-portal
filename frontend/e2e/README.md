@@ -24,6 +24,37 @@ cd frontend && npm run dev    # separate terminal; the config never starts a ser
 > **host** port. The API then comes up unable to reach its own database, and every spec fails with
 > something that looks like an application bug.
 
+## The two commands, and which specs each one runs
+
+`package.json` declares both, because a selection expressed on a command line is a selection nobody
+else runs the same way:
+
+```bash
+npm run test:e2e     # playwright test — everything, needs the stack and a dev server
+npm run test:unit    # the specs that need NOTHING but node — what CI gates on
+```
+
+`test:unit` selects by NAME: every spec ending `-unit.spec.ts`, minus two named exclusions. Those
+specs read source files, call exported functions and compare against shared fixtures; they open no
+browser and reach no API, so they run on a laptop with the stack down and in a CI job with no
+services at all.
+
+**Two specs carry the `-unit` suffix and are excluded from it by name**, and that is the whole
+reason the pattern in `package.json` is not simply `-unit`:
+
+| Spec | Why it is excluded |
+| --- | --- |
+| `access-refusal-unit.spec.ts` | Drives a browser against the dev server to prove what a signed-out visitor is shown. |
+| `login-credential-floor-unit.spec.ts` | Same — it types into the real sign-in form. |
+
+Both were named for the RULE they pin rather than for what they need to run, which is how they ended
+up on the wrong side of the line. **A new `-unit` spec that needs a server must either join that
+exclusion list or lose the suffix** — otherwise the CI job goes red on a machine that was never
+supposed to have a server, and a gate that is red on arrival is the one people switch off.
+
+The list lives in `package.json`, which cannot hold a comment. That is why it is written out here,
+where somebody adding a spec will look, rather than only in `.github/workflows/checks.yml`.
+
 ## The variables, and why each one exists
 
 | Variable | Default | Why it exists |

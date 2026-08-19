@@ -492,7 +492,8 @@ val FieldDisplayFontFamily: FontFamily = FontFamily(
  * size. It is not uniform: `tracking-tight` appears 22 times in the whole web app and clusters at
  * the top of the ramp — 30px and up is tight 19 times out of 20, while 14–24px is ~70 plain against
  * ~10 tight. So the title slots take Tailwind's default and only headlineMedium upward tightens.
- * (The old file tightened every Jakarta slot. AuthScreen's login card h1 is annotated
+ * (The old file tightened every Jakarta slot. The WEB login card's h1 — `frontend/app/login/page.tsx`,
+ * which is the surface this table was measured off — is annotated
  * `font-display text-2xl font-bold`, and that class carries no tracking whatsoever.)
  */
 private val TrackingTight = (-0.025).em // Tailwind `tracking-tight` — 30px and up only

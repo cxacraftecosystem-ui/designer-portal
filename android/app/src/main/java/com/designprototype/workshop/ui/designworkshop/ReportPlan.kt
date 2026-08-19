@@ -1,9 +1,11 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.data.DwCustomCache
 import com.designprototype.workshop.data.DwQuestionnaireCopy
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.WorkshopDraft
+import com.designprototype.workshop.data.customSectionsForReport
 import com.designprototype.workshop.report.NARRATIVE_ORDER
 import com.designprototype.workshop.report.NON_PRINTING_STAGES
 import com.designprototype.workshop.report.Presentation
@@ -90,6 +92,18 @@ internal fun reportPlanFor(
      * "we have not looked" answer rather than silently claiming an annexure it cannot draw.
      */
     questionnaires: DwQuestionnaireCopy = DwQuestionnaireCopy.UNKNOWN,
+    /**
+     * This workshop's own sections, as this device holds them — see `DwCustomSectionStore`.
+     *
+     * IT REACHES THE PLAN BECAUSE THE PLAN IS THE TEMPLATE, and where a designer's block prints is a
+     * template decision on this surface exactly as it is on the server: `applyReportSettings` is the
+     * single arbiter of the running order. Resolving it anywhere else would be a second opinion about
+     * one document — the failure this whole object exists to prevent.
+     *
+     * Defaulted null, so every existing caller and every test keeps the "this handset has never read
+     * a definition" answer, which splices nothing and prints exactly what it always printed.
+     */
+    customSections: DwCustomCache? = null,
 ): ReportPlan {
     val settings = draft?.stages?.get("REPORT_GENERATION")?.values.orEmpty()
     val templateId = resolveTemplateId(requestedTemplateId, settings, draft?.templateId.orEmpty())
@@ -97,7 +111,16 @@ internal fun reportPlanFor(
     // The stages this build's catalogue has never heard of are appended BEFORE the settings are
     // applied, so `excludedStages` can still exclude one and `includePhotographs` still reaches it.
     val catalogue = withUnknownStages(reportTemplate(templateId), schema)
-    val template = applyReportSettings(catalogue, settings)
+    val template = applyReportSettings(
+        catalogue,
+        settings,
+        // The definition and the answers travel together, so the section this places after stage 13
+        // is the same section the builder then draws. Two independent reads could straddle a
+        // definition edit and leave a heading with nothing under it.
+        customSections = customSectionsForReport(customSections) { stageKey ->
+            draft?.stages?.get(stageKey)?.custom.orEmpty()
+        },
+    )
 
     val setup = draft?.stages?.get("WORKSHOP_SETUP")?.values.orEmpty()
     fun setupText(key: String) = DwValues.text(setup[key]).trim()

@@ -42,7 +42,7 @@ export function GuideHero({ stepCount, onStart }: { stepCount: number; onStart: 
    * "Take the walkthrough" — so its readers include people who have not signed in yet and people
    * whose sign-in was just refused. Since the platform allow-list shipped, the second group exists
    * in numbers it never did before: an address nobody has admitted gets a pending request instead of
-   * an account. Teaching that reader the ten steps of documentation without first telling them why
+   * an account. Teaching that reader the steps of documentation without first telling them why
    * the door did not open sends them to look for a fault in the app, or to try again with a
    * different browser, which is the worst version of the same wait.
    *

@@ -103,6 +103,31 @@ data class DwDictateDto(
 )
 
 /**
+ * `GET /design-workshops/dictation-allowance` — the ceiling, learned WITHOUT spending an upload.
+ *
+ * THE FOUR KEYS ARE `dictation_cap.allowance_payload`'s, and they are the same four the 200 of a
+ * dictation carries; only the way of asking is different. This route exists because a phone that can
+ * only learn the ceiling by being refused has to spend a six-megabyte upload to learn it, and then
+ * another one tomorrow — the failure [DwDictationRun] already names for the 503. A browser has had a
+ * client for it and this handset had none, so the two surfaces disagreed about whether the ceiling
+ * can be known before it is spent.
+ *
+ * IT ANSWERS FOR THE CALLER AND NOBODY ELSE: there is no user parameter and the server must not grow
+ * one, because a route that could be asked about a colleague would be a report on their working day.
+ *
+ * Every field defaulted, so a deployment that predates the cap — which answers 404, or answers with
+ * fewer keys — cannot make this throw. A payload with no `dictationDay` yields no allowance at all;
+ * see [dwDictationAllowanceOf].
+ */
+@Serializable
+data class DwDictationAllowanceDto(
+    val dictationsLimit: Int? = null,
+    val dictationsUsed: Int? = null,
+    val dictationsRemaining: Int? = null,
+    val dictationDay: String? = null,
+)
+
+/**
  * THE ROUTE ITSELF SAID IT HAS NO TRANSCRIPTION PROVIDER — as opposed to a 503 from in between.
  *
  * WHY A TYPE AND NOT A STATUS CODE. The dictation route raises 503 when `transcribe_audio_bytes`

@@ -1,6 +1,9 @@
 package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.data.DraftRow
+import com.designprototype.workshop.data.DwCustomCache
+import com.designprototype.workshop.data.DwCustomFieldDto
+import com.designprototype.workshop.data.DwCustomSectionDto
 import com.designprototype.workshop.data.DwValues
 import com.designprototype.workshop.data.EntityDto
 import com.designprototype.workshop.data.EnumOption
@@ -718,6 +721,10 @@ class ReportTemplateDocumentTest {
                         "state" to JsonPrimitive("Odisha"),
                         "coverPhoto" to JsonPrimitive("media-1"),
                     ),
+                    // CUSTOM_SECTION's one answer, by the same rule as every value above: the
+                    // section omits itself when the designer answered nothing under it, so an empty
+                    // probe would report a working section as an unbuilt one.
+                    custom = mapOf("loomsWorking" to JsonPrimitive(12)),
                 ),
                 // ACKNOWLEDGEMENT prints exactly one field and nothing without it.
                 "INTRODUCTORY_ADMIN_DOCUMENTATION" to StageDraft(
@@ -747,9 +754,41 @@ class ReportTemplateDocumentTest {
                 ),
             ),
         )
+        /*
+          CUSTOM_SECTION'S OWN "one value it needs to have something to say", which is a DEFINITION
+          rather than a stage answer.
+
+          It is the one member of this enum that names a thing outside the template — the block it
+          prints, by key — and `TemplateSection`'s constructor refuses a CUSTOM_SECTION that names
+          nothing, deliberately, because such a section prints nothing and says nothing about why.
+          So the probe hands it a key, a matching definition, and (above) an answer under it. With
+          none of those it would draw nothing and this test would demand it be added to
+          UNSUPPORTED_SECTIONS — i.e. demand that every designer be warned they are losing a section
+          they are in fact getting.
+        */
+        val customProbe = DwCustomCache(
+            workshopId = "x", customSchemaVersion = "d1", complete = true,
+            sections = listOf(
+                DwCustomSectionDto(
+                    id = "sec1", key = "loomAudit", stageKey = "WORKSHOP_SETUP", title = "Loom audit",
+                    fields = listOf(
+                        DwCustomFieldDto(
+                            id = "f1", key = "loomsWorking", label = "Looms in working order",
+                            type = "INT", tier = "BASIC",
+                        ),
+                    ),
+                ),
+            ),
+        )
         SpecialSection.entries.forEach { special ->
             val template = reportTemplate("DCH_STANDARD").copy(
-                sections = listOf(TemplateSection(special = special)),
+                sections = listOf(
+                    if (special == SpecialSection.CUSTOM_SECTION) {
+                        TemplateSection(special = special, customKey = "loomAudit")
+                    } else {
+                        TemplateSection(special = special)
+                    }
+                ),
             )
             val plan = ReportPlan(
                 template = template,
@@ -763,6 +802,7 @@ class ReportTemplateDocumentTest {
                 warnings = emptyList(), accent = "",
                 imageFor = { id -> ImageRef(source = "/tmp/$id.jpg", widthPx = 1600, heightPx = 1200) },
                 plan = plan,
+                customSections = customProbe,
             )
             val drew = document.blocks.isNotEmpty()
             val declared = special in UNSUPPORTED_SECTIONS
@@ -1035,6 +1075,128 @@ class ReportTemplateDocumentTest {
             ),
         ).blocks.filterIsInstance<MapBlock>().first()
         assertTrue("a zero fix is not a fix: ${unfixed.points}", unfixed.points.isEmpty())
+    }
+
+    /** Stage 1's singleton plus the participant roster the artisan pins are read from. */
+    private fun rosterMapSchema() = SchemaResponse(
+        version = "test",
+        stages = listOf(
+            singletonStage(
+                1, "WORKSHOP_SETUP", "Workshop setup",
+                text("state", "State"), text("village", "Village"),
+            ),
+            StageDto(
+                number = 3, key = "WORKSHOP_PLAN_PARTICIPANTS_OPENING", title = "Participants",
+                entities = listOf(
+                    EntityDto(
+                        key = "participant", cardinality = "COLLECTION", title = "Participants",
+                        labelField = "name",
+                        fields = listOf(
+                            text("name", "Name"),
+                            text("village", "Village"),
+                            text("district", "District"),
+                            text("state", "State"),
+                            FieldDto(key = "subjectLocation", label = "Home", type = "GEO"),
+                        ),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    @Test
+    fun `an artisan whose home was surveyed is pinned, and one whose address was only typed is counted`() {
+        /*
+          THE HANDSET DREW NO ARTISAN PINS AT ALL, on a reason that had gone false.
+
+          `renderMap`'s KDoc justified the gap with "the cached artisan record on this device carries
+          a village and no district and no state". Both halves are wrong now: `_artisan_points` reads
+          the ROW's own frozen copy first, and `REFERENCE_HYDRATION["participant.artisanRef"]` copies
+          village, district, state, pincode, address and subjectLocation onto the roster row at save
+          time — all of which this device holds in the draft it is printing from.
+
+          What is genuinely missing is the ATLAS: `WorkshopData.district_points` is 795 anchors
+          averaged over live Location rows and cannot ship in an APK. So a row that STATES a place and
+          drops no pin still cannot be placed here, and is counted in the caption instead — while a
+          row carrying `subjectLocation` needs no atlas at all and is drawn on exactly the coordinate
+          the office draws it on.
+        */
+        val document = build(
+            rosterMapSchema(),
+            WorkshopDraft(
+                workshopId = "local-test",
+                title = "Barpali cluster",
+                stages = mapOf(
+                    "WORKSHOP_SETUP" to StageDraft(
+                        stageId = "WORKSHOP_SETUP",
+                        values = mapOf("state" to JsonPrimitive("Odisha")),
+                    ),
+                    "WORKSHOP_PLAN_PARTICIPANTS_OPENING" to StageDraft(
+                        stageId = "WORKSHOP_PLAN_PARTICIPANTS_OPENING",
+                        rows = listOf(
+                            DraftRow(
+                                id = "participant#1",
+                                values = mapOf(
+                                    "name" to JsonPrimitive("Bhikari Meher"),
+                                    "village" to JsonPrimitive("Barpali"),
+                                    "district" to JsonPrimitive("Bargarh"),
+                                    "state" to JsonPrimitive("Odisha"),
+                                    "subjectLocation" to DwValues.geoOf(21.19580, 83.58720),
+                                ),
+                            ),
+                            // The same hamlet, to the metre - one pin that says two, exactly as
+                            // `_fold_points` folds it. Six weavers on one coordinate look like one.
+                            DraftRow(
+                                id = "participant#2",
+                                values = mapOf(
+                                    "name" to JsonPrimitive("Sanjukta Meher"),
+                                    "village" to JsonPrimitive("Barpali"),
+                                    "district" to JsonPrimitive("Bargarh"),
+                                    "state" to JsonPrimitive("Odisha"),
+                                    "subjectLocation" to DwValues.geoOf(21.19580, 83.58720),
+                                ),
+                            ),
+                            // A stated address and no surveyed pin: the office geocodes it, this
+                            // device cannot, and the caption is where the difference is stated.
+                            DraftRow(
+                                id = "participant#3",
+                                values = mapOf(
+                                    "name" to JsonPrimitive("Kunja Behera"),
+                                    "village" to JsonPrimitive("Sonepur"),
+                                    "district" to JsonPrimitive("Subarnapur"),
+                                    "state" to JsonPrimitive("Odisha"),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val map = document.blocks.filterIsInstance<MapBlock>().first()
+        val artisans = map.points.filter { it.kind == MapPointKind.ARTISAN }
+        assertEquals("two surveyed rows on one coordinate are one pin: ${map.points}", 1, artisans.size)
+        assertEquals(2, artisans.first().count)
+        // THE LABEL IS THE PLACE THE ROW NAMES, never the artisan's name: a coordinate carries no
+        // name, and a map pinned with people is a different figure under the same heading.
+        assertEquals("Barpali, Bargarh", artisans.first().label)
+        assertEquals(21.19580, artisans.first().lat, 1e-9)
+        assertEquals(83.58720, artisans.first().lon, 1e-9)
+
+        assertTrue(
+            "the caption must state how many of how many were placed: ${map.caption}",
+            map.caption.contains("Home places of 2 of 3 participating artisans, at 1 location(s)."),
+        )
+        assertTrue(
+            "the row this copy cannot place must be counted, not silently dropped: ${map.caption}",
+            map.caption.contains("1 participant(s) have no surveyed position"),
+        )
+        // AND THE OLD BLANKET SENTENCE IS GONE. It said the home places "are not plotted on this
+        // copy" for every roster row, which is now false for the surveyed ones.
+        assertFalse(
+            "the caption still claims nothing is plotted: ${map.caption}",
+            map.caption.contains("are not plotted on this copy"),
+        )
     }
 
     @Test

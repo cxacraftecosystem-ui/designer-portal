@@ -14,6 +14,7 @@ import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
 import { DosDontsField } from "@/components/forms/DosDontsField";
 import { DuplicateArtisanDialog } from "@/components/forms/DuplicateArtisanDialog";
+import type { InlineHostSeed, UseExistingArtisan } from "@/components/forms/inlineRecordHost";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
@@ -322,9 +323,29 @@ function StatusField({
 
 export function ArtisanForm({
   initial,
-  onCreated
+  seed,
+  onCreated,
+  onCancel,
+  onQueued,
+  onUseExisting
 }: {
   initial?: Artisan;
+  /**
+   * What the picker that opened this form already knows — see {@link InlineHostSeed}. Only the
+   * workshop applies to an artisan: an artisan has no artisan of their own, and their craft is the
+   * one thing the carry bag is genuinely right about.
+   */
+  seed?: InlineHostSeed;
+  /** Back out without saving, without navigating — see `InlineRecordHostProps.onCancel`. */
+  onCancel?: () => void;
+  /** Banked in the outbox, no id to link — see `InlineRecordHostProps.onQueued`. */
+  onQueued?: () => void;
+  /**
+   * The duplicate check found the artisan already in the repository: hand them back rather than
+   * navigating to their edit page. See {@link UseExistingArtisan} for why only the id and the name
+   * cross, and never the masked identity number beside them.
+   */
+  onUseExisting?: UseExistingArtisan;
   /**
    * Hand the saved record back instead of navigating, so this form can be mounted INSIDE a dialog.
    *
@@ -392,7 +413,17 @@ export function ArtisanForm({
   // The workshop this artisan was documented at: shared picker, shared most-recent defaulting, and
   // the late-submission gate (see components/forms/WorkshopSelect).
   const workshop = useWorkshopSelection({
-    initialWorkshopId: initial?.workshopId,
+    /*
+      THE SEED IS THE DESIGN WORKSHOP'S OWN LINKED WORKSHOP, and it outranks both the "most recent
+      workshop" probe and the carry bag — an artisan created from stage 3 of a workshop was in THAT
+      room, and a WORKSHOP-scoped picker narrows on exactly this column, so a seedless create files
+      a person the picker that made them can never show. Passing it as `initialWorkshopId` also
+      marks the selection `touched`, which is what stops the probe and `carry.onApply` below
+      overwriting it a moment later.
+
+      Absent — an unlinked design workshop — and everything behaves exactly as it did.
+    */
+    initialWorkshopId: initial?.workshopId ?? seed?.workshopId,
     isEdit: Boolean(initial),
     resetKey: initial?.id ?? null
   });
@@ -449,7 +480,13 @@ export function ArtisanForm({
   const carry = useCarryContext({
     enabled: !initial,
     scopes: [carryScope("craft", craftListState, craftOptions)],
-    applies: ["craft", "workshop"],
+    /*
+      A KEY THE SEED ALREADY ANSWERED IS NOT OFFERED, or the banner would name a workshop that is
+      nowhere on the form. `applies` is what the banner claims to have filled in, and a claim about
+      a box holding somebody else's answer is exactly the invisible prefill this banner exists to
+      prevent — see `CarryContextBanner`'s header.
+    */
+    applies: seed?.workshopId ? ["craft"] : ["craft", "workshop"],
     onApply: (context) => {
       if (context.craftId) setCraftId(context.craftId);
       if (context.workshopId && !workshop.touched) workshop.setWorkshopId(context.workshopId);
@@ -461,9 +498,24 @@ export function ArtisanForm({
     setCraftId("");
   }
 
+  /**
+   * Leave this form — to the host's idea of "away", which is not always a navigation.
+   *
+   * ── THE DEFECT THIS ENDS ──────────────────────────────────────────────────────────────────
+   * `router.back()` was the only exit, and it is wrong in a dialog: the dialog is not a route, so
+   * back popped the REAL history entry and took the designer out of the half-filled stage they
+   * were standing in. Cancel is the most natural way to back out of a modal and it was the one
+   * control that lost their place. The save path had already been audited for exactly this hazard
+   * (see the `onCreated` branch below); the cancel path had not.
+   */
+  function leave() {
+    if (onCancel) onCancel();
+    else router.back();
+  }
+
   function handleBack() {
     if (dirty) setBackPromptOpen(true);
-    else router.back();
+    else leave();
   }
 
   /**
@@ -601,11 +653,27 @@ export function ArtisanForm({
         ]
       });
       if (outcome.queued) {
-        // No per-form "queued" banner: OutboxBanner at the top of the page already names the entry
-        // and is the one place that says where it lives. Scroll so it is the next thing seen.
         resetDirty();
-        if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
         setSaving(false);
+        if (onQueued) {
+          /*
+            THE PAGE'S ANSWER IS UNREACHABLE FROM A DIALOG, so the host is told instead.
+
+            `OutboxBanner` is mounted at the top of the protected layout — outside the portal,
+            underneath `FieldDialog`'s overlay, on a body whose scroll `FieldDialog` has locked. So
+            the banner is invisible and the scroll below is a no-op. `onCreated` is not called
+            either (there is no record and no server id), which meant the button flipped back from
+            "Saving…" to "Save artisan" and nothing else on screen changed. That is
+            indistinguishable from a save that FAILED, and the designer's next move is to press it
+            again — three copies of one artisan in the outbox, all of which sync in as duplicates.
+          */
+          onQueued();
+          return;
+        }
+        // No per-form "queued" banner ON THE PAGE HOST: OutboxBanner at the top of the page already
+        // names the entry and is the one place that says where it lives. Scroll so it is the next
+        // thing seen. See the dialog branch above for why that reasoning does not travel.
+        if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
       const saved = outcome.saved;
@@ -956,7 +1024,30 @@ export function ArtisanForm({
           // Leaving for the other record discards this one either way, so drop the guard rather than
           // making the researcher answer a second "unsaved changes" prompt on the way out.
           resetDirty();
-          if (conflict?.existingArtisan) router.push(`/artisans/${conflict.existingArtisan.id}/edit`);
+          if (!conflict?.existingArtisan) return;
+          /*
+            ── HOSTED IN A DIALOG, THE ANSWER IS THE ARTISAN, NOT A ROUTE ──────────────────────
+            Inside the inline record dialog a duplicate is the ORDINARY outcome, not the exception:
+            the designer pressed "Create a new artisan" precisely because the picker's search did
+            not show the person standing in front of them, and the deduplication key may still
+            match. `router.push` threw them onto /artisans/{id}/edit with the stage gone — so
+            acting on the one thing this prompt exists to surface, "she is already in the
+            repository", cost them their place. Handed back instead, the picker links her, asks the
+            server to describe her, and hydrates the row exactly as an ordinary pick would.
+
+            NOTHING FROM THIS PAYLOAD IS WRITTEN ONTO THE ROW. It carries `maskedValue` — a masked
+            Aadhaar or Pehchan string — and that must never reach a stage entry. Only the id and
+            the name cross, and the name only as the term the picker searches with; every value
+            that lands comes back from the server. See `UseExistingArtisan`.
+
+            The comment above still governs the page host below it: there, leaving really is a
+            navigation and the guard really would be a second prompt on the way out.
+          */
+          if (onUseExisting) {
+            onUseExisting(conflict.existingArtisan);
+            return;
+          }
+          router.push(`/artisans/${conflict.existingArtisan.id}/edit`);
         }}
         onDiscard={discardEntry}
         onKeepEditing={() => setDuplicatePromptOpen(false)}
@@ -968,7 +1059,10 @@ export function ArtisanForm({
         onDiscard={() => {
           setBackPromptOpen(false);
           resetDirty();
-          router.back();
+          // `leave`, not `router.back()`: the prompt is as load-bearing in a dialog as on a page —
+          // closing the dialog still throws the typing away — but what "discard" DOES afterwards
+          // belongs to the host. See `leave`.
+          leave();
         }}
         onSave={() => {
           setBackPromptOpen(false);

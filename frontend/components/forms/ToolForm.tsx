@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -8,13 +8,15 @@ import { mergeById } from "@/components/data/cappedList";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { CarryContextBanner, carryScope, useCarryContext } from "@/components/forms/CarryContextBanner";
+import type { CarryNode } from "@/lib/carryContext";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
+import { seedHasArtisan, type InlineHostSeed } from "@/components/forms/inlineRecordHost";
 import { craftChangeClearsArtisan, useCraftAndArtisanOptions, useRecordOffPage } from "@/components/forms/recordPickers";
 import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
-import { GridMeasurement, type GridFiles, type GridGroup } from "@/components/media/GridMeasurement";
+import { GridMeasurement, MEASUREMENT_GRID_PURPOSE, type GridFiles, type GridGroup } from "@/components/media/GridMeasurement";
 import { UploadProgress } from "@/components/media/UploadProgress";
 import { RichTextField } from "@/components/richtext/RichTextField";
 import { appendStoredParagraph } from "@/components/richtext/storedRichText";
@@ -80,9 +82,21 @@ function StatusField({
 
 export function ToolForm({
   initial,
-  onCreated
+  seed,
+  onCreated,
+  onCancel,
+  onQueued
 }: {
   initial?: ToolDocumentation;
+  /**
+   * What the picker that opened this form already knows — see {@link InlineHostSeed} for the whole
+   * argument, and for why every value it carries lands in a control the designer can see and change.
+   */
+  seed?: InlineHostSeed;
+  /** Back out without saving, without navigating — see `InlineRecordHostProps.onCancel`. */
+  onCancel?: () => void;
+  /** Banked in the outbox, no id to link — see `InlineRecordHostProps.onQueued`. */
+  onQueued?: () => void;
   /**
    * Hand the saved record back instead of navigating, so this form can be mounted INSIDE a dialog.
    *
@@ -103,12 +117,23 @@ export function ToolForm({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);
+  /*
+    THE SEED IS THE DIALOG'S QUERY STRING.
+
+    `/tools/new?artisanId=…&artisanName=…` is how the full-page route learns whose toolkit this is;
+    a dialog has no URL, so the same lines below read the seed instead. It sits AFTER the record
+    being edited and BEFORE the query string for the only reason that ordering ever has: an edit is
+    about a record that already has answers, and a form mounted in a dialog has no query string for
+    the seed to be arguing with.
+  */
   const [craftId, setCraftId] = useState(initial?.craftId ?? searchParams.get("craftId") ?? "");
-  const [artisanId, setArtisanId] = useState(initial?.artisanId ?? searchParams.get("artisanId") ?? "");
+  const [artisanId, setArtisanId] = useState(initial?.artisanId ?? seed?.artisanId ?? searchParams.get("artisanId") ?? "");
   // Android parity: picking a linked craft fills the craft name; picking a linked artisan fills the
   // artisan name + place — so these three are controlled.
   const [craftName, setCraftName] = useState(initial?.craftName ?? searchParams.get("craftName") ?? "");
-  const [artisanName, setArtisanName] = useState(initial?.artisanName ?? searchParams.get("artisanName") ?? "");
+  const [artisanName, setArtisanName] = useState(
+    initial?.artisanName ?? seed?.artisanName ?? searchParams.get("artisanName") ?? ""
+  );
   const [place, setPlace] = useState(initial?.place ?? searchParams.get("place") ?? "");
   // Android parity: ordered "Process stages" captures, archived as STAGE_STEP_1, STAGE_STEP_2, …
   const [stageFiles, setStageFiles] = useState<File[]>([]);
@@ -166,12 +191,67 @@ export function ToolForm({
   const isEdit = Boolean(initial);
   // The workshop this tool was documented at: shared picker, shared most-recent defaulting, and the
   // late-submission gate (see components/forms/WorkshopSelect).
-  const workshop = useWorkshopSelection({ initialWorkshopId: initial?.workshopId, isEdit, resetKey: initial?.id ?? null });
+  //
+  // `seed.workshopId` is the design workshop's own linked Workshop and outranks the most-recent
+  // probe: a tool created from a WORKSHOP-scoped picker that is filed against a different sitting is
+  // a tool that picker can never show again. Passing it here also marks the selection `touched`,
+  // which is what keeps the probe and the carry bag off it. See {@link InlineHostSeed}.
+  const workshop = useWorkshopSelection({
+    initialWorkshopId: initial?.workshopId ?? seed?.workshopId,
+    isEdit,
+    resetKey: initial?.id ?? null
+  });
+
+  /**
+   * FINISH WHAT THE SEED (OR THE QUERY STRING) STARTED — an artisan id alone is not a usable answer.
+   *
+   * The "Linked artisan" dropdown below is `disabled={!craftId}` and its options are narrowed to the
+   * chosen craft, so an `artisanId` arriving on its own lands in a control that is greyed out and
+   * reading "Select a linked craft first". The id would still have been SUBMITTED — the payload
+   * reads it from state, not from the disabled control — which is precisely the shape the seed is
+   * forbidden to have: a parent asserted behind the form, invisible to the person who would have
+   * spotted it was wrong. Android's inline record host refuses to assert a parent for that exact
+   * reason.
+   *
+   * So the artisan's own record — already fetched by `useCraftAndArtisanOptions`' by-id lookup,
+   * whatever page they sort on — fills the craft, the name and the place, and the dropdown lights
+   * up showing who it is.
+   *
+   * ONLY BLANKS, AND ONLY ON A CREATE. Overwriting is the designer's business, and on an edit a
+   * toolkit legitimately carries a craft its artisan does not: silently rewriting it here would make
+   * merely OPENING a record change it.
+   */
+  useEffect(() => {
+    if (isEdit || !artisanId) return;
+    const known = artisans.find((artisan) => artisan.id === artisanId);
+    if (!known) return;
+    if (known.craftId) setCraftId((current) => current || known.craftId || "");
+    if (known.craft?.name) setCraftName((current) => current || known.craft?.name || "");
+    if (known.name) setArtisanName((current) => current || known.name);
+    if (known.place) setPlace((current) => current || known.place);
+    // Deliberately does NOT call `markDirty`: this is the app filling a box in, not the researcher.
+    // A blank new form announcing unsaved work before anybody has typed is what trains people to
+    // click through the guard — see the same rule on `acceptFix` in LocationFields.
+  }, [artisans, artisanId, isEdit]);
 
   const toNum = (value: string) => {
     const n = Number(value);
     return value.trim() && Number.isFinite(n) ? n : null;
   };
+
+  /**
+   * Which carried records this form is still willing to be told about.
+   *
+   * See the note beside `applies` below. Held in a `useMemo` because `useCarryContext` compares the
+   * array's contents through a ref rather than by identity, and a fresh literal every render would
+   * be harmless but misleading about that.
+   */
+  const carryApplies = useMemo<CarryNode[]>(() => {
+    const nodes: CarryNode[] = [];
+    if (!seedHasArtisan(seed)) nodes.push("craft", "artisan");
+    if (!seed?.workshopId) nodes.push("workshop");
+    return nodes;
+  }, [seed]);
 
   // Offer the sitting this researcher was last working in, however they got here — the query string
   // only survives a click straight through from the save screen (lib/carryContext). The TOOL in the
@@ -187,7 +267,13 @@ export function ToolForm({
     scopes: [carryScope("artisan", referenceState, artisans), carryScope("craft", referenceState, craftOptions)],
     // This form has no product, tool or process field, so it neither fills those in nor lets the
     // banner claim it did — they stay in the bag for the forms that do.
-    applies: ["craft", "artisan", "workshop"],
+    // A KEY THE SEED ANSWERED IS DROPPED FROM THE OFFER TOO, and for the banner's own reason: it
+    // names every record it brought so that no prefill is invisible, and naming an artisan that is
+    // not the artisan on screen is worse than naming none. The row this form was opened from is a
+    // better answer than the last artisan this designer documented anywhere, which is all the bag
+    // knows. The craft goes with the artisan because the seeded artisan's own record supplies it
+    // (see the completion effect above), and the two disagreeing would be the same lie one level up.
+    applies: carryApplies,
     onApply: (context) => {
       if (context.craftId) setCraftId(context.craftId);
       if (context.craftName) setCraftName(context.craftName);
@@ -213,9 +299,23 @@ export function ToolForm({
     ? artisans.filter((artisan) => artisan.craftId === craftId || artisan.id === artisanId)
     : artisans;
 
+  /**
+   * Leave this form — to the host's idea of "away", which is not always a navigation.
+   *
+   * `router.back()` was the only exit, and it is wrong in a dialog: the dialog is not a route, so
+   * back pops the REAL history entry and takes the designer out of the half-filled stage they were
+   * standing in. Cancel is the most natural way to back out of a modal and it was the one control
+   * that lost their place. The save path had already been audited for exactly this hazard (see the
+   * `onCreated` branch in `submit`); the cancel path had not.
+   */
+  function leave() {
+    if (onCancel) onCancel();
+    else router.back();
+  }
+
   function handleBack() {
     if (dirty) setBackPromptOpen(true);
-    else router.back();
+    else leave();
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -288,6 +388,12 @@ export function ToolForm({
             location,
             recordedAt,
             recordedTimezone,
+            // SEE THE MARKER'S NOTE ON THE ONLINE UPLOAD BELOW. It is written on both paths because
+            // a queued save is the ORDINARY one in a village: a grid sheet that reached the
+            // repository through the outbox is exactly as eligible to become the record's
+            // photograph as one uploaded on the spot, and a marker only the online path writes
+            // would leave the offline half of the fleet still printing ruled paper.
+            extraMetadata: { purpose: MEASUREMENT_GRID_PURPOSE },
             transcribeAudio: false
           })),
           ...stageFiles.map((file, index) => ({
@@ -327,10 +433,25 @@ export function ToolForm({
         // recorded — an old tool offered under a new one's name is a wrong link.
         carry.prune("tool");
         carry.remember(sitting);
-        // OutboxBanner at the top of the page names the entry and says where it lives.
         resetDirty();
-        if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
         setSaving(false);
+        if (onQueued) {
+          /*
+            THE PAGE'S ANSWER IS UNREACHABLE FROM A DIALOG, so the host is told instead.
+
+            `OutboxBanner` is mounted at the top of the protected layout — outside the portal,
+            underneath `FieldDialog`'s overlay, on a body whose scroll `FieldDialog` has locked. So
+            the banner is invisible and the scroll below is a no-op. `onCreated` is not called
+            either (there is no record and no server id), which meant the button flipped back from
+            "Saving…" to "Save tool" and nothing else on screen changed — indistinguishable from
+            a save that FAILED, and the designer's next move is to press it again.
+          */
+          onQueued();
+          return;
+        }
+        // OutboxBanner at the top of the PAGE names the entry and says where it lives; scroll so it
+        // is the next thing seen. See the dialog branch above for why that reasoning does not travel.
+        if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
       const saved = outcome.saved;
@@ -349,6 +470,10 @@ export function ToolForm({
             location,
             recordedAt,
             recordedTimezone,
+            // MARKED SO IT SORTS LAST AND NEVER OUTRANKS A REAL PHOTOGRAPH — see
+            // MEASUREMENT_GRID_PURPOSE. Last and not excluded: a tool whose only image is this
+            // grid shot still gets a picture rather than a blank.
+            extraMetadata: { purpose: MEASUREMENT_GRID_PURPOSE },
             transcribeAudio: false
           });
         } catch {
@@ -645,7 +770,10 @@ export function ToolForm({
         onDiscard={() => {
           setBackPromptOpen(false);
           resetDirty();
-          router.back();
+          // `leave`, not `router.back()`: the prompt is as load-bearing in a dialog as on a page —
+          // closing the dialog still throws the typing away — but what "discard" DOES afterwards
+          // belongs to the host. See `leave`.
+          leave();
         }}
         onSave={() => {
           setBackPromptOpen(false);

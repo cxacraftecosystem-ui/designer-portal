@@ -3,9 +3,14 @@ import {
   ClipboardCheck,
   ClipboardList,
   Eye,
+  FileOutput,
   GitBranch,
+  History,
   Images,
+  Layers,
+  ListChecks,
   Package,
+  QrCode,
   User as UserIcon,
   UsersRound,
   Wrench,
@@ -13,8 +18,23 @@ import {
 } from "lucide-react";
 
 /**
- * The ten steps of the documentation process, in the order a researcher actually performs
- * them in the field.
+ * The sixteen steps of the process, in the order a designer actually performs them in the field:
+ * TEN that build the repository records, then SIX that run the design & prototype development
+ * workshop those records feed.
+ *
+ * THE SECOND ARC WAS MISSING FOR AS LONG AS THIS FILE EXISTED, and it is the one the fortnight is
+ * for. The ten steps below are the repository RECORD forms; nothing here mentioned the 22-stage
+ * workshop, the readiness check, the code cards or generating the report handed to a ministry
+ * officer. A designer who opened the in-app Walkthrough looking for the deliverable found ten ways
+ * to file a record and no path to the document. The workshop arc comes AFTER the ten and not before,
+ * because that is the order the work happens in: the records exist first, and the stage form points
+ * at them.
+ *
+ * ONE CLAIM IN THE SECOND ARC IS NOT A SCREEN DESCRIPTION and must not be softened: choosing a
+ * record in a stage COPIES its values onto the stage entry, and the report prints the copy. Never
+ * write that a picker shows the linked record, or that the report reads it — that is the opposite of
+ * what the system does, and the difference is a document already in an officer’s hands changing
+ * under him. Its authority is `REFERENCE_HYDRATION` in `backend/app/services/stage_schema.py`.
  *
  * Every `label` here is the Android-parity feature name (see
  * `.claude/skills/field-repo-frontend/SKILL.md` → "Naming"): the walkthrough must call a
@@ -319,6 +339,144 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Pick a folder, then use the breadcrumb to move back up — the tree loads lazily as you expand it.",
       "Transcripts and AI text render as formatted Markdown in the preview pane, not raw text.",
       "Dataset download is a granted permission. If your role does not have it the browser shows a restricted notice — use Search to find records instead."
+    ]
+  },
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * The design & prototype development workshop — what the ten steps above are for.
+   *
+   * These six mirror the section of the same name in `docs/WALKTHROUGH.md` one for one. That file
+   * and this array are TWO RENDERINGS OF ONE THING and its maintenance rule says they move in the
+   * same commit: add a step here, add it there.
+   *
+   * ALL SIX POINT AT `/design-workshops` AND NOT AT THE SCREEN THEY DESCRIBE, which is the one place
+   * this arc cannot keep the promise the ten steps above make. Every screen below lives under
+   * `/design-workshops/[id]/...` and a guide has no workshop id to put there; a link to a made-up
+   * one is a 404 delivered by the help. The list is the honest destination — it is one tap from all
+   * six — and the `summary` names the screen so a designer knows what they are looking for when
+   * they get there.
+   * ────────────────────────────────────────────────────────────────────────── */
+
+  {
+    id: "design-workshop",
+    label: "Design workshops",
+    action: "Open a design workshop",
+    icon: Layers,
+    href: "/design-workshops",
+    summary:
+      "Open the design & prototype development workshop you are running — or create it — and everything below hangs off it.",
+    why:
+      "This is the fortnight itself: 22 stages of capture that end in a report submitted to a Development Commissioner’s office. It is a different thing from the Workshop record in step 1, and it points AT the records you made in steps 2–10 rather than replacing them.",
+    fields: [
+      "Workshop title (required)",
+      "Craft and place",
+      "Dates",
+      "Linked workshop record — what narrows every reference picker inside the stages",
+      "Who else may open it (an admin grants this)"
+    ],
+    watch: [
+      "Link it to a Workshop record early. The pickers inside the stages are narrowed to that workshop’s artisans, products and tools, and an unlinked workshop offers the whole repository instead — the screen says which you are looking at.",
+      "It opens and fills with no signal. Everything is kept on the device and sent up when there is a connection."
+    ]
+  },
+  {
+    id: "design-workshop-stages",
+    label: "Stages",
+    action: "Fill the stages",
+    icon: ClipboardList,
+    href: "/design-workshops",
+    summary:
+      "Work through the 22 stages. The stage index shows a completeness figure against each one; open a stage and the form is built from the registry the server publishes.",
+    why:
+      "The stages ARE the report: every section of the printed document is one of them. The web and the phone draw the same boxes in the same order because both read the same registry, so a stage half-filled on a handset in the village is the stage you finish on a laptop that evening.",
+    fields: [
+      "Basic fields — the ones a submit is refused without",
+      "Standard and Advanced fields — depth, never a blocker",
+      "Reference pickers — choose the artisan, product, tool or process you documented in the steps above",
+      "“Create a new …” inside a picker, when the record is missing and you are mid-stage",
+      "Photographs, sketches and measurements per stage",
+      "A microphone on every narrative box"
+    ],
+    watch: [
+      "Choosing a record COPIES its values onto this stage. The report prints that copy, so editing the artisan next week does not rewrite a report already handed over — re-pick the record here if you want the newer values.",
+      "Point a row at a different record and every box it filled is cleared first, so two records can never be half-mixed on one row.",
+      "Anything you typed yourself is never overwritten by a pick — only blanks are filled.",
+      "Stage 9 and stage 17 compute findings BESIDE what you typed (your price bands against the survey; each cost sheet against its own lines). Neither ever changes your figures: you were in the room and the arithmetic was not."
+    ]
+  },
+  {
+    id: "design-workshop-codes",
+    label: "Cards & tags",
+    action: "Print the code cards",
+    icon: QrCode,
+    href: "/design-workshops",
+    summary: "Print a code card for every artisan on the roster and a tag for every prototype, and tie the tag to the object.",
+    why:
+      "Stages 14, 15 and 16 each begin by choosing a prototype from a list of twenty-five. Scanning a tag removes the choosing — and choosing wrong is how two days of measurements end up attached to somebody else’s work, with nothing downstream able to tell.",
+    fields: ["Artisan cards — one per roster entry", "Prototype tags — one per prototype", "Print sheet, sized for a home printer"],
+    watch: [
+      "Print them at the START of the fortnight, before the prototypes exist in numbers. A tag tied on afterwards is a tag tied on from memory.",
+      "The codes are on the stage index too — you do not need this screen to scan one."
+    ]
+  },
+  {
+    id: "design-workshop-readiness",
+    label: "Readiness",
+    action: "Check what still blocks submission",
+    icon: ListChecks,
+    href: "/design-workshops",
+    summary: "One screen answering: what still stops this workshop being submitted?",
+    why:
+      "The alternative is opening all 22 stages on the last afternoon to find the four Basic fields, in three stages, that the server is going to refuse the submit for. This lists them first, then the report’s own warnings, then the Standard and Advanced gaps as counts.",
+    fields: [
+      "Unfilled Basic fields — the only things that refuse a submit",
+      "Report checks — they change the delivered file without refusing it",
+      "Standard and Advanced gaps — counts, behind a disclosure",
+      "A link straight into the stage that holds each gap"
+    ],
+    watch: [
+      "Use it on the FIRST afternoon as well as the last. It is a plan for the fortnight, not only a check at the end.",
+      "Standard and Advanced counts never block anything. They are there so a thin stage is a decision rather than an oversight."
+    ]
+  },
+  {
+    id: "design-workshop-report",
+    label: "Report",
+    action: "Configure and generate the report",
+    icon: FileOutput,
+    href: "/design-workshops",
+    summary:
+      "Choose the template, set what the document contains, read it back as real A4 or Letter pages, and download the .docx or .pdf.",
+    why:
+      "This is the deliverable. The preview is drawn from the same document model the .docx and .pdf writers consume, so what you read on screen is what is generated — not an approximation of it.",
+    fields: [
+      "Report template",
+      "Transcripts in this file",
+      "Include machine-assisted text",
+      "Accent colour and cover details",
+      "Page-by-page preview with the template’s own page breaks marked",
+      "Download (.docx / .pdf)"
+    ],
+    watch: [
+      "Stage 20 is where these settings live — it configures the report and is one of the two stages that never print in it.",
+      "The preview is read-only on purpose. To correct something it shows, open the stage it came from: an edit has to land on the stage entry, and the printed value is the entry’s own frozen copy.",
+      "A report generated on the PHONE honours the same template and settings, and names on the file itself the three annexures it cannot draw offline: transcripts, questionnaire answers and machine-assisted text."
+    ]
+  },
+  {
+    id: "design-workshop-history",
+    label: "Report history",
+    action: "Review what you have produced",
+    icon: History,
+    href: "/design-workshops",
+    summary:
+      "Every file ever generated for this workshop — including ones a phone produced offline — with its checksum, size, page count, template and timestamp, and a diff between any two.",
+    why:
+      "A report submitted to a ministry comes back for revision three or four times, and “did you update the cost sheet before you resubmitted?” needs an answer that is evidence rather than memory.",
+    fields: ["Every generated file, newest first", "Checksum, size, page count, template, who generated it and when", "Compare any two"],
+    watch: [
+      "Nothing here can be tidied up. The checksum is what makes the record evidence, and evidence that can be edited is not evidence.",
+      "The comparison is between two GENERATED FILES. It is not a field-level history of the workshop — for who changed a value and when, open the stage’s provenance."
     ]
   }
 ];

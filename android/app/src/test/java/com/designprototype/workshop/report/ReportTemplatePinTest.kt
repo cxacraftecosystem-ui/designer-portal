@@ -1,5 +1,6 @@
 package com.designprototype.workshop.report
 
+import com.designprototype.workshop.data.DwCustomSectionDto
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -125,6 +126,15 @@ class ReportTemplatePinTest {
             "$where figures",
             expected["figures"]!!.jsonArray.map { it.jsonPrimitive.content }, actual.figures,
         )
+        // READ CONDITIONALLY, WHICH IS THE ONE PLACE THIS FILE DOES NOT INSIST ON A KEY. The fixture
+        // in the tree predates `custom_key` and cannot be regenerated in a checkout with no API
+        // container, so demanding the key would fail every one of the 116 pinned sections over a
+        // field none of them has an opinion about. The day the pin is regenerated with the
+        // CUSTOM_SECTION cases (see `applyReportSettings agrees with the server …`) this starts
+        // comparing without anybody having to remember to come back for it.
+        expected["custom_key"]?.let {
+            assertEquals("$where custom_key", it.jsonPrimitive.content, actual.customKey)
+        }
     }
 
     private fun assertTemplate(where: String, expected: JsonObject, actual: ReportTemplate) {
@@ -203,6 +213,30 @@ class ReportTemplatePinTest {
 
     // ── the settings arithmetic ──────────────────────────────────────────────────────────────────
 
+    /**
+     * ── THE HOLE THIS TEST STILL HAS, WRITTEN DOWN WHERE THE NEXT READER WILL SEE IT ──────────────
+     *
+     * `grep -c CUSTOM_SECTION report_templates_pin.json` returns 0. None of the 38 pinned cases
+     * passes a custom-section definition, so the one test whose stated purpose is "the two catalogues
+     * agree by value" reports agreement on a code path it has never exercised — which is exactly how
+     * the placement divergence shipped green: the handset drew a designer's questions inline at
+     * level 2 inside the stage while the server splices them as level-1 sections after it, and
+     * dropped them entirely for a template that does not print the anchor stage.
+     *
+     * The Kotlin side of the pin is now ready for those cases: [applyReportSettings] takes the
+     * definition, [assertSection] compares `custom_key` the moment the fixture carries it, and the
+     * `custom_sections` input below is read the moment the generator emits it. What is missing is the
+     * fixture, which is dumped from the running API container (see this class's KDoc) and cannot be
+     * regenerated in a checkout with no Docker. THREE CASES ARE WANTED, and each pins a different
+     * half of `apply_report_settings`' rule:
+     *
+     *   1. two sections on ONE printed stage — pins the walk-past that stops the second section
+     *      being inserted ahead of the first and reversing the designer's own sort order;
+     *   2. a section whose stage the template never carries (PHOTO_CATALOGUE) — pins the back
+     *      annexure BEFORE the completeness section, and its `page_break_before`;
+     *   3. a section whose stage is named in `excludedStages` — pins that the splice runs AFTER the
+     *      exclusion filter, so the block is not stranded behind a stage section that was removed.
+     */
     @Test
     fun `applyReportSettings agrees with the server over the whole case table`() {
         val cases = pin["apply_report_settings"]!!.jsonArray
@@ -215,7 +249,19 @@ class ReportTemplatePinTest {
             val photos = case["include_photographs"]!!.let {
                 if (it is JsonNull) null else it.jsonPrimitive.boolean
             }
-            val actual = applyReportSettings(reportTemplate(templateId), settings, photos)
+            // Only `key`, `title`, `stage_key` and `sort_order` are read by the function under test,
+            // and only those four are serialised by the generator — the rest of a definition is the
+            // renderer's business and would make the fixture a copy of the custom-sections payload.
+            val custom = case["custom_sections"]?.takeIf { it !is JsonNull }?.jsonArray?.map {
+                val item = it.jsonObject
+                DwCustomSectionDto(
+                    key = item["key"]!!.jsonPrimitive.content,
+                    title = item["title"]!!.jsonPrimitive.content,
+                    stageKey = item["stage_key"]!!.jsonPrimitive.content,
+                    sortOrder = item["sort_order"]!!.jsonPrimitive.int,
+                )
+            }.orEmpty()
+            val actual = applyReportSettings(reportTemplate(templateId), settings, photos, custom)
             assertTemplate("case '$name'", case["result"]!!.jsonObject, actual)
         }
     }

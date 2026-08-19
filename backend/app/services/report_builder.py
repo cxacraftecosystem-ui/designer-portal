@@ -104,6 +104,7 @@ from app.services.stage_schema import (
     ReportRole,
     StageSpec,
     enum_label,
+    reference_hydration_for,
     stage_completeness,
     stages,
 )
@@ -122,17 +123,51 @@ class ReferencedRecord:
     a submitted report must never re-resolve a name through a live table — so for prose this
     builder needs no lookup at all and deliberately performs none.
 
-    Two things are NOT copied by hydration and cannot be, and this is what carries them:
+    Two things hydration does not put on every row that needs them, and this is what carries
+    those:
 
-    * THE PHOTOGRAPH OF A RECORD THE MAPPING DOES NOT SEED. ``participant.artisanRef`` seeds a
-      participant's ``photo``; ``prototype.productRef`` and ``existingProduct.artisanRef`` seed only
-      a name, because the entities they write onto have a gallery of the designer's OWN photographs
-      and hydration must never overwrite those. The consequence was a report describing a prototype
-      of a documented product with the product's photograph nowhere in it, while the picture sat in
-      the media table one join away.
-    * WHERE THE ARTISAN LIVES. No participant field holds a district: the roster records a village
-      as free text and the administrative hierarchy lives on the ``Artisan``'s ``Location``. The
-      map of who came from where cannot be drawn without it.
+    * THE PHOTOGRAPH OF A RECORD WHOSE MAPPING SEEDS NONE. ``participant.artisanRef`` seeds a
+      participant's ``photo`` and ``existingProduct.productRef`` seeds ``productPhotos``, so for
+      those the frozen copy is already on the row and ``_images`` dedupes by media id.
+      ``prototype.productRef`` and ``existingProduct.artisanRef`` map ``{"name": ...}`` and nothing
+      else, and ``workshopSetup.craftRef`` maps only the craft's two names — for those three this
+      carrier is the only way the picture reaches the page at all. Without it the report described
+      a prototype of a documented product with the product's photograph nowhere in it, while the
+      picture sat in the media table one join away.
+
+      ``craftRef`` is easy to miss in that list and was missed: ``Craft`` is the one model whose
+      ``data`` lambda publishes the label column under a name of its own, so it also needs an entry
+      in :data:`_REFERENCE_NAME_SOURCES` before its borrowed photograph can be captioned from the
+      frozen copy.
+
+      THE REASON IS NOT "HYDRATION MUST NEVER SEED A GALLERY", WHICH IS WHAT THESE LINES USED TO
+      SAY AND IS NOT THE RULE. ``design_workshops.hydrate_entries`` states the real one: a gallery
+      is SEEDED WHEN EMPTY and never overwritten. ``existingProduct.productPhotos`` is seeded from
+      the documented product's own photograph deliberately — its declaration in
+      ``stage_definitions`` spends a sentence on it, so that a designer who is not told does not
+      add the same picture a second time. Only ``prototype``'s gallery is left unseeded, for the
+      separate reason written at ``prototype.productRef``: a prototype is defined by how it differs
+      from the product it was based on. So the circulating rule "hydration must not seed the
+      galleries of existingProduct / prototype" holds today for ``prototype`` ALONE, and anybody
+      "restoring" it by deleting the ``photo`` -> ``productPhotos`` mapping would cost every new
+      product row the catalogue photograph its own help text promises, while only-fill-blanks
+      leaves every row saved before the deletion holding theirs — an inconsistency that appears
+      nowhere in the report and cannot be seen without diffing two rows.
+    * WHERE AN ARTISAN LIVED, FOR ROWS SAVED BEFORE THE MAPPING WIDENED. This bullet used to say
+      "No participant field holds a district: the roster records a village as free text". That is
+      no longer true, and reading it as true is what kept the map wrong:
+      ``REFERENCE_HYDRATION["participant.artisanRef"]`` copies ``village``, ``district``,
+      ``state``, ``pincode`` and ``address`` onto the roster row at save time, and ``participant``
+      declares all five. :meth:`ReportBuilder._artisan_points` therefore reads the ROW's frozen
+      copy first, and ``place``/``district``/``state`` below are the fallback for rows hydrated
+      before that widening and for rows whose ref was never picked. Do not delete them — those
+      rows would drop off the map — and do not promote them back to first choice: preferring the
+      live record is exactly what let a ministry's map and the participant table two pages earlier
+      disagree about where one artisan lives.
+
+    ``label`` REACHES PAPER. It is the caption under a borrowed photograph, so it is not internal
+    bookkeeping: :meth:`ReportBuilder._reference_caption` prefers the row's own frozen name where
+    hydration put one there, and falls back to this only where it did not.
 
     Every field is optional and an absent entry is ordinary — a roster row typed by hand on day two
     has no artisan record behind it at all, and the report must be exactly as complete as it can be
@@ -145,6 +180,29 @@ class ReferencedRecord:
     place: str = ""       # the free text the record states: "Barpali, Bargarh, Odisha"
     district: str = ""
     state: str = ""
+
+
+#: model -> the extra hydration SOURCE keys under which that model publishes its DISPLAY NAME.
+#: ``"name"`` is always accepted and is not repeated here; this table is only for a model whose
+#: ``data`` lambda calls the label column something else.
+#:
+#: ONE MODEL NEEDS IT AND IT IS THE ONE THAT REACHES THE COVER PAGE.
+#: ``design_workshops.REFERENCE_MODELS["Craft"].data`` emits ``{"craftName": r.name,
+#: "craftLocalName": r.localName}`` while its ``label`` is ``r.name`` — the same column under a
+#: different key, because stage 1's cover asks for "Craft name" and the mapping is one-to-one with
+#: the boxes it fills rather than with the record's column names. ``Craft`` also declares
+#: ``media_field="craftId"``, so a craft photograph really does reach :meth:`ReportBuilder._images`'
+#: second pass; matching the literal ``"name"`` alone left that one picture captioned from the LIVE
+#: record while ``workshopSetup.craftName`` — a COVER_FIELD — printed the frozen copy. One page,
+#: two names for one craft, which is the exact failure :meth:`ReportBuilder._reference_caption` was
+#: written to close.
+#:
+#: Declared here rather than derived because this module is also the on-device report builder and
+#: may not import ``design_workshops`` (which queries). ``test_report_figures`` walks
+#: ``REFERENCE_MODELS`` and fails if a model with a ``media_field`` publishes its name under a key
+#: no mapping here accepts, so the next renamed key fails in the suite and not on a ministry's
+#: cover page.
+_REFERENCE_NAME_SOURCES: dict[str, tuple[str, ...]] = {"Craft": ("craftName",)}
 
 
 @dataclass
@@ -320,8 +378,35 @@ def format_value(spec: FieldSpec, value: Any) -> str:
         if isinstance(value, dict):
             return f"{float(value.get('lat', 0)):.5f}, {float(value.get('lon', 0)):.5f}"
         return clean_text(value)
+    if t in (FieldType.IMAGE, FieldType.IMAGE_LIST):
+        return ""   # a picture never prints as text; it is placed by ``ReportBuilder._images``
     if t.is_media:
-        return ""   # media never prints as text; it is placed by the image path
+        # FILE, AUDIO AND VIDEO HAVE NO IMAGE PATH TO BE PLACED BY, and this branch used to claim
+        # for all five media types that "it is placed by the image path". ``_images`` is the only
+        # placement path there is and it filters on IMAGE and IMAGE_LIST, so the eight FILE, five
+        # AUDIO and four VIDEO fields the registry declares fell through here to "" and printed on
+        # no surface whatsoever. A designer attached the ministry's sanction order at stage 1 and
+        # the .docx the officer received did not mention that a sanction order existed. The tier
+        # warning then made it worse rather than better: ``fields_hidden_by_tier`` reads
+        # ``_is_filled``, which is True for a media field holding ids, so a Compact summary named
+        # "Sanction order document" in "generate the report with a template that captures every
+        # tier to include them" — and the Advanced templates printed nothing for it either. The
+        # designer regenerated sixty pages to recover a field no template could carry.
+        #
+        # A COUNT AND A NOUN, NOT A FILENAME. The stored value is a media id; the name the designer
+        # uploaded lives on the ``MediaFile`` row, and this module may not query for it — it is
+        # also the on-device report builder, which has no network. So the line says the honest
+        # minimum, which is the whole of what the entry itself states: that an attachment exists
+        # and how many. Naming the file needs the resolver widened to carry filenames and is
+        # tracked as its own change; saying nothing at all was the defect.
+        count = len(_media_ids(value))
+        if not count:
+            return ""
+        singular, plural = {
+            FieldType.AUDIO: ("recording", "recordings"),
+            FieldType.VIDEO: ("video", "videos"),
+        }.get(t, ("document", "documents"))
+        return f"{count} {singular if count == 1 else plural} attached"
 
     text = clean_text(value)
     return f"{text} {spec.unit}".strip() if spec.unit and text else text
@@ -424,10 +509,40 @@ MAP_VENUE_STAGE = "WORKSHOP_SETUP"
 MAP_ROSTER_STAGE = "WORKSHOP_PLAN_PARTICIPANTS_OPENING"
 MAP_ROSTER_ENTITY = "participant"
 
-#: The roster fields that might carry an artisan's own home, most specific first. Read only when
-#: the ``Artisan`` record behind the row supplied nothing, which is the ordinary state for a
-#: participant who walked in on day two and was typed in by hand.
-MAP_ROSTER_PLACE_KEYS: tuple[str, ...] = ("village", "block", "district")
+#: The roster fields that carry an artisan's OWN stated home, joined into one string in the order
+#: an address is written — the village first, then the district that disambiguates it — so the
+#: atlas's longest-run matching and the district-anchor loop both see the whole address at once.
+#: The same join :meth:`ReportBuilder._venue_point` makes for the venue, for the same reason.
+#:
+#: PRIMARY, AND THIS COMMENT USED TO SAY THE OPPOSITE ("Read only when the ``Artisan`` record
+#: behind the row supplied nothing"), which was an accurate description of a wrong precedence.
+#: These are the frozen copies ``REFERENCE_HYDRATION["participant.artisanRef"]`` writes at save
+#: time and the ones the participant table beside the map prints. Resolving the LIVE record first
+#: is what let one document say an artisan lives in Bargarh in its table and pin them somewhere
+#: else on the map above it, after a researcher corrected the record post-submission.
+#:
+#: ``block`` used to sit between these two and is not a participant field at all — it belongs to
+#: ``workshopSetup`` — so a third of this tuple had never read anything but ``None``. Nothing
+#: catches that at import: ``validate_registry`` lives in ``stage_schema``, which this module
+#: imports, so it cannot see this constant without an import cycle. A test asserts it instead.
+MAP_ROSTER_PLACE_KEYS: tuple[str, ...] = ("village", "district")
+
+#: The roster field holding the artisan's stated STATE. Read separately and deliberately NOT
+#: appended to the tuple above: a state is disambiguation for a place name, not a place name, and
+#: a bare "Odisha" handed to the geocoder as though a designer had typed it in the village box
+#: drops a pin on the capital and calls it somebody's home.
+MAP_ROSTER_STATE_KEY = "state"
+
+#: The roster field holding the pin a researcher dropped on the artisan's OWN place. Hydrated from
+#: the ``Artisan``'s ``Location.subjectLatitude/subjectLongitude`` at save time, so what is read
+#: here is the row's frozen copy and not a live lookup.
+#:
+#: THE STATED PIN, NOT THE CAPTURED ONE, and the distinction is the whole reason the column exists.
+#: ``design_workshops._subject_point`` will not let ``latitude``/``longitude`` cross into a stage
+#: entry, because on this database those are the desk the record was typed at — routinely ~1,500
+#: km from the village named on the same row. A map drawn from those would put every artisan in
+#: the office.
+MAP_ROSTER_PIN_KEY = "subjectLocation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,6 +553,13 @@ class _Located:
     between a pin that says "Barpali" and a pin that says "Barpali" while sitting on Bhubaneswar.
     When only the state resolved, the label is the state, so the pin never claims to know more
     than it does — the overstatement ``place_atlas.Precision`` exists to prevent.
+
+    ONE PIN IS BUILT WITHOUT AN ATLAS AND IS THE EXCEPTION TO THAT SENTENCE: the surveyed pin
+    :meth:`ReportBuilder._artisan_points` makes from ``participant.subjectLocation``. A coordinate
+    a researcher dropped carries no name at all, so the row's own stated place is the only honest
+    label available — the alternative is a nameless pin or the artisan's personal name printed on
+    a map. It is still held to the atlas's GRAMMAR (the most specific single part, never the joined
+    address), so the figure does not mix two kinds of label; the reasoning is at the construction.
     """
 
     lat: float
@@ -769,11 +891,19 @@ class ReportBuilder:
 
         Asked of a field the tier cap has already excluded, so it cannot go through ``_printable``
         — that skips an invisible field before it ever looks at the value. It asks the two
-        questions the two printing paths ask, and no third one: media is placed by ``_images``
-        (which reads ids, never text) and everything else is placed from ``_value`` (which is what
-        turns a dead reference into a blank rather than a cuid). A field that would have rendered
-        as nothing anyway is not a loss and must not be counted as one — a "fields were left out"
-        warning that fires on empty boxes is a warning designers learn to ignore.
+        questions the printing paths ask, and no third one. THE OLD SPLIT WAS "MEDIA VS
+        EVERYTHING ELSE" AND THAT IS NO LONGER THE SHAPE OF THE REPORT: ``_images`` filters on
+        IMAGE and IMAGE_LIST, so those two are the only types placed as pictures, while FILE,
+        AUDIO and VIDEO are printed from ``_value`` like any text field — ``format_value``'s media
+        branch turns their ids into "2 documents attached". The two questions still give the same
+        answer for those three by construction, because that branch counts the very ``_media_ids``
+        this one reads, which is why they stay on the id side of the test rather than paying for a
+        second format.
+
+        ``_value`` is the other question, and it is what turns a dead reference into a blank
+        rather than a cuid. A field that would have rendered as nothing anyway is not a loss and
+        must not be counted as one — a "fields were left out" warning that fires on empty boxes is
+        a warning designers learn to ignore.
         """
         if spec.type.is_media:
             return bool(_media_ids(row.get(spec.key)))
@@ -1007,10 +1137,8 @@ class ReportBuilder:
             reference = self.data.reference(row.get(spec.key))
             if reference is None or not reference.photo:
                 continue
-            # The reference's OWN label, because the field's label is the relationship and not the
-            # subject: "Artisan" under a photograph is a category, "Bhikari Meher" is a caption.
-            # The field label is the fallback for a record whose label never loaded.
-            wanted.setdefault(reference.photo, reference.label or spec.label)
+            wanted.setdefault(reference.photo,
+                              self._reference_caption(entity, spec, row, reference))
 
         found: list[tuple[ImageRef, str]] = []
         for media_id, caption in wanted.items():
@@ -1021,6 +1149,45 @@ class ReportBuilder:
             if limit and len(found) >= limit:
                 break
         return found
+
+    def _reference_caption(self, entity: EntitySpec, spec: FieldSpec, row: dict[str, Any],
+                           reference: ReferencedRecord) -> str:
+        """What to print under a photograph borrowed from the record a REF field points at.
+
+        THE ROW'S OWN FROZEN NAME FIRST. ``reference.label`` is
+        ``REFERENCE_MODELS[model].label(row)`` evaluated against the record AS IT STANDS TODAY, and
+        every external REF in the registry is ``report_role=HIDDEN`` with none named as a
+        ``label_field`` — so this caption was the single place in a submitted report where a live
+        re-resolved name reached paper. The visible failure had one page carrying both answers: a
+        prototype's sub-section printing "Developed from: Sambalpuri Saree" out of the frozen
+        ``productName`` hydration copied at save time, and, directly beneath it, the borrowed
+        catalogue photograph captioned "Sambalpuri Ikat Saree — revised 2027" because somebody
+        renamed the product record after the workshop closed. One product, two names, and nothing
+        on the page to say which the workshop actually worked from.
+
+        Generic, with no per-entity code: the hydration mapping already declares which box on THIS
+        row the referenced record's display name was copied into, so the caption asks it. Where the
+        mapping seeds no name — and where it seeded one into a box the designer left the picker to
+        fill and it never arrived — ``reference.label`` is still the right caption and is used, for
+        the reason the line it replaced gave: the field's label is the RELATIONSHIP and not the
+        subject, so "Artisan" under a photograph is a category where "Bhikari Meher" is a caption.
+        The field label remains the last resort for a record whose label never loaded at all.
+
+        WHICH SOURCE KEY HOLDS THE NAME IS NOT ALWAYS ``"name"`` — see
+        :data:`_REFERENCE_NAME_SOURCES`. Matching that literal alone missed ``Craft``, which is the
+        one model whose frozen name reaches the COVER PAGE.
+        """
+        sources = ("name", *_REFERENCE_NAME_SOURCES.get(reference.model, ()))
+        for source, target in reference_hydration_for(entity.key, spec.key).items():
+            if source not in sources:
+                continue
+            target_spec = entity.field(target)
+            if target_spec is None:
+                continue
+            frozen = self._value(target_spec, row)
+            if frozen:
+                return frozen
+        return reference.label or spec.label
 
     # -- entity renderers -------------------------------------------------------------
 
@@ -1141,9 +1308,24 @@ class ReportBuilder:
         Six columns on A4 is about the limit before a cell is too narrow to hold a craft name.
         Fields beyond that are not lost — :meth:`_render_table` prints the overflow underneath
         each row as a key-value line — but the *table* keeps its shape.
+
+        A MEDIA FIELD IS NEVER A COLUMN, WHATEVER ROLE IT DECLARES, which is the half of a
+        cross-surface divergence the handset had already closed alone. ``ReportScreen.kt``'s
+        ``renderCollection`` filters ``!isMedia`` out of its columns and says so in a note ending
+        "one of the two, not one each" — this is the other one. A picture cannot be a table cell:
+        ``format_value`` prints "" for IMAGE and IMAGE_LIST (they are placed by :meth:`_images`,
+        which reads the TYPE and never the role, so the photograph still reaches the page) and
+        "2 documents attached" for FILE/AUDIO/VIDEO, so the column would be blank or a count while
+        eating one of the six slots a real answer needed, and the two surfaces would print
+        different column COUNTS for one workshop.
+
+        Latent today and deliberately closed anyway: the registry declares no media TABLE_COLUMN,
+        so this filter changes no existing table's shape — which is also why it can be added
+        without touching anybody's declared ``column_width_pct``.
         """
         columns = [f for f in entity.fields
-                   if self._visible(f) and f.report_role is ReportRole.TABLE_COLUMN]
+                   if self._visible(f) and f.report_role is ReportRole.TABLE_COLUMN
+                   and not f.type.is_media]
         return columns[:6]
 
     def _render_table(self, entity: EntitySpec, rows: list[dict[str, Any]],
@@ -1417,9 +1599,45 @@ class ReportBuilder:
     def _artisan_points(self, state_hint: Any) -> _MapFacts:
         """Where each participating artisan lives, folded into one pin per place.
 
-        The home district comes from the ``Artisan`` record the roster row was picked from, which
-        is the only place it exists: the roster itself records a village as free text and no
-        district at all. That record is reached through the SAME resolver the picker uses
+        THE ROW'S OWN FROZEN COPY DECIDES, AND THE LIVE ``Artisan`` RECORD IS ONLY THE LEGACY
+        FALLBACK. It was the other way round, on a stated reason that had gone false: "the roster
+        itself records a village as free text and no district at all".
+        ``REFERENCE_HYDRATION["participant.artisanRef"]`` copies ``village``, ``district``,
+        ``state``, ``pincode``, ``address`` and ``subjectLocation`` onto the roster row at save
+        time, and ``participant`` declares every one of them — so the frozen, provenance-correct
+        answer the participant table beside this map prints was sitting on the row and was used
+        only as second choice.
+
+        That is the one place a submitted report re-resolved a live row, and it showed. A
+        researcher corrects an artisan's ``Location`` in June, or merges the record into a
+        duplicate and deletes it; the February report is regenerated; the roster TABLE still says
+        Bargarh because that is the frozen copy, and the map above it pins the artisan somewhere
+        else. One document, two answers about where one person lives, with nothing on the page to
+        say why. It does not even take an edit: hydration is only-fill-blanks, so a designer who
+        OVERTYPES the roster row's district got the same disagreement on the day they typed it.
+
+        ONE SOURCE PER ROW, NEVER A MIX. A row that states a place AND the state it is in is read
+        entirely from itself; a row missing either half is read entirely from the reference. Taking
+        the text from one and the state from the other would put the live record back in the path
+        by the side door: an edit to the artisan's state would still move a pin whose village came
+        from the frozen copy.
+
+        ASKING FOR THE STATE AS WELL IS NOT PEDANTRY, IT IS THE ROWS THE MAPPING WIDENED AROUND.
+        ``village`` has been copied down since the initial commit and ``district``/``state``
+        only much later, so a row saved in between states a village and nothing that can place it —
+        and while this gate asked ``if not text`` alone, those rows were geocoded against the
+        WORKSHOP's state and landed on the wrong capital. The comment on the gate carries the
+        measurement.
+
+        THE STATED SUBJECT PIN WINS OVER ANY NAME LOOKUP, the way ``_venue_point``'s measured fix
+        wins over the venue's address. ``subjectLocation`` is the pin a researcher dropped on the
+        artisan's own place; geocoding the district name instead drew them on a district centroid
+        or a state capital and then counted them in the caption's "approximate" sentence, exactly
+        as if no pin had ever been dropped. It is read from the ROW and never re-derived through
+        :attr:`WorkshopData.references`, which would re-open the defect above, and it is the
+        STATED pin rather than the device fix — see :data:`MAP_ROSTER_PIN_KEY`.
+
+        The reference is still reached through the SAME resolver the picker uses
         (``design_workshops.REFERENCE_MODELS``), loaded once by the caller into
         :attr:`WorkshopData.references` — this module must not and does not query.
 
@@ -1435,32 +1653,96 @@ class ReportBuilder:
         ref_keys = [f.key for f in entity.fields
                     if f.type is FieldType.REF and f.ref_model == "Artisan"]
 
+        from app.services.address import canonical_state
+
         rows = self.data.rows(MAP_ROSTER_STAGE, MAP_ROSTER_ENTITY)
         found: list[tuple[str, _Located]] = []
         facts = _MapFacts(total=len(rows))
         for row in rows:
-            reference = next(
-                (r for r in (self.data.reference(row.get(key)) for key in ref_keys)
-                 if r is not None),
-                None,
-            )
-            text = ""
-            state = clean_text(state_hint).strip()
-            if reference is not None:
-                text = ", ".join(part for part in (clean_text(reference.district).strip(),
-                                                   clean_text(reference.place).strip()) if part)
-                state = clean_text(reference.state).strip() or state
-            if not text:
-                text = next(
-                    (clean_text(row.get(key)).strip() for key in MAP_ROSTER_PLACE_KEYS
-                     if clean_text(row.get(key)).strip()),
-                    "",
+            # The row's whole stated address in one string, joined rather than "first non-empty":
+            # a bare village with no district beside it is what the atlas is worst at, and taking
+            # only the most specific key would have placed pins WORSE than the live lookup did.
+            stated =[clean_text(row.get(key)).strip() for key in MAP_ROSTER_PLACE_KEYS]
+            text = ", ".join(part for part in stated if part)
+            # The most specific part the row states, kept beside the joined string for the pin
+            # LABEL — see the surveyed-pin branch below, which is the one pin on this map that is
+            # not named by the atlas. ``MAP_ROSTER_PLACE_KEYS`` is ordered village-then-district,
+            # so the first non-empty element is the finest thing the row says.
+            place_label = next((part for part in stated if part), "")
+            state = clean_text(row.get(MAP_ROSTER_STATE_KEY)).strip()
+            if not text or not state:
+                # LEGACY ONLY — AND "LEGACY" IS TWO ROW SHAPES, NOT ONE. This gate read ``if not
+                # text``, on the belief that a pre-widening row had no stated address at all. It
+                # had part of one: ``"village": "village"`` has been in
+                # ``REFERENCE_HYDRATION["participant.artisanRef"]`` since the initial commit, while
+                # ``district`` and ``state`` were added much later — so a row saved in between
+                # carries a village and NOTHING to place it with. Those rows stayed on the
+                # row-first branch, never reached the reference, and had the WORKSHOP's state
+                # handed to the geocoder as though the artisan had named it: a Bargarh weaver in a
+                # Rajasthan workshop pinned on Jaipur, ~1,300 km out, with Odisha not tinted at
+                # all. A row carrying MORE frozen data drew a worse pin than one carrying none.
+                #
+                # A row that has not frozen its state has not frozen its address, so it is read
+                # from the record like any other pre-widening row.
+                #
+                # THIS DOES NOT REOPEN THE NEVER-RE-RESOLVE DEFECT. Every row hydrated since the
+                # mapping widened carries ``state`` beside ``village`` and so never gets here; the
+                # row-first branch still owns every row a current save produced.
+                reference = next(
+                    (r for r in (self.data.reference(row.get(key)) for key in ref_keys)
+                     if r is not None),
+                    None,
                 )
-            if not text:
-                continue
-            located = _geocode(text, state, self.data.district_points)
-            if located is None:
-                continue
+                if reference is not None:
+                    ref_place = clean_text(reference.place).strip()
+                    ref_district = clean_text(reference.district).strip()
+                    ref_text = ", ".join(part for part in (ref_district, ref_place) if part)
+                    # BOTH VALUES MOVE TOGETHER OR NEITHER DOES, per "one source per row" above:
+                    # disambiguating "Bhuj, Kachchh" against a state the row froze separately is
+                    # how a village lands 900 km away. And only when the record actually states a
+                    # place — an ``Artisan`` with an empty ``Location`` is not a second source, and
+                    # blanking the row's own village against it would drop a pin the row could
+                    # still have placed.
+                    if ref_text:
+                        text, state = ref_text, clean_text(reference.state).strip()
+                        place_label = ref_place or ref_district
+            if not state:
+                # The workshop's own state, and last. It is a hint for disambiguating a village
+                # name, never a position: a row that states nothing still contributes no pin.
+                state = clean_text(state_hint).strip()
+
+            fix = _geo_point(row.get(MAP_ROSTER_PIN_KEY))
+            if fix is not None:
+                # PRECISE BY CONSTRUCTION, so it is counted in ``placed`` and never in
+                # ``approximate`` — describing a surveyed pin with the caption's "drawn at its
+                # state capital" sentence would be a straight falsehood. The label is what the row
+                # SAYS the place is; a coordinate carries no name, and printing the artisan's own
+                # name on a map pin is not the same figure.
+                #
+                # ONE LABEL GRAMMAR PER FIGURE. Every other pin here is named by the atlas, which
+                # returns a single token ("Barpali"), so this one takes the most specific part the
+                # row stated rather than the joined address it was geocoded from — a map that says
+                # "Barpali" for five artisans and "Barpali, Bargarh" for the sixth reads as two
+                # kinds of pin and invites a reader to look for the distinction.
+                #
+                # The state falls back to the UNCANONICALISED spelling exactly as ``_geocode``
+                # does, so the one pin built without the atlas does not disagree with every other
+                # pin about what a state is. ``canonical_state`` alone dropped a spelling it does
+                # not recognise to "", which ``_render_map`` then filters out of ``highlight``
+                # entirely — a pin drawn on an untinted region with nothing anywhere saying why.
+                # Carried through, ``report_map._tint_states`` cannot seed it either, but it
+                # returns the name in ``missed`` and the figure prints "Not tinted: …" under
+                # itself. An admission on the picture beats a silent blank on the half of a map a
+                # reader trusts most.
+                located = _Located(lat=fix[0], lon=fix[1],
+                                   state=canonical_state(state) or state,
+                                   label=place_label or "Artisan's home")
+            else:
+                if not text:
+                    continue
+                located = _geocode(text, state, self.data.district_points)
+                if located is None:
+                    continue
             found.append((located.label, located))
             facts.placed += 1
             if located.state:

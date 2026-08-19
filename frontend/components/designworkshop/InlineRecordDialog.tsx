@@ -31,7 +31,8 @@ import { ProcessForm } from "@/components/forms/ProcessForm";
 import { ProductForm } from "@/components/forms/ProductForm";
 import { ToolForm } from "@/components/forms/ToolForm";
 import type { ProcessRecord } from "@/components/forms/ProcessForm";
-import type { Artisan, ProductDocumentation, ToolDocumentation } from "@/lib/types";
+import type { InlineHostSeed, UseExistingArtisan } from "@/components/forms/inlineRecordHost";
+import type { Artisan, ArtisanIdentityMatch, ProductDocumentation, ToolDocumentation } from "@/lib/types";
 
 /**
  * The reference models a stage field can point at and this dialog can create.
@@ -39,6 +40,35 @@ import type { Artisan, ProductDocumentation, ToolDocumentation } from "@/lib/typ
  * `Dw…` models are NOT here and cannot be: a `DwSketch` or a `DwPrototype` is another ROW of the
  * same workshop, created by adding a row to its own stage, not a repository record. Offering to
  * "create" one from a picker would put a second, parallel way to add a prototype into the app.
+ *
+ * ── CRAFT IS ABSENT, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT ──────────────────────────
+ * `Craft` is a genuine repository model with its own `ReferenceModel`, and stage 1 really does
+ * declare `workshopSetup.craftRef` against it — so the omission looked like a gap until somebody
+ * asked what a per-workshop craft create would DO.
+ *
+ * A craft is not a record of something a designer observed. It is a row of a SHARED TAXONOMY, about
+ * 178 of them for the whole repository, and everything else joins to it: an artisan's craft, a
+ * product's craft, the workshop scope filters, the map's rollups, the dataset export. A picker that
+ * mints one is a picker that mints a NEAR-DUPLICATE — "Bagru Block Printing" beside "Bagru block
+ * print" beside "Block Printing (Bagru)" — created in the field, by somebody who could not see the
+ * existing row because they were searching for a different spelling of it, and never merged
+ * afterwards because nothing anywhere says two crafts are the same craft. Every one of those splits
+ * a corpus in half along a line no report will ever admit to.
+ *
+ * The other four are the opposite case: an artisan, a product, a tool and a process are things a
+ * designer met in a room, they belong to whoever documented them, and a duplicate is a nuisance
+ * rather than a fracture in the taxonomy.
+ *
+ * WHAT A DESIGNER GETS INSTEAD. `craftRef` is OPTIONAL and stage 1's `craftName` is a free-text box
+ * they can simply type, so nobody is blocked; and the picker offers a link to /crafts so the one
+ * remedy that is right — curate the taxonomy where the whole taxonomy is visible — is one click
+ * away rather than something to be remembered. See `StageReferenceSelect`'s craft branch.
+ *
+ * IF THIS IS EVER REVERSED, a `CraftForm` has to be extracted first (the craft form is inline on
+ * `app/(protected)/crafts/page.tsx` and there is nothing here to mount), it must go through
+ * `onCreated`/`adoptCreated` like the other four so `workshopSetup.craftRef`'s hydration runs, and
+ * `INLINE_CREATABLE` in Android's `DwReferenceField.kt` has to gain it in the same change or the
+ * two surfaces disagree about which pickers can create.
  */
 export const INLINE_CREATABLE = ["Artisan", "ProductDocumentation", "ToolDocumentation", "Process"] as const;
 export type InlineCreatableModel = (typeof INLINE_CREATABLE)[number];
@@ -69,11 +99,32 @@ export function InlineRecordDialog({
   open,
   model,
   recordId,
+  seed,
   onClose,
-  onCreated
+  onCreated,
+  onQueued,
+  onUseExisting
 }: {
   open: boolean;
   model: InlineCreatableModel;
+  /**
+   * What the picker that opened this dialog already knows about the record being made.
+   *
+   * ── THE DEFECT THIS EXISTS FOR ──────────────────────────────────────────────────────────────
+   * This dialog used to take exactly `{ open, model, recordId, onClose, onCreated }` and pass the
+   * forms nothing, even though the picker rendering it was holding the row's artisan and the
+   * workshop the whole time. The full-page routes seed the same boxes from the query string; a
+   * dialog has none, so the only thing that filled them was the carry bag — the LAST artisan this
+   * designer documented anywhere. At stage 6 a designer picks Kamla on the row, presses
+   * 'Create "Sambalpuri saree" as a new product', and the product is filed under whoever was last
+   * in the bag, or under nobody. The server narrows this very picker on that column, so the record
+   * is then invisible in the control that created it and `describeCreated` cannot describe it —
+   * two blank required boxes and a 422 on submit, seconds after the record holding both answers
+   * was made. The obvious next move is to create it a second time.
+   *
+   * Every value in it lands in a control the designer can see and change; see {@link InlineHostSeed}.
+   */
+  seed?: InlineHostSeed;
   /**
    * Edit this record instead of creating one.
    *
@@ -91,9 +142,50 @@ export function InlineRecordDialog({
    * have would be a round trip in the middle of a designer's sentence.
    */
   onCreated: (record: CreatedRecord) => void;
+  /**
+   * The save was banked in the offline outbox: no record, no server id, nothing to link.
+   *
+   * The dialog closes on it — the designer is done here either way — and the caller says so where
+   * they are looking. It cannot be folded into `onCreated`: a REF field must hold a real server id
+   * (`hydrate_entries`, `canonical_divergence` and the report's `ReferencedRecord` join all resolve
+   * on it), so a placeholder would render for ever as a reference to a deleted record. The row is
+   * left unlinked and the picker says why.
+   */
+  onQueued?: () => void;
+  /**
+   * The artisan the duplicate check found already in the repository — {@link UseExistingArtisan}.
+   *
+   * Only meaningful for `Artisan`. Absent, the form keeps its page behaviour and navigates to the
+   * existing record's edit route, which is right on `/artisans/new` and loses the stage here.
+   */
+  onUseExisting?: UseExistingArtisan;
 }) {
   const noun = INLINE_MODEL_NOUN[model];
   const editing = Boolean(recordId);
+
+  /**
+   * THE SEED IS CREATE-ONLY, AND THIS IS WHERE THAT IS ENFORCED.
+   *
+   * The rule is stated on {@link InlineRecordDialog}'s `seed` prop above — seeding a parent over an
+   * existing record would rewrite a link nobody touched — and it was enforced NOWHERE IN THIS FILE:
+   * all three forms were handed `seed` unconditionally, and the only gate in the tree was one call
+   * site's `seed={inlineDialog.mode === "create" ? seed : undefined}` in `StageReferenceSelect`.
+   * The multipicker beside it passes a bare `seed={seed}` and is harmless only because it never
+   * passes a `recordId`; the day it grows one — or any other host opens this dialog on a record —
+   * the rule would be gone with no line of code having changed.
+   *
+   * THE FORMS CANNOT BE THE GUARD, which is why it has to be this line. They resolve the seed with
+   * `??`, not with an is-edit test: `initial?.artisanId ?? seed?.artisanId` and
+   * `initialWorkshopId: initial?.workshopId ?? seed?.workshopId`. On a record whose artisan or
+   * workshop column is NULL — exactly the row this lane exists to let a designer fix without
+   * abandoning the stage — `??` falls straight through to the seed, the form submits a parent the
+   * designer never chose, and `useWorkshopSelection` marks it `touched` so the carry banner does
+   * not mention it either.
+   *
+   * So the ternary at the single picker and the bare prop at the multipicker are now belt and
+   * braces over this, rather than the whole of it.
+   */
+  const seedForForm = editing ? undefined : seed;
 
   /** The full record, for the edit case. Null while it is being read. */
   const [initial, setInitial] = useState<CreatedRecord | null>(null);
@@ -130,6 +222,36 @@ export function InlineRecordDialog({
     [onCreated, onClose]
   );
 
+  /**
+   * A save that went into the outbox instead of onto the wire.
+   *
+   * Closing is the same act as `finish` — the designer is done with this form either way — but
+   * there is no record, so the picker is told separately and says so out loud. Before this the
+   * queued branch of all four forms simply returned: the button flipped back from "Saving…" to
+   * "Save artisan", the dialog stayed open, the row stayed unlinked, and the one thing that would
+   * have explained it (`OutboxBanner`) was behind this dialog's own overlay on a body whose scroll
+   * this dialog had locked.
+   */
+  const reportQueued = useCallback(() => {
+    onQueued?.();
+    onClose();
+  }, [onQueued, onClose]);
+
+  /**
+   * "Open the existing record" from the duplicate prompt, answered without leaving the stage.
+   *
+   * Handed to `ArtisanForm` only when the caller offered somewhere to hand it; on its own page the
+   * form still routes, which is right there. See {@link UseExistingArtisan} for why nothing but the
+   * id and the name may cross this boundary.
+   */
+  const adoptExisting = useCallback(
+    (artisan: ArtisanIdentityMatch) => {
+      onUseExisting?.(artisan);
+      onClose();
+    },
+    [onUseExisting, onClose]
+  );
+
   return (
     <FieldDialog
       open={open}
@@ -150,8 +272,12 @@ export function InlineRecordDialog({
       surfaceClassName="max-w-4xl"
     >
       {/*
-        Each form is mounted with NO `initial`, so it is in create mode, and with `onCreated`, which
-        is what stops it routing to its own list page and abandoning the stage behind this dialog.
+        Each form is mounted with NO `initial`, so it is in create mode, and with the four host
+        callbacks that stop it navigating — `onCreated` for a save, `onCancel` for the button
+        designers actually press to back out, `onQueued` for a save that went to the outbox, and (on
+        the artisan) `onUseExisting` for the duplicate prompt. All four used to end in `router.back()`
+        or `router.push()`, and this dialog is not a route: every one of them popped the real history
+        entry and abandoned the stage the designer was standing in. See `forms/inlineRecordHost`.
       */}
       {loadError ? (
         <p className="rounded-md border border-error-500/30 bg-error-50 px-3 py-2 text-sm text-error-700">{loadError}</p>
@@ -168,12 +294,33 @@ export function InlineRecordDialog({
       */}
       {(!editing || initial) && !loadError ? (
         <>
-      {model === "Artisan" ? <ArtisanForm initial={(initial as Artisan) ?? undefined} onCreated={finish} /> : null}
+      {model === "Artisan" ? (
+        <ArtisanForm
+          initial={(initial as Artisan) ?? undefined}
+          seed={seedForForm}
+          onCreated={finish}
+          onCancel={onClose}
+          onQueued={reportQueued}
+          onUseExisting={onUseExisting ? adoptExisting : undefined}
+        />
+      ) : null}
       {model === "ProductDocumentation" ? (
-        <ProductForm initial={(initial as ProductDocumentation) ?? undefined} onCreated={finish} />
+        <ProductForm
+          initial={(initial as ProductDocumentation) ?? undefined}
+          seed={seedForForm}
+          onCreated={finish}
+          onCancel={onClose}
+          onQueued={reportQueued}
+        />
       ) : null}
       {model === "ToolDocumentation" ? (
-        <ToolForm initial={(initial as ToolDocumentation) ?? undefined} onCreated={finish} />
+        <ToolForm
+          initial={(initial as ToolDocumentation) ?? undefined}
+          seed={seedForForm}
+          onCreated={finish}
+          onCancel={onClose}
+          onQueued={reportQueued}
+        />
       ) : null}
       {model === "Process" ? (
         /*
@@ -190,6 +337,7 @@ export function InlineRecordDialog({
           onDone={onClose}
           onCancel={onClose}
           onCreated={finish}
+          onQueued={reportQueued}
         />
       ) : null}
         </>

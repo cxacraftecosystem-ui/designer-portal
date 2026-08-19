@@ -32,11 +32,24 @@ import { API, bearer, CREDENTIALS_MISSING, signIn } from "./support/session";
  *      browser, in one assertion.
  *   3. The strict save is ACCEPTED. That is the 422 the two blank boxes used to cause.
  *
- * WHAT IS DELIBERATELY NOT ASSERTED. "Length" stays blank here and that is correct: the SERVER's
- * `REFERENCE_HYDRATION` maps `lengthCm` (12 inches becomes 30.48 through `_inches_to_cm`) but the
- * browser's `DW_REFERENCE_HYDRATION` is narrower and does not, so the box fills at save rather than
- * at pick. Widening that table is another lane's work; asserting on it here would make this spec
- * fail for a reason that has nothing to do with what it is about.
+ * WHAT IS DELIBERATELY NOT ASSERTED, AND WHY THAT IS NOT A GAP IN THE FEATURE. "Length" DOES fill
+ * at the pick: `existingProduct.productRef` maps `lengthCm`/`widthCm`/`heightCm` in the browser's
+ * `DW_REFERENCE_HYDRATION` exactly as `REFERENCE_HYDRATION` maps them on the server, and 12 inches
+ * arrives as 30.48 because `_inches_to_cm` runs where the reference payload is built. This spec
+ * simply does not look: it is about the required-box 422, and every assertion in it is aimed at the
+ * two boxes whose emptiness refused a submit.
+ *
+ * THE PARAGRAPH THAT USED TO STAND HERE SAID THE OPPOSITE, and it was the more expensive kind of
+ * wrong: it told the next developer that the two tables were ALLOWED to differ and that closing the
+ * gap belonged to somebody else. They do not and it does not —
+ * `backend/tests/test_reference_registry.py::test_the_web_carries_the_same_hydration_table` asserts
+ * `set(web) == set(server)` and then per-path equality, so the two tables are REQUIRED to move
+ * together and a widening that lands on one file alone fails that test by design. Acting on the old
+ * paragraph meant either shipping the server half into a failure you had been told to expect, or
+ * deleting a correct web entry to match a comment.
+ *
+ * The tests that own the pick-time claim are that backend test, for the two tables agreeing, and
+ * `reference-hydration-unit.spec.ts`, for what the browser writes onto a row.
  *
  * NOT INTERCEPTED, unlike the location specs. The record has to be really created, through the real
  * form, and really read back through `GET /references` — a stubbed create would hand back whatever
@@ -226,7 +239,9 @@ test.describe("Inline-created records hydrate the stage row", () => {
     await choose(page, "Linked craft", craftName);
     await choose(page, "Linked artisan", `${artisanName} · Bagru`);
     await dialog.locator('input[name="sellingPrice"]').fill("1250.50");
-    // Inches on the record; the stage's box says cm. See assertion 3 in the file header.
+    // Inches on the record; the stage's box says cm, and the ×2.54 runs where the SERVER builds the
+    // reference payload — assertion 2's argument in a second column. Not asserted on here, for the
+    // reason under "WHAT IS DELIBERATELY NOT ASSERTED": this spec is about the required-box 422.
     await dialog.locator('input[name="lengthInches"]').fill("12");
     // The stated address, which a create is refused without. The coordinate half answers itself
     // from the granted geolocation above.

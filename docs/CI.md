@@ -11,7 +11,8 @@ every secret it needs. Sister documents:
 
 ## 1. The pipeline
 
-Three workflows, chained. One push to `main` walks the whole chain.
+Three workflows chained into a deploy pipeline, **plus one that is deliberately not in the chain.**
+One push to `main` walks the whole chain.
 
 ```mermaid
 flowchart LR
@@ -19,13 +20,24 @@ flowchart LR
     B -->|workflow_run:<br/>success only| F["<b>deploy-frontend.yml</b><br/>Deploy frontend to Vercel"]
     F -->|workflow_run:<br/>any outcome| A["<b>android-build.yml</b><br/>Android build"]
     A --> R([app-debug.apk artifact])
+    P -.->|starts alongside,<br/>NOT in front of| C["<b>checks.yml</b><br/>Backend tests · Web typecheck,<br/>lint and unit specs · Docs check"]
+    PR([pull request]) --> C
 ```
+
+**The dotted arrow is the important one.** `checks.yml` also fires on `push: main`, but a GitHub
+workflow cannot `needs:` a job in another workflow file, so on `main` it RACES the deploy rather than
+blocking it: a commit that breaks the backend suite still ships. The only thing that makes Checks a
+real gate is adding its three job names as **required status checks** in branch protection, which is
+repository configuration and exists nowhere in this repository. Until somebody does that, treat the
+three as advisory on `main` and as a genuine gate on a pull request, where a human reads the red tick
+before pressing merge. §5 carries the same warning at the point a reader is deciding what to trust.
 
 | # | Workflow | File | Trigger | What it does |
 |---|---|---|---|---|
 | 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | rsync → write `.env` → `prisma migrate deploy` → restart `fieldrepo` + `fieldrepo-queue` → poll `/health` |
 | 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | `vercel pull` → **assert the pulled env carries what the app needs** → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 17 → `compileDebugKotlin` → `testDebugUnitTest` → `lintDebug` (advisory) → `assembleDebug` → upload APK |
+| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Three independent jobs: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). Chained to nothing in either direction. |
 
 There is also `.github/workflows/keep-supabase-active.yml` — an unrelated nightly cron that pings
 Postgres so Supabase does not pause the free-tier project.
@@ -59,14 +71,20 @@ triggered and the frontend would never ship. Instead, stage 1's `changes` job di
 publishes the result as the `pipeline-changes` artifact, and stages 1 and 2 skip their own work when
 their area is untouched.
 
-| Push touches | 1 · backend deploy | 2 · frontend deploy | 3 · Android build |
-|---|---|---|---|
-| `backend/**` only | **runs** | skipped (nothing to publish) | runs |
-| `frontend/**` only | skipped (run still succeeds) | **runs** | runs |
-| `android/**` only | skipped | skipped | **runs** |
-| several areas | **runs** | **runs**, after 1 is green | runs |
-| docs only | skipped | skipped | runs |
-| backend deploy **fails** | ❌ red | **refuses to deploy**, says why in the summary | still runs |
+| Push touches | 1 · backend deploy | 2 · frontend deploy | 3 · Android build | — · Checks |
+|---|---|---|---|---|
+| `backend/**` only | **runs** | skipped (nothing to publish) | runs | **runs** |
+| `frontend/**` only | skipped (run still succeeds) | **runs** | runs | **runs** |
+| `android/**` only | skipped | skipped | **runs** | **runs** |
+| several areas | **runs** | **runs**, after 1 is green | runs | **runs** |
+| docs only | skipped | skipped | runs | **runs** |
+| backend deploy **fails** | ❌ red | **refuses to deploy**, says why in the summary | still runs | unaffected — it is not in the chain |
+
+The Checks column has no "skipped" cell and that is the design: it has no `paths:` filter, because a
+filter is exactly how `android-build.yml` ended up unreachable from a backend pull request. It also
+runs on **pull requests**, which none of the three deploy stages do — that is the gap it was written
+for. **Its result does not hold any of the other three back**; see the note under the pipeline
+diagram.
 
 Anything the diff cannot be computed for — manual dispatch, the first push of a branch, a force-push
 that orphaned the previous head — is treated as "everything changed". The pipeline over-deploys
@@ -190,22 +208,42 @@ same value in two places. Change one there and re-run this workflow (or push) to
 | Build the APK now | Actions → *Android build* → **Run workflow**, or open a PR touching `android/**`. |
 | Re-deploy after changing a Vercel env var | Re-run *Deploy frontend to Vercel*. `NEXT_PUBLIC_*` values are baked at build time; changing them in the dashboard does nothing until something rebuilds. |
 | Get the APK | The run's **Artifacts** section → `app-debug-<sha>`. Debug-signed: sideload-only, and Android will refuse to install it over a release-signed build. |
+| Run the Checks suite now | Actions → *Checks* → **Run workflow**. Or locally, which is faster and is what the jobs run verbatim: `PYTHONUTF8=1 python -m pytest -q` from `backend/` (see [QA_AUDIT.md §5](QA_AUDIT.md) — an empty environment does **not** give you the pure core, it gives 70 collection errors); `npx tsc --noEmit && npx eslint . --max-warnings=0 && npm run test:unit` from `frontend/`; `node docs/tools/check-docs.mjs` from the repo root **on a clean tree**, since `REPO_FACTS.md`'s line counts are read off disk. |
 
 ---
 
 ## 5. Known limits, and things that are deliberately not gates
 
-- **The backend test suite is not a gate, and it should be.** `backend/tests/` holds a substantial
-  pure-Python suite (count in [REPO_FACTS.md](REPO_FACTS.md); **294 cases passing in 8.7 s**, measured
-  2026-07-27) with **no** database fixture, no test client and no secrets — `conftest.py` does
-  nothing but extend `sys.path`. Nothing in any workflow runs it, so a commit that breaks it deploys.
-  This is the cheapest real improvement available to this pipeline: a job running
-  `cd backend && python -m pytest -q`, which stage 1 `needs:`. It costs nine seconds and needs no
-  services.
-- **The Playwright suite is not a gate either.** `frontend/e2e/` holds real specs and
-  `frontend/scripts/pw-smoke.mjs` a login-and-visit smoke run. Neither is wired into a workflow. They
-  need a running app, so they are a genuinely larger job than the backend one — but "not wired up" is
-  the current state, not "not worth wiring up".
+- ~~**The backend test suite is not a gate, and it should be.**~~ **BUILT — 2026-08-20, and not in
+  the shape this bullet asked for.** `grep -rn pytest .github/workflows/*.yml` is no longer empty:
+  the `Backend tests` job in `checks.yml` runs the whole suite. The bullet asked for "a job running
+  `cd backend && python -m pytest -q` that stage 1 `needs:`", and a `needs:` inside
+  `deploy-backend.yml` was rejected on purpose — that workflow only fires on `push: main`, so the
+  job would never have run on a pull request, which is where the drift it guards against is
+  introduced. A separate workflow runs on both. **What the bullet asked for that is still NOT true:
+  it does not block the deploy.** `deploy-backend.yml` fires on `push: main` independently and
+  cannot `needs:` across a workflow file, so on `main` the two race; only branch protection makes it
+  a gate. See §1.
+  **The description of the SUITE in the previous version of this bullet was also wrong twice, and
+  both corrections are load-bearing.** It first described "294 cases passing in 8.7 s … with **no**
+  database fixture, no test client and no secrets" (true on 2026-07-27; `backend/tests/` has since
+  grown to the count in [REPO_FACTS.md](REPO_FACTS.md), and ~28 modules import
+  `fastapi.testclient.TestClient` and drive real routes against Postgres). It then said "a CI box
+  with no `DATABASE_URL` runs the pure core and skips the rest" — **MEASURED, it does not.**
+  `app.core.config.Settings` requires `DATABASE_URL`, `JWT_SECRET`, three AWS values and
+  `MASTER_ADMIN_EMAIL`, so an environment holding none of them fails to build `Settings` and gives
+  **70 collection ERRORS**, collecting 1244 of ~3230 tests — among the casualties
+  `test_reference_carry.py`, the entire carry-fidelity suite the workflow exists for. That is why
+  the job exports deliberately unusable placeholders including an `.invalid` DSN; the DSN, not the
+  absence of one, is what makes the ~28 modules skip. With them it is 2862 passed, 381 skipped, 0
+  failed, in four to five minutes. Standing up Postgres in that job would run the other ~28 as well
+  and is a second, larger decision — worth taking, but not this bullet's.
+- **The Playwright suite is HALF a gate — corrected 2026-08-20.** `checks.yml` runs
+  `npm run test:unit`, the `*-unit.spec.ts` selection: pure-function specs, no dev server, no
+  browser download, 536 tests in about 31 s. **The specs that drive a screen are still gated by
+  nothing**, and neither is `frontend/scripts/pw-smoke.mjs`. Those need a running app and a
+  database, so they remain a genuinely larger job — but the cheap half is no longer an argument for
+  postponing it, because the cheap half is done.
 - **Android Lint is advisory.** `./gradlew :app:lintDebug` on the current tree reports
   *1 error, 44 warnings* and aborts. The error is pre-existing and unrelated to any code change:
   `AndroidManifest.xml:6 PermissionImpliesUnsupportedChromeOsHardware` — `CAMERA` is requested with
@@ -213,16 +251,23 @@ same value in two places. Change one there and re-run this workflow (or push) to
   Making lint a hard gate today would fail every run and train everyone to ignore red. The HTML/XML
   report is uploaded on every run. Fix the manifest (or commit a `lint-baseline.xml`), then delete
   `continue-on-error` from the lint step and it becomes a real gate.
-- **There are no Android tests.** `android/app/src` contains only `main/` — no unit or instrumented
-  source set. `:app:testDebugUnitTest` is wired in anyway and currently reports `NO-SOURCE`;
-  the step prints a warning so a green tick is never mistaken for "the tests passed". The first unit
-  test anyone adds is enforced the moment it lands, with no CI change. Instrumented tests are not
-  run at all — they need an emulator; add a separate job with an emulator action if that changes.
-- **No web typecheck/lint gate of its own.** `vercel build` runs `next build`, which fails on
-  TypeScript and ESLint errors, so a broken frontend cannot reach production — but the failure
-  surfaces as a build failure *after the backend has already deployed*. `frontend/package.json` has
-  both `typecheck` and `lint` scripts ready; add `npm ci && npm run typecheck && npm run lint` as a
-  separate job that stage 2 `needs:` to catch it before the backend moves.
+- ~~**There are no Android tests.**~~ **The Android unit suite is a REAL GATE — corrected
+  2026-08-19, and this is the one bullet in §5 that had inverted.** `android/app/src` no longer
+  contains only `main/`: there is a unit source set and an instrumented one, with the counts in
+  [REPO_FACTS.md](REPO_FACTS.md), which also records that the generated table itself once asserted
+  this absence and had never looked. The **Unit tests** step in `android-build.yml` branches on
+  whether `app/src/test` holds sources — it now takes the "running them for real" branch, and it
+  carries no `continue-on-error`, so a failing Kotlin test fails the workflow. **The step's own
+  comment still describes the NO-SOURCE case as the current state** and needs the same correction;
+  it belongs to the Android workstream, not to this document. Instrumented tests are still not run —
+  they need an emulator; add a separate job with an emulator action rather than bolting one onto
+  this build, which is what that step's comment says and is still right.
+- ~~**No web typecheck/lint gate of its own.**~~ **BUILT — 2026-08-20.** The `Web typecheck, lint and
+  unit specs` job runs `npx tsc --noEmit` and `npx eslint . --max-warnings=0` on every pull request,
+  so the answer arrives before the merge rather than as a `next build` failure after the backend has
+  already deployed. `--max-warnings=0` is deliberate: this config's warnings are the accessibility
+  and hook rules, and a warning nobody fails on is a warning nobody reads. Same caveat as the backend
+  bullet — on `main` it does not hold the deploy back; only branch protection would.
 - **Don't chain a fourth stage.** GitHub caps how deep `workflow_run` chains can go (documented at
   three levels); this pipeline already uses two hops. A fourth stage should be a job with `needs:`
   inside an existing workflow, not another `workflow_run` link.
@@ -300,16 +345,17 @@ pointed at the `/api` form is measuring a 404, not the service.
 
 ## How this document is kept true
 
-Everything here describes four YAML files, so almost all of it is mechanically checkable — and the
+Everything here describes five YAML files, so almost all of it is mechanically checkable — and the
 parts that are not are exactly the parts that were wrong before.
 
 | Claim class | Kept true by |
 |---|---|
 | The three workflows, their triggers and their step order | `.github/workflows/*.yml`. `grep -n "^name:\|^on:\|    - name:" .github/workflows/deploy-frontend.yml` renders the shape of a workflow in one command. |
+| **"Runs" versus "gates"** | **Not checkable from a checkout, which is why §1 and §5 now say it in words rather than leaving it implied.** A workflow file proves a job RUNS; nothing in `.github/` proves it BLOCKS anything, because required status checks live in the repository's branch-protection settings (`gh api repos/:owner/:repo/branches/main/protection`, or the Settings page). `checks.yml` landed on 2026-08-20 with a long header about what it stops and no sentence about what it does not, and a reader who takes a green Checks tick as protection for `main` is wrong today. Whenever a bullet in §5 moves from "not a gate" to built, say which of the two it became. |
 | The secrets **table** (names and purposes) | `grep -ho 'secrets\.[A-Z_]*' .github/workflows/*.yml \| sort -u` lists every secret the workflows read. Anything in that output missing from §2 is undocumented. |
 | Which secrets **exist** | **Not checkable from a checkout, and deliberately not stated.** `gh secret list`, or the Actions settings page. A previous version asserted an inventory here and it went stale within days. |
-| The §5 non-gates | The absence of a job. A row leaves that list when a workflow gains the step — so re-read §5 against the workflow files, not against memory. |
-| The measured pytest figure in §5 | Dated. Re-run `cd backend && python -m pytest -q` and re-date it, or delete it. |
+| The §5 non-gates | The absence of a job. A row leaves that list when a workflow gains the step — so re-read §5 against the workflow files, not against memory. **This row is not enough on its own and 2026-08-19 proved it:** the Android bullet went stale not because a workflow changed but because the *tree* did — the step was already there, branching on whether `app/src/test` had sources, and the sources arrived. A non-gate bullet that describes the CODE as well as the workflow has two ways to rot, and only one of them is visible in `.github/`. |
+| The measured pytest figure in §5 | **There is no longer a figure to re-date, on purpose.** It said "294 cases passing in 8.7 s" for three weeks after the suite had roughly septupled and grown ~28 `TestClient` modules, and a stale number quoted as the cost of a proposed CI job is worse than no number. §5 points at [REPO_FACTS.md](REPO_FACTS.md), which is generated. If you put a timing back, date it and say which `DATABASE_URL` it ran with — the same command takes seconds with the database modules skipping and minutes with them running. |
 | Vercel project settings (Root Directory, Git link, `createDeployments`) | **UNVERIFIED from here** — dashboard state. §3 and §6 say what they must be; the workflow's own "Assert the project is still rooted at frontend/" step is the only thing that actually checks one of them, and it checks it at deploy time. |
 
 **Review triggers:** any change under `.github/workflows/`, `frontend/vercel.json`, or

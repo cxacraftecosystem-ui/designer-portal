@@ -66,6 +66,8 @@ import {
   type FieldErrors,
   type ServerHeldRows
 } from "@/components/designworkshop/EntityForm";
+import { LinkedWorkshopProvider } from "@/components/designworkshop/LinkedWorkshop";
+import { COSTING_STAGE, CostFindingsPanel } from "@/components/designworkshop/CostFindingsPanel";
 import { ANALYSIS_STAGE, MarketFindingsPanel } from "@/components/designworkshop/MarketFindingsPanel";
 import {
   EMPTY_RECORDING_PLACE,
@@ -306,6 +308,19 @@ function DesignWorkshopStagePageBody({
    * a browser that has not saved yet has no evidence of drift and must not claim any.
    */
   const [heldCustomVersion, setHeldCustomVersion] = useState("");
+  /**
+   * The `Workshop` RECORD this design workshop is linked to — not this page's own `id`.
+   *
+   * Read off the DRAFT's header rather than fetched, so it is answerable in a courtyard with no
+   * signal, which is where inline record creation is used. Null is a real answer (an unlinked
+   * design workshop) and the one consumer, {@link LinkedWorkshopProvider}, treats it as one.
+   *
+   * What it is for: a reference picker that creates a repository record inline hands it to the form,
+   * so the artisan or product is filed against the sitting it was documented at. Five REF fields are
+   * WORKSHOP-scoped and the server narrows them on exactly this column — without it, a record made
+   * from one of those pickers is invisible in the picker that made it. See `LinkedWorkshop`.
+   */
+  const [linkedWorkshopId, setLinkedWorkshopId] = useState<string | null>(null);
   const [serverCustomVersion, setServerCustomVersion] = useState<string | null>(null);
   /**
    * Custom keys the server's definition did not carry, with a sentence of their own.
@@ -569,6 +584,8 @@ function DesignWorkshopStagePageBody({
           would put a second round trip in front of every stage open on the fleet, including the twenty-two
           stages of every workshop that has no custom questions at all — which is nearly all of them.
         */
+        // The linked Workshop, for the reference pickers' inline creates — see the state's own note.
+        setLinkedWorkshopId(draft.header.workshopId ?? null);
         setHeldCustomVersion(draft.customSchemaVersion ?? "");
         setCustomSections(sectionsForStage(draft.customDefinition ?? null, stageKey));
         setCustomSource(draft.customDefinition ? "cache" : "unknown");
@@ -1750,6 +1767,40 @@ function DesignWorkshopStagePageBody({
             <MarketFindingsPanel workshopId={id} collections={collections} />
           ) : null}
 
+          {/*
+            THE SAME INSTRUMENT ON STAGE 17, AND THE HANDSET HAS HAD IT ALL ALONG.
+
+            `cost_integrity.py` adds up the material and labour lines under each cost sheet and holds
+            them against the subtotals typed into the header, and `DwFindingsPanel.kt` prints the
+            result on every handset. The browser had no port and no panel, so a designer typing a
+            material subtotal of ₹1,560 with lines that come to ₹1,650 was warned on a phone and not
+            on a laptop — about the same workshop, on the figure the report prints into a document
+            submitted to a Development Commissioner's office.
+
+            BEFORE the entity forms, for the same reason the market panel is: what it says qualifies
+            the figures the designer is about to type, and below four collection tables it would be
+            scrolled past.
+
+            It reads `collections` and never writes it. There is no control on it that fills a field
+            in and it takes no callback that could — a subtotal decided in the room stays exactly as
+            it was typed, and the arithmetic is shown beside it.
+          */}
+          {stageKey === COSTING_STAGE ? (
+            <CostFindingsPanel workshopId={id} collections={collections} />
+          ) : null}
+
+          {/*
+            THE LINKED WORKSHOP, PUT WITHIN REACH OF THE REFERENCE PICKERS FIVE LEVELS DOWN.
+
+            A picker that creates a repository record inline seeds the form with the sitting it was
+            documented at, so the record lands inside the very list it was created from — see
+            `LinkedWorkshop` for why that is a correctness rule for the five WORKSHOP-scoped REF
+            fields and not a convenience. It is a context rather than a prop because every component
+            between here and `StageReferenceSelect` already takes a `workshopId` meaning THIS page's
+            design-workshop id, and threading a second id of the same name through the same four
+            signatures is how the two come to be swapped.
+          */}
+          <LinkedWorkshopProvider workshopId={linkedWorkshopId}>
           {stage.entities.map((entity) => (
             <Fragment key={entity.key}>
               {entity.key === customBeforeKey ? customBlock : null}
@@ -1805,8 +1856,10 @@ function DesignWorkshopStagePageBody({
             </Fragment>
           ))}
           {/* A stage that declares nothing at all still has to be able to ask a designer's own
-              questions — there is no entity to hang the block off, so it stands alone. */}
+              questions — there is no entity to hang the block off, so it stands alone. Inside the
+              provider with the rest: a designer's own question can be a REF field too. */}
           {customAfterKey === null && customBeforeKey === null ? customBlock : null}
+          </LinkedWorkshopProvider>
 
           <section className="panel grid gap-3 p-4">
             {completeness ? (

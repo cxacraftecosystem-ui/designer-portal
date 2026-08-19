@@ -44,7 +44,27 @@ data class PendingMedia(
     // Override the link target type (e.g. "processstep" for a process step's media). Null = the entry's
     // own type. `stepIndex` (process only) selects which created step's server id to attach to on sync.
     val linkedType: String? = null,
-    val stepIndex: Int? = null
+    val stepIndex: Int? = null,
+    /**
+     * WHAT THIS FILE IS FOR, where it is not just another photograph of the record — today only
+     * [MEASUREMENT_GRID_PURPOSE]. Sent as `extraMetadata.purpose` by [WorkshopRepository.uploadLocalFile].
+     *
+     * IT HAS TO SURVIVE THE OUTBOX, and for a while it did not. The marker is written by the form's
+     * grid section into `MediaCaptureState.purposes` and read by `uploadAttachments` — which is the
+     * ONLINE path. A new product or tool saved with no signal goes through `trySaveOffline` ->
+     * `queueOffline` instead and never reaches that function, so the grid shot was staged here
+     * unmarked and uploaded unmarked on reconnect. Offline is this app's primary field path: the
+     * designer measuring an object on graph paper is standing in a cluster with no bars, which is the
+     * exact case the marker exists for. The .docx handed to a Development Commissioner's office went
+     * on printing a sheet of ruled paper captioned as the tool, and neither of the server's
+     * transitional clauses covers this path — [uploadLocalFile] builds its own `mediaFilename(...)`
+     * (never `grid-`/`measure-grid-`) and the caption it carries is "Field media for X".
+     *
+     * DEFAULTED, so an entry queued by an older build still decodes — the same reason every field in
+     * [PendingEntry]'s replay-progress block is defaulted, and it matters for the same reason: the
+     * queue on a device that has been offline for a fortnight predates the build that reads it.
+     */
+    val purpose: String? = null
 )
 
 /** One queued create: the record type, its serialized create request, and the media to attach after. */
@@ -106,7 +126,9 @@ data class OfflineMediaSpec(
     val stageStep: Int? = null,
     val processing: List<String>? = null,
     val linkedType: String? = null,
-    val stepIndex: Int? = null
+    val stepIndex: Int? = null,
+    /** See [PendingMedia.purpose]; a form builds this from its `MediaCaptureState.purposes` map. */
+    val purpose: String? = null
 )
 
 /** Live connectivity check (validated internet, not just an attached interface). */
@@ -303,7 +325,8 @@ object OfflineOutbox {
         processing: List<String>?,
         stageStep: Int? = null,
         linkedType: String? = null,
-        stepIndex: Int? = null
+        stepIndex: Int? = null,
+        purpose: String? = null
     ): PendingMedia {
         val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
         val originalName = displayName(context, uri) ?: "field-media-${System.currentTimeMillis()}"
@@ -325,7 +348,8 @@ object OfflineOutbox {
             stageStep = stageStep,
             processing = processing,
             linkedType = linkedType,
-            stepIndex = stepIndex
+            stepIndex = stepIndex,
+            purpose = purpose
         )
     }
 

@@ -19,6 +19,7 @@ import com.designprototype.workshop.report.ParagraphBlock
 import com.designprototype.workshop.report.ReportDocument
 import com.designprototype.workshop.report.Run
 import com.designprototype.workshop.report.TableBlock
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -70,8 +71,21 @@ class ReportEntityParityTest {
     private fun imageField(key: String, label: String) =
         FieldDto(key = key, label = label, type = "IMAGE", reportRole = "MEDIA")
 
-    private fun refField(key: String, label: String, model: String, role: String = "KEY_VALUE") =
-        FieldDto(key = key, label = label, type = "REF", refModel = model, reportRole = role)
+    private fun refField(
+        key: String,
+        label: String,
+        model: String,
+        role: String = "KEY_VALUE",
+        /** The server's own `REFERENCE_HYDRATION` for this field, as `field_to_dict` publishes it. */
+        hydration: Map<String, String> = emptyMap(),
+    ) = FieldDto(
+        key = key, label = label, type = "REF", refModel = model, reportRole = role,
+        refHydration = hydration,
+    )
+
+    /** A FILE / AUDIO / VIDEO field - the three media types with no picture path. */
+    private fun attachmentField(key: String, label: String, type: String, required: Boolean = false) =
+        FieldDto(key = key, label = label, type = type, reportRole = "KEY_VALUE", required = required)
 
     private fun metricField(key: String, label: String, unit: String = "") =
         FieldDto(key = key, label = label, type = "INT", reportRole = "METRIC", unit = unit)
@@ -528,8 +542,14 @@ class ReportEntityParityTest {
           leftovers by the role test, so it was dropped from the document entirely: not a layout
           difference, a silent loss of a field somebody filled in.
 
-          Note the deliberate divergence recorded in `renderCollection`: the server would make this a
-          table column and print a media id through `format_value`. Here it prints as a picture.
+          Note the deliberate divergence recorded in `renderCollection`, and note that its REASON has
+          changed: `_table_columns` applies no media filter, so the server would make this a table
+          column — but `format_value` no longer prints a media id into it, it prints "" for a picture
+          and a count-and-noun for FILE/AUDIO/VIDEO. So what remains is a SHAPE difference (a blank
+          column at the office, no column here) rather than a raw id kept off paper. It stands
+          because no such field exists in the registry and because adding one to `columns` would move
+          every width in that table, which `test_the_tables_whose_declared_widths_govern_still_do`
+          pins deliberately.
         */
         val schema = schemaOf(
             StageDto(
@@ -729,7 +749,263 @@ class ReportEntityParityTest {
         )
     }
 
-    // ── The whole point, said once ───────────────────────────────────────────────────────────────
+
+    // -- 6. The media split: three types that print a sentence, two that print a plate -----------
+
+    /**
+     * `format_value`'s MEDIA BRANCH, which this file compensated for by dropping media entirely.
+     *
+     * `_images` places IMAGE and IMAGE_LIST and nothing else, so the registry's eight FILE, five
+     * AUDIO and four VIDEO fields had NO path to paper at all until the server grew a count and a
+     * noun for them. A designer attached the ministry's sanction order at stage 1 and the .docx the
+     * officer received did not mention that a sanction order existed - while the tier warning named
+     * the field as one to "generate the report with a template that captures every tier to include",
+     * which no template could do. `renderEntity`'s `printable` walk skipped every media-typed field
+     * under a comment asserting the server did the same; it never did.
+     *
+     * The nouns are asserted by value because they are `format_value`'s exact words. A different
+     * word here is a different sentence in one of the two copies of one workshop's report.
+     */
+    @Test
+    fun `a document, a recording and a video print a count and a noun where a photograph prints neither`() {
+        val schema = schemaOf(
+            StageDto(
+                number = 1, key = "WORKSHOP_SETUP", title = "Setup",
+                entities = listOf(
+                    EntityDto(
+                        key = "setup", cardinality = "SINGLETON", title = "Setup",
+                        fields = listOf(
+                            attachmentField("sanctionOrder", "Sanction order", "FILE"),
+                            attachmentField("interviewClips", "Interview recordings", "AUDIO"),
+                            attachmentField("processClip", "Process video", "VIDEO"),
+                            attachmentField("consentForm", "Consent form", "FILE", required = true),
+                            imageField("venuePhoto", "Venue photograph"),
+                        ),
+                    )
+                )
+            )
+        )
+        val document = build(
+            schema,
+            draftOf(
+                "WORKSHOP_SETUP",
+                values = mapOf(
+                    "sanctionOrder" to JsonPrimitive("media-file-1"),
+                    "interviewClips" to JsonArray(
+                        listOf(JsonPrimitive("media-audio-1"), JsonPrimitive("media-audio-2"))
+                    ),
+                    "processClip" to JsonPrimitive("media-video-1"),
+                    "venuePhoto" to JsonPrimitive("media-photo-1"),
+                ),
+            ),
+            imageFor = everyImageResolves,
+        )
+        val printed = printedText(document)
+
+        assertTrue("the sanction order is unmentioned:\n" + printed, printed.contains("Sanction order: 1 document attached"))
+        assertTrue("the plural noun:\n" + printed, printed.contains("Interview recordings: 2 recordings attached"))
+        assertTrue("VIDEO has its own noun:\n" + printed, printed.contains("Process video: 1 video attached"))
+
+        // NOT A FILENAME AND NEVER AN ID. The stored value is a media id and neither builder may
+        // query for the name the designer uploaded - this one has no network when it matters.
+        assertFalse("a media id must not reach paper:\n" + printed, printed.contains("media-file-1"))
+        assertFalse(printed.contains("media-audio-1"))
+
+        // A PICTURE STILL SAYS NOTHING IN THE GRID; it is placed as a plate by `imagesOf`, and it
+        // must still BE placed - the split must not have made a photograph silent everywhere.
+        assertFalse("a photograph must not print as text:\n" + printed, printed.contains("Venue photograph:"))
+        assertTrue(
+            "the photograph must still be placed: " + shape(document),
+            document.blocks.any { it is ImageBlock || it is ImageGridBlock },
+        )
+
+        // AND A REQUIRED ATTACHMENT THAT WAS NEVER MADE IS SAID, exactly as `_printable` says it for
+        // every other role. This is the substitution the old `isMedia` skip put out of reach.
+        assertTrue("an unattached required document must be reported:\n" + printed, printed.contains("Consent form: Not recorded."))
+    }
+
+    /**
+     * A DOCUMENT IS NOT OFFERED TO THE IMAGE RESOLVER AS THOUGH IT WERE A PHOTOGRAPH.
+     *
+     * `_images` filters on IMAGE and IMAGE_LIST; `imagesOf` asked `isMedia`, so a FILE's media id was
+     * handed to `imageFor` and - in the app, where that resolver reads the downloaded media cache
+     * rather than returning null - a PDF would have been drawn as a plate with the field's label
+     * under it. Nothing in the file would have said the plate was a sanction order.
+     */
+    @Test
+    fun `an attached document is never placed as a plate`() {
+        val schema = schemaOf(
+            StageDto(
+                number = 1, key = "WORKSHOP_SETUP", title = "Setup",
+                entities = listOf(
+                    EntityDto(
+                        key = "setup", cardinality = "SINGLETON", title = "Setup",
+                        fields = listOf(attachmentField("sanctionOrder", "Sanction order", "FILE")),
+                    )
+                )
+            )
+        )
+        val document = build(
+            schema,
+            draftOf("WORKSHOP_SETUP", values = mapOf("sanctionOrder" to JsonPrimitive("media-file-1"))),
+            imageFor = everyImageResolves,
+        )
+        assertTrue(
+            "a document was placed as a photograph: " + shape(document),
+            document.blocks.none { it is ImageBlock || it is ImageGridBlock },
+        )
+        assertTrue(printedText(document).contains("Sanction order: 1 document attached"))
+    }
+
+    // -- 7. A borrowed photograph is captioned from the frozen copy ------------------------------
+
+    /**
+     * `ReportBuilder._reference_caption` - THE ONE PLACE A SUBMITTED REPORT RE-RESOLVED A LIVE NAME.
+     *
+     * `imagesOf`'s reference pass captioned the borrowed plate with `DwRefLabels.label(refId)`, which
+     * resolves the referenced record AS IT STANDS TODAY. Hydration copied that record's name onto
+     * THIS row at save time and every other line on the page prints the frozen copy, so a record
+     * renamed after the workshop closed put both answers on one page: the sub-section reading
+     * "Sketch: SK-04" out of the frozen box, and directly beneath it the borrowed plate captioned
+     * "SK-04 - revised 2027".
+     *
+     * The mapping is asked and not guessed: `field_to_dict` publishes `REFERENCE_HYDRATION` per field
+     * as `refHydration`, which already says which box the name landed in.
+     */
+    @Test
+    fun `a borrowed photograph is captioned with the row's frozen name, not the live record`() {
+        val schema = schemaOf(
+            StageDto(
+                number = 11, key = "SKETCH_DEVELOPMENT", title = "Sketch development",
+                entities = listOf(
+                    EntityDto(
+                        key = "sketch", cardinality = "COLLECTION", title = "Sketch",
+                        labelField = "code",
+                        fields = listOf(textField("code", "Sketch code"), imageField("sketchImage", "Sketch")),
+                    )
+                )
+            ),
+            StageDto(
+                number = 13, key = "PROTOTYPE_DEVELOPMENT", title = "Prototype development",
+                entities = listOf(
+                    EntityDto(
+                        key = "prototype", cardinality = "COLLECTION", title = "Prototype",
+                        labelField = "code",
+                        fields = listOf(
+                            textField("code", "Code"),
+                            // The box hydration copied the sketch's name into, at save time.
+                            textField("sketchName", "Sketch"),
+                            refField("sketchRef", "Sketch", "DwSketch", hydration = mapOf("name" to "sketchName")),
+                        ),
+                    )
+                )
+            ),
+        )
+        val draft = WorkshopDraft(
+            workshopId = "local-test",
+            stages = mapOf(
+                "SKETCH_DEVELOPMENT" to StageDraft(
+                    stageId = "SKETCH_DEVELOPMENT",
+                    rows = listOf(
+                        DraftRow(
+                            id = "sketch#kzzq1p8n4m2wd7xr",
+                            values = mapOf(
+                                // RENAMED AFTER THE WORKSHOP CLOSED, which is the whole case.
+                                "code" to JsonPrimitive("SK-04 revised 2027"),
+                                "sketchImage" to JsonPrimitive("media-sketch-4"),
+                            ),
+                        )
+                    ),
+                ),
+                "PROTOTYPE_DEVELOPMENT" to StageDraft(
+                    stageId = "PROTOTYPE_DEVELOPMENT",
+                    rows = listOf(
+                        DraftRow(
+                            id = "prototype#row-1",
+                            values = mapOf(
+                                "code" to JsonPrimitive("PT-01"),
+                                "sketchName" to JsonPrimitive("SK-04"),
+                                "sketchRef" to JsonPrimitive("kzzq1p8n4m2wd7xr"),
+                            ),
+                        )
+                    ),
+                ),
+            ),
+        )
+
+        val borrowed = build(schema, draft, imageFor = everyImageResolves).blocks
+            .filterIsInstance<ImageBlock>()
+            .filter { it.image.source.endsWith("media-sketch-4") }
+        assertTrue("the borrowed plate is missing", borrowed.isNotEmpty())
+        assertTrue(
+            "the caption re-resolved the live record: " + borrowed.map { it.caption },
+            borrowed.any { it.caption == "SK-04" },
+        )
+        assertTrue(
+            "no plate may carry the renamed live label: " + borrowed.map { it.caption },
+            borrowed.none { it.caption == "SK-04 revised 2027" },
+        )
+    }
+
+    // -- 8. Only a stage singleton gets a metric row ---------------------------------------------
+
+    /**
+     * `_render_stage` IS THE ONLY RENDERER ON THE SERVER THAT BUILDS A `MetricRowBlock`.
+     *
+     * Neither `_render_cards` nor `_render_narrative` nor `_render_table`'s per-row block emits one,
+     * and `_render_narrative`'s pair roles are KEY_VALUE, COVER_FIELD and TABLE_COLUMN - METRIC is in
+     * none of them. So a METRIC field on a COLLECTION prints nowhere at the office, while
+     * `renderEntity` drew a band of big numbers for every row. Latent today (all four METRIC fields
+     * in the shipped registry are on singletons) and a structural divergence that would appear with
+     * no code change the day one is declared on a collection: different block heights, different page
+     * boundaries, one workshop, two files.
+     */
+    @Test
+    fun `a collection row gets no metric row, and a stage singleton still does`() {
+        val schema = schemaOf(
+            StageDto(
+                number = 17, key = "COST_INTEGRITY", title = "Costing",
+                entities = listOf(
+                    EntityDto(
+                        key = "costing", cardinality = "SINGLETON", title = "Costing",
+                        fields = listOf(metricField("sheets", "Cost sheets")),
+                    ),
+                    EntityDto(
+                        key = "costSheet", cardinality = "COLLECTION", title = "Cost sheet",
+                        labelField = "name",
+                        fields = listOf(textField("name", "Product"), metricField("units", "Units")),
+                    ),
+                )
+            )
+        )
+        val singletonOnly = build(
+            schema,
+            draftOf("COST_INTEGRITY", values = mapOf("sheets" to JsonPrimitive(4))),
+        )
+        assertTrue(
+            "the stage singleton must still get its metric row: " + shape(singletonOnly),
+            singletonOnly.blocks.any { it is MetricRowBlock },
+        )
+
+        val rowsOnly = build(
+            schema,
+            draftOf(
+                "COST_INTEGRITY",
+                rows = listOf(
+                    DraftRow(
+                        id = "costSheet#row-1",
+                        values = mapOf("name" to JsonPrimitive("Bandha runner"), "units" to JsonPrimitive(12)),
+                    )
+                ),
+            ),
+        )
+        assertTrue(
+            "a collection row must not grow a metric row: " + shape(rowsOnly),
+            rowsOnly.blocks.none { it is MetricRowBlock },
+        )
+    }
+
+    // -- The whole point, said once --------------------------------------------------------------
 
     @Test
     fun `no answer is lost by any of the five changes`() {

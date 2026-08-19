@@ -183,13 +183,39 @@ because an astral letter would otherwise read as two and slip past the floor; an
 `pyStr` exist so that `str(value or "")` means the same thing on both sides, including the case
 where `NaN` is truthy in Python and falsy in JavaScript.
 
-> **This parity is not proven by any test in this repository.** `backend/tests/test_market_analysis.py`
-> tests the Python. `frontend/e2e/market-findings-panel.spec.ts` proves the panel renders a finding
-> without touching the network. Neither compares the two implementations, and there is no equivalent
-> of `android/app/src/test/java/com/designprototype/workshop/data/ImageQualityParityTest.kt` — which
-> does pin a Kotlin port by value against its TypeScript original — for market analysis. The parity
-> is asserted by the comments and held by discipline. Treat it as **UNVERIFIED** and re-check it by
-> hand when either side changes.
+> **Half of this parity is now proven by value, and half of it still is not — corrected 2026-08-19,
+> because the paragraph that stood here said "not proven by any test in this repository" after the
+> test landed, and a reader acting on that sentence rebuilds a harness that already exists.**
+>
+> **KOTLIN ↔ PYTHON: PINNED.**
+> `android/app/src/test/java/com/designprototype/workshop/data/DwAnalysisParityTest.kt` is the
+> harness this paragraph said did not exist. One case table
+> (`android/app/src/test/resources/dw-analysis-cases.json`) is fed to
+> `backend/app/services/market_analysis.py` and `cost_integrity.py` verbatim, the payload Python
+> produced is frozen into `dw-analysis-expected.json`, and the test recomputes all 59 cases in
+> Kotlin and diffs the two documents leaf by leaf — naming the case, the JSON path and both values
+> when it fails. The cases were chosen at the seams listed in the table above rather than for
+> coverage: half-to-even, `\p{M}`, code-point ordering, `PY_FLOAT`'s grammar, `DwPy.strip` against
+> `trim()`. **The table is itself tested by mutation** — its header records how many leaves each
+> guard moves when broken (HALF_EVEN→HALF_UP moves 5, dropping `\p{M}` moves 4, `toDoubleOrNull`
+> moves 16, `trim()` moves 31) and records one case, `m28-python-whitespace-forms`, added because
+> `trim()` originally moved NOTHING. A guard nothing can break is a guard nobody can trust, and that
+> is what makes this a proof rather than a green tick. Two of the 59 are not synthetic at all:
+> `m27-live-workshop` and `k26-live-workshop` are a real 270-row workshop's stage-8/9/17 rows beside
+> what the live endpoints answered for them. The golden is a CACHE of the Python, not a second
+> opinion: if the two disagree the Python is right.
+>
+> **TYPESCRIPT ↔ PYTHON: STILL UNVERIFIED, and this is now the whole of the gap.** Nothing diffs
+> `frontend/lib/marketAnalysis.ts` against the Python by value. `backend/tests/test_market_analysis.py`
+> tests the Python; `frontend/e2e/market-findings-panel.spec.ts` proves the panel renders a finding
+> without touching the network; `frontend/e2e/market-analysis-sum-unit.spec.ts` pins exactly one
+> seam — `pySum`, the compensated summation CPython 3.12 does and a `for` loop does not — against
+> CPython's own output, using the same numbers the Kotlin side pins as `m29-mean-compensated-sum`.
+> That seam was found by a differential fuzz across the Kotlin and the Python, and then found here
+> by inspection, which is the shape of the risk: **the browser port is the one surface where a
+> divergence has to be noticed by a human.** The cheapest fix is to run `dw-analysis-cases.json`
+> through the TypeScript and diff it against `dw-analysis-expected.json`; the golden is already
+> language-neutral JSON.
 
 ---
 
@@ -301,26 +327,43 @@ rather than a wrong answer. The endpoint injects it explicitly and says why.
 
 ### 3.6 What is built and what is surfaced — read this before promising it to anyone
 
-*Checked 2026-08-08. Every row is one grep; re-run them rather than trusting the table.*
+*Re-checked 2026-08-20. Every row is one grep; re-run them rather than trusting the table.*
+
+*The 2026-08-08 version of this table said the Kotlin port was called by nothing and that "no
+designer sees a cost-integrity finding on any surface". Android has surfaced both ports since, and
+the sentence stood for eleven days — which is why the row below carries the caller's name and not
+just a yes.*
 
 | Piece | State |
 |---|---|
 | `backend/app/services/cost_integrity.py` | Complete, covered by `backend/tests/test_cost_integrity.py` |
-| `GET /design-workshops/{id}/cost-integrity` | Live, read-only, gated by `load_workshop_or_404` |
-| A TypeScript port | **Does not exist.** There is no cost-integrity module under `frontend/lib/` at all |
-| A web UI | **Does not exist.** Nothing in `frontend/` calls the endpoint or renders a cost finding |
-| `DwCostIntegrity.kt` | Present, and **referenced by no other Kotlin file** — nothing on the handset calls it |
+| `GET /design-workshops/{id}/cost-integrity` | Live, read-only, gated by `load_workshop_or_404`. **Consumed by the web panel as a FALLBACK only** — `CostFindingsPanel` calls `dwCostIntegrity(workshopId)` when this browser has never downloaded the stage collections; when it has, it computes locally, as Android does |
+| A TypeScript port | **BUILT — 2026-08-20.** `frontend/lib/costIntegrity.ts`, held equal to `backend/app/services/cost_integrity.py` case for case by `frontend/e2e/cost-integrity-port-unit.spec.ts` |
+| A web UI | **BUILT — 2026-08-20.** `frontend/components/designworkshop/CostFindingsPanel.tsx`, mounted from `frontend/app/(protected)/design-workshops/[id]/stages/[stageKey]/page.tsx` at `COSTING_STAGE`. Its header opens by stating the gap it closed, in the past tense ("the browser **had** NEITHER a port nor a panel … returned zero") — read that as the argument for the file, not as a live claim about the tree |
+| `DwCostIntegrity.kt` | **Surfaced.** `DwFindingsPanel.CostFindingsCard` calls `DwCostIntegrity.analyse`, and `DwFindingsPanel.DwStageFindings` is mounted by `StageScreen` on every stage form |
+| `DwMarketAnalysis.kt` | **Surfaced.** `DwFindingsPanel.MarketFindingsCard` calls `DwMarketAnalysis.analyse`, through the same `DwStageFindings` mount |
 
-So today **no designer sees a cost-integrity finding on any surface.** The capability is built and
-tested; it is not surfaced. That is worth stating plainly because the endpoint's own docstring
-currently claims the calculation "also runs in the browser and on the handset, so a designer with no
-signal gets the same warning", and at the time of writing that is not true of either client — see
-§7.
+~~So today a designer sees a cost-integrity finding **on Android … and nowhere in a browser.** The web
+is the half that is still missing, and it is missing entirely: no port, no panel, no call to the
+endpoint.~~ **Closed 2026-08-20, and struck rather than deleted because it was quoted onward — into
+§4's re-run greps below and into the `workshop_cost_integrity` docstring.** A designer now sees the
+cost findings beside the costing stage in the browser as well, from `CostFindingsPanel` over the
+TypeScript port, with the endpoint as the fallback for a browser that holds no collections. **What
+the paragraph said about the ENDPOINT is still the interesting part and is unchanged**: neither
+surface asks the server for the answer when it can compute it, so the endpoint remains a fallback
+rather than the source of truth — which is why the port has to be held equal to the Python by a test
+rather than by trust.
 
-Market analysis is the opposite case and the contrast is instructive: it is surfaced on the web
+`DwStageFindings` dispatches on the stage key, so the two cards reach the designer standing in the
+courtyard with the radio off, which is the arrangement §1 says the whole exercise is for. Nothing it
+renders is written back — `DwFindingsPanel`'s own header states why, and `DwFindingsSurfaceTest`
+pins every registry key it reads against the bundled registry, so a renamed field key fails a test
+rather than silently emptying a card.
+
+Market analysis is no longer the contrasting case it was: it is surfaced on the web
 (`MarketFindingsPanel`, mounted on stage 9 in
-`frontend/app/(protected)/design-workshops/[id]/stages/[stageKey]/page.tsx`) and **not** on Android,
-where `DwMarketAnalysis.kt` is likewise referenced by nothing.
+`frontend/app/(protected)/design-workshops/[id]/stages/[stageKey]/page.tsx`) **and** on Android. The
+asymmetry that remains runs the other way — cost integrity is Android-only.
 
 ---
 
@@ -418,18 +461,27 @@ Two differences between them are deliberate and easy to miss when copying one to
 
 Found while writing this document, left **unchanged** because in each case the right fix is a
 judgement about the code rather than about the prose. Each is a one-line edit for whoever owns the
-module.
+module. *Re-checked 2026-08-19; the Status column is that recheck.*
 
-| Where | Says | Actually |
-|---|---|---|
-| `cost_integrity.py` module docstring, and the comment in `analyse_cost_integrity` | `report_builder._child_groups` | The method is `_parent_groups`. `_child_groups` exists nowhere in the repository |
-| `report_builder._parent_groups` docstring | "`cost_integrity.summarise_sheets` guards the identical join" | There is no `summarise_sheets`. The join is in `analyse_cost_integrity` |
-| `workshop_cost_integrity` docstring in `backend/app/api/routes/design_workshops.py` | "the calculation is pure and **also runs in the browser and on the handset**, so a designer with no signal gets the same warning" | No browser port exists; the Kotlin port exists but nothing calls it. §3.6 |
-| `frontend/lib/designWorkshopViewers.ts` header | "A design workshop is **currently** visible to exactly ONE account", and describes the viewer routes as "being built in parallel with this screen" | `load_workshop_or_404` has consulted `has_viewer_grant` since the grant landed, and all three routes exist |
+| Where | Says | Actually | Status |
+|---|---|---|---|
+| ~~`cost_integrity.py` module docstring, and the comment in `analyse_cost_integrity`~~ | ~~`report_builder._child_groups`~~ | The method is `_parent_groups` | **CLOSED.** Both now cite `report_builder._parent_groups`; `grep -rn "_child_groups" backend/` is empty |
+| `backend/tests/test_report_child_grouping.py`, the docstring on `test_a_sheet_that_has_not_synced_yet_claims_none_of_the_orphans` | "`cost_integrity.summarise_sheets` guards the identical join" | There is no `summarise_sheets`. The join is in `analyse_cost_integrity` | **OPEN**, and it MOVED: `report_builder._parent_groups` was fixed and the test that repeats the same citation was missed. This one line is why §7's closure grep can never come back empty |
+| `workshop_cost_integrity` docstring in `backend/app/api/routes/design_workshops.py` | *now the opposite*: "a Kotlin `DwCostIntegrity` exists that nothing calls. **So no designer sees a cost-integrity finding on any surface today**", ending "Delete this paragraph when the ports and a panel land, not before" | The Kotlin port IS called — `DwFindingsPanel.CostFindingsCard`, mounted through `DwStageFindings` in `StageScreen`. **The browser half stopped being true on 2026-08-20**: `CostFindingsPanel` renders the findings over `lib/costIntegrity.ts` at the costing stage. §3.6 | **OPEN, wholly stale, and now safe to close.** The row used to record the docstring over-claiming ("also runs in the browser and on the handset"); somebody corrected it past true, and its closing instruction — "Delete this paragraph when the ports and a panel land, not before" — has been met on both surfaces. **The paragraph is in `backend/app/api/routes/design_workshops.py`, which this document does not own**: delete it there, then delete this row |
+| `frontend/lib/designWorkshopViewers.ts` header | "A design workshop is **currently** visible to exactly ONE account", and describes the viewer routes as "being built in parallel with this screen" | `load_workshop_or_404` has consulted `has_viewer_grant` since the grant landed, and all three routes exist | **OPEN.** The quoted `createdById != user.id and not admin` two-liner no longer exists in `design_workshops.py`; the live condition also consults `has_viewer_grant` |
 
-The first two are the same mistake in both directions — two modules citing each other by a symbol
+Rows 1 and 2 were the same mistake in both directions — two modules citing each other by a symbol
 neither has — and they matter more than they look, because both comments exist precisely to tell a
-future reader that the two joins must stay in step.
+future reader that the two joins must stay in step. **Fixing one side and not the other, which is
+what happened here, is the worst of the three outcomes:** a maintainer who greps for
+`summarise_sheets` now finds only the test, concludes the sibling guard was deleted, and edits one
+side of a join whose disagreement prints a fabricated material-cost breakdown under the wrong
+product.
+
+Row 3 is the pattern worth naming on its own. A docstring that ends "delete this paragraph when X
+lands, not before" is an instruction the next reader obeys — so when X lands and nobody deletes it,
+the sentence is not merely stale, it is armed. Prefer "true as of «date»; check `«grep»`" over an
+instruction that only a person who already knows the answer can act on.
 
 ---
 
@@ -438,19 +490,26 @@ future reader that the two joins must stay in step.
 | Claim class | Kept true by |
 |---|---|
 | The floors, the tolerance and the verdict vocabularies | They are module-scope constants and docstrings: `MIN_SAMPLE_FOR_QUANTILES`, `MIN_SAMPLE_FOR_VERDICT`, `NARROW_COVERAGE` in `backend/app/services/market_analysis.py`; `TOLERANCE_RUPEES`, `MARGIN_TOLERANCE_POINTS`, `COST_HEADS` in `backend/app/services/cost_integrity.py`. Each table above should be diffable against the dataclass docstring that defines it in one read. |
-| The port-parity rules (§2.7) | Nothing mechanical. `backend/tests/test_market_analysis.py` covers the Python only; there is no cross-language test. The rules are pinned in the ports' own file headers, and the honest status is **UNVERIFIED** — re-derive it by running the same input through both when either changes. |
+| The port-parity rules (§2.7) | **Kotlin ↔ Python is mechanical now:** `android/app/src/test/java/com/designprototype/workshop/data/DwAnalysisParityTest.kt` diffs 59 cases against a golden frozen from the two backend modules, and `DwOverflowParityTest.kt` covers the overflow edges. Regenerate the golden from the backend when either side changes; the Python is the authority. **TypeScript ↔ Python is not:** only `pySum` is pinned, by `frontend/e2e/market-analysis-sum-unit.spec.ts`. That is the honest remaining **UNVERIFIED**, and this row said "there is no cross-language test" for eleven days after one landed. |
 | "Nothing is ever written back" | Structural, and therefore the easiest claim here to keep: both services are pure functions over dicts and both endpoints are `GET`. A `PUT`, a `db.` call or a returned form value in either module falsifies §1 and §3.4 at once. |
-| Which surfaces actually render a finding (§3.6) | `grep -rn "cost-integrity" frontend/` and `grep -rn "DwCostIntegrity" android/app/src/main` are the whole check, and both should stay empty of call sites until somebody builds the UI. The same greps for `market-analysis` / `DwMarketAnalysis` currently return the web panel and nothing on Android. |
-| §7's contradictions | They close when the cited symbols are corrected. Re-run `grep -rn "_child_groups\|summarise_sheets" backend/` — an empty result means somebody fixed them and §7's first two rows should go. |
+| Which surfaces actually render a finding (§3.6) | Four greps, and **the expected answer is different for each — none of the four is "empty" any more, and this row has now been wrong in both directions.** It first said "both should stay empty", which read a shipped Android panel as unwanted wiring; it was then corrected to say the frontend pair "is expected to stay EMPTY until somebody builds the web panel", and the web panel landed on 2026-08-20, so that half inverted too. Current expectations: `grep -rn "DwCostIntegrity\|DwMarketAnalysis" android/app/src/main` returns `ui/designworkshop/DwFindingsPanel.kt`; `grep -rn "cost-integrity\|costIntegrity" frontend/` returns `lib/costIntegrity.ts`, `components/designworkshop/CostFindingsPanel.tsx`, the `stages/[stageKey]/page.tsx` mount and `e2e/cost-integrity-port-unit.spec.ts`; `grep -rn "marketAnalysis" frontend/` returns `MarketFindingsPanel`. **For all four, DISAPPEARANCE is the alarm, not presence** — which is the shape this row should have had from the start, and is why it is written as "returns X" rather than as a yes/no. |
+| §7's contradictions | They close when the cited symbols are corrected, and the Status column records which are still open. Re-run `grep -rn "_child_groups\|summarise_sheets" backend/`: `_child_groups` is now empty (row 1 closed), and `summarise_sheets` returns exactly one line, in `backend/tests/test_report_child_grouping.py`. When that line names `analyse_cost_integrity` the grep goes empty and rows 1 and 2 should both go. |
 
 **Review triggers:** any change to `backend/app/services/market_analysis.py`,
 `backend/app/services/cost_integrity.py`, `frontend/lib/marketAnalysis.ts`,
 `frontend/components/designworkshop/MarketFindingsPanel.tsx`, the two Kotlin ports under
-`android/app/src/main/java/com/designprototype/workshop/data/`, or the stage-8/9/17 entity
-declarations in `backend/app/services/stage_definitions.py` — a renamed field key silently empties
-an analysis rather than failing it.
+`android/app/src/main/java/com/designprototype/workshop/data/`, the Android panel
+`android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwFindingsPanel.kt`, or the
+stage-8/9/17 entity declarations in `backend/app/services/stage_definitions.py` — a renamed field key
+silently empties an analysis rather than failing it.
 
-**Known unverified:** the three-way parity of the market analysis (§2.7). Whether `DwMarketAnalysis.kt`
-and `DwCostIntegrity.kt` are faithful ports at all — they compile and they are unreferenced, so
-neither a test nor a running screen has ever exercised them. The wording of every message quoted
-here is the Python's; the ports reproduce those sentences by hand and no test compares them.
+**Known unverified:** the TypeScript half of the market-analysis parity (§2.7) — nothing diffs
+`frontend/lib/marketAnalysis.ts` against the Python by value, and the browser is now the only
+unpinned surface. **The old wording of this note — "whether `DwMarketAnalysis.kt` and
+`DwCostIntegrity.kt` are faithful ports at all: they compile and they are unreferenced, so neither a
+test nor a running screen has ever exercised them" — is withdrawn as of 2026-08-19, because both
+halves of it became false.** `DwAnalysisParityTest` exercises them by value against a Python golden
+and `DwFindingsPanel` renders them on the stage form. Nor does the old note's last clause survive on
+the Kotlin side: the golden holds each finding's rendered `message` and `note` string, ₹-formatting
+and all, so the leaf-by-leaf diff pins the SENTENCES as well as the numbers. That clause is still
+true of the TypeScript, where nothing compares the wording to the Python's at all.
