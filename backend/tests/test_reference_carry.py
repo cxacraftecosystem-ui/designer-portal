@@ -1106,6 +1106,162 @@ def test_the_photograph_lookup_carries_nothing_a_media_entitlement_would_gate():
 # --------------------------------------------------------------------------------------
 
 
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+# THE FORMATTED-PROSE COLUMN, WHICH IS A JSON DOCUMENT IN A ``String?`` BOX
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+#
+# Eight of the columns the data lambdas read accept rich text and store it, as JSON, inside the
+# ``String?`` column that used to hold a paragraph — ``rich_text``'s module banner lists them and
+# ``records.prose_contains`` exists because the search had to be taught the same thing. Every
+# hydration target opposite one of them is a TEXT or LONG_TEXT box, ``coerce_value``'s text branch
+# passes a string through ``clean_text`` unchanged, and ``report_builder.format_value`` only unwraps
+# a document for a RICH_TEXT field, where the value is a dict.
+#
+# So the JSON was copied onto the stage entry verbatim and printed verbatim — a
+# ``{"blocks": …}`` string in a table column of a document submitted to a ministry — and every
+# emptiness check upstream read that JSON-shaped string as a filled field, so nothing anywhere
+# reported a problem. ``design_workshops._reference_data`` is the flattening; these are its guards.
+
+
+def _formatted(*paragraphs: str) -> str:
+    """A column value exactly as a record form's rich-text editor writes a FORMATTED one.
+
+    THE FIRST SPAN CARRIES A MARK, AND WITHOUT IT THIS HELPER TESTS NOTHING. ``to_stored_text``
+    stores an UNFORMATTED document as ordinary prose — ``_is_unformatted`` is a whitelist of
+    "nothing interesting is set", and a document of bare paragraphs passes it — so a helper that
+    built two plain paragraphs returned a plain string, and every assertion below that a value "is
+    not JSON" held for a value that was never JSON in the first place. The bold run is what makes
+    the encoder take the ``json.dumps`` branch, which is the state a researcher's column is in
+    after they press **B**, and the only state in which the defect these tests exist for can
+    happen at all.
+
+    ``test_a_formatted_column_is_json_in_the_database_so_the_premise_holds`` is the guard on
+    exactly that, and it is not decoration: it caught this helper being toothless.
+    """
+    from app.services import rich_text
+
+    blocks = [
+        {
+            "kind": "PARAGRAPH",
+            "spans": [{"text": text, "marks": ["BOLD"]} if index == 0 else {"text": text}],
+        }
+        for index, text in enumerate(paragraphs)
+    ]
+    stored = rich_text.to_stored_text(rich_text.from_json({"blocks": blocks}))
+    assert stored is not None
+    return stored
+
+
+def test_a_formatted_column_is_json_in_the_database_so_the_premise_holds():
+    """The tests below would be worthless if the storage were not what they claim it is."""
+    from app.services import rich_text
+
+    stored = _formatted("Tied with cotton thread", "then dipped in indigo.")
+    assert stored.startswith("{")
+    assert "blocks" in stored
+    assert rich_text.stored_text_document(stored) is not None
+
+
+@pytest.mark.parametrize(
+    ("model", "delegate", "row_builder", "column", "entity_key", "ref_key", "target"),
+    [
+        # ``processStep.description`` is the worst of them: the registry labels it "What happens"
+        # and it is a TABLE COLUMN of the traditional-process table.
+        ("Process", "process", "_process_row", "notes",
+         "processStep", "processRef", "description"),
+        ("Process", "process", "_process_row", "notes",
+         "traditionalProcess", "processRef", "documentedProcessNotes"),
+        # ``existingProduct.material`` is a TABLE COLUMN too, 16% wide.
+        ("ProductDocumentation", "productdocumentation", "_product_row", "rawMaterialsUsed",
+         "existingProduct", "productRef", "material"),
+        ("ProductDocumentation", "productdocumentation", "_product_row", "remarks",
+         "existingProduct", "productRef", "remarks"),
+        ("ProductDocumentation", "productdocumentation", "_product_row", "mainToolsUsed",
+         "existingProduct", "productRef", "mainToolsUsed"),
+        ("ProductDocumentation", "productdocumentation", "_product_row", "productFunctionUse",
+         "existingProduct", "productRef", "use"),
+        ("ToolDocumentation", "tooldocumentation", "_tool_row", "remarks",
+         "tool", "toolRef", "remarks"),
+        ("ToolDocumentation", "tooldocumentation", "_tool_row", "suggestionsForToolImprovement",
+         "tool", "toolRef", "improvements"),
+        ("Artisan", "artisan", "_artisan_row", "notes",
+         "participant", "artisanRef", "recordNotes"),
+    ],
+)
+async def test_a_formatted_record_column_arrives_as_prose_and_never_as_json(
+    monkeypatch, model, delegate, row_builder, column, entity_key, ref_key, target
+):
+    """Every rich-text-capable source column, through the REAL hydration, into its real target.
+
+    Parametrised over the pairs rather than written once, because the thing that goes wrong is a
+    SINGLE pair being missed — and the fix is a wrapper over the whole payload precisely so that no
+    pair can be. If a column is promoted to rich text later, add its row here; if the wrapper is
+    ever narrowed to a named list of keys, one of these fails.
+    """
+    stored = _formatted("Tied with cotton thread", "then dipped in indigo.")
+    row = globals()[row_builder](**{column: stored})
+    sent = {ref_key: row.id}
+    if entity_key == "processStep":
+        sent["stepNumber"] = 1
+
+    data = await _hydrate(monkeypatch, entity_key, sent, rows={delegate: [row]})
+
+    landed = data.get(target)
+    assert landed, f"{model}.{column} reached {entity_key}.{target} as nothing at all"
+    assert "blocks" not in landed, (
+        f"{model}.{column} reached {entity_key}.{target} as raw JSON: {landed!r}. "
+        "design_workshops._reference_data is what flattens it; see its docstring."
+    )
+    assert landed == "Tied with cotton thread\nthen dipped in indigo."
+
+
+def test_an_unformatted_column_leaves_the_flattening_boundary_untouched():
+    """The identity half, and it is the half that decides whether the fix is safe to ship.
+
+    ``plain_from_stored`` returns a plain string as the SAME OBJECT rather than round-tripping it
+    through ``from_plain``/``to_plain``, which would strip each line, collapse runs of blank lines
+    and drop trailing whitespace. Applying that to the repository would silently reformat every
+    note, remark and address in it — a diff nobody asked for, across data this app's users are the
+    custodians of rather than the authors of.
+
+    ASSERTED AT ``_reference_data`` AND NOT AFTER ``hydrate_entries``, which is the correction this
+    test needed. A hydrated value has also been through ``coerce_value``, whose text branch has
+    normalised these columns since long before any of this — so "byte for byte" is a claim about
+    the FLATTENING BOUNDARY and never was one about the stored entry. Asserting it downstream tests
+    somebody else's behaviour and fails for a reason that has nothing to do with the fix, which is
+    exactly what the first version of this test did.
+    """
+    prose = "Dyed twice.  Second dip is  longer.\n"
+    row = _process_row(notes=prose)
+    data = dw._reference_data(dw.REFERENCE_MODELS["Process"], row, None)
+    assert data["notes"] == prose
+    assert data["notes"] is row.notes, (
+        "a plain string must come back as the same object, not as one that survived a round trip"
+    )
+
+
+async def test_the_subject_pin_is_not_flattened_into_a_string(monkeypatch):
+    """THE REGRESSION THE FIX ITSELF NEARLY SHIPPED, and the reason its guard is one line long.
+
+    ``rich_text.plain_from_stored`` treats a ``dict`` as a document it does not need to detect:
+    ``to_plain({"lat": …, "lon": …})`` finds no ``blocks`` key, answers ``EMPTY``, and returns "".
+    ``participant.subjectLocation`` is exactly such a dict — the pin a researcher dropped on the
+    artisan's own place — so a wrapper applied to every value regardless of type would have blanked
+    it on every pick, which is the same class of silent loss the wrapper was written to end.
+    ``_reference_data`` therefore flattens ``str`` values and nothing else.
+    """
+    row = _artisan_row(notes=_formatted("Prefers the afternoon."))
+    data = await _hydrate(
+        monkeypatch, "participant", {"artisanRef": row.id}, rows={"artisan": [row]}
+    )
+    assert data["recordNotes"] == "Prefers the afternoon."
+    assert isinstance(data.get("subjectLocation"), dict), (
+        "the artisan's own pin must survive the prose flattening as the point it is"
+    )
+    assert data["subjectLocation"]["lat"]
+    assert data["subjectLocation"]["lon"]
+
+
 def test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full():
     """Six declared widths summing to 100 is a table already in submitted documents.
 
@@ -1121,6 +1277,85 @@ def test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full(
         assert sum(widths) <= 100.0 + 1e-6, (
             f"{entity_key}'s table column widths now sum to {sum(widths)}"
         )
+
+
+# Entities whose declared TABLE_COLUMN widths do NOT govern their table today, with the sum they
+# actually reach. ``_render_table`` uses the declared widths only when they add up to 100 (within
+# half a point) and otherwise lays the table out proportionally — free text gets twice the share of
+# a number or a date — so every percentage written beside a field of these five is a dead
+# declaration that reads as a decision.
+#
+# Twenty-four of the twenty-nine tabular entities DO add up, which is what makes these five drift
+# rather than design. Two of them are over: somebody added a column and did not rebalance.
+#
+# THEY ARE RECORDED RATHER THAN REBALANCED, and that is a deliberate refusal. Making a sum reach
+# 100 does not tidy a number up — it switches a table from one layout to another, in documents that
+# have been printed and filed, which is the exact consequence the note above ``participant``'s
+# address fields refuses to incur. Which of the two layouts is right is a judgement about the
+# printed page and belongs to whoever owns it, not to a test and not to a passing edit. What a test
+# CAN do is stop the set growing and stop any of these drifting further, which is what
+# :func:`test_the_tables_whose_declared_widths_govern_still_do` does.
+#
+# To retire an entry: rebalance that entity's first six widths to 100 and delete its line.
+_WIDTHS_THAT_DO_NOT_GOVERN = {
+    "sketch": 88.0,
+    "prototype": 112.0,
+    "prototypeValidation": 86.0,
+    "finalProduct": 120.0,
+    "followUp": 88.0,
+}
+
+
+def _governing_widths(entity):
+    """The widths ``report_builder._render_table`` would actually read, and their sum.
+
+    ``_table_columns`` caps at six, so a seventh declared column contributes NOTHING to the sum and
+    prints as a key-value line beneath each row instead. ``existingProduct`` declares seven and its
+    first six add to exactly 100, which is somebody having done this arithmetic on purpose; two of
+    the entities in the exemption above declare seven and did not.
+    """
+    columns = [f for f in entity.fields
+               if f.report_role.value == "TABLE_COLUMN" and not f.deprecated][:6]
+    return columns, sum(f.column_width_pct for f in columns)
+
+
+def test_the_tables_whose_declared_widths_govern_still_do():
+    """A declared width that stops being read is a layout decision silently discarded.
+
+    THE BLIND SPOT THIS CLOSES. The guard beside it checks three entities and asks only that their
+    widths do not EXCEED 100 — so a table that drifted DOWN to 88 passed it while being laid out by
+    the proportional fallback, and the twenty-six entities it does not name were never checked at
+    all. Five of them are in that state right now and are listed in ``_WIDTHS_THAT_DO_NOT_GOVERN``
+    with the sum each reaches.
+
+    Every other tabular entity must either declare nothing (proportional by design) or add up.
+    """
+    drifted = []
+    for _stage, entity in all_entities():
+        columns, total = _governing_widths(entity)
+        if not columns or not total:
+            # No table, or no width declared anywhere on it — proportional by design, which is a
+            # legitimate choice and not something to assert about.
+            continue
+        governs = abs(total - 100.0) < 0.5
+        recorded = _WIDTHS_THAT_DO_NOT_GOVERN.get(entity.key)
+        if governs:
+            assert recorded is None, (
+                f"{entity.key} now adds up to 100 and its declared widths govern again — "
+                "delete its line from _WIDTHS_THAT_DO_NOT_GOVERN"
+            )
+            continue
+        if recorded is None:
+            drifted.append(f"{entity.key} (sums to {total})")
+        else:
+            assert abs(total - recorded) < 0.5, (
+                f"{entity.key}'s widths have moved from {recorded} to {total} while still not "
+                "governing — rebalance them to 100 rather than to another number nothing reads"
+            )
+    assert drifted == [], (
+        "these tables' declared widths have stopped governing, so report_builder is laying them "
+        f"out proportionally and the percentages beside their fields do nothing: {drifted}"
+    )
 
 
 def test_the_hydration_table_grew_and_no_pair_was_lost():

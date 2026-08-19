@@ -8,6 +8,7 @@ import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
 import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { Field, Select, TextInput } from "@/components/FormControls";
+import { RichTextField } from "@/components/richtext/RichTextField";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
@@ -286,11 +287,28 @@ function MultiNoteInput({ label, value, onChange }: { label: string; value: stri
 export function ProcessForm({
   initial,
   onDone,
-  onCancel
+  onCancel,
+  onCreated
 }: {
   initial?: ProcessRecord;
   onDone: () => void;
   onCancel: () => void;
+  /**
+   * Hand the saved record back, so a picker that mounted this form in a dialog can SELECT it.
+   *
+   * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────────
+   * `InlineRecordDialog` mounts `ArtisanForm`, `ProductForm` and `ToolForm` with `onCreated` and
+   * this one with `onDone={onClose}`, because this form had no `onCreated` to give it. So the
+   * button that reads "Create “Tie and dye” as a new process" opened a form, saved a process, and
+   * closed on a picker with nothing selected — no link, no hydration, and the designer left hunting
+   * through a list for the record they had just made, seconds after being told it would be created
+   * "as a new process". The three sibling models did the whole job; this one did half of it.
+   *
+   * SAME CONTRACT AS THE SIBLINGS: when it is set the form neither routes nor reports through
+   * `onDone`, and the caller owns what happens next. `onDone` stays for the page, which mounts this
+   * form directly and wants exactly the old behaviour.
+   */
+  onCreated?: (record: ProcessRecord) => void;
 }) {
   const { user } = useAuth();
   const isEdit = Boolean(initial);
@@ -303,9 +321,27 @@ export function ProcessForm({
   const [artisanId, setArtisanId] = useState(initial?.product?.artisanId ?? "");
   const [productId, setProductId] = useState(initial?.productId ?? "");
   const [preProcessAvailable, setPreProcessAvailable] = useState(initial?.preProcessAvailable ?? false);
-  // Android parity: the whole-process notes field has no input in the form; it is carried through
-  // unchanged on edit so nothing typed elsewhere is lost.
-  const notes = initial?.notes ?? "";
+  /**
+   * WHAT THE WHOLE PROCESS IS, IN THE RESEARCHER'S OWN WORDS — and until this box existed there was
+   * nowhere to type it.
+   *
+   * `Process.notes` had no input on either surface. Both forms held it as state, both sent it, and
+   * neither ever let anybody change it, so it stayed null on every process this app created and
+   * could only be written through the API. That is not a cosmetic omission, because it is the one
+   * column the report leans on hardest: `REFERENCE_HYDRATION["processStep.processRef"]` maps it to
+   * `description` — the box the registry labels "What happens", a TABLE COLUMN of the
+   * traditional-process table — and `traditionalProcess.processRef` maps it to
+   * `documentedProcessNotes` above the same table. `docs/REPORT-DATA-WIRING.md` calls that mapping
+   * "the copy that turns a one-word row into a paragraph"; with no way to type the paragraph, every
+   * one of those rows printed the one word.
+   *
+   * RICH, like the four narrative boxes on `ProductForm` and the two on `ToolForm`, and for the same
+   * reason they are: it is a paragraph a researcher writes about a sequence, not a label. The column
+   * is a plain `String?` that stores the document as JSON — see the banner in
+   * `backend/app/services/rich_text.py`, and `records.prose_contains`, which exists because the
+   * search had to be taught the same thing.
+   */
+  const [notes, setNotes] = useState(initial?.notes ?? "");
   // Status policy: professor+ defaults to APPROVED on create and may pick any status; below
   // professor the status is forced to PENDING (locked chip below) and the server enforces it too.
   const [status, setStatus] = useState<string>(initial?.status ?? (canPickStatus ? "APPROVED" : "PENDING"));
@@ -496,6 +532,11 @@ export function ProcessForm({
     productId: productId && productId === carriedProductId ? "" : productId,
     workshopId: workshop.touched ? workshop.workshopId : "",
     status,
+    // IN THE SIGNATURE, because this form's unsaved-changes guard is a diff of state rather than an
+    // `onDirty` event — so a box left out of it is a box a researcher can fill in, navigate away
+    // from, and be told there was nothing to lose. `RichTextField` reports its value through
+    // `onValueChange`, which lands in `notes`, which lands here.
+    notes,
     preProcessAvailable,
     pre: preFiles.length,
     steps: steps.map((step) => ({
@@ -704,6 +745,12 @@ export function ProcessForm({
       });
       if (outcome.queued) {
         // OutboxBanner at the top of the page names the entry and says where it lives.
+        //
+        // `onDone` AND NOT `onCreated`, EVEN IN A DIALOG, and the asymmetry is honest rather than
+        // lazy: a queued write has no server id yet, so there is no record for a picker to link to.
+        // Reporting a create here would have the picker arm a hydration for an id that does not
+        // exist, search for it, fail, and tell the designer their record could not be described —
+        // three steps to arrive at the same place the outbox banner already says plainly.
         setGuardOpen(false);
         setSaving(false);
         onDone();
@@ -778,9 +825,20 @@ export function ProcessForm({
           `The process was saved, but ${failures.length} media file(s) failed to upload: ${failures.join(", ")}. Re-open the process from the list to retry those files.`
         );
         setGuardOpen(false);
+        // DELIBERATELY NOT REPORTED, on either path. The record exists, but this form stays on
+        // screen so the designer can read which files were lost — and `onCreated` closes the dialog
+        // it is mounted in. Closing over the one message that says what did not save would be the
+        // failure this branch exists to report, hidden by the reporting of it. The record is in the
+        // repository either way; the picker's list will hold it the next time it is opened.
         return;
       }
       setGuardOpen(false);
+      if (onCreated) {
+        // Hosted in a dialog: the caller links and hydrates the row. Reporting through `onDone`
+        // instead is what left a just-created process unselected in the picker that made it.
+        onCreated(saved);
+        return;
+      }
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save process");
@@ -915,6 +973,25 @@ export function ProcessForm({
         {!productsLoading && !productLoadError && artisanId ? <CappedListNotice cuts={[productCut]} /> : null}
         {productError ? <p className="mt-1 text-xs text-error-600">{productError}</p> : null}
       </div>
+
+      {/*
+        WHAT HAPPENS, FOR THE PROCESS AS A WHOLE — above the steps, because that is the order a
+        reader meets them in and the order the report prints them in.
+
+        `onValueChange` and not the hidden input every other form reads: this form builds its request
+        body out of React state and never constructs a `FormData`, so `textValue(form, "notes")` has
+        nothing to read. `defaultValue` is seeded once from `initial` and the reported string is
+        deliberately NOT fed back — see the note on `initialValue` inside `RichTextField` for the
+        caret that would throw to position zero on every keystroke.
+      */}
+      <RichTextField
+        name="notes"
+        label="What happens in this process"
+        defaultValue={initial?.notes ?? ""}
+        helper="The sequence in your own words. This is what the design-workshop report prints under “What happens”, both in the traditional-process table and above it."
+        className="md:col-span-2"
+        onValueChange={setNotes}
+      />
 
       <label className="flex items-center gap-2 text-sm text-ink-900">
         <input

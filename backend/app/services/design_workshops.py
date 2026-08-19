@@ -356,6 +356,74 @@ def _money(value: Any) -> str | None:
         return None
 
 
+def _reference_data(spec: "ReferenceModel", row: Any, photo: Any) -> dict[str, Any]:
+    """One record's display payload, with any stored FORMATTING flattened out of it.
+
+    ── THE DEFECT THIS EXISTS FOR ───────────────────────────────────────────────────────────────
+    Eight of the record columns these lambdas read accept RICH TEXT and store it, as JSON, inside
+    the ``String?`` column that used to hold a paragraph — ``Artisan.notes``,
+    ``ProductDocumentation.rawMaterialsUsed`` / ``mainToolsUsed`` / ``productFunctionUse`` /
+    ``remarks``, ``ToolDocumentation.suggestionsForToolImprovement`` / ``remarks``, and
+    ``Process.notes``. ``rich_text``'s own module banner says so, and ``records.prose_contains``
+    exists because the search had to be taught the same thing. The storage decision was explicitly
+    "no migration, no new column", so a row somebody formatted holds ``{"blocks":[…]}`` where prose
+    used to be.
+
+    Every hydration target opposite those columns is a TEXT or LONG_TEXT box —
+    ``participant.recordNotes``, ``existingProduct.material`` / ``mainToolsUsed`` / ``use`` /
+    ``remarks``, ``tool.improvements`` / ``remarks``, ``processStep.description`` and
+    ``traditionalProcess.documentedProcessNotes`` — and ``coerce_value``'s text branch passes a
+    string through ``clean_text`` unchanged. So the JSON was copied onto the stage entry verbatim,
+    and ``format_value`` only unwraps a document for a RICH_TEXT field, where the value is a dict.
+    ``{"blocks": [{"kind": "PARAGRAPH", "spans": [{"text": "Tied with cotton thread"…`` therefore
+    printed **into a table column of a report submitted to a ministry** — three of those targets
+    are TABLE_COLUMNs — and every emptiness check upstream read that JSON-shaped string as a
+    filled field, so nothing anywhere reported a problem. ``report_builder.format_value`` carries
+    this exact failure written out for the RICH_TEXT case it does guard; this is the same failure
+    arriving through the door beside it.
+
+    AND IT WAS PERMANENT. Hydration only ever fills blanks, so once the JSON was on the entry the
+    designer could overtype it but nothing could ever un-answer it, and a submitted report never
+    re-resolves a copied value by design.
+
+    ── WHY HERE, AND NOT IN EACH LAMBDA ─────────────────────────────────────────────────────────
+    ``spec.data`` is the ONE translation between a repository row and what a workshop entry stores
+    — it is where ``_inches_to_cm``, ``_money`` and ``mask_identity_number`` already live, and both
+    clients read its output rather than the row (see ``describeCreated`` in
+    ``StageReferenceField.tsx`` and ``hydratedValues`` in ``DwReferenceField.kt``, whose comments
+    each argue at length that a browser- or handset-side copy of this knowledge would drift). One
+    wrapper here therefore fixes the picker, the save-time hydration, the web, the handset and both
+    on-device report writers at once.
+
+    Applying it to the WHOLE payload rather than to a named list of keys is deliberate: the named
+    list is the thing that goes stale the next time a column is promoted to rich text, and that
+    promotion touches neither this module nor any test that would notice. ``ToolDocumentation.
+    processUsedIn`` is the live example — the form still renders it single-line, the review
+    registry already marks it multiline, and ``tool.usedFor`` is a 26%-wide table column either
+    way.
+
+    ``rich_text.plain_from_stored`` is the documented read boundary for exactly this and is already
+    what ``record_fields`` and ``data_browser`` call. **It is the identity on a plain string** — the
+    same object back, not a round trip through ``from_plain``/``to_plain``, which would strip and
+    re-wrap every note in the repository, a diff nobody asked for across data this app's users are
+    the custodians of rather than the authors of.
+
+    ── ``isinstance(value, str)`` IS LOAD-BEARING AND MUST NOT BE WIDENED ────────────────────────
+    ``plain_from_stored`` treats a ``dict`` as a document it does not need to detect, and flattens
+    it: ``to_plain({"lat": 20.29, "lon": 85.82})`` finds no ``blocks`` key, answers ``EMPTY``, and
+    returns ``""``. ``participant.subjectLocation`` is exactly such a dict — the pin a researcher
+    dropped on the artisan's own place, built by ``_subject_point`` — so calling the helper on
+    every value regardless of type would silently BLANK it on every pick, which is the shape of
+    failure this function was written to end rather than to commit. The formatted prose this is
+    about only ever lives in ``String`` columns, so the guard costs nothing and the widening costs
+    a field.
+    """
+    return {
+        key: rich_text.plain_from_stored(value) if isinstance(value, str) else value
+        for key, value in spec.data(row, photo).items()
+    }
+
+
 def _joined(*parts: Any) -> str:
     return " · ".join(str(p).strip() for p in parts if p not in (None, "") and str(p).strip())
 
@@ -1075,7 +1143,9 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
             "id": row.id,
             "label": spec.label(row),
             "sublabel": spec.sublabel(row),
-            "data": {k: v for k, v in spec.data(row, photos.get(row.id)).items()
+            # `_reference_data` and NOT `spec.data`: see its docstring for the formatted-prose
+            # column that otherwise reaches this payload as raw JSON and lands in a table cell.
+            "data": {k: v for k, v in _reference_data(spec, row, photos.get(row.id)).items()
                      if v not in (None, "")},
         }
         for row in rows
@@ -1315,8 +1385,11 @@ async def hydrate_entries(entries: list[PendingEntry]) -> None:
             where={"id": {"in": sorted(ids)}}, include=model_spec.include or None
         )
         photos = await _reference_photos(model_spec, [r.id for r in rows])
+        # `_reference_data` and NOT `model_spec.data`, matching the picker payload above — the
+        # two must resolve a record identically or the boxes that fill in at the keyboard disagree
+        # with the ones the server writes at save.
         resolved[model] = {
-            row.id: model_spec.data(row, photos.get(row.id)) for row in rows
+            row.id: _reference_data(model_spec, row, photos.get(row.id)) for row in rows
         }
         authors[model] = {row.id: getattr(row, "createdById", None) for row in rows}
 

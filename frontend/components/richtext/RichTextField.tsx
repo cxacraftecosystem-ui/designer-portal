@@ -58,7 +58,8 @@ export function RichTextField({
    * columns is not decoration — it is what keeps the formatting controls on one line.
    */
   className,
-  onDirty
+  onDirty,
+  onValueChange
 }: {
   /** The FormData key the containing form already reads. Unchanged from the `<TextArea>` it replaces. */
   name: string;
@@ -82,6 +83,24 @@ export function RichTextField({
    * dictated into a field could navigate away and be told there was nothing to lose.
    */
   onDirty?: () => void;
+  /**
+   * The encoded column value, reported on every change, for a form that does not submit through
+   * `FormData`.
+   *
+   * ADDITIVE AND OPTIONAL, and the hidden input below stays regardless: every existing call site
+   * reads its value with `textValue(form, name)` at submit time and must go on working untouched.
+   * `ProcessForm` is the form that needs this — it builds its request body out of React state and
+   * never constructs a `FormData` at all, so a hidden input is invisible to it.
+   *
+   * IT REPORTS THE ENCODED STRING, NOT THE DOCUMENT, which is the same value the hidden input
+   * carries and the same one the API stores. Handing back the document would make the caller
+   * responsible for `encodeStoredRichText` and its `join` argument, which is exactly the knowledge
+   * this component exists to hold in one place.
+   *
+   * The caller must NOT feed the reported string back in as `defaultValue` on the next render —
+   * read the note on `initialValue` below for the caret it would throw to position zero.
+   */
+  onValueChange?: (value: string) => void;
 }) {
   const reactId = useId();
   const labelId = `rtf-${reactId}-label`;
@@ -121,7 +140,9 @@ export function RichTextField({
       <RichTextEditor
         value={initialValue}
         onChange={(doc: StoredRichDoc | null) => {
-          setSubmitValue(encodeStoredRichText(doc, join));
+          const encoded = encodeStoredRichText(doc, join);
+          setSubmitValue(encoded);
+          onValueChange?.(encoded);
           onDirty?.();
         }}
         disabled={disabled}
