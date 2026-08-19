@@ -67,6 +67,15 @@ Smoke test, then run as a service:
 
 ### systemd unit (keeps it running + restarts on reboot)
 
+> **FIRST, WHICH BOX.** This portal and the field repository run SEPARATE EC2 instances, separate S3
+> buckets (`designrepo-media-626159998512` here, `fieldrepo-media-626159998512` there) and separate
+> Vercel projects — but IDENTICAL systemd unit names, because `infra/terraform/user_data.sh` writes
+> `/etc/systemd/system/fieldrepo.service` as a literal string instead of templating it from
+> `var.project`. Nothing in a unit name, an nginx site or `deploy-backend.yml` tells the two apart.
+> **The only thing that decides which machine a push touches is the `EC2_HOST` secret in the
+> repository being pushed, so those secrets must never be copied between the two repositories.**
+> `docs/ENVIRONMENT.md` rule 4 carries the full table and the failure this prevents.
+
 > **On the `fieldrepo` unit names below.** They are the product's pre-rebrand name and they are
 > deliberate, not leftovers. These strings are not labels in a config file — they are the names of
 > units that are installed and enabled on the live instance, and `.github/workflows/deploy-backend.yml`
