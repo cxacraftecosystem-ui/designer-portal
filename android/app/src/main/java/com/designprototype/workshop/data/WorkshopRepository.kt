@@ -963,6 +963,349 @@ class WorkshopRepository(
         ),
     )
 
+    // ── The five AI verbs ────────────────────────────────────────────────────────────────────────
+    //
+    // ALL FIVE THROW, and none of them is ever queued. The reasons are [designWorkshopDictate]'s and
+    // they transfer whole: there is no cached anything that could stand in for a model's answer, so a
+    // swallowed failure would reach the designer as an empty panel — which reads as "the model had
+    // nothing to say" and sends them off to rewrite a perfectly good note. And a verb SPENDS MONEY,
+    // counted for every run that reached a provider including one that then failed, so a run banked in
+    // [OfflineOutbox] and replayed three days later would be charged against a day the designer is not
+    // having, over a workshop whose consent may have been withdrawn in between.
+    //
+    // THE THREE FAILURES TRANSLATED are the ones whose CODE alone cannot say what happened, and the
+    // list is deliberately SHORTER than dictation's by one: there is no consent type here, because a
+    // verb route answers 409 for four different states with no discriminator in the body. See
+    // [DwAiVerbRefused], which carries the code and the server's own sentence and classifies nothing.
+    //
+    // THE ALLOWANCE IS LEARNED AS IT GOES BY. There is no pre-flight route for these — grep `backend/`
+    // for `ai-verb-allowance` and there is none, where dictation has one — so the numbers on the 201
+    // and the refusal on the 429 are the only things this phone can be told. See [DwAiVerbAllowance].
+
+    /**
+     * Correct the spelling, grammar and punctuation of a passage, and change nothing else.
+     *
+     * **THE CORRECTED TEXT IS A NEW ROW AND NOTHING IS WRITTEN BACK** — not into the stage field the
+     * words came from, not over the layer they were read from. The server cannot express either write
+     * (`LayerWritePlan` may only name a table in `WRITABLE_TABLES` and `DwStageEntry` is not in it),
+     * and this side keeps it true by returning a layer and offering no way to apply one.
+     *
+     * IT IS A DIFFERENT VERB FROM THE REFINEMENT THIS SERVER ALREADY DOES, which is why it has its own
+     * kind: `ai.refine_transcript_text` restructures a conversation into speaker turns and, on this
+     * deployment's default, translates it into English. Proofreading promises the same words, in the
+     * same language, in the same order, with the spelling fixed. Two promises, two headings.
+     */
+    suspend fun designWorkshopProofread(
+        context: Context,
+        workshopId: String,
+        source: DwVerbSource,
+        language: String? = null,
+    ): DwAiVerbResultDto = runVerb(context, DwAiVerb.PROOFREAD) {
+        api.designWorkshopProofread(dwVerbWorkshopId(workshopId), dwProofreadBody(source, language))
+    }
+
+    /**
+     * Write a designer's terse note out into prose. **The riskiest thing this API does.**
+     *
+     * **THERE IS NO LAYER PARAMETER AND THERE MUST NEVER BE ONE**, and no caller may offer a control
+     * that drops the result into a field. Both halves are the plan's: an expansion INVENTS sentences,
+     * which over the designer's own shorthand turns their note into their prose with them standing
+     * there to judge it, and over an artisan's transcript would put invented words in a named person's
+     * mouth in a document a ministry officer reads. The expansion appears BESIDE the note, named as
+     * machine-written, and reaches a document only through the annexure, only after a person accepts
+     * it, and only under a printed caution. A designer who wants those words in the field types them —
+     * at which point they are that designer's sentences under that designer's name, which is a true
+     * statement that no paste button could produce. See [dwExpandBody].
+     */
+    suspend fun designWorkshopExpand(
+        context: Context,
+        workshopId: String,
+        note: String,
+        language: String? = null,
+    ): DwAiVerbResultDto = runVerb(context, DwAiVerb.EXPAND) {
+        api.designWorkshopExpand(dwVerbWorkshopId(workshopId), dwExpandBody(note, language))
+    }
+
+    /**
+     * Translate a passage. **The original stays exactly where it is; this is a sibling.**
+     *
+     * The failure this shape is written against is already in this database rather than hypothetical:
+     * `AppSetting.transcriptionMode` defaults to REFINED_TRANSLATED, under which the media queue writes
+     * an English rewrite into `MediaFile.transcriptText` — the column an annexure prints as the
+     * artisan's words. Nothing here updates, supersedes or flags the source layer; both rows stay live
+     * and both stay printable, so a reader who wants the artisan's own words can have them.
+     *
+     * BOTH LANGUAGES ARE RECORDED ON THE ROW, and "in English" is not a provenance record for a
+     * translation — a reader checking it against what the artisan said has to know what they said it
+     * in. `multi` is a real SOURCE and never a target; [dwTranslationTargetRefusal] says so before the
+     * press rather than spending a run to be told.
+     */
+    suspend fun designWorkshopTranslate(
+        context: Context,
+        workshopId: String,
+        source: DwVerbSource,
+        targetLanguage: String,
+        sourceLanguage: String? = null,
+    ): DwAiVerbResultDto = runVerb(context, DwAiVerb.TRANSLATE) {
+        api.designWorkshopTranslate(
+            dwVerbWorkshopId(workshopId),
+            dwTranslateBody(source, targetLanguage, sourceLanguage),
+        )
+    }
+
+    /**
+     * Describe a photograph or a video in one sentence — for the annexure, and for a screen reader.
+     *
+     * THE ACCESSIBILITY HALF IS NOT A SECOND FEATURE: a media annexure of forty photographs with no
+     * descriptions is unusable to a reader with a screen reader and nearly as unusable to anybody
+     * reading the .docx a year later without the designer beside them.
+     *
+     * [remoteMediaId] IS THE SERVER'S `MediaFile` ID AND NEVER THIS DEVICE'S. A photograph that has not
+     * been uploaded names nothing up there; [dwVerbMediaRefusal] is the pre-press rung that says so, in
+     * a sentence, instead of spending a round trip on a 404.
+     *
+     * `multi` is DROPPED by the server rather than refused for a caption — it is something a recording
+     * can BE, not something one sentence can be written in — so nothing here has to special-case it.
+     */
+    suspend fun designWorkshopCaptionMedia(
+        context: Context,
+        workshopId: String,
+        remoteMediaId: String,
+        language: String? = null,
+    ): DwAiVerbResultDto = runVerb(context, DwAiVerb.CAPTION) {
+        api.designWorkshopCaptionMedia(
+            dwVerbWorkshopId(workshopId),
+            DwMediaVerbBody(sourceMediaId = remoteMediaId, language = language?.trim()?.takeIf { it.isNotEmpty() }),
+        )
+    }
+
+    /**
+     * Produce timed captions for a recording or a video, stored as cues.
+     *
+     * **THIS SENDS THE RECORDING TO A TRANSCRIPTION ENGINE AGAIN**, even one this workshop has already
+     * transcribed, and the route calls that a defect rather than a design: the timings are the whole
+     * point and every timing this system has ever received was discarded one line after being parsed.
+     * On a handset that is an upload out of the designer's own data bundle, so
+     * [DW_SUBTITLES_SECOND_UPLOAD_NOTE] belongs in front of the press and not in a log.
+     *
+     * NO LANGUAGE ARGUMENT, matching `AiMediaVerbIn`: a cue list is in whatever language was spoken.
+     */
+    suspend fun designWorkshopSubtitleMedia(
+        context: Context,
+        workshopId: String,
+        remoteMediaId: String,
+    ): DwAiVerbResultDto = runVerb(context, DwAiVerb.SUBTITLES) {
+        api.designWorkshopSubtitleMedia(
+            dwVerbWorkshopId(workshopId),
+            DwMediaVerbBody(sourceMediaId = remoteMediaId),
+        )
+    }
+
+    /**
+     * One run of one verb: the call, the allowance it reports, and the three failures worth naming.
+     *
+     * THE ALLOWANCE IS WRITTEN DOWN ON THE WAY PAST, from the 201 that carries it, because there is no
+     * route to ask — see [DwAiVerbAllowance] on the pre-flight this deployment does not have. A
+     * response with no `aiVerbDay` leaves the mirror alone rather than overwriting it with a record
+     * that can never match a day; [dwAiVerbAllowanceOf] is the one place that decides.
+     *
+     * A CAP REFUSAL IS REMEMBERED AND A THROTTLE IS NOT, which is the whole reason the two are told
+     * apart: the cap will not clear until midnight IST, so remembering it saves a round trip per press
+     * for the rest of the day, while remembering a courtesy-limiter burst would withdraw all five verbs
+     * over a handful of taps. The day written for a cap refusal is THIS PHONE's reckoning of today,
+     * because the verb routes' 429 carries no `aiVerbDay` at all.
+     */
+    private suspend fun runVerb(
+        context: Context,
+        verb: DwAiVerb,
+        call: suspend () -> DwAiVerbResultDto,
+    ): DwAiVerbResultDto {
+        val userId = cachedUser()?.id?.takeIf { it.isNotBlank() }
+        try {
+            val result = call()
+            dwAiVerbAllowanceOf(result, userId)?.let { DwAiVerbAllowanceStore.write(context, it) }
+            return result
+        } catch (e: HttpException) {
+            val failure = e.asVerbFailure(verb)
+            if (userId != null && failure is DwAiVerbCapRefused && !failure.transientThrottle) {
+                val today = dwDictationIstDay()
+                DwAiVerbAllowanceStore.write(
+                    context,
+                    dwAiVerbCapSpentRecord(
+                        previous = DwAiVerbAllowanceStore.read(context, userId),
+                        userId = userId,
+                        today = today,
+                    ),
+                )
+            }
+            throw failure
+        }
+    }
+
+    /**
+     * One failed verb, read ONCE, into the type that carries what the code alone cannot say.
+     *
+     * Everything comes out of a single `errorBody().string()` for [ApiRefusal]'s stated reason: Retrofit
+     * buffers the error body and reading it CONSUMES the buffer, so asking the same exception two
+     * questions silently answers the second with nothing — here that would mean either a refusal with
+     * no sentence on screen or a cap that was never written down.
+     *
+     * The order of the branches is the order the codes have to be read in. A 429 is the cap or the
+     * courtesy limiter, told apart by `retryAfterSeconds` and never by prose. A 503 is the route saying
+     * this deployment cannot run THIS VERB — but only when the body is FastAPI's: a 503 with no
+     * `detail` came from the gateway in front of the origin ([ApiClient] documents 502/503/504 as what
+     * CloudFront answers when this origin is slow), means only "not now", and must not be recorded as a
+     * fact about the deployment. Everything else keeps its code and its sentence and is classified no
+     * further — see [DwAiVerbRefused] for the four different states a 409 can be.
+     */
+    private fun HttpException.asVerbFailure(verb: DwAiVerb): Exception {
+        val raw = runCatching { response()?.errorBody()?.string() }.getOrNull()
+        val body = raw
+            ?.takeIf { it.isNotBlank() }
+            ?.let { runCatching { errorBodyJson.parseToJsonElement(it) }.getOrNull() } as? JsonObject
+        val detail = body?.get("detail")?.let { detailMessage(it) }
+        val retryAfterSeconds =
+            (body?.get("retryAfterSeconds") as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+        return when {
+            code() == 429 -> DwAiVerbCapRefused(detail = detail, retryAfterSeconds = retryAfterSeconds)
+            code() == 503 && detail != null -> DwAiVerbNotConfigured(verb, detail)
+            else -> DwAiVerbRefused(code(), detail)
+        }
+    }
+
+    /**
+     * Save one SUBTITLES layer into the device's Downloads folder, and answer with where it landed.
+     *
+     * **THE FILE NAME IS THE SERVER'S AND IS NEVER INVENTED WHERE IT SENT ONE.** `download_subtitles`
+     * writes `subtitles-{layer}.speakers.srt` for the labelled file and `subtitles-{layer}.srt` for the
+     * anonymised one, precisely so a designer with both in one folder can tell them apart — and
+     * confusing those two is how a ministry is emailed the version that attributes an artisan's words
+     * to a machine's guess. The fallback is reached only if a proxy strips the header, and it keeps the
+     * same distinction for that reason.
+     *
+     * `speakers=false` IS SENT AS NO PARAMETER AT ALL rather than as `?speakers=false`, so the URL this
+     * client asks for is byte for byte the one every build before the flag existed asked for.
+     *
+     * Spooled to the cache and copied second, exactly as [downloadQuestionnaireArtefact] does: the
+     * MediaStore entry is created IS_PENDING and cleared once the bytes are there, so a transfer that
+     * dies half-way cannot leave a half-written subtitle file visible in Downloads looking like one
+     * somebody can play.
+     */
+    suspend fun downloadDesignWorkshopSubtitles(
+        context: Context,
+        workshopId: String,
+        layerId: String,
+        format: DwSubtitleFormat,
+        speakers: Boolean = false,
+    ): String = withContext(Dispatchers.IO) {
+        val response = api.designWorkshopSubtitleFile(
+            id = dwVerbWorkshopId(workshopId),
+            layerId = layerId,
+            fmt = format.extension,
+            speakers = if (speakers) true else null,
+        )
+        if (!response.isSuccessful) {
+            // The server's own sentence and not a status code: a 422 here names the actual problem —
+            // this layer is not a SUBTITLES layer, or it carries no speaker labels so a labelled file
+            // would be the same file — and "download failed (HTTP 422)" throws away the only part of
+            // the answer that helps.
+            throw DwAiVerbRefused(response.code(), errorBodyDetail(response.errorBody()?.string()))
+        }
+        val body = response.body()
+            ?: throw IllegalStateException("The subtitle download came back with no file in it.")
+        val name = filenameFromContentDisposition(response.headers()["Content-Disposition"])
+            ?: buildString {
+                append("subtitles-")
+                append(safeDownloadName(layerId) ?: "layer")
+                if (speakers) append(".speakers")
+                append('.')
+                append(format.extension)
+            }
+        val tmp = File(context.cacheDir, name)
+        body.byteStream().use { input -> FileOutputStream(tmp).use { out -> input.copyTo(out) } }
+        val location = persistFileToDownloads(context, tmp, name, format.mimeType)
+        tmp.delete()
+        location
+    }
+
+    // ── What becomes of a layer ──────────────────────────────────────────────────────────────────
+    //
+    // THESE FOUR THROW, for the viewers routes' reason rather than the verbs': an acceptance is a named
+    // person stating that they read this text and stand behind it, and the report prints their name
+    // beside it. A failure swallowed and reported as success would leave this phone showing an
+    // acceptance the server never recorded — and the report, which reads the server's rows, printing
+    // nothing. There is nothing to cache and nothing to queue.
+
+    /**
+     * Every layer this workshop's material has produced, newest first.
+     *
+     * [includeText] IS OFF BY DEFAULT AND SHOULD STAY OFF FOR A LIST. A workshop can hold twenty-five
+     * interviews and an hour of speech is tens of kilobytes; a list with the text in would be megabytes
+     * on one bar of signal, and unread, because a list is scanned by `preview` and `textChars`. Ask for
+     * the text when showing ONE layer to the person about to put their name to it.
+     */
+    suspend fun designWorkshopAiLayers(
+        workshopId: String,
+        kind: String? = null,
+        includeText: Boolean = false,
+        includeDeleted: Boolean = false,
+    ): DwAiLayerListDto = api.designWorkshopAiLayers(
+        id = dwVerbWorkshopId(workshopId),
+        kind = kind?.trim()?.takeIf { it.isNotEmpty() },
+        includeText = if (includeText) true else null,
+        includeDeleted = if (includeDeleted) true else null,
+    )
+
+    /**
+     * A person puts their name to one layer, and it becomes printable. **Rule 3's only door.**
+     *
+     * Until this is called the row is a suggestion sitting in a table that no report reads. The answer
+     * carries the layer's new state AND the whole decision log, and both are returned rather than the
+     * boolean, because the audit being visible is what stops a screen rendering acceptance as a
+     * checkbox.
+     */
+    suspend fun acceptDesignWorkshopAiLayer(
+        workshopId: String,
+        layerId: String,
+        note: String? = null,
+    ): DwAiLayerDecisionResultDto = api.acceptDesignWorkshopAiLayer(
+        id = dwVerbWorkshopId(workshopId),
+        layerId = layerId,
+        body = DwAiLayerDecisionBody(note = note?.trim()?.takeIf { it.isNotEmpty() }),
+    )
+
+    /**
+     * A person takes their name off one layer. **The layer itself is untouched and stays readable.**
+     *
+     * THE ACCEPTANCE IS CLEARED AND THE HISTORY IS NOT: a report generated while this layer was
+     * accepted named it as accepted, and that document does not change because somebody changed their
+     * mind on the 11th. Withdrawing is not declining — the layer goes back to being a suggestion and
+     * can be accepted again, by the same person or another.
+     */
+    suspend fun unacceptDesignWorkshopAiLayer(
+        workshopId: String,
+        layerId: String,
+        note: String? = null,
+    ): DwAiLayerDecisionResultDto = api.unacceptDesignWorkshopAiLayer(
+        id = dwVerbWorkshopId(workshopId),
+        layerId = layerId,
+        // A WITHDRAWAL'S NOTE IS THE ONE WORTH ASKING FOR, which is `AiLayerDecisionIn`'s own
+        // asymmetry: accepting needs no explanation, and the reason somebody took their name off is
+        // what stops the same layer being re-accepted by a colleague who was not told.
+        body = DwAiLayerDecisionBody(note = note?.trim()?.takeIf { it.isNotEmpty() }),
+    )
+
+    /**
+     * Decline a layer: the model proposed it and a person said no. **Soft, and 204.**
+     *
+     * The row stays, because it is the only record that the proposal was made and refused. It does not
+     * touch what the layer was made from — a deletion plan names exactly one row and sets exactly
+     * `deletedAt` and `deletedById` — and a 409 comes back where other layers derive from this one.
+     */
+    suspend fun declineDesignWorkshopAiLayer(workshopId: String, layerId: String) {
+        api.declineDesignWorkshopAiLayer(dwVerbWorkshopId(workshopId), layerId)
+    }
+
     // ── Who may open one design workshop ─────────────────────────────────────────────────────────
     //
     // THESE THREE THROW, unlike almost everything above them, and the exception is the point. The

@@ -68,7 +68,24 @@ function shortDate(iso?: string): string {
   if (Number.isNaN(parsed.getTime())) return "";
   // Day and month only. A year on every one of forty fields is noise — and where the year matters
   // (a workshop revisited across two seasons) the provenance view prints it in full.
-  return parsed.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  //
+  // ── THE ORDER IS OURS; ONLY THE MONTH NAME IS THE LOCALE'S ──────────────────────────────────
+  //
+  // This was `toLocaleDateString(undefined, { day: "numeric", month: "short" })`, which hands the
+  // ORDER to the runtime's locale as well as the wording — so the same stamp read "14 Aug" in a
+  // browser resolving en-IN and "Aug 14" in one resolving en-US. Android's `shortDay` has always
+  // hardcoded the order (`"${date.dayOfMonth} ${date.month.getDisplayName(SHORT, getDefault())}"`)
+  // and localises the month name alone, so the two clients disagreed about the same field on the
+  // same day for no reason a designer could see.
+  //
+  // That is the divergence `fieldProvenanceLine`'s own docstring calls "a requirement rather than a
+  // nicety", and it went unnoticed because every machine anybody developed on resolved to a
+  // day-first locale. The CI runner does not, which is what finally showed it — the first defect
+  // this repository's new checks workflow caught that no local run could have.
+  //
+  // Day-first, month name localised, matching the handset exactly.
+  const month = new Intl.DateTimeFormat(undefined, { month: "short" }).format(parsed);
+  return `${parsed.getDate()} ${month}`;
 }
 
 /** The record a hydrated value came out of, in the words a designer uses for it. */

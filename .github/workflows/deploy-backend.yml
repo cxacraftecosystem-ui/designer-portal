@@ -226,15 +226,31 @@ jobs:
           [ -s .env ] && [ -n "$(tail -c1 .env)" ] && printf '\n' >> .env
           # Drop any inherited value, so this is authoritative rather than additive.
           sed -i '/^BACKEND_CORS_ORIGINS=/d' .env
-          # `field-repository.vercel.app` is the pre-rebrand product name and it is still the real
-          # origin the browser sends. A Vercel project's production domain is not renamed by editing
-          # this repository, so "correcting" it to a design-workshop.* host here removes the ONLY
-          # allowed origin the deployed site actually loads from: every authenticated call fails its
-          # CORS preflight, the site renders and then does nothing, and the pipeline stays green
-          # because the backend is healthy and the frontend built. Change this only in the same
-          # change that adds the new domain in the Vercel dashboard, and keep the old one listed
-          # until the alias is retired. deploy-frontend.yml smoke-tests the same host.
-          printf 'BACKEND_CORS_ORIGINS=%s\n' 'https://field-repository.vercel.app,http://localhost:3000' >> .env
+          # ── THESE ARE THIS PORTAL'S ORIGINS, AND THE LIST THAT STOOD HERE WAS THE OTHER PRODUCT'S ──
+          #
+          # This line read `https://field-repository.vercel.app,http://localhost:3000` — the FIELD
+          # REPOSITORY's domain, inherited when this repo was derived from that one, like the rest of
+          # this workflow. The paragraph that stood here argued at length that the pre-rebrand name
+          # was "still the real origin the browser sends" and that correcting it would remove the only
+          # allowed origin. Every word of that is true OF THE OTHER REPOSITORY. Here it named a host
+          # this portal is never served from.
+          #
+          # IT WAS INVISIBLE UNTIL THE DEPLOY WORKED. The step had never run: SSH ingress was pinned
+          # to an operator's home address, so every CI deploy died before reaching this line and the
+          # box kept the origins written by hand at provisioning. The first successful run of this
+          # workflow — the same change that fixed the SSH window — is what finally executed it, and
+          # because the `sed -i` above deletes any inherited value to make this authoritative, it
+          # replaced the correct list with the wrong one and broke login on the live site. A fix and
+          # a regression in one push, which is what an untested step does the moment it starts running.
+          #
+          # BOTH VERCEL HOSTS ARE LISTED because both answer 200 today: `designer-repository` is the
+          # one a designer is actually on, `design-repository` is the alias named in the provisioning
+          # environment and in `BACKEND_CORS_ORIGINS` as `BACKEND_ENV` writes it. Dropping either is
+          # how this breaks again — the failure is silent from the server's side, because a rejected
+          # preflight is a 400 the API considers correct and the browser reports only "failed to
+          # fetch". Add a new domain here in the same change that adds it in Vercel, and keep the old
+          # one until its alias is actually retired.
+          printf 'BACKEND_CORS_ORIGINS=%s\n' 'https://designer-repository.vercel.app,https://design-repository.vercel.app,http://localhost:3000' >> .env
           # Assert the key landed on a line of its own. `grep -q` rather than `grep -c`: a count of
           # zero exits 1, which under `set -e` fails the step with no explanation of what was wrong.
           grep -q '^BACKEND_CORS_ORIGINS=' .env || { echo "CORS origins did not land on their own line"; exit 1; }

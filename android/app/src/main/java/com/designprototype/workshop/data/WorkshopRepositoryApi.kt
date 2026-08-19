@@ -1121,6 +1121,182 @@ interface WorkshopRepositoryApi {
         @Body body: DwConsentDecisionRequest
     ): DwConsentDecisionDto
 
+    // --- The five AI verbs, and the layers they produce -----------------------------------------
+    //
+    // Proofread, expand, translate, caption, subtitle. See data/DwAiVerbs.kt for the bodies, the
+    // vocabulary, the allowance and the pre-press ladder; this block is the six calls and the four
+    // that decide what becomes of a result.
+    //
+    // ONE GATE CHAIN IN FRONT OF ALL FIVE, in this order, and every one of them can be the answer:
+    // `_require_designer` (403) -> `load_workshop_or_404(for_edit=True)` (404, or 409 for a workshop
+    // that is soft-deleted) -> the workshop's dictation consent for THIS verb (409) -> the per-designer
+    // daily ceiling (429). It is the same `DesignWorkshop.dictationConsent` column rung 2 of the
+    // dictation ladder is gated on, asked with a description of what THIS verb sends and where — a
+    // caption goes to Gemini and there is no dictation and nothing to type, which is why
+    // `dictation_consent.send_for` exists and why the sentence must be shown verbatim rather than
+    // classified. [DwAiVerbRefused] carries it.
+    //
+    // NONE OF THESE MAY EVER BE QUEUED. [OfflineOutbox] exists for record creates that can be replayed;
+    // a verb is a provider round trip somebody pays for, counted by `ai_verb_cap.spend` for every run
+    // that REACHED a provider including one that then failed. A run banked today and replayed in three
+    // days would be charged against a day the designer is not having, over a workshop whose consent may
+    // have been withdrawn in between. With no signal these are simply unavailable, and
+    // [DW_VERBS_NEED_A_CONNECTION] says so in words including the clause that nothing was queued.
+    //
+    // AND NONE OF THEM IS AUTO-RETRIED, which is [ApiClient.isSafelyRetriable]'s doing and is worth
+    // knowing rather than discovering: a POST is retried only when its path is one of the four
+    // side-effect-free upload-setup calls, and these are not among them. A 504 from CloudFront over a
+    // verb that the origin actually ran would otherwise spend a second run of the allowance and store a
+    // second layer saying the same thing.
+    //
+    // THE WORKSHOP ID IS THE SERVER'S AND IS REQUIRED. A workshop that exists only on this device has
+    // no row for `load_workshop_or_404` to find, and every press would answer a bare 404 "Record not
+    // found" — a sentence about a missing record rather than about an unsent workshop. The web shipped
+    // exactly that and review caught it; [dwVerbWorkshopId] and [dwVerbGate] are the two guards.
+
+    @POST("design-workshops/{id}/ai-layers/proofread")
+    suspend fun designWorkshopProofread(
+        @Path("id") id: String,
+        @Body body: DwProofreadBody
+    ): DwAiVerbResultDto
+
+    // NO `sourceLayerId` ON THIS BODY AND THERE MUST NEVER BE ONE. `AiExpandIn` has no such field so
+    // that a client cannot even ask: an expansion invents sentences, and run over an artisan's
+    // transcript it would put invented words in a named person's mouth in a document a ministry
+    // officer reads. See [dwExpandBody] for the whole argument and the four other places it is kept.
+    @POST("design-workshops/{id}/ai-layers/expand")
+    suspend fun designWorkshopExpand(
+        @Path("id") id: String,
+        @Body body: DwExpandBody
+    ): DwAiVerbResultDto
+
+    @POST("design-workshops/{id}/ai-layers/translate")
+    suspend fun designWorkshopTranslate(
+        @Path("id") id: String,
+        @Body body: DwTranslateBody
+    ): DwAiVerbResultDto
+
+    // `sourceMediaId` IS A CLAIM AND NEVER AN AUTHORISATION, which is the server's own wording:
+    // `GET /api/media` hands every signed-in account the id of every file in the repository, so
+    // `_verb_source_media` checks the id against this workshop's own attached files AND against the
+    // caller's media entitlement before any bytes leave the object store. It must be a
+    // [DraftMedia.remoteMediaId] — a media id this device invented names nothing up there.
+    @POST("design-workshops/{id}/ai-layers/caption")
+    suspend fun designWorkshopCaptionMedia(
+        @Path("id") id: String,
+        @Body body: DwMediaVerbBody
+    ): DwAiVerbResultDto
+
+    // THE ONE VERB THAT COSTS A SECOND UPLOAD OF AUDIO THIS SYSTEM HAS ALREADY TRANSCRIBED, and the
+    // route calls that "a defect rather than a design": both transcription providers already return
+    // timings and both discard them one line after parsing, so nothing in the archive can be subtitled
+    // without sending the recording again. Say so before the press — [DW_SUBTITLES_SECOND_UPLOAD_NOTE].
+    // `language` is deliberately not sent: `AiMediaVerbIn` documents that subtitles ignore it, because
+    // a cue list is in whatever language was spoken.
+    @POST("design-workshops/{id}/ai-layers/subtitles")
+    suspend fun designWorkshopSubtitleMedia(
+        @Path("id") id: String,
+        @Body body: DwMediaVerbBody
+    ): DwAiVerbResultDto
+
+    /**
+     * One SUBTITLES layer as a `.srt` or `.vtt` file a player can open.
+     *
+     * `@Streaming` and a raw [Response] rather than a decoded body, for the two reasons the
+     * questionnaire downloads state: Retrofit would otherwise buffer the whole file, and a non-2xx
+     * must arrive as a RESPONSE so the server's own sentence can be read out of it rather than
+     * surfacing as "HTTP 422".
+     *
+     * NOT GATED ON ACCEPTANCE, matching the route, which is deliberate and says so: *"requiring
+     * acceptance first would mean accepting subtitles nobody has watched, which is the opposite of
+     * what acceptance is for."* This is the designer looking at what the model produced, in the only
+     * form in which subtitles can be judged, which is played against the video. Rule 3 is untouched —
+     * this is not a report, and the annexure refuses an unaccepted layer twice over.
+     *
+     * `speakers` IS OFF BY DEFAULT AND THE LABELS ARE A MODEL'S GUESS. Nobody told the engine how many
+     * people were in the room; it decided from the audio and can merge two quiet voices or split one
+     * person who moved away from the microphone. The `.vtt` carries that caution inside the file as a
+     * WebVTT `NOTE`; SubRip has no comment syntax and cannot, so a `.srt` carries the labels alone.
+     * The server also puts `.speakers` in the filename, precisely so the two files can be told apart
+     * in a downloads folder — which is why the name is taken from `Content-Disposition` and never
+     * invented here.
+     */
+    @Streaming
+    @GET("design-workshops/{id}/ai-layers/{layerId}/subtitles.{fmt}")
+    suspend fun designWorkshopSubtitleFile(
+        @Path("id") id: String,
+        @Path("layerId") layerId: String,
+        @Path("fmt") fmt: String,
+        @Query("speakers") speakers: Boolean? = null
+    ): Response<ResponseBody>
+
+    // --- What becomes of a layer: read it, accept it, take a name off it, decline it -------------
+    //
+    // RULE 1 OF THE LAYERING LAW LIVES HERE. A verb's output is a ROW BESIDE the designer's words and
+    // never a replacement for them, inert until a named person accepts it — so a client that could run
+    // the five verbs and not reach these four would produce layers that can never legitimately reach a
+    // report, which is the whole feature with its point removed.
+    //
+    // LISTABLE BY ANYONE WHO CAN READ THE WORKSHOP; READABLE PER RECORDING, WHICH IS NOT THE SAME GATE.
+    // The provenance — which tier, which model, accepted by whom — is what a reviewer opens the screen
+    // for and is nobody's recording. A layer's TEXT is a stored copy of a transcript, gated per media
+    // file, so a row standing on a recording this account may not read comes back with `textWithheld`
+    // true and no text, preview, payload or character count. See [DwAiLayerDto].
+
+    @GET("design-workshops/{id}/ai-layers")
+    suspend fun designWorkshopAiLayers(
+        @Path("id") id: String,
+        @Query("kind") kind: String? = null,
+        // OFF BY DEFAULT ON THE SERVER AND LEFT OFF HERE. A workshop can hold twenty-five interviews
+        // and an hour of speech is tens of kilobytes, so a list with the text in would be megabytes on
+        // one bar of signal — and unread, because a list is scanned by `preview` and `textChars`. Ask
+        // for it when showing ONE layer to the person about to put their name to it.
+        @Query("includeText") includeText: Boolean? = null,
+        // Layers a designer declined are soft-deleted and kept, so "the model proposed this and a
+        // person said no" stays answerable. Out of the default list, because a declined suggestion
+        // re-offered is the same suggestion.
+        @Query("includeDeleted") includeDeleted: Boolean? = null
+    ): DwAiLayerListDto
+
+    // TWO WRITES BEHIND ONE CALL, and both come back: the layer gains `acceptedAt`/`acceptedById` (the
+    // current state the report builder reads) and a decision row is appended (the history, which is
+    // what survives a withdrawal). The audit being visible in the response is what stops a client
+    // rendering acceptance as a checkbox.
+    //
+    // REFUSED 403 WHEN THIS ACCOUNT MAY NOT READ THE RECORDING THE LAYER STANDS ON. An acceptance is
+    // somebody stating they read this text and the report prints their name beside it; a signature on
+    // a page the signer is not allowed to open is worth less than no signature.
+    @POST("design-workshops/{id}/ai-layers/{layerId}/accept")
+    suspend fun acceptDesignWorkshopAiLayer(
+        @Path("id") id: String,
+        @Path("layerId") layerId: String,
+        @Body body: DwAiLayerDecisionBody
+    ): DwAiLayerDecisionResultDto
+
+    // `unaccept` AND NOT `withdraw`, which is the route's own spelling and is checked against it.
+    //
+    // DELIBERATELY NOT GATED THE WAY ACCEPT IS: taking a name off states nothing about the text and
+    // must stay reachable even after the recording's permissions have changed under it, or a grant
+    // withdrawn between the acceptance and the doubt would trap an accepted layer in a report with
+    // nobody able to unaccept it. The response still withholds the TEXT; what is not gated is the act.
+    @POST("design-workshops/{id}/ai-layers/{layerId}/unaccept")
+    suspend fun unacceptDesignWorkshopAiLayer(
+        @Path("id") id: String,
+        @Path("layerId") layerId: String,
+        @Body body: DwAiLayerDecisionBody
+    ): DwAiLayerDecisionResultDto
+
+    // DECLINE. Soft, 204, and it does not touch what the layer was made from: `deletion_plan` sets
+    // exactly `deletedAt` and `deletedById` on exactly one row and has no branch that reads
+    // `sourceMediaId` or `sourceLayerId`. A 409 when other layers derive from this one — deleting a
+    // raw transcript out from under a cleaned one would leave the cleaned one describing something no
+    // screen will show.
+    @DELETE("design-workshops/{id}/ai-layers/{layerId}")
+    suspend fun declineDesignWorkshopAiLayer(
+        @Path("id") id: String,
+        @Path("layerId") layerId: String
+    )
+
     // --- Who, besides its creator, may open one design workshop ---------------------------------
     //
     // ADMIN-ONLY, ALL THREE. Every route behind these is `Depends(require_admin)` — `is_admin`, so

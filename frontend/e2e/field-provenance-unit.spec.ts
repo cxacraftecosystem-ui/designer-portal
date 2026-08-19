@@ -80,9 +80,23 @@ test.describe("the attribution line under a stage field", () => {
   });
 
   test("a value somebody typed here is attributed to them, with the day", () => {
-    expect(
-      fieldProvenanceLine({ source: "designer", by: "usr_1", byName: "Ravi Kumar", at: "2026-08-14T09:00:00Z" })
-    ).toMatch(/^Ravi Kumar, \d+ \w+$/);
+    // DAY FIRST, AND THAT IS THE ASSERTION — not an incidental shape this happened to have.
+    // `shortDate` used to hand the ORDER to the runtime's locale, so this same stamp rendered
+    // "14 Aug" on a machine resolving en-IN and "Aug 14" on one resolving en-US, while Android's
+    // `shortDay` hardcoded day-first on every device. Two clients, one field, two answers. Every
+    // developer machine resolved day-first, so only a CI runner ever saw it.
+    //
+    // The regex therefore pins the ORDER and leaves the month WORDING free, because the month name
+    // is localised on both surfaces deliberately and asserting a specific one would fail in exactly
+    // the places the feature is meant to work.
+    const line = fieldProvenanceLine({
+      source: "designer",
+      by: "usr_1",
+      byName: "Ravi Kumar",
+      at: "2026-08-14T09:00:00Z"
+    });
+    expect(line).toMatch(/^Ravi Kumar, 14 \w+$/);
+    expect(line).not.toMatch(/^Ravi Kumar, \w+ 14$/);
   });
 
   test("typing over a hydrated field reads as the designer's, with no trace of the record", () => {
