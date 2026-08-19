@@ -398,9 +398,11 @@ private const val MAP_ROSTER_ENTITY = "participant"
 /**
  * The roster columns naming where an artisan lives — `report_builder.MAP_ROSTER_PLACE_KEYS`.
  *
- * They are the pin's LABEL here and nothing more. The office also hands the joined string to a
- * geocoder; this device has no atlas, so a row that states a place and drops no pin contributes
- * nothing but a line in the caption.
+ * ORDERED FINEST-FIRST, AND THE ORDER IS READ RATHER THAN DECORATIVE: the pin's label is the FIRST
+ * non-empty of these, which is `_artisan_points`' `place_label`. The office ALSO builds the joined
+ * string ("Barpali, Bargarh") and hands that to a geocoder — this device has no atlas, so it never
+ * needs the joined form, and a row that states a place and drops no pin contributes nothing but a
+ * line in the caption.
  */
 private val MAP_ROSTER_PLACE_KEYS = listOf("village", "district")
 
@@ -436,6 +438,98 @@ private fun geoFix(value: JsonElement?): Pair<Double, Double>? {
     if (!lat.isFinite() || !lon.isFinite()) return null
     if (Math.abs(lat) < 0.0001 && Math.abs(lon) < 0.0001) return null
     return lat to lon
+}
+
+/**
+ * The artisans' own pins, folded by coordinate — the surveyed half of `_artisan_points`.
+ *
+ * [placed] and [total] are what the caption is built from: a map showing four pins for a workshop of
+ * thirty artisans is not wrong, but a reader who cannot see that twenty-six were never placed reads
+ * it as a workshop of four. The arithmetic has to survive the walk that produced the pins, which is
+ * what `_MapFacts` exists for on the other side.
+ */
+private class RosterPins(
+    val points: List<MapPoint> = emptyList(),
+    val states: Set<String> = emptySet(),
+    val placed: Int = 0,
+    val total: Int = 0,
+)
+
+/**
+ * Where each participating artisan lives, for the rows that carry a surveyed pin — `_artisan_points`.
+ *
+ * ONLY [MAP_ROSTER_PIN_KEY] IS READ, and the rest of `_artisan_points` is deliberately absent: its
+ * geocoding branch needs the 795-anchor district table, which is a running average over live
+ * `Location` rows and cannot ship in an APK. See [renderMap] for the whole argument. A row with no
+ * pin is counted in [RosterPins.total] and not in [RosterPins.placed], so the caption can say so.
+ *
+ * THE LABEL IS WHAT THE ROW SAYS THE PLACE IS, never the artisan's name. A coordinate carries no
+ * name, and a map pinned with people's names is a different figure from a map pinned with places,
+ * printed under the same heading.
+ *
+ * AND IT IS THE MOST SPECIFIC PART THE ROW STATED, NOT THE JOINED ADDRESS. `_artisan_points` takes
+ * `next((part for part in stated if part), "")` under a comment headed "ONE LABEL GRAMMAR PER
+ * FIGURE", and its argument is the reason this port must not simplify: every OTHER pin on this
+ * figure is named by the atlas, which returns a single token, so a map reading "Barpali" for five
+ * artisans and "Barpali, Bargarh" for the sixth reads as two kinds of pin and invites a reader to
+ * look for a distinction that is not there. This file joined the two columns, and a test asserted
+ * the joined string, which pinned the divergence rather than the port.
+ *
+ * FOLDED TO FIVE DECIMALS, about a metre, exactly as `_fold_points` does — six weavers from one
+ * hamlet are one pin as far as any reader can tell, so the pin says six. HALF_EVEN through
+ * [java.math.BigDecimal] because that is what Python's `round()` does to a binary double, and the
+ * emitted coordinate is the ROUNDED one on both sides.
+ */
+private fun rosterPins(draft: WorkshopDraft?, stateHint: String): RosterPins {
+    val rows = draft?.stages?.get(MAP_ROSTER_STAGE)?.rowsFor(MAP_ROSTER_ENTITY).orEmpty()
+    if (rows.isEmpty()) return RosterPins()
+
+    fun round5(value: Double): Double =
+        java.math.BigDecimal(value).setScale(5, java.math.RoundingMode.HALF_EVEN).toDouble()
+
+    // Insertion-ordered, and the first label for a coordinate wins — `_fold_points`' dict.
+    val folded = LinkedHashMap<Pair<Double, Double>, Pair<String, Int>>()
+    val states = LinkedHashSet<String>()
+    var placed = 0
+    rows.forEach { row ->
+        val values = row.values
+        val fix = geoFix(values[MAP_ROSTER_PIN_KEY]) ?: return@forEach
+        // `place_label` — the finest thing the row says, and see the KDoc for why not the join.
+        val text = MAP_ROSTER_PLACE_KEYS
+            .map { DwValues.text(values[it]).trim() }
+            .firstOrNull { it.isNotEmpty() }
+            .orEmpty()
+        // The row's own state, with the workshop's as the last resort — a hint for naming the region
+        // the pin fell in, never a position. `_artisan_points` reads it in the same order.
+        val state = DwValues.text(values[MAP_ROSTER_STATE_KEY]).trim().ifEmpty { stateHint }
+        // `canonical_state(state) or state`, AND THE FALLBACK IS THE POINT. Dropping a spelling
+        // `canonicalState` does not recognise leaves the pin on an untinted region with nothing
+        // anywhere saying why: both rasterisers report a failed fill with the RAW name out of
+        // `highlight` and print "Not tinted: …" on the figure itself, so a name carried through is an
+        // admission the office prints and a name dropped is one it prints and this copy does not — on
+        // a figure whose tinted region is its entire content when no fix and no atlas leave any pin.
+        // [renderMap] already does `canonicalState(state) ?: state` for stage 1's own answer
+        // when it builds `highlight`, so until this line changed the file disagreed with itself.
+        if (state.isNotEmpty()) states += (canonicalState(state) ?: state)
+        val key = round5(fix.first) to round5(fix.second)
+        val existing = folded[key]
+        folded[key] = (existing?.first ?: text.ifEmpty { "Artisan's home" }) to ((existing?.second ?: 0) + 1)
+        placed++
+    }
+    return RosterPins(
+        points = folded.map { (key, value) ->
+            MapPoint(
+                label = value.first,
+                lat = key.first,
+                lon = key.second,
+                kind = MapPointKind.ARTISAN,
+                count = value.second,
+            )
+        },
+        states = states,
+        placed = placed,
+        total = rows.size,
+    )
 }
 
 /**
@@ -493,81 +587,6 @@ private fun geoFix(value: JsonElement?): Pair<Double, Double>? {
  * divergence an office notices first when it matches two files. The caption is where the difference
  * belongs, and it now states the residue exactly: how many rows were placed, of how many.
  */
-/**
- * The artisans' own pins, folded by coordinate — the surveyed half of `_artisan_points`.
- *
- * [placed] and [total] are what the caption is built from: a map showing four pins for a workshop of
- * thirty artisans is not wrong, but a reader who cannot see that twenty-six were never placed reads
- * it as a workshop of four. The arithmetic has to survive the walk that produced the pins, which is
- * what `_MapFacts` exists for on the other side.
- */
-private class RosterPins(
-    val points: List<MapPoint> = emptyList(),
-    val states: Set<String> = emptySet(),
-    val placed: Int = 0,
-    val total: Int = 0,
-)
-
-/**
- * Where each participating artisan lives, for the rows that carry a surveyed pin — `_artisan_points`.
- *
- * ONLY [MAP_ROSTER_PIN_KEY] IS READ, and the rest of `_artisan_points` is deliberately absent: its
- * geocoding branch needs the 795-anchor district table, which is a running average over live
- * `Location` rows and cannot ship in an APK. See [renderMap] for the whole argument. A row with no
- * pin is counted in [RosterPins.total] and not in [RosterPins.placed], so the caption can say so.
- *
- * THE LABEL IS WHAT THE ROW SAYS THE PLACE IS, never the artisan's name — `_artisan_points` says the
- * same in as many words. A coordinate carries no name, and a map pinned with people's names is a
- * different figure from a map pinned with places, printed under the same heading.
- *
- * FOLDED TO FIVE DECIMALS, about a metre, exactly as `_fold_points` does — six weavers from one
- * hamlet are one pin as far as any reader can tell, so the pin says six. HALF_EVEN through
- * [java.math.BigDecimal] because that is what Python's `round()` does to a binary double, and the
- * emitted coordinate is the ROUNDED one on both sides.
- */
-private fun rosterPins(draft: WorkshopDraft?, stateHint: String): RosterPins {
-    val rows = draft?.stages?.get(MAP_ROSTER_STAGE)?.rowsFor(MAP_ROSTER_ENTITY).orEmpty()
-    if (rows.isEmpty()) return RosterPins()
-
-    fun round5(value: Double): Double =
-        java.math.BigDecimal(value).setScale(5, java.math.RoundingMode.HALF_EVEN).toDouble()
-
-    // Insertion-ordered, and the first label for a coordinate wins — `_fold_points`' dict.
-    val folded = LinkedHashMap<Pair<Double, Double>, Pair<String, Int>>()
-    val states = LinkedHashSet<String>()
-    var placed = 0
-    rows.forEach { row ->
-        val values = row.values
-        val fix = geoFix(values[MAP_ROSTER_PIN_KEY]) ?: return@forEach
-        val text = MAP_ROSTER_PLACE_KEYS
-            .map { DwValues.text(values[it]).trim() }
-            .filter { it.isNotEmpty() }
-            .joinToString(", ")
-        // The row's own state, with the workshop's as the last resort — a hint for naming the region
-        // the pin fell in, never a position. `_artisan_points` reads it in the same order.
-        val state = DwValues.text(values[MAP_ROSTER_STATE_KEY]).trim().ifEmpty { stateHint }
-        canonicalState(state)?.takeIf { it.isNotEmpty() }?.let { states += it }
-        val key = round5(fix.first) to round5(fix.second)
-        val existing = folded[key]
-        folded[key] = (existing?.first ?: text.ifEmpty { "Artisan's home" }) to ((existing?.second ?: 0) + 1)
-        placed++
-    }
-    return RosterPins(
-        points = folded.map { (key, value) ->
-            MapPoint(
-                label = value.first,
-                lat = key.first,
-                lon = key.second,
-                kind = MapPointKind.ARTISAN,
-                count = value.second,
-            )
-        },
-        states = states,
-        placed = placed,
-        total = rows.size,
-    )
-}
-
 internal fun renderMap(
     builder: DocumentBuilder,
     section: TemplateSection,

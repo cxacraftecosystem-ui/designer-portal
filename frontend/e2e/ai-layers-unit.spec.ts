@@ -49,11 +49,13 @@ const SERVER_SHAPE: DwAiLayer = JSON.parse(`
   "designWorkshopId": "cmworkshop0000000000000a",
   "kind": "RAW_TRANSCRIPT",
   "tier": "TIER_3",
-  "source": { "kind": "MEDIA", "id": "cmmedia000000000000000a" },
+  "source": { "kind": "MEDIA", "id": "cmmedia000000000000000a", "text": null },
   "provider": "UNRECORDED",
   "modelId": "UNRECORDED",
   "modelVersion": null,
   "language": null,
+  "sourceLanguage": null,
+  "targetLanguage": null,
   "producedAt": null,
   "createdAt": "2026-08-12T09:15:00+00:00",
   "createdById": "cmuser00000000000000001",
@@ -72,6 +74,18 @@ function layer(overrides: Partial<DwAiLayer>): DwAiLayer {
   return { ...SERVER_SHAPE, ...overrides };
 }
 
+/**
+ * A pointer source, with the `text` key the server sends on every one of them.
+ *
+ * `layer_payload` writes `"text": None if text_withheld else stored.text` UNCONDITIONALLY — for a
+ * MEDIA or LAYER source that is always null, because there are no supplied words to carry, but the
+ * key is there. Written through a helper so that a source built in a test cannot quietly omit a key
+ * the wire has, which is the `DwIdentityOcrResult` defect in the direction a spec can commit it.
+ */
+function from(kind: string, id: string | null): DwAiLayer["source"] {
+  return { kind, id, text: null };
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * The chain
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -81,13 +95,13 @@ test("a cleaned transcript is drawn INSIDE the raw one it was made from, not bes
   const cleaned = layer({
     id: "cleaned",
     kind: "CLEANED_TRANSCRIPT",
-    source: { kind: "LAYER", id: "raw" },
+    source: from("LAYER", "raw"),
     createdAt: "2026-08-12T09:00:01+00:00"
   });
   const summary = layer({
     id: "summary",
     kind: "SUMMARY",
-    source: { kind: "LAYER", id: "cleaned" },
+    source: from("LAYER", "cleaned"),
     createdAt: "2026-08-12T09:30:00+00:00"
   });
 
@@ -137,9 +151,9 @@ test("no layer is ever dropped: a missing source, a missing parent and a cycle a
   */
   const rooted = layer({ id: "rooted" });
   const noSource = layer({ id: "no-source", source: null });
-  const orphan = layer({ id: "orphan", kind: "SUMMARY", source: { kind: "LAYER", id: "a-layer-not-in-this-list" } });
-  const loopA = layer({ id: "loop-a", kind: "SUMMARY", source: { kind: "LAYER", id: "loop-b" } });
-  const loopB = layer({ id: "loop-b", kind: "SUMMARY", source: { kind: "LAYER", id: "loop-a" } });
+  const orphan = layer({ id: "orphan", kind: "SUMMARY", source: from("LAYER", "a-layer-not-in-this-list") });
+  const loopA = layer({ id: "loop-a", kind: "SUMMARY", source: from("LAYER", "loop-b") });
+  const loopB = layer({ id: "loop-b", kind: "SUMMARY", source: from("LAYER", "loop-a") });
 
   const items = [rooted, noSource, orphan, loopA, loopB];
   const grouping = groupAiLayers(items);
@@ -169,7 +183,7 @@ test("a source kind this build has never heard of is said to be unknown, not dia
     fabricated-fact failure this whole feature exists to prevent, committed by the client rather than
     by a model, which is why it gets a witness of its own.
   */
-  const future = layer({ id: "future", source: { kind: "COLLECTION", id: "cmthing0000000000000000a" } });
+  const future = layer({ id: "future", source: from("COLLECTION", "cmthing0000000000000000a") });
   const grouping = groupAiLayers([future]);
 
   expect(grouping.recordings).toEqual([]);

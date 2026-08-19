@@ -389,14 +389,6 @@ internal fun DwReferenceSelectField(
     val inlineHost = bridge?.inlineRecords?.takeIf { noun != null && enabled }
 
     /**
-     * Open the record form, and take up whatever it reports.
-     *
-     * Rebuilt on every composition rather than remembered, so the closure it hands the host reads
-     * this composition's [rowValues] and [selectedId] rather than a snapshot from some earlier one.
-     * That matters for the hydration bookkeeping: a stale `lastHydration` would decide it may
-     * overwrite a value the designer has since typed by hand.
-     */
-    /**
      * What this picker already knows about a record created from it — see [DwInlineSeed].
      *
      * The name is read out of THIS ROW through the PARENT field's own hydration mapping, which is the
@@ -411,6 +403,14 @@ internal fun DwReferenceSelectField(
         return DwInlineSeed(artisanId = parentId, artisanName = name)
     }
 
+    /**
+     * Open the record form, and take up whatever it reports.
+     *
+     * Rebuilt on every composition rather than remembered, so the closure it hands the host reads
+     * this composition's [rowValues] and [selectedId] rather than a snapshot from some earlier one.
+     * That matters for the hydration bookkeeping: a stale `lastHydration` would decide it may
+     * overwrite a value the designer has since typed by hand.
+     */
     fun openInlineRecord(recordId: String?) {
         val host = inlineHost ?: return
         // NOTHING IS SEEDED INTO AN EDIT. The record already has its own answers, and a seed landing

@@ -3,8 +3,12 @@ package com.designprototype.workshop.data
 import java.util.Locale
 
 /**
- * **PUTTING THE SPEECH MODEL ON THIS PHONE — THE TWO ROUTES IN, AND THE ONE GATE THEY BOTH GO
+ * **PUTTING THE SPEECH MODEL ON THIS PHONE — THE THREE ROUTES IN, AND THE ONE GATE THEY ALL GO
  * THROUGH.**
+ *
+ * It said TWO until this deployment's own per-file endpoint was wired up; the third is
+ * [DwAsrEndpointState], declared in `DwAsrModelEndpoint.kt` beside the paths and the manifest
+ * verdict. It changes nothing about the gate below, which is the point of saying so here.
  *
  * ── WHY THIS IS A SEPARATE FILE FROM `DwAsrRuntime.kt` ────────────────────────────────────────
  *
@@ -32,7 +36,7 @@ import java.util.Locale
  *
  * ── THE GATE, WHICH IS THE SAME GATE, AND THAT IS THE POINT ───────────────────────────────────
  *
- * Both routes below end in the same three lines: hash every pinned file **on disk, in this run**,
+ * All three routes end in the same three lines: hash every pinned file **on disk, in this run**,
  * compare with [dwAsrVerify] against a digest compiled into the APK, and refuse to load anything that
  * did not match. There is no debug backdoor and no "skip verification" flag, because a sideload that
  * skipped the check would be the only path in this app that fed unchecked bytes to a native graph
@@ -69,10 +73,15 @@ import java.util.Locale
  *  * **Hand-rolling a bzip2 decoder** is several hundred lines of bit-twiddling whose output is fed
  *    straight to a native graph executor. A decompressor nobody has reviewed is a worse supply-chain
  *    decision than the one `ASR-RUNTIME-MEASUREMENT.md` §1 already declined.
- *  * **Republishing the model as a `.zip` on this deployment's own storage** is the move that makes
- *    [DOWNLOAD][DwAsrModelOffer.DOWNLOAD] live, and it is a release task rather than a code one —
- *    docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md. Set [DwAsrModelArtifact.container] to [ZIP], pin the new
- *    digest, and every line below starts working with no other change.
+ *  * **Republishing the model as a `.zip` on this deployment's own storage** was the move that would
+ *    make [DOWNLOAD][DwAsrModelOffer.DOWNLOAD] live on THIS route — a release task rather than a code
+ *    one, and docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md is where it is written up. Set
+ *    [DwAsrModelArtifact.container] to [ZIP], pin the new digest, and every line below starts
+ *    working with no other change. **SUPERSEDED RATHER THAN WRONG, AND KEPT SO NOBODY REDOES THE
+ *    INVESTIGATION**: the deployment's own endpoint (`DwAsrModelEndpoint.kt`) serves the two files
+ *    ALREADY UNPACKED, so it needs no archive and no republish, and it is the route that actually
+ *    made a download button drawable. This paragraph still applies to anybody who wants the pinned
+ *    GitHub container itself to become fetchable.
  */
 enum class DwAsrContainerFormat(
     /** The published file's extension, used only to name the file on disk while it is being fetched. */
@@ -350,10 +359,13 @@ fun dwAsrInstalledModelIds(status: DwAsrModelStatus): Set<String> =
 fun dwAsrModelStorageNeededBytes(
     model: DwAsrModel,
     /**
-     * The container, when the bytes are coming down a wire. **Both are on the phone at once** while
-     * the archive is unpacked, exactly as [dwAsrStorageNeededBytes] argues for the engine. Null for a
-     * sideload, where the staged copy is somebody else's bytes in somebody else's directory and this
-     * app is only writing the unpacked size.
+     * The container, when the bytes are coming down a wire **as an archive**. Both are on the phone
+     * at once while it is unpacked, exactly as [dwAsrStorageNeededBytes] argues for the engine.
+     *
+     * NULL FOR THE OTHER TWO ROUTES, AND FOR THE SAME REASON IN BOTH: neither stages anything to
+     * disk twice. A sideload copies somebody else's bytes out of somebody else's directory, and the
+     * deployment endpoint serves the two files already unpacked — so each writes the model once and
+     * peak disk is ~365 MB rather than the container route's ~658 MB.
      */
     artifact: DwAsrModelArtifact? = null,
 ): Long = model.onDiskBytes + (artifact?.downloadBytes ?: 0L) + DW_MODEL_FREE_STORAGE_MARGIN_BYTES
@@ -407,8 +419,15 @@ enum class DwAsrModelOffer {
     NOTHING_PINNED,
 
     /**
-     * **A CONTAINER THIS BUILD HAS NO READER FOR — TODAY'S ANSWER ON EVERY HANDSET WITH NO STAGED
-     * COPY.** The model is published as a `.tar.bz2` and nothing in this APK can open one.
+     * **A CONTAINER THIS BUILD HAS NO READER FOR.** The pinned container is a `.tar.bz2` and nothing
+     * in this APK can open one.
+     *
+     * IT USED TO SAY "TODAY'S ANSWER ON EVERY HANDSET WITH NO STAGED COPY", AND THAT IS NO LONGER
+     * WHAT IT MEANS. There is now a third route in — [DwAsrEndpointState], this deployment's own
+     * per-file copy — which has no archive at all, so the bzip2 blocker does not apply to it. This
+     * value is the answer only when the deployment has NOT been given the bytes either (or has not
+     * been asked yet), which on the fleet today is still every handset, because `ASR_MODEL_DIR` is
+     * unset by default on the origin. It stops being the usual answer the day somebody provisions it.
      *
      * Its own value rather than folded into [NOTHING_PINNED], because they are different missing
      * things with different owners and different next moves: nothing-pinned waits on a release builder
@@ -423,6 +442,35 @@ enum class DwAsrModelOffer {
      * that does nothing — does not arise.
      */
     CONTAINER_NOT_READABLE_IN_THIS_BUILD,
+
+    /**
+     * **THE DEPLOYMENT WOULD SERVE IT AND THIS ACCOUNT MAY NOT ASK.** HTTP 403.
+     *
+     * Its own value, and never merged with [SESSION_LAPSED], because the two have different owners
+     * and opposite next moves. `can_run_design_workshops` is a SET and not a rank threshold — a
+     * PROFESSOR outranks a designer and is still refused — so a designer who reads "sign in again"
+     * here signs in again, gets the identical 403, and concludes the app is broken. The card prints
+     * the SERVER's own 403 sentence rather than a second phrasing of the rule; see
+     * [DwAsrEndpointState.FORBIDDEN] for why two wordings of a counter-intuitive rule will drift.
+     */
+    NOT_ENTITLED,
+
+    /**
+     * **THE SESSION LAPSED.** HTTP 401. Signing in again fixes it, and this app already draws that
+     * distinction twice elsewhere — see [DwAsrEndpointState.SESSION_LAPSED].
+     */
+    SESSION_LAPSED,
+
+    /**
+     * **THE DEPLOYMENT DOES NOT KNOW THE MODEL THIS APK PINS.** HTTP 404 on the manifest route.
+     *
+     * Not [NOTHING_PINNED] (this app pins one) and not
+     * [CONTAINER_NOT_READABLE_IN_THIS_BUILD] (nothing was fetched): it is an app/server version
+     * skew, and the only move that helps is updating the app. Rolled into "the deployment has not
+     * been given the model" it would send a designer to an administrator who will find the bytes
+     * present and correct.
+     */
+    DEPLOYMENT_DOES_NOT_KNOW_THIS_MODEL,
 
     /** `StatFs` would not answer, so whether it fits is a question. It will not be guessed. */
     STORAGE_UNMEASURED,
@@ -454,6 +502,14 @@ fun dwAsrModelOffer(
     stagedFilesPresent: Boolean,
     catalogue: List<DwAsrModel> = DW_ASR_MODELS,
     artifacts: List<DwAsrModelArtifact> = DW_ASR_MODEL_ARTIFACTS,
+    /**
+     * What THIS DEPLOYMENT answered when last asked whether it serves the model.
+     *
+     * Defaulted to [DwAsrEndpointState.UNKNOWN] so every existing call site keeps its behaviour
+     * exactly — and because UNKNOWN is the honest value for a caller that has not asked. It falls
+     * through to the container branch; it is never read as "not published". See [DwAsrEndpointState].
+     */
+    endpoint: DwAsrEndpointState = DwAsrEndpointState.UNKNOWN,
 ): DwAsrModelOffer {
     // 1. Is there anything to install at all? A fact about this BUILD, checked before anything about
     //    the handset, because no reading of a phone can change the answer.
@@ -492,12 +548,61 @@ fun dwAsrModelOffer(
         }
     }
 
-    // 4. Nothing staged, so it would have to be fetched. Is there a container, and can this build
-    //    open it? Both are facts about the build and neither is changed by anything on the phone.
+    /*
+     * 3b. THIS DEPLOYMENT'S OWN PER-FILE COPY, **BELOW THE STAGED BRANCH AND ABOVE THE CONTAINER.**
+     *
+     * BELOW STAGED, and that ordering is the one a later refactor reverses without noticing because
+     * both branches "work": a designer whose administrator already pushed the files over a cable
+     * would be offered a 365 MB fetch of bytes sitting on the phone in front of them, which is the
+     * exact failure the staged-first comment above was written for.
+     *
+     * ABOVE THE CONTAINER, because this route has no container: the endpoint serves the two files
+     * unpacked, so [DwAsrContainerFormat] and the bzip2 refusal do not apply to it at all.
+     *
+     * SIZED AGAINST WHAT IT WRITES — [dwAsrModelStorageNeededBytes] with NO artifact — for the same
+     * reason the staged branch is: nothing is staged to disk twice on this route, so peak disk is
+     * the model alone (~365 MB) rather than the container plus the unpacked files (~658 MB).
+     * Charging it the container's question would refuse an install that would have fitted.
+     */
+    when (endpoint) {
+        DwAsrEndpointState.PUBLISHES -> {
+            if (free < dwAsrModelStorageNeededBytes(model)) return DwAsrModelOffer.NOT_ENOUGH_STORAGE
+            // The connection last, because it is the one that changes while a designer stands there.
+            if (connection == DwConnection.NONE) return DwAsrModelOffer.NO_CONNECTION
+            return if (status.state == DwAsrModelState.FAILED) {
+                DwAsrModelOffer.RETRY
+            } else {
+                DwAsrModelOffer.DOWNLOAD
+            }
+        }
+        /*
+         * EVERY OTHER ANSWER FALLS THROUGH, INCLUDING THE REFUSALS, and that is deliberate. A 401 or
+         * a 403 is a fact about THIS route and says nothing about the container route beside it, so
+         * refusing here would suppress an install that would have worked the day the model is
+         * republished as a `.zip`. What the refusals do instead is REPLACE the container branch's
+         * own dead end below, where they are strictly more actionable than "this app cannot open a
+         * .tar.bz2" — see [dwAsrModelEndpointRefusal].
+         *
+         * UNKNOWN falls through for this codebase's standing rule ([DwAsrModelState.UNKNOWN],
+         * [DwAsrRuntimeState.UNKNOWN], [DwPackState.UNKNOWN]): the app has not asked yet, and
+         * not-yet-looked is never rendered as not-there.
+         */
+        DwAsrEndpointState.UNKNOWN,
+        DwAsrEndpointState.UNREACHABLE,
+        DwAsrEndpointState.SESSION_LAPSED,
+        DwAsrEndpointState.FORBIDDEN,
+        DwAsrEndpointState.VERSION_SKEW,
+        DwAsrEndpointState.NOT_PUBLISHED -> Unit
+    }
+
+    // 4. Nothing staged and this deployment cannot serve it, so it would have to come from the
+    //    pinned container. Is there one, and can this build open it? Both are facts about the build
+    //    and neither is changed by anything on the phone.
     val artifact = artifacts.firstOrNull { it.modelId == model.modelId }
-        ?: return DwAsrModelOffer.NOTHING_PINNED
+        ?: return dwAsrModelEndpointRefusal(endpoint) ?: DwAsrModelOffer.NOTHING_PINNED
     if (!artifact.container.readableInThisBuild) {
-        return DwAsrModelOffer.CONTAINER_NOT_READABLE_IN_THIS_BUILD
+        return dwAsrModelEndpointRefusal(endpoint)
+            ?: DwAsrModelOffer.CONTAINER_NOT_READABLE_IN_THIS_BUILD
     }
 
     // 5. Storage for the download route: the container and the unpacked files at once.
@@ -507,6 +612,99 @@ fun dwAsrModelOffer(
     if (connection == DwConnection.NONE) return DwAsrModelOffer.NO_CONNECTION
 
     return if (status.state == DwAsrModelState.FAILED) DwAsrModelOffer.RETRY else DwAsrModelOffer.DOWNLOAD
+}
+
+/**
+ * The endpoint's own refusal, where it is more use than the container's — or null.
+ *
+ * **ASKED ONLY WHERE THE CONTAINER ROUTE HAS ALREADY DEAD-ENDED.** Its two call sites in
+ * [dwAsrModelOffer] are the `NOTHING_PINNED` and `CONTAINER_NOT_READABLE_IN_THIS_BUILD` returns, and
+ * nowhere else. That is what keeps an account problem on ONE route from suppressing a working
+ * install on the other: when the container can actually be fetched, this function is never reached.
+ *
+ * When neither route can serve, "your session lapsed" and "this account is not allowed" are things a
+ * designer can act on within the minute, and "published as a .tar.bz2, which this app cannot open"
+ * is a sentence about a release builder's decision that they can do nothing whatsoever about.
+ *
+ * UNREACHABLE and NOT_PUBLISHED return null on purpose: on today's fleet those ARE the ordinary
+ * answers (`ASR_MODEL_DIR` is unset), and the container sentence is the honest one for them — it
+ * names the cable route, which is what actually works.
+ */
+private fun dwAsrModelEndpointRefusal(endpoint: DwAsrEndpointState): DwAsrModelOffer? =
+    when (endpoint) {
+        DwAsrEndpointState.SESSION_LAPSED -> DwAsrModelOffer.SESSION_LAPSED
+        DwAsrEndpointState.FORBIDDEN -> DwAsrModelOffer.NOT_ENTITLED
+        DwAsrEndpointState.VERSION_SKEW -> DwAsrModelOffer.DEPLOYMENT_DOES_NOT_KNOW_THIS_MODEL
+        DwAsrEndpointState.UNKNOWN,
+        DwAsrEndpointState.UNREACHABLE,
+        DwAsrEndpointState.NOT_PUBLISHED,
+        DwAsrEndpointState.PUBLISHES -> null
+    }
+
+/**
+ * WHERE THE BYTES WOULD COME FROM. Three routes, and the tap has to dispatch on one of them.
+ *
+ * Derived by [dwAsrModelSourceFor] rather than re-worked out at the call site, because the offer and
+ * the tap are two different moments and the controller asks the offer again at the second one. Two
+ * independent derivations of "which route is this" is how a card that says "already on this phone"
+ * starts a 365 MB download.
+ */
+enum class DwAsrModelSource {
+    /** A cable put the files on this phone. A copy between two directories; no network at all. */
+    STAGED_FILES,
+
+    /** This deployment's own `GET /api/asr-models/{id}/files/{name}` — per file, unpacked, authenticated. */
+    DEPLOYMENT_ENDPOINT,
+
+    /** [DW_ASR_MODEL_ARTIFACTS]' single container URL. One stream, one archive, one container digest. */
+    PINNED_CONTAINER,
+}
+
+/**
+ * Which route an offer would actually pull from, or null when the offer moves no bytes.
+ *
+ * ── WHY [DwAsrModelOffer.RESUME] NEEDS AN ARGUMENT THE OTHERS DO NOT ──────────────────────────
+ *
+ * [dwAsrModelOffer] returns RESUME at step 2, from [DwAsrModelState.PAUSED], **before `endpoint` is
+ * ever consulted** — deliberately, because bytes already paid for outrank every gate below. So a
+ * resume cannot be attributed to a route by asking what the deployment says today: the part-files on
+ * disk were left by whichever route was running yesterday, and the deployment may since have been
+ * provisioned or emptied. The controller reads which part-files exist and passes the answer in.
+ *
+ * A null [pausedSource] on a RESUME means the disk was not asked, or answered nothing recognisable;
+ * it falls back to the same rule as a fresh DOWNLOAD, which is the safe direction — the fetch loop
+ * checks `Content-Range` against what it asked for and starts fresh if the two disagree, so a
+ * mis-attributed resume costs bytes and never a corrupt file.
+ */
+fun dwAsrModelSourceFor(
+    offer: DwAsrModelOffer,
+    endpoint: DwAsrEndpointState,
+    /**
+     * Mirrors [dwAsrModelOffer]'s own argument, so a REFUSAL can still name the route it was refused
+     * ON — which is what lets the NOT_ENOUGH_STORAGE sentence quote the right figure. Without it a
+     * staged install refused for room would be described with the container's arithmetic.
+     */
+    stagedFilesPresent: Boolean = false,
+    /** Which route left the part-files on this phone, read off the disk. Null when unasked. */
+    pausedSource: DwAsrModelSource? = null,
+): DwAsrModelSource? {
+    val fresh = if (endpoint == DwAsrEndpointState.PUBLISHES) {
+        DwAsrModelSource.DEPLOYMENT_ENDPOINT
+    } else {
+        DwAsrModelSource.PINNED_CONTAINER
+    }
+    return when (offer) {
+        DwAsrModelOffer.INSTALL_FROM_STAGED_FILES -> DwAsrModelSource.STAGED_FILES
+        DwAsrModelOffer.RESUME -> pausedSource ?: fresh
+        DwAsrModelOffer.DOWNLOAD, DwAsrModelOffer.RETRY -> fresh
+        // The route this refusal is ABOUT. [dwAsrModelOffer]'s staged branch is the only one that can
+        // answer NOT_ENOUGH_STORAGE with files already on the phone, and it returns before the
+        // connection is ever read — so NO_CONNECTION can only ever be about a fetch.
+        DwAsrModelOffer.NOT_ENOUGH_STORAGE ->
+            if (stagedFilesPresent) DwAsrModelSource.STAGED_FILES else fresh
+        DwAsrModelOffer.NO_CONNECTION -> fresh
+        else -> null
+    }
 }
 
 /**
@@ -572,19 +770,47 @@ fun dwAsrModelOfferSentence(
     measurement: DwDeviceMeasurement,
     catalogue: List<DwAsrModel> = DW_ASR_MODELS,
     artifacts: List<DwAsrModelArtifact> = DW_ASR_MODEL_ARTIFACTS,
+    /**
+     * Which route the offer would pull from — [dwAsrModelSourceFor]. Null keeps the container's
+     * figures, which is what every caller got before the endpoint route existed.
+     *
+     * **IT IS HERE BECAUSE THE MONEY IS DIFFERENT ON THE TWO ROUTES AND THE CARD PRINTS THE MONEY.**
+     * See the DOWNLOAD arm.
+     */
+    source: DwAsrModelSource? = null,
 ): String {
     val model = catalogue.firstOrNull()
     val artifact = model?.let { m -> artifacts.firstOrNull { it.modelId == m.modelId } }
+    val fromEndpoint = source == DwAsrModelSource.DEPLOYMENT_ENDPOINT
     return when (offer) {
         // It still names where the bytes came from: a designer told their phone holds a 365 MB model
         // they did not download is entitled to know who put it there.
         DwAsrModelOffer.INSTALL_FROM_STAGED_FILES ->
             "Already on this phone, put here with a cable. Installing costs no data."
 
-        // THE COST, BEFORE THE TAP. Both figures, because both have to fit at once while it unpacks.
+        /*
+         * THE COST, BEFORE THE TAP — AND THE TWO ROUTES COST DIFFERENT AMOUNTS, IN OPPOSITE
+         * DIRECTIONS.
+         *
+         * THE CONTAINER: 292,571,207 compressed to fetch and 365,438,543 to keep, and both figures
+         * are printed because both have to fit AT ONCE while it unpacks — peak disk is about 658 MB.
+         *
+         * THE ENDPOINT: the same two files, unpacked, so the wire cost is 365,438,543 —
+         * **+72,867,336, about 25% MORE than the container** — and the storage cost falls to the
+         * same 365,438,543 because nothing is staged to disk twice. Printing the container's smaller
+         * number here would understate a designer's prepaid bundle by 73 MB, which is precisely what
+         * this app's rule about `dwDownloadCostSentence` ("it is the money") exists to prevent. Note
+         * that this is the arm that actually prints the figure: a separate "source sentence" helper
+         * beside the button would leave the wrong number on the line a designer reads.
+         */
         DwAsrModelOffer.DOWNLOAD ->
-            "${dwBytesLabel(artifact?.downloadBytes)} to fetch, " +
-                "${dwBytesLabel(model?.onDiskBytes)} to keep. Nothing is fetched until you tap."
+            if (fromEndpoint) {
+                "${dwBytesLabel(model?.onDiskBytes)} to fetch from this deployment, and the same " +
+                    "again is what it takes on the phone. Nothing is fetched until you tap."
+            } else {
+                "${dwBytesLabel(artifact?.downloadBytes)} to fetch, " +
+                    "${dwBytesLabel(model?.onDiskBytes)} to keep. Nothing is fetched until you tap."
+            }
 
         DwAsrModelOffer.RESUME ->
             "Paused. Resuming asks the server only for the part that is missing."
@@ -609,19 +835,63 @@ fun dwAsrModelOfferSentence(
          * rather than one: without the second, a designer reads "cannot be fetched" beside a card
          * that plainly knows which file it wants and concludes the app is broken. The second names
          * the route that works and whose job the fix is.
+         *
+         * **IT NO LONGER PRINTS A PATH IN THIS REPOSITORY.** It used to end "docs/ASR-MODEL-SIDELOAD.md",
+         * which is a maintainer's filename on a designer's card, and `DwSpeechCardProseTest`'s rule —
+         * "no sentence this app shows a designer names a file in this repository" — fails any string
+         * matching `\bdocs/[A-Za-z0-9._-]+`. That test happens not to walk this function today, which
+         * made this a latent violation rather than a licence. The document path belongs in the KDoc,
+         * where the maintainer reads it: docs/ASR-MODEL-SIDELOAD.md is the cable route.
          */
         DwAsrModelOffer.CONTAINER_NOT_READABLE_IN_THIS_BUILD ->
             "Published as a ${artifact?.container?.extension ?: "compressed archive"}, which this " +
-                "app cannot open. It can still be put on this phone with a cable — " +
-                "docs/ASR-MODEL-SIDELOAD.md."
+                "app cannot open, and this deployment does not have its own copy. Somebody with a " +
+                "cable can still put it on this phone — ask whoever set up your account."
+
+        /*
+         * THE SERVER'S OWN 403 SENTENCE, QUOTED, and not a second phrasing of the rule. The gate is
+         * a SET and not a rank threshold — a PROFESSOR outranks a designer and is still refused — so
+         * a card that improvised "you need a higher role" would be telling somebody who already has
+         * a higher role that they qualify. `_require_entitlement`'s `detail` is worded around exactly
+         * that trap and deliberately does not say "or above".
+         */
+        DwAsrModelOffer.NOT_ENTITLED ->
+            "The offline speech model is part of running a design workshop, so it needs a " +
+                "Designer, Admin or Master Admin account. Ask whoever manages accounts here."
+
+        DwAsrModelOffer.SESSION_LAPSED ->
+            "This phone is signed out of the deployment, so it could not ask for the model. Sign " +
+                "in again and tap “Check again”."
+
+        // NOT "the deployment has no model": it has one, and it is not the one this app knows how to
+        // ask for. Sending this designer to an administrator wastes both their time — the bytes will
+        // be present and correct — so the sentence names the move that helps.
+        DwAsrModelOffer.DEPLOYMENT_DOES_NOT_KNOW_THIS_MODEL ->
+            "This deployment does not recognise the speech model this version of the app asks for. " +
+                "Updating the app is what fixes it; a cable still works in the meantime."
 
         DwAsrModelOffer.STORAGE_UNMEASURED ->
             "This phone would not say how much storage is free. Tap “Check again”."
 
-        DwAsrModelOffer.NOT_ENOUGH_STORAGE ->
-            "Not enough room: needs ${dwBytesLabel(model?.onDiskBytes)} plus " +
+        /*
+         * THE FIGURE IS THE ONE THE GATE ACTUALLY USED, and until the endpoint route existed there
+         * was only one number to print so nothing said which. There are two now, and they differ by
+         * 292 MB: [dwAsrModelStorageNeededBytes] adds the container's own length on the container
+         * route, because the archive and the unpacked files are on the phone AT ONCE while it
+         * unpacks — peak disk ~658 MB — and adds nothing on the staged and endpoint routes, which
+         * write the model once. A refusal quoting the smaller figure while the gate used the larger
+         * one tells a designer to free 365 MB and then refuses them again.
+         */
+        DwAsrModelOffer.NOT_ENOUGH_STORAGE -> {
+            val staging = if (source == DwAsrModelSource.PINNED_CONTAINER) {
+                artifact?.downloadBytes ?: 0L
+            } else {
+                0L
+            }
+            "Not enough room: needs ${dwBytesLabel((model?.onDiskBytes ?: 0L) + staging)} plus " +
                 "${dwBytesLabel(DW_MODEL_FREE_STORAGE_MARGIN_BYTES)} kept back, and this phone has " +
                 "${dwBytesLabel(measurement.freeStorageBytes)} free."
+        }
 
         DwAsrModelOffer.UNKNOWN ->
             "Not looked at yet. Tap “Check again”."

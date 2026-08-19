@@ -192,15 +192,20 @@ where `NaN` is truthy in Python and falsy in JavaScript.
 > harness this paragraph said did not exist. One case table
 > (`android/app/src/test/resources/dw-analysis-cases.json`) is fed to
 > `backend/app/services/market_analysis.py` and `cost_integrity.py` verbatim, the payload Python
-> produced is frozen into `dw-analysis-expected.json`, and the test recomputes all 59 cases in
-> Kotlin and diffs the two documents leaf by leaf — naming the case, the JSON path and both values
+> produced is frozen into `dw-analysis-expected.json`, and the test recomputes THE WHOLE CASE TABLE
+> in Kotlin and diffs the two documents leaf by leaf — naming the case, the JSON path and both values
 > when it fails. The cases were chosen at the seams listed in the table above rather than for
 > coverage: half-to-even, `\p{M}`, code-point ordering, `PY_FLOAT`'s grammar, `DwPy.strip` against
 > `trim()`. **The table is itself tested by mutation** — its header records how many leaves each
 > guard moves when broken (HALF_EVEN→HALF_UP moves 5, dropping `\p{M}` moves 4, `toDoubleOrNull`
 > moves 16, `trim()` moves 31) and records one case, `m28-python-whitespace-forms`, added because
 > `trim()` originally moved NOTHING. A guard nothing can break is a guard nobody can trust, and that
-> is what makes this a proof rather than a green tick. Two of the 59 are not synthetic at all:
+> is what makes this a proof rather than a green tick. **No case count is stated here on purpose.**
+> This document carried "59" in three places while the table held 62 (29 market + 5 competitor
+> positions + 28 cost), copied out of a KDoc that has since stopped stating one for the same reason:
+> a number in prose beside a table that grows is a claim that rots on the next commit, and
+> `DwAnalysisParityTest`'s first assertion — that the case table and the golden describe the same
+> cases — is the only thing a reader wanted the number for. Two of the cases are not synthetic at all:
 > `m27-live-workshop` and `k26-live-workshop` are a real 270-row workshop's stage-8/9/17 rows beside
 > what the live endpoints answered for them. The golden is a CACHE of the Python, not a second
 > opinion: if the two disagree the Python is right.
@@ -362,8 +367,22 @@ rather than silently emptying a card.
 
 Market analysis is no longer the contrasting case it was: it is surfaced on the web
 (`MarketFindingsPanel`, mounted on stage 9 in
-`frontend/app/(protected)/design-workshops/[id]/stages/[stageKey]/page.tsx`) **and** on Android. The
-asymmetry that remains runs the other way — cost integrity is Android-only.
+`frontend/app/(protected)/design-workshops/[id]/stages/[stageKey]/page.tsx`) **and** on Android.
+
+~~The asymmetry that remains runs the other way — cost integrity is Android-only.~~ **That closing
+sentence was false the day it was written and is struck rather than deleted, because a summary
+sentence is where a reader who scrolled stops.** It sat fifteen lines below the rows recording
+`frontend/lib/costIntegrity.ts` and `frontend/components/designworkshop/CostFindingsPanel.tsx` as
+BUILT on 2026-08-20, and it withdrew, in the reader's last line, the exact repair the table above it
+had just landed. **Both computations are surfaced on both surfaces: market analysis and cost
+integrity each have a browser panel and an Android card.**
+
+**The asymmetry that actually remains is not a SURFACE but a PROOF.** `frontend/lib/costIntegrity.ts`
+is held to the Python case for case by `frontend/e2e/cost-integrity-port-unit.spec.ts`;
+`frontend/lib/marketAnalysis.ts` is not held to it by anything, and only `pySum` is pinned. §2.7's
+**TYPESCRIPT ↔ PYTHON: STILL UNVERIFIED** paragraph is the authority on what that leaves open and
+names the cheapest way to close it. Before quoting either paragraph onward, re-read both — this
+section has now stated the surface asymmetry wrong in both directions.
 
 ---
 
@@ -490,7 +509,7 @@ instruction that only a person who already knows the answer can act on.
 | Claim class | Kept true by |
 |---|---|
 | The floors, the tolerance and the verdict vocabularies | They are module-scope constants and docstrings: `MIN_SAMPLE_FOR_QUANTILES`, `MIN_SAMPLE_FOR_VERDICT`, `NARROW_COVERAGE` in `backend/app/services/market_analysis.py`; `TOLERANCE_RUPEES`, `MARGIN_TOLERANCE_POINTS`, `COST_HEADS` in `backend/app/services/cost_integrity.py`. Each table above should be diffable against the dataclass docstring that defines it in one read. |
-| The port-parity rules (§2.7) | **Kotlin ↔ Python is mechanical now:** `android/app/src/test/java/com/designprototype/workshop/data/DwAnalysisParityTest.kt` diffs 59 cases against a golden frozen from the two backend modules, and `DwOverflowParityTest.kt` covers the overflow edges. Regenerate the golden from the backend when either side changes; the Python is the authority. **TypeScript ↔ Python is not:** only `pySum` is pinned, by `frontend/e2e/market-analysis-sum-unit.spec.ts`. That is the honest remaining **UNVERIFIED**, and this row said "there is no cross-language test" for eleven days after one landed. |
+| The port-parity rules (§2.7) | **Kotlin ↔ Python is mechanical now:** `android/app/src/test/java/com/designprototype/workshop/data/DwAnalysisParityTest.kt` diffs the whole of `dw-analysis-cases.json` against a golden frozen from the two backend modules (**no count restated — this row said 59 while the table held 62, and the KDoc now declines to state one at all**), and `DwOverflowParityTest.kt` covers the overflow edges. Regenerate the golden from the backend when either side changes; the Python is the authority. **TypeScript ↔ Python is not:** only `pySum` is pinned, by `frontend/e2e/market-analysis-sum-unit.spec.ts`. That is the honest remaining **UNVERIFIED**, and this row said "there is no cross-language test" for eleven days after one landed. |
 | "Nothing is ever written back" | Structural, and therefore the easiest claim here to keep: both services are pure functions over dicts and both endpoints are `GET`. A `PUT`, a `db.` call or a returned form value in either module falsifies §1 and §3.4 at once. |
 | Which surfaces actually render a finding (§3.6) | Four greps, and **the expected answer is different for each — none of the four is "empty" any more, and this row has now been wrong in both directions.** It first said "both should stay empty", which read a shipped Android panel as unwanted wiring; it was then corrected to say the frontend pair "is expected to stay EMPTY until somebody builds the web panel", and the web panel landed on 2026-08-20, so that half inverted too. Current expectations: `grep -rn "DwCostIntegrity\|DwMarketAnalysis" android/app/src/main` returns `ui/designworkshop/DwFindingsPanel.kt`; `grep -rn "cost-integrity\|costIntegrity" frontend/` returns `lib/costIntegrity.ts`, `components/designworkshop/CostFindingsPanel.tsx`, the `stages/[stageKey]/page.tsx` mount and `e2e/cost-integrity-port-unit.spec.ts`; `grep -rn "marketAnalysis" frontend/` returns `MarketFindingsPanel`. **For all four, DISAPPEARANCE is the alarm, not presence** — which is the shape this row should have had from the start, and is why it is written as "returns X" rather than as a yes/no. |
 | §7's contradictions | They close when the cited symbols are corrected, and the Status column records which are still open. Re-run `grep -rn "_child_groups\|summarise_sheets" backend/`: `_child_groups` is now empty (row 1 closed), and `summarise_sheets` returns exactly one line, in `backend/tests/test_report_child_grouping.py`. When that line names `analyse_cost_integrity` the grep goes empty and rows 1 and 2 should both go. |

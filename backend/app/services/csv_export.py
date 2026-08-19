@@ -10,6 +10,14 @@ masking the registry applies to regulated personal data such as an artisan's Aad
 
 A CSV is a data extract rather than a reading surface, so one column the registry has no opinion
 about is prepended: the record's ``ID``, the only stable key a downstream sheet can join on.
+
+THE COUPLING IS LOAD-BEARING AND NOT ONLY TIDY, and the dimension cell is the case that shows it.
+``record_fields.dims_with_method`` says in the cell itself when a dimension was a vision model's
+estimate rather than a tape reading. A researcher who downloads this file and costs a production run
+from it in another tool carries that claim with them because the cell comes from the registry — and
+would silently not, on the surface furthest from anybody who could notice, if this module ever went
+back to composing its own columns. ``tests/test_measurement_provenance.py`` asserts the CSV row and
+the screen carry the same words for that reason.
 """
 
 import csv

@@ -2556,6 +2556,68 @@ private val OPAQUE_ID = Regex("^[a-z0-9]{16,}$")
 private const val NOT_RECORDED = "Not recorded."
 
 /**
+ * The registry roles the key-value grid does NOT print, because `_render_narrative` places them
+ * itself — and the ONE name whose absence from this set was a regression on paper.
+ *
+ * ── WHY A NEGATIVE TEST AT ALL ────────────────────────────────────────────────────────────────
+ *
+ * The server asks positively: `_printable(entity, row, {KEY_VALUE, COVER_FIELD, TABLE_COLUMN})`.
+ * This file asks negatively, and keeps doing so on the argument that has always stood here: a role
+ * a registry one version ahead of this build carries must reach paper under its own label rather
+ * than be dropped, which is the same shape of silent loss the RICH_TEXT drop was. Naming the three
+ * positively would turn every future role into that drop. So the set below is the roles this build
+ * KNOWS are placed elsewhere, and anything unrecognised still lands in the grid.
+ *
+ * ── AND THE NAME THAT WAS MISSING WAS GALLERY ─────────────────────────────────────────────────
+ *
+ * The negative test used to read `!= NARRATIVE && != BULLETS && != METRIC`, which is three of the
+ * six roles that are placed elsewhere. That cost nothing while `printable` skipped media-typed
+ * fields wholesale; the day that skip was removed — correctly, because it was withholding the
+ * "1 document attached" sentence for seventeen FILE/AUDIO/VIDEO fields — GALLERY fields started
+ * reaching this lambda, [displayValue] answered "" for an IMAGE as it must, and the
+ * `required && showEmptyNote` arm fired. `stage_definitions`' sketch entity declares
+ * `f("image", "Sketch image", IMG, B, required=True, report_role=GALLERY)`, so every sketch whose
+ * photograph the designer HAD taken printed "Sketch image: Not recorded." in the grid, directly
+ * under the plate [imagesOf] had just placed. The office's copy printed neither line, because
+ * GALLERY is not in `_render_narrative`'s role set and never reaches `_printable` there at all.
+ * Two copies of one workshop, one of them calling the designer's own photograph missing.
+ *
+ * CAPTION is in the set for completeness rather than for effect — a caption field is already
+ * withheld by its `captionFor`, and `_printable` skips it on the same test. HIDDEN likewise: the
+ * lambda's caller refuses it first. They are named because a reader checking this set against
+ * `ReportRole` should find every value accounted for, and a role that is excluded by two
+ * independent tests is safer than one excluded by the test somebody is about to refactor.
+ *
+ * ── AND TABLE_COLUMN IS ABSENT FROM THIS SET ON PURPOSE ───────────────────────────────────────
+ *
+ * Keeping TABLE_COLUMN in the grid is what makes the CARDS presentation lossless: a sketch's
+ * number, category and expected price are TABLE_COLUMNs, and omitting them from every presentation
+ * that draws no table would be a filter on the designer's work rather than a layout of it. It is in
+ * `_render_narrative`'s three-role set for the same reason. Adding it here to "tidy" the set would
+ * reintroduce a silent drop that a stage read as 100% complete.
+ */
+private val ROLES_THE_GRID_DOES_NOT_PRINT: Set<String> =
+    setOf("NARRATIVE", "BULLETS", "METRIC", "GALLERY", "CAPTION", "HIDDEN")
+
+/**
+ * The roles for which an unfilled REQUIRED field produces no "Not recorded." anywhere.
+ *
+ * DERIVED FROM [ROLES_THE_GRID_DOES_NOT_PRINT] RATHER THAN RETYPED, because the two sets have to
+ * move together: NARRATIVE and BULLETS are placed outside the grid and DO print the note (their own
+ * loops in [renderEntity] fall through to it), and every other role placed outside the grid prints
+ * nothing for an empty answer — a METRIC row is suppressed on a collection row by
+ * [RenderOptions.metricRow], a GALLERY has only a plate, a CAPTION is withheld with its image.
+ *
+ * It is asked in exactly one place, [renderCollection]'s per-row `hasExtra`, and it is what stops a
+ * numbered sub-heading being drawn over nothing. `_render_table` states the same set positively —
+ * `_printable(entity, row, {NARRATIVE, TABLE_COLUMN, KEY_VALUE, COVER_FIELD, BULLETS})` — and this
+ * subtraction is the negative form of it, kept negative so an unrecognised role still counts, for
+ * [ROLES_THE_GRID_DOES_NOT_PRINT]'s reason.
+ */
+private val ROLES_THAT_PRINT_NO_EMPTY_NOTE: Set<String> =
+    ROLES_THE_GRID_DOES_NOT_PRINT - setOf("NARRATIVE", "BULLETS")
+
+/**
  * One record's fields, sorted into the report roles the registry declares — `_render_narrative`.
  *
  * Returns whether anything at all reached the document, which is what decides between "Not recorded."
@@ -2621,9 +2683,11 @@ private fun renderEntity(
       two documents that disagree about whether it exists.
 
       IMAGE and IMAGE_LIST still reach paper only through [imagesOf] — [displayValue] answers "" for
-      them, so a photograph that WAS taken adds nothing here. What the substitution below now also
-      covers is a REQUIRED media field that is EMPTY, which `_printable` has always said
-      [NOT_RECORDED] for: a photograph that was not taken is a gap the reviewing officer must see.
+      them, so a photograph that WAS taken adds nothing here. What the substitution therefore covers
+      is a REQUIRED media field that is EMPTY **and whose role is one the grid prints anyway**: an
+      unattached `sanctionDocument` says "Not recorded." exactly as `_printable` says it. Which roles
+      those are is [ROLES_THE_GRID_DOES_NOT_PRINT]'s business and not this lambda's — see the defect
+      recorded there, which is what a role filter left one name short costs.
      */
     fun printable(match: (String) -> Boolean): List<Pair<FieldDto, String>> = visible.mapNotNull { field ->
         if (field.reportRole == "HIDDEN" || !match(field.reportRole)) return@mapNotNull null
@@ -2639,21 +2703,10 @@ private fun renderEntity(
     val narrative = printable { it == "NARRATIVE" }
     val bullets = printable { it == "BULLETS" }
     val metrics = printable { it == "METRIC" }
-    /*
-      EVERYTHING ELSE IS A PAIR, stated as a negative and not as a list of four role names.
-
-      `_render_narrative` groups KEY_VALUE, COVER_FIELD and TABLE_COLUMN into the grid, and this
-      file's `when` has always had an `else ->` arm that also caught a BLANK role and any role a
-      registry one version ahead of this build might carry. Naming the four positively would have
-      turned that `else` into a silent drop the day the server added a fifth role — which is the same
-      shape as the RICH_TEXT drop this whole function was rewritten over. Printing an unknown role in
-      the grid is the honest degrade: the answer reaches paper under its own label.
-
-      Including TABLE_COLUMN is what makes CARDS presentation lossless: a sketch's number, category
-      and expected price are TABLE_COLUMNs, and omitting them from every presentation that draws no
-      table would be a filter on the designer's work rather than a layout of it.
-    */
-    val pairs = printable { it != "NARRATIVE" && it != "BULLETS" && it != "METRIC" }
+    // EVERYTHING THE REGISTRY DOES NOT PLACE SOMEWHERE ELSE IS A PAIR — see
+    // [ROLES_THE_GRID_DOES_NOT_PRINT] for why this stays a negative test and for the name whose
+    // absence from it printed "Sketch image: Not recorded." under a sketch that had one.
+    val pairs = printable { it !in ROLES_THE_GRID_DOES_NOT_PRINT }
 
     val gallery = if (options.includePhotos) {
         // `includePhotographs = false` and the templates that set it per section — the price list a
@@ -2863,18 +2916,19 @@ private fun renderCollection(
       `_render_table` says the same thing with `skip=column_keys`: what the narrative block prints is
       everything the TABLE did not.
 
-      NOTE ONE DELIBERATE DIVERGENCE FROM THE SERVER, AND ITS REASON HAS CHANGED. `_table_columns`
-      applies no media filter, so a media TABLE_COLUMN becomes a column there while `columns` above
-      keeps it out and prints it underneath instead. The old reason for the exclusion was that the
-      server would print a raw media id into the cell; that is no longer true — `format_value` now
-      answers "" for a picture and a count-and-noun for FILE/AUDIO/VIDEO — so what is left is a
-      SHAPE difference: a media column would be a blank (or count-bearing) column at the office and
-      no column at all here. It is kept as it stands because the registry declares no media
-      TABLE_COLUMN today, so nothing prints differently, and because adding one to `columns` would
-      move the drawn column set and with it every width in that table — which
-      `test_the_tables_whose_declared_widths_govern_still_do` pins deliberately. Closing it properly
-      means the two surfaces agreeing on ONE answer, and that agreement has to be made on the server
-      side first.
+      THE DIVERGENCE THAT USED TO BE RECORDED HERE IS CLOSED, and the paragraph is rewritten rather
+      than deleted because a reader who remembers it would otherwise go looking for it. It said
+      `_table_columns` applied no media filter, so a media TABLE_COLUMN was a column at the office
+      and a per-row line here, and that the agreement "has to be made on the server side first".
+      It was: `_table_columns` now reads `... and not f.type.is_media` and its docstring says why
+      ("A MEDIA FIELD IS NEVER A COLUMN, WHATEVER ROLE IT DECLARES"). The two surfaces build the
+      same column set, and the `!isMedia` above is the handset's half of one rule rather than a
+      unilateral one.
+
+      WHAT IS STILL A DIVERGENCE, AND IS A DIFFERENT ONE, is the column WIDTHS: five entities are
+      knowingly on the proportional fallback rather than on declared percentages, and
+      `test_the_tables_whose_declared_widths_govern_still_do` pins that deliberately. Do not read the
+      closed media question as licence to rebalance those.
     */
     val leftovers = visible.filter {
         it.key !in columnKeys && it.reportRole != "HIDDEN" && it.captionFor.isBlank()
@@ -2895,13 +2949,20 @@ private fun renderCollection(
         // so it has to count here too, or the heading is suppressed over the one note the reviewing
         // officer needs. `_render_table` computes `has_extra` from `_printable`, which is the same
         // statement: the substitution is part of what a row has to say.
-        // NO TYPE GUARD ON THE SUBSTITUTION. It used to read `&& !isMedia`, which meant a required
-        // photograph or a required sanction order that was never attached suppressed the very heading
-        // its [NOT_RECORDED] note needed. `_render_table` computes `has_extra` straight from
-        // `_printable`, which substitutes for a required media field like any other; the
-        // photographs-off case is already handled one line up, by [carried].
+        //
+        // NO TYPE GUARD ON THE SUBSTITUTION, AND A ROLE GUARD INSTEAD. It used to read `&& !isMedia`,
+        // which meant a required sanction order that was never attached suppressed the very heading
+        // its [NOT_RECORDED] note needed. Dropping the type test was right; leaving nothing in its
+        // place was not, because it counts a row as having something to say on the strength of a note
+        // [renderEntity] will not print. A required GALLERY photograph is the case: no note (see
+        // [ROLES_THE_GRID_DOES_NOT_PRINT]) and, with the picture never taken, no plate either — so the
+        // row got a numbered sub-heading over nothing at all. `_render_table` asks the same question
+        // the same way round: its `has_extra` role set is every role EXCEPT GALLERY, CAPTION, METRIC
+        // and HIDDEN, which is exactly [ROLES_THAT_PRINT_NO_EMPTY_NOTE].
         val hasExtra = carried.any { field ->
-            DwValues.isFilled(row[field.key]) || (field.required && options.showEmptyNote)
+            DwValues.isFilled(row[field.key]) ||
+                (field.required && options.showEmptyNote &&
+                    field.reportRole !in ROLES_THAT_PRINT_NO_EMPTY_NOTE)
         }
         if (!hasExtra) return@forEachIndexed
         builder.heading(rowHeading(entity, row, index, refs), level = rowLevel, numbered = options.numbered)

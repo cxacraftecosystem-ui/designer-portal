@@ -56,6 +56,23 @@ Two measurements make that the only viable shape rather than merely a nice one:
 > instead of against its own constant. A test reads both catalogues and asserts they agree, so that
 > drift is caught in CI.
 >
+> **FURTHER AMENDED 2026-08-20: THERE IS NOW A CLIENT, AND IT READS THE MANIFEST. It reads it ONLY TO
+> REFUSE, which is the amendment's own stated void condition and is therefore the sentence that has
+> to be restated rather than assumed.** `dwAsrManifestVerdict` in
+> `android/app/src/main/java/com/designprototype/workshop/data/DwAsrModelEndpoint.kt` compares the
+> published size and digest against the constants compiled into the APK and returns a
+> `DwAsrManifestVerdict`; `DwAsrModelController.downloadFromEndpoint` acts on it. **Every value except
+> `AGREES` is a refusal, and `AGREES` means "worth spending the bytes" and never "the file is good"** —
+> a null or absent published digest is `NOT_PUBLISHED`, not agreement. Nothing downstream may skip the
+> on-disk SHA-256 against the APK's own `DwAsrModelFile.sha256` because the manifest agreed, and
+> `DwAsrModelEndpointTest` carries a case named so that it cannot be deleted casually —
+> `an unpublished or silent manifest never agrees`.
+>
+> That is the whole of the concession: the manifest may stop a fetch, and may never start trust. **The
+> optimisation that voids §1 is the plausible-looking one** — noticing that the server already hashed
+> the bytes and skipping the local hash — so if a future change makes `AGREES` sufficient for anything
+> at all, this section is no longer true and must be rewritten rather than annotated.
+>
 > Why an endpoint became necessary at all, which §1 as written could not have known: **the model
 > cannot be fetched from upstream by a handset.** `ai4bharat` repos are `gated: auto` and answer 401
 > to an unauthenticated `HEAD`; the k2-fsa asset is a `.tar.bz2`, which nothing in the APK can open.
@@ -491,7 +508,7 @@ row below is checkable against the client that is already built.
 
 | Claim class | Kept true by |
 |---|---|
-| That there is **no endpoint the client TRUSTS**, and why | Amended 2026-08-13, see §1. A manifest now exists (`GET /api/asr-models`) and the argument survives because **nothing verifies against it**: the digest the handset checks is `DwAsrModelFile.sha256` in `android/app/src/main/java/com/designprototype/workshop/data/DwAsrModel.kt`, compiled into the APK. What would void the argument is a client that verifies against the manifest instead of its own constant — that is the change that must not be made quietly. `backend/tests/test_asr_model_download.py` reads the Kotlin catalogue and asserts the server's digests, sizes, file names and language list match it, so the two cannot drift silently; and the server refuses to serve any file whose bytes do not hash to what it pins, so the manifest can only ever cause a fetch to be refused. |
+| That there is **no endpoint the client TRUSTS**, and why | Amended 2026-08-13, see §1. A manifest now exists (`GET /api/asr-models`) and the argument survives because **nothing verifies against it**: the digest the handset checks is `DwAsrModelFile.sha256` in `android/app/src/main/java/com/designprototype/workshop/data/DwAsrModel.kt`, compiled into the APK. What would void the argument is a client that verifies against the manifest instead of its own constant — that is the change that must not be made quietly. `backend/tests/test_asr_model_download.py` reads the Kotlin catalogue and asserts the server's digests, sizes, file names and language list match it, so the two cannot drift silently; and the server refuses to serve any file whose bytes do not hash to what it pins, so the manifest can only ever cause a fetch to be refused. **A client that reads the manifest now exists, which makes this row checkable rather than hypothetical:** `dwAsrManifestVerdict` in `DwAsrModelEndpoint.kt` is refuse-only by contract — read its header and `an unpublished or silent manifest never agrees` in `DwAsrModelEndpointTest`, and check that `downloadFromEndpoint` still hashes every file on disk against the APK constant afterwards. The day `AGREES` is treated as sufficient for anything, §1 is false. |
 | That the ENGINE still has no endpoint | `DW_ASR_ARTIFACTS` in `android/app/src/main/java/com/designprototype/workshop/data/DwAsrRuntime.kt` is empty and the engine is vendored into the APK (§8), so there is no engine download at all. The endpoint above serves models only — `backend/app/services/asr_artifacts.py` has no engine row and its catalogue type has no ABI field to put one in. |
 | That nothing is installable today | `DW_ASR_ARTIFACTS` is empty, and `dwAsrMayInstall` is false for every handset shape and connection. `DwAsrRuntimeTest` asserts both, so the day somebody pins a row the tests say so rather than the screen quietly going live. |
 | That the URL cannot be cleartext | `DwAsrArtifact`'s `init` — `require(url.startsWith("https://"))`. It is a constructor check, so no code path in the app can express a cleartext fetch. |

@@ -69,7 +69,20 @@ import { isUnreachable } from "@/lib/offline";
  * audio ──▶ RAW_TRANSCRIPT ──▶ CLEANED_TRANSCRIPT ──▶ SUMMARY
  * photo ──▶ OCR_TEXT       ──▶ STRUCTURED_TEXT
  * (either text rung) ──▶ TAGS, METADATA
+ *
+ * (any prose rung, or supplied words) ──▶ PROOFREAD
+ * (supplied words only)               ──▶ EXPANDED
+ * (any prose rung, or supplied words) ──▶ TRANSLATION   ← a SIBLING, never a replacement
+ * photo / video                       ──▶ CAPTION
+ * audio / video                       ──▶ SUBTITLES     ← the only timed kind
  * ```
+ *
+ * **THE SECOND FIVE WERE MISSING FROM THIS UNION WHILE THE SERVER WAS ALREADY WRITING THEM**, which
+ * is the defect this whole file's header is against, committed against `LayerKind` itself rather
+ * than against a payload. `ai_layers.LayerKind` has carried all twelve since the verbs landed, so
+ * the first proofread a designer ever ran came back and rendered as "A layer kind this screen does
+ * not know (PROOFREAD)" with no note under it — on the one screen whose entire subject is saying
+ * what a machine did and did not do.
  */
 export type DwAiLayerKind =
   | "RAW_TRANSCRIPT"
@@ -78,13 +91,26 @@ export type DwAiLayerKind =
   | "OCR_TEXT"
   | "STRUCTURED_TEXT"
   | "TAGS"
-  | "METADATA";
+  | "METADATA"
+  | "PROOFREAD"
+  | "EXPANDED"
+  | "TRANSLATION"
+  | "CAPTION"
+  | "SUBTITLES";
 
 /** Which MACHINE produced it. Not a ranking — see rule 2 in the header. */
 export type DwAiTier = "TIER_1" | "TIER_2" | "TIER_3";
 
-/** The two things a layer can derive from, and there is no third. */
-export type DwAiSourceKind = "MEDIA" | "LAYER";
+/**
+ * The three things a layer can derive from, and there is no fourth.
+ *
+ * **`SUPPLIED_TEXT` IS NOT LIKE THE OTHER TWO AND IT IS WORTH BEING EXACT ABOUT.** `MEDIA` and
+ * `LAYER` are POINTERS — the evidence is a row that still exists and a reader can open it.
+ * `SUPPLIED_TEXT` is a COPY: the words the caller sent travel ON the layer, in `source.text`,
+ * because there is no row to point at. The verb that needs it — proofreading or expanding a note a
+ * designer is typing — runs before the stage has been saved, which is the moment it exists for.
+ */
+export type DwAiSourceKind = "MEDIA" | "LAYER" | "SUPPLIED_TEXT";
 
 export type DwAiDecisionKind = "ACCEPTED" | "WITHDRAWN";
 
@@ -116,7 +142,21 @@ export const MAX_AI_LAYER_NOTE_CHARS = 500;
 export type DwAiLayerSource = {
   /** Widened with `string` deliberately — see the note on {@link DwAiLayer.kind}. */
   kind: DwAiSourceKind | string;
-  id: string;
+  /**
+   * The `MediaFile` id or the parent layer's id — and NULL for a supplied-text source, which names
+   * no row at all. `layer_payload` writes `stored.id or None` for exactly that case, with the note
+   * that an empty string is "the shape a client renders as a link to nothing". This was typed
+   * `string` here while the server could already send null.
+   */
+  id: string | null;
+  /**
+   * THE EVIDENCE TRAVELS WITH THE LAYER. The words a proofread or an expansion was made FROM, for
+   * `SUPPLIED_TEXT` and for nothing else — there is no second request that could fetch them, since
+   * they exist only on this row. Null on the two pointer kinds, and null on any kind when the media
+   * gate withheld the text; the key is present either way so a screen renders a stated fact rather
+   * than inferring one from an absence.
+   */
+  text: string | null;
 };
 
 /**
@@ -143,6 +183,22 @@ export type DwAiLayer = {
   modelVersion: string | null;
   /** May be the literal `multi`, which is a real answer and not a placeholder — see `tierSentence`. */
   language: string | null;
+  /**
+   * The pair a TRANSLATION records, and null on every other kind.
+   *
+   * **SENT UNCONDITIONALLY BY `layer_payload`, WHICH IS WHY THEY ARE NOT OPTIONAL HERE.** Its own
+   * comment gives the reason: "a client that has to look at `kind` before it knows whether a key
+   * exists is a client that will one day read the wrong branch". They were absent from this type
+   * altogether, so the two columns a reviewer of a translated passage opens the screen FOR were
+   * invisible to every renderer.
+   *
+   * `sourceLanguage` may be the literal {@link UNRECORDED} — the run detected nothing — and may be
+   * `multi`, which is a real answer for these code-switched interviews. `targetLanguage` can never
+   * be `multi`: `_check_languages` refuses a translation INTO it, because a target is a choice
+   * somebody made rather than an observation.
+   */
+  sourceLanguage: string | null;
+  targetLanguage: string | null;
   /**
    * When the MODEL ran, if anybody recorded it. Deliberately NOT defaulted to the row's own creation
    * time on the server: a transcript the queue produced last March and registered today would
@@ -353,6 +409,20 @@ export function isUnrecorded(value: string | null | undefined): boolean {
   return (value ?? "").trim().toUpperCase() === UNRECORDED;
 }
 
+/**
+ * The five verb headings are `report_ai_layers._KIND_TITLES`' own words, deliberately.
+ *
+ * A designer accepts a layer on this screen and a ministry officer reads it in the annexure months
+ * later; if the two surfaces name one thing two ways, the person who signed for "a proofread" has
+ * no way to recognise "AI-corrected spelling and punctuation" as the thing they signed for. So
+ * these five are transliterated from that constant rather than written here. EXPANDED is the one
+ * worth defending: it is NOT "AI-expanded note", which reads as a note that got longer, when what
+ * actually happened is that a machine wrote sentences from a shorthand.
+ *
+ * The first seven are this screen's own and predate the annexure; RAW_TRANSCRIPT is "Machine
+ * transcript" here and "Automatic transcript" there, a divergence this change deliberately does not
+ * touch — it is pinned by `ai-layers-unit.spec.ts` and belongs to whoever reconciles the two lists.
+ */
 const KIND_LABELS: Record<DwAiLayerKind, string> = {
   RAW_TRANSCRIPT: "Machine transcript",
   CLEANED_TRANSCRIPT: "AI-cleaned transcript",
@@ -360,7 +430,12 @@ const KIND_LABELS: Record<DwAiLayerKind, string> = {
   OCR_TEXT: "Text read off a photograph",
   STRUCTURED_TEXT: "Fields read off a photograph",
   TAGS: "Suggested tags",
-  METADATA: "Extracted details"
+  METADATA: "Extracted details",
+  PROOFREAD: "AI-corrected spelling and punctuation",
+  EXPANDED: "Prose written by AI from a designer's note",
+  TRANSLATION: "AI translation",
+  CAPTION: "AI description of a photograph or video",
+  SUBTITLES: "AI subtitles, with their timings"
 };
 
 /**
@@ -407,7 +482,31 @@ const KIND_NOTES: Record<DwAiLayerKind, string> = {
   OCR_TEXT: "The text a model read off the photograph.",
   STRUCTURED_TEXT: "Named fields a model picked out of the text read off the photograph.",
   TAGS: "Tags a model suggested from the text — a suggestion to accept or to decline.",
-  METADATA: "Details a model picked out of the text."
+  METADATA: "Details a model picked out of the text.",
+  /* Each of the five names what the machine WAS and WAS NOT allowed to change, because that is the
+     question somebody about to quote the passage actually has. */
+  PROOFREAD:
+    "Spelling, grammar and punctuation only. The model was refused permission to translate, to " +
+    "restructure or to shorten, and it was given the craft vocabulary as a do-not-touch list so " +
+    "that “dabu” is not “corrected” to “double”. The original is untouched and stays beside this.",
+  EXPANDED:
+    "A machine wrote these sentences from a short note the designer made. It is the only kind here " +
+    "that INVENTS: anything in it that is not in the note — a detail, a reason, a connection " +
+    "between two things — was supplied by the model and was not recorded in the field. Treat the " +
+    "note as the record and this as a reading of it, and check any specific claim against the " +
+    "workshop's own material before quoting it. Nothing may be derived from an expansion.",
+  TRANSLATION:
+    "A translation that stands BESIDE the original rather than replacing it, so a reader who wants " +
+    "the artisan's own words can still have them. The row records which language it came from as " +
+    "well as which it went into, because a translated passage nobody can trace back is a passage " +
+    "nobody can check.",
+  CAPTION:
+    "One sentence a model wrote about the photograph or video — for the media annexure, and for a " +
+    "screen reader. Check it against the picture, which is the evidence it stands on.",
+  SUBTITLES:
+    "Timed captions: a cue list with a start and an end for every line. The timings are the whole " +
+    "verb — a subtitle without them is a transcript. Any speaker labels are the engine's own guess " +
+    "about how many people were in the room, which nobody told it."
 };
 
 /** The sentence under a kind's heading, or null for a kind this build does not know. */
@@ -496,6 +595,38 @@ export function layerProvenance(layer: DwAiLayer): DwAiProvenance {
   };
 }
 
+/**
+ * A translation's two ends, in words, or null for a layer that is not one.
+ *
+ * **A FUNCTION RATHER THAN AN EXPRESSION AT THE CALL SITE, SO THAT SOMETHING READS THESE COLUMNS AND
+ * A TEST CAN SEE THAT IT DOES.** `layer_payload` sends `sourceLanguage` and `targetLanguage`
+ * unconditionally, and this client declared neither until the verbs landed — which meant the single
+ * pair of facts a reviewer of a translated passage opens the screen FOR was invisible to every
+ * renderer. That is the `DwIdentityOcrResult` defect in the opposite direction, and an inline
+ * `layer.sourceLanguage ?? …` in one component would leave nothing to assert against.
+ *
+ * `UNRECORDED` becomes "not recorded" for {@link layerProvenance}'s reason: `_check_languages`
+ * accepts the literal word as a source language when the run genuinely detected none, so it is an
+ * ordinary answer rather than a fault. `multi` is spelled out because for much of this archive the
+ * honest answer to "what language was it in" really is "several, interleaved".
+ */
+export type DwAiLanguagePair = { from: string; into: string };
+
+export function layerLanguagePair(layer: DwAiLayer): DwAiLanguagePair | null {
+  const source = (layer.sourceLanguage ?? "").trim();
+  const target = (layer.targetLanguage ?? "").trim();
+  if (!source && !target) return null;
+  const say = (value: string) =>
+    !value
+      ? "not recorded"
+      : isUnrecorded(value)
+        ? "not recorded"
+        : value === "multi"
+          ? "multi — mixed, code-switched speech"
+          : value;
+  return { from: say(source), into: say(target) };
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * The chain — a cleaned transcript is shown BENEATH the raw one it was made from
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -522,6 +653,22 @@ export type DwAiUnrooted = { node: DwAiLayerNode; reason: DwAiUnrootedReason };
 
 export type DwAiLayerGrouping = {
   recordings: DwAiLayerGroup[];
+  /**
+   * Chains standing on WORDS THE DESIGNER SUPPLIED rather than on a recording — a proofread of a
+   * note being typed, an expansion of a field jotting, a translation of a passage.
+   *
+   * **A GROUP OF THEIR OWN, BECAUSE THEY ARE ROOTS AND NOT ORPHANS.** Before this existed every one
+   * of them fell through to {@link DwAiLayerGrouping.unrooted} with the reason `UNKNOWN_SOURCE`,
+   * because `SUPPLIED_TEXT` was not in {@link DwAiSourceKind} — so a designer's own proofread of
+   * their own note appeared on the screen that exists to show it under the heading "could not be
+   * attached to a recording". `ai_layers.chain_roots` draws the same distinction on the server
+   * (`RootKind.SUPPLIED_TEXT` reaches no recording and is deliberately not withheld), and the list
+   * route switched to it for precisely this reason.
+   *
+   * There is no id to head them with: the evidence is `source.text` on the layer itself, which is
+   * what a surface should print above the output.
+   */
+  notes: DwAiLayerNode[];
   /**
    * Layers that could not be attached to a recording. NEVER DROPPED, and that is the point: a list
    * that quietly stops is indistinguishable from a workshop with nothing in it, which is the single
@@ -570,15 +717,21 @@ export function groupAiLayers(items: DwAiLayer[]): DwAiLayerGrouping {
   const byId = new Map(items.map((layer) => [layer.id, layer]));
   const childrenOf = new Map<string, DwAiLayer[]>();
   const mediaRooted: DwAiLayer[] = [];
+  const textRooted: DwAiLayer[] = [];
 
   for (const layer of items) {
     const source = layer.source;
-    if (source && source.kind === "LAYER" && byId.has(source.id)) {
+    if (source && source.kind === "LAYER" && source.id && byId.has(source.id)) {
       const siblings = childrenOf.get(source.id);
       if (siblings) siblings.push(layer);
       else childrenOf.set(source.id, [layer]);
     } else if (source && source.kind === "MEDIA") {
       mediaRooted.push(layer);
+    } else if (source && source.kind === "SUPPLIED_TEXT") {
+      // A ROOT OF ITS OWN, not an orphan — see `DwAiLayerGrouping.notes`. It names no row, so it
+      // cannot be grouped by an id the way a recording's chains are; the words it was made from
+      // travel on the layer.
+      textRooted.push(layer);
     }
   }
   for (const siblings of childrenOf.values()) siblings.sort(byCreatedAtAsc);
@@ -604,6 +757,19 @@ export function groupAiLayers(items: DwAiLayer[]): DwAiLayerGrouping {
     else groups.set(mediaId, [node]);
   }
 
+  // AFTER the media roots and before the unrooted sweep: a supplied-text root cannot be anybody's
+  // child (a child names its parent with kind LAYER), so the order between the two root passes is
+  // free — but it must run BEFORE the sweep below, or every one of these would be reported as a
+  // layer that could not be placed.
+  const notes: DwAiLayerNode[] = [];
+  for (const layer of textRooted.slice().sort(byCreatedAtAsc)) {
+    if (visited.has(layer.id)) continue;
+    notes.push(build(layer, 0));
+  }
+  // Newest first, matching the recordings below and for the same reason: a designer opening this
+  // screen has just run a verb, and it should not be at the bottom.
+  notes.sort((a, b) => (newestCreatedAt(a) > newestCreatedAt(b) ? -1 : 1));
+
   const unrooted: DwAiUnrooted[] = [];
   for (const layer of items) {
     if (visited.has(layer.id)) continue;
@@ -613,9 +779,9 @@ export function groupAiLayers(items: DwAiLayer[]): DwAiLayerGrouping {
     // confident wrong answer about a row a newer server sent in good faith.
     const reason: DwAiUnrootedReason = !source
       ? "NO_SOURCE"
-      : source.kind !== "MEDIA" && source.kind !== "LAYER"
+      : source.kind !== "MEDIA" && source.kind !== "LAYER" && source.kind !== "SUPPLIED_TEXT"
         ? "UNKNOWN_SOURCE"
-        : source.kind === "LAYER" && !byId.has(source.id)
+        : source.kind === "LAYER" && (!source.id || !byId.has(source.id))
           ? "SOURCE_NOT_LISTED"
           : "CIRCULAR";
     unrooted.push({ node: build(layer, 0), reason });
@@ -635,7 +801,59 @@ export function groupAiLayers(items: DwAiLayer[]): DwAiLayerGrouping {
       return left > right ? -1 : 1;
     });
 
-  return { recordings, unrooted };
+  return { recordings, notes, unrooted };
+}
+
+/**
+ * The layer kinds a verb may be run OVER, as `ai_layers.ALLOWED_PARENTS` decides it.
+ *
+ * **TRANSCRIBED FROM THE PYTHON, AND PINNED BY A TEST, BECAUSE THE ALTERNATIVE IS OFFERING A BUTTON
+ * WHOSE ONLY OUTCOME IS A 422.** `check_placement` refuses a proofread standing on a proofread (the
+ * second run cannot tell a correction it is making from one the first run already made, so a
+ * passage drifts away from what was said one defensible step at a time), a translation standing on a
+ * translation (pivot translation compounds error invisibly, and the "made from" line would name a
+ * row whose own language is not the one the artisan spoke), and ANYTHING standing on an expansion
+ * (an expansion is invented prose, and every rung above one puts the invention further from the
+ * person who could have caught it). All three are decidable on this screen, where the whole chain is
+ * already drawn, so the panel states the reason in place of the control.
+ *
+ * The source sets, for whoever has to keep this in step:
+ *   `TEXT_KINDS`            = RAW_TRANSCRIPT, CLEANED_TRANSCRIPT, SUMMARY, OCR_TEXT, PROOFREAD,
+ *                             EXPANDED, TRANSLATION, CAPTION
+ *   `DERIVABLE_PROSE_KINDS` = TEXT_KINDS − EXPANDED
+ *   `ALLOWED_PARENTS[PROOFREAD]`   = DERIVABLE_PROSE_KINDS − PROOFREAD
+ *   `ALLOWED_PARENTS[TRANSLATION]` = DERIVABLE_PROSE_KINDS − TRANSLATION
+ *
+ * Derived here rather than written out as two literal tuples, for the house rule's reason: a
+ * transcribed tuple excludes the very case it was meant to catch the first time somebody adds a
+ * kind to one list and not the other.
+ */
+const DERIVABLE_PROSE_KINDS: readonly DwAiLayerKind[] = [
+  "RAW_TRANSCRIPT",
+  "CLEANED_TRANSCRIPT",
+  "SUMMARY",
+  "OCR_TEXT",
+  "PROOFREAD",
+  "TRANSLATION",
+  "CAPTION"
+];
+
+/**
+ * May a verb producing `kind` stand on a stored layer of `parentKind`?
+ *
+ * Answers false for a kind this build does not know, in BOTH positions, which is the fail-closed
+ * direction and the right one: the server is the authority, and offering a control into an unknown
+ * placement risks the 422 this exists to avoid. Only the two derivable verbs are askable — EXPANDED
+ * may stand on nothing but supplied words and `AiExpandIn` has no field with which to ask, so it is
+ * refused here rather than left to look like an oversight.
+ */
+export function aiVerbPlacementAllows(kind: string | null | undefined, parentKind: string | null | undefined): boolean {
+  const verb = (kind ?? "") as DwAiLayerKind;
+  const parent = (parentKind ?? "") as DwAiLayerKind;
+  if (!DERIVABLE_PROSE_KINDS.includes(parent)) return false;
+  if (verb === "PROOFREAD") return parent !== "PROOFREAD";
+  if (verb === "TRANSLATION") return parent !== "TRANSLATION";
+  return false;
 }
 
 /** Every layer in a chain, parents before children — for counting and for flat rendering. */
@@ -658,9 +876,26 @@ export function flattenAiLayerNodes(nodes: DwAiLayerNode[]): DwAiLayerNode[] {
  *
  * TAGS and METADATA carry their principal content here rather than in `text`, so a row of them
  * rendered as nothing would look empty in exactly the list a designer is scanning to decide what to
- * accept. Nothing in this repository writes a payload YET — generation is steps 7 and 8 of the plan —
- * so this deliberately handles the three shapes an extractive verb can plausibly produce and prints
- * anything else as the stored JSON rather than pretending to understand it.
+ * accept.
+ *
+ * ── WHAT ACTUALLY WRITES A PAYLOAD TODAY ────────────────────────────────────────────────────────
+ * This paragraph used to read *"Nothing in this repository writes a payload YET — generation is
+ * steps 7 and 8 of the plan"*, and the verbs closed that gap in the lane that wrote this sentence.
+ * Two kinds carry one:
+ *
+ *  - **CAPTION** — `ai_verbs.caption` stores `{selfReportedConfidence, confidenceIsCalibrated:
+ *    false}` when the model volunteered a number, so it lands here as a **ROWS** view, which is how
+ *    `AiVerbReviewDialog` reads the confidence out of it. The second key travels precisely so nobody
+ *    builds a gate on the first: nothing in this repository has ever calibrated a model's confidence
+ *    against anything, and a surface must never print it as a percentage of correctness.
+ *  - **SUBTITLES** — the `dw.subtitles/1` cue wrapper, which this function deliberately does NOT
+ *    serve: it is read by `subtitleCueSummary` in `lib/aiVerbs.ts`, which knows the schema key and
+ *    can say when a payload is not one. Sent here it would fall to the JSON arm and print a cue list
+ *    as raw text.
+ *
+ * The three shapes below therefore stand for what an extractive verb can plausibly produce, and the
+ * JSON arm remains the honest fallback for the kinds nothing writes yet rather than pretending to
+ * understand them.
  */
 export type DwAiPayloadView =
   | { shape: "TAGS"; tags: string[] }

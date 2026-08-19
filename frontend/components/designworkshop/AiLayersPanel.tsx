@@ -70,6 +70,21 @@
  * of a transcript is not that caller: they would be typing a guess into the column that exists to
  * make guessing impossible. So the form has no boxes, the row is registered with the provenance the
  * server records honestly as unrecorded, and the panel says so before the press rather than after it.
+ *
+ * ────────────────────────────────────────────────────────────────────────────────────────────────
+ * AND REGISTERING IS NO LONGER THE ONLY WAY A ROW COMES INTO EXISTENCE. That sentence was true for
+ * as long as the five verb routes had no client at all. A designer now produces layers from the
+ * rich-text toolbar (`AiVerbSelectionMenu`), from a media tile (`MediaAiVerbs`) and from a stored
+ * layer on this very screen — so this panel is one of three doors and the chain it draws routinely
+ * roots in words a designer typed rather than in a recording. Those chains are the `notes` group of
+ * `groupAiLayers`; before it existed every one of them fell through to `unrooted` with the reason
+ * `UNKNOWN_SOURCE`.
+ *
+ * THE VERB CONTROLS HERE OBEY RULE 3 ONE STEP FURTHER THAN THE ACCEPT BUTTON DOES. `ALLOWED_PARENTS`
+ * refuses a proofread of a proofread, a translation of a translation, and anything at all standing
+ * on an EXPANDED — and every one of those is decidable from what is already drawn on this page, so
+ * the reason stands where the control would have been. `aiVerbPlacementAllows` is the pure mirror of
+ * that table and is pinned against the Python by `frontend/e2e/ai-verbs-unit.spec.ts`.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -77,6 +92,7 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  Download,
   EyeOff,
   Info,
   Layers,
@@ -88,9 +104,30 @@ import {
 } from "lucide-react";
 
 import { Markdown } from "@/components/Markdown";
+import { AiVerbReviewDialog } from "@/components/designworkshop/AiVerbReviewDialog";
+import { useWorkshopConsent } from "@/components/hooks/useWorkshopConsent";
 import { useAuth } from "@/components/AuthProvider";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { formatDateTime } from "@/lib/format";
+import {
+  AI_VERB_COUNTDOWN_FROM,
+  SUBTITLE_FORMAT_LABELS,
+  downloadDesignWorkshopSubtitles,
+  dwAiVerbAllowance,
+  isVerbOffline,
+  proofreadDesignWorkshopText,
+  subtitleCueSummary,
+  translateDesignWorkshopText,
+  translationTargetRefusal,
+  verbAllowanceRefusal,
+  verbWorkshopRefusal,
+  VERBS_NEED_A_CONNECTION,
+  WORKSHOP_NOT_ON_SERVER_YET,
+  type DwAiVerbAllowanceState,
+  type DwAiVerbResult,
+  type DwSubtitleFormat
+} from "@/lib/aiVerbs";
+import { saveBlobToDisk } from "@/lib/designWorkshops";
 import {
   MAX_AI_LAYER_NOTE_CHARS,
   acceptDesignWorkshopAiLayer,
@@ -102,6 +139,7 @@ import {
   layerKindLabel,
   layerKindNote,
   layerKindNoun,
+  aiVerbPlacementAllows,
   layerProvenance,
   listDesignWorkshopAiLayers,
   readAiPayload,
@@ -150,6 +188,19 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
   const [decisions, setDecisions] = useState<DecisionLog>({});
   /** The layer whose withdrawal note is being typed, and the note. See `WithdrawForm` for why. */
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
+
+  /**
+   * What is left of today's allowance, and whether this workshop may send anything at all.
+   *
+   * BOTH READ BEFORE THE PRESS RATHER THAN LEARNED FROM A REFUSAL. A verb costs a provider call
+   * somebody pays for, and `ai_verb_cap.allowance_payload`'s own docstring makes the argument: *"a
+   * client that can learn the ceiling only by being refused has to spend a run to learn it."* The
+   * consent is read from this device's own copy of the workshop, so it answers with no connection.
+   */
+  const [verbAllowance, setVerbAllowance] = useState<DwAiVerbAllowanceState | null>(null);
+  const consent = useWorkshopConsent(workshopId);
+  /** The layer a verb has just produced, waiting to be read and signed for. */
+  const [verbResult, setVerbResult] = useState<DwAiVerbResult | null>(null);
 
   const [transcripts, setTranscripts] = useState<DwTranscriptList | null>(null);
   const [transcriptsFailed, setTranscriptsFailed] = useState(false);
@@ -232,6 +283,33 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
     };
   }, [workshopId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void dwAiVerbAllowance().then((answer) => {
+      if (!cancelled) setVerbAllowance(answer);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * Why no verb may be run from this screen right now, or null when one may.
+   *
+   * THE SAME LADDER THE OTHER TWO SURFACES USE, and shared with them rather than re-derived: the
+   * still-reading, consent and no-server-copy rungs, then the ceiling. This screen used to compute
+   * them here in a ternary of its own, which is how it came to carry its own copy of the ceiling
+   * sentence and how the still-reading state ("") ended up on the wrong side of a truthiness test
+   * further down. The placement law stays PER ROW ({@link aiVerbPlacementAllows}), because it
+   * depends on what a given layer is.
+   *
+   * **THREE-VALUED, AND EVERY CONSUMER MUST TEST `!== null`.** "" means "still reading", which is a
+   * refusal to proceed with nothing to say — see {@link verbWorkshopRefusal}.
+   */
+  const verbsBlocked =
+    verbWorkshopRefusal({ ready: consent.ready, serverId: consent.serverId, decision: consent.decision }) ??
+    verbAllowanceRefusal(verbAllowance);
+
   const grouping = useMemo(() => groupAiLayers(list?.items ?? []), [list]);
 
   const recordingsById = useMemo(() => {
@@ -247,7 +325,13 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
     return seen;
   }, [list]);
 
-  /** Recordings whose transcript is not yet a layer. The only way rows come into existence today. */
+  /**
+   * Recordings whose transcript is not yet a layer.
+   *
+   * NO LONGER "the only way rows come into existence", which is what this comment said while the
+   * five verb routes had no client. A designer now produces layers from the rich-text toolbar, from
+   * a media tile, and from a stored row on this very screen.
+   */
   const registerable = useMemo(() => {
     const already = new Set(
       (list?.items ?? [])
@@ -454,6 +538,22 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
           <span className="text-ink-700">
             <strong className="text-ink-900">{accepted}</strong> accepted
           </span>
+          {/* THE CEILING, WHERE THERE IS ONE. `aiVerbsLimit` is null on an uncapped deployment and
+              nothing is drawn then — "0 of 0 left" and "no ceiling" must not look alike, which is
+              exactly what the obvious `?? 0` makes them. The DAY is named because the allowance
+              turns over at India-time midnight on the SERVER, not on this laptop. */}
+          {verbAllowance && verbAllowance.aiVerbsLimit !== null ? (
+            <span
+              className={
+                verbAllowance.aiVerbsRemaining !== null && verbAllowance.aiVerbsRemaining <= AI_VERB_COUNTDOWN_FROM
+                  ? "font-medium text-amber-800"
+                  : "text-ink-700"
+              }
+            >
+              <strong className="text-ink-900">{verbAllowance.aiVerbsRemaining ?? 0}</strong> of{" "}
+              {verbAllowance.aiVerbsLimit} AI runs left for {verbAllowance.aiVerbDay}
+            </span>
+          ) : null}
           <label className="flex items-center gap-2 text-ink-700">
             <input
               type="checkbox"
@@ -532,7 +632,17 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
             something to act on now, a success may wait for a pause in the reading. */}
         {error ? (
           <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700">
-            {error}
+            {/*
+              THE LIST 404s ON A WORKSHOP THAT HAS NO SERVER COPY, AND `load`'s SENTENCE IS WRONG
+              ABOUT WHY. It offers an unresolved disjunction — "this server may not offer them yet, or
+              this may not be a workshop this account can open" — which is the honest reading of a 404
+              when nothing else is known, and which is FALSE in both halves here: the routes exist and
+              this is the designer's own workshop, it simply has not been sent up. `load` cannot tell
+              the difference (it is keyed on the route param and runs before the draft is read), so the
+              correction is made where the draft IS known. Same fact as the verbs' fifth pre-press
+              state, in the one voice `WORKSHOP_NOT_ON_SERVER_YET` states it.
+            */}
+            {consent.ready && !consent.serverId ? WORKSHOP_NOT_ON_SERVER_YET : error}
           </p>
         ) : null}
 
@@ -549,7 +659,7 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
 
       {loading && !list ? <p className="text-sm text-ink-700">Reading this workshop&apos;s layers…</p> : null}
 
-      {list && !grouping.recordings.length && !grouping.unrooted.length ? (
+      {list && !grouping.recordings.length && !grouping.notes.length && !grouping.unrooted.length ? (
         <div className="panel grid gap-2 p-4">
           <h3 className="font-display text-sm font-bold text-ink-900">Nothing has been registered yet</h3>
           <p className="text-sm leading-6 text-ink-muted">
@@ -594,6 +704,9 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
                 <LayerRow
                   key={node.layer.id}
                   node={node}
+                  workshopId={workshopId}
+                  verbsBlocked={verbsBlocked}
+                  onVerbProduced={setVerbResult}
                   parentKind={null}
                   withText={withText}
                   userId={user?.id ?? null}
@@ -611,6 +724,51 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
           </div>
         );
       })}
+
+      {grouping.notes.length ? (
+        // CHAINS THAT STAND ON WORDS A DESIGNER TYPED, and they are ROOTS rather than orphans.
+        //
+        // Before `groupAiLayers` knew about `SUPPLIED_TEXT` every one of these fell through to the
+        // "could not be attached to a recording" block below, with the reason `UNKNOWN_SOURCE` — so
+        // a designer's own proofread of their own note appeared, on the screen that exists to show
+        // it, under a heading saying it could not be placed. `ai_layers.chain_roots` draws the same
+        // distinction on the server, and the list route switched to it for exactly this reason.
+        <div className="panel grid gap-3 p-4">
+          <div>
+            <h3 className="font-display text-sm font-bold text-ink-900">
+              {grouping.notes.length} layer{grouping.notes.length === 1 ? "" : "s"} made from words typed into this
+              workshop
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-ink-muted">
+              These stand on a passage a designer sent — a note being written, or a selection from a stage field —
+              rather than on a recording. The words themselves travel with the layer, because there is no row to point
+              at: the passage was sent before anything was saved, which is the moment these verbs exist for.
+            </p>
+          </div>
+          <ul className="grid gap-3">
+            {grouping.notes.map((node) => (
+              <LayerRow
+                key={node.layer.id}
+                node={node}
+                workshopId={workshopId}
+                verbsBlocked={verbsBlocked}
+                onVerbProduced={setVerbResult}
+                parentKind={null}
+                withText={withText}
+                userId={user?.id ?? null}
+                busyLayerId={busyLayerId}
+                anyBusy={anyBusy}
+                decisions={decisions}
+                withdrawing={withdrawing}
+                onAccept={accept}
+                onWithdrawOpen={setWithdrawing}
+                onWithdraw={withdraw}
+                onDecline={decline}
+              />
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {grouping.unrooted.length ? (
         <div className="panel grid gap-3 p-4">
@@ -646,6 +804,9 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
                 <ul className="grid gap-3">
                   <LayerRow
                     node={entry.node}
+                    workshopId={workshopId}
+                    verbsBlocked={verbsBlocked}
+                    onVerbProduced={setVerbResult}
                     parentKind={null}
                     withText={withText}
                     userId={user?.id ?? null}
@@ -698,6 +859,36 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
         anyBusy={anyBusy}
         onRegister={register}
       />
+
+      {/*
+        THE REVIEW SURFACE, SHARED WITH THE OTHER TWO CALL SITES.
+
+        A verb run from a row on this page produces a layer whose TEXT is on the 201 — `_finish_verb`
+        passes `include_text=True` — and this list deliberately does not carry text, so the dialog is
+        the only place the new words are readable at all. It is therefore the confirm, and the
+        panel's own `confirm()` is NOT stacked on top of it: that confirm exists precisely because
+        the panel may not have the text on screen, and two dialogs in a row is the "trains people to
+        click" failure this file's header names.
+      */}
+      <AiVerbReviewDialog
+        open={verbResult !== null}
+        workshopId={workshopId}
+        result={verbResult}
+        onAccepted={() => {
+          setVerbResult(null);
+          void refresh();
+        }}
+        onDeclined={() => {
+          setVerbResult(null);
+          void refresh();
+        }}
+        onClose={() => {
+          setVerbResult(null);
+          // Reloaded even on "leave it for now": the row exists on the server whatever the designer
+          // decided, and a list that did not show it would be a layer that is inert AND invisible.
+          void refresh();
+        }}
+      />
     </section>
   );
 }
@@ -708,6 +899,9 @@ export function AiLayersPanel({ workshopId }: { workshopId: string }) {
 
 function LayerRow({
   node,
+  workshopId,
+  verbsBlocked,
+  onVerbProduced,
   parentKind,
   withText,
   userId,
@@ -721,6 +915,13 @@ function LayerRow({
   onDecline
 }: {
   node: DwAiLayerNode;
+  workshopId: string;
+  /**
+   * Why no verb may be run from this screen at all, "" while the consent is still being read, or
+   * null when one may. The PER-ROW half of the decision is `aiVerbPlacementAllows`.
+   */
+  verbsBlocked: string | null;
+  onVerbProduced: (result: DwAiVerbResult) => void;
   /** The kind of the layer this one was produced from — null when it stands on the recording. */
   parentKind: string | null;
   withText: boolean;
@@ -1002,6 +1203,12 @@ function LayerRow({
             ) : null}
           </div>
         )}
+        <LayerVerbs
+          layer={layer}
+          workshopId={workshopId}
+          blocked={verbsBlocked}
+          onProduced={onVerbProduced}
+        />
       </div>
 
       {node.children.length ? (
@@ -1012,6 +1219,9 @@ function LayerRow({
             <LayerRow
               key={child.layer.id}
               node={child}
+              workshopId={workshopId}
+              verbsBlocked={verbsBlocked}
+              onVerbProduced={onVerbProduced}
               parentKind={layer.kind}
               withText={withText}
               userId={userId}
@@ -1028,6 +1238,263 @@ function LayerRow({
         </ul>
       ) : null}
     </li>
+  );
+}
+
+/**
+ * RUN A VERB OVER THIS STORED LAYER, and download a stored cue list — the two things this screen can
+ * do that no other surface can.
+ *
+ * ── WHY A VERB OVER A STORED LAYER BELONGS HERE AND NOWHERE ELSE ────────────────────────────────
+ *
+ * This is where a designer reads a transcript against its source and decides what a report may
+ * print. A verb over PROSE BEING TYPED belongs at the caret (`AiVerbSelectionMenu`) and a verb over
+ * a FILE belongs beside the tile (`MediaAiVerbs`); a verb over a row that already exists belongs
+ * where the row is.
+ *
+ * ── THE PLACEMENT LAW IS PREDICTED, NOT DISCOVERED ──────────────────────────────────────────────
+ *
+ * `check_placement` runs BEFORE anything is sent, so a refused placement spends nothing — but a
+ * control that is only ever refused is still the defect this panel's rule 3 is about. All three
+ * refusals are decidable from what is already drawn on this page, so the reason stands where the
+ * control would have been:
+ *
+ *   · a PROOFREAD may not stand on a PROOFREAD — the second run has no way to tell a correction it
+ *     is making from one the first run already made, so a passage drifts away from what was said one
+ *     defensible step at a time, with every step individually accepted;
+ *   · a TRANSLATION may not stand on a TRANSLATION — pivot translation compounds error invisibly and
+ *     the "made from" line would name a row whose own language is not the one the artisan spoke;
+ *   · NOTHING may stand on an EXPANDED, because an expansion is invented prose and every rung above
+ *     one puts the invention further from the person who could have caught it.
+ *
+ * ── AND A WITHHELD ROW GETS NO CONTROL AT ALL ───────────────────────────────────────────────────
+ *
+ * `_verb_source_layer` refuses a verb over a layer whose recording this account may not read, with a
+ * 403 whose reasoning is that "the result would put its words in front of you by another route".
+ * `textWithheld` on the row and that refusal are the same computation on the same server, so the
+ * outcome is settled before the press.
+ *
+ * ── THE SUBTITLE DOWNLOAD IS NOT GATED ON ACCEPTANCE, AND THAT IS DELIBERATE ────────────────────
+ *
+ * The route says why: "requiring acceptance first would mean accepting subtitles nobody has
+ * watched, which is the opposite of what acceptance is for." This is the designer looking at what
+ * the model produced, in the only form in which subtitles can be judged — played against the video.
+ * The speaker tick is drawn ONLY where the cues actually carry labels, because asking for labels
+ * that do not exist is a 422 by design ("a file with them in would be the same file without").
+ */
+function LayerVerbs({
+  layer,
+  workshopId,
+  blocked,
+  onProduced
+}: {
+  layer: DwAiLayer;
+  workshopId: string;
+  /** Consent or the ceiling, decided once for the whole panel. "" = still reading; null = go ahead. */
+  blocked: string | null;
+  onProduced: (result: DwAiVerbResult) => void;
+}) {
+  const [running, setRunning] = useState<"PROOFREAD" | "TRANSLATE" | "DOWNLOAD" | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [target, setTarget] = useState<string | null>(null);
+  const [speakers, setSpeakers] = useState(false);
+
+  const kind = String(layer.kind ?? "");
+  const declined = layer.deletedAt !== null;
+  const cues = kind === "SUBTITLES" ? subtitleCueSummary(layer.payload) : null;
+  const canProofread = aiVerbPlacementAllows("PROOFREAD", kind);
+  const canTranslate = aiVerbPlacementAllows("TRANSLATION", kind);
+
+  async function run(verb: "PROOFREAD" | "TRANSLATE", targetLanguage?: string) {
+    setRunning(verb);
+    setProblem(null);
+    try {
+      const answer =
+        verb === "PROOFREAD"
+          ? await proofreadDesignWorkshopText(workshopId, { sourceLayerId: layer.id })
+          : await translateDesignWorkshopText(workshopId, { sourceLayerId: layer.id }, targetLanguage ?? "");
+      setTarget(null);
+      onProduced(answer);
+    } catch (err) {
+      setProblem(isVerbOffline(err) ? VERBS_NEED_A_CONNECTION : aiLayerProblem(err, "That could not be done."));
+    } finally {
+      setRunning(null);
+    }
+  }
+
+  async function download(format: DwSubtitleFormat) {
+    setRunning("DOWNLOAD");
+    setProblem(null);
+    try {
+      // NEVER AN `<a href>`: every media route is bearer-authenticated and an anchor sends no
+      // Authorization header. The file NAME is the server's, because it is what distinguishes the
+      // speaker-labelled file from the anonymised one in a downloads folder.
+      const file = await downloadDesignWorkshopSubtitles(workshopId, layer.id, format, speakers);
+      saveBlobToDisk(file.blob, file.fileName);
+    } catch (err) {
+      setProblem(aiLayerProblem(err, "That subtitle file could not be produced."));
+    } finally {
+      setRunning(null);
+    }
+  }
+
+  // A DECLINED ROW IS A RECORD THAT SOMEBODY SAID NO, and deriving from one would put that judgement
+  // back into a live chain. Nothing is offered on it, and the row's own "Declined" chip already says
+  // as much — so there is no sentence to add here.
+  if (declined) return null;
+
+  const offersVerbs = canProofread || canTranslate;
+  if (!offersVerbs && !cues) return null;
+
+  return (
+    <div className="grid gap-2 border-t border-line-200 pt-2">
+      {cues ? (
+        <div className="grid gap-1.5">
+          <p className="text-xs leading-5 text-ink-500">
+            {cues.count.toLocaleString()} cue{cues.count === 1 ? "" : "s"}
+            {cues.estimatedCues ? `, ${cues.estimatedCues.toLocaleString()} of them approximate` : ""}
+            {cues.language ? ` \u00b7 ${cues.language}` : ""}. Download and watch them against the recording — this
+            changes nothing and accepts nothing.
+          </p>
+          {cues.hasSpeakers ? (
+            <label className="flex items-start gap-2 text-xs leading-5 text-ink-700">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-3.5 w-3.5 accent-purple-700"
+                checked={speakers}
+                onChange={(event) => setSpeakers(event.currentTarget.checked)}
+              />
+              <span>
+                Put the speaker label in front of each line. The labels are the engine&apos;s own guess — nobody told it
+                how many people were in the room.
+              </span>
+            </label>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {(["srt", "vtt"] as DwSubtitleFormat[]).map((format) => (
+              <button
+                key={format}
+                type="button"
+                className="field-button-secondary"
+                disabled={running !== null || !cues.cues.length}
+                onClick={() => void download(format)}
+              >
+                <Download className="h-4 w-4" aria-hidden />
+                {SUBTITLE_FORMAT_LABELS[format]}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {offersVerbs ? (
+        layer.textWithheld ? (
+          // A GUARANTEED 403, so the reason stands where the buttons would have been.
+          <p className="text-xs leading-5 text-ink-500">
+            Running a model over this one is not offered. This account cannot read the recording it was made from, and
+            the result would put its words in front of you by another route. Ask whoever uploaded the recording for
+            access to their media.
+          </p>
+        ) : blocked !== null ? (
+          /*
+            `!== null` AND NOT TRUTHINESS, WHICH IS THE WHOLE POINT OF THE THREE-VALUED TYPE.
+
+            `blocked` is "" while the consent is still being read, and the empty string is falsy — so
+            `blocked ?` sent that state down the ELSE arm and rendered live, pressable Proofread and
+            Translate buttons during the IndexedDB read. On a NOT_RECORDED workshop that is a press
+            into the 409 this entire ladder exists to prevent, which is the "control offered into a
+            certain refusal" this file's own rule 3 forbids.
+
+            The intent above `verbsBlocked` was SILENCE during that read, and it achieves that here
+            too: the paragraph below renders "" and draws nothing. What it did not achieve was
+            INERTNESS, and the other two call sites got it for free by feeding the same value into
+            `disabled={... || blocked !== null}` rather than into a ternary.
+          */
+          <p className="text-xs leading-5 text-ink-500">{blocked}</p>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-2">
+              {canProofread ? (
+                <button
+                  type="button"
+                  className="field-button-secondary"
+                  // `blocked` again, though this arm is only reached when it is null: the gate that
+                  // failed here lived ONLY in a render ternary, and one that also sits on the control
+                  // survives somebody restructuring that ternary. It is what the other two surfaces do.
+                  disabled={running !== null || blocked !== null}
+                  onClick={() => void run("PROOFREAD")}
+                >
+                  {running === "PROOFREAD" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+                  {running === "PROOFREAD" ? "Proofreading\u2026" : "Proofread this"}
+                </button>
+              ) : null}
+              {canTranslate ? (
+                <button
+                  type="button"
+                  className="field-button-secondary"
+                  disabled={running !== null || blocked !== null}
+                  onClick={() => setTarget("")}
+                >
+                  Translate this
+                </button>
+              ) : null}
+            </div>
+            {target !== null ? (
+              <div className="grid gap-1.5">
+                <label className="field-label" htmlFor={`ai-translate-${layer.id}`}>
+                  Translate into
+                </label>
+                {/* THE ELLIPSIS IS THE LITERAL CHARACTER, AND IT HAS TO BE. A JSX attribute string
+                    literal is not a JavaScript string literal: it processes no backslash escapes. So
+                    the u2026 escape form — correct in the button labels above, which are `{...}`
+                    expressions, and copied down here from them — rendered its six source characters
+                    into the box for a designer to read. Same for the mid-dot in the cue line above. */}
+                <input
+                  id={`ai-translate-${layer.id}`}
+                  className="field-input"
+                  value={target}
+                  maxLength={40}
+                  placeholder="Odia, Hindi, English…"
+                  onChange={(event) => setTarget(event.target.value)}
+                />
+                <p className="text-xs leading-5 text-ink-500">
+                  The translation stands BESIDE this layer and never replaces it, so a reader who wants the
+                  artisan&apos;s own words can still have them.
+                </p>
+                {target.trim() && translationTargetRefusal(target) ? (
+                  <p className="text-xs leading-5 text-error-600">{translationTargetRefusal(target)}</p>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="field-button"
+                    disabled={running !== null || blocked !== null || translationTargetRefusal(target) !== null}
+                    onClick={() => void run("TRANSLATE", target.trim())}
+                  >
+                    {running === "TRANSLATE" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+                    {running === "TRANSLATE" ? "Translating\u2026" : "Translate this layer"}
+                  </button>
+                  <button
+                    type="button"
+                    className="field-button-secondary"
+                    disabled={running !== null}
+                    onClick={() => setTarget(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </>
+        )
+      ) : null}
+
+      {problem ? (
+        <p role="alert" className="text-xs leading-5 text-error-600">
+          {problem}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

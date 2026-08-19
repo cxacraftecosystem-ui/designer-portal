@@ -4,16 +4,36 @@
 without spending 292 MB of somebody's data allowance. It is not a debug backdoor: the bytes go through
 exactly the same fingerprint check as a download would, because it is the same code.
 
-> **AMENDED 2026-08-13. IT IS NO LONGER THE ONLY ROUTE ON THE SERVER SIDE, AND IS STILL THE ONLY ONE
-> THE APP CAN USE.** The sentence here used to say this was *"the only route that works at all"*.
-> The deployment now serves the artifact over HTTP —
+> **AMENDED 2026-08-13, AND AGAIN ON 2026-08-20 WHEN THE SECOND HALF OF THE 08-13 AMENDMENT WENT
+> FALSE.** The sentence here originally said the cable was *"the only route that works at all"*. The
+> deployment has served the artifact over HTTP since 2026-08-13 —
 > `GET /api/asr-models/{id}/files/{name}`, resumable, digest-gated, designer-entitled
 > (`docs/ASR-MODEL-HOSTING.md`), exercised against **this exact 365 MB file** and proved to reassemble
-> from two Range requests to the same digest. What has **not** changed is the app: `DW_ASR_MODEL_ARTIFACTS`
-> still pins the GitHub `.tar.bz2` URL, which this build cannot open, so **no surface in the app fetches
-> from the endpoint yet** and the cable below remains the only way a designer gets the model today.
-> The cable also stays useful afterwards, for the case it was written for: a phone whose designer has
-> no data allowance to spend at all.
+> from two Range requests to the same digest.
+>
+> The 08-13 amendment then said **"no surface in the app fetches from the endpoint yet"**, on the
+> grounds that `DW_ASR_MODEL_ARTIFACTS` pins only the GitHub `.tar.bz2`. **That is no longer true, and
+> the sentence is struck rather than deleted because this is the most-read operator document and the
+> claim is the exact thing it exists to answer.**
+> One surface does fetch from the endpoint: `DwAsrModelSource.DEPLOYMENT_ENDPOINT` →
+> `DwAsrModelController.downloadFromEndpoint`, built on `DwAsrModelEndpoint.kt`, which is a route
+> beside the pinned-container catalogue rather than a row inside it — so `DW_ASR_MODEL_ARTIFACTS` is
+> still the one `.tar.bz2` row and that fact no longer implies what it used to.
+>
+> **The bzip2 argument below is SUPERSEDED, not pending.** It reasons about whether the upstream
+> archive should be republished as a `.zip` so the app could open it. Serving the two files
+> UNPACKED, per file, deletes the question outright: there is no archive on that route, so
+> `DwAsrContainerFormat` and the bzip2 refusal simply do not apply to it. Do not open the
+> republish-as-`.zip` work item; it has no remaining purpose.
+>
+> **What has NOT changed is that the cable is the route a designer can actually use today**, and that
+> is now for a different reason: the endpoint is dark until an operator sets `ASR_MODEL_DIR`
+> (`docs/ASR-MODEL-HOSTING.md` §3), and until then every handset that asks is told nothing is
+> published and falls through to the card below. `Settings.asr_model_dir` defaults to `None`, both
+> `.env.example` files leave `ASR_MODEL_DIR` commented out, and no deployment manifest in this
+> repository sets it — checked, not assumed. And the cable stays useful afterwards for the case it
+> was written for, which no endpoint addresses: a phone whose designer has no data allowance to spend
+> at all.
 
 ---
 
@@ -71,6 +91,14 @@ checking here is to find out on a laptop rather than after a 292 MB download on 
 
 ## Why a cable at all, and why the download button does not work yet
 
+> **SCOPE NARROWED 2026-08-20. EVERYTHING IN THIS SECTION IS TRUE OF THE UPSTREAM `.tar.bz2` AND OF
+> NOTHING ELSE.** It was written when that archive was the only thing the app could be pointed at, so
+> it reads as a statement about the app. It is not one any more: the deployment-endpoint route
+> (`DwAsrModelEndpoint.kt` → `DwAsrModelController.downloadFromEndpoint`) fetches the two files
+> unpacked and never meets an archive, and the table below is the reason the CONTAINER route is still
+> the one that cannot run. Read "the app cannot fetch this file" as "nothing in this build can open a
+> `.tar.bz2`", which is what it always meant and is still exactly true.
+
 **The app cannot fetch this file.** It knows the URL, it knows the size, it knows the digest — and
 upstream publishes it as a `.tar.bz2`, and **Android's class library has no bzip2 decoder.**
 `java.util.zip` is Deflate and GZIP; that is all there is.
@@ -84,12 +112,20 @@ that were considered and not done:
 |---|---|
 | add a bzip2 library | a dependency on a **compulsory** download for the whole fleet — this app's updater fetches the whole APK on every release behind a dialog with no "Later" button. That trade belongs to whoever owns it, not to this lane |
 | hand-roll a bzip2 decoder | several hundred lines of bit-twiddling whose output is fed straight to a native graph executor. A decompressor nobody has reviewed is a worse supply-chain decision than the one `ASR-RUNTIME-MEASUREMENT.md` §1 already declined |
-| **republish the same bytes as a `.zip`** on this deployment's own storage | **this is the answer.** It is a release task, not a code one |
+| **republish the same bytes as a `.zip`** on this deployment's own storage | ~~**this is the answer.**~~ **SUPERSEDED — a fourth option was built instead: serve the two files UNPACKED, per file.** See below |
 
-**To switch the download on:** publish the two files in a `.zip` on the deployment's storage, then in
-`DW_ASR_MODEL_ARTIFACTS` set `url`, `sha256`, `downloadBytes` and `container = ZIP`. Nothing else
-changes — the fetch, the byte cap, the container digest, the unpack-by-pinned-name and the per-file
-verification are all written and are in `DwAsrModelController.downloadAndInstall`.
+~~**To switch the download on:** publish the two files in a `.zip` on the deployment's storage, then in
+`DW_ASR_MODEL_ARTIFACTS` set `url`, `sha256`, `downloadBytes` and `container = ZIP`.~~ **Struck
+2026-08-20, and struck rather than deleted because it is a work item somebody could still pick up by
+mistake.** The deployment does not republish an archive at all: `GET /api/asr-models/{id}/files/{name}`
+serves `model.int8.onnx` and `tokens.txt` as themselves, so there is no container to choose a format
+for and the whole bzip2-versus-zip question stops applying on that route. The client half is
+`DwAsrModelController.downloadFromEndpoint`, not `downloadAndInstall`.
+
+`downloadAndInstall` and the `container = ZIP` path above are nevertheless **left in place and are not
+dead code to be tidied away**: they are the route for any future artifact that genuinely does arrive
+as one archive, and the endpoint route is dark on the fleet until an operator provisions
+`ASR_MODEL_DIR`. Both are wired; neither can run today.
 
 ---
 

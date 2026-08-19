@@ -26,17 +26,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.BuildConfig
+import com.designprototype.workshop.data.ApiClient
 import com.designprototype.workshop.data.DW_ASR_MODELS
 import com.designprototype.workshop.data.DW_ASR_MODEL_ARTIFACTS
 import com.designprototype.workshop.data.DW_ASR_MODEL_MISMATCH_SENTENCE
+import com.designprototype.workshop.data.DW_MODEL_FREE_STORAGE_MARGIN_BYTES
 import com.designprototype.workshop.data.DwAsrContainerFormat
+import com.designprototype.workshop.data.DwAsrEndpointState
+import com.designprototype.workshop.data.DwAsrManifestVerdict
 import com.designprototype.workshop.data.DwAsrModel
 import com.designprototype.workshop.data.DwAsrModelArtifact
+import com.designprototype.workshop.data.DwAsrModelEndpointApi
+import com.designprototype.workshop.data.DwAsrModelFile
 import com.designprototype.workshop.data.DwAsrModelOffer
+import com.designprototype.workshop.data.DwAsrModelSource
 import com.designprototype.workshop.data.DwAsrModelState
 import com.designprototype.workshop.data.DwAsrModelStatus
 import com.designprototype.workshop.data.DwAsrVerification
 import com.designprototype.workshop.data.DwConnection
+import com.designprototype.workshop.data.TokenStore
+import com.designprototype.workshop.data.dwAsrEndpointStateOf
+import com.designprototype.workshop.data.dwAsrManifestVerdict
+import com.designprototype.workshop.data.dwAsrModelFileUrl
+import com.designprototype.workshop.data.dwAsrModelSourceFor
 import com.designprototype.workshop.data.DwDeviceMeasurement
 import com.designprototype.workshop.data.DwRecognitionSupport
 import com.designprototype.workshop.data.DwResumeDecision
@@ -76,8 +89,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import retrofit2.HttpException
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
@@ -310,12 +325,18 @@ internal class DwAsrModelController(
      *
      * ── WHY A SEAM, WHEN SEAMS ARE USUALLY A SMELL ────────────────────────────────────────────
      *
-     * [downloadAndInstall]'s own docstring said, in as many words, *"this function has never run
-     * against a server and that is the honest state of it"*. It could not: the pinned container is a
-     * `.tar.bz2`, `dwAsrModelOffer` answers `CONTAINER_NOT_READABLE_IN_THIS_BUILD` before any control
-     * is drawn, and `DwAsrModelArtifact`'s constructor requires `https://` — correctly — so a local
-     * plaintext server cannot stand in for one either. Two hundred and ninety-two megabytes of
-     * somebody's prepaid bundle were riding on code nothing had ever run.
+     * [downloadAndInstall]'s own docstring says, in as many words, *"this function has never run
+     * against a server"*. It could not: the pinned container is a `.tar.bz2`, so `dwAsrModelOffer`
+     * step 4 answers `CONTAINER_NOT_READABLE_IN_THIS_BUILD` and `dwAsrModelSourceFor` never resolves
+     * to `PINNED_CONTAINER` for an offer that may install — and `DwAsrModelArtifact`'s constructor
+     * requires `https://`, correctly, so a local plaintext server cannot stand in for one either.
+     * Two hundred and ninety-two megabytes of somebody's prepaid bundle were riding on code nothing
+     * had ever run.
+     *
+     * NOT "before any control is drawn", which is what this said and which [DwAsrEndpointState]
+     * falsified: on a deployment that PUBLISHES, a control is drawn and works — it just dispatches
+     * to `downloadFromEndpoint`. The container half stays unexecuted because no source selects it,
+     * not because no button exists.
      *
      * These two parameters are what let `DwAsrModelTransferProbeTest` point the SAME loop at a real
      * https host that honours `Range`, watch the readout against bytes it counts itself, interrupt it,
@@ -326,6 +347,18 @@ internal class DwAsrModelController(
      */
     private val models: List<DwAsrModel> = DW_ASR_MODELS,
     private val artifacts: List<DwAsrModelArtifact> = DW_ASR_MODEL_ARTIFACTS,
+    /**
+     * Where this deployment's own per-file route lives, **overridable for the same reason the two
+     * catalogues above are.**
+     *
+     * `DwAsrModelTransferProbeTest` is the only thing that has ever executed the fetch loop against a
+     * real server, and it can only reach `downloadFromEndpoint` if it can point it somewhere — a
+     * handset with `adb reverse` gives it `http://127.0.0.1:8000/api/`, which
+     * `network_security_config.xml` already permits cleartext for (10.0.2.2, 127.0.0.1, localhost and
+     * nothing else). **Production passes nothing**: the default is the build constant, and there is
+     * no code path outside `androidTest` that supplies anything else.
+     */
+    private val apiBaseUrl: String = BuildConfig.DEFAULT_API_BASE_URL,
 ) {
 
     /** What the model is doing on this phone. Starts as the honest UNKNOWN, never as "not there". */
@@ -341,6 +374,41 @@ internal class DwAsrModelController(
 
     /** True when a cable has left a complete set of the pinned files somewhere this app can read. */
     var stagedFilesPresent by mutableStateOf(false)
+        private set
+
+    /**
+     * What THIS DEPLOYMENT last said about serving the model. **Starts UNKNOWN and never as "no".**
+     *
+     * Read by [refresh] only when there is a connection to read it over, so an offline refresh costs
+     * no socket and no timeout wait. Until then it is [DwAsrEndpointState.UNKNOWN], which
+     * [dwAsrModelOffer] falls through rather than treating as a refusal — this codebase's standing
+     * not-yet-looked rule.
+     */
+    var endpoint by mutableStateOf(DwAsrEndpointState.UNKNOWN)
+        private set
+
+    /**
+     * WHY the manifest was refused, when it was. Null until one has been read at all.
+     *
+     * Kept beside [endpoint] rather than folded into it because
+     * [DwAsrManifestVerdict.DISAGREES_ON_DIGEST] is the one an administrator has to be told about —
+     * it means this deployment is serving a DIFFERENT file under the name this APK pins — while the
+     * card's state for it is the same [DwAsrEndpointState.NOT_PUBLISHED] as an empty origin's.
+     */
+    var manifestVerdict by mutableStateOf<DwAsrManifestVerdict?>(null)
+        private set
+
+    /**
+     * Which route left the part-files that are on this phone right now, or null when there are none.
+     *
+     * **READ OFF THE DISK, BECAUSE A PAUSE OUTRANKS EVERY GATE AND IS DECIDED BEFORE [endpoint] IS.**
+     * `dwAsrModelOffer` answers RESUME at step 2 from [DwAsrModelState.PAUSED], before the endpoint
+     * state is consulted at all — deliberately, since bytes already paid for beat every question
+     * below. So a resume cannot be attributed to a route by asking what the deployment says today:
+     * the prefix was written by whichever route ran yesterday, and the deployment may have been
+     * provisioned or emptied since. See [dwAsrModelSourceFor], whose `pausedSource` this is.
+     */
+    var pausedSource by mutableStateOf<DwAsrModelSource?>(null)
         private set
 
     /**
@@ -409,15 +477,50 @@ internal class DwAsrModelController(
 
     private var job: Job? = null
 
-    /** Built only if a download actually starts, so reading the card costs no connection pool. */
+    /**
+     * Built only if a download actually starts, so reading the card costs no connection pool.
+     *
+     * ── IT CARRIES THE BEARER TOKEN NOW, AND WITHOUT THAT THE ENDPOINT ROUTE IS 401 EVERY TIME ───
+     *
+     * This was a bare builder with no auth, and correctly so: it was written for an anonymous GitHub
+     * release asset. This deployment's own route runs `get_current_user` before anything else, so
+     * every request from an unauthenticated client answers 401 — and the existing code would surface
+     * that as `"the server answered HTTP 401"`, which tells a designer nothing they can act on. The
+     * interceptor is the same six lines `ApiClient` uses, reading the same [TokenStore].
+     *
+     * ── AND IT IS **NOT** `ApiClient`'s CLIENT, WHICH IS THE ONE PLACE THAT RULE DOES NOT APPLY ──
+     *
+     * `ApiClient.retrofit`'s docstring says a feature must not stand up a second HTTP stack, because
+     * it would opt out of the 504 retry this origin needs. That is right for the manifest — see
+     * [DwAsrModelEndpointApi], which does go through it — and it is wrong for the stream:
+     * `ApiClient.isSafelyRetriable` treats every GET as replayable and would re-issue a 365 MB
+     * download up to four times with backoff, fighting the resume logic below, which asks for the
+     * REMAINDER rather than the whole file. So this client has the auth interceptor and none of the
+     * retry policy, and that composition is deliberate rather than an oversight.
+     */
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
-            // An hour, because this is 292 MB over a district-town connection — but not unbounded: a
+            // An hour, because this is 365 MB over a district-town connection — but not unbounded: a
             // stalled fetch has to end in a sentence rather than in a spinner that outlives the day.
             .callTimeout(60, TimeUnit.MINUTES)
+            .addInterceptor(
+                Interceptor { chain ->
+                    val token = TokenStore(context).getToken()
+                    val request = if (token.isNullOrBlank()) {
+                        // The GitHub route needs no token and must not be broken by this: an empty
+                        // Authorization header is worse than none, and some CDNs reject it outright.
+                        chain.request()
+                    } else {
+                        chain.request().newBuilder()
+                            .header("Authorization", "Bearer $token")
+                            .build()
+                    }
+                    chain.proceed(request)
+                }
+            )
             .build()
     }
 
@@ -462,7 +565,9 @@ internal class DwAsrModelController(
                  * a phone whose file an OS storage cleaner had since removed. So every reading asks
                  * the disk, and a designer who force-stopped the app mid-download finds their bytes
                  * still there and a Resume button over them, which is the outcome that keeps the
-                 * 292 MB honest.
+                 * bytes already paid for honest — the 292 MB the container route costs, or the
+                 * 365 MB the endpoint route does. Neither figure is a constant any more, which is
+                 * why the sentence names the route rather than a number.
                  *
                  * Only from NOT_INSTALLED: a verified install outranks any leftover, and a FAILED
                  * read carries a sentence about a digest that a "Paused" label would bury.
@@ -476,10 +581,31 @@ internal class DwAsrModelController(
             val staged = withContext(Dispatchers.IO) {
                 pinned != null && stagedModelFiles(context, pinned) != null
             }
+            /*
+             * ASKED ONLY WHEN THERE IS SOMETHING TO ASK OVER, AND ONLY WHEN IT COULD CHANGE THE
+             * ANSWER. With no connection this costs no socket, no DNS and no timeout wait — a
+             * designer refreshing this card in a courtyard gets it back instantly and the card says
+             * "no connection", which is true, rather than spinning for thirty seconds to discover it.
+             *
+             * The state is left at whatever it was rather than reset to UNKNOWN: a deployment that
+             * said PUBLISHES five minutes ago has not stopped publishing because the phone walked
+             * into a shed, and [dwAsrModelOffer] checks the connection itself before offering a
+             * fetch. What is NOT done is caching that across a process death and offering a button
+             * on the strength of it — [endpoint] starts UNKNOWN on every launch, so a designer who
+             * has never been online since installing is never promised a fetch that would 503.
+             */
+            val deployment = if (pinned == null || here == DwConnection.NONE) {
+                endpoint
+            } else {
+                readManifest(pinned)
+            }
+            val onDisk = withContext(Dispatchers.IO) { partialBytesAndSource() }
             measurement = reading
             connection = here
             stagedFilesPresent = staged
-            partialOnDiskBytes = withContext(Dispatchers.IO) { partialBytes() }
+            endpoint = deployment
+            partialOnDiskBytes = onDisk.first
+            pausedSource = onDisk.second
             status = next
             // ONE READING, TWO READERS. The dictation ladder asks [DwAsrModelRun] on every tap and
             // must not take its own — 365 MB of SHA-256 per prose field is minutes per stage screen.
@@ -517,22 +643,140 @@ internal class DwAsrModelController(
         }
     }
 
-    /** The part-file this build would resume from, whether or not it exists yet. */
-    private fun partialFor(model: DwAsrModel, artifact: DwAsrModelArtifact): File {
-        val incoming = File(File(context.filesDir, DW_ASR_MODEL_DIR), DW_ASR_MODEL_INCOMING)
-        return File(
-            incoming,
-            dwPartialFileName("model-${model.modelId}${artifact.container.extension}")
-        )
+    /** The one directory a partial transfer of any route is allowed to live in. See [sweepIncoming]. */
+    private fun incomingDir(): File =
+        File(File(context.filesDir, DW_ASR_MODEL_DIR), DW_ASR_MODEL_INCOMING)
+
+    /** The part-file the CONTAINER route would resume from, whether or not it exists yet. */
+    private fun partialFor(model: DwAsrModel, artifact: DwAsrModelArtifact): File =
+        File(incomingDir(), dwPartialFileName("model-${model.modelId}${artifact.container.extension}"))
+
+    /**
+     * The part-file the ENDPOINT route would resume ONE pinned file from.
+     *
+     * **IN `incoming/`, NOT IN THE MODEL'S TARGET DIRECTORY, AND THE DIFFERENCE IS THE 300 MB A
+     * PAUSE IS PRESSED TO KEEP.** Writing `model.int8.onnx.part` into `dwAsrModelDir` would look
+     * tidier and would destroy the feature: every failure and cancellation arm on both fetch routes
+     * runs `target.listFiles()?.forEach { it.delete() }`, and `installFromStaged` empties the same
+     * directory on purpose, so a Pause would delete exactly the prefix it was pressed to preserve.
+     * The container route survives a pause only because it lives here, and this one lives here for
+     * the identical reason. [sweepIncoming] spares `.part` names specifically.
+     *
+     * The model id is in the name as well as the file name so that two models pinned in some future
+     * build cannot collide on `tokens.txt.part` — a 47 KB vocabulary from the wrong artifact would
+     * fail its digest rather than corrupt anything, but it would fail it after 365 MB.
+     */
+    private fun endpointPartFor(model: DwAsrModel, pinned: DwAsrModelFile): File =
+        File(incomingDir(), dwPartialFileName("${model.modelId}-${pinned.fileName}"))
+
+    /**
+     * What is sitting in part-files right now and **which route put it there**.
+     *
+     * ── WHY THIS IS ONE FUNCTION AND NOT TWO ──────────────────────────────────────────────────
+     *
+     * It used to be `partialBytes()` alone and it was keyed on the container: it began
+     * `dwAsrModelArtifactFor(pinned.modelId, artifacts) ?: return 0L`, so a paused ENDPOINT download
+     * would have reported 0 bytes, never become [DwAsrModelState.PAUSED] in [refresh], and never
+     * been offered as a RESUME — while `downloadFromEndpoint` would silently have carried on from
+     * the surviving prefixes. The card would have named the full 365,438,543 bytes for a fetch that
+     * was about to move rather less, which is a lie in the designer's favour and still a lie.
+     *
+     * THE ENDPOINT'S PARTS WIN WHEN BOTH EXIST. They are the route a resume would now take, and the
+     * container's leftover is from a route that cannot run in this build at all.
+     */
+    private fun partialBytesAndSource(): Pair<Long, DwAsrModelSource?> {
+        val pinned = model ?: return 0L to null
+        val fromEndpoint = pinned.files.sumOf { file ->
+            val part = endpointPartFor(pinned, file)
+            if (part.isFile) part.length() else 0L
+        }
+        if (fromEndpoint > 0L) return fromEndpoint to DwAsrModelSource.DEPLOYMENT_ENDPOINT
+        val artifact = dwAsrModelArtifactFor(pinned.modelId, artifacts) ?: return 0L to null
+        val container = partialFor(pinned, artifact)
+        val bytes = if (container.isFile) container.length() else 0L
+        return bytes to (if (bytes > 0L) DwAsrModelSource.PINNED_CONTAINER else null)
     }
 
-    /** Bytes sitting in the part-file right now, or 0 when there is none. */
-    private fun partialBytes(): Long {
-        val pinned = model ?: return 0L
-        val artifact = dwAsrModelArtifactFor(pinned.modelId, artifacts) ?: return 0L
-        val file = partialFor(pinned, artifact)
-        return if (file.isFile) file.length() else 0L
+    /** Bytes sitting in a part-file right now, whichever route left them, or 0 when there are none. */
+    private fun partialBytes(): Long = partialBytesAndSource().first
+
+    /**
+     * The manifest service, **built once for the life of this controller and not once per read.**
+     *
+     * [readManifest] used to call `ApiClient.retrofit(TokenStore(context)).create(...)` inside
+     * itself, and [refresh] calls it on every card appearance and every "Check again" tap. Each call
+     * stood up a whole `OkHttpClient` — its own `ConnectionPool` and its own `Dispatcher`
+     * `ExecutorService` — plus a Retrofit and a dynamic proxy, none of which is ever shut down. Idle
+     * threads and pooled sockets do time out, so it was bounded garbage rather than a leak, but
+     * `WorkshopRepository`'s own rejected-alternative note names this exact construction as a reason
+     * NOT to do something — "it would stand up an OkHttp client per field on a screen that draws
+     * hundreds of them" — and a file cannot contradict the rule the repository argues from. It also
+     * meant the manifest never reused the connection the previous check had just opened, on a card
+     * whose whole purpose is a connection.
+     *
+     * `by lazy` and not eager, because a controller is created for every appearance of the card and
+     * a designer with no connection never reaches this at all.
+     *
+     * A FRESH TOKEN IS STILL PICKED UP: `ApiClient.retrofit`'s auth interceptor calls
+     * `tokenStore.getToken()` inside `intercept`, per request, so caching the service caches no
+     * credential. What it DOES pin is the base URL — `ApiClient.retrofit` builds from
+     * `BuildConfig.DEFAULT_API_BASE_URL` and not from [apiBaseUrl], so a probe that overrides
+     * [apiBaseUrl] moves the BYTE routes and not this one. That was already true before the hoist;
+     * it is written down here because the two now sit beside each other.
+     */
+    private val endpointApi: DwAsrModelEndpointApi by lazy {
+        ApiClient.retrofit(TokenStore(context)).create(DwAsrModelEndpointApi::class.java)
     }
+
+    /**
+     * **ASK THIS DEPLOYMENT WHETHER IT SERVES THE MODEL.** One small JSON GET, and it may only ever
+     * REFUSE a fetch.
+     *
+     * ── THE FOUR STATUS CODES ARE FOUR DIFFERENT NEXT MOVES ───────────────────────────────────
+     *
+     * 401 is a lapsed session and signing in again fixes it; 403 is an account that will never be
+     * allowed and only whoever manages accounts can change it; 404 is this deployment's BUILD not
+     * knowing the artifact id this APK pins, which is a version skew an update fixes; anything else,
+     * and every `IOException`, is "could not ask". Collapsing any pair of them produces a designer
+     * doing the one thing that cannot help. `WorkshopRepository` and `WorkshopSync` already keep the
+     * 401 apart from everything else and say why in as many words.
+     *
+     * A 200 IS NOT A YES. The route answers 200 with `available: false` when the origin has not been
+     * given the bytes, deliberately, so that a phone can tell "not published" from "your token
+     * expired" — so the body goes through [dwAsrManifestVerdict], which is refuse-only. **Nothing
+     * this function returns may be read as permission to trust a byte.** The digest that decides
+     * that is taken off this phone's own disk, after the transfer, against the constant in the APK.
+     *
+     * ── THROUGH `ApiClient`, WHICH THE 365 MB STREAM DELIBERATELY IS NOT ──────────────────────
+     *
+     * See [DwAsrModelEndpointApi] for the argument. In short: this is exactly the small authenticated
+     * GET the CloudFront 504 retry was written for, and the stream is exactly the request replaying
+     * it would ruin.
+     */
+    private suspend fun readManifest(pinned: DwAsrModel): DwAsrEndpointState =
+        withContext(Dispatchers.IO) {
+            try {
+                val manifest = endpointApi.asrModel(pinned.modelId)
+                val verdict = dwAsrManifestVerdict(manifest, pinned)
+                withContext(Dispatchers.Main) { manifestVerdict = verdict }
+                dwAsrEndpointStateOf(verdict)
+            } catch (cancellation: kotlinx.coroutines.CancellationException) {
+                // First, and rethrown: a refresh cancelled by the surface leaving must not be
+                // recorded as this deployment answering anything at all.
+                throw cancellation
+            } catch (http: HttpException) {
+                withContext(Dispatchers.Main) { manifestVerdict = null }
+                when (http.code()) {
+                    401 -> DwAsrEndpointState.SESSION_LAPSED
+                    403 -> DwAsrEndpointState.FORBIDDEN
+                    404 -> DwAsrEndpointState.VERSION_SKEW
+                    else -> DwAsrEndpointState.UNREACHABLE
+                }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) { manifestVerdict = null }
+                DwAsrEndpointState.UNREACHABLE
+            }
+        }
 
     /** The one verification, shared with [DwAsrModelRun]. See [dwAsrReadInstalledModel]. */
     private fun readInstalled(
@@ -550,14 +794,31 @@ internal class DwAsrModelController(
     fun install() {
         val reading = measurement ?: return
         val pinned = model ?: return
-        val offer = dwAsrModelOffer(status, reading, connection, stagedFilesPresent, models, artifacts)
+        /*
+         * THE OFFER IS ASKED WITH [endpoint], AND IT IS THIS LINE THAT MAKES THE NEW BUTTON DO
+         * ANYTHING. Left at the default UNKNOWN here, the offer would fall through to the container
+         * branch, answer CONTAINER_NOT_READABLE_IN_THIS_BUILD, fail `dwAsrModelMayInstall` and return
+         * one line later having done nothing — a control that draws and cannot work, which is the
+         * exact defect every comment in this file is written against.
+         */
+        val offer = dwAsrModelOffer(
+            status, reading, connection, stagedFilesPresent, models, artifacts, endpoint,
+        )
         if (!dwAsrModelMayInstall(offer)) return
+        // WHICH ROUTE, decided once and in the pure layer. Deriving it a second time here — "if the
+        // endpoint publishes, fetch from the endpoint" — is how a card that says one thing starts the
+        // other. See [dwAsrModelSourceFor], and [pausedSource] for why a RESUME needs the disk asked.
+        val source = dwAsrModelSourceFor(offer, endpoint, stagedFilesPresent, pausedSource)
         stopIntent = DwTransferControlState.RUNNING
         status = DwAsrModelStatus(DwAsrModelState.INSTALLING, pinned)
         busy = true
         job = scope.launch {
-            val outcome = when (offer) {
-                DwAsrModelOffer.INSTALL_FROM_STAGED_FILES -> installFromStaged(pinned)
+            val outcome = when (source) {
+                DwAsrModelSource.STAGED_FILES -> installFromStaged(pinned)
+                DwAsrModelSource.DEPLOYMENT_ENDPOINT -> downloadFromEndpoint(pinned)
+                // PINNED_CONTAINER, and null — which `dwAsrModelMayInstall` has already made
+                // unreachable, and which is answered here rather than with `error(...)` because a
+                // crash on the install button is a worse outcome than one honest sentence.
                 else -> {
                     val artifact = dwAsrModelArtifactFor(pinned.modelId, artifacts)
                     if (artifact == null) {
@@ -580,7 +841,10 @@ internal class DwAsrModelController(
     }
 
     /**
-     * **STOP, AND KEEP WHAT HAS ARRIVED.** The half of the pair that does not cost 292 MB.
+     * **STOP, AND KEEP WHAT HAS ARRIVED.** The half of the pair that does not re-spend the bytes
+     * already paid for — the 292 MB the container route costs, or the 365 MB the endpoint route
+     * does. Two figures rather than one since [DwAsrModelSource.DEPLOYMENT_ENDPOINT] exists: the
+     * endpoint serves the files unpacked, so it is the dearer of the two on the wire.
      *
      * The intent is recorded BEFORE the job is cancelled, because the cleanup that runs inside the
      * cancellation is what reads it — reversed, the `catch` would delete the part-file a fraction of
@@ -600,7 +864,7 @@ internal class DwAsrModelController(
         meter = null
         /*
          * **AND THE READOUT GOES WITH IT.** This line was missing, and what stayed on screen was the
-         * last live reading of a transfer that had stopped: "184 MB of 349 MB · 53% · 2.4 MB/s · about
+         * last live reading of a transfer that had stopped: "184 MB of 365 MB · 50% · 2.4 MB/s · about
          * 1 min left", frozen, beside the word Paused and a Resume button. The speed was a measurement
          * of a connection nothing was being asked of, and the minute never came — [tick] returns early
          * once the state is no longer INSTALLING, so nothing would ever have corrected it.
@@ -639,6 +903,12 @@ internal class DwAsrModelController(
                     dwAsrModelArtifactFor(m.modelId, artifacts)?.let {
                         runCatching { partialFor(m, it).delete() }
                     }
+                    // BOTH ROUTES' PREFIXES, because Cancel means "give the space back" and a
+                    // designer who abandons a fetch does not care which shape it was arriving in.
+                    // Missing this would leave up to 365 MB in `incoming/` that nothing ever opens
+                    // and that the next refresh would offer as a Resume for a download they
+                    // deliberately abandoned.
+                    m.files.forEach { file -> runCatching { endpointPartFor(m, file).delete() } }
                     runCatching { dwAsrModelDir(context, m.modelId).listFiles()?.forEach { it.delete() } }
                 }
             }
@@ -782,13 +1052,28 @@ internal class DwAsrModelController(
     }
 
     /**
-     * **THE NETWORK ROUTE. Written, and unreachable in this build.**
+     * **THE CONTAINER ROUTE. Written, and unreachable in this build.**
      *
-     * [dwAsrModelOffer] answers [DwAsrModelOffer.CONTAINER_NOT_READABLE_IN_THIS_BUILD] before any
-     * control is drawn, because the pinned container is a `.tar.bz2` and Android has no bzip2 — so
-     * this function has never run against a server and that is the honest state of it. It is here,
-     * and it is checked at the top rather than assumed, so that republishing the same model as a
-     * `.zip` is two constants and no new code.
+     * ── AND THE REASON IS NO LONGER "no control is drawn" ─────────────────────────────────────
+     *
+     * That is what this block used to say, and [DwAsrEndpointState] made it false: with
+     * `endpoint == PUBLISHES` the offer answers [DwAsrModelOffer.DOWNLOAD], a control IS drawn, and
+     * [install] dispatches it through [dwAsrModelSourceFor] to
+     * [DwAsrModelSource.DEPLOYMENT_ENDPOINT] — `downloadFromEndpoint`, not this function. Left as it
+     * was, the next reader would conclude the container route becomes live the day somebody sets
+     * `ASR_MODEL_DIR`, when the truth is the opposite: provisioning the origin is what routes every
+     * fetch AWAY from here.
+     *
+     * **What is still true is the conclusion.** This function has never run against a server,
+     * because nothing can select it: [dwAsrModelSourceFor] only answers
+     * [DwAsrModelSource.PINNED_CONTAINER] for an offer that reached step 4 of [dwAsrModelOffer],
+     * and step 4 returns [DwAsrModelOffer.CONTAINER_NOT_READABLE_IN_THIS_BUILD] (or an endpoint
+     * refusal) for a `.tar.bz2` — which [dwAsrModelMayInstall] refuses. The one other way in is a
+     * RESUME attributed to the container, and `partialBytesAndSource` can only attribute one when a
+     * container part-file exists, which only this function writes. So the route is closed on itself.
+     *
+     * It is here, and the archive is checked at the top rather than assumed, so that republishing
+     * the same model as a `.zip` is two constants and no new code.
      *
      * THE REQUIREMENTS IT MEETS, EACH ON PURPOSE:
      *
@@ -983,6 +1268,292 @@ internal class DwAsrModelController(
     }
 
     /**
+     * **THE DEPLOYMENT ROUTE. Fetch the two pinned files from this deployment, one at a time, and
+     * verify them where they will be read.**
+     *
+     * ── WHY IT IS WRITTEN BESIDE [downloadAndInstall] AND NOT INSIDE IT ───────────────────────
+     *
+     * The container route's shape has no meaning here: one stream, one container digest, an unpack
+     * keyed by `ZipFile.getEntry`. **There is no container, so there is no container digest and no
+     * unpacking phase at all** — the endpoint serves the two files already unpacked, which is the
+     * fact that deletes the bzip2 blocker rather than working around it. Folding both routes into one
+     * function behind a flag would put a branch in the middle of the digest check, which is the one
+     * place in this app that feeds unchecked bytes to a native graph executor.
+     *
+     * What IS reused is every pure helper the container route uses — [dwResumePlan],
+     * [dwRangeHonoured], [dwParseContentRangeStart], [serverAcceptsRanges] — because reusing the
+     * DECISIONS rather than the function body is what keeps their guarantees. A host that ignores
+     * `Range` answers 200 with the whole file, and appending that to a prefix produces a corrupt
+     * model that fails its digest an hour and a bundle later.
+     *
+     * ── ONE RANGE PER REQUEST, AND NEVER SEVERAL ──────────────────────────────────────────────
+     *
+     * `docs/ASR-MODEL-HOSTING.md` flags multipart ranges as a TRAP rather than a feature: several
+     * ranges in one request answer **206** `multipart/byteranges`, so [dwRangeHonoured] would accept
+     * the status while the body carries MIME boundaries nothing here parses — a corrupt file that
+     * fails its digest. The request below asks for exactly one open range, `bytes=N-`, and nothing
+     * else. A later "optimisation" to parallel ranges is the way this gets broken.
+     *
+     * ── THE PHASES ───────────────────────────────────────────────────────────────────────────
+     *
+     * FETCHING is one meter totalled over `model.onDiskBytes` across BOTH files, the shape
+     * [installFromStaged] already uses for its cross-file copy, so the bar does not restart at zero
+     * for `tokens.txt`. Then one VERIFYING pass, which is [readInstalled] and needs no new code: its
+     * `onBytesHashed` is already documented as "the running total of bytes hashed across all of this
+     * model's files".
+     */
+    private suspend fun downloadFromEndpoint(model: DwAsrModel): DwAsrModelStatus {
+        val target = dwAsrModelDir(context, model.modelId)
+        val parts = model.files.map { it to endpointPartFor(model, it) }
+        return try {
+            withContext(Dispatchers.IO) {
+                incomingDir().mkdirs()
+                target.mkdirs()
+                // The MODEL directory is emptied — a half-written earlier attempt is worth nothing.
+                // The PART-FILES are in `incoming/` and are deliberately untouched by this: they may
+                // be the prefixes we are resuming. That separation is the whole of why they live
+                // there; see [endpointPartFor].
+                runCatching { target.listFiles()?.forEach { it.delete() } }
+
+                val alreadyHere = parts.sumOf { (_, part) -> if (part.isFile) part.length() else 0L }
+                /*
+                 * THE SAME GATE THE OFFER USED, INCLUDING THE MARGIN. `dwAsrModelStorageNeededBytes`
+                 * adds [DW_MODEL_FREE_STORAGE_MARGIN_BYTES] and the offer asked with it; a tap-time
+                 * check that dropped it would allow an install the card had just refused, or refuse
+                 * one it had just offered, thirty seconds apart and read by the same person. The
+                 * margin exists because a phone filled to the last megabyte by a speech model is a
+                 * phone that cannot record the workshop the model was installed for.
+                 *
+                 * Only what is still MISSING has to fit: the prefix is already written, and charging
+                 * the designer's free space for bytes on the disk in front of them would refuse an
+                 * install that would have completed.
+                 */
+                val refusal = dwTransferSpaceRefusal(
+                    measurement?.freeStorageBytes,
+                    (model.onDiskBytes - alreadyHere).coerceAtLeast(0L) +
+                        DW_MODEL_FREE_STORAGE_MARGIN_BYTES,
+                )
+                if (refusal != null) return@withContext failed(model, refusal)
+
+                startMeter(
+                    DwTransferPhase.FETCHING,
+                    model.onDiskBytes,
+                    resumedFrom = alreadyHere,
+                )
+                /*
+                 * What THIS attempt moves, across both files — the currency [publishProgress]'s
+                 * last-frame escape has to be measured in, or it never fires on a resume.
+                 *
+                 * ONE KNOWN INACCURACY, AND IT IS IN THE READOUT ONLY. [alreadyHere] is counted
+                 * before the per-file resume decisions are made, so if a host turns out NOT to
+                 * honour `Range` a part-file is discarded and re-fetched from zero while this total
+                 * still counts it. The bar then reads ahead of the truth until it catches up;
+                 * `DwTransferMeter.readAt` clamps the percentage to 0–100 so nothing throws and no
+                 * byte count is wrong. Asking the server about ranges before opening the meter would
+                 * fix it at the cost of a round trip before anything is drawn, which is a worse
+                 * trade on a district-town connection.
+                 */
+                val attemptTotal = (model.onDiskBytes - alreadyHere).coerceAtLeast(1L)
+                var movedThisAttempt = 0L
+                parts.forEach { (pinned, part) ->
+                    movedThisAttempt += fetchEndpointFile(model, pinned, part) { moved ->
+                        publishProgress(movedThisAttempt + moved, attemptTotal)
+                    }
+                }
+
+                /*
+                 * PROMOTED ONLY WHEN EVERY FILE IS COMPLETE, and only into the directory the
+                 * recogniser reads. Until this moment nothing under a pinned name exists in `target`,
+                 * so `dwAsrReadInstalledModel` — which looks up PINNED names and requires an exact
+                 * length — cannot mistake a half-written fetch for an install.
+                 */
+                parts.forEach { (pinned, part) ->
+                    val out = File(target, pinned.fileName)
+                    runCatching { out.delete() }
+                    if (!part.renameTo(out)) {
+                        /*
+                         * A RENAME INSIDE `filesDir` IS A METADATA OPERATION AND COSTS NO SPACE, so
+                         * this is not the disk-full case and must not be worded as one — both paths
+                         * are on the same volume by construction. It empties the model directory
+                         * (a half-promoted model is worth nothing) and KEEPS whatever part-files are
+                         * still in `incoming/`, so a retry re-fetches only what had already been
+                         * moved rather than all 365 MB.
+                         */
+                        runCatching { target.listFiles()?.forEach { it.delete() } }
+                        return@withContext failed(
+                            model,
+                            "The fetched files could not be moved into place inside this app's own " +
+                                "storage, so nothing has been installed. What is still on the phone " +
+                                "is kept. Tap “Check again” and try once more.",
+                        )
+                    }
+                }
+
+                // ONE VERIFYING PASS, over the files where they will actually be read — its own
+                // meter over its own length, because a hash is not the transfer that just finished.
+                startMeter(
+                    DwTransferPhase.VERIFYING,
+                    model.onDiskBytes,
+                    resumedFrom = 0L,
+                    fedByTick = true,
+                )
+                finishOrCleanUp(model, target, onBytesHashed = { countedBytes = it })
+            }
+        } catch (cancellation: kotlinx.coroutines.CancellationException) {
+            /*
+             * COPIED VERBATIM FROM THE CONTAINER ROUTE, AND IT IS ONLY TRUE HERE BECAUSE THE PARTS
+             * LIVE IN `incoming/`. Pause keeps the prefixes so the next tap asks the server only for
+             * the remainder; Cancel, and the surface simply leaving, clear them. The half-written
+             * MODEL directory goes in both cases: it is not resumable in any state.
+             */
+            runCatching { target.listFiles()?.forEach { it.delete() } }
+            if (stopIntent != DwTransferControlState.PAUSED) {
+                parts.forEach { (_, part) -> runCatching { part.delete() } }
+            }
+            throw cancellation
+        } catch (error: Exception) {
+            /*
+             * A FAILURE KEEPS THE PREFIXES, for the container route's reason: the bytes that arrived
+             * are good, the digest has not been taken yet and will be over the whole file, and
+             * throwing them away would charge the designer for them twice.
+             *
+             * PER FILE THIS IS STRICTLY BETTER THAN THE CONTAINER ROUTE. `tokens.txt` is 86,423
+             * bytes and will almost always be complete, so a drop during `model.int8.onnx` costs
+             * nothing of the other file at all.
+             */
+            runCatching { target.listFiles()?.forEach { it.delete() } }
+            val kept = runCatching {
+                parts.sumOf { (_, part) -> if (part.isFile) part.length() else 0L }
+            }.getOrDefault(0L)
+            failed(
+                model,
+                when {
+                    /*
+                     * THE LAPSED SESSION GETS ITS OWN SENTENCE **AND KEEPS THE BYTES.** This is 365
+                     * MB with a sixty-minute call timeout: a token can expire inside that window, and
+                     * what a designer would otherwise read is "The download stopped: the server
+                     * answered HTTP 401", which names nothing they can do. Signing in again and
+                     * tapping Resume carries on from the prefix rather than re-spending it.
+                     */
+                    error is DwAsrEndpointSignedOut && kept > 0L ->
+                        "This phone was signed out of the deployment while the model was arriving. " +
+                            "${dwBytesLabel(kept)} is kept on this phone — sign in again and " +
+                            "Resume carries on from there."
+                    error is DwAsrEndpointSignedOut ->
+                        "This phone was signed out of the deployment, so nothing could be fetched. " +
+                            "Sign in again and try once more."
+                    dwIsDiskFull(error.message) && kept > 0L ->
+                        "${dwTransferDiskFullSentence(DwTransferPhase.FETCHING)} " +
+                            "${dwBytesLabel(kept)} is on this phone already."
+                    dwIsDiskFull(error.message) ->
+                        dwTransferDiskFullSentence(DwTransferPhase.FETCHING)
+                    kept > 0L ->
+                        "The download stopped: ${error.message ?: "the connection failed"}. " +
+                            "${dwBytesLabel(kept)} is kept on this phone — Resume carries on from there."
+                    else ->
+                        "The download stopped: ${error.message ?: "the connection failed"}. " +
+                            "Nothing was kept."
+                },
+            )
+        }
+    }
+
+    /**
+     * Stream ONE pinned file into its part-file and return how many bytes THIS attempt moved.
+     *
+     * A COMPLETE PART-FILE IS LEFT ALONE RATHER THAN DISCARDED, and this is the one place the
+     * per-file route may NOT simply hand [dwResumePlan] what it has. That function answers
+     * `DISCARD_AND_RESTART` for a partial at or past the total, correctly, on the reasoning that "the
+     * digest was never taken or it failed" — which is true of a single-file container, where the only
+     * reason to be holding a full-length part-file is a failed check. **Here it is the ordinary
+     * case**: `tokens.txt` is 86,423 bytes and finishes in the first second, so every resume of
+     * `model.int8.onnx` would otherwise re-fetch a file that was already complete. The digest is
+     * still taken, over the assembled file, after the promotion — nothing is trusted because it is
+     * the right LENGTH.
+     *
+     * A part-file LONGER than pinned goes through [dwResumePlan] and is discarded, which is the
+     * behaviour that guard actually exists for.
+     */
+    private suspend fun fetchEndpointFile(
+        model: DwAsrModel,
+        pinned: DwAsrModelFile,
+        part: File,
+        /** Called with the bytes moved for THIS FILE so far, so the caller can add its own offset. */
+        onMoved: suspend (Long) -> Unit,
+    ): Long {
+        val onDisk = if (part.isFile) part.length() else 0L
+        if (onDisk == pinned.bytes) return 0L
+
+        val url = dwAsrModelFileUrl(apiBaseUrl, model.modelId, pinned.fileName)
+        val acceptsRanges = onDisk > 0L && serverAcceptsRanges(url)
+        var startFrom = when (dwResumePlan(onDisk, pinned.bytes, acceptsRanges)) {
+            DwResumeDecision.RESUME_FROM_PARTIAL -> onDisk
+            DwResumeDecision.START_FRESH, DwResumeDecision.DISCARD_AND_RESTART -> {
+                runCatching { part.delete() }
+                0L
+            }
+        }
+
+        val builder = Request.Builder().url(url).get()
+        // ONE OPEN RANGE AND NOTHING ELSE — see [downloadFromEndpoint] on multipart/byteranges.
+        if (startFrom > 0L) builder.header("Range", "bytes=$startFrom-")
+        client.newCall(builder.build()).execute().use { response ->
+            // 401 BEFORE `isSuccessful`, so the sentence a designer reads names the session rather
+            // than a status code. See the failure arm in [downloadFromEndpoint].
+            if (response.code == 401) throw DwAsrEndpointSignedOut()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("the server answered HTTP ${response.code}")
+            }
+            if (startFrom > 0L) {
+                val honoured = dwRangeHonoured(
+                    response.code,
+                    dwParseContentRangeStart(response.header("Content-Range")),
+                    startFrom,
+                )
+                // Not honoured: drop back to zero and truncate. A fresh start, correctly described
+                // as one — the word "resuming" is never used for a fetch that is not resuming.
+                if (!honoured) startFrom = 0L
+            }
+            val body = response.body ?: throw IllegalStateException("the server sent no file")
+
+            var written = 0L
+            body.byteStream().use { input ->
+                // `append = startFrom > 0`: FileOutputStream truncates by default, which is precisely
+                // the behaviour a resume must not have.
+                FileOutputStream(part, startFrom > 0L).use { output ->
+                    val buffer = ByteArray(DW_ASR_MODEL_BUFFER)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        written += read
+                        // THE BYTE CAP, per file. Without it a host answering this URL with an
+                        // endless stream fills the phone that holds a fortnight of unsynced
+                        // fieldwork, and the digest check comes after the write so it would never be
+                        // reached to notice.
+                        if (startFrom + written > pinned.bytes) {
+                            throw IllegalStateException(
+                                "the server sent more than the ${pinned.bytes} bytes this app " +
+                                    "expects for ${pinned.fileName}, which means it is not serving " +
+                                    "the file this app pins"
+                            )
+                        }
+                        output.write(buffer, 0, read)
+                        onMoved(written)
+                    }
+                    output.flush()
+                    output.fd.sync()
+                }
+            }
+            if (startFrom + written != pinned.bytes) {
+                throw IllegalStateException(
+                    "${pinned.fileName} stopped after ${startFrom + written} of ${pinned.bytes} bytes"
+                )
+            }
+            return written
+        }
+    }
+
+    /**
      * Stream the artifact to [container], **stopping the moment more bytes arrive than were pinned.**
      *
      * THE BYTE CAP IS NOT A NICETY. Without it, a host answering this URL with an endless stream fills
@@ -1001,7 +1572,7 @@ internal class DwAsrModelController(
         val onDisk = if (container.isFile) container.length() else 0L
         // Asked of the server rather than assumed. A HEAD is one round trip against an hour of
         // downloading, and its answer decides whether the word "resuming" may be used at all.
-        val acceptsRanges = onDisk > 0L && serverAcceptsRanges(artifact)
+        val acceptsRanges = onDisk > 0L && serverAcceptsRanges(artifact.url)
         val plan = dwResumePlan(onDisk, artifact.downloadBytes, acceptsRanges)
         var startFrom = when (plan) {
             DwResumeDecision.RESUME_FROM_PARTIAL -> onDisk
@@ -1084,9 +1655,20 @@ internal class DwAsrModelController(
      * "will not honour ranges", which is the fail-closed direction: the download restarts, which is
      * merely expensive, rather than appending to a prefix that will not line up, which is expensive
      * AND ends in a digest failure the designer cannot diagnose.
+     *
+     * **A URL AND NOT A [DwAsrModelArtifact]**, because the per-file route has no artifact — it has
+     * a path built from two constants. The container route passes `artifact.url` and behaves exactly
+     * as it did; `DwAsrModelTransferProbeTest`, which is the only thing that has ever driven this
+     * against a real host, goes through that call site unchanged.
+     *
+     * NOTE FOR THE DEPLOYMENT ROUTE: this is a SECOND authenticated round trip through CloudFront,
+     * and whether that distribution forwards HEAD for this route is unverified here — Docker is down
+     * and nothing could be exercised end to end. If it does not, the answer is "no ranges", the
+     * download restarts rather than corrupting anything, and the word "resuming" is correctly never
+     * used. Expensive and honest is the direction this function is written to fail in.
      */
-    private fun serverAcceptsRanges(artifact: DwAsrModelArtifact): Boolean = runCatching {
-        client.newCall(Request.Builder().url(artifact.url).head().build()).execute().use { response ->
+    private fun serverAcceptsRanges(url: String): Boolean = runCatching {
+        client.newCall(Request.Builder().url(url).head().build()).execute().use { response ->
             response.isSuccessful &&
                 response.header("Accept-Ranges")?.contains("bytes", ignoreCase = true) == true
         }
@@ -1237,6 +1819,17 @@ internal class DwAsrModelController(
     }
 }
 
+/**
+ * The transfer stopped because this phone is signed out of the deployment. **HTTP 401, and its own
+ * type.**
+ *
+ * A type rather than a message match, because the sentence a designer reads has to differ from every
+ * other transport failure and matching on `"HTTP 401"` in a string is how that stops working the day
+ * somebody rewords the generic sentence. It is a failure that KEEPS the part-files: the bytes that
+ * arrived are good, and a fresh sign-in resumes from them rather than re-spending 365 MB.
+ */
+private class DwAsrEndpointSignedOut : IllegalStateException("the deployment rejected this session")
+
 /** How many bytes are read at a time. 64 KiB, as everywhere else in this app. */
 private const val DW_ASR_MODEL_BUFFER = 64 * 1024
 
@@ -1333,6 +1926,17 @@ internal fun DwAsrModelBody(
             controller.stagedFilesPresent,
             controller.modelCatalogue,
             controller.artifactCatalogue,
+            controller.endpoint,
+        )
+        // WHERE THE BYTES WOULD COME FROM, asked once and used for the wording. The endpoint route
+        // is 365,438,543 bytes on the wire against the container's 292,571,207 — about 25% MORE —
+        // and it is `dwAsrModelOfferSentence`'s DOWNLOAD arm that prints the figure a designer reads
+        // before spending a prepaid bundle. See [dwAsrModelSourceFor].
+        val source = dwAsrModelSourceFor(
+            offer,
+            controller.endpoint,
+            controller.stagedFilesPresent,
+            controller.pausedSource,
         )
 
         Row(
@@ -1356,7 +1960,39 @@ internal fun DwAsrModelBody(
                 fontSize = 11.sp
             )
         }
-        Text(dwAsrModelOfferSentence(offer, reading), color = MaterialTheme.field.body, fontSize = 13.sp)
+        Text(
+            dwAsrModelOfferSentence(
+                offer,
+                reading,
+                controller.modelCatalogue,
+                controller.artifactCatalogue,
+                source,
+            ),
+            color = MaterialTheme.field.body,
+            fontSize = 13.sp,
+        )
+
+        /*
+         * THE ONE THING THE OFFER SENTENCE CANNOT SAY, because it is about a deployment rather than
+         * about this phone: this deployment is serving a file under the name this app pins, and it
+         * is NOT the file this app pins.
+         *
+         * It renders as NOT_PUBLISHED like an empty origin — from the handset's point of view a
+         * deployment serving a different model is a deployment with no model it can use — but an
+         * empty origin is somebody's to fill and this is somebody's to investigate, and only one of
+         * them is worth phoning about. Nothing was fetched: the whole point of reading the manifest
+         * is that this is discovered at one JSON read rather than at 365 MB.
+         */
+        if (controller.manifestVerdict == DwAsrManifestVerdict.DISAGREES_ON_DIGEST ||
+            controller.manifestVerdict == DwAsrManifestVerdict.DISAGREES_ON_SIZE
+        ) {
+            Text(
+                "This deployment is offering a different file under the name this app expects, so " +
+                    "nothing was fetched. Tell whoever administers it.",
+                color = MaterialTheme.field.warning,
+                fontSize = 12.sp,
+            )
+        }
 
         /*
          * WHAT IT WOULD ADD **TO THIS PHONE** — printed in every state, including the ones where

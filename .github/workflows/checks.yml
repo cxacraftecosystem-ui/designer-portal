@@ -2,10 +2,14 @@ name: Checks
 
 # ─── WHAT THIS EXISTS TO STOP ────────────────────────────────────────────────────────────
 # Until this file landed, a pull request that touched only `backend/` and `frontend/` started
-# NO WORKFLOW AT ALL. The three workflows beside this one are deploy stages: deploy-backend.yml
-# and deploy-frontend.yml fire on `push: main` (never on a PR), and android-build.yml's
-# `pull_request` trigger is path-filtered to `android/**`. So every guard this repository has
-# written for the server and the web ran only when a human remembered to type the command.
+# NO WORKFLOW AT ALL. The workflows beside this one are NAMED here rather than counted, because a
+# count is the one fact in this header that a new file falsifies silently and nobody re-reads:
+# deploy-backend.yml fires on `push: main` and deploy-frontend.yml on `workflow_run` after it, so
+# neither can run on a pull request at all; android-build.yml does carry a `pull_request` trigger,
+# but path-filtered to `android/**` and its own workflow file; and keep-supabase-active.yml is a
+# nightly cron that pings Postgres so the free tier does not idle out, asserting nothing about the
+# code. So every guard this repository has written for the server and the web ran only when a
+# human remembered to type the command.
 #
 # That is not an abstract gap. The carry rules exist because a stage row that points at an
 # artisan has to copy that artisan's values at SAVE time, and the table saying WHICH values move
@@ -148,52 +152,112 @@ jobs:
         # ran `-q -rf` for its whole first life, and under `-q` pytest drops verbosity to -1 and
         # `TerminalReporter.pytest_sessionstart` returns before `_write_report_lines_from_hooks`, so
         # `conftest.pytest_report_header` — the one line this comment used to promise was here,
-        # saying whether the database-backed tests ran or skipped — was never printed at all.
-        # Measured on this tree, same interpreter: without `-q` the sentence appears, with `-q` the
-        # log is dots and a count. The reader was left with the bare skip number the sentence was
-        # written to replace, which is this repository's own named failure mode — a green skip that
-        # cannot be told apart from a test nobody ever wrote.
+        # saying whether the database-backed tests ran or skipped — was never printed at all. Back
+        # then that hook was the only one, so `-q` left the log as dots and a bare count: the reader
+        # was left with exactly the skip number the sentence was written to replace, which is this
+        # repository's own named failure mode — a green skip that cannot be told apart from a test
+        # nobody ever wrote. Since `pytest_terminal_summary` landed there is a second copy at the
+        # foot that `-q` cannot touch, so what `-q` costs TODAY is narrower and is measured below;
+        # the flag is still wrong here, and the gate at the end of this step is what enforces that
+        # rather than this paragraph.
         #
-        # `-rfs`, ONE FLAG, NOT `-rf -rs`. A second `-r` REPLACES the first rather than adding to
-        # it; measured here, `pytest -rf -rs` on a run with a failure and a skip prints the SKIPPED
-        # lines and silently drops the FAILED ones. Spelling it as one flag is the difference
-        # between a summary that names the failures and one that hides them.
+        # `-rf`, AND THE MISSING `s` IS THE POINT. Skips are already reported, grouped by reason, by
+        # `pytest_terminal_summary` in backend/tests/conftest.py, and asking pytest for them as well
+        # reproduces precisely the output that hook was written to replace: measured 2026-08-20 with
+        # this env block, the run skips 381 tests and `-rfs` spends 360 SKIPPED lines restating them
+        # one location at a time. It also puts them in the wrong place, which is the half that is
+        # not obvious. Pluggy calls the LAST-registered `pytest_terminal_summary` first, and a
+        # conftest is registered after pytest's own TerminalReporter, so anything a `-r` flag
+        # summarises prints BELOW the conftest tally, not above it. In that measured log the wall of
+        # SKIPPED lines starts at the summary section and runs unbroken down to the final status
+        # line — over half the log — so the `database:` sentence and the breakdown sit on top of it,
+        # in a log everybody opens at the bottom. NO ABSOLUTE LINE NUMBERS HERE, and there were some:
+        # this paragraph gave "line 209 of 595 … from 235", and re-measuring the same command the
+        # same day gave 245 of 633. Every test added and every failure traceback moves them, which is
+        # exactly the rot the rest of this file argues against. Measured both ways
+        # on tests/test_conftest_database_gate.py too: under `-rfs` the tally prints first and
+        # pytest's own SKIPPED summary after it. `-rf` puts its FAILED lines under the tally by the
+        # same ordering — measured, with a failure forced into that file — but that is one line per
+        # failure, which is a list worth reading rather than a wall, and it is the one thing a
+        # reader scrolling to the bottom of a red log came for.
         #
-        # The grep below is a gate, not decoration. Belt and braces on the same sentence: conftest
-        # also prints it from `pytest_terminal_summary`, which survives any verbosity, so if
-        # somebody re-adds `-q` here for log volume the sentence still reaches the log — and if the
-        # hook is ever deleted or renamed, THIS STEP GOES RED instead of quietly reverting to the
-        # bare count. pytest's pass/fail verdict is carried across the check in `status` — the grep
-        # can only ADD a failure, never mask one, so a red suite is still what the job reports.
+        # If `s` is ever wanted back it goes INSIDE THIS FLAG — `-rfs`, never `-rf -rs`. A second
+        # `-r` REPLACES the first rather than adding to it; measured here, `pytest -rf -rs` on a run
+        # with a failure and a skip prints the SKIPPED lines and silently drops the FAILED ones.
+        # Spelling it as one flag is the difference between a summary that names the failures and
+        # one that hides them.
         #
-        # MEASURED, not estimated, and RE-MEASURED after the flags above changed, with exactly the
-        # environment of the `env:` block and no database anywhere: 381 skipped, in four to six
-        # minutes. The totals move as tests are added — do not treat them as a target — but THE SKIP
-        # COUNT IS THE ONE TO WATCH, and the terminal summary now breaks it down by reason so the
-        # watching is possible rather than a matter of trust. The breakdown printed by that run,
-        # verbatim, which is the shape to compare against:
-        #     skipped 381 tests, by reason:
+        # The grep below is a gate, not decoration, and it COUNTS rather than matching once. Both
+        # hooks print the same sentence — `pytest_report_header` at the top, `pytest_terminal_summary`
+        # at the foot, from one `_gate_sentence` so they cannot drift — and `grep -q` was satisfied
+        # by either, which made this step's promise to go red on a deleted hook false: delete
+        # `pytest_terminal_summary`, lose the skip tally that makes 381 readable, and the header copy
+        # still matched, green. Demanding two is the only way to tell them apart.
+        #
+        # That also makes `-q` incompatible with this step, deliberately. Under `-q` the header hook
+        # is never written at all (see the paragraph above), so the count drops to exactly one and
+        # this step goes red — measured 2026-08-20, `python -m pytest
+        # tests/test_conftest_database_gate.py -rf -q --durations=15` prints the `database:` sentence
+        # ONCE and the identical command without `-q` prints it TWICE, which is this gate's own
+        # negative control.
+        #
+        # WHAT `-q` COSTS IS THAT HEADER SENTENCE AND NOTHING ELSE OF THIS STEP'S OUTPUT, and an
+        # earlier version of this paragraph said it cost "the tally and the durations", which is
+        # false and contradicted the conftest docstring in the same change. Both survive any
+        # verbosity: `terminalreporter.write_line` is unconditional, and the durations report is not
+        # verbosity-gated either. Measured the same day, that `-q` run still prints `skipped 1 tests,
+        # by reason:` with its breakdown and a `slowest 15 durations` section, and `python -m pytest
+        # tests/test_reference_carry.py -rf --durations=5` prints five real duration rows with and
+        # without `-q` alike. The tally surviving is precisely WHY the grep below has to count to
+        # two: with one hook silenced the other still matches, so matching once could never notice.
+        # pytest's pass/fail verdict is carried across the check in `status`, so
+        # the grep can only ADD a failure, never mask one: a red suite is still what the job reports.
+        #
+        # MEASURED, not estimated, 2026-08-20 on this tree: this step's own invocation, `python -m
+        # pytest -rf --durations=15` from backend/ with exactly the environment of the `env:` block
+        # and no database anywhere — 2892 passed, 381 skipped, 2 xfailed, 0 failed, 353 s. The
+        # `-rfs` re-run started the moment it finished, which is where the 360-line figure was counted,
+        # gave 2890 passed, 381 skipped, 2 xfailed, 274 s and 2 FAILED in test_measurement_provenance
+        # that another workstream had landed in between — see the warning at the foot of this comment
+        # before you read a failure here as yours. `-r` decides what the summary section prints and
+        # nothing about what runs, so the flag is not what moved the pass count; the tree moved.
+        # THAT IS THE POINT OF WRITING THEM DOWN AT ALL. They are a snapshot of a healthy run, NOT a
+        # target: totals move the day anybody adds a test, the wall-clock pair was taken on a
+        # developer laptop with other work running on it and predicts nothing about a runner, and
+        # reconciling a CI log against a number typed into a comment is how people learn to argue
+        # with the log.
+        #
+        # THE SKIP COUNT IS THE ONE TO WATCH, and the terminal summary breaks it down by reason so
+        # the watching is possible rather than a matter of trust. The two lines that carry it,
+        # verbatim from the `-rf` run above and identical in the `-rfs` one:
         #         339 × needs a LOCAL database; refuses to run against a remote DATABASE_URL
         #          36 × needs a LOCAL database
-        #           6 × (six one-offs: Pillow, a tz database, a Windows st_ctime case, …)
-        # So 375 of the 381 are the database gate and the remaining six are named individually. If
-        # the 375 collapses toward zero without the `database:` sentence changing, a gate has been
-        # inverted and this job is quietly running far less than its green tick claims.
+        # So 375 of the 381 are the database gate. The other six each print their own line and are
+        # deliberately not pasted here — one of them is a whole paragraph about st_ctime on Windows,
+        # and copying it in is how this comment would start rotting again. If the 375 collapses
+        # toward zero without the `database:` sentence changing, a gate has been inverted and this
+        # job is quietly running far less than its green tick claims.
         #
-        # THE PASS COUNT IN THE PREVIOUS VERSION OF THIS COMMENT ("2862 passed, 0 failed") IS NOT
-        # RE-ASSERTED, because it is no longer true and the reason is worth the line: the same
-        # invocation now reports 31 failed in test_entry_provenance.py and test_reference_carry.py,
-        # every one of which PASSES when its module is run alone. That is cross-module pollution
-        # arriving with in-flight work in those files, not something this workflow can fix, and
-        # writing a green number here that the job will not reproduce is how a comment starts lying.
+        # ONE WARNING ABOUT A RED RUN HERE, learned the expensive way on a tree several workstreams
+        # were editing at once: this job runs the WHOLE suite, so a failure it reports is not always
+        # a defect in the file you touched. The same invocation once reported failures in
+        # test_entry_provenance.py and test_reference_carry.py that both modules passed when run
+        # alone — cross-module pollution from in-flight work, which no workflow file can fix. Run the
+        # named module by itself before you believe the attribution; believe the verdict either way.
         run: |
           set -uo pipefail
           status=0
-          if ! python -m pytest -rfs --durations=15 | tee pytest-output.log; then
+          if ! python -m pytest -rf --durations=15 | tee pytest-output.log; then
             status=1
           fi
-          if ! grep -q '^database: ' pytest-output.log; then
-            echo "::error::conftest no longer printed its 'database:' line. The skip count in this log is now unreadable — see pytest_report_header / pytest_terminal_summary in backend/tests/conftest.py."
+          # Two, not one: the header hook and the terminal-summary hook each print the sentence, and
+          # matching once would let either be deleted unnoticed. See the comment above. Counted into
+          # a variable with a `:-0` default so a MISSING log reads as zero and goes red — `[ "" -lt
+          # 2 ]` is a shell error, and a shell error inside `if` is a FALSE condition, i.e. a gate
+          # that passes exactly when it has nothing to check.
+          sentences=$(grep -c '^database: ' pytest-output.log || true)
+          if [ "${sentences:-0}" -lt 2 ]; then
+            echo "::error::conftest printed its 'database:' line fewer than twice, so one of the two hooks has been deleted, renamed, or silenced by a verbosity flag. Both must reach the log — pytest_report_header at the top, pytest_terminal_summary with the skip tally at the foot. See backend/tests/conftest.py."
             exit 1
           fi
           exit "$status"
@@ -221,6 +285,19 @@ jobs:
         # "skipped by design" to "connecting to whatever is on 127.0.0.1 of a CI runner". Do not
         # widen the path below. The trap removes the file even if pytest fails, so the step above
         # (which runs first, and must keep seeing no `.env`) is unaffected either way.
+        #
+        # THIS IS THE ONE STEP IN THIS FILE THAT MUST NOT BE PASTED INTO A DEVELOPER'S TERMINAL, and
+        # the `[ -e backend/.env ]` refusal below is what enforces that rather than this sentence.
+        # On a runner the file is gitignored and absent, so writing it and trapping it away costs
+        # nothing. On a machine that has one it is somebody's real credentials — 17 KB of them on
+        # this project's own laptop, recoverable from nowhere — and `act`, or copying the run block
+        # to reproduce a failure, is all it takes to lose them. Note the order: the check happens
+        # BEFORE `trap` is armed, so a refusal cannot delete the file it just refused to overwrite.
+        #
+        # `-rf` here for the same reason as the step above, and there is nothing for an `s` to
+        # summarise anyway: with DATABASE_URL blanked, `DATABASE_URL_WAS_EXPORTED` is False, so the
+        # export-detection test that skips up there runs down here. Measured against an equivalent
+        # loopback `.env`: 4 passed, 0 skipped.
         working-directory: .
         env:
           # YAML cannot unset a job-level variable, and it does not need to: every read of this in
@@ -229,9 +306,13 @@ jobs:
           DATABASE_URL: ""
         run: |
           set -euo pipefail
+          if [ -e backend/.env ]; then
+            echo "::error::backend/.env already exists, and this step overwrites it and then deletes it. On a runner that file is gitignored and cannot be there, so you are almost certainly running this workflow locally (act, or a copy-pasted run block) against real secrets. Refusing before touching it."
+            exit 1
+          fi
           trap 'rm -f backend/.env' EXIT
           echo 'DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/nothing_is_listening' > backend/.env
-          python -m pytest backend/tests/test_conftest_database_gate.py -rfs
+          python -m pytest backend/tests/test_conftest_database_gate.py -rf
 
   # ═══════════════════════════════════════════════════════════════════════════════════════
   # 2 · The web checks
@@ -291,19 +372,31 @@ jobs:
         # they are excluded by name rather than by hope:
         #   • access-refusal-unit.spec.ts        — page.route() stubs the API, but it still
         #   • login-credential-floor-unit.spec.ts  page.goto()s the real login screen.
-        # MEASURED: running all `*-unit.spec.ts` with nothing listening on :3000 fails exactly the
-        # six tests in those two files and nothing else; the selection that remains is 536 tests in
-        # ~31 s. If a new `-unit` spec starts failing here with a NAVIGATION TIMEOUT, it belongs in
-        # that list — or, better, does not belong under the `-unit` name.
+        # MEASURED 2026-08-20 with nothing listening on :3000: the pattern WITHOUT the exclusion
+        # fails exactly six tests — the four in access-refusal-unit.spec.ts and the two in
+        # login-credential-floor-unit.spec.ts, every one of them inside `page.goto` with
+        # `net::ERR_CONNECTION_REFUSED at http://localhost:3000/login` — and `npm run test:unit`,
+        # which is that pattern minus those two files, is green. THE SIX IS THE FACT; the totals
+        # either side of them are not. This paragraph carried "collects 556 … the 550 this step
+        # actually runs" and the same two commands re-measured hours later collected 570 and ran 564,
+        # because specs land in frontend/e2e/ continuously. The difference between the two patterns
+        # is what decides whether a spec belongs in the exclusion list; neither total decides
+        # anything.
         #
-        # Re-measured with no server running: 536 tests, ~45 s, of which 3 FAIL — in
-        # inline-record-host-unit, record-form-dictation-unit and web-surface-gaps-unit. Read the
-        # distinction above before adding them to the exclusion list, because they are the OTHER
-        # kind: every one is a source-inspection assertion (`expect(source).toContain(…)`) that
-        # names a symbol the component or `lib/designWorkshops.ts` does not currently have. Nothing
-        # about a dev server would change the answer. That is real web-surface drift arriving with
-        # in-flight work in files this job only reads, and excluding it would be silencing the
-        # check rather than scoping it.
+        # NO COUNT OR DURATION IS WRITTEN DOWN BEYOND THAT ONE MEASUREMENT OF THE EXCLUSION, on
+        # purpose. Playwright prints "N passed" in this step's own log on every run, so a total kept
+        # in a comment can only be wrong between edits — this paragraph has already carried "536
+        # tests, 3 of them failing" past the day that stopped being true, which is worse than
+        # carrying no number at all. android-build.yml's unit step takes the same line and prints its
+        # file count at runtime.
+        #
+        # WHAT DOES BELONG HERE is the distinction that decides whether a new failure means "exclude
+        # this spec". A failure inside `page.goto` — connection refused, or a navigation timeout
+        # where something answers :3000 but does not serve — means the spec wants a dev server and is
+        # misnamed. A failing `expect(source).toContain(…)` does NOT: those are source-inspection
+        # assertions naming a symbol a component or `lib/designWorkshops.ts` is supposed to have,
+        # nothing about a dev server would change the answer, and adding one to the exclusion list
+        # would be silencing the check rather than scoping it.
         run: npm run test:unit
 
   # ═══════════════════════════════════════════════════════════════════════════════════════

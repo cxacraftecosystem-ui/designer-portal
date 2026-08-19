@@ -806,6 +806,27 @@ class WorkshopRepository(
         )
 
     /**
+     * Ask the server for this designer's dictation ceiling and write it into the local mirror.
+     *
+     * WHAT IT BUYS: the refusal happening BEFORE the microphone opens, on a phone that has learned
+     * nothing yet. `DwDictationRun.learnAllowance` writes the mirror from the 200 of a dictation, so
+     * until this existed the FIRST dictation of every day — on every handset — paid a six-megabyte
+     * upload to discover a number the server would have given for two primary-key reads. In a
+     * district town the connection is scarcer than the provider credit the cap is about.
+     *
+     * EVERY FAILURE IS SWALLOWED AND NOTHING IS WRITTEN ON ONE. A 404 is a deployment that predates
+     * the route, a 403 is an account that is not a designer, and no signal is the ordinary case; all
+     * three mean "we were not told", which is exactly what an untouched mirror already says. Writing
+     * anything here on a failure would be inventing an allowance, and a fabricated `dictationDay`
+     * would then be compared against a real one.
+     */
+    suspend fun refreshDictationAllowance(context: Context) {
+        val userId = cachedUser()?.id?.takeIf { it.isNotBlank() } ?: return
+        val dto = runCatching { api.designWorkshopDictationAllowance() }.getOrNull() ?: return
+        dwDictationAllowanceOf(dto, userId)?.let { DwDictationAllowanceStore.write(context, it) }
+    }
+
+    /**
      * Send one dictated clip to be written down — rung 2 of the ladder in [dwDictationLadder].
      *
      * THROWS, for the same reason [designWorkshopIdentityOcr] does and for one more. The first: there
@@ -837,27 +858,6 @@ class WorkshopRepository(
      * exists only on this device HAS no server id; the ladder refuses rung 2 for it before a microphone
      * is ever opened ([DwDictationConditions.workshopOnServer]), so no caller has to invent one.
      */
-    /**
-     * Ask the server for this designer's dictation ceiling and write it into the local mirror.
-     *
-     * WHAT IT BUYS: the refusal happening BEFORE the microphone opens, on a phone that has learned
-     * nothing yet. `DwDictationRun.learnAllowance` writes the mirror from the 200 of a dictation, so
-     * until this existed the FIRST dictation of every day — on every handset — paid a six-megabyte
-     * upload to discover a number the server would have given for two primary-key reads. In a
-     * district town the connection is scarcer than the provider credit the cap is about.
-     *
-     * EVERY FAILURE IS SWALLOWED AND NOTHING IS WRITTEN ON ONE. A 404 is a deployment that predates
-     * the route, a 403 is an account that is not a designer, and no signal is the ordinary case; all
-     * three mean "we were not told", which is exactly what an untouched mirror already says. Writing
-     * anything here on a failure would be inventing an allowance, and a fabricated `dictationDay`
-     * would then be compared against a real one.
-     */
-    suspend fun refreshDictationAllowance(context: Context) {
-        val userId = cachedUser()?.id?.takeIf { it.isNotBlank() } ?: return
-        val dto = runCatching { api.designWorkshopDictationAllowance() }.getOrNull() ?: return
-        dwDictationAllowanceOf(dto, userId)?.let { DwDictationAllowanceStore.write(context, it) }
-    }
-
     suspend fun designWorkshopDictate(
         workshopId: String,
         clip: File,

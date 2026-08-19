@@ -170,6 +170,11 @@ import {
 
 import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { DictationButton } from "@/components/designworkshop/Dictation";
+import { AiVerbSelectionMenu } from "@/components/designworkshop/AiVerbSelectionMenu";
+// The passage under the caret, composed from `lib/richText.ts`'s own exports — see
+// `readSelectedPassage`. It lives in `lib/aiVerbs.ts` rather than in the document model because it
+// is a verb's idea of a source passage, not the editor's idea of a selection.
+import { selectedPassage } from "@/lib/aiVerbs";
 import { apiFetch } from "@/lib/api";
 import { uploadMediaBatch } from "@/lib/media";
 import type { MediaFile } from "@/lib/types";
@@ -1253,6 +1258,16 @@ export function RichTextEditor({
     canUndo: boolean;
     canRedo: boolean;
     showPlaceholder: boolean;
+    /**
+     * How many characters are selected, for the AI verb menu below the surface.
+     *
+     * THE LENGTH TRAVELS AND THE TEXT DOES NOT, and that split is the whole design. The menu has to
+     * enable and disable in step with the selection — on a `contenteditable`, a control that changes
+     * a render late reads as broken — so the number joins the signature. The PASSAGE itself is read
+     * lazily at the moment of the press through `readSelectedPassage`: a 20,000-character string
+     * rebuilt on every arrow key is exactly the stutter the signature exists to prevent.
+     */
+    selectionChars: number;
   };
 
   const [chrome, setChrome] = useState<ChromeState>(() => ({
@@ -1264,7 +1279,8 @@ export function RichTextEditor({
     counts: countDoc(seed.doc),
     canUndo: false,
     canRedo: false,
-    showPlaceholder: isEmptyDoc(seed.doc)
+    showPlaceholder: isEmptyDoc(seed.doc),
+    selectionChars: 0
   }));
 
   const [active, setActive] = useState(false);
@@ -1334,6 +1350,19 @@ export function RichTextEditor({
     const canUndo = history.index > 0;
     const canRedo = history.index < history.entries.length - 1;
     const showPlaceholder = isEmptyDoc(doc);
+    /*
+      Computed here rather than in the menu because this is the one function that runs on every
+      selection change; the menu is a child and cannot see the caret at all.
+
+      IT COSTS STRICTLY LESS THAN WHAT THIS FUNCTION ALREADY DOES, which is why building a string on
+      every keystroke is acceptable here and would not be in the render path: `countDoc` two lines up
+      calls `blockText` on EVERY block of the document, while `selectedPassage` walks only the blocks
+      between the two ends of the selection. What must not happen is the passage travelling through
+      the signature and into `setChrome` — a 20,000-character string rebuilt and compared on every
+      arrow key is exactly the stutter the signature exists to prevent, so only its LENGTH goes, and
+      the menu reads the words lazily through `readSelectedPassage` when somebody presses something.
+    */
+    const selectionChars = selectedPassage(doc, range).length;
     // One string decides whether React re-renders at all. Without it every arrow-key press through
     // a paragraph would re-render the toolbar, and on a stage with a dozen narrative fields that is
     // a measurable stutter on the field laptops this runs on.
@@ -1349,10 +1378,17 @@ export function RichTextEditor({
       counts.blocks,
       canUndo ? "1" : "0",
       canRedo ? "1" : "0",
-      showPlaceholder ? "1" : "0"
+      showPlaceholder ? "1" : "0",
+      // WITHOUT THIS THE MENU WOULD ENABLE AND DISABLE A RENDER LATE. Selecting a passage changes
+      // neither the marks, the block kind nor any count — every other member of this signature is
+      // identical before and after — so the state would be skipped and the control would only catch
+      // up on the next unrelated edit.
+      selectionChars
     ].join("|");
     setChrome((current) =>
-      current.signature === signature ? current : { signature, bar, counts, canUndo, canRedo, showPlaceholder }
+      current.signature === signature
+        ? current
+        : { signature, bar, counts, canUndo, canRedo, showPlaceholder, selectionChars }
     );
 
     // The find bar's tally has to follow the document, not just the query: replacing one of six
@@ -1364,6 +1400,20 @@ export function RichTextEditor({
       setFind((current) => (current.count === matches.length ? current : { ...current, count: matches.length }));
     }
   }, []);
+
+  /**
+   * The selected text, built once, at the moment somebody asks for it.
+   *
+   * READ THROUGH THE REFS RATHER THAN FROM STATE, deliberately: `docRef` and `selectionRef` are the
+   * live document and the live caret, while a render's copy is whatever was true when the toolbar
+   * last re-rendered. The signature holds only the LENGTH (see `ChromeState.selectionChars`), so
+   * this is the one thing that has to be current, and refs are the only thing here that always are.
+   *
+   * `selectedPassage` composes it from `lib/richText.ts`'s existing exports and adds nothing to that
+   * module — another lane is editing it, and a helper added there for one caller here would be a
+   * second definition of "what is selected".
+   */
+  const readSelectedPassage = useCallback(() => selectedPassage(docRef.current, selectionRef.current), []);
 
   /* ── Resolving the photographs placed in the prose ──────────────────────── */
 
@@ -2953,6 +3003,45 @@ export function RichTextEditor({
           What gets saved
         </button>
       </div>
+
+      {/*
+        THE THREE TEXT VERBS, IN A BAND OF THEIR OWN UNDER THE COUNTS ROW.
+
+        `workshopId` guards it for the same reason it decides which microphone is drawn above: a
+        record form has no workshop whose consent could govern a send, so it gets no verb menu at
+        all. That is the honest degradation for the NO-WORKSHOP case, and it cannot leak anything,
+        because with no workshop there is no route to call.
+
+        ⚠ IT IS NOT, AND NEVER WAS, A GUARD AGAINST A 404, and this comment claimed it was. A stage
+        form always has a workshop id, and on an unsynced draft that id is `dwlocal-…` — a perfectly
+        good string that satisfies this ternary and that `load_workshop_or_404` answers 404 to. The
+        menu shipped offering all three verbs into that. The gate that actually closes it is inside
+        the menu, where it can say WHY: `WORKSHOP_NOT_ON_SERVER_YET`, ahead of the consent rung
+        because the consent rung reads the local draft and cannot see the difference. It is deliberately
+        NOT a fourth condition here — a control that disappears from the toolbar for a fortnight and
+        comes back is the "greyed control with no sentence" failure in its worst form.
+
+        A ROW OF ITS OWN RATHER THAN A THIRD ITEM IN THE FLEX ROW ABOVE, because four of this menu's
+        five pre-press states are a SENTENCE and not a chip: "select the words you want worked on
+        first", the passage-too-long refusal with its length in it, the consent refusal with a link to
+        the workshop's own screen, and the not-yet-synced refusal above. Squeezed between the word
+        count and the microphone each of
+        them would wrap to four lines in a 12rem column, which is how a stated reason becomes
+        something nobody reads.
+
+        Nothing here writes into the document. See `AiVerbReviewDialog`'s header for why, at length;
+        the short form is that the server cannot express a write into a stage field, and this side
+        keeps that true by having nothing to press.
+      */}
+      {!disabled && workshopId ? (
+        <div className="mt-2">
+          <AiVerbSelectionMenu
+            workshopId={workshopId}
+            selectionChars={chrome.selectionChars}
+            readPassage={readSelectedPassage}
+          />
+        </div>
+      ) : null}
 
       {/*
         THE VISIBLE DEGRADATION CHANNEL. Everything this editor can do that does not survive intact

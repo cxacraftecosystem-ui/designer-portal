@@ -1311,8 +1311,22 @@ class ReportBuilder:
 
         A MEDIA FIELD IS NEVER A COLUMN, WHATEVER ROLE IT DECLARES, which is the half of a
         cross-surface divergence the handset had already closed alone. ``ReportScreen.kt``'s
-        ``renderCollection`` filters ``!isMedia`` out of its columns and says so in a note ending
-        "one of the two, not one each" — this is the other one. A picture cannot be a table cell:
+        ``renderCollection`` filters ``!isMedia`` out of its columns. The note above that filter
+        used to record the divergence as OPEN and said the agreement "has to be made on the server
+        side first"; it now records it as closed and cites this docstring back by name. This is
+        that server-side half.
+
+        THE CITATION IN THESE LINES HAS ALREADY BEEN WRONG TWICE, WHICH IS WHY IT IS SPELLED OUT.
+        First they ended the Android note at "one of the two, not one each" — a phrase no file
+        under ``android/`` has ever contained. It is ``docs/AUDIT-2026-08-15.md``'s Remedy
+        paragraph: "if the media exclusion is wanted, add it to the server instead — one of the
+        two, not one each". Correcting that, they then attributed to the Kotlin a sentence
+        beginning "Closing it properly means the two surfaces agreeing on ONE answer", which is not
+        in it either. The only words of that note quotable as the Kotlin's are the ones quoted
+        above, and the Kotlin is itself quoting its own older self when it writes them. Quote the
+        file you name, or name the file you are quoting.
+
+        A picture cannot be a table cell:
         ``format_value`` prints "" for IMAGE and IMAGE_LIST (they are placed by :meth:`_images`,
         which reads the TYPE and never the role, so the photograph still reaches the page) and
         "2 documents attached" for FILE/AUDIO/VIDEO, so the column would be blank or a count while
@@ -1696,7 +1710,18 @@ class ReportBuilder:
                 if reference is not None:
                     ref_place = clean_text(reference.place).strip()
                     ref_district = clean_text(reference.district).strip()
-                    ref_text = ", ".join(part for part in (ref_district, ref_place) if part)
+                    # THE PLACE FIRST AND THE DISTRICT AFTER IT, which is the order
+                    # :data:`MAP_ROSTER_PLACE_KEYS` states, the order :meth:`_venue_point` joins
+                    # in, and — until this line was corrected — the one order this branch did not
+                    # use. It joined ``(ref_district, ref_place)``, and the order is not
+                    # cosmetic: ``place_atlas.resolve_place`` scans longest runs first and
+                    # LEFTMOST WINS AT EQUAL WIDTH, so with the district in front, any district
+                    # that is ALSO a curated town outranks the village beside it. "Bargarh,
+                    # Barpali" resolved to Bargarh town, ~16 km from Barpali and labelled as the
+                    # wrong place, while the identical address on a post-widening row went down
+                    # the branch above as "Barpali, Bargarh" and resolved to Barpali. One map,
+                    # two answers for one village, decided by when the row happened to be saved.
+                    ref_text = ", ".join(part for part in (ref_place, ref_district) if part)
                     # BOTH VALUES MOVE TOGETHER OR NEITHER DOES, per "one source per row" above:
                     # disambiguating "Bhuj, Kachchh" against a state the row froze separately is
                     # how a village lands 900 km away. And only when the record actually states a

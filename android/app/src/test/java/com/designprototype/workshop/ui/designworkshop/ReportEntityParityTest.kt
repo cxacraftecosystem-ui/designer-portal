@@ -68,8 +68,21 @@ class ReportEntityParityTest {
     private fun textField(key: String, label: String, role: String = "KEY_VALUE", required: Boolean = false) =
         FieldDto(key = key, label = label, type = "TEXT", reportRole = role, required = required)
 
-    private fun imageField(key: String, label: String) =
-        FieldDto(key = key, label = label, type = "IMAGE", reportRole = "MEDIA")
+    /**
+     * A photograph field, in the role the registry actually gives one.
+     *
+     * IT USED TO SAY `reportRole = "MEDIA"`, AND THAT IS HOW THE REGRESSION GOT PAST THIS FILE.
+     * `ReportRole` declares no MEDIA; every photograph field in `stage_definitions` is GALLERY (the
+     * `photos(...)` helper emits it, and the sketch entity writes it by hand). MEDIA is an unknown
+     * role, so it exercised the deliberate unknown-role degrade instead of the branch the registry
+     * takes — and the one REQUIRED GALLERY field in the registry, `sketch.image`, had no fixture in
+     * this file at all. A fixture naming a role the server cannot emit tests the port against nothing.
+     */
+    private fun imageField(key: String, label: String, required: Boolean = false) =
+        FieldDto(
+            key = key, label = label, type = "IMAGE",
+            reportRole = "GALLERY", required = required,
+        )
 
     private fun refField(
         key: String,
@@ -542,14 +555,12 @@ class ReportEntityParityTest {
           leftovers by the role test, so it was dropped from the document entirely: not a layout
           difference, a silent loss of a field somebody filled in.
 
-          Note the deliberate divergence recorded in `renderCollection`, and note that its REASON has
-          changed: `_table_columns` applies no media filter, so the server would make this a table
-          column — but `format_value` no longer prints a media id into it, it prints "" for a picture
-          and a count-and-noun for FILE/AUDIO/VIDEO. So what remains is a SHAPE difference (a blank
-          column at the office, no column here) rather than a raw id kept off paper. It stands
-          because no such field exists in the registry and because adding one to `columns` would move
-          every width in that table, which `test_the_tables_whose_declared_widths_govern_still_do`
-          pins deliberately.
+          AND THE SERVER NOW AGREES ABOUT THE COLUMN. This comment used to record a live divergence
+          — "`_table_columns` applies no media filter, so the server would make this a table column"
+          — and say the agreement had to be made server-side first. It has been: `_table_columns`
+          filters `not f.type.is_media`, so both surfaces draw ONE column here and the assertion
+          below is a parity assertion rather than a pinned difference. What is still divergent is the
+          column WIDTHS on five entities, which is a separate and deliberate thing.
         */
         val schema = schemaOf(
             StageDto(
@@ -822,6 +833,127 @@ class ReportEntityParityTest {
         // AND A REQUIRED ATTACHMENT THAT WAS NEVER MADE IS SAID, exactly as `_printable` says it for
         // every other role. This is the substitution the old `isMedia` skip put out of reach.
         assertTrue("an unattached required document must be reported:\n" + printed, printed.contains("Consent form: Not recorded."))
+    }
+
+    /**
+     * A REQUIRED PHOTOGRAPH THAT WAS TAKEN MUST NOT BE CALLED MISSING BESIDE ITSELF.
+     *
+     * THE REGRESSION THIS PINS, IN THE ORDER IT HAPPENED. `printable` used to skip every media-typed
+     * field; removing that skip was right, because it was withholding "1 document attached" for the
+     * registry's seventeen FILE/AUDIO/VIDEO fields. But this port's `pairs` is a NEGATIVE role test
+     * and it named only three roles, where `_render_narrative` asks POSITIVELY for exactly three —
+     * KEY_VALUE, COVER_FIELD, TABLE_COLUMN. GALLERY therefore fell into the grid on the handset and
+     * reaches `_printable` on no path at all at the office. [displayValue] answers "" for an IMAGE,
+     * as it must, so the `required && showEmptyNote` arm fired: every sketch whose photograph the
+     * designer HAD taken printed "Sketch image: Not recorded." in the grid, one line under the plate
+     * `imagesOf` had just placed. `stage_definitions` writes that field
+     * `f("image", "Sketch image", IMG, B, required=True, report_role=GALLERY)`, so this is the
+     * bundled registry's own shape and not a hypothetical, and the office's copy printed neither
+     * line.
+     *
+     * THE SECOND HALF IS THE HEADING, AND IT IS WHY THIS TEST BUILDS TWO DRAFTS. A required GALLERY
+     * field with no photograph now prints nothing on either surface — so a collection row with
+     * nothing else left to say must not be given a numbered sub-heading over the silence.
+     * `_render_table`'s `has_extra` leaves GALLERY out of its role set for exactly that reason.
+     * Asserting only the first half would trade a wrong sentence for a bare heading.
+     */
+    @Test
+    fun `a required photograph that was taken prints its plate and no note`() {
+        val schema = schemaOf(
+            StageDto(
+                number = 11, key = "SKETCH_DEVELOPMENT", title = "Sketch development",
+                entities = listOf(
+                    EntityDto(
+                        key = "sketch", cardinality = "COLLECTION", title = "Sketch",
+                        labelField = "code",
+                        fields = listOf(
+                            textField("code", "Sketch code", role = "TABLE_COLUMN"),
+                            imageField("image", "Sketch image", required = true),
+                        ),
+                    )
+                )
+            )
+        )
+        val taken = build(
+            schema,
+            draftOf(
+                "SKETCH_DEVELOPMENT",
+                rows = listOf(
+                    DraftRow(
+                        id = "sketch#1",
+                        values = mapOf(
+                            "code" to JsonPrimitive("SK-01"),
+                            "image" to JsonPrimitive("media-sketch-1"),
+                        ),
+                    )
+                ),
+            ),
+            imageFor = everyImageResolves,
+        )
+        val printedTaken = printedText(taken)
+        assertTrue(
+            "the photograph was not placed at all: " + shape(taken),
+            taken.blocks.any { it is ImageBlock || it is ImageGridBlock },
+        )
+        assertFalse(
+            "an attached photograph is called missing beside itself:\n" + printedTaken,
+            printedTaken.contains("Sketch image: Not recorded."),
+        )
+        // And not under any other wording either: the whole ROLE is out of the grid, not just the
+        // note. A GALLERY field reaches `_printable` on no server path, filled or empty.
+        assertFalse(
+            "a GALLERY field reached the key-value grid:\n" + printedTaken,
+            printedTaken.contains("Sketch image:"),
+        )
+
+        // NO PHOTOGRAPH: still no sentence, and — on the TABLE path, where the heading is
+        // conditional — no sub-heading over the silence either.
+        //
+        // A SECOND STAGE FOR THE SECOND HALF, AND NOT AN OVERSIGHT. DCH_STANDARD draws
+        // SKETCH_DEVELOPMENT as CARDS, and `_render_cards` heads EVERY row unconditionally on both
+        // surfaces — so a card's heading proves nothing either way. It is `_render_table`'s per-row
+        // block that asks `has_extra` first, and FOLLOW_UP is the stage this file already uses to
+        // exercise it.
+        val notTaken = build(
+            schemaOf(
+                StageDto(
+                    number = 22, key = "FOLLOW_UP", title = "Follow up",
+                    entities = listOf(
+                        EntityDto(
+                            key = "followUp", cardinality = "COLLECTION", title = "Follow up",
+                            labelField = "product",
+                            fields = listOf(
+                                textField("product", "Product", role = "TABLE_COLUMN"),
+                                imageField("shelfPhoto", "Shop shelf", required = true),
+                            ),
+                        )
+                    )
+                )
+            ),
+            draftOf(
+                "FOLLOW_UP",
+                rows = listOf(
+                    DraftRow(
+                        id = "followUp#1",
+                        values = mapOf("product" to JsonPrimitive("Bandha runner")),
+                    ),
+                ),
+            ),
+            imageFor = everyImageResolves,
+        )
+        val printedMissing = printedText(notTaken)
+        assertTrue(
+            "this half only means something on the table path: " + shape(notTaken),
+            notTaken.blocks.any { it is TableBlock },
+        )
+        assertFalse(
+            "the office prints no such note for a GALLERY field:\n" + printedMissing,
+            printedMissing.contains("Shop shelf: Not recorded."),
+        )
+        assertFalse(
+            "a sub-heading was drawn over a row with nothing left to print: " + headings(notTaken),
+            headings(notTaken).any { it.contains("Bandha runner") },
+        )
     }
 
     /**

@@ -95,6 +95,7 @@ import {
   newClientKey,
   patchDesignWorkshop,
   peekStageRegistry,
+  recordDesignWorkshopDictationConsent,
   saveDesignWorkshopStage,
   type DwDetail,
   type DwEntity,
@@ -379,6 +380,31 @@ export type DwDraftStage = {
   failure: DwDraftFailure | null;
 };
 
+/**
+ * One recorded consent answer as this device holds it — Android's `DraftConsent`, key for key.
+ *
+ * `recordedAt` is the COURTYARD MOMENT and is what the server stores as the consent's own timestamp;
+ * its `createdAt` records when the server heard, and on this fleet the two can differ by a
+ * fortnight. Truncated to milliseconds when written, for Android's stated reason: the field is
+ * capped at 32 characters server-side, a longer fraction risks a 422 the designer can do nothing
+ * about, and a 422 here is not a visible failure — the push simply never succeeds, the answer stays
+ * unsent for ever, and every send from this workshop goes on being refused up there.
+ */
+export type DwDraftConsent = {
+  decision: "GRANTED" | "REFUSED" | string;
+  /** ISO 8601, milliseconds at most. When the ARTISAN answered, on this device's clock. */
+  recordedAt: string;
+  recordedById: string | null;
+  recordedByName: string | null;
+  /**
+   * Has the SERVER heard this? False is the load-bearing state, not a bookkeeping detail: the gate
+   * that refuses a verb reads the server's column, so until this is true a designer who recorded
+   * "they agreed" ten minutes ago will still be refused, and the screen has to say why rather than
+   * let them conclude the feature is broken.
+   */
+  synced: boolean;
+};
+
 export type DwDraft = {
   schemaVersion: number;
   /** Primary key. Minted here, never changed — the URL and every media row hold it. */
@@ -498,6 +524,34 @@ export type DwDraft = {
    * stage form assert that the workshop asks nothing of its own on the strength of a missing key.
    */
   customDefinition?: DwCustomDefinition | null;
+  /**
+   * The artisan's answer to "may this workshop's material be sent out", as this device holds it.
+   *
+   * ── WHY THE ANSWER IS WRITTEN HERE FIRST AND PUSHED SECOND ────────────────────────────────────
+   *
+   * The artisan is standing there and the courtyard has no signal. A control that recorded consent
+   * only when it could reach the server would refuse the answer at the exact moment it was given,
+   * and the designer would be told to walk to the guest house and ask again. Android settled this
+   * years ago (`dwRecordDictationConsent`: *"the answer lands in the document the device owns … and
+   * the server hears about it when there is something to hear it over"*), and a web control that
+   * silently needed the network would be the divergence this feature is the first to make
+   * load-bearing, re-introduced on the other side.
+   *
+   * ── WHAT A LOCAL ANSWER DOES AND DOES NOT DO ──────────────────────────────────────────────────
+   *
+   * It is what the SCREEN reads, so the workshop page states the current answer with no connection.
+   * It is NOT what the SERVER's gate reads: every verb and every server dictation is refused up
+   * there until this has been pushed, which is why {@link DwDraftConsent.synced} exists and why the
+   * surface says so in as many words. Claiming otherwise would be the "reported as success" failure
+   * this store's outbox rules are written against.
+   *
+   * Optional for the reason {@link DwDraft.headerDirtyKeys} is, and it is why no schema rung is
+   * spent: `migrateDraft` only climbs and leaves a document from the future alone, and `mutate`
+   * writes back a spread, so a key an older build has never heard of is preserved rather than
+   * dropped. A draft written before this field existed carries no answer, which reads as "this
+   * device has nothing of its own" and defers to the server's — exactly right.
+   */
+  consent?: DwDraftConsent | null;
   /** So a shared field laptop never shows one designer another's unsent work. */
   ownerUserId: string | null;
   lastSyncedAt: number | null;
@@ -2724,6 +2778,9 @@ export async function adoptServerDetail(detail: DwDetail, spec: DwRegistry): Pro
       ...draft,
       remoteId: detail.id,
       header: draft.headerDirtyAt !== null ? draft.header : headerOf(detail),
+      // The artisan's answer, reconciled rather than replaced — see {@link mergeDraftConsent} for
+      // the four cases and for why an unorderable disagreement resolves to REFUSED.
+      consent: mergeDraftConsent(draft.consent ?? null, detail),
       stages,
       registryVersion: detail.schemaVersion || draft.registryVersion,
       /*
@@ -2746,6 +2803,130 @@ export async function adoptServerDetail(detail: DwDetail, spec: DwRegistry): Pro
       lastSyncedAt: Date.now()
     };
   });
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The artisan's consent, recorded here first
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** A moment as a comparable number, or null when it is missing or unparseable. */
+function consentMoment(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Reconcile this device's recorded answer with the server's, and never quietly lose either.
+ *
+ * PURE AND EXPORTED SO IT CAN BE ASSERTED WITHOUT IndexedDB, a live API or a Postgres row — the same
+ * split {@link stagesUnreadAfterCreate} draws, and for the same reason: the decision is where the
+ * defect would be and the transaction is not. It is a transliteration of Android's `dwConsentMerge`,
+ * because the same designer answering the same question on the phone in the courtyard and on the
+ * laptop at the guest house must not end up with two answers on record.
+ *
+ * FOUR CASES, IN THIS ORDER:
+ *
+ * 1. **The two agree.** Not a conflict — the same answer arrived here from the web, from a
+ *    colleague's phone, or from an earlier push whose response never came back. The local record is
+ *    marked SYNCED, which is what stops this device re-pushing an answer that is already up there on
+ *    every single open.
+ * 2. **This device has nothing unsent.** Take the server's, which is the authority.
+ * 3. **Both sides hold a moment.** The LATER answer wins. It is the artisan's most recent word, and
+ *    an artisan who changes their mind is precisely the case the consent log exists to record.
+ * 4. **No ordering to be had** — a clock this browser cannot parse, or a server that sent no
+ *    timestamp. **Fail closed:** a REFUSED on either side wins. Guessing wrong in that direction
+ *    costs a designer a capability for as long as it takes to record the answer again; guessing
+ *    wrong in the other direction sends an artisan's voice to a provider after they said no.
+ */
+export function mergeDraftConsent(
+  onDevice: DwDraftConsent | null,
+  server: { dictationConsent?: string | null; dictationConsentAt?: string | null; dictationConsentById?: string | null }
+): DwDraftConsent | null {
+  const there = (server.dictationConsent ?? "").trim().toUpperCase();
+  if (!onDevice) {
+    if (!there || there === "NOT_RECORDED") return null;
+    return {
+      decision: there,
+      // The server's own moment, not this browser's: the answer was recorded by whoever recorded it,
+      // and stamping it with the time this tab happened to read it would be a fabricated fact about
+      // when somebody agreed.
+      recordedAt: server.dictationConsentAt ?? "",
+      recordedById: server.dictationConsentById ?? null,
+      recordedByName: null,
+      synced: true
+    };
+  }
+  const here = (onDevice.decision ?? "").trim().toUpperCase();
+  if (there === here) return onDevice.synced ? onDevice : { ...onDevice, synced: true };
+  if (onDevice.synced) {
+    if (!there || there === "NOT_RECORDED") return onDevice;
+    return {
+      decision: there,
+      recordedAt: server.dictationConsentAt ?? "",
+      recordedById: server.dictationConsentById ?? null,
+      recordedByName: null,
+      synced: true
+    };
+  }
+
+  const mine = consentMoment(onDevice.recordedAt);
+  const theirs = consentMoment(server.dictationConsentAt);
+  const takeServer =
+    mine !== null && theirs !== null
+      ? theirs > mine
+      : // No ordering. Fail closed — see case 4.
+        there === "REFUSED";
+  if (!takeServer) return onDevice;
+  if (!there || there === "NOT_RECORDED") return onDevice;
+  return {
+    decision: there,
+    recordedAt: server.dictationConsentAt ?? "",
+    recordedById: server.dictationConsentById ?? null,
+    recordedByName: null,
+    synced: true
+  };
+}
+
+/**
+ * Write the artisan's answer down on THIS DEVICE. The push is a separate, later act.
+ *
+ * ── THE ORDER IS THE WHOLE DESIGN, AND IT IS ANDROID'S ────────────────────────────────────────────
+ *
+ * The artisan is standing there and the courtyard has no signal. A control that recorded consent
+ * only when it could reach the server would refuse the answer at the exact moment it was given, and
+ * the designer would be told to walk to the guest house and ask again. So the answer lands in the
+ * document this device owns, the screen honours it immediately, and the server hears about it when
+ * there is something to hear it over — {@link syncDesignWorkshopDrafts} carries it.
+ *
+ * ⚠ **A LOCAL ANSWER DOES NOT OPEN THE SERVER'S GATE, AND THE SURFACE MUST SAY SO.** Every AI verb
+ * and every server dictation reads `DesignWorkshop.dictationConsent` up there, so until the push
+ * lands a designer who recorded "they agreed" ten minutes ago will still be refused. Reporting that
+ * as done would be the "success for an act that did not happen" failure this store's rules exist
+ * against; `synced: false` is the fact a screen renders from.
+ *
+ * The moment is truncated to milliseconds for Android's reason: `DictationConsentIn.recordedAt` is
+ * capped at 32 characters and a longer fraction risks a 422 the designer can do nothing about — and
+ * a 422 in the push is invisible, so the answer would stay unsent for ever.
+ */
+export async function recordDraftConsent(
+  id: string,
+  decision: "GRANTED" | "REFUSED",
+  actor: { id: string | null; name: string | null }
+): Promise<DwDraft | null> {
+  const recorded: DwDraftConsent = {
+    decision,
+    recordedAt: new Date().toISOString().replace(/(\.\d{3})\d+/, "$1"),
+    recordedById: actor.id,
+    recordedByName: actor.name,
+    synced: false
+  };
+  return mutate(id, (draft) => ({ ...draft, consent: recorded, updatedAt: Date.now() }));
+}
+
+/** Mark a locally recorded answer as one the server has now heard. Nothing else about it changes. */
+export async function markDraftConsentSynced(id: string): Promise<DwDraft | null> {
+  return mutate(id, (draft) => (draft.consent ? { ...draft, consent: { ...draft.consent, synced: true } } : draft));
 }
 
 /**
@@ -3100,7 +3281,20 @@ export async function adoptServerSummaries(rows: DwSummary[]): Promise<void> {
         if (current.headerDirtyAt !== null) continue;
         // A copy cached before `GET /me` answered has no owner; the session that is refreshing it
         // is the one it belongs to.
-        await req(store.put({ ...current, header: headerOf(row), ownerUserId: current.ownerUserId ?? sessionUserId, updatedAt: now }));
+        await req(
+          store.put({
+            ...current,
+            header: headerOf(row),
+            // THE CONSENT IS ON THE LIST PAYLOAD TOO — `consent_keys` is spread into
+            // `workshop_summary`, which the list serialises per row — so the list refresh is a second
+            // chance to learn an answer recorded on somebody else's device. Merged rather than
+            // written, so a courtyard answer this laptop has not yet pushed is never overwritten by a
+            // list read that predates it. See {@link mergeDraftConsent}.
+            consent: mergeDraftConsent(current.consent ?? null, row),
+            ownerUserId: current.ownerUserId ?? sessionUserId,
+            updatedAt: now
+          })
+        );
         continue;
       }
       // NOT A STRANGER — POSSIBLY THIS DEVICE'S OWN, MID-CREATE. See {@link titlesAwaitingACreate}.
@@ -3123,6 +3317,10 @@ export async function adoptServerSummaries(rows: DwSummary[]): Promise<void> {
           // is the truth here rather than a placeholder.
           customSchemaVersion: "",
           customDefinition: null,
+          // Nothing on this device to reconcile against, so this is simply the server's answer —
+          // and NOT_RECORDED resolves to null rather than to a record saying nobody has been asked,
+          // which would be a stored answer to a question nobody has put.
+          consent: mergeDraftConsent(null, row),
           // WHOEVER CACHED IT, not whoever created it on the server. This field answers "may this
           // session send this local copy", and a row cached under its remote creator's id would be
           // invisible offline to the designer who is actually sitting here — while still being
@@ -3165,6 +3363,12 @@ export function draftSummary(draft: DwDraft): DwSummary {
     sponsor: null,
     notes: draft.header.notes,
     workshopId: draft.header.workshopId,
+    // Read off this device's own record so the answer is on screen with no connection. NOT_RECORDED
+    // is the honest floor and is what `consent_of` fails closed to server-side, so the two ends
+    // agree about a workshop nobody has answered for.
+    dictationConsent: draft.consent?.decision ?? "NOT_RECORDED",
+    dictationConsentAt: draft.consent?.recordedAt ?? null,
+    dictationConsentById: draft.consent?.recordedById ?? null,
     createdById: draft.ownerUserId ?? "",
     createdAt: new Date(draft.createdAt).toISOString(),
     updatedAt: new Date(draft.updatedAt).toISOString(),
@@ -3181,6 +3385,14 @@ export type DwDraftPending = {
   /** True when the workshop itself has never reached the server. */
   needsCreate: boolean;
   needsHeader: boolean;
+  /**
+   * True when the artisan's answer was recorded on this device and the server has not heard it.
+   *
+   * ITS OWN FLAG BECAUSE IT IS ITS OWN KIND OF OUTSTANDING WORK: until it lands, the SERVER's gate
+   * still refuses every AI verb and every server dictation on this workshop, however emphatically
+   * the local screen says the artisan agreed.
+   */
+  needsConsent: boolean;
   /** Stage keys with unsent edits, oldest edit first. */
   stageKeys: string[];
   /** Local media rows whose id the server has not acknowledged. */
@@ -3225,8 +3437,17 @@ export async function pendingWork(): Promise<DwDraftPending[]> {
     }
     const needsCreate = draft.remoteId === null;
     const needsHeader = draft.headerDirtyAt !== null;
-    if (!needsCreate && !needsHeader && !stageKeys.length && !media.length && !failures.length) continue;
-    out.push({ draft, needsCreate, needsHeader, stageKeys, mediaCount: media.length, failures });
+    /*
+      A CONSENT RECORDED WITH NO SIGNAL IS OUTSTANDING WORK, and without this line it would never be
+      sent. The common case is a workshop with nothing else pending — the designer asks the artisan
+      in the courtyard, records the answer, and touches no stage — so a draft whose only unsent item
+      is the consent would be skipped by the `continue` below, for ever, while the server went on
+      refusing every verb and every dictation on it. That is the shape of the silent-emptiness defect
+      this repository keeps meeting: a thing recorded, reported as recorded, and never sent.
+    */
+    const needsConsent = Boolean(draft.consent && !draft.consent.synced);
+    if (!needsCreate && !needsHeader && !needsConsent && !stageKeys.length && !media.length && !failures.length) continue;
+    out.push({ draft, needsCreate, needsHeader, needsConsent, stageKeys, mediaCount: media.length, failures });
   }
   return out;
 }
@@ -4294,6 +4515,53 @@ async function runSync(): Promise<DwSyncResult> {
 
       const remoteId = draft.remoteId;
       if (!remoteId) continue;
+
+      /* 1b. The artisan's consent, before anything else this workshop holds. ------------------- */
+      /*
+        WHY IT GOES FIRST, AHEAD OF THE PHOTOGRAPHS AND THE STAGES, AND IT IS NOT A PREFERENCE.
+
+        The consent GATES what the server may do with the rest of this pass. A recording uploaded
+        before a GRANTED lands is a recording the transcription queue refuses and stamps with the
+        refusal sentence; a REFUSED that lands after the uploads is a withdrawal arriving behind the
+        sends it was about, which `cancel_pending_transcriptions` then has to chase. Sending the
+        answer first makes the ordinary case ordinary.
+
+        IT NEVER FAILS THE PASS AND NEVER MARKS THE DRAFT. A failed push is not a failed recording:
+        the answer IS recorded, on this device, where the screen that shows it reads it — so raising
+        this would tell a designer their consent was not taken when it was, and would put a
+        `permanent` failure on a workshop whose stages are perfectly sendable. What the surface says
+        instead is that it has not reached the server YET, which is the one thing they could not
+        otherwise know. The next pass carries it, because `synced` is still false.
+      */
+      /*
+        AND AN UNRECOGNISED TOKEN IS NOT PUSHED AT ALL, RATHER THAN PUSHED AS A GRANT.
+
+        This read `decision === "REFUSED" ? "REFUSED" : "GRANTED"`, which sends anything that is not
+        literally REFUSED up as permission to send an artisan's voice to a third-party provider. It
+        is unreachable today and that is an argument for fixing it, not for leaving it: only
+        {@link recordDraftConsent} can leave a record `synced: false` and it is typed to the two
+        answers, while every server-derived record {@link mergeDraftConsent} produces is marked
+        synced. So the coercion has no live input — but `DwDraftConsent.decision` is widened with
+        `string` for the reason every enum on this boundary is (a server one release ahead), an
+        upgrade path or a hand-edited IndexedDB record could put a third token there, and the
+        direction the old line failed in was OPEN. That is intolerable inside the one module whose
+        whole argument — `mergeDraftConsent`'s case 4 — is failing CLOSED on a disagreement it cannot
+        order.
+
+        Left `synced: false` rather than dropped, so it stays visibly outstanding on the consent
+        card ("This answer is on this device and has not reached the repository yet") instead of
+        being reported as sent. That sentence is wrong about the cause here and right about the
+        consequence, which is the half a designer acts on.
+      */
+      const answer = draft.consent?.decision;
+      if (draft.consent && !draft.consent.synced && (answer === "GRANTED" || answer === "REFUSED")) {
+        const landed = await recordDesignWorkshopDictationConsent(remoteId, answer, {
+          recordedAt: draft.consent.recordedAt || null
+        })
+          .then(() => true)
+          .catch(() => false);
+        if (landed) draft = (await markDraftConsentSynced(draft.localId)) ?? draft;
+      }
 
       /* 2. The photographs, before the stages that reference them. ---------------------------- */
       const blocked = new Set<string>();

@@ -28,6 +28,7 @@ import Link from "next/link";
 import { DraftingCompass, FileClock, FileText, Images, Layers, ListChecks, ListPlus, QrCode, GitCompareArrows} from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { DictationConsentCard } from "@/components/designworkshop/DictationConsentCard";
 import { WorkshopSearchPanel } from "@/components/designworkshop/WorkshopSearchPanel";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -163,6 +164,12 @@ function draftHeader(draft: DwDraft): Omit<DwSummary, "id"> {
     sponsor: null,
     notes: draft.header.notes,
     workshopId: draft.header.workshopId,
+    // The artisan's answer as THIS DEVICE holds it, so the consent row states what is on record with
+    // no connection. See `DwDraft.consent` — a local answer is what the screen reads and is NOT what
+    // the server's gate reads, which is why the row says whether it has been sent.
+    dictationConsent: draft.consent?.decision ?? "NOT_RECORDED",
+    dictationConsentAt: draft.consent?.recordedAt ?? null,
+    dictationConsentById: draft.consent?.recordedById ?? null,
     createdById: draft.ownerUserId ?? "",
     createdAt: new Date(draft.createdAt).toISOString(),
     updatedAt: new Date(draft.updatedAt).toISOString(),
@@ -211,6 +218,8 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
    * a screen that is the designer's only copy of it.
    */
   const [unopenable, setUnopenable] = useState(false);
+  /** Who recorded the consent, as the server resolved it. Null = this screen cannot name them. */
+  const [consentByName, setConsentByName] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -250,6 +259,10 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         const detail = await getDesignWorkshop(local?.remoteId ?? id);
         if (cancelled) return;
         setServerSchemaVersion(detail.schemaVersion);
+        // The single-record read is the ONLY place the acceptor's name is resolved — `consent_keys`
+        // leaves it out of the list because it would be a name lookup per row in a paged endpoint.
+        // Held apart from the draft because the draft is this device's copy and a name is not on it.
+        setConsentByName(detail.dictationConsentByName ?? null);
         const merged = await adoptServerDetail(detail, loadedRegistry);
         if (cancelled) return;
         /*
@@ -519,6 +532,42 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
             stage 1 and stay blank until it is saved.
           </p>
         </section>
+      ) : null}
+
+      {/*
+        ABOVE THE SEARCH PANEL AND THE STAGE INDEX, AND THAT PLACEMENT IS THE POINT.
+
+        Six different refusals — server dictation and all five AI verbs — end with "Open the
+        workshop's own screen and record the artisan's answer to that question". This IS that screen,
+        and a designer arriving from one of those sentences must find the control without reading
+        twenty-two progress bars first. It sits below the workshop's own detail panel because the
+        answer belongs to the workshop rather than to any stage.
+
+        Drawn only once the local draft has loaded: the card's whole job is to state what is on
+        record, and drawing it against "NOT_RECORDED" while the draft is still being read would show
+        every workshop as unanswered for a moment and invite a designer to re-ask a question that
+        already has an answer.
+      */}
+      {draft ? (
+        <DictationConsentCard
+          draftLocalId={draft.localId}
+          remoteId={draft.remoteId}
+          consent={draft.consent?.decision ?? "NOT_RECORDED"}
+          recordedAt={draft.consent?.recordedAt ?? null}
+          // The device's own name for the recorder is used when the server has not named one — after
+          // an offline answer there is no server copy to resolve, and "Recorded" with no name at all
+          // would read as though nobody had.
+          recordedByName={consentByName ?? draft.consent?.recordedByName ?? null}
+          synced={draft.consent ? draft.consent.synced : true}
+          onRecorded={() => {
+            // Re-read from IndexedDB rather than patching state here: `recordDraftConsent` is the
+            // one writer, and a second reconstruction of the record in this component is how the
+            // screen and the store come to disagree about what is on record.
+            void loadDraft(draft.localId).then((refreshed) => {
+              if (refreshed) setDraft(refreshed);
+            });
+          }}
+        />
       ) : null}
 
       {/* Above the stage index and below the header, because the question it answers ("where did I

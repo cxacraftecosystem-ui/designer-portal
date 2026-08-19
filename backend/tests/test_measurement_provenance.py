@@ -42,7 +42,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services import ai
+from app.services import ai, csv_export, record_fields
 from app.services.measurement_provenance import (
     DIMENSION_FIELDS,
     GEOMETRY_TECHNIQUES,
@@ -55,6 +55,7 @@ from app.services.measurement_provenance import (
     self_reported_confidence,
     vision_model_provenance,
 )
+from app.services.records import PROVENANCE_SKIP_FIELDS, merge_field_provenance
 
 BACKEND = Path(__file__).resolve().parents[1]
 MODEL_ID = "gemini-2.5-flash-lite"
@@ -826,12 +827,17 @@ def test_the_reader_writes_nothing(api):
 def test_the_queue_will_not_be_asked_to_write_a_dimension_nobody_saw(api):
     """**THE SHARPEST FORM OF THE DEFECT, AND THIS REFUSAL IS WHAT ENDS IT.**
 
-    ``media_queue._measurement_update_data`` takes the model's ``lengthInches`` and writes it onto
-    ``ProductDocumentation`` when the column is empty — a background worker putting a vision model's
-    estimate into a costed, printed dimension with no person in the loop at any point and no client
-    involved to show it to anybody. No shipped client asks for it (the web's ``resolveProcessing`` adds
-    only TRANSCRIPTION; Android's ``uploadMeasurement`` has no call site), so the path is dead from both
-    clients and live in the API.
+    A queued measurement is a background worker reading a photograph with no person in the loop at any
+    point and no client involved to show the answer to anybody. Until this refusal existed,
+    ``media_queue._measurement_update_data`` wrote the model's ``lengthInches`` onto
+    ``ProductDocumentation`` whenever the column was empty — a vision model's estimate landing in a
+    costed, printed dimension nobody had ever seen. No shipped client asks for it (the web's
+    ``resolveProcessing`` adds only TRANSCRIPTION; Android's ``uploadMeasurement`` has no call site),
+    so the path was dead from both clients and live in the API.
+
+    The writer has since stopped writing the two columns as well — see
+    ``test_the_queue_records_the_reading_and_writes_no_dimension_with_it``. This refusal stays because
+    it is the door: a request that never becomes a job cannot depend on the worker being careful.
 
     A 422 rather than a silent drop: dropping it would answer 201 to a caller that then waits for a
     ``measurementAnalysisStatus`` which never moves. The tripwire proves the refusal lands BEFORE the
@@ -897,6 +903,512 @@ def test_an_upload_asking_for_nothing_is_untouched(api):
 
 
 # --------------------------------------------------------------------------------------
+# THE RECORD HALF: the method is stored BESIDE the signature, never instead of it
+#
+# Pure dict work. ``merge_field_provenance`` takes the payload dict a route has already cleaned and
+# mutates it in place, so the whole of the record half is assertable with no Postgres — which is why
+# this section lives here rather than in a DB-backed suite that cannot run on a field laptop.
+# --------------------------------------------------------------------------------------
+
+
+class _Row:
+    """A record stub that answers ``None`` for every column nobody set.
+
+    The field registry asks a product for twenty attributes and a ``SimpleNamespace`` raises on the
+    nineteen a test does not care about — which would make these tests about the stub rather than
+    about the cell being measured.
+    """
+
+    def __init__(self, **columns):
+        self.__dict__.update(columns)
+
+    def __getattr__(self, name):  # only reached for names __init__ did not set
+        return None
+
+
+def _saver():
+    return SimpleNamespace(id="usr_7", name="R. Menon")
+
+
+def _machine_marker(**overrides):
+    marker = {
+        "method": "VISION_MODEL",
+        "provider": "gemini",
+        "modelId": MODEL_ID,
+        MARKER_CONFIDENCE_KEY: 0.8,
+    }
+    marker.update(overrides)
+    return marker
+
+
+def _machine_stamp():
+    """A stored vision-model stamp, as it sits on a row saved before the one under test."""
+    return {
+        "by": "usr_7",
+        "byName": "R. Menon",
+        "at": "2026-08-01T00:00:00+00:00",
+        "method": "VISION_MODEL",
+        "methodProvider": "gemini",
+        "methodModelId": MODEL_ID,
+        "methodConfidence": 0.8,
+    }
+
+
+def _stored_provenance(new_data):
+    """The ``fieldProvenance`` blob ``merge_field_provenance`` just wrote.
+
+    Unwrapped from the Prisma ``Json`` wrapper deliberately rather than indexed through it: the column
+    is a Json column and ``merge_field_provenance`` assigns ``Json(base_extra)``, so a test that
+    indexed the wrapper would be asserting on prisma's ``__getitem__`` instead of on what is stored.
+    """
+    wrapper = new_data["extraMetadata"]
+    stored = getattr(wrapper, "data", wrapper)
+    return stored["fieldProvenance"]
+
+
+def test_a_model_reading_is_stored_as_a_model_reading_beside_the_person_who_accepted_it():
+    """**THE DEFECT, PINNED AS FIXED.** Before this the row said "R. Menon measured 8.5 inches". It now
+    says "a vision model estimated 8.5 inches, and R. Menon accepted it into the record at that
+    moment" — a true sentence, and the one an auditor needs.
+
+    Both halves are asserted. Dropping ``{by, byName, at}`` is the other way of getting this wrong: it
+    would delete the only person who can be asked about the number.
+    """
+    new_data = {
+        "lengthInches": "8.5",
+        MARKER_BODY_KEY: {"lengthInches": _machine_marker()},
+    }
+
+    merge_field_provenance(new_data, _saver())
+
+    stamp = _stored_provenance(new_data)["lengthInches"]
+    assert stamp["by"] == "usr_7"
+    assert stamp["byName"] == "R. Menon"
+    assert stamp["at"], "the moment of acceptance is the whole value of the human half"
+    assert stamp["method"] == "VISION_MODEL"
+    assert stamp["methodProvider"] == "gemini"
+    assert stamp["methodModelId"] == MODEL_ID
+    assert stamp["methodConfidence"] == 0.8
+
+
+def test_the_marker_never_reaches_the_database_as_a_column():
+    """``measurementMethods`` is not a column on either documentation table, and ``clean_data`` only
+    drops ``None`` — so a marker that survived this call would be handed to
+    ``db.productdocumentation.create(data=...)`` as an unknown column: a 500 on the save rather than a
+    validation error a researcher could act on. The pop is the only thing removing it.
+
+    Both assertions below move with the pop and nothing else: replace ``new_data.pop(...)`` with
+    ``new_data.get(...)`` and the marker is handed to Prisma as a column AND attributed as a field.
+    The skip-set entry is NOT what saves either of them — see the test under this one for why, and do
+    not count it among this file's behaviour controls.
+
+    MEASURED with ``pop`` replaced by ``get``: 1 failed, 92 passed, 2 xfailed, and the one failure is
+    this test (baseline 93 passed, 2 xfailed).
+    """
+    new_data = {"lengthInches": "8.5", MARKER_BODY_KEY: {"lengthInches": _machine_marker()}}
+
+    merge_field_provenance(new_data, _saver())
+
+    assert MARKER_BODY_KEY not in new_data
+    assert MARKER_BODY_KEY not in _stored_provenance(new_data)
+
+
+def test_the_skip_set_entry_for_the_marker_is_redundancy_and_no_behaviour_can_observe_it():
+    """**THIS ASSERTS A CONSTANT, DELIBERATELY, AND IT IS NOT EVIDENCE THAT ANYTHING WORKS.** It is
+    split out of the test above and labelled because it was once reported as one of six negative
+    controls, which made this file look better defended than it is — the failure mode this whole
+    module exists to prevent, applied to its own suite.
+
+    ``merge_field_provenance`` pops :data:`MARKER_BODY_KEY` off ``new_data`` BEFORE the loop that reads
+    ``PROVENANCE_SKIP_FIELDS``, so by the time the set is consulted the key is already gone. Lifting
+    the key out of the set therefore changes NOTHING a test can see: no stamp appears, no column
+    survives, no message changes. The only thing that fails is an assertion about the set.
+
+    IT IS KEPT ANYWAY, AND THE REASON IS THE ONE THE SET'S OWN COMMENT GIVES: a future caller that
+    merges provenance without popping first would attribute the marker as though it were a field
+    somebody filled in — putting a designer's name against a dictionary they never saw. The entry is
+    the defence for a caller that does not exist yet, which is exactly the kind of guard that gets
+    deleted as dead weight by somebody who checked only whether a test went red.
+
+    MEASURED, and the measurement is the whole argument: with :data:`MARKER_BODY_KEY` lifted out of
+    ``PROVENANCE_SKIP_FIELDS``, this file ran 1 failed, 92 passed, 2 xfailed (baseline 93 passed, 2
+    xfailed) and the single failure was THIS test. Not one behavioural assertion moved. A run like
+    that is a red line in a report and nothing more; do not quote it as a control.
+    """
+    assert MARKER_BODY_KEY in PROVENANCE_SKIP_FIELDS
+
+
+def test_every_changed_field_gets_its_own_stamp_and_not_one_shared_dict():
+    """This line used to assign the SAME ``stamp`` object to every changed field, so any later per-field
+    edit of the blob silently edited all of them. Merging the method in gives each field its own dict,
+    which is worth holding deliberately rather than as a side effect."""
+    new_data = {"lengthInches": "8.5", "remarks": "A water pot."}
+
+    merge_field_provenance(new_data, _saver())
+
+    provenance = _stored_provenance(new_data)
+    assert provenance["lengthInches"] is not provenance["remarks"]
+    # And a method is stamped only on the columns that hold a documented dimension.
+    assert "method" not in provenance["remarks"]
+
+
+def test_a_dimension_nobody_declared_a_method_for_says_so_in_that_word():
+    """An old web build or an installed handset writes an explicit UNRECORDED rather than nothing.
+
+    A missing stamp and a stamp reading UNRECORDED would otherwise be indistinguishable from a row
+    written before any of this existed, and being able to tell them apart is the point. Expect a burst
+    of these from the fleet after this ships; that is the design degrading correctly, not a bug.
+    """
+    new_data = {"lengthInches": "8.5"}
+
+    merge_field_provenance(new_data, _saver())
+
+    assert _stored_provenance(new_data)["lengthInches"]["method"] == UNRECORDED
+
+
+def test_an_untouched_dimension_keeps_the_method_it_was_saved_with():
+    """**THE REGRESSION TEST FOR THE WORST WAY THIS FEATURE CAN GO WRONG.**
+
+    Both record forms re-send every dimension on every save. A client that blanket-sent
+    ``{"method": "TYPED"}`` for every box would therefore launder every accepted vision-model
+    measurement in the database into an apparent human one the next time somebody fixed a typo in
+    ``remarks`` — reintroducing the exact defect this work exists to remove, silently, through the fix
+    for it. This passes only because the merge sits inside the changed-fields loop.
+    """
+    previous = _Row(
+        lengthInches="8.50",
+        remarks="Old.",
+        extraMetadata={"fieldProvenance": {"lengthInches": _machine_stamp()}},
+    )
+    new_data = {
+        "lengthInches": "8.5",
+        "remarks": "A water pot.",
+        MARKER_BODY_KEY: {"lengthInches": {"method": "TYPED"}},
+    }
+
+    merge_field_provenance(new_data, _saver(), previous=previous)
+
+    stamp = _stored_provenance(new_data)["lengthInches"]
+    assert stamp["method"] == "VISION_MODEL"
+    assert stamp["methodModelId"] == MODEL_ID
+    # The field that DID change is re-attributed, so this is not passing by doing nothing at all.
+    assert _stored_provenance(new_data)["remarks"]["byName"] == "R. Menon"
+
+
+def test_a_trailing_zero_is_not_a_change_and_therefore_not_a_downgrade():
+    """The guard above rests entirely on ``values_match``, and the value makes a round trip that could
+    defeat it: ``lengthInches`` is a Prisma ``Decimal`` that reaches a client as the string "8.50",
+    goes into a text input and comes back as 8.5. ``deps.values_match`` falls back to
+    ``Decimal(str(a)) == Decimal(str(b))``, so those compare equal — asserted here with that literal
+    pair, because if it ever stopped being true EVERY dimension would count as changed on every save
+    and the downgrade above would fire despite the guard."""
+    previous = _Row(
+        lengthInches="8.50", extraMetadata={"fieldProvenance": {"lengthInches": _machine_stamp()}}
+    )
+    new_data = {"lengthInches": 8.5, MARKER_BODY_KEY: {"lengthInches": {"method": "TYPED"}}}
+
+    merge_field_provenance(new_data, _saver(), previous=previous)
+
+    assert _stored_provenance(new_data)["lengthInches"]["method"] == "VISION_MODEL"
+
+
+def test_overtyping_a_machine_number_makes_it_the_persons_own():
+    """A designer who types over an accepted machine number has made it their own number. The stamp is
+    REPLACED WHOLESALE — ``entry_provenance``'s rule 3, one table over — so no provider or model id is
+    left behind claiming gemini produced a figure somebody read off a tape."""
+    previous = _Row(
+        lengthInches="8.50", extraMetadata={"fieldProvenance": {"lengthInches": _machine_stamp()}}
+    )
+    new_data = {"lengthInches": "9", MARKER_BODY_KEY: {"lengthInches": {"method": "TYPED"}}}
+
+    merge_field_provenance(new_data, _saver(), previous=previous)
+
+    stamp = _stored_provenance(new_data)["lengthInches"]
+    assert stamp["method"] == "TYPED"
+    for residue in ("methodProvider", "methodModelId", "methodConfidence", "methodTechnique"):
+        assert residue not in stamp, f"{residue} outlived the reading it described"
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        {"method": "typed"},  # lower case is not a token any part of this system writes
+        "TYPED",  # a string where a mapping belongs
+        {"method": ["TYPED"]},
+        None,
+    ],
+)
+def test_a_malformed_marker_is_unrecorded_and_never_typed_in_the_record_too(marker):
+    """``provenance_of_marker`` guarantees the direction of this fallback and the pure tests above
+    already pin it. This asserts the guarantee survives the record-half integration, which is where the
+    direction actually costs something: resolving to TYPED here would let slightly-wrong JSON turn a
+    model's estimate into an apparent human measurement inside a stored government record."""
+    new_data = {"lengthInches": "8.5", MARKER_BODY_KEY: {"lengthInches": marker}}
+
+    merge_field_provenance(new_data, _saver())
+
+    assert _stored_provenance(new_data)["lengthInches"]["method"] == UNRECORDED
+
+
+def test_a_marker_naming_a_column_the_save_is_not_writing_stamps_nothing():
+    """``fields=new_data.keys()`` narrows the stamps to the dimensions this save actually carries. A
+    marker for a column the body does not mention describes nothing that is happening here, and writing
+    it would attribute a method to a value this save never saw.
+
+    THE FIRST ASSERTION IS WHERE THE NARROWING IS OBSERVABLE AND IT IS PURE, WHICH IS THE POINT OF
+    PUTTING IT HERE. Drop the ``fields=`` argument and :func:`method_stamps` answers
+    ``{"heightInches": {"method": "VISION_MODEL", ...}}`` — a machine method for a column this save is
+    not writing — which is a different value, immediately, at the seam that produces it.
+
+    AN EARLIER VERSION OF THIS TEST CLAIMED THE NARROWING AND ASSERTED IT WHERE IT CANNOT BE SEEN, and
+    the record-half lines below are kept with that correction written down rather than deleted, because
+    the end-to-end guarantee is still worth stating. ``merge_field_provenance`` writes ``provenance``
+    from ``new_data.items()``, so ``"heightInches" not in provenance`` CANNOT fail here whatever
+    ``method_stamps`` returned: nothing could ever have put a key there that the save does not carry.
+    It is a statement of the guarantee, not the guard for it. The line under it does fail on a reverted
+    narrowing — ``provenance["lengthInches"]`` loses its ``method`` key and raises KeyError — but it
+    fails for the same reason, and in the same breath, as
+    ``test_a_dimension_nobody_declared_a_method_for_says_so_in_that_word``, so it is not this test's
+    distinguishing evidence either. The first assertion is.
+
+    MEASURED, not asserted: with ``fields=new_data.keys()`` removed from ``merge_field_provenance``,
+    this file ran 2 failed, 90 passed, 2 xfailed — this test and that sibling — against a baseline of
+    92 passed, 2 xfailed taken in the same session. Both counts predate the split-out
+    ``test_the_skip_set_entry_...`` below, so the baseline the same control would run against today is
+    93 passed; the two failures are the part that matters and they do not move.
+    """
+    assert method_stamps({"heightInches": _machine_marker()}, fields={"lengthInches"}) == {
+        "lengthInches": {"method": UNRECORDED}
+    }
+
+    new_data = {"lengthInches": "8.5", MARKER_BODY_KEY: {"heightInches": _machine_marker()}}
+
+    merge_field_provenance(new_data, _saver())
+
+    provenance = _stored_provenance(new_data)
+    assert "heightInches" not in provenance
+    assert provenance["lengthInches"]["method"] == UNRECORDED
+
+
+@pytest.mark.xfail(
+    reason=(
+        "HANDOFF, NOT A KNOWN-BROKEN FEATURE: MARKER_BODY_KEY must be added to "
+        "access.REVISION_SKIP_FIELDS, and services/access.py belongs to another lane. This test is "
+        "the acceptance criterion for that edit; delete the marker in the same diff."
+    ),
+    strict=False,
+)
+def test_the_marker_is_not_logged_as_an_edit_somebody_made():
+    """``guard_record_edit`` runs ``record_revision`` on the raw ``data`` BEFORE
+    ``merge_field_provenance`` pops the marker, and ``record_revision`` diffs every key that is not in
+    ``REVISION_SKIP_FIELDS`` against the record. ``getattr(product, "measurementMethods", None)`` is
+    None and ``values_match(None, {...})`` is False, so EVERY marker-bearing PATCH records a change to
+    a key that is not a value — breaking ``record_revision``'s own contract ("No-op when nothing
+    meaningful changed") and filling the admin audit trail with an edit nobody made.
+
+    Moving the pop earlier is not available: the merge must still see the marker. The fix is one entry
+    in the skip list, with the reason that a marker is a hint about how a value was produced rather
+    than a value.
+    """
+    from app.services.access import REVISION_SKIP_FIELDS
+
+    assert MARKER_BODY_KEY in REVISION_SKIP_FIELDS
+
+
+@pytest.mark.xfail(
+    reason=(
+        "HANDOFF, NOT A KNOWN-BROKEN FEATURE: measurementMethods must be declared on the four record "
+        "schemas, and app/schemas/records.py belongs to another lane. This test is the acceptance "
+        "criterion for that edit; delete the marker in the same diff. LAND THE OTHER HANDOFF FIRST: "
+        "MARKER_BODY_KEY has to be in access.REVISION_SKIP_FIELDS BEFORE this declaration, never "
+        "after, because this declaration is what makes the marker sendable and a sendable marker "
+        "with no skip entry writes a RecordRevision nobody made on every save that carries one — "
+        "into an immutable audit table that landing the skip entry afterwards cannot un-write. "
+        "Order: access.py, then these four schemas, then the clients. See "
+        "test_the_marker_is_not_logged_as_an_edit_somebody_made above."
+    ),
+    strict=False,
+)
+def test_the_schemas_accept_the_marker_the_endpoint_hands_out():
+    """**THE HARD BLOCKER ON THE CLIENT HALF, AND IT FAILS LOUDLY IN THE FIELD.** ``APIModel`` is
+    ``ConfigDict(extra="forbid")``, so an undeclared key is not ignored — it 422s the whole save,
+    naming a key the researcher has never heard of. Worse, the web's ``saveOrQueue`` refuses to queue a
+    4xx ("the server saw it and said no"), so with no signal the designer's work is thrown away rather
+    than retried.
+
+    All four models, not just the Update pair: a client that implemented its half against
+    ``ProductUpdate`` alone would find every product CREATE rejected.
+    """
+    from app.schemas.records import ProductCreate, ProductUpdate, ToolCreate, ToolUpdate
+
+    body = {MARKER_BODY_KEY: {"lengthInches": _machine_marker()}}
+    ProductCreate(craftName="Pottery", place="Bhuj", artisanName="A", productName="Pot", **body)
+    ProductUpdate(**body)
+    ToolCreate(craftName="Pottery", place="Bhuj", artisanName="A", toolkitName="Wheel", **body)
+    ToolUpdate(**body)
+
+
+# --------------------------------------------------------------------------------------
+# THE READ SIDE: the claim reaches everybody entitled to read the record, not only an admin
+# --------------------------------------------------------------------------------------
+
+
+def _dimension_cell(kind: str, record) -> str:
+    """The Dimensions cell out of the .xlsx/CSV row, found by its column rather than by position."""
+    columns = record_fields.sheet_columns(kind)
+    row = record_fields.sheet_row(kind, record)
+    label = next(c for c in columns if c.startswith("Dimensions"))
+    return row[columns.index(label)]
+
+
+def test_the_record_sheet_says_a_machine_estimated_it():
+    """**THIS IS WHY THE READ SIDE IS NOT THE PROVENANCE PANEL.** That panel is gated on
+    ``adminMode || canViewProvenance``; this cell is gated on nothing beyond being allowed to see the
+    record, so it reaches the researcher who accepted the number, the reviewer who approves the record
+    and the officer reading the export — the correct audience for "this number is an estimate"."""
+    record = _Row(
+        productName="Water pot",
+        lengthInches="8.5",
+        breadthInches="4",
+        extraMetadata={
+            "fieldProvenance": {
+                "lengthInches": {"by": "usr_7", "method": "VISION_MODEL", "methodModelId": MODEL_ID},
+                "breadthInches": {"by": "usr_7", "method": "VISION_MODEL"},
+            }
+        },
+    )
+
+    panel = record_fields.info_panel("product", record)
+    cell = next(f["value"] for f in panel["fields"] if f["label"].startswith("Dimensions"))
+
+    assert cell == "8.5 x 4 (vision model estimate)"
+    # The workbook and the browser table read the same registry, so they must say the same thing.
+    assert _dimension_cell("product", record) == cell
+
+
+def test_the_cell_names_which_number_when_the_numbers_disagree():
+    """A trailing "(vision model estimate)" on a cell whose breadth came off a tape would overstate the
+    machine's part. The initials are derived from the column names, so a dimension column added later
+    cannot get the wrong letter."""
+    record = _Row(
+        productName="Water pot",
+        lengthInches="8.5",
+        breadthInches="4",
+        extraMetadata={
+            "fieldProvenance": {
+                "lengthInches": {"method": "VISION_MODEL"},
+                "breadthInches": {"method": "TYPED"},
+            }
+        },
+    )
+
+    assert _dimension_cell("product", record) == "8.5 x 4 (L: vision model estimate)"
+
+
+def test_the_two_machine_methods_read_differently_because_they_mean_different_things():
+    """``PHOTO_GEOMETRY`` is deterministic arithmetic a reader can re-derive; ``VISION_MODEL`` is a
+    guess nobody can check. One word for both would tell a reader they are the same thing, which is
+    the distinction ``measurement_provenance`` exists to keep."""
+    record = _Row(
+        productName="Water pot",
+        lengthInches="8.5",
+        extraMetadata={"fieldProvenance": {"lengthInches": {"method": "PHOTO_GEOMETRY"}}},
+    )
+
+    assert _dimension_cell("product", record) == "8.5 (photo measurement)"
+
+
+@pytest.mark.parametrize(
+    "stamp", [None, {"method": "TYPED"}, {"method": UNRECORDED}, {"by": "usr_7"}]
+)
+def test_a_number_with_nothing_to_declare_prints_as_a_bare_number(stamp):
+    """TYPED is what most dimensions in this repository are and needs no ceremony; UNRECORDED is what
+    every legacy row carries, and appending "method not recorded" to most of the database would be
+    noise that trains a reader to skip the clause on the row where it matters. Neither token is ever
+    shown to a reader — the rule ``aiLayers.ts`` already holds for its own UNRECORDED."""
+    provenance = {"lengthInches": stamp} if stamp is not None else {}
+    record = _Row(
+        productName="Water pot",
+        lengthInches="8.5",
+        breadthInches="4",
+        extraMetadata={"fieldProvenance": provenance},
+    )
+
+    cell = _dimension_cell("product", record)
+
+    assert cell == "8.5 x 4"
+    assert UNRECORDED not in cell
+
+
+def test_the_csv_download_carries_the_same_claim_as_the_screen():
+    """``records_to_csv`` builds its columns from ``sheet_columns`` and its cells from ``sheet_row``, so
+    a researcher who downloads the dataset and costs a production run from it in another tool carries
+    the claim with them. This asserts the COUPLING rather than the wording: it catches anyone who later
+    'fixes' the record sheet by special-casing the info panel instead of the registry."""
+    record = _Row(
+        id="prd_1",
+        productName="Water pot",
+        lengthInches="8.5",
+        extraMetadata={"fieldProvenance": {"lengthInches": {"method": "VISION_MODEL"}}},
+    )
+
+    csv_text = csv_export.records_to_csv("product", [record])
+
+    assert "8.5 (vision model estimate)" in csv_text
+
+
+def test_a_tool_says_it_too_and_its_height_still_cannot():
+    """Parity between the two forms, and the one asymmetry that is a shared limitation rather than a
+    divergence. ``ToolDocumentation`` has no ``heightInches``: the grid control's height reading lands
+    in the plain ``height`` column, which is outside ``DIMENSION_FIELDS``, so it can be accepted and
+    cannot be recorded. Asserted rather than only commented, so the next reader finds the gap here
+    instead of reporting the feature as half rolled out."""
+    record = _Row(
+        toolkitName="Wheel",
+        lengthInches="12",
+        breadthInches="3",
+        height="6",
+        extraMetadata={
+            "fieldProvenance": {
+                "lengthInches": {"method": "VISION_MODEL"},
+                "breadthInches": {"method": "VISION_MODEL"},
+                # What a client would send for the height if anything could carry it.
+                "height": {"method": "VISION_MODEL"},
+            }
+        },
+    )
+
+    columns = record_fields.sheet_columns("tool")
+    row = record_fields.sheet_row("tool", record)
+
+    assert _dimension_cell("tool", record) == "12 x 3 (vision model estimate)"
+    assert row[columns.index("Height")] == "6"
+    assert "height" not in DIMENSION_FIELDS
+
+
+def test_the_queue_records_the_reading_and_writes_no_dimension_with_it():
+    """The background writer that had no human in it anywhere. It keeps the analysis and the status —
+    so both clients still show the reading and a person can accept it — and writes neither column.
+
+    The forbidden keys are derived from ``DIMENSION_FIELDS`` rather than transcribed, so a fourth
+    dimension column added to the vocabulary is covered here the day it is added.
+    """
+    from app.services import media_queue
+
+    data = media_queue._measurement_update_data(
+        "med_1", "COMPLETED", {"lengthInches": 8.5, "breadthInches": 4}
+    )
+
+    assert set(data) & DIMENSION_FIELDS == set()
+    assert data["measurementAnalysisStatus"] == "COMPLETED"
+    assert data["measurementImageId"] == "med_1"
+    assert getattr(data["measurementAnalysis"], "data", None) == {
+        "lengthInches": 8.5,
+        "breadthInches": 4,
+    }
+
+
+# --------------------------------------------------------------------------------------
 # Property 4: the offline path is not burdened, asserted on the module rather than promised
 # --------------------------------------------------------------------------------------
 
@@ -943,6 +1455,19 @@ def test_the_client_specification_is_written_down_and_names_the_call_sites():
     # The two models a Confirm button should be copied from, both already in this repository.
     assert "IdentityCardReader" in spec
     assert "DwPhotoMeasurePanel" in spec
+
+    # AND THE ORDER THE TWO HANDOFFS MUST LAND IN, which is the one part of this specification that
+    # costs something irreversible if it is read wrong. The schema declaration is what makes the
+    # marker sendable; landing it before access.REVISION_SKIP_FIELDS gains the key means every
+    # marker-bearing save writes a RecordRevision nobody made, into a table nothing retracts. The
+    # paragraph saying "deploy the schema first" is about schema-before-CLIENT and was, on its own,
+    # read as schema-first-of-all — so the correction is pinned rather than left as prose.
+    assert "REVISION_SKIP_FIELDS" in spec, (
+        "the specification no longer names the skip-list handoff that has to land before the schemas"
+    )
+    assert "BEFORE this schema declaration" in spec, (
+        "the ordering constraint between the two handoffs has been dropped from the specification"
+    )
 
 
 def test_the_layer_table_records_why_a_measurement_cannot_be_one_of_its_rows():

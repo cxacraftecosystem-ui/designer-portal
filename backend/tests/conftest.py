@@ -198,12 +198,16 @@ def pytest_report_header() -> str:
     THIS HOOK IS NOT ENOUGH ON ITS OWN, and the first version of this file claimed it was. Under
     ``-q`` pytest drops verbosity to -1 and ``TerminalReporter.pytest_sessionstart`` returns before
     ``_write_report_lines_from_hooks``, so NOTHING a ``pytest_report_header`` returns is printed at
-    all. Measured on this tree: ``pytest tests/test_conftest_database_gate.py`` prints the sentence,
-    ``pytest tests/test_conftest_database_gate.py -q`` prints dots and a count and nothing else —
-    which is precisely the bare skip count this sentence was written to replace. The CI step that
-    the sentence was written for ran with ``-q``, so for its whole life it printed nothing.
-    ``pytest_terminal_summary`` below is the copy that survives any verbosity; keep both, because
-    this one is what a developer reading a local run sees first, at the top, before the wait.
+    all. Measured 2026-08-20 on this tree: ``pytest tests/test_conftest_database_gate.py -rf
+    --durations=15`` prints the ``database:`` sentence TWICE — once here, once from
+    ``pytest_terminal_summary`` below — and the identical command with ``-q`` prints it ONCE, the
+    surviving copy being the one below. Before that second hook existed, ``-q`` left the log as dots
+    and a bare skip count, which is precisely the number this sentence was written to replace; and
+    the CI step the sentence was written for ran with ``-q``, so for its whole life it printed
+    nothing. Keep both hooks. This one is what a developer reading a local run sees first, at the
+    top, before the wait, and the count of TWO is what the "Run the suite" step in
+    .github/workflows/checks.yml greps for — one hook deleted, or ``-q`` quietly re-added, and the
+    count falls to one and the step goes red.
     """
     return _gate_sentence()
 
@@ -217,11 +221,25 @@ def pytest_terminal_summary(terminalreporter) -> None:
     for log volume — which is exactly how the sentence went missing the first time.
 
     The per-reason tally is the second half of the same argument. ``-rs`` would also print skip
-    reasons, but as one line per skipped test — roughly four hundred identical lines in CI, which
-    is a wall rather than a fact. Grouping them says the thing a reader needs in one line per
-    reason: not "381 skipped" but "381 skipped because this run has no LOCAL database", so a green
-    skip stays distinguishable from a test that was never written. If that count ever collapses
-    toward zero without the sentence above changing, a gate has been inverted.
+    reasons, but one line per skip LOCATION — measured 2026-08-20 under the CI environment, 360
+    near-identical lines carrying 381 skips, a wall rather than a fact. Grouping them says what a
+    reader needs in one line per reason: not "381 skipped" but "381 skipped because this run has no
+    LOCAL database", so a green skip stays distinguishable from a test that was never written. If
+    that count ever collapses toward zero without the sentence above changing, a gate has been
+    inverted.
+
+    "AT THE FOOT" IS ONLY TRUE WHILE NOBODY ASKS PYTEST FOR THE SAME THING, and the ordering is the
+    opposite way round from what you would guess. Pluggy calls the LAST-registered
+    ``pytest_terminal_summary`` first, and a conftest is registered after pytest's own
+    TerminalReporter — so everything a ``-r`` flag summarises prints BELOW this, not above it. Add
+    ``s`` to the CI flag and the sentence and the tally end up sitting on top of that wall: measured
+    2026-08-20, the 360 SKIPPED lines run unbroken from the summary section down to the final status
+    line and are over half the log, in a file that is read from the bottom. No absolute line number is
+    given, deliberately — this paragraph carried one ("line 209 of a 595-line log"), and the same
+    command re-measured the same day put it at 245 of 633, because every test added and every
+    failure traceback shifts it. That is why the "Run the suite" step in
+    .github/workflows/checks.yml spells the flag ``-rf`` and says so; the two decisions are one
+    decision and should not be changed apart.
     """
     terminalreporter.write_line("")
     terminalreporter.write_line(_gate_sentence())
