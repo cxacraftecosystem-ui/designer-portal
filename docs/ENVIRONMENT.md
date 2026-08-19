@@ -40,16 +40,52 @@ cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
 2. **The backend caches its settings.** `get_settings()` is `@lru_cache`d, so a running uvicorn
    process never notices an edited `.env`. Always restart (`sudo systemctl restart fieldrepo
    fieldrepo-queue`, or Ctrl-C the dev server) after a change.
-3. **Several identifiers here still read `fieldrepo` / `design-workshop`, and that is correct.**
-   The product was renamed to Design Prototype Workshop; the *things* were not. The systemd units
-   (`fieldrepo`, `fieldrepo-queue`) are installed on the live EC2 box and are what
-   `deploy-backend.yml` restarts by name; the S3 bucket `fieldrepo-media-626159998512` holds every
-   uploaded file and an S3 bucket cannot be renamed; the Vercel project `design-workshop` owns the
-   production domain. Each one is an external resource whose name this repository does not control.
-   Treat them as opaque identifiers: aligning them with the product name is a migration with a
-   cutover, never an edit to a document or a default. See `infra/terraform/variables.tf` and
-   `infra/terraform/user_data.sh` for the specific failure each rename would cause.
-4. **In Vercel, every `NEXT_PUBLIC_*` variable must be type `Encrypted`, never `Sensitive`.**
+3. **Several identifiers here still read `fieldrepo` / `design-workshop`, and that is correct — but
+   READ THE NEXT RULE BEFORE ACTING ON IT.** The product was renamed to Design Prototype Workshop;
+   the *things* were not. The systemd units (`fieldrepo`, `fieldrepo-queue`) are installed and enabled
+   on the API box and are what `deploy-backend.yml` restarts by name; the Vercel project owns the
+   production domain. Treat them as opaque identifiers: aligning them with the product name is a
+   migration with a cutover, never an edit to a document or a default. See
+   `infra/terraform/variables.tf` and `infra/terraform/user_data.sh` for the specific failure each
+   rename would cause.
+
+4. **THIS PORTAL HAS ITS OWN INFRASTRUCTURE, AND THE SHARED NAMES ABOVE ARE WHY THAT IS EASY TO MISS.**
+   The designer portal was derived from the field repository, so both repositories carry a
+   byte-identical `deploy-backend.yml` and a `user_data.sh` that HARDCODES the unit names rather than
+   templating them from `var.project`. The consequence is a genuine trap: two different EC2 boxes each
+   run services literally called `fieldrepo`, and nothing in a unit name, an nginx site name or a
+   workflow file distinguishes them. The only thing that decides which machine a push touches is the
+   `EC2_HOST` secret in whichever repository is being pushed.
+
+   Separate infrastructure was provisioned for this portal on 2026-08-16 (terraform
+   `-var="project=designrepo"`), and it is separate at every layer that holds data:
+
+   | | Designer portal (this repo) | Field repository |
+   |---|---|---|
+   | API box | `13.206.216.18` | a different Elastic IP |
+   | S3 media bucket | `designrepo-media-626159998512` | `fieldrepo-media-626159998512` |
+   | CloudFront | `d3ekigkotd1xa2.cloudfront.net` (origin id `designrepo-ec2-origin`) | its own distribution |
+   | SSH key pair | `designrepo-deploy` | its own |
+   | Vercel | `design-repository.vercel.app` | its own project |
+   | Google OAuth | its own web + Android clients (see `2696bfb`) | its own |
+   | systemd units | **`fieldrepo`, `fieldrepo-queue`** | **`fieldrepo`, `fieldrepo-queue`** |
+
+   **The last row is the one to remember.** The unit names are identical on both boxes because
+   `user_data.sh` writes `/etc/systemd/system/fieldrepo.service` as a literal string; they are shared
+   by hardcoding, not because the two deployments are coupled. So `systemctl restart fieldrepo` in
+   `deploy-backend.yml` is correct here, and correcting it to `designrepo` would break this portal's
+   deploy against a unit that does not exist.
+
+   **What must never be done: copying `EC2_HOST`, `EC2_SSH_KEY` or `BACKEND_ENV` between the two
+   repositories.** Before 2026-08-16 this portal had no deploy secrets at all and its backend deploy
+   had been failing since 8 August on an empty SSH key. Wiring it up by copying the field
+   repository's values across would have rsynced this portal's backend over
+   `/home/ubuntu/app/backend/` on the field repository's live box, overwritten its `.env`, stopped its
+   `fieldrepo` service and run migrations against its database — with a workflow file that looks
+   entirely correct while doing it, because every name in it matches. That is not recoverable by a
+   revert.
+
+5. **In Vercel, every `NEXT_PUBLIC_*` variable must be type `Encrypted`, never `Sensitive`.**
    Sensitive is write-only: Vercel will not return that value to anyone afterwards, including to the
    `vercel pull` our CI runs before it builds. Because the build happens on a GitHub runner rather
    than on Vercel, a sensitive variable simply is not present when Next.js compiles, and Next.js
@@ -125,9 +161,9 @@ Emitted by `app.main.SecurityHeadersMiddleware`. Defaults are correct for local 
 | `AWS_ACCESS_KEY_ID` | **Yes** | — | Treat as secret | IAM user (or MinIO account) with `PutObject`/`GetObject`/`DeleteObject` on the media bucket. Local MinIO: `minioadmin`. |
 | `AWS_SECRET_ACCESS_KEY` | **Yes** | — | **Yes** | Local MinIO: `minioadmin`. |
 | `AWS_REGION` | No | `us-east-1` | No | Production: `ap-south-1`. Must match the bucket's region or presigned URLs 403. |
-| `AWS_S3_BUCKET` | **Yes** | — | No | Production: `fieldrepo-media-626159998512`. Local: `design-workshop`. |
+| `AWS_S3_BUCKET` | **Yes** | — | No | Production: `designrepo-media-626159998512` — THIS portal's own bucket, not the field repository's `fieldrepo-media-626159998512`. Local: `design-workshop`. |
 | `AWS_S3_ENDPOINT` | No | unset | No | **Set only for MinIO/non-AWS storage** (`http://localhost:9000`). Leave it UNSET on AWS so boto3 signs against the dual-stack regional endpoint — that is what makes uploads work from IPv6-only mobile networks. |
-| `AWS_S3_PUBLIC_BASE_URL` | No | unset | No | Base URL used to build readable media links. On AWS use the dual-stack host: `https://fieldrepo-media-626159998512.s3.dualstack.ap-south-1.amazonaws.com`. |
+| `AWS_S3_PUBLIC_BASE_URL` | No | unset | No | Base URL used to build readable media links. On AWS use the dual-stack host for THIS portal's bucket: `https://designrepo-media-626159998512.s3.dualstack.ap-south-1.amazonaws.com`. |
 | `AWS_S3_SSE_ALGORITHM` | No | `AES256` | No | Server-side encryption requested on uploads the **API** starts (multipart create). `aws:kms` needs a key policy granting the media IAM user. Set it **empty** for local MinIO without a KMS backend, which rejects the header outright. Presigned single PUTs cannot carry it — the bucket's default-encryption setting covers those. |
 
 ### Offline speech model artifacts
