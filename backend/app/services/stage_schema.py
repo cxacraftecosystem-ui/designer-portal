@@ -741,6 +741,12 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "remarks": "remarks",
         "lengthCm": "lengthCm",
         "breadthCm": "breadthCm",
+        # HOW THE TWO CONVERTED FIGURES ABOVE WERE ARRIVED AT. A sentence about the RECORD's own
+        # columns, not a label on the boxes — see `design_workshops._measurement_method_note` for why
+        # only that claim survives the only-fill-blanks rule, and `record_fields.METHOD_CLAUSES` for
+        # the two phrases it may use. Without it a vision model's estimate of a tool's length arrived
+        # on the entry stamped with the name of whoever saved the record.
+        "measurementMethodNote": "measurementMethodNote",
         "heightAsRecorded": "heightAsRecorded",
         "widthAsRecorded": "widthAsRecorded",
         "thicknessAsRecorded": "thicknessAsRecorded",
@@ -880,6 +886,10 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "lengthCm": "lengthCm",
         "widthCm": "widthCm",
         "heightCm": "heightCm",
+        # HOW THOSE THREE WERE ARRIVED AT. See the same pair on `tool.toolRef` above and
+        # `design_workshops._measurement_method_note`. `dimensionsNote` below is free text and carries
+        # no method; nothing here invents one for it.
+        "measurementMethodNote": "measurementMethodNote",
         "dimensionsNote": "dimensionsNote",
         "productionTimeNote": "productionTimeNote",
         "remarks": "remarks",

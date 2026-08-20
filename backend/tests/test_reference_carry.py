@@ -46,6 +46,11 @@ import pytest
 # Importing this module is what installs the twenty-two stages into the registry.
 import app.services.stage_definitions  # noqa: F401
 from app.services import design_workshops as dw
+# The two modules the measurement-method carry has to agree with, imported so the assertions read
+# their real values rather than a copy: `record_fields.METHOD_CLAUSES` is the two phrases every
+# record surface already prints, and `measurement_provenance.DIMENSION_FIELDS` is the closed set of
+# columns a method can be stamped on at all.
+from app.services import measurement_provenance, record_fields
 from app.services.records import derive_age
 from app.services.stage_schema import (
     ENUMS,
@@ -309,6 +314,14 @@ PRODUCT_CARRIED = {
     "lengthInches": "existingProduct.lengthCm (x2.54)",
     "breadthInches": "existingProduct.widthCm (x2.54)",
     "heightInches": "existingProduct.heightCm (x2.54)",
+    # MOVED HERE FROM NOT_CARRIED, where it read "bookkeeping — EXIF written programmatically by the
+    # record form". The EXIF summary is still not carried and never will be; what this column ALSO
+    # holds is `fieldProvenance`, and inside that the `method` stamp `records.merge_field_provenance`
+    # writes on each dimension. Filing the whole column as bookkeeping is how the one fact on it that
+    # a ministry officer needs — that a length is a vision model's estimate off a grid photograph and
+    # not a tape reading — stayed on the record while the number crossed. See
+    # `design_workshops._measurement_method_note`.
+    "extraMetadata": "existingProduct.measurementMethodNote (fieldProvenance.method only)",
     "size": "existingProduct.dimensionsNote",
     "timeTakenToCompleteProduct": "existingProduct.productionTimeNote",
     "remarks": "existingProduct.remarks",
@@ -342,7 +355,6 @@ PRODUCT_NOT_CARRIED = {
     "reviewNotes": "bookkeeping",
     "reviewedById": "bookkeeping",
     "reviewedAt": "bookkeeping",
-    "extraMetadata": "bookkeeping — EXIF written programmatically by the record form",
     "recordedTimezone": "the date is carried as a bare DATE",
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
@@ -367,6 +379,12 @@ TOOL_CARRIED = {
     "remarks": "tool.remarks",
     "lengthInches": "tool.lengthCm (x2.54)",
     "breadthInches": "tool.breadthCm (x2.54)",
+    # MOVED HERE FROM NOT_CARRIED, where it read "bookkeeping". Same reason as the product's, and
+    # sharper here: five of this model's seven measurements state no unit either, so the tool table
+    # was the one place a reader had nothing at all to go on. Only `fieldProvenance.method` crosses,
+    # and only for the two INCH columns — `measurement_provenance.DIMENSION_FIELDS` never stamps the
+    # five unit-less ones. See `design_workshops._measurement_method_note`.
+    "extraMetadata": "tool.measurementMethodNote (fieldProvenance.method only)",
     "height": "tool.heightAsRecorded (source states no unit)",
     "width": "tool.widthAsRecorded (source states no unit)",
     "thickness": "tool.thicknessAsRecorded (source states no unit)",
@@ -391,7 +409,6 @@ TOOL_NOT_CARRIED = {
     "reviewNotes": "bookkeeping",
     "reviewedById": "bookkeeping",
     "reviewedAt": "bookkeeping",
-    "extraMetadata": "bookkeeping",
     "recordedTimezone": "the date is carried as a bare DATE",
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
@@ -1121,6 +1138,30 @@ def _product_row(**overrides):
         # declared five targets for them — so "a fully documented product arrives whole" was asserting
         # over a row that was not fully documented and the five boxes read as legitimately empty.
         location=_location_row(),
+        # HOW EACH DIMENSION CAME TO BE KNOWN, in the exact shape `records.merge_field_provenance`
+        # writes: the {by, byName, at} of whoever pressed Save, with `method` merged in BESIDE it
+        # for a dimension column rather than replacing it. This fixture is deliberately the
+        # THREE-WAY case — a vision model read the length off a grid photograph, the breadth was
+        # computed from marks a person placed on a photograph, the height was typed — because that
+        # is the case where a single trailing clause would overstate the machine's part and the note
+        # has to say WHICH number each method produced. `sellingPrice` carries the plain stamp with
+        # no method, which is what every non-dimension column on a real row looks like.
+        extraMetadata={
+            "fieldProvenance": {
+                "lengthInches": {"by": "usr_7", "byName": "R. Menon",
+                                 "at": "2025-04-02T11:00:00+00:00",
+                                 "method": "VISION_MODEL", "methodProvider": "gemini",
+                                 "methodModelId": "gemini-2.5-flash-lite",
+                                 "methodConfidence": 0.8},
+                "breadthInches": {"by": "usr_7", "byName": "R. Menon",
+                                  "at": "2025-04-02T11:00:00+00:00",
+                                  "method": "PHOTO_GEOMETRY", "methodTechnique": "SCALE"},
+                "heightInches": {"by": "usr_7", "byName": "R. Menon",
+                                 "at": "2025-04-02T11:00:00+00:00", "method": "TYPED"},
+                "sellingPrice": {"by": "usr_7", "byName": "R. Menon",
+                                 "at": "2025-04-02T11:00:00+00:00"},
+            },
+        },
         media=[
             _media_row(id="med_p1"),
             _media_row(id="med_p2", mediaType="VIDEO", originalFilename="finishing.mp4"),
@@ -1141,6 +1182,21 @@ def _tool_row(**overrides):
         suggestionsForToolImprovement="A higher bench would ease the back.",
         remarks="Rebuilt in 2019.", recordedAt=datetime(2025, 4, 3, 8, 30),
         location=_location_row(),
+        # ONE STAMPED DIMENSION AND ONE EXPLICITLY UNRECORDED, which is the state of the fleet: a
+        # client that has not implemented its half of the marker makes `method_stamps` write
+        # UNRECORDED rather than nothing, and UNRECORDED must print nothing at a reader — see
+        # `record_fields.METHOD_CLAUSES`. The five unit-less columns (`height`, `width`,
+        # `thickness`, `weight`, `radius`) carry NO stamp at all and cannot: they are outside
+        # `measurement_provenance.DIMENSION_FIELDS`, so `method_stamps` drops any marker naming one.
+        extraMetadata={
+            "fieldProvenance": {
+                "lengthInches": {"by": "usr_9", "byName": "S. Bal",
+                                 "at": "2025-04-03T08:30:00+00:00",
+                                 "method": "VISION_MODEL", "methodProvider": "gemini"},
+                "breadthInches": {"by": "usr_9", "byName": "S. Bal",
+                                  "at": "2025-04-03T08:30:00+00:00", "method": "UNRECORDED"},
+            },
+        },
         # The record page's media card is mounted twice: the ordered "Process stages" sequence, whose
         # captures ToolForm renames STAGE_STEP_n, and general footage. Both shapes are here, plus a
         # measurement-grid frame, which is a sheet of ruled paper and not footage of the tool.
@@ -1419,6 +1475,183 @@ async def test_a_fully_documented_tool_arrives_whole(monkeypatch):
     assert data["heightAsRecorded"] == 180 and data["weightAsRecorded"] == 95
     assert data["yearsInUse"] == 18
     assert data["photoCaption"] == "The loom in the shed"
+
+
+#: The exact sentences the two fixtures above must produce. Written out rather than rebuilt from
+#: the table, so a change to the grammar has to be typed here as well as read there.
+_PRODUCT_METHOD_NOTE = (
+    "On the product record: length (vision model estimate), breadth (photo measurement)"
+)
+_TOOL_METHOD_NOTE = "On the tool record: length (vision model estimate)"
+
+
+async def test_the_measurement_method_crosses_with_the_number_it_qualifies(monkeypatch):
+    """A HYDRATED CENTIMETRE FIGURE NO LONGER ATTRIBUTES A MACHINE'S GUESS TO A PERSON.
+
+    THE DEFECT. `records.merge_field_provenance` stamps `method: "VISION_MODEL"` beside
+    `{by, byName, at}` on a dimension a vision model estimated off a photograph of the object on a
+    grid sheet, and `record_fields.dims_with_method` prints that on the record sheet, every .xlsx
+    sheet and both CSV exports. Hydration copied the NUMBER and left the stamp on the record — while
+    `hydrate_entries` stamped the entry with `HydrationSource(author_id=row.createdById)`, whose NAME
+    both field-provenance views render. So the workshop entry, and then the .docx a ministry officer
+    reads, asserted that a named human had measured a number a model guessed: the exact defect
+    `services/measurement_provenance` exists to end, one layer further out.
+
+    WHY IT NAMES THE RECORD AND NOT THE BOX. Hydration only fills BLANKS, so a designer who measured
+    the saree themselves keeps their own length beside a hydrated width. A per-dimension label would
+    then sit over the designer's own figure and call it a model's estimate — a new false claim in
+    place of the old one. The sentence is about the RECORD's columns, so it stays true whatever the
+    designer typed, and it says BREADTH because the product record's column is `breadthInches`.
+
+    WHY IT NAMES BOTH METHODS SEPARATELY. The product fixture's length is a vision model's and its
+    breadth is arithmetic over marks somebody placed; one trailing clause would overstate the
+    machine's part on a number a person produced. `dims_with_method` splits its own cell for the
+    same reason.
+    """
+    product = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [_product_row()]},
+    )
+    assert product["measurementMethodNote"] == _PRODUCT_METHOD_NOTE
+    # The height was TYPED, so it is absent from the sentence rather than described.
+    assert "height" not in product["measurementMethodNote"]
+
+    tool = await _hydrate(
+        monkeypatch, "tool", {"toolRef": "tul_1"},
+        rows={"tooldocumentation": [_tool_row()]},
+    )
+    assert tool["measurementMethodNote"] == _TOOL_METHOD_NOTE
+    # UNRECORDED prints nothing, so the breadth is unqualified rather than described as unknown.
+    assert "breadth" not in tool["measurementMethodNote"]
+
+
+async def test_a_record_whose_dimensions_were_all_typed_says_nothing_at_all(monkeypatch):
+    """TYPED AND UNRECORDED ARE SILENT HERE FOR THE REASON THEY ARE SILENT ON THE RECORD SHEET.
+
+    Every row written before `measurement_provenance` existed carries UNRECORDED, including the ones
+    a model produced, so appending "method not recorded" to most of the database would be noise that
+    trains a reader to skip the clause on the one row where it matters — `record_fields.METHOD_CLAUSES`
+    argues both at length. A blank box is the honest rendering of a legacy row, and this asserts the
+    workshop agrees with the record sheet about that rather than inventing a third answer.
+    """
+    typed = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [_product_row(extraMetadata={"fieldProvenance": {
+            "lengthInches": {"by": "usr_7", "method": "TYPED"},
+            "breadthInches": {"by": "usr_7", "method": "UNRECORDED"},
+            "heightInches": {"by": "usr_7"},
+        }})]},
+    )
+    assert "measurementMethodNote" not in typed, (
+        "a record whose dimensions were typed, unrecorded or unstamped must leave this box blank"
+    )
+
+    legacy = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [_product_row(extraMetadata=None)]},
+    )
+    assert "measurementMethodNote" not in legacy, (
+        "a row with no fieldProvenance blob at all predates the record half and states nothing"
+    )
+
+
+async def test_the_note_never_names_a_dimension_that_has_no_number_to_qualify(monkeypatch):
+    """A CLAUSE OVER A BLANK BOX IS A CLAIM ABOUT NOTHING.
+
+    A stamp can outlive its value: `merge_field_provenance` only ever ADDS to the blob, so a
+    researcher who fills in a length, saves, then clears it leaves the method behind. Naming it
+    would put "length (vision model estimate)" on an entry whose Length box the record left empty —
+    and the designer would then type their own tape reading under a sentence crediting a model.
+    """
+    data = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [_product_row(lengthInches=None)]},
+    )
+    assert "lengthCm" not in data, "the fixture must actually leave the length box empty"
+    assert data["measurementMethodNote"] == "On the product record: breadth (photo measurement)"
+
+
+def test_the_workshop_prints_the_record_sheets_own_two_phrases_and_not_a_third_vocabulary():
+    """ONE STAMP MUST NOT BE DESCRIBED IN TWO VOCABULARIES ON TWO SURFACES.
+
+    `record_fields.METHOD_CLAUSES`'s own comment calls this "a cross-surface contract" and names the
+    drift it guards against. The workshop note IMPORTS that dict rather than restating it, so this
+    test pins the two phrases themselves — the thing a future surface has to be written against —
+    and pins that the note is built out of them rather than out of a paraphrase.
+    """
+    assert record_fields.METHOD_CLAUSES == {
+        "VISION_MODEL": "vision model estimate",
+        "PHOTO_GEOMETRY": "photo measurement",
+    }, (
+        "these two phrases are printed by the record sheet, every .xlsx sheet, both CSV exports and "
+        "now the workshop report. Rewording one rewords all four; rewording it in one place only is "
+        "how one stamp comes to be described in two vocabularies"
+    )
+    for clause in record_fields.METHOD_CLAUSES.values():
+        assert clause in _PRODUCT_METHOD_NOTE or clause in _TOOL_METHOD_NOTE
+
+    # TYPED and UNRECORDED are absent by design, not by omission — see the dict's own comment.
+    assert "TYPED" not in record_fields.METHOD_CLAUSES
+    assert measurement_provenance.UNRECORDED not in record_fields.METHOD_CLAUSES
+
+
+def test_the_method_carry_covers_exactly_the_columns_a_method_can_be_stamped_on():
+    """A PAIR FOR A COLUMN NOTHING STAMPS WOULD BE A SENTENCE ABOUT A STAMP THAT IS NEVER WRITTEN.
+
+    `measurement_provenance.method_stamps` drops a marker naming anything outside
+    `DIMENSION_FIELDS`, and that set is `{lengthInches, breadthInches, heightInches}`. So the tool's
+    five unit-less columns (`height`, `width`, `thickness`, `weight`, `radius`) can never carry a
+    method — that module says so itself under WHAT THE RECORD HALF STILL CANNOT REACH, and names the
+    tool's missing `heightInches` column as the reason an accepted vision-model tool height is
+    recorded as nothing. This is the assertion that keeps `_METHOD_CARRIED_DIMENSIONS` honest in both
+    directions: nothing outside the stampable set, and every payload key it names is really hydrated.
+    """
+    table = dw._METHOD_CARRIED_DIMENSIONS
+    assert set(table) <= set(dw.REFERENCE_MODELS)
+
+    for model, pairs in table.items():
+        columns = {column for _payload, column in pairs}
+        assert columns <= measurement_provenance.DIMENSION_FIELDS, (
+            f"{model} pairs a method against {sorted(columns - measurement_provenance.DIMENSION_FIELDS)}, "
+            f"which method_stamps drops — the note would describe a stamp nothing writes"
+        )
+        # And the payload keys are the ones the mapping actually carries, so a renamed target
+        # cannot leave the note qualifying a dimension the entry never receives.
+        carried = {
+            source
+            for path, mapping in REFERENCE_HYDRATION.items()
+            if _field(*path.split(".", 1)).ref_model == model
+            for source in mapping
+        }
+        payload_keys = {payload for payload, _column in pairs}
+        assert payload_keys <= carried, (
+            f"{model} names payload keys {sorted(payload_keys - carried)} that no mapping hydrates"
+        )
+
+    # The five unit-less tool columns are named here so that adding one is a deliberate act.
+    tool_columns = {column for _payload, column in table["ToolDocumentation"]}
+    assert tool_columns.isdisjoint({"height", "width", "thickness", "weight", "radius"})
+    assert "heightInches" not in tool_columns, "ToolDocumentation has no heightInches column"
+
+
+async def test_the_method_note_is_recomputable_by_the_divergence_path(monkeypatch):
+    """`canonical_divergence` resolves the canonical value by calling `spec.data` AGAIN, with two
+    arguments — so a key it cannot reproduce is reported to an admin as diverged on every audit, for
+    ever. `_media_note`'s docstring records what that already cost once ("EVERY artisan with a
+    photograph read as diverged") and an audit that flags everything flags nothing.
+
+    The note is therefore built inside the data lambda and off the row, never inside
+    `hydrate_entries` where there is no row in hand. This asserts the property directly: the same
+    row, resolved twice by the two paths, gives the same sentence.
+    """
+    row = _product_row()
+    canonical = dw.REFERENCE_MODELS["ProductDocumentation"].data(row, None)
+    hydrated = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [row]},
+    )
+    assert canonical["measurementMethodNote"] == hydrated["measurementMethodNote"]
+    assert canonical["measurementMethodNote"] == _PRODUCT_METHOD_NOTE
 
 
 async def test_where_a_tool_was_obtained_is_not_guessed_from_who_made_it(monkeypatch):
@@ -1703,35 +1936,120 @@ async def test_a_tools_numbered_making_sequence_is_named_and_a_grid_frame_is_not
     )
 
 
+def _widest_media_note(digits: int) -> str:
+    """``_media_note``'s widest sentence when every count is ``digits`` digits wide.
+
+    Every type word present and the numbered clause present, which is the only shape in which all
+    six of the sentence's integers are printed at once.
+    """
+    n = 10 ** digits - 1
+    rows = (
+        [_media_row(mediaType="IMAGE", originalFilename="STAGE_STEP_1_x.jpg")] * n
+        + [_media_row(mediaType="VIDEO")] * n
+        + [_media_row(mediaType="AUDIO")] * n
+        + [_media_row(mediaType="PDF")] * n
+        + [_media_row(mediaType="OTHER")] * n
+    )
+    note = dw._media_note("product", rows, numbered_prefix="STAGE_STEP_")
+    assert note is not None
+    return note
+
+
 def test_the_media_note_cannot_overrun_the_bound_its_field_declares():
     """``coerce_value`` REFUSES an over-length value rather than truncating it, so the bound is real.
 
     A refused hydration is not a small thing: the field stays blank, the designer is shown an error
     on a box they never touched, and the sentence that was supposed to tell a reader the footage
-    exists says nothing at all. The four notes declare ``max_length=200``; this is the longest
-    sentence ``_media_note`` can build, measured rather than estimated.
+    exists says nothing at all. The four notes this function fills declare ``max_length=200``.
+
+    ── A FORMULA AND NOT ONE MEASUREMENT, WHICH IS THE POINT OF THIS VERSION ──────────────────────
+    This test used to build a note at 9999 files per type, measure 152 characters and assert
+    152 <= 200. That pinned a HYPOTHESIS — "no record will ever hold more than 9999 files of one
+    type" — dressed as a bound, and the sentence it called "the longest ``_media_note`` can build" is
+    only the longest at four digits. The sentence prints SIX integers (five type words plus the
+    numbered-making clause), so it grows by exactly six characters per digit of width. That slope is
+    MEASURED below rather than assumed, and the bound is then asserted at a width no media table can
+    reach instead of at a width somebody guessed was enough.
+
+    Measured on this tree: 134 characters at one digit, 152 at four, 158 at five, 164 at six — i.e.
+    ``6 * digits + 128``. At TWELVE digits per count that is exactly 200, the declared bound, and at
+    thirteen it breaches — so the note fits until a single record holds 10^12 files of one type. The
+    guard is real (an over-length value is REFUSED, not truncated) and it is unreachable, which is
+    what a bound should say. Note that the twelve-digit assertion below is therefore EXACT rather
+    than slack: lowering ``max_length`` by one character fails it, which is the intended sensitivity.
     """
-    crowded = (
-        [_media_row(mediaType="IMAGE", originalFilename="STAGE_STEP_1_x.jpg")] * 9999
-        + [_media_row(mediaType="VIDEO")] * 9999
-        + [_media_row(mediaType="AUDIO")] * 9999
-        + [_media_row(mediaType="PDF")] * 9999
-        + [_media_row(mediaType="OTHER")] * 9999
+    widths = {d: len(_widest_media_note(d)) for d in (1, 2, 3, 4, 5)}
+    slopes = {widths[d + 1] - widths[d] for d in (1, 2, 3, 4)}
+    assert slopes == {6}, (
+        f"the sentence grew by {sorted(slopes)} characters per digit, not 6. Six integers are "
+        f"printed in it; a different slope means a count was added or removed, and the bound below "
+        f"is extrapolated from this slope, so it has to be re-derived rather than nudged"
     )
-    longest = dw._media_note("product", crowded, numbered_prefix="STAGE_STEP_")
-    assert longest is not None
+    intercept = widths[1] - 6
+
+    # Twelve digits: 999,999,999,999 files of ONE type on ONE record. `_media_note`'s own docstring
+    # calls a roster of forty long-documented artisans the worst case in the repository.
+    unreachable = 6 * 12 + intercept
     for entity_key, field_key in (
         ("participant", "recordMediaNote"),
         ("existingProduct", "recordMediaNote"),
         ("tool", "recordMediaNote"),
         ("workshopSetup", "craftMediaNote"),
-        ("traditionalProcess", "recordMediaNote"),
     ):
         bound = _field(entity_key, field_key).max_length
-        assert bound and len(longest) <= bound, (
-            f"{entity_key}.{field_key} declares max_length={bound} and the longest note this "
-            f"function can build is {len(longest)} characters, which coerce_value would REFUSE"
+        assert bound and unreachable <= bound, (
+            f"{entity_key}.{field_key} declares max_length={bound}. `_media_note` builds "
+            f"6 * digits + {intercept} characters, so coerce_value would REFUSE it at "
+            f"{(bound - intercept) // 6 + 1} digits per count"
         )
+
+
+def test_the_process_media_note_has_its_own_bound_and_its_own_grammar():
+    """``traditionalProcess.recordMediaNote`` is filled by ``_process_media_note``, not ``_media_note``.
+
+    THE TEST ABOVE USED TO ASSERT THIS BOX AGAINST THE OTHER FUNCTION'S LONGEST OUTPUT, which was
+    harmless over-strictness with a real hole in it: the one note of the five whose grammar is NOT
+    the one being measured was the one left unmeasured. This function prints a total and a per-step
+    breakdown ("N on the process itself, N across N step(s)") off an entirely different sentence,
+    counts no media TYPES, and — see the paragraph naming it in ``_media_note``'s docstring — does
+    not skip a measurement-grid frame, because nothing can attach one to a process record.
+
+    THREE integers, so the sentence is fixed text plus however many digits those three occupy.
+    Measured on this tree: 73 characters of fixed text, so breaching 200 needs 127 digits spread
+    across three counts.
+    """
+    def note(own: int, steps: int, per_step: int) -> str:
+        process = SimpleNamespace(
+            media=[_media_row()] * own,
+            steps=[SimpleNamespace(media=[_media_row()] * per_step)] * steps,
+        )
+        built = dw._process_media_note(process)
+        assert built is not None
+        return built
+
+    # (own, steps, per-step) -> how many digits the three PRINTED integers occupy in total. The
+    # middle one is the sum across steps, so it is wider than either input.
+    cases = {
+        (9, 9, 9): 1 + 2 + 1,               # own=9, per_step=81, covered=9
+        (99, 99, 99): 2 + 4 + 2,            # own=99, per_step=9801, covered=99
+        (999, 999, 999): 3 + 6 + 3,         # own=999, per_step=998001, covered=999
+    }
+    fixed = {len(note(*args)) - digits for args, digits in cases.items()}
+    assert len(fixed) == 1, (
+        f"the fixed text measured {sorted(fixed)} characters at three different widths, so the "
+        f"sentence is no longer 'fixed text plus the digits of three integers' and the bound below "
+        f"has to be re-derived"
+    )
+    fixed_chars = fixed.pop()
+
+    bound = _field("traditionalProcess", "recordMediaNote").max_length
+    # 30 digits across three counts is already past anything a bigint column could hold.
+    assert bound and fixed_chars + 30 <= bound, (
+        f"traditionalProcess.recordMediaNote declares max_length={bound} and "
+        f"`_process_media_note` spends {fixed_chars} characters before printing a single digit, "
+        f"leaving {bound - fixed_chars} for three counts — tight enough for coerce_value to REFUSE "
+        f"a real process record's note"
+    )
 
 
 async def test_the_pin_on_the_subjects_place_now_crosses_for_all_three_models(monkeypatch):

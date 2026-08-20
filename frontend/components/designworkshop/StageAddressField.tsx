@@ -127,7 +127,19 @@ export function StageAddressField({
 }) {
   const { states, districts } = useAddressReference();
   const own = inputValue(value);
-  const stateName = role.stateField ? inputValue(row[role.stateField.key]) : own;
+  /**
+   * The state this row is IN — what the district list is keyed by and what the zone check is checked
+   * against. Derived per role, and never `own` as a fall-through.
+   *
+   * `role.role === "state"` is the only case where this box IS the state, so it is the only case
+   * where `own` is one. The expression used to end `: own`, which meant a `pincode` field on an
+   * entity declaring no state sibling would have handed the PIN CODE ITSELF to `postalZoneMismatch`
+   * as a state name. Nothing does that today — all three pincode fields have a state sibling on
+   * their own entity, and `postalZoneMismatch` returns null for a name its table does not know — so
+   * this is the expression being made to read as what it means before a new address field inherits
+   * it. An absent sibling now means "no state to check against", which is what both callers want.
+   */
+  const stateName = role.role === "state" ? own : role.stateField ? inputValue(row[role.stateField.key]) : "";
 
   if (role.role === "pincode") {
     // Advisory, both of them, and in the record page's own words. `pincodeValidationError` is the
@@ -188,6 +200,20 @@ export function StageAddressField({
         <Dropdown
           value={own}
           onChange={(next) => {
+            /*
+             * RE-PICKING THE STATE ALREADY SHOWING IS NOT A CHANGE, and without this line it wiped
+             * the district. `SearchableSelect.choose` fires `onChange` unconditionally — there is no
+             * equality guard there and there should not be, since a caller that wants one can say so
+             * — so opening the list and tapping the value already selected, which is how a designer
+             * confirms what a hydrated row says, ran the clear below.
+             *
+             * The record page loses the same gesture (`FormControls`' Select is a wrapper over this
+             * same component), but it can afford to: an artisan record can be re-edited against the
+             * live district list. A stage entry cannot. Hydration only re-fills on a re-point to a
+             * DIFFERENT record (invariant 2), and re-answering the district by hand needs the network
+             * the district list may not have.
+             */
+            if (next === own) return;
             if (!role.districtField) {
               onChange(next || null);
               return;

@@ -77,8 +77,16 @@ import kotlinx.coroutines.launch
  *     one tap: choose it, name a language, wait out a round trip on one bar of signal, read a review
  *     sheet and decide. A control hosted in a bar that unmounts on focus loss would vanish in the
  *     middle of its own flow.
- *  3. **THE BAR IS ALREADY A `horizontalScroll` ROW OF EIGHTEEN CONTROLS PLUS A MICROPHONE.** A
- *     nineteenth item, off the right-hand edge, is a capability nobody finds twice.
+ *  3. **THE BAR IS ALREADY A `horizontalScroll` ROW OF TWENTY-THREE CONTROLS.** Counted from
+ *     `RichTextToolbar`'s Row rather than remembered: five marks, ¶, H1-H4, Quote, the bulleted and
+ *     numbered lists, outdent, indent, four aligns, Photograph, Clear formatting, Undo, Redo — 23
+ *     with the Photograph button and 22 in a field that has no media bridge to place one. A
+ *     twenty-fourth item, off the right-hand edge, is a capability nobody finds twice.
+ *
+ *     This said "EIGHTEEN CONTROLS PLUS A MICROPHONE" and both halves were wrong. The microphone is
+ *     NOT in that Row: `DwDictationButton` is a SIBLING of `RichTextToolbar` inside the same
+ *     `if (focusedBlock != null && enabled)` block in `RichTextEditor`, which is why it vanishes on
+ *     focus loss exactly as reason 2 describes — and is why a verb hosted like it would too.
  *
  * ── SO: A CARD UNDER THE FIELD, AND THE PASSAGE IS THE PARAGRAPH THE CARET IS IN ────────────────
  *
@@ -161,12 +169,21 @@ internal fun DwAiVerbsPanel(
     var target by remember { mutableStateOf<String?>(null) }
 
     /*
-      THE GATE IS EVALUATED WHEN THE CARD IS DRAWN, AND EVERY RUNG OF IT AGAIN AT THE PRESS.
+      THE GATE IS EVALUATED WHERE THE CARD IS DRAWN, NOT AT THE TOP OF THIS COMPOSABLE.
 
       `surface.gate(context)` reaches `ConnectivityManager` through `getSystemService`, so it is called
-      from the branch that draws the card rather than from the top of this composable — this panel
-      lives under a field that recomposes on every keystroke, and a read in the composition body would
-      be one system-service call per character typed.
+      from inside the `if (open …)` branch — this panel lives under a field that recomposes on every
+      keystroke, and a read in the composition body would be one system-service call per character
+      typed, on a card that is shut.
+
+      WHAT `start` RE-READS AT THE PRESS IS THE PAIR AND THE PASSAGE, and not the whole ladder. This
+      comment used to claim every rung was re-evaluated there; it is not, and the claim mattered
+      because it named the wrong mechanism as the safety net. The repository/workshop pair is re-read
+      because a sync can land while a card is open, and the passage because the caret can move. Consent,
+      the connection and the ceiling can all change under an open card too — and a press made after one
+      of them did is answered by the SERVER's own sentence through `dwAiVerbProblem` (a 409, a 429, or
+      the `IOException` arm that returns the offline sentence), which is the browser's mechanism and is
+      better than this client's guess at all three.
     */
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (running) {
@@ -203,7 +220,13 @@ internal fun DwAiVerbsPanel(
         if (open && !running) {
             val gate = surface.gate(context)
 
-            /** Run one verb. Re-checks every rung, because every one of them can change under a card. */
+            /**
+             * Run one verb.
+             *
+             * Re-checks the two rungs THIS CLIENT can answer more cheaply than a round trip — the
+             * server-id pair and the passage — and lets the server answer the rest. See the comment
+             * above the column for why that is the right division and not a gap.
+             */
             fun start(verb: String, targetLanguage: String? = null) {
                 problem = null
                 /*
@@ -378,24 +401,27 @@ internal fun DwAiVerbsPanel(
                                         lineHeight = 16.sp,
                                     )
                                 }
-                                if (surface.cap.limit == null && surface.cap.remaining == null) {
-                                    /*
-                                      THE MISSING PRE-FLIGHT, STATED RATHER THAN GUESSED AT.
+                                /*
+                                  TWO DIFFERENT FACTS, AND THIS BRANCHED ON A SHAPE THEY SHARE.
 
-                                      `ai_verb_cap.allowance_payload` rides on the 201 and on the 429
-                                      and nowhere else — there is no route that answers "what is my
-                                      allowance", which was checked against `backend/app/api/routes/`
-                                      rather than assumed. So until a run has gone past on this phone
-                                      today there is no number, and this cannot say whether the
-                                      ceiling is near, far or absent. Silence would leave a designer
-                                      discovering it as a refusal after typing a language in.
-                                    */
+                                  This read `cap.limit == null && cap.remaining == null` and printed
+                                  the "not known until one goes through" sentence for both — so a
+                                  designer on an UNCAPPED deployment, whose phone had been told exactly
+                                  that, was warned about a ceiling nobody can see. `allowance_payload`
+                                  sends both numbers as null where there is no cap, deliberately,
+                                  *"because 0 remaining and 'no ceiling' must not look alike"*, and
+                                  `DwAiVerbCapView.told` is what keeps the two apart now. Same defect
+                                  class as the `?: 0` that file argues against, from the other side.
+
+                                  THE SENTENCES ARE NOT WRITTEN HERE ANY MORE. Both live in
+                                  [dwAiVerbAllowanceNote] so the media row draws the same words in the
+                                  same state — it drew nothing at all, which was a divergence with no
+                                  argument behind it, on the surface whose press is the more expensive
+                                  of the two.
+                                */
+                                dwAiVerbAllowanceNote(surface.cap)?.let {
                                     Text(
-                                        "How many runs are left today is not known until one goes " +
-                                            "through — this server has no way to be asked without " +
-                                            "running something. If the allowance is already used " +
-                                            "up, the refusal will say so and nothing will have been " +
-                                            "spent finding out.",
+                                        it,
                                         color = MaterialTheme.field.muted,
                                         fontSize = 11.sp,
                                         lineHeight = 16.sp,

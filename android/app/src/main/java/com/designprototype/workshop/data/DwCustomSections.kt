@@ -239,7 +239,7 @@ data class DwCustomDefinitionDto(
      *
      * NOT `schemaVersion`, and the two must never be conflated. `schemaVersion` is
      * `registry_version()`, a digest of every key, type, tier, derivation and hydration mapping of
-     * the 496-field registry, and [StageSchemaStore] uses it to decide whether the BUNDLED asset is
+     * the whole registry, and [StageSchemaStore] uses it to decide whether the BUNDLED asset is
      * stale. A designer's own question must never move that digest, or every handset in the fleet
      * would treat its bundled schema as stale the moment anyone anywhere added a field (plan §4,
      * constraint 2).

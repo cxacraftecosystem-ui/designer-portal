@@ -5,6 +5,7 @@ import com.designprototype.workshop.data.DW_AI_VERB_COUNTDOWN_FROM
 import com.designprototype.workshop.data.DW_VERBS_NEED_A_CONNECTION
 import com.designprototype.workshop.data.DW_VERBS_NOTHING_SELECTED
 import com.designprototype.workshop.data.DwAiVerbCapRefused
+import com.designprototype.workshop.data.DwAiVerbCapView
 import com.designprototype.workshop.data.DwAiVerbRefused
 import com.designprototype.workshop.report.BlockKind
 import com.designprototype.workshop.report.RichBlock
@@ -36,10 +37,14 @@ import java.io.IOException
  *  2. **WHICH VERB A FILE IS OFFERED.** [dwMediaVerbsFor] mirrors `_VERB_MEDIA_TYPES`. Getting it
  *     wrong does not fail locally: it uploads a recording to a vision model and spends real credit to
  *     receive a parse error the designer cannot act on.
- *  3. **THE COUNTDOWN.** [dwAiVerbCountdownLine] must answer NOTHING on an uncapped deployment. The
- *     `?: 0` an implementer reaches for turns "no ceiling" into "no runs left", which withdraws the
- *     whole feature from exactly the deployments that never limited it. This is also the function
- *     whose absence let the browser compute the same forty words in three places.
+ *  3. **THE COUNTDOWN, AND THE SENTENCE WHERE THERE IS NO NUMBER TO COUNT.**
+ *     [dwAiVerbCountdownLine] must answer NOTHING on an uncapped deployment. The `?: 0` an implementer
+ *     reaches for turns "no ceiling" into "no runs left", which withdraws the whole feature from
+ *     exactly the deployments that never limited it. This is also the function whose absence let the
+ *     browser compute the same forty words in three places. [dwAiVerbAllowanceNote] fills the silence
+ *     it leaves, and has the same defect available in mirror image: "no ceiling" and "this phone has
+ *     been told nothing" are the SAME two nulls, and printing the second sentence for the first warns
+ *     a designer about a ceiling that does not exist.
  *  4. **WHOSE WORDS A REFUSAL IS.** [dwAiVerbProblem] must print the SERVER's sentence verbatim
  *     wherever the server sent one. A client that paraphrased a consent 409 or a cap 429 would be the
  *     second voice on a rule, which is how a client and a server come to disagree about what a
@@ -130,6 +135,29 @@ class DwAiVerbWordingTest {
         // A preview that simply stopped would be indistinguishable from a short paragraph, which is
         // the defect class this repository keeps re-fixing.
         assertTrue(long.length <= DW_VERB_PREVIEW_CHARS + 1)
+
+        /*
+          AND THE SAME ANSWER FOR A PASSAGE THE SIZE OF A REAL NARRATIVE, which is what the rewrite
+          from a whitespace-run `Regex` split into a single bounded pass had to preserve. This input is
+          20,000 characters — the server's own bound on a passage — and the whole of it used to be
+          collapsed into intermediate strings, per keystroke, to produce these 160.
+        */
+        val narrative = dwVerbPassagePreview("क ".repeat(10_000))
+        assertTrue(narrative, narrative.length <= DW_VERB_PREVIEW_CHARS + 1)
+        assertTrue(narrative.endsWith("…"))
+        // The ellipsis replaces the space that fell on the boundary rather than following it: a
+        // preview reading "… …" would look like the passage itself had trailed off.
+        assertTrue(narrative, !narrative.contains(" …"))
+        // Leading and trailing whitespace is dropped and interior runs collapse to one space —
+        // including a tab and a newline, and no space is left before the ellipsis.
+        val ragged = "\n  one \t\t two   \n"
+        assertEquals("one two", dwVerbPassagePreview(ragged))
+        // A passage of nothing but whitespace is nothing at all, not a single space.
+        assertEquals("", dwVerbPassagePreview(" \n\t "))
+        // Exactly at the limit is NOT truncated, which is the boundary the extra character exists to
+        // find: 160 characters is a preview, 161 is a truncation.
+        assertEquals("अ".repeat(DW_VERB_PREVIEW_CHARS), dwVerbPassagePreview("अ".repeat(DW_VERB_PREVIEW_CHARS)))
+        assertTrue(dwVerbPassagePreview("अ".repeat(DW_VERB_PREVIEW_CHARS + 1)).endsWith("…"))
     }
 
     @Test
@@ -214,6 +242,58 @@ class DwAiVerbWordingTest {
         // and a countdown that vanished at exactly the moment it mattered would be the one reading a
         // designer cannot act on.
         assertTrue(dwAiVerbCountdownLine(0, "2026-08-19") != null)
+    }
+
+    // ── 3b. What to say when there is no number to count ─────────────────────────────────────────
+
+    /**
+     * **THE TWO STATES THE COUNTDOWN CANNOT DISTINGUISH, AND WHICH THE PANEL GOT WRONG.**
+     *
+     * `dwAiVerbCountdownLine` answers null whenever `remaining` is null, which is true both for a
+     * phone that has been told nothing and for a deployment with no ceiling. `DwAiVerbsPanel` filled
+     * that silence by branching on `limit == null && remaining == null` and printing "not known until
+     * one goes through" for BOTH — telling a designer on an uncapped server that there might be a
+     * ceiling nobody can see. That is the `?: 0` defect from the other direction, and
+     * `DwAiVerbCapView.told` is what makes it expressible.
+     */
+    @Test
+    fun `an untold allowance and an uncapped one get different sentences`() {
+        val untold = dwAiVerbAllowanceNote(
+            DwAiVerbCapView(told = false, spent = false, limit = null, remaining = null)
+        )
+        val uncapped = dwAiVerbAllowanceNote(
+            DwAiVerbCapView(told = true, spent = false, limit = null, remaining = null)
+        )
+        assertTrue(untold != null && untold.contains("not known until one goes through"))
+        assertTrue(uncapped != null && uncapped.contains("no daily ceiling"))
+        // The point of the whole change: two facts, two sentences. Equal strings here would mean the
+        // branch had collapsed back onto the numbers.
+        assertNotEquals(untold, uncapped)
+        // And the uncapped one must not tell a designer their allowance is unknown, which is the
+        // specific false statement this repair removed.
+        assertTrue(!uncapped!!.contains("not known"))
+    }
+
+    /**
+     * WHERE A NUMBER IS KNOWN, THIS SAYS NOTHING — the countdown owns that line.
+     *
+     * Both drawn together would put two sentences about one ceiling under one button. The surfaces do
+     * draw both, so the division has to be here rather than in each of them.
+     */
+    @Test
+    fun `a known allowance leaves the line to the countdown`() {
+        assertNull(
+            dwAiVerbAllowanceNote(
+                DwAiVerbCapView(told = true, spent = false, limit = 25, remaining = 3)
+            )
+        )
+        // Including a ceiling of zero, which is a real setting and is the gate's refusal to word, not
+        // this line's.
+        assertNull(
+            dwAiVerbAllowanceNote(
+                DwAiVerbCapView(told = true, spent = true, limit = 0, remaining = 0)
+            )
+        )
     }
 
     // ── 4. Whose words a refusal is ──────────────────────────────────────────────────────────────

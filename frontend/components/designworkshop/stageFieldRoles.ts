@@ -15,13 +15,14 @@
  * matches six exact keys and no pattern. Its own doc block carries the reasoning and the measurement
  * behind that list.
  *
- * THE FIFTH DOES NOT GUESS, and the difference is worth naming because it is the shape the other four
- * would like to be. {@link measurableLengthFields} never looks at a key: it asks whether the registry
- * DECLARED the field numeric and DECLARED its unit to be a length. `lengthCm`, `finalWidthCm` and
- * `diameterCm` qualify because they carry `unit="cm"`; `weightG`, `makingTimeDays` and `materialCost`
- * do not, because they carry `unit="g"`, `"days"` and `"INR"` — not because of anything in their
- * names. A registry that adds a `unit="mm"` field gets the behaviour with no change here, and one
- * that adds `spanInHands` gets nothing, which is the correct answer in both directions.
+ * THE SEVENTH DOES NOT GUESS EITHER, and the difference is worth naming because it is the shape the
+ * other five would like to be. {@link measurableLengthFields} never looks at a key: it asks whether
+ * the registry DECLARED the field numeric and DECLARED its unit to be a length. `lengthCm`,
+ * `finalWidthCm` and `diameterCm` qualify because they carry `unit="cm"`; `weightG`,
+ * `makingTimeDays` and `materialCost` do not, because they carry `unit="g"`, `"days"` and `"INR"` —
+ * not because of anything in their names. A registry that adds a `unit="mm"` field gets the
+ * behaviour with no change here, and one that adds `spanInHands` gets nothing, which is the correct
+ * answer in both directions.
  */
 
 import type { DwEntity, DwField } from "@/lib/designWorkshops";

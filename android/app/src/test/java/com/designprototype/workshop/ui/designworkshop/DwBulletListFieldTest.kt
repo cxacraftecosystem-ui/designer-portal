@@ -7,6 +7,7 @@ import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.entity
 import com.designprototype.workshop.data.liveFields
 import com.designprototype.workshop.ui.joinNumbered
+import com.designprototype.workshop.ui.numberedRowsAfterEdit
 import com.designprototype.workshop.ui.splitNumbered
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -36,8 +37,15 @@ import java.io.File
  *
  * Nothing here composes anything. A unit test cannot see that the numbered rows were drawn; what it
  * can see is that the registry still says what [FieldRenderer]'s LONG_TEXT arm and
- * [dwNumericTextField] read, and that the stored-string codec both surfaces share still round-trips.
- * Those are the two things that go quietly wrong.
+ * [dwNumericTextField] read, that the stored-string codec both surfaces share still round-trips, and
+ * that one keystroke in one row still produces the rows it should. Those are the three things that go
+ * quietly wrong.
+ *
+ * THAT THIRD ONE IS ASSERTABLE ONLY BECAUSE THE RULE WAS LIFTED OUT OF THE LAMBDA. `numberedRowsAfterEdit`
+ * exists as a function so the Enter-splits-a-row behaviour and the row-count lock that protects an
+ * in-flight dictation can be checked here rather than by reading a `TextField` callback nothing in this
+ * project can compose. The greying of the microphones and of the remove button is still reading-only,
+ * and is stated as such in the report rather than claimed as covered.
  */
 class DwBulletListFieldTest {
 
@@ -166,6 +174,76 @@ class DwBulletListFieldTest {
         // Idempotent: what the control writes is what it reads.
         val stored = "one\ntwo\nthree"
         assertEquals(stored, joinNumbered(splitNumbered(stored)))
+    }
+
+    /**
+     * ENTER MAKES A NEW BULLET, AND A PASTE FULL OF NEWLINES MAKES SEVERAL.
+     *
+     * The affordance the whole LONG_TEXT/BULLETS arm exists for: a designer types a point and presses
+     * Enter for the next, rather than being handed one box and the words "one point per line". The
+     * text before the break stays where it was and the remainder becomes rows under it — trimmed,
+     * because a pasted block arrives with indentation that is not part of any point.
+     */
+    @Test
+    fun `enter inside a row pushes the remainder into new bullets`() {
+        val rows = listOf("do not wash hot", "dry in shade")
+        // An ordinary keystroke, untrimmed — trimming here would eat the space between two words as
+        // the designer types it.
+        assertEquals(listOf("do not wash hot ", "dry in shade"), numberedRowsAfterEdit(rows, 0, "do not wash hot "))
+        // Enter at the end of row 0.
+        assertEquals(
+            listOf("do not wash hot", "", "dry in shade"),
+            numberedRowsAfterEdit(rows, 0, "do not wash hot\n")
+        )
+        // A pasted block lands as one bullet per line, in order, under the row it was pasted into.
+        assertEquals(
+            listOf("one", "two", "three", "dry in shade"),
+            numberedRowsAfterEdit(rows, 0, "one\n  two  \nthree")
+        )
+        // An index nothing declares answers the list unchanged rather than throwing — a crash on a
+        // keystroke is not a defensible way to find out a caller was wrong.
+        assertEquals(rows, numberedRowsAfterEdit(rows, 7, "anything"))
+    }
+
+    /**
+     * **WHILE A ROW IS DICTATING, NOTHING MAY CHANGE THE ROW COUNT — AND THIS IS THE ASSERTION THAT
+     * SAYS SO.**
+     *
+     * A row's identity in `NumberedListInput` is its INDEX: the loop is `rows.forEachIndexed` with no
+     * `key()`, and `DwDictationButton` is handed that index when it is created. So an insert above the
+     * dictating row shifts its data down while the in-flight button keeps its position, and the commit
+     * merges the spoken sentence into a point the designer never opened — verbatim the failure that
+     * button's own comment names, *"which for a collection row means writing into whichever row was
+     * open when the recogniser started"*. `rememberUpdatedState` does not help: it keeps the lambda
+     * current, and the current lambda faithfully writes to the wrong point.
+     *
+     * THE CHARACTERS ARE ALL KEPT. Folding the break to a space rather than dropping the tail is the
+     * difference between a designer pressing Enter again in a second and a designer losing what they
+     * typed — and losing it silently, which is the shape this repository keeps re-fixing.
+     *
+     * THIS IS THE TEST THAT FAILS IF THE LOCK IS REMOVED, which is the point of writing it: without
+     * the `rowsLocked` branch the first assertion below returns three rows instead of two.
+     */
+    @Test
+    fun `a locked row set never grows or shifts under an in-flight dictation`() {
+        val rows = listOf("soaking", "printing")
+        val locked = numberedRowsAfterEdit(rows, 0, "soaking\nrinsing", rowsLocked = true)
+        // The row count may not change while a recogniser is running.
+        assertEquals(rows.size, locked.size)
+        // Folded to a space, not dropped: every character the designer typed survives.
+        assertEquals(listOf("soaking rinsing", "printing"), locked)
+        // And the row that was NOT edited is untouched, so no later index moves.
+        assertEquals("printing", locked[1])
+        // Unlocked, the same keystroke splits — so the lock is what changed the answer and not the
+        // input. Without this pair the assertions above would also pass on a control that had simply
+        // stopped splitting at all.
+        assertEquals(
+            listOf("soaking", "rinsing", "printing"),
+            numberedRowsAfterEdit(rows, 0, "soaking\nrinsing", rowsLocked = false)
+        )
+        // A locked ordinary keystroke is completely unaffected: the lock is about the row COUNT, not
+        // about typing, and a designer may go on editing another point while one is dictating.
+        assertEquals(listOf("soaking", "printing now"), numberedRowsAfterEdit(rows, 1, "printing now", rowsLocked = true))
     }
 
     /**

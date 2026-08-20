@@ -62,6 +62,11 @@ import kotlin.math.min
  * ([com.designprototype.workshop.ui.designworkshop.priceBands]) and the server labels the same bands
  * through the same `_group_indian`. A second grouping there would put "₹ 1,00,000–1,24,999" on this
  * figure's axis and "₹ 100,000–124,999" in its band label, in one picture.
+ *
+ * A THIRD CALLER, OUTSIDE THE REPORT ENTIRELY: `data.dwVerbPassageTooLong` groups the two character
+ * counts in the AI verbs' too-long refusal. Same reason at a smaller scale — "20001 characters and at
+ * most 20000" is a pair a designer has to count digits to compare — and reusing this rather than
+ * writing a fourth grouping is what keeps one number one shape across the app.
  */
 internal fun groupIndian(digits: String): String {
     if (digits.length <= 3) return digits

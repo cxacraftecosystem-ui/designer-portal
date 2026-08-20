@@ -144,14 +144,18 @@ internal fun DwMediaAiVerbsRow(
     var subtitled by remember(surface.serverWorkshopId) { mutableStateOf<Set<String>?>(null) }
 
     /*
-      THE GATE AND THE DUPLICATE CHECK ARE BOTH READ WHEN THE ROW IS OPENED, AND THE GATE AGAIN AT
-      THE PRESS.
+      THE GATE AND THE DUPLICATE CHECK ARE BOTH READ WHEN THE ROW IS OPENED.
 
       Keyed on [open] rather than on the tile, so a designer who walked out of range with the row
-      shut and back into it before opening one gets the answer that is true now — and one who opens
-      the row, loses signal and presses anyway is answered by the re-check inside `start` rather than
-      by a stale "you have a connection". `StillReading` is the state before either has answered, and
-      it draws nothing at all.
+      shut and back into it before opening one gets the answer that is true now. `StillReading` is the
+      state before either has answered, and it draws nothing at all.
+
+      A DESIGNER WHO LOSES SIGNAL BETWEEN OPENING THE ROW AND PRESSING IS ANSWERED BY THE FAILURE AND
+      NOT BY A SECOND GATE READ. This comment used to say `start` re-checked the gate; it does not —
+      it re-reads the workshop pair and `dwVerbMediaRefusal`, which are the two facts that change in
+      the direction that makes a verb POSSIBLE. A press made with no signal reaches `dwAiVerbProblem`,
+      whose `IOException` arm returns the same `DW_VERBS_NEED_A_CONNECTION` the gate would have shown,
+      so the sentence is identical and nothing is spent: no request reaches the server.
     */
     var gate by remember(item.id) { mutableStateOf<DwVerbGate>(DwVerbGate.StillReading) }
     LaunchedEffect(open, item.id, surface.serverWorkshopId, surface.consent) {
@@ -363,6 +367,25 @@ internal fun DwMediaAiVerbsRow(
                 }
                 dwAiVerbCountdownLine(surface.cap.remaining, surface.today)?.let {
                     Text(it, color = MaterialTheme.field.warning, fontSize = 11.sp, lineHeight = 16.sp)
+                }
+                /*
+                  AND WHAT THE COUNTDOWN CANNOT SAY, WHICH THIS SURFACE USED TO SAY NOTHING ABOUT.
+
+                  `dwAiVerbCountdownLine` answers null whenever there is no `remaining` to count, which
+                  covers BOTH "this phone has not been told an allowance" and "this deployment has no
+                  ceiling" — so this row was silent in both. [DwAiVerbsPanel] printed a sentence for
+                  them and this did not, and nothing argued for the difference. Its argument applies
+                  here with more force than there: the press below can be a whole recording going up
+                  over the designer's own mobile data, so discovering the ceiling as a refusal
+                  afterwards costs the upload as well as the wait.
+
+                  ONE COPY OF BOTH SENTENCES, in [dwAiVerbAllowanceNote], for the reason the countdown
+                  is one copy — the browser's own review found this feature's cap wording computed
+                  inline in three places. Muted rather than `field.warning`: neither sentence is a
+                  refusal, and the countdown above is the line that is.
+                */
+                dwAiVerbAllowanceNote(surface.cap)?.let {
+                    Text(it, color = MaterialTheme.field.muted, fontSize = 11.sp, lineHeight = 16.sp)
                 }
             }
         }

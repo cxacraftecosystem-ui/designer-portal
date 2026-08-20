@@ -259,14 +259,14 @@ fun dwFoldServerStage(
     // `containsKey` and NOT "is filled", and the reason is NOT the one this comment used to give. It
     // said "a key the draft holds as an empty string is a designer who cleared it" — which the stage
     // screen never produces: `StageScreen.put` REMOVES a key whose value went blank rather than
-    // storing "" or a null, deliberately, so that 496 fields across 22 stages do not accumulate a null
-    // apiece to be re-sent on every metered sync. A field the designer cleared this morning is
-    // therefore ABSENT here, indistinguishable from one never typed, and this loop re-fills it from
-    // the server. That is the documented behaviour and the header argues for it: the clearance never
-    // reached the server, the server does still hold the value, and showing it is the truth. What it
-    // is not is a clearance being honoured — the draft carries no record of one to honour. (The one
-    // record a designer's deletion DOES leave is `emptiedEntities`, and that one is honoured, in the
-    // row loop below.)
+    // storing "" or a null, deliberately, so that hundreds of fields across 22 stages do not
+    // accumulate a null apiece to be re-sent on every metered sync. A field the designer cleared this
+    // morning is therefore ABSENT here, indistinguishable from one never typed, and this loop re-fills
+    // it from the server. That is the documented behaviour and the header argues for it: the clearance
+    // never reached the server, the server does still hold the value, and showing it is the truth.
+    // What it is not is a clearance being honoured — the draft carries no record of one to honour.
+    // (The one record a designer's deletion DOES leave is `emptiedEntities`, and that one is honoured,
+    // in the row loop below.)
     //
     // What `containsKey` is actually for is every OTHER way an empty string reaches this draft: a
     // stage seeded by `fromRemote` from a server that holds "", a rich-text control that writes an

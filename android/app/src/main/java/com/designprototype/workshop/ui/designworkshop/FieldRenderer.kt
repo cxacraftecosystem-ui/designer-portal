@@ -77,12 +77,21 @@ import java.io.File
 import java.time.LocalDate
 
 /**
- * ONE composable that can draw any of the registry's fields — 570 of them in the bundled asset as
- * this was written, counted from it rather than remembered — by dispatching on [FieldDto.type].
+ * ONE composable that can draw any of the registry's fields, by dispatching on [FieldDto.type].
+ *
+ * NO FIELD COUNT IS WRITTEN IN THIS FILE, ON PURPOSE — AND THE HISTORY IS THE ARGUMENT. This comment
+ * has said 496 and then 570, each measured honestly from
+ * `android/app/src/main/assets/design-workshop-schema.json` at the time; both were wrong within days,
+ * because the registry owner regenerates that asset whenever a field lands, and it moved TWICE during
+ * the single session in which this note was written. A number in a comment beside a generated file is
+ * stale before the next commit, and the next reader is then misled by a figure that looks measured.
+ * The claims below carry their whole argument without one; where a count is genuinely load-bearing it
+ * belongs in a test that reads the asset, which is what `DwBulletListFieldTest` and
+ * `DwPhotoMeasureFieldTest` do.
  *
  * THIS IS THE WHOLE POINT OF THE FEATURE. There is no per-stage form code anywhere in this app and
- * there must never be: the 22 stages carry 570 typed fields across 43 entities, that count moves with
- * every registry edit, the tiers within them
+ * there must never be: the 22 stages carry hundreds of typed fields across 43 entities, that count
+ * moves with every registry edit, the tiers within them
  * move between studies, and hand-writing the forms would make every registry edit an app release
  * while guaranteeing that the phone, the web form, the validator and the report writer each end up
  * with their own opinion of what stage 14 contains. They would drift, and the first anyone would
@@ -321,7 +330,9 @@ fun FieldRenderer(
         // because a constant without a branch renders an empty `when` arm instead of degrading to
         // a text box, which loses the designer's prose silently.
         //
-        // The 81 NARRATIVE fields in the server registry carry this type as of the same change.
+        // The server registry's NARRATIVE fields carry this type as of the same change. (It said "the
+        // 81 NARRATIVE fields"; the asset has declared more than that for some time. The count is not
+        // the point and is not replaced with a fresher one — see this file's header.)
         // A phone that has not yet fetched that registry still sees LONG_TEXT and still captures a
         // plain string, and the server reads a plain string as unformatted prose — so the two
         // builds interoperate in both directions and no fieldwork is lost either way.
@@ -786,11 +797,12 @@ private fun InlineError(error: String?) {
  * field is wrong.
  *
  * AN EXACT KEY SET RATHER THAN A PATTERN, so it cannot over-match. Measured against the bundled
- * `design-workshop-schema.json` rather than assumed: of its 570 fields exactly three have a
- * pincode-shaped key — `participant.pincode`, `tool.recordPincode` and `existingProduct.recordPincode`
- * — and all three are TEXT. A future PIN-code field under a fourth name gets the alphabetic keyboard
- * until somebody adds it here, which is the failure mode of a stopgap and the reason the declared
- * attribute is the answer rather than this.
+ * `design-workshop-schema.json` rather than assumed: exactly three fields in it have a pincode-shaped
+ * key — `participant.pincode`, `tool.recordPincode` and `existingProduct.recordPincode` — and all
+ * three are TEXT. (The registry's total is deliberately not quoted here; see this file's header.) A
+ * future PIN-code field under a fourth name gets the alphabetic keyboard until somebody adds it here,
+ * which is the failure mode of a stopgap and the reason the declared attribute is the answer rather
+ * than this.
  *
  * NOT the place to fix `maxLength`. All three declare 10 where an Indian PIN code is 6, so the box
  * accepts and the report prints a ten-character value the record page could not have produced. That
@@ -1029,7 +1041,21 @@ private fun DwNumberedPointsInput(
      */
     var rows by remember(field.key, resetKey) { mutableStateOf(splitNumbered(DwValues.text(value))) }
     var localError by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
-    /** Which row the recogniser is speaking into, or -1. Paired with [spoken]; see [rowOverlay]. */
+    /**
+     * Which row the recogniser is speaking into, or -1. Paired with [spoken].
+     *
+     * **ONE ROW AT A TIME, AND THIS PAIR IS WHY.** A single `Int` and a single `String` can hold ONE
+     * row's partial, so two live recognisers are not merely undesirable here — they are not
+     * representable. Every microphone below is therefore gated on this value: while it is >= 0, only
+     * the row it names may start another.
+     *
+     * WITHOUT THE GATE, tapping row 1's microphone and then row 2's was a broken keyboard in both
+     * rows. Row 2's first `onPartial` moved this to 2, which cleared row 1's overlay and made row 1
+     * writable again while its recogniser was still running — the exact case `NumberedListInput`'s
+     * `rowOverlay` KDoc says the overlay exists to prevent — and then whichever recogniser finished
+     * first set this back to -1, dropping the other row's overlay mid-sentence and letting its
+     * eventual commit land with nothing on screen having said it was ever listening.
+     */
     var spokenRow by remember(field.key, resetKey) { mutableStateOf(-1) }
     var spoken by remember(field.key, resetKey) { mutableStateOf("") }
 
@@ -1053,6 +1079,27 @@ private fun DwNumberedPointsInput(
     val dictationAvailable = rememberDictationAvailable()
     val canDictate = services != null && dictationAvailable && dictatable(DwFieldType.LONG_TEXT)
 
+    /*
+      THE HELP LINE IS DRAWN BY [FieldCaption], THE SAME COMPOSABLE EVERY OTHER FIELD ON THIS STAGE
+      USES, AND NOT PASSED THROUGH THE SHARED CONTROL AS `helper`.
+
+      NOT BECAUSE THE COLOUR WAS WRONG — IT WAS NOT, AND THAT IS WORTH WRITING DOWN because it was
+      reported as a visible defect and it does not reproduce. `NumberedListInput`'s helper `Text` reads
+      the legacy top-level `Muted`, which is `legacyPalette.value.scheme.onSurfaceVariant`; that
+      resolves to `FieldPalette.Ink500Light`/`Ink500Dark`, and `MaterialTheme.field.muted` is
+      `FieldTokens.muted`, which is `Ink500Light`/`Ink500Dark`. The same two colours, and
+      `DesignWorkshopTheme` repoints `legacyPalette` at the active scheme in the same composition, so
+      they cannot even come apart between light and dark. Nobody was looking at two greys.
+
+      WHAT IS WRONG IS THAT TWO PALETTES HAD TO AGREE FOR THAT TO BE TRUE. Theme.kt calls the legacy
+      names transitional and says new code should read `MaterialTheme.field`; the day either `muted` or
+      `onSurfaceVariant` is retuned on its own, this one help line on this one stage would move and
+      nothing would fail. Drawing it through the composable every other arm draws it through — in the
+      same position, above the label, as `DateField` and the rest place it — removes the coincidence
+      rather than relying on it. The shared control keeps its `helper` parameter for the record form,
+      whose own header is on the legacy names throughout.
+    */
+    FieldCaption(field)
     NumberedListInput(
         label = fieldLabel(field),
         // `fieldLabel` has already added the asterisk if the registry says the field is required.
@@ -1062,12 +1109,17 @@ private fun DwNumberedPointsInput(
         mutedLabel = true,
         items = rows,
         error = localError ?: error,
-        helper = field.help.takeIf { it.isNotBlank() },
+        helper = null,
         enabled = enabled,
         rowOverlay = { index ->
             if (index != spokenRow || spoken.isBlank()) null
             else appendSpoken(rows.getOrElse(index) { "" }, spoken)
         },
+        // WHILE ONE ROW IS SPEAKING, NO ROW MAY BE REMOVED AND NO ROW MAY BE INSERTED ABOVE ANOTHER.
+        // The shared control's parameter carries the argument: a row's identity in that loop is its
+        // INDEX, so a deletion or an Enter above the dictating row hands the in-flight commit a
+        // different point than the one the designer spoke into.
+        rowsLocked = spokenRow >= 0,
         // THE DOUBLE BRACES ARE NOT A TYPO. `else { … }` is a BLOCK, so a lambda passed on the else
         // branch has to be the block's own last expression — the same shape [ScalarInput] uses for
         // its `trailingIcon`. Written as `else { index -> … }` this is a block beginning with a
@@ -1075,7 +1127,13 @@ private fun DwNumberedPointsInput(
         rowTrailing = if (!canDictate) null else {
             { index ->
                 DwDictationButton(
-                    enabled = enabled,
+                    // ONE MICROPHONE LIVE AT A TIME. Not a mode and not a new rule — it is what the
+                    // single [spoken]/[spokenRow] pair has always assumed, made honest. The row that
+                    // is speaking keeps its own button live so it can be stopped; every other row's
+                    // is greyed until it finishes, which is also the answer to "why did my second tap
+                    // do nothing" — greyed says waiting, where a live button that fought the first
+                    // recogniser said nothing at all.
+                    enabled = enabled && (spokenRow < 0 || spokenRow == index),
                     // ONE MICROPHONE PER ROW, which is the whole reason [rowTrailing] exists. A
                     // single button for the block cannot know which point a phrase belongs to, and
                     // its only defensible guess — the last row — is wrong exactly when a designer

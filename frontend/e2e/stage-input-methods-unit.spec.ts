@@ -187,6 +187,16 @@ test("the address control reuses the record page's lists, zone check and six-dig
   // Changing the state clears the district in ONE commit, so no render ever sees a row naming one
   // state and a district from another.
   expect(source).toContain("onPatch({ [field.key]: next || null, [role.districtField.key]: null })");
+  // ...and RE-PICKING THE STATE ALREADY SHOWING is not a change, so it must not run that clear.
+  // `SearchableSelect.choose` fires `onChange` unconditionally, so tapping the value already
+  // selected — how a designer confirms what a hydrated row says — wiped the district. The record
+  // page loses the same gesture and can afford to; a stage entry is a copy nothing re-resolves and
+  // the district list needs the network it may not have.
+  expect(source).toContain("if (next === own) return;");
+  // The zone check is fed the STATE, per role, never this box's own value as a fall-through: a
+  // `pincode` field on an entity with no state sibling used to pass the PIN itself as a state name.
+  expect(source).toContain('const stateName = role.role === "state" ? own : role.stateField ?');
+  expect(source).not.toContain("inputValue(row[role.stateField.key]) : own;");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -226,6 +236,20 @@ test("there is ONE numbered-list control, and both surfaces mount it", () => {
   // is the same signal the RICH_TEXT branch beside it already reads to open a numbered item.
   expect(stage).toContain('if (field.reportRole === "BULLETS") {');
   expect(stage).toContain("<NumberedListField");
+  // AND THE GROUP IS NAMED. The rows are named by their ordinal alone, so an unnamed group put two
+  // identical runs of "Point 1"…"Point n" on one stage — `participant.dos` and `participant.donts`
+  // sit next to each other. `unlabelled` renders the `<span className="field-label" id={labelId}>`,
+  // so the id has to reach the control or that span names nothing at all. `DosDontsField` had
+  // already paid for this defect on the record page (a11y-barriers.spec.ts finds its group by name).
+  const bullets = stage.slice(stage.indexOf("<NumberedListField"), stage.indexOf("<NumberedListField") + 400);
+  expect(bullets).toContain("labelId={labelId}");
+  const rows = read("components/forms/NumberedListInput.tsx");
+  expect(rows).toContain('role="group" aria-labelledby={labelId}');
+  // ...on the string-in/string-out wrapper only. `NumberedPointRows` stays unnamed because
+  // `DosDontsField` supplies its own group, and a group inside a group announces the heading twice.
+  expect(rows.slice(rows.indexOf("export function NumberedPointRows"), rows.indexOf("export function NumberedListField"))).not.toContain(
+    'role="group"'
+  );
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -269,11 +293,17 @@ test("the card reader is offered on the number box itself, and the media reader 
 });
 
 test("the roles file still says how many roles there are, and which of them guess", () => {
-  // The header is the only place a reader learns that four of these are inferences and what a wrong
+  // The header is the only place a reader learns that five of these are inferences and what a wrong
   // answer costs. It has been wrong about the count once already (it said five while six were
   // declared), and a stale count is how the next reader concludes the file is not maintained.
   const source = read(ROLES);
   expect(source).toContain("There are seven");
   expect(source).toContain("FIVE OF THE SEVEN GUESS, AND SAY SO");
   expect(source).toContain("{@link addressListRole} IS THE ONE THAT COULD REFUSE AN ANSWER");
+  // The ORDINAL as well as the count, because the count moving is what made the ordinal stale the
+  // last time: the header went to seven roles and five guessers while this paragraph still called
+  // `measurableLengthFields` "THE FIFTH" and the guessers "the other four". Both halves are pinned
+  // so raising the count cannot silently leave a paragraph counting to an older total.
+  expect(source).toContain("THE SEVENTH DOES NOT GUESS EITHER");
+  expect(source).toContain("other five would like to be");
 });

@@ -460,6 +460,20 @@ export function FieldInput({
        * carries a MASKED value from `mask_identity_number` when it was hydrated — which is why
        * `currentValue` is passed: the control says what confirming would replace before it happens.
        *
+       * WHAT THIS MOUNT DOES NOT DO IS TEST WHETHER THAT VALUE IS STILL THE MASK, and it is written
+       * down rather than left to be inferred because the code cannot say which way it was decided.
+       * Confirming a candidate calls `onChange(next)` unconditionally, so the full PM Vishwakarma
+       * number can replace the masked copy hydration wrote — into a row nothing re-resolves
+       * (invariant 1), on a surface whose stage reads do not pass through
+       * `records._redact_sensitive`, which is the reason `design_workshops` masks it on the way in at
+       * all. Two things bound the change: the box was hand-typeable before this control existed, so
+       * the number arriving unmasked is not a new class of exposure, and `IdentityCardCapture` names
+       * the replacement before it happens — it prints the value being replaced, and "Confirming
+       * replaces it." beside it. The alternative is to withhold the mount while the current value
+       * still looks like a mask, which would also withhold it from the designer standing with the
+       * card in their hand. Which of the two a grantee-readable row should get is an owner call and
+       * has not been made; nothing here should be read as having made it.
+       *
        * `IdentityCardReader` stays exactly where it is. It is the right control for a card a designer
        * really did attach, and it is the only one of the two that can offer a real delete.
        */
@@ -531,14 +545,19 @@ export function FieldInput({
        * hydrated line already begins "1." — `_step_lines` writes its own ordinals — the rows draw
        * their ordinal beside it and the duplication becomes visible instead of only being printed.
        *
-       * `unlabelled`, because the rows carry a Remove button each and an "Add point" below them; the
-       * ordinal-named row labels do the naming, per the `<label>` rule in the file header.
+       * `unlabelled`, because the rows carry a Remove button each and an "Add point" below them. The
+       * `<span className="field-label">` that wrapper renders is then handed to the control as
+       * `labelId`, per the `<label>` rule in the file header: the rows are named by their ordinal
+       * alone, so without the group name `participant.dos` and `participant.donts` — adjacent on one
+       * stage — are announced as two identical runs of "Point 1"…"Point n". `DosDontsField` already
+       * names its group for exactly that reason.
        */
       if (field.reportRole === "BULLETS") {
         return unlabelled(
           <NumberedListField
             value={inputValue(value)}
             onChange={(next) => onChange(next || null)}
+            labelId={labelId}
             disabled={disabled}
             describedBy={describedBy}
             invalid={Boolean(error)}

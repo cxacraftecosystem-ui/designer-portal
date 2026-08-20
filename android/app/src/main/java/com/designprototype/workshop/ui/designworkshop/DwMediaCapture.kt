@@ -450,12 +450,38 @@ internal fun DwMediaCaptureCard(
               the wrong description under a picture, permanently, in a file already delivered."* The
               same argument, applied to the control that produces one.
 
-              A DESCRIPTOR THIS DEVICE CANNOT RESOLVE GETS NOTHING. `item` is null when the bytes have
-              gone missing — the row above already says so — and there is no file to send.
-              [DwMediaAiVerbsRow] draws nothing at all for a PDF or a document, which is the one place
-              this feature stays silent on purpose; see the note on `dwMediaVerbsFor`.
+              A DESCRIPTOR THIS DEVICE CANNOT RESOLVE GETS A SENTENCE AND NOT SILENCE, AND THERE ARE
+              TWO WAYS TO BE ONE.
+
+              `item` is null when the bytes have gone missing, which the row above already says. It is
+              ALSO null for a file this phone never imported: `media.resolve` reads `StageScreen`'s
+              `mediaIndex`, which is `draft?.media.orEmpty().associateBy { it.id }` — LOCAL descriptors
+              only — so a photograph attached in the browser answers null here even though the server
+              certainly holds it. That was the second cause, this comment claimed the first was the
+              only one, and the consequence was the worst-shaped one available: the verbs were silently
+              missing on exactly the files a verb could certainly have run over, with no control and no
+              sentence saying why. `RichTextEditor`'s comment on the same resolver had already recorded
+              the case — *"a picture placed on the web carries a server id and answers null, which is a
+              different thing to draw and not an error."*
+
+              WHICH OF THE TWO IT IS CANNOT BE TOLD APART HERE, so the sentence names both; see
+              [DW_MEDIA_VERBS_NEED_THE_FILE_HERE], which also records what the fuller repair would be.
+              It is drawn only for a field type whose files could carry a verb at all
+              ([dwMediaFieldMayCarryVerbs]) — a FILE field's PDF gets no control and no sentence when it
+              IS resolvable, and an unresolvable one must not acquire an explanation the ordinary case
+              does not have. [DwMediaAiVerbsRow] applies the same rule from the bytes' own `mediaType`;
+              see the note on `dwMediaVerbsFor`.
             */
-            item?.let { DwMediaAiVerbsRow(item = it, enabled = enabled) }
+            if (item != null) {
+                DwMediaAiVerbsRow(item = item, enabled = enabled)
+            } else if (dwMediaFieldMayCarryVerbs(type)) {
+                Text(
+                    DW_MEDIA_VERBS_NEED_THE_FILE_HERE,
+                    color = MaterialTheme.field.muted,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
         }
 
         // Blur, resolution and duplicate advice, measured on this device from the bytes that were

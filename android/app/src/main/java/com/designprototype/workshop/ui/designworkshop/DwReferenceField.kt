@@ -272,6 +272,34 @@ private val INLINE_CREATABLE: Map<String, String> = mapOf(
  * finds nothing the clause is simply dropped, so a wrong answer costs a shorter sentence and never a
  * pointer at a box that does not exist. The `pendingHydration` note inside [DwReferenceSelectField]
  * records what guessing keys on this surface cost the last time.
+ *
+ * ── IT IS NOT THE WEB'S SENTENCE, AND THAT IS DELIBERATE. WHOEVER READS ONE FILE SHOULD KNOW ─────
+ *
+ * `StageReferenceField.tsx` declares TWO sentences and picks between them by rank —
+ * `CRAFT_REGISTER_LINK` for somebody `canManageCrafts` answers true for, `CRAFT_REGISTER_BLOCKED`
+ * ("ask the master admin") for everybody else — and its doc block asks the handset to carry "these
+ * words, not a second phrasing of them". This is a second phrasing, on purpose, for a reason that is a
+ * property of this file rather than a preference:
+ *
+ *  · **THIS PICKER HAS NO USER IN SCOPE.** [DwReferenceSelectField] takes a field, a value, a bridge
+ *    and a row; there is no `useAuth` equivalent to reach for, and threading one in to choose between
+ *    two sentences would put a second copy of the rank rule on this surface — which is what the
+ *    paragraph above refuses. One sentence therefore has to be true at BOTH ranks.
+ *  · **THE WEB'S BLOCKED SENTENCE IS NOT TRUE AT BOTH RANKS.** "Ask the master admin" is the wrong
+ *    next move for a Professor, who can add the craft themselves; and the web reaches it by HIDING the
+ *    route from anybody below that rank, so somebody who could get the craft added by asking a
+ *    colleague one rank up is not told the register exists. Naming the destination and its gate says
+ *    something unconditionally true to every reader, which is the property the shared-string rule is
+ *    protecting in the first place.
+ *
+ * SO THE CLAIM EACH SENTENCE MAKES IS THE SAME CLAIM — crafts come from the register, not from here,
+ * and the stage saves regardless — and only the routing advice differs, because the two surfaces know
+ * different things about who is reading. The web's own anchor USED to be gated on `refModel ===
+ * "Craft" && !disabled` and on nothing else, which sent every sub-Professor designer to a page they
+ * can only read; it is gated on `craftManager` now, and naming the gate in words is how this surface
+ * avoids the same trap without reading a rank. **The web's doc block still says the handset offers
+ * neither sentence, which stopped being true when this one landed** — that half of the reconciliation
+ * is in `frontend/`, is not this lane's to write, and is handed off.
  */
 private fun dwCraftRegisterNote(field: FieldDto, writableFields: Map<String, FieldDto>): String {
     val nameBox = field.refHydration["craftName"]?.let { writableFields[it]?.label }

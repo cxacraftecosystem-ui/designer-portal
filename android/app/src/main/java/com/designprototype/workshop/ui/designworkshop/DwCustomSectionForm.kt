@@ -129,7 +129,7 @@ private fun DwCustomSectionBlock(
             fontWeight = FontWeight.SemiBold,
         )
         // NAMED AS THE DESIGNER'S OWN, once per section. Without it a custom question is
-        // indistinguishable from one of the registry's 496, and the first time a colleague cannot
+        // indistinguishable from one the registry declares, and the first time a colleague cannot
         // find it on their own handset there is nothing on screen to explain why.
         Text(
             "Added to this workshop by its designer.",

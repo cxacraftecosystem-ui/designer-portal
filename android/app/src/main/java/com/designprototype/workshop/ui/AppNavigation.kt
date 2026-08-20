@@ -371,7 +371,7 @@ enum class NavDestination {
     ADD_CRAFT,
     RECORD_WORKSHOP,
     /**
-     * The Design & Prototype Workshop record — 22 stages, 43 entities, 496 registry-declared fields.
+     * The Design & Prototype Workshop record — 22 stages, 43 entities, every field registry-declared.
      *
      * Its own destination rather than a mode of [RECORD_WORKSHOP], because the two are different
      * records that happen to share a word. "Record workshop" creates a `Workshop` — the event an

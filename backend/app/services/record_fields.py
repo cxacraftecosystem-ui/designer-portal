@@ -170,11 +170,21 @@ def meta_val(meta: dict[str, Any], *keys: str) -> Any:
 #: the drift ``designworkshop/FieldProvenance.tsx`` calls "a requirement rather than a nicety" for its
 #: own attribution sentence. This block is the source those two must be written against.
 #:
+#: A THIRD SURFACE NOW READS THIS DICT RATHER THAN RESTATING IT, WHICH IS WHY THE NAME LOST ITS
+#: UNDERSCORE. ``design_workshops._measurement_method_note`` imports it to build the sentence that
+#: carries a record's measurement method onto a workshop entry — the layer where the false human
+#: attribution had survived, because hydration copied the NUMBER and the stamp stayed on the record.
+#: It is imported and not transcribed on the reasoning this comment already gives: a second spelling
+#: of these two phrases is how the record sheet and the workshop report come to describe one stamp in
+#: two vocabularies. The workshop's own note is a statement about the RECORD's columns ("On the
+#: product record: length, breadth (vision model estimate)"), so the phrase does the same work in
+#: both places and must be the same phrase.
+#:
 #: An earlier draft of this comment named ``methodLabel`` as an existing web symbol that had to be kept
 #: in sync. It exists nowhere in the repository, and a reader who greps for it concludes the contract
 #: is already held up at both ends. A named symbol reads as a promise that something is there; write
 #: the phrases down as the thing to be matched, not as a thing already matching.
-_METHOD_CLAUSES = {
+METHOD_CLAUSES = {
     "VISION_MODEL": "vision model estimate",
     "PHOTO_GEOMETRY": "photo measurement",
 }
@@ -233,7 +243,7 @@ def dims_with_method(record: Any, *columns: str) -> str | None:
     labelled = [
         (column, clause)
         for column, _ in printed
-        if (clause := _METHOD_CLAUSES.get(field_method(record, column) or ""))
+        if (clause := METHOD_CLAUSES.get(field_method(record, column) or ""))
     ]
     if not labelled:
         return text

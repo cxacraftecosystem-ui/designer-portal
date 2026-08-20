@@ -4,8 +4,10 @@ import com.designprototype.workshop.data.DW_AI_VERBS_SPENT
 import com.designprototype.workshop.data.DW_AI_VERB_COUNTDOWN_FROM
 import com.designprototype.workshop.data.DW_VERBS_NEED_A_CONNECTION
 import com.designprototype.workshop.data.DwAiVerbCapRefused
+import com.designprototype.workshop.data.DwAiVerbCapView
 import com.designprototype.workshop.data.DwAiVerbNotConfigured
 import com.designprototype.workshop.data.DwAiVerbRefused
+import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.dwAiIsUnrecorded
 import com.designprototype.workshop.report.RichDoc
 import java.io.IOException
@@ -81,8 +83,6 @@ internal fun dwVerbPassageOf(doc: RichDoc, range: DocRange): String {
 /** How much of the passage the card shows, so a designer can see what is about to be sent. */
 internal const val DW_VERB_PREVIEW_CHARS: Int = 160
 
-private val DW_WHITESPACE_RUN = Regex("\\s+")
-
 /**
  * The opening of a passage, on one line.
  *
@@ -91,11 +91,49 @@ private val DW_WHITESPACE_RUN = Regex("\\s+")
  * of a phone screen. Truncation is MARKED with an ellipsis rather than silent — a preview that simply
  * stopped would be indistinguishable from a short paragraph, which is the defect class this
  * repository keeps re-fixing.
+ *
+ * ── THE COST IS BOUNDED BY [DW_VERB_PREVIEW_CHARS] AND NOT BY THE PASSAGE ───────────────────────
+ *
+ * This was `passage.split(Regex("\\s+")).filter { … }.joinToString(" ")` and then `take(160)`, which
+ * built the WHOLE collapsed paragraph — thousands of intermediate strings for a paragraph near
+ * `DW_VERB_MAX_TEXT_CHARS` — before throwing all but 160 characters of it away. Its caller in
+ * `RichTextEditor` is the one composable that file says recomposes on every keystroke, so the cost
+ * landed per character typed. The single pass below stops as soon as it has one character more than
+ * it can show, which is what makes the 161st character the last one this function ever looks at.
+ *
+ * SAME ANSWER, arrived at more cheaply: a run of whitespace becomes one space, leading and trailing
+ * whitespace is dropped, and the ellipsis appears on exactly the inputs it appeared on before.
+ *
+ * ONE DELIBERATE DIFFERENCE, WHICH IS THE PREDICATE. `Char.isWhitespace()` is
+ * `Character.isWhitespace(ch) || Character.isSpaceChar(ch)`, so it covers what the regex's ASCII `\s`
+ * did AND the Unicode separators a pasted document carries — U+2028/U+2029, and the non-breaking
+ * space a word processor puts between a number and its unit. Folding those is what this function is
+ * for: a LINE SEPARATOR left in place drew the second line of a paste into a card sized for one. **It
+ * changes nothing that is sent or measured** — `passageChars` and `readPassage` never come through
+ * here, so the passage a layer records as its evidence is byte-for-byte what it always was.
  */
 internal fun dwVerbPassagePreview(passage: String): String {
-    val flat = passage.split(DW_WHITESPACE_RUN).filter { it.isNotEmpty() }.joinToString(" ")
-    if (flat.length <= DW_VERB_PREVIEW_CHARS) return flat
-    return flat.take(DW_VERB_PREVIEW_CHARS).trimEnd() + "…"
+    val flat = StringBuilder(DW_VERB_PREVIEW_CHARS + 1)
+    var gap = false
+    for (ch in passage) {
+        if (ch.isWhitespace()) {
+            // Recorded rather than written, so a trailing run adds nothing and a leading one — where
+            // `flat` is still empty — is dropped altogether.
+            if (flat.isNotEmpty()) gap = true
+            continue
+        }
+        if (gap) {
+            flat.append(' ')
+            gap = false
+        }
+        flat.append(ch)
+        // ONE CHARACTER PAST THE LIMIT AND THEN STOP. The extra character is what tells a passage of
+        // exactly [DW_VERB_PREVIEW_CHARS] from a longer one, which is the difference between a
+        // preview that ends and one that is marked as truncated.
+        if (flat.length > DW_VERB_PREVIEW_CHARS) break
+    }
+    if (flat.length <= DW_VERB_PREVIEW_CHARS) return flat.toString()
+    return flat.substring(0, DW_VERB_PREVIEW_CHARS).trimEnd() + "…"
 }
 
 /**
@@ -160,6 +198,65 @@ internal fun dwMediaVerbsFor(mediaType: String?): Set<String> {
     return verbs
 }
 
+/**
+ * Could a file attached to a field of THIS TYPE be offered a media verb at all?
+ *
+ * **THE FIELD'S DECLARATION, FOR THE CASE WHERE THE FILE'S OWN `mediaType` IS NOT KNOWN.**
+ * [DwFieldType] is what the registry declares; `DraftMedia.mediaType` is measured from bytes this device holds. When
+ * a descriptor cannot be resolved — a photograph attached in the browser, or bytes that have gone
+ * missing — there are no bytes to measure and [dwMediaVerbsFor] has nothing to answer from, so the
+ * tile has to decide from the field whether to explain the missing control or to say nothing.
+ *
+ * IMAGE, IMAGE_LIST, AUDIO and VIDEO fields hold exactly the three media types a verb exists for.
+ * **FILE IS DELIBERATELY FALSE**, and it is the interesting one: a FILE field holds the scanned
+ * sanction order, and `dwMediaVerbsFor` answers PDF and DOCUMENT with nothing at all *"which is the
+ * one place this feature stays silent on purpose"*. Explaining an absent control there would advertise
+ * a capability that does not exist for that field even when the bytes are present — so an
+ * unresolvable FILE tile keeps that silence rather than acquiring a sentence the resolvable one does
+ * not have. The cost, stated: a designer who photographed a certificate INTO a FILE field on another
+ * device gets no sentence about the missing caption control. Naming the field type is a declaration;
+ * guessing the type of bytes this phone does not hold is not.
+ *
+ * `else` RATHER THAN TWENTY-THREE SPELLED-OUT ARMS, and the direction is why that is safe here: a
+ * media type added to [DwFieldType] later answers FALSE, so it draws no sentence until somebody adds
+ * it — silence, which is this feature's own floor, and never a sentence about a capability that does
+ * not exist. The opposite default would advertise one.
+ */
+internal fun dwMediaFieldMayCarryVerbs(type: DwFieldType): Boolean = when (type) {
+    DwFieldType.IMAGE, DwFieldType.IMAGE_LIST, DwFieldType.AUDIO, DwFieldType.VIDEO -> true
+    else -> false
+}
+
+/**
+ * WHY THERE IS NO CAPTION OR SUBTITLE CONTROL UNDER A TILE THIS PHONE CANNOT OPEN.
+ *
+ * ── THE SILENCE THIS REPLACES, AND THE CASE THAT MADE IT WORTH REPLACING ────────────────────────
+ *
+ * `DwMediaCaptureCard` draws the row as `item?.let { DwMediaAiVerbsRow(…) }`, so an unresolvable
+ * descriptor got a tile with no control and no sentence. **The comment there named only one cause —
+ * bytes gone missing — and the second one is the case where the server CERTAINLY holds the file: a
+ * photograph attached from the browser.** `mediaIndex` in `StageScreen` is
+ * `draft?.media.orEmpty().associateBy { it.id }`, LOCAL descriptors only, and `DraftMedia` is a local
+ * file record (`relativePath`, `sha256` of the copy on this disk) — so a web upload resolves to null
+ * here even though it has a `remoteMediaId` on the server and is the one file a verb could certainly
+ * run over. `RichTextEditor`'s comment on the same resolver already records the shape: *"a picture
+ * placed on the web carries a server id and answers null, which is a different thing to draw and not
+ * an error."*
+ *
+ * So the tile now names BOTH causes — it cannot tell them apart from here — and says what to do. A
+ * sentence rather than silence is the minimum; the fuller repair is for the bridge to surface a
+ * SERVER-ONLY descriptor so `remoteMediaId` is known for a file this device never imported, which is
+ * a data-lane change (the pull would have to write descriptors with no local bytes, and every reader of
+ * `DraftMedia.relativePath` — the report writer and the uploader among them — would have to be shown
+ * to tolerate one) and is handed off rather than guessed at here.
+ */
+internal const val DW_MEDIA_VERBS_NEED_THE_FILE_HERE: String =
+    "There is no “Ask AI about this file” here because this phone has no record of this attachment. " +
+        "This app knows only the files that were imported on this device, so one attached in the " +
+        "browser or on another handset cannot be named to the server from here — and bytes that have " +
+        "gone missing leave the same gap. Describing it and subtitling it are both offered on the " +
+        "web, on the workshop's own copy of this file."
+
 // -------------------------------------------------------------------------------------------------
 // The two sentences these surfaces compose
 // -------------------------------------------------------------------------------------------------
@@ -192,6 +289,52 @@ internal fun dwAiVerbCountdownLine(remaining: Int?, day: String?): String? {
     val where = if (on.isEmpty()) "left today" else "left for $on"
     return "$runs of the writing and captioning models $where. Dictation has its own separate " +
         "allowance and is unaffected."
+}
+
+/**
+ * WHAT TO SAY ABOUT THE CEILING WHEN THERE IS NO NUMBER TO COUNT DOWN — null to say nothing.
+ *
+ * ── THREE FACTS, AND TWO OF THEM LOOK IDENTICAL IN THE NUMBERS ──────────────────────────────────
+ *
+ * [DwAiVerbCapView.told] is the fact that separates them, and its KDoc has the table. This function
+ * exists so the separation is made ONCE: [DwAiVerbsPanel] branched on `limit == null && remaining ==
+ * null` and told an uncapped deployment its allowance was unknown, which is precisely what
+ * `allowance_payload` keeps two nulls apart to prevent — *"because 0 remaining and 'no ceiling' must
+ * not look alike"*.
+ *
+ * ── AND WHY BOTH PRE-PRESS SURFACES NOW DRAW IT ─────────────────────────────────────────────────
+ *
+ * The prose panel drew a sentence in this state and [DwMediaAiVerbsRow] drew nothing, which was a
+ * divergence between two surfaces of one feature and nothing argued for it. The panel's own reason —
+ * *"Silence would leave a designer discovering it as a refusal after typing a language in"* — is
+ * stronger on the media row, not weaker: the press it precedes can be a whole recording going up over
+ * a designer's own mobile data, which is the most expensive press this feature has.
+ *
+ * NOTHING HERE IS DRAWN WHILE A COUNTDOWN IS: [dwAiVerbCountdownLine] answers non-null only when a
+ * `remaining` is known and low, and both branches here need it to be absent. A surface may therefore
+ * draw both without ever printing two sentences about one ceiling.
+ */
+internal fun dwAiVerbAllowanceNote(cap: DwAiVerbCapView): String? = when {
+    !cap.told ->
+        // THE MISSING PRE-FLIGHT, STATED RATHER THAN GUESSED AT. `ai_verb_cap.allowance_payload` rides
+        // on the 201 and on the 429 and nowhere else; there is no route that answers "what is my
+        // allowance" (checked against `backend/app/api/routes/` rather than assumed). So until a run
+        // has gone past on this phone today there is no number, and nothing here can say whether the
+        // ceiling is near, far or absent.
+        "How many runs are left today is not known until one goes through — this server has no way " +
+            "to be asked without running something. If the allowance is already used up, the " +
+            "refusal will say so and nothing will have been spent finding out."
+
+    cap.limit == null && cap.remaining == null ->
+        // TOLD, AND TOLD THERE IS NO CEILING. A statement about the DEPLOYMENT rather than about this
+        // designer's afternoon, which is why it does not decay: it is read off a row this phone
+        // accepted for today, and `dwAiVerbCapView` answers "not told" for any other day.
+        "This server sets no daily ceiling on these runs, so there is no count to watch. Dictation " +
+            "has its own separate allowance either way."
+
+    // A number is known. The countdown says it where it is worth saying — see [dwAiVerbCountdownLine],
+    // which stays silent well above the ceiling rather than nagging from run one.
+    else -> null
 }
 
 /**

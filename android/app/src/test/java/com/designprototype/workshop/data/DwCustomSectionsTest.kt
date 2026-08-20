@@ -245,7 +245,7 @@ class DwCustomSectionsTest {
     /**
      * THE DEGRADE THAT MATTERS MOST, and the reason [DwFieldType.known] exists beside [DwFieldType.of].
      *
-     * `of` resolves ANY unrecognised token to TEXT, deliberately: for the 496-field registry the
+     * `of` resolves ANY unrecognised token to TEXT, deliberately: for the server registry the
      * alternative is one new server type blanking all 22 stages on every handset that has not
      * updated. For a designer's own question that same forgiveness IS the failure — the token arrives
      * at the renderer as TEXT and is drawn as an ordinary editable box with no note and no disabled

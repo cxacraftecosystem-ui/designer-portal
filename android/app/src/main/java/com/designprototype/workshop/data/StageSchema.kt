@@ -40,10 +40,10 @@ import java.util.concurrent.atomic.AtomicReference
  * `stage_schema.py` line for line.
  *
  * WHY THERE IS NO PER-STAGE FORM CODE ANYWHERE IN THIS APP. The requirements document defines 22
- * stages holding 496 typed fields across 43 entities, and the tiers within them move between studies.
- * Hand-writing 22 forms means every registry edit is an app release, and — worse — it means the phone,
- * the web form, the validator and the report writer each carry their own opinion about what stage 14
- * contains. They would drift, and the first anyone would notice is a ministry report with an empty
+ * stages holding hundreds of typed fields across 43 entities, and the tiers within them move between
+ * studies. Hand-writing 22 forms means every registry edit is an app release, and — worse — it means
+ * the phone, the web form, the validator and the report writer each carry their own opinion about what
+ * stage 14 contains. They would drift, and the first anyone would notice is a ministry report with an empty
  * column. So the registry is DATA: this file decodes it, [FieldRenderer] dispatches on
  * [FieldDto.type], and a field added on the server appears on both clients with no client change.
  *

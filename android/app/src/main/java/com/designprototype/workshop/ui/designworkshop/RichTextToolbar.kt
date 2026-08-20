@@ -128,9 +128,15 @@ internal fun RichTextToolbar(
             .focusProperties { canFocus = false }
             .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp))
             .border(1.dp, MaterialTheme.field.hairline, RoundedCornerShape(10.dp))
-            // Twenty-one controls do not fit across a phone, and wrapping them onto three rows makes
-            // the bar taller than the field it is formatting. One scrolling row keeps the five marks
-            // — which is what almost every press is — visible without any scrolling at all.
+            // Twenty-three controls do not fit across a phone, and wrapping them onto three rows
+            // makes the bar taller than the field it is formatting. One scrolling row keeps the five
+            // marks — which is what almost every press is — visible without any scrolling at all.
+            //
+            // The count is the buttons below, counted from them: 5 marks, ¶, H1-H4, Quote, two
+            // lists, outdent, indent, 4 aligns, Photograph, Clear formatting, Undo, Redo. 22 in a
+            // field with no media bridge, where Photograph is absent. It read "Twenty-one", which
+            // was already one short of the set beneath it — a count in a comment beside a growing
+            // button set decays silently, so recount before trusting this one.
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
