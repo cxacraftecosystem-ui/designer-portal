@@ -191,6 +191,42 @@ STAGE_1 = StageSpec(
               ref_scope=ALL_SCOPE, report_role=HIDDEN,
               help="Choose the craft from the crafts already documented. The cover fields above "
                    "are filled in from it."),
+            # ── WHAT ELSE THE CRAFT RECORD HOLDS, EACH IN A BOX OF ITS OWN ────────────────────
+            #
+            # The crafts page collects five things and two of them used to cross. These are the
+            # other three plus the provenance date and the photograph, and every one of them is a
+            # SEPARATE box rather than a value folded into a cover field — which is the whole
+            # reason the old refusal was wrong rather than merely narrow. `craftPlace` must not
+            # answer the four REQUIRED cover fields above (state/district/block/village) and does
+            # not try to; it is the record's own free-text place, exactly as `tool.place` and
+            # `existingProduct.place` already carry theirs, so a reader can see the craft was
+            # documented somewhere other than this cluster.
+            #
+            # KEY_VALUE, not COVER_FIELD. The cover page is the sanction order's own facts about
+            # THIS workshop; a taxonomy string and a researcher's note from another survey belong
+            # in the per-stage block beneath it, where `report_builder` prints KEY_VALUE fields.
+            # Adding a seventh COVER_FIELD would also change the cover table's shape in documents
+            # already submitted.
+            fromref("craftCategory", "Category on the craft record", T, S, max_length=120),
+            fromref("craftPlace", "Place on the craft record", T, S, max_length=160),
+            # `documentedCraftNotes` and NOT stage 4's `craftIntroduction`: that one is the REQUIRED
+            # narrative the DESIGNER writes about the craft as they found it, and this is what a
+            # researcher wrote months earlier. Two authors must not share one box — the report
+            # prints both and a reader has to be able to tell which is which. Same rule, same
+            # wording, as `documentedProcessNotes`.
+            fromref("documentedCraftNotes", "Notes from the craft record", LT, S),
+            # Provenance of the SOURCE record, so a reader can tell a cover filled from a survey
+            # three years ago from one filled last week. Every other reference model carries it.
+            fromref("craftDocumentedOn", "Craft documented on", DATE, S),
+            # THE PHOTOGRAPH THAT WAS ALWAYS RESOLVED AND ALWAYS THROWN AWAY. `media_field="craftId"`
+            # has been declared on the Craft model since it was written, so the server has always
+            # looked a craft's picture up and handed it to the data lambda — which named the
+            # parameter `_photo` and dropped it. It is a single IMAGE and not a gallery, so the
+            # gallery rule does not apply: there is no designer's own set of craft photographs for
+            # a seeded one to overwrite.
+            fromref("craftPhoto", "Photograph on the craft record", IMG, S, report_role=GALLERY),
+            fromref("craftPhotoCaption", "Craft photograph caption", T, S,
+                    caption_for="craftPhoto", report_role=CAP),
             f("clusterName", "Cluster", T, B, required=True, report_role=COVER, max_length=160),
             f("state", "State", T, B, required=True, report_role=COVER, max_length=80),
             f("district", "District", T, B, required=True, report_role=COVER, max_length=80),
@@ -533,6 +569,13 @@ STAGE_5 = StageSpec(
             fromref("documentedProcessName", "Documented process", T, S),
             fromref("documentedFor", "Documented for", T, S,
                     help="The product whose documented process this is."),
+            # WHAT THE PROCESS RECORD HAS ON FILE. A researcher who filmed every step of a dye
+            # sequence produced a workshop row that said the sequence existed and showed none of
+            # it. This is a sentence naming how much footage the record carries, not the files —
+            # see `_process_media_note` for why a count is the honest carry here and a list of ids
+            # would either freeze ids the report cannot fetch or bypass the per-file entitlement
+            # gate. It tells a reader the footage exists so they can ask for it.
+            fromref("recordMediaNote", "Media on the process record", T, S, max_length=200),
             fromref("documentedProcessNotes", "Notes from the process record", LT, S,
                     report_role=NARR),
             fromref("documentedSteps", "Sub-steps on the process record", LT, S,
@@ -691,6 +734,37 @@ STAGE_5 = StageSpec(
             fromref("craftName", "Craft on the tool record", T, S),
             fromref("place", "Place on the tool record", T, S),
             fromref("artisanName", "Documented for", T, S),
+            # ── WHO USES IT, WHICH IS A DIFFERENT QUESTION FROM WHO IT WAS DOCUMENTED FOR ────────
+            #
+            # `artisanName` above is ONE denormalised string on the tool record naming whoever it
+            # was first documented against. `ToolArtisan` is the real many-to-many that the tool
+            # page's `ToolAssignmentSection` exists to populate, and a pit loom assigned to nine
+            # weavers used to cross into a workshop as one of those nine names with the other eight
+            # unreachable from the report. Both boxes, because both facts are real and a reader
+            # comparing them can see that a shared tool is shared.
+            #
+            # BULLETS, so `report_builder` splits the newline-separated list into one line per
+            # artisan instead of printing nine names as one run-on sentence — the same shape and the
+            # same reason as `documentedSteps`.
+            # ── THE RECORD'S OWN STATED ADDRESS, IN BOXES OF ITS OWN ────────────────────────────
+            #
+            # The record page collects a full location and none of it used to cross: this row had one
+            # free-text `place` and nothing else, so a thing documented in Barpali, Bargarh, Odisha
+            # arrived as whatever somebody had typed into a single box. `place` above is unchanged —
+            # it is the denormalised column — and these four are what the page actually asks.
+            #
+            # KEY_VALUE, and NOT extra table columns: this entity's declared widths already govern
+            # its table and four more columns would push it onto the proportional fallback, silently
+            # re-laying-out a table that is in submitted documents. `report_builder` prints
+            # KEY_VALUE in the per-row block beneath, so nothing is lost.
+            #
+            # STATED, never the device's fix. See the model's `include` in `design_workshops`.
+            fromref("recordState", "State on the record", T, S, max_length=80),
+            fromref("recordDistrict", "District on the record", T, S, max_length=80),
+            fromref("recordVillage", "Village on the record", T, S, max_length=120),
+            fromref("recordPincode", "PIN code on the record", T, S, max_length=10),
+            fromref("usedByArtisans", "Also used by", LT, S, report_role=BULLETS,
+                    help="Every artisan this tool is assigned to on the tool record. One per line."),
             fromref("improvements", "Improvements suggested", LT, S),
             fromref("remarks", "Remarks on the tool record", LT, S),
             # ── SEVEN MEASUREMENTS, TWO DIFFERENT STATES OF KNOWLEDGE ────────────────────────
@@ -877,6 +951,23 @@ STAGE_6 = StageSpec(
             f("problems", "Problems reported", RICH, S, report_role=NARR),
             fromref("craftName", "Craft on the product record", T, S),
             fromref("place", "Place on the product record", T, S),
+            # ── THE RECORD'S OWN STATED ADDRESS, IN BOXES OF ITS OWN ────────────────────────────
+            #
+            # The record page collects a full location and none of it used to cross: this row had one
+            # free-text `place` and nothing else, so a thing documented in Barpali, Bargarh, Odisha
+            # arrived as whatever somebody had typed into a single box. `place` above is unchanged —
+            # it is the denormalised column — and these four are what the page actually asks.
+            #
+            # KEY_VALUE, and NOT extra table columns: this entity's declared widths already govern
+            # its table and four more columns would push it onto the proportional fallback, silently
+            # re-laying-out a table that is in submitted documents. `report_builder` prints
+            # KEY_VALUE in the per-row block beneath, so nothing is lost.
+            #
+            # STATED, never the device's fix. See the model's `include` in `design_workshops`.
+            fromref("recordState", "State on the record", T, S, max_length=80),
+            fromref("recordDistrict", "District on the record", T, S, max_length=80),
+            fromref("recordVillage", "Village on the record", T, S, max_length=120),
+            fromref("recordPincode", "PIN code on the record", T, S, max_length=10),
             fromref("remarks", "Remarks on the product record", LT, S),
             fromref("documentedOn", "Product documented on", DATE, S),
             # Written out rather than built by ``photos()`` for the sake of the one extra

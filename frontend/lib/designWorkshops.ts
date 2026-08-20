@@ -1184,7 +1184,22 @@ export function listStageReferences(workshopId: string, query: DwReferenceQuery)
   which is the test doing its job rather than an argument for deleting it.
 */
 const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
-  "workshopSetup.craftRef": { craftName: "craftName", craftLocalName: "craftLocalName" },
+  // The craft record in full. Two of the five things the crafts page collects used to cross; the
+  // argument for refusing the other three, and why each was answered by giving the value its own box
+  // rather than by silence, is written above `REFERENCE_MODELS["Craft"].data` on the server.
+  // `craftDescription -> documentedCraftNotes` is the pair that differs by name on purpose: stage 4's
+  // `craftIntroduction` is the designer's own required narrative and must not receive a researcher's
+  // note from another survey.
+  "workshopSetup.craftRef": {
+    craftName: "craftName",
+    craftLocalName: "craftLocalName",
+    craftCategory: "craftCategory",
+    craftPlace: "craftPlace",
+    craftDescription: "documentedCraftNotes",
+    craftDocumentedOn: "craftDocumentedOn",
+    craftPhoto: "craftPhoto",
+    craftPhotoCaption: "craftPhotoCaption"
+  },
   "participant.artisanRef": {
     name: "name",
     localName: "localName",
@@ -1240,6 +1255,15 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     thicknessAsRecorded: "thicknessAsRecorded",
     weightAsRecorded: "weightAsRecorded",
     radiusAsRecorded: "radiusAsRecorded",
+    // Every artisan the tool is ASSIGNED to (the ToolArtisan many-to-many the tool page's
+    // ToolAssignmentSection populates), which the single denormalised `artisanName` cannot answer.
+    // The record's own STATED address, four boxes of its own beside the denormalised free-text
+    // `place`. Provenance coordinates never cross as an address.
+    recordState: "recordState",
+    recordDistrict: "recordDistrict",
+    recordVillage: "recordVillage",
+    recordPincode: "recordPincode",
+    usedByArtisans: "usedByArtisans",
     documentedOn: "documentedOn",
     photoCaption: "photoCaption"
   },
@@ -1252,6 +1276,9 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
   // `steps` arrives as one ordered bulleted list built from all four `ProcessStep` columns — the
   // source's own sub-steps, which reached nothing at all before.
   "traditionalProcess.processRef": {
+    // How much footage the process record carries, as a sentence. Not the media ids: the gallery
+    // rule forbids seeding the designer's own photographs and the record's files are gated per file.
+    recordMediaNote: "recordMediaNote",
     name: "documentedProcessName",
     notes: "documentedProcessNotes",
     productName: "documentedFor",
@@ -1266,6 +1293,12 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     material: "material",
     price: "price",
     use: "use",
+    // The record's own STATED address, four boxes of its own beside the denormalised free-text
+    // `place`. Provenance coordinates never cross as an address.
+    recordState: "recordState",
+    recordDistrict: "recordDistrict",
+    recordVillage: "recordVillage",
+    recordPincode: "recordPincode",
     photo: "productPhotos",
     // `lengthCm`/`widthCm`/`heightCm` are the inches columns converted ×2.54 on the server. The boxes
     // print "cm", so a raw copy would have understated every measurement by a factor of 2.54 in a
