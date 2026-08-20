@@ -1165,6 +1165,11 @@ fun StageScreen(
                         mediaType = descriptor.mediaType,
                         sizeBytes = descriptor.sizeBytes,
                         sha256 = descriptor.sha256,
+                        // THE SERVER'S ID, PASSED THROUGH RATHER THAN DERIVED. Null until
+                        // `/media/complete` has answered with one, which is that field's whole
+                        // discipline — and it is what lets the AI media verbs tell "this file is on
+                        // the server" from "these bytes are only here". See [DwMediaItem].
+                        remoteMediaId = descriptor.remoteMediaId,
                     )
                 }
             },

@@ -119,6 +119,21 @@ data class DwMediaItem(
      * as a duplicate OR as distinct.
      */
     val sha256: String? = null,
+    /**
+     * **THE SERVER'S `MediaFile` ID, OR NULL WHILE THESE BYTES ARE ON THIS PHONE AND NOWHERE ELSE.**
+     *
+     * `DraftMedia.remoteMediaId`, carried through so a control that needs the SERVER's copy can tell
+     * whether there is one — which the AI media verbs do, because they run on the server's copy and
+     * an id on a request body is a claim (`_verb_source_media` answers one 404 covering both "not
+     * attached to this workshop" and "not yours to read", so an id cannot be used to find out whether
+     * a file exists). Sending this device's own UUID would be a claim about a file the server has
+     * never seen; `dwVerbMediaRefusal` is the rung that says so in a sentence instead.
+     *
+     * It is NOT what the local report writer or the thumbnail resolve by — those read [id], because
+     * the bytes on this phone are filed under it. Two id spaces, translated on the wire and nowhere
+     * else, exactly as `DraftMedia.remoteMediaId` documents.
+     */
+    val remoteMediaId: String? = null,
 )
 
 /**

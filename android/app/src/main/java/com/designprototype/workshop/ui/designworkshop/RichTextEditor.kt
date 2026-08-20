@@ -708,6 +708,45 @@ fun RichTextEditor(
             }
         }
 
+        /*
+          ── ASK AI ABOUT THIS PARAGRAPH ─────────────────────────────────────────────────────────
+          THE THREE TEXT VERBS, UNDER THE BOX AND OUTSIDE THE TOOLBAR. The placement is argued in
+          full in [DwAiVerbsPanel]'s header; the two facts that put it HERE rather than in the bar
+          are both properties of this file. A selection in this editor can never span two blocks
+          (`RichTextBlockRow.onSelectionChanged` builds both ends of the range from ONE block index,
+          because each block is its own `BasicTextField`), so a selection-scoped menu would silently
+          send one paragraph to a designer who believed they had chosen five. And the bar above is
+          drawn only while `focusedBlock != null`, which every step of a verb's flow destroys — a
+          menu, a language field, a round trip, a review dialog — where a mark toggle survives only
+          because `RichTextToolbar` refuses focus outright and a press is instantaneous.
+
+          GATED ON `enabled && media != null`, WHICH IS THE PHOTOGRAPH BUTTON'S OWN GATE AND ITS
+          ARGUMENT: a bridge is the one thing only the stage screen can supply, so its absence means
+          this field is being PREVIEWED rather than edited. A verb offered in a preview would spend a
+          real provider run against whichever workshop the stage screen last published, from a
+          surface that cannot save anything. The verbs' own ladder would also refuse most of those
+          cases in words, and this is the rung that means it never has to.
+        */
+        if (enabled && media != null) {
+            Spacer(Modifier.height(8.dp))
+            // Computed ONCE per recomposition rather than three times — the passage is one block's
+            // substring, but the card asks for its length and its opening, and the third reader is a
+            // callback that deliberately runs later.
+            val passageNow = dwVerbPassageOf(doc, selection)
+            DwAiVerbsPanel(
+                enabled = enabled,
+                // ONLY THE LENGTH AND THE OPENING TRAVEL THROUGH THE RENDER PATH. Both are read off
+                // ONE block, so they cost a substring of a paragraph per keystroke rather than a
+                // rebuild of a forty-page narrative — which is the cost that made the web pass a
+                // callback for the words themselves.
+                passageChars = passageNow.length,
+                passagePreview = dwVerbPassagePreview(passageNow),
+                // Read at the moment of the press, so a caret the designer moved after opening the
+                // card is honoured rather than a snapshot taken when it was drawn.
+                readPassage = { dwVerbPassageOf(doc, selection) },
+            )
+        }
+
         if (!help.isNullOrBlank()) {
             Spacer(Modifier.height(4.dp))
             Text(help, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

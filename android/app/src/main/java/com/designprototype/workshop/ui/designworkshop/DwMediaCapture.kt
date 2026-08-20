@@ -438,6 +438,24 @@ internal fun DwMediaCaptureCard(
                     onIdsChange(if (multiple) ids.filterNot { it == id } else emptyList())
                 }
             )
+            /*
+              DESCRIBE THIS PHOTOGRAPH, OR SUBTITLE THIS RECORDING — DIRECTLY UNDER THE TILE IT IS
+              ABOUT, and never as a row of its own further down.
+
+              A caption is a sentence about THIS file and a designer accepting one is judging it
+              against THIS picture, so the control has to be attached to the tile the same way the
+              caption box is: `FieldRenderer`'s own rule for a `caption_for` field is that it is drawn
+              "INSIDE this field's block, directly under the media it describes", because *"a caption
+              rendered as a separate input three rows below its photo is how a report comes to print
+              the wrong description under a picture, permanently, in a file already delivered."* The
+              same argument, applied to the control that produces one.
+
+              A DESCRIPTOR THIS DEVICE CANNOT RESOLVE GETS NOTHING. `item` is null when the bytes have
+              gone missing — the row above already says so — and there is no file to send.
+              [DwMediaAiVerbsRow] draws nothing at all for a PDF or a document, which is the one place
+              this feature stays silent on purpose; see the note on `dwMediaVerbsFor`.
+            */
+            item?.let { DwMediaAiVerbsRow(item = it, enabled = enabled) }
         }
 
         // Blur, resolution and duplicate advice, measured on this device from the bytes that were

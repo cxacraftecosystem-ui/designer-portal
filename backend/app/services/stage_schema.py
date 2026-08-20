@@ -612,9 +612,29 @@ def promoted_values(entity_key: str, data: dict[str, Any]) -> dict[str, Any]:
 # participant's name into a ministry report's product table, and the only-fill-blanks rule then
 # refuses to correct it for ever.
 REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
+    # ── THE CRAFT RECORD, IN FULL ────────────────────────────────────────────────────────────
+    #
+    # Two of the five things the crafts page collects used to cross. The argument for refusing the
+    # other three is written out, and answered, above `REFERENCE_MODELS["Craft"].data` — the short
+    # version is that "this value must not overwrite the designer's four cover fields" is a reason
+    # for a box of its own, not a reason for silence, and the tool and product mappings had been
+    # carrying a record's free-text place beside the workshop's own answers all along.
+    #
+    # `craftDescription` lands on `documentedCraftNotes` and NOT on stage 4's `craftIntroduction`,
+    # for the reason `documentedProcessNotes` exists: `craftIntroduction` is the REQUIRED narrative
+    # the designer writes about the cluster's craft as they observed it, and this is what a
+    # researcher wrote about the craft months earlier somewhere else. Only-fill-blanks would put the
+    # second where the first belongs on every workshop whose designer had not typed yet, and no
+    # reader of the .docx could tell which author they were reading.
     "workshopSetup.craftRef": {
         "craftName": "craftName",
         "craftLocalName": "craftLocalName",
+        "craftCategory": "craftCategory",
+        "craftPlace": "craftPlace",
+        "craftDescription": "documentedCraftNotes",
+        "craftDocumentedOn": "craftDocumentedOn",
+        "craftPhoto": "craftPhoto",
+        "craftPhotoCaption": "craftPhotoCaption",
     },
     # ── THE ARTISAN RECORD, IN FULL ──────────────────────────────────────────────────────────
     #
@@ -691,6 +711,17 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "thicknessAsRecorded": "thicknessAsRecorded",
         "weightAsRecorded": "weightAsRecorded",
         "radiusAsRecorded": "radiusAsRecorded",
+        # Every artisan the tool is ASSIGNED to, which the denormalised `artisanName` above cannot
+        # answer. See `_linked_artisan_names` for why both are carried.
+        # The record's own STATED address, in four boxes of its own. The free-text `place` above
+        # is the denormalised column and is unchanged; these are what the record page collects and
+        # what a reader needs to see that the thing was documented somewhere other than this
+        # cluster. Provenance coordinates never cross — see the model's `include`.
+        "recordState": "recordState",
+        "recordDistrict": "recordDistrict",
+        "recordVillage": "recordVillage",
+        "recordPincode": "recordPincode",
+        "usedByArtisans": "usedByArtisans",
         "documentedOn": "documentedOn",
         "photo": "photo",
         "photoCaption": "photoCaption",
@@ -712,6 +743,9 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
     # every workshop whose designer had not typed yet, and no reader of the .docx could tell which
     # they were reading.
     "traditionalProcess.processRef": {
+        # How much footage the record carries. A sentence rather than the ids — the gallery rule
+        # forbids seeding the designer's own photographs, and the record's files are gated per file.
+        "recordMediaNote": "recordMediaNote",
         "name": "documentedProcessName",
         "notes": "documentedProcessNotes",
         "productName": "documentedFor",
@@ -809,6 +843,14 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "dimensionsNote": "dimensionsNote",
         "productionTimeNote": "productionTimeNote",
         "remarks": "remarks",
+        # The record's own STATED address, in four boxes of its own. The free-text `place` above
+        # is the denormalised column and is unchanged; these are what the record page collects and
+        # what a reader needs to see that the thing was documented somewhere other than this
+        # cluster. Provenance coordinates never cross — see the model's `include`.
+        "recordState": "recordState",
+        "recordDistrict": "recordDistrict",
+        "recordVillage": "recordVillage",
+        "recordPincode": "recordPincode",
         "documentedOn": "documentedOn",
         "photo": "productPhotos",
         "photoCaption": "productPhotosCaption",

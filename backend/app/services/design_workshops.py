@@ -383,6 +383,61 @@ def _step_lines(process: Any) -> str | None:
     return "\n".join(lines) or None
 
 
+def _linked_artisan_names(tool: Any) -> str | None:
+    """Every artisan a tool is assigned to, one per line, or ``None`` when it is assigned to none.
+
+    `ToolDocumentation.artisanName` is ONE denormalised string — whoever the record was first
+    documented against — while `ToolArtisan` is the real many-to-many that `ToolAssignmentSection`
+    on the tool page exists to populate and `GET /tools/{id}/artisans` serves. A pit loom assigned
+    to nine weavers therefore reached a workshop as one name, with the other eight unreachable from
+    the report. "Documented for" and "used by" are different questions and the tool row already has
+    a box for the first.
+
+    ORDERED BY NAME, and deliberately not by the link's own `createdAt`: the printed list is read as
+    a roster rather than as a history of who was added when, and a stable alphabetical order means a
+    regenerated report does not reshuffle its bullets because somebody assigned a tenth weaver.
+
+    DE-DUPLICATED, because the link table permits the same artisan twice through two different
+    routes and a report that names somebody twice reads as a data-entry error.
+    """
+    links = getattr(tool, "artisanLinks", None) or []
+    names: list[str] = []
+    for link in links:
+        artisan = getattr(link, "artisan", None)
+        name = str(getattr(artisan, "name", "") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return "\n".join(sorted(names)) or None
+
+
+def _process_media_note(process: Any) -> str | None:
+    """How much footage the process record carries, as a sentence, or ``None`` when it carries none.
+
+    NOT A LIST OF MEDIA IDS, AND THE REASON IS TWO RULES AT ONCE. A stage entry's galleries hold the
+    photographs the DESIGNER took at the workshop and hydration may never overwrite them; and a
+    referenced record's files are entitlement-gated per file, which ``_reference_photos`` resolves
+    for one image and no more. Copying ids onto the entry would either freeze ids the report is not
+    entitled to fetch, or quietly bypass the gate that decides. So the carry is the FACT that the
+    footage exists, which is what a reader of the printed process needs in order to ask for it.
+
+    Counted from the relation rather than from a media query: ``REFERENCE_MODELS["Process"]``
+    includes ``steps``, and each step's own media are counted through it, so this costs no extra
+    read beyond the include the sub-steps already pay for.
+    """
+    own = len(getattr(process, "media", None) or [])
+    steps = getattr(process, "steps", None) or []
+    per_step = sum(len(getattr(step, "media", None) or []) for step in steps)
+    if not own and not per_step:
+        return None
+    parts: list[str] = []
+    if own:
+        parts.append(f"{own} on the process itself")
+    if per_step:
+        covered = sum(1 for step in steps if getattr(step, "media", None))
+        parts.append(f"{per_step} across {covered} step(s)")
+    return "Attached to the process record: " + ", ".join(parts) + "."
+
+
 def _money(value: Any) -> str | None:
     """A Prisma Decimal as the two-place string a MONEY field is stored as.
 
@@ -978,6 +1033,23 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         delegate="productdocumentation",
         order={"productName": "asc"},
         search_fields=("productName", "localName", "artisanName", "craftName"),
+        # ── THE RECORD'S OWN STATED ADDRESS, WHICH THE FREE-TEXT `place` CANNOT CARRY ────────────
+        #
+        # Both record pages collect a full location — state, district, village, pincode — and none of
+        # it crossed. The workshop row had one free-text `place` string, so a product documented in
+        # Barpali, Bargarh, Odisha reached the report as whatever somebody typed into one box.
+        #
+        # SAFE TO SWITCH ON ONLY BECAUSE `_reference_place` NOW GUARDS ON THE MODEL. That function
+        # runs at RENDER time and used to prefer `location.village` over `place` for any row whose
+        # relation happened to be loaded, so adding this include would have changed the place printed
+        # in reports already submitted — the trap its own comment warned about in capitals. It now
+        # returns the denormalised `place` for everything except an artisan, so this include changes
+        # what SAVE-time hydration can offer and nothing about what render time prints.
+        #
+        # STATED COLUMNS ONLY. `latitude`/`longitude`/`altitude`/`accuracy`/`capturedAt`/`placeName`
+        # are the fix of the desk the record was typed at — routinely 1,500 km from the village named
+        # beside it — and they never cross as an address. Same rule, same reason, as the artisan.
+        include={"location": True},
         workshop_where=lambda wid: {"workshopId": wid},
         artisan_field="artisanId",
         media_field="productId",
@@ -1074,6 +1146,14 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # blank this whole lane exists to end. The words are carried as words.
             "productionTimeNote": r.timeTakenToCompleteProduct,
             "remarks": r.remarks,
+            # THE RECORD'S OWN STATED ADDRESS. Stated columns only — see this model's `include`
+            # for why the device's fix never crosses as an address. `place` above is the
+            # denormalised free-text column and stays exactly as it was; these are the four the
+            # record page actually collects.
+            "recordState": _rel(r, "location", "state"),
+            "recordDistrict": _rel(r, "location", "district"),
+            "recordVillage": _rel(r, "location", "village"),
+            "recordPincode": _rel(r, "location", "pincode"),
             "documentedOn": _iso_date(r.recordedAt),
             "photo": photo.id if photo else None,
             "photoCaption": photo.caption if photo else None,
@@ -1086,6 +1166,36 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         workshop_where=lambda wid: {"workshopId": wid},
         artisan_field="artisanId",
         media_field="toolId",
+        # ── THE MANY-TO-MANY, WHICH IS THE ANSWER THE DENORMALISED `artisanName` CANNOT GIVE ─────
+        #
+        # `ToolArtisan` is a real relation with a whole UI behind it — `ToolAssignmentSection` on the
+        # tool page exists to assign one tool to SEVERAL artisans, and `GET /tools/{id}/artisans`
+        # serves them — while `ToolDocumentation.artisanName` is one denormalised string naming
+        # whoever the record was first documented against. So a pit loom assigned to nine weavers
+        # crossed into a workshop as one name, and the other eight existed nowhere the report could
+        # reach. That is not a thin carry, it is a different fact: "documented for" and "used by"
+        # are not the same question, and the tool row already has a box for the first.
+        #
+        # ONE EXTRA INDEXED READ FOR THE WHOLE PAGE, exactly as `Process`'s `steps` include is: Prisma
+        # issues the relation as a single `WHERE toolId IN (…)` against `@@index([toolId])`, and the
+        # picker is bounded by `REFERENCE_LIMIT_MAX`, so this is not an N+1.
+        # ── THE RECORD'S OWN STATED ADDRESS, WHICH THE FREE-TEXT `place` CANNOT CARRY ────────────
+        #
+        # Both record pages collect a full location — state, district, village, pincode — and none of
+        # it crossed. The workshop row had one free-text `place` string, so a product documented in
+        # Barpali, Bargarh, Odisha reached the report as whatever somebody typed into one box.
+        #
+        # SAFE TO SWITCH ON ONLY BECAUSE `_reference_place` NOW GUARDS ON THE MODEL. That function
+        # runs at RENDER time and used to prefer `location.village` over `place` for any row whose
+        # relation happened to be loaded, so adding this include would have changed the place printed
+        # in reports already submitted — the trap its own comment warned about in capitals. It now
+        # returns the denormalised `place` for everything except an artisan, so this include changes
+        # what SAVE-time hydration can offer and nothing about what render time prints.
+        #
+        # STATED COLUMNS ONLY. `latitude`/`longitude`/`altitude`/`accuracy`/`capturedAt`/`placeName`
+        # are the fix of the desk the record was typed at — routinely 1,500 km from the village named
+        # beside it — and they never cross as an address. Same rule, same reason, as the artisan.
+        include={"location": True, "artisanLinks": {"include": {"artisan": True}}},
         label=lambda r: str(r.toolkitName or ""),
         sublabel=lambda r: _joined(r.englishName, r.artisanName, r.place, _review_flag(r)),
         data=lambda r, photo: {
@@ -1131,6 +1241,19 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "thicknessAsRecorded": _decimal(r.thickness),
             "weightAsRecorded": _decimal(r.weight),
             "radiusAsRecorded": _decimal(r.radius),
+            # EVERY ARTISAN THE TOOL IS ASSIGNED TO, not just the one it was documented against.
+            # See the note on this model's `include`. Newline-separated because the target is a
+            # LONG_TEXT with `report_role=BULLETS`, which the renderer splits into one bullet per
+            # line — the same shape, for the same reason, as `_step_lines`.
+            # THE RECORD'S OWN STATED ADDRESS. Stated columns only — see this model's `include`
+            # for why the device's fix never crosses as an address. `place` above is the
+            # denormalised free-text column and stays exactly as it was; these are the four the
+            # record page actually collects.
+            "recordState": _rel(r, "location", "state"),
+            "recordDistrict": _rel(r, "location", "district"),
+            "recordVillage": _rel(r, "location", "village"),
+            "recordPincode": _rel(r, "location", "pincode"),
+            "usedByArtisans": _linked_artisan_names(r),
             "documentedOn": _iso_date(r.recordedAt),
             "photo": photo.id if photo else None,
             "photoCaption": photo.caption if photo else None,
@@ -1161,7 +1284,10 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # Prisma issues the relation as one extra `WHERE processId IN (…)` for the whole page, not
         # one per row, and the picker is bounded at `REFERENCE_LIMIT_MAX`, so this is a second
         # indexed read (`@@index([processId])`) and not an N+1.
-        include={"product": True, "steps": True},
+        # `media` on both sides so `_process_media_note` can count what is attached without a
+        # second query — the process's own pre-process clips, and each step's captures.
+        include={"product": True, "media": True,
+                 "steps": {"include": {"media": True}}},
         order={"name": "asc"},
         search_fields=("name",),
         workshop_where=lambda wid: {"workshopId": wid},
@@ -1197,6 +1323,22 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # If somebody later adds any of these three to the `processStep.processRef` mapping,
             # the row-level defect comes back exactly as described. Widen the singleton instead.
             "steps": _step_lines(r),
+            # ── WHAT THE PROCESS RECORD HAS ATTACHED, WHICH REACHED NO SURFACE ────────────────
+            #
+            # A process carries pre-process clips on itself and each `ProcessStep` carries its own
+            # captures — `ProcessForm` has a MediaCaptureField for the process and one per step, and
+            # `describePreProcess`/`describeProcessStep` name the files. None of it crossed, so a
+            # researcher who filmed every step of a dye sequence produced a workshop row that said
+            # the sequence existed and showed nothing of it.
+            #
+            # A COUNT AND NOT THE IDS, deliberately, and this is the one place a count is the honest
+            # answer rather than a lazy one. A stage entry's galleries hold the DESIGNER's own
+            # photographs and hydration must never seed them (the gallery rule); and the referenced
+            # record's media are entitlement-gated per file, which `_reference_photos` resolves for
+            # exactly one image and no more. Copying a list of ids onto the entry would either
+            # bypass that gate or freeze ids the report cannot fetch. What a reader needs, and what
+            # is safe, is to know the footage exists and where to ask for it.
+            "recordMediaNote": _process_media_note(r),
             "preProcessAvailable": r.preProcessAvailable,
             "documentedOn": _iso_date(r.recordedAt),
         },
@@ -1211,14 +1353,47 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         media_field="craftId",
         label=lambda r: str(r.name or ""),
         sublabel=lambda r: _joined(r.category, r.place),
-        # `category`, `description` and `place` are NOT carried, and the reason is that stage 1
-        # already asks all three of its own questions and asks them better. `workshopSetup` has
-        # `state`/`district`/`block`/`village` as four REQUIRED cover fields — a Craft's single
-        # free-text `place` cannot answer them and would disagree with them — and the craft's own
-        # description belongs to stage 4's `craftIntroduction`, a RICH_TEXT narrative that a
-        # one-line taxonomy string would sit oddly inside. `Craft.category` has no counterpart on
-        # the cover at all. The two names are what the cover page needs from the craft record.
-        data=lambda r, _photo: {"craftName": r.name, "craftLocalName": r.localName},
+        # ── THE CRAFT RECORD, IN FULL — AND THE ARGUMENT THIS REPLACES WAS THE LAST 1:1 GAP ─────
+        #
+        # This carried two of the five things the crafts page collects. The note that stood here
+        # said `category`, `description` and `place` were omitted because "stage 1 already asks all
+        # three of its own questions and asks them better", and each clause was answering a
+        # question nobody asked:
+        #
+        #  * `place` was refused because `workshopSetup`'s four REQUIRED cover fields
+        #    (state/district/block/village) "cannot be answered by a Craft's single free-text
+        #    place, and would disagree with them". True — and the fix for a value that must not
+        #    overwrite four others is its OWN box, which is what `craftPlace` is. It is the same
+        #    shape as `tool.place` ("Place on the tool record") and `existingProduct.place`, both of
+        #    which carry a record's free-text place beside the workshop's own answers precisely so a
+        #    reader can see the record was documented somewhere else. Refusing it here while
+        #    carrying it for tools and products was an inconsistency, not a policy.
+        #  * `description` was refused because it "belongs to stage 4's `craftIntroduction`, a
+        #    RICH_TEXT narrative a one-line taxonomy string would sit oddly inside". Also true, and
+        #    also an argument for a separate box rather than for silence: `craftIntroduction` is
+        #    what the DESIGNER writes about the cluster's craft as they found it, and the record's
+        #    description is what a researcher wrote months earlier. Two authors must not share one
+        #    box — the rule `documentedProcessNotes` was created under, for exactly this reason.
+        #  * `category` was refused because it "has no counterpart on the cover at all", which
+        #    describes the absence of a box as though it were a reason not to add one.
+        #
+        # So all three cross now, into three fields of their own, plus the provenance date every
+        # other model carries. Nothing is overwritten and nothing shares a box with the designer.
+        #
+        # THE PHOTOGRAPH CROSSES TOO, and it is the one that was quietly dropped rather than
+        # argued: `media_field="craftId"` has always been declared, so `_reference_photos` has
+        # always resolved a craft's picture and handed it to this lambda, which named the parameter
+        # `_photo` and threw it away. A craft record's own photograph reached no surface at all.
+        data=lambda r, photo: {
+            "craftName": r.name,
+            "craftLocalName": r.localName,
+            "craftCategory": r.category,
+            "craftPlace": r.place,
+            "craftDescription": r.description,
+            "craftDocumentedOn": _iso_date(r.recordedAt),
+            "craftPhoto": photo.id if photo else None,
+            "craftPhotoCaption": photo.caption if photo else None,
+        },
     ),
 }
 
@@ -2838,7 +3013,7 @@ def reference_ids(entries: list[Any]) -> dict[str, set[str]]:
     return found
 
 
-def _reference_place(row: Any) -> tuple[str, str, str]:
+def _reference_place(row: Any, model: str) -> tuple[str, str, str]:
     """``(place, district, state)`` for one referenced record, from wherever it states them.
 
     THE STATED ADDRESS, NEVER THE PROVENANCE COORDINATE. ``Location`` carries both — where the
@@ -2857,14 +3032,45 @@ def _reference_place(row: Any) -> tuple[str, str, str]:
     it today: ``report_builder._artisan_points`` is the sole consumer of the district and state and
     it filters to ``ref_model == "Artisan"``.
 
-    DO NOT "FIX" IT BY ADDING ``include={"location": True}`` to the other models. The first element
-    prefers ``location.village`` over ``place``, and ``load_report_references`` runs at RENDER time
-    — so switching the include on would change the place string printed in documents that have
-    already been submitted, which is exactly what the never-re-resolve rule forbids. The reason the
-    include is not there is written out on :class:`ReferenceModel`'s ``include`` field. If a
-    district is genuinely wanted for a tool or a product, it is a deliberate change with a test
-    pinning what the printed place becomes.
+    THAT PARAGRAPH USED TO END "DO NOT FIX IT BY ADDING ``include={"location": True}`` TO THE OTHER
+    MODELS", AND THE INCLUDE IS NOW ON TWO OF THEM. The warning was correct about the mechanism and
+    wrong to conclude the data could not cross. Its reasoning was that this function prefers
+    ``location.village`` over ``place`` and runs at RENDER time, so loading the relation would change
+    the place printed in already-submitted documents. True — of THIS function. A product's and a
+    tool's stated address now reaches the workshop through their ``data`` lambdas at SAVE time,
+    into boxes of their own, where hydration only fills blanks and the boxes are new.
+
+    So the include is on, and the guard at the top of the body is what keeps this function's answer
+    identical to what it was: ``place`` for a product or a tool comes from the denormalised column
+    whether or not the relation is loaded, and the district and state stay empty for every model but
+    ``Artisan``. The behaviour this docstring describes is now enforced by a condition instead of by
+    the accident of a relation nobody had switched on — which is the actual lesson, because relying
+    on that accident is how an include added two thousand lines away rewrites a ministry's document.
     """
+    # ── THE GUARD, AND WHY IT IS AN ARGUMENT RATHER THAN A CONDITION ─────────────────────────
+    #
+    # This function runs at RENDER time (`load_report_references` -> `attach_report_references`), so
+    # whatever it returns for `place` is printed into a document that may already have been
+    # submitted. Until now only `REFERENCE_MODELS["Artisan"]` included the `location` relation, so
+    # for every other model `location` was absent, the first element fell through to the
+    # denormalised `place` string, and the paragraph above warned in capitals against "fixing" that
+    # by switching the include on — because doing so would silently start preferring
+    # `location.village` and change the place printed in reports already filed.
+    #
+    # The warning was right about the render path and wrong to conclude the data could not cross.
+    # A product's and a tool's STATED address now DO reach the workshop — through their `data`
+    # lambdas at SAVE time, into boxes of their own — which is a different path with none of this
+    # hazard, because hydration only fills blanks and those boxes are new. Switching the include on
+    # for those two models is what makes that possible, and this guard is what stops the render path
+    # noticing: `place` for a product or a tool keeps coming from the denormalised column exactly as
+    # it did before, and the district and state stay empty for everything except an artisan.
+    #
+    # KEYED ON THE MODEL, not on whether `location` happens to be loaded, and that distinction is
+    # the whole point: "the relation is absent" was an accident of configuration that this function
+    # was relying on for its behaviour, and relying on an accident is how switching an include two
+    # thousand lines away rewrites a ministry's document.
+    if model != "Artisan":
+        return (str(getattr(row, "place", "") or ""), "", "")
     location = getattr(row, "location", None)
     village = str(getattr(location, "village", "") or "") if location is not None else ""
     district = str(getattr(location, "district", "") or "") if location is not None else ""
@@ -2948,7 +3154,7 @@ async def load_report_references(entries: list[Any]) -> dict[str, ReferencedReco
     for model, (rows, photos) in zip(models, results, strict=True):
         spec = REFERENCE_MODELS[model]
         for row in rows:
-            place, district, state = _reference_place(row)
+            place, district, state = _reference_place(row, model)
             out[str(row.id)] = ReferencedRecord(
                 model=model,
                 label=spec.label(row),
