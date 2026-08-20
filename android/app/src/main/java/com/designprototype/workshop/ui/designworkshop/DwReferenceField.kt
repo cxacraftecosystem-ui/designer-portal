@@ -220,13 +220,31 @@ data class DwInlineSeed(
  * The `Dw…` models are absent and cannot be here. A `DwSketch`, a `DwPrototype` or a `DwParticipant`
  * is another ROW of this same workshop, created by adding a row to its own stage — offering to
  * "create" one from a picker would put a second, parallel way of adding a prototype into the app, and
- * the two would disagree about what a prototype is by the second release. `Craft` is absent for a
- * different reason: creating one is gated on `require_craft_manager` (Professor and above), so a
- * button offered to every designer would buy most of them a 403 after filling a form in.
+ * the two would disagree about what a prototype is by the second release.
  *
  * Kept in step with `INLINE_CREATABLE` in `components/designworkshop/InlineRecordDialog.tsx` — a
  * model creatable on one client and not the other is a designer who can finish a stage on a laptop
  * and not on the phone they actually carry.
+ *
+ * ── CRAFT IS ABSENT ON BOTH CLIENTS, AND THE TWO USED TO GIVE DIFFERENT REASONS FOR IT ────────────
+ *
+ * This comment gave one reason (the `require_craft_manager` rank gate, Professor and above, so a
+ * button offered to every designer buys most of them a 403 after filling a form in) while
+ * `InlineRecordDialog.tsx` gives another (a taxonomy created from inside a stage fractures the craft
+ * vocabulary), and both asserted they were "kept in step" — which they are only in outcome. Both
+ * reasons are real and either alone is sufficient, so the decision stands; what did not stand was
+ * the pretence that one file's argument was the other's.
+ *
+ * WHAT WAS ACTUALLY OUT OF STEP was the REMEDY, not the refusal. The web picker offers a link to the
+ * crafts register when the craft is missing, added because "stage 1 is the first control a designer
+ * ever touches in this app, and until this line it was the only picker in the product that offered
+ * nothing at all when the craft was missing or misspelt: the remedy existed on /crafts and nothing
+ * said so." That was still true of the handset — the surface the designer is actually holding in the
+ * room, where an empty list said only "No records on this device yet", a claim about THIS PHONE'S
+ * CACHE that sends somebody looking for a tower when the craft has never been documented anywhere.
+ * [dwCraftRegisterNote] is the handset's half of that remedy: a sentence, not a button, because a
+ * button here would be the change this comment refuses. Adding `"Craft"` to the map above still
+ * requires the web's entry to move in the same change.
  */
 private val INLINE_CREATABLE: Map<String, String> = mapOf(
     "Artisan" to "artisan",
@@ -234,6 +252,37 @@ private val INLINE_CREATABLE: Map<String, String> = mapOf(
     "ToolDocumentation" to "tool",
     "Process" to "process",
 )
+
+/**
+ * What to tell a designer at stage 1 whose craft is not in the list — see [INLINE_CREATABLE]'s note.
+ *
+ * IT NAMES THE ROUTE AND THE ROUTE'S GATE WITHOUT CLAIMING THE READER HAS IT. "Add craft" is a real
+ * destination in this app's own menu (`NavDestination.ADD_CRAFT`, gated on
+ * `FieldPermissions.canManageCrafts`, mirroring `require_craft_manager`), so the sentence can point at
+ * it — but this picker has no user in scope and inventing one to decide the wording would be a second
+ * copy of the rank rule. Naming the gate instead is true for every reader: a Professor knows where to
+ * go, and everybody else knows who to ask, which is strictly better than the old sentence that named
+ * neither.
+ *
+ * THE SECOND HALF IS THE ONE THAT UNBLOCKS THE STAGE, and it is the reason this cannot just be a
+ * placeholder. `craftRef` is optional and the craft's NAME box is required, so the designer's real
+ * next move is to type the name rather than to find the register — and nothing on this screen said
+ * so. The name box is resolved through [FieldDto.refHydration], the server's own dictionary from the
+ * Craft record's keys onto this entity's, rather than by matching a key name here; when that lookup
+ * finds nothing the clause is simply dropped, so a wrong answer costs a shorter sentence and never a
+ * pointer at a box that does not exist. The `pendingHydration` note inside [DwReferenceSelectField]
+ * records what guessing keys on this surface cost the last time.
+ */
+private fun dwCraftRegisterNote(field: FieldDto, writableFields: Map<String, FieldDto>): String {
+    val nameBox = field.refHydration["craftName"]?.let { writableFields[it]?.label }
+    val fallback = "Linking one is optional — the stage still saves without it."
+    val typeItIn = nameBox?.let {
+        "Linking one is optional: type the craft into “$it” above and the stage still saves."
+    } ?: fallback
+    return "Craft not listed, or listed under a different spelling? Crafts are added on the crafts " +
+        "register — “Add craft” in this app's menu, which is open to a Professor and above — and " +
+        "never from this picker. $typeItIn"
+}
 
 /** Everything the picker needs that the renderer cannot work out from the field alone. */
 @Immutable
@@ -545,6 +594,25 @@ internal fun DwReferenceSelectField(
                 Spacer(Modifier.size(6.dp))
                 Text("Edit this $noun", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
             }
+        }
+
+        /*
+         * The crafts register, named on the one picker that cannot offer to create.
+         *
+         * WHILE NOTHING IS LINKED, and not only while the LIST is empty. A list with rows in it and
+         * not the craft the designer is looking at is the same dead end as an empty one — it is the
+         * misspelt-craft case the web branch names — and once a craft IS linked the sentence is
+         * noise. `selectedId` is therefore the right condition and `options.isEmpty()` is not.
+         *
+         * A sentence and not a button: see [INLINE_CREATABLE], which refuses the button on two
+         * independent grounds, either of which would have to be answered on BOTH clients at once.
+         */
+        if (field.refModel == "Craft" && selectedId.isBlank()) {
+            Text(
+                dwCraftRegisterNote(field, writableFields),
+                color = MaterialTheme.field.muted,
+                fontSize = 12.sp
+            )
         }
 
         ReferenceProvenance(list = list, truncated = truncated, bridge = bridge, visible = !needsParent)

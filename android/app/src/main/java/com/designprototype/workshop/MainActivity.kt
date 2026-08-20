@@ -203,6 +203,13 @@ import com.designprototype.workshop.ui.RecordCodeSection
 // The shared prose box behind every record form: an optional on-device microphone and an optional
 // rich-text editor, both defaulting to off. See `ui/RecordProseField.kt` and `ui/RecordProseText.kt`.
 import com.designprototype.workshop.ui.RecordProseField
+// The artisan form's numbered Do's/Don'ts control and its stored-string codec, which used to be
+// private to this file. They moved to `ui/NumberedPointsField.kt` so the stage form's own Do's and
+// Don'ts boxes — the same two facts, carried onto the participant row by hydration — could render
+// through the same control instead of a second one. See that file for what the move widened.
+import com.designprototype.workshop.ui.NumberedListInput
+import com.designprototype.workshop.ui.joinNumbered
+import com.designprototype.workshop.ui.splitNumbered
 // The Design & Prototype Workshop capture surface. Four screens, all of them rendered entirely
 // from the field registry — see ui/designworkshop/FieldRenderer.kt for why there is no per-stage
 // form code here or anywhere else.
@@ -14928,94 +14935,6 @@ private fun TextInput(
         resetKey = resetKey,
         below = { if (titleCased) TitleCaseHint(value) },
     )
-}
-
-/** Split a stored newline-separated list into editable rows (always at least one, for the empty case). */
-private fun splitNumbered(value: String?): List<String> =
-    value?.split("\n")?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() } ?: listOf("")
-
-/** Collapse editable rows back into the stored newline-separated form (blank rows dropped). */
-private fun joinNumbered(items: List<String>): String =
-    items.map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
-
-/**
- * A required, numbered multi-point input. Each row is one numbered bullet; pressing Enter inside a row
- * splits it into a new bullet (so the user just types a point and hits Enter for the next). Rows can be
- * removed individually, and "+ Add point" appends an empty one. Backed by a List<String>; persist with
- * [joinNumbered]. Used for an artisan's Do's (positive prompt) and Don'ts (negative prompt).
- *
- * ── DELIBERATELY LEFT WITHOUT EITHER CONTROL, AND THIS IS THE RECORD OF WHY ───────────────────
- *
- * It is the one multi-row input on a record form that got neither a microphone nor an editor, so a
- * later reader will assume it was missed. It was not.
- *
- * NO EDITOR: this control already IS a list editor. Its rows persist as a newline-joined string and
- * reopen as numbered points, which is precisely the structure a rich document would encode — so
- * adding one would put two list models in one column, each convinced it owned the newlines.
- *
- * NO MICROPHONE, AND THIS HALF IS A JUDGEMENT THAT COULD REASONABLY GO THE OTHER WAY. A do or a
- * don't is one short line ("do not wash in hot water"), which is the shape the user's own rule
- * excludes; and the row's box carries three behaviours the shared control does not have — an
- * `onValueChange` that splits on a pasted newline into new bullets, an `isError` on the first row,
- * and a `FocusRequester` the form drives on a validation failure. Threading those through
- * `RecordProseField` would widen it for exactly one caller. If somebody later decides these points
- * are worth dictating, widen the shared control rather than hand-rolling a fourth microphone here.
- */
-@Composable
-private fun NumberedListInput(
-    label: String,
-    items: List<String>,
-    error: String?,
-    focusRequester: FocusRequester? = null,
-    helper: String? = null,
-    onChange: (List<String>) -> Unit
-) {
-    val rows = items.ifEmpty { listOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("$label *", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-        helper?.let { Text(it, color = Muted, fontSize = 12.sp) }
-        rows.forEachIndexed { index, item ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("${index + 1}.", color = Muted, fontSize = 14.sp)
-                OutlinedTextField(
-                    value = item,
-                    onValueChange = { raw ->
-                        if (raw.contains('\n')) {
-                            // Enter pressed: commit text before the break, push the remainder to new bullet(s).
-                            val segments = raw.split('\n')
-                            val updated = rows.toMutableList()
-                            updated[index] = segments.first().trim()
-                            updated.addAll(index + 1, segments.drop(1).map { it.trim() })
-                            onChange(updated)
-                        } else {
-                            val updated = rows.toMutableList()
-                            updated[index] = raw
-                            onChange(updated)
-                        }
-                    },
-                    isError = error != null && index == 0,
-                    minLines = 1,
-                    modifier = Modifier
-                        .weight(1f)
-                        .let { if (index == 0 && focusRequester != null) it.focusRequester(focusRequester) else it }
-                )
-                if (rows.size > 1) {
-                    IconButton(onClick = {
-                        val updated = rows.toMutableList().also { it.removeAt(index) }
-                        onChange(updated.ifEmpty { listOf("") })
-                    }) {
-                        Icon(Icons.Filled.Close, contentDescription = "Remove point", tint = Muted)
-                    }
-                }
-            }
-        }
-        TextButton(onClick = { onChange(rows + "") }) {
-            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("Add point")
-        }
-        if (error != null) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-    }
 }
 
 // Notes can hold several distinct entries. They are stored in the existing single `notes` column,

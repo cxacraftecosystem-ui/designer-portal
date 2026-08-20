@@ -218,6 +218,21 @@ STAGE_1 = StageSpec(
             # Provenance of the SOURCE record, so a reader can tell a cover filled from a survey
             # three years ago from one filled last week. Every other reference model carries it.
             fromref("craftDocumentedOn", "Craft documented on", DATE, S),
+            # AND UNDER WHOSE STUDY, which `craftDocumentedOn` cannot answer. `craftRef` is
+            # ALL_SCOPE, so the linked craft may have been documented in a different cluster by a
+            # different study years earlier — legitimate reuse, and only visible if it is printed.
+            # The crafts page asks this first, through `WorkshopSelect`, and the workshop discarded
+            # it. KEY_VALUE and not a seventh COVER_FIELD, for the reason written above
+            # `craftCategory`: the cover page is the sanction order's own facts about THIS workshop.
+            fromref("craftDocumentedAtWorkshop", "Workshop the craft was documented at", T, S,
+                    max_length=220),
+            # EVERYTHING ATTACHED THAT IS NOT THE ONE STILL IMAGE BELOW. The crafts page's media card
+            # takes images, video, audio notes and documents with no limit; `_reference_photos`
+            # resolves one IMAGE. So a craft documented with fifteen loom photographs, a recorded
+            # elder's account and a scanned gazetteer page contributed one picture to the report whose
+            # cover names it, and nothing said the rest existed. A sentence and never the ids — see
+            # `_media_note`. Same type, tier and bound as `traditionalProcess.recordMediaNote`.
+            fromref("craftMediaNote", "Media on the craft record", T, S, max_length=200),
             # THE PHOTOGRAPH THAT WAS ALWAYS RESOLVED AND ALWAYS THROWN AWAY. `media_field="craftId"`
             # has been declared on the Craft model since it was written, so the server has always
             # looked a craft's picture up and handed it to the data lambda — which named the
@@ -414,6 +429,42 @@ STAGE_3 = StageSpec(
             # at, 1,500 km from the village on the same row.
             fromref("district", "District", T, S, max_length=80),
             fromref("state", "State", T, S, max_length=80),
+            # ── WHY THESE THREE ARE STILL FREE TEXT, AND WHY max_length IS STILL 10 ───────────────
+            #
+            # Written here once for all nine address boxes in the registry (this entity's three,
+            # `workshopSetup.state`/`district`, and the `record…` boxes on `tool` and
+            # `existingProduct`), because the next reader will look at the record page's closed
+            # dropdowns and its six-digit clamp and ask why the workshop does not match them.
+            #
+            # THE ANSWER IS `validate_entry`, WHICH RE-COERCES EVERY FIELD ON EVERY SAVE — not only
+            # the ones the client just changed. It walks `entity.fields` and calls `coerce_value` on
+            # `data.get(spec.key)` for each, so tightening a declaration does not merely constrain
+            # NEW answers: on the next save of a row that already holds a value the new declaration
+            # refuses, `coerce_value` returns an error, the field is dropped from `cleaned`, and the
+            # designer is shown a refused answer on a box they never touched. (`save_stage` does
+            # restore the stored value from `previous`, so nothing is destroyed — but the refusal is
+            # reported and counted in `refusedAnswers`.)
+            #
+            # So both "improvements" are regressions on data that already exists:
+            #  * ENUM. `coerce_value`'s ENUM branch refuses a token that is not a member, and
+            #    hydration has been writing `Artisan.gender` and the canonical state names into these
+            #    TEXT boxes verbatim. A designer's "Rajastan" — or, for gender, the "Female" that
+            #    every hydrated roster row in the database holds — becomes a refused answer, and both
+            #    clients draw an EMPTY dropdown over a filled-in value they cannot match. That is the
+            #    `toolType` lesson, written out above `tool.toolFamily`, and it is why the countable
+            #    answer gets a box of its own there rather than replacing the sentence.
+            #  * max_length. An Indian PIN is six digits and this says ten, which is laxer than the
+            #    column it copies from — but a value already stored as "768 029" (seven characters,
+            #    and typed exactly that way by somebody reading a card aloud) would start being
+            #    refused on a stage the designer is trying to submit.
+            #
+            # WHAT WOULD MAKE EITHER SAFE, so this is a deferral and not a verdict: a grandfathering
+            # clause in `coerce_value` (a promoted field accepts a value that unambiguously names one
+            # member's LABEL, exactly as the RICH_TEXT branch accepts a plain string) landing in the
+            # SAME change as the client half that keeps a stored value visible in its own dropdown.
+            # Until then the honest box is the loose one. I could not check what is actually stored in
+            # these boxes today: the compose stack is down, so there is no Postgres here to run the
+            # DISTINCT over `DwStageEntry.data` that would settle it.
             fromref("pincode", "PIN code", T, S, max_length=10),
             fromref("address", "Address", LT, S),
             fromref("subjectLocation", "Location of the artisan’s place", GEO, A,
@@ -438,6 +489,29 @@ STAGE_3 = StageSpec(
             # Provenance of the SOURCE record, so a reader of the printed roster can tell a row
             # filled from a survey three years ago from one filled last week.
             fromref("documentedOn", "Artisan documented on", DATE, S),
+            # THE OTHER HALF OF THAT SENTENCE, WHICH HAD NO BOX. `artisanRef` is the one artisan
+            # picker declared ALL_SCOPE — "this is where the roster is built" — so a roster
+            # legitimately holds artisans documented at a different cluster's workshop years earlier,
+            # and a reader of the printed roster could not tell such a row from one filled in the
+            # room. The record page asks this FIRST, through `WorkshopSelect`, on the argument that
+            # the workshop "is the context every other answer belongs to".
+            #
+            # KEY_VALUE by omission, and that is not a preference: the six TABLE_COLUMN widths
+            # declared above already sum to exactly 100, so a seventh would push
+            # `report_builder._table_columns` onto its proportional fallback and silently re-lay-out a
+            # participant table that is already in submitted documents. KEY_VALUE fields print in the
+            # per-row block beneath the table, so nothing is lost.
+            fromref("documentedAtWorkshop", "Documented at workshop", T, S, max_length=160,
+                    help="The workshop this artisan was documented at, from their record."),
+            # WHAT ELSE IS ON THE ARTISAN RECORD, WHICH ONE PHOTOGRAPH CANNOT SAY. The record form's
+            # media card asks for "images, audio introductions, videos, and documents" by name, and
+            # `_reference_photos` resolves exactly one IMAGE — so a researcher who recorded an
+            # artisan's spoken introduction produced material no box on this row could mention, and a
+            # reader could not know to ask for it. A sentence counting the files and never the ids:
+            # `_media_note` gives both reasons (a stage gallery holds the DESIGNER's own photographs,
+            # and a referenced record's files are entitlement-gated per file). Same shape and same
+            # bound as `traditionalProcess.recordMediaNote`.
+            fromref("recordMediaNote", "Media on the artisan record", T, S, max_length=200),
             f("attendedDays", "Days attended", INT, S, min_value=0),
             fromref("photo", "Photograph", IMG, S, report_role=GALLERY),
             # WHATEVER THE REPOSITORY HOLDS AGAINST THE CHOSEN PHOTOGRAPH, which is not always a
@@ -576,7 +650,20 @@ STAGE_5 = StageSpec(
             # would either freeze ids the report cannot fetch or bypass the per-file entitlement
             # gate. It tells a reader the footage exists so they can ask for it.
             fromref("recordMediaNote", "Media on the process record", T, S, max_length=200),
-            fromref("documentedProcessNotes", "Notes from the process record", LT, S,
+            # RICH, AND THE PROMOTION BUYS SOMETHING HERE THAT IT WOULD NOT BUY IN A CELL. The record
+            # page gives this column the full editor — headings, ordered and bulleted lists, an
+            # inline picture — and the workshop gave the same fact a bare textarea, inches from
+            # `processOverview`, which is RICH: two narratives about the same sequence offering
+            # different editors. NARRATIVE is the one role the RICH alias note above says a promotion
+            # is worth anything for, because `_render_narrative` gives a rich NARRATIVE its own path
+            # through `rich_text.to_report_blocks` — and this field already declares it, so nothing
+            # about WHERE it prints changes.
+            #
+            # Nothing is blanked and no backfill is needed: `coerce_value` reads a plain string as
+            # unformatted prose, which is exactly what hydration writes here (`_reference_data`
+            # flattens the researcher's marks on the way across), and both clients document absorbing
+            # the same promotion. The mapping pair is unchanged.
+            fromref("documentedProcessNotes", "Notes from the process record", RICH, S,
                     report_role=NARR),
             fromref("documentedSteps", "Sub-steps on the process record", LT, S,
                     report_role=BULLETS,
@@ -586,6 +673,26 @@ STAGE_5 = StageSpec(
             # available: Yes" appearing under step 3 of 7. It is a property of the whole process,
             # so it belongs on the whole-process record, which is this one.
             fromref("preProcessAvailable", "Pre-process required", BOOL, S),
+            # ── THE EVIDENCE FOR THE ANSWER ABOVE, WHICH THE WORKSHOP ASKED FOR AND COULD NOT HOLD ─
+            #
+            # The record page makes pre-process media MANDATORY the moment its own checkbox is
+            # ticked — `submit()` refuses the save with "Attach the pre-process media or uncheck the
+            # box" — and it says video is the preferred format because the point is the action as it
+            # happens. This entity had no IMAGE, IMAGE_LIST, VIDEO or FILE field of any kind, so the
+            # workshop asked the question one line above and gave the designer nowhere to put the
+            # answer's evidence: footage of the pre-processing shot at the cluster had to be left out
+            # of the workshop entirely.
+            #
+            # `f()` AND NOT `fromref()`, AND IT MUST STAY THAT WAY. `recordMediaNote` above counts the
+            # SOURCE record's files deliberately; these two hold the DESIGNER's own footage, of which
+            # there is no second copy anywhere. Seeding them from the record would break the rule
+            # `hydrate_entries` states — a gallery is seeded when empty and never overwritten — and
+            # `MediaFile` has no `processId` to seed them from in any case (see
+            # `REFERENCE_MODELS["Process"]`, which spells out what a migration would cost).
+            f("preProcessVideo", "Pre-process footage", VIDEO, A,
+              help="Video of the pre-processing, if it was observed at the workshop."),
+            *photos("preProcessPhotos", "Pre-process photographs", A,
+                    "Pre-process photograph caption"),
             fromref("documentedOn", "Process documented on", DATE, S),
             f("totalMakingTime", "Total making time", DEC, S, unit="days", min_value=0),
             f("currentProblems", "Current problems", RICH, S, report_role=BULLETS,
@@ -641,10 +748,43 @@ STAGE_5 = StageSpec(
             f("timeTaken", "Time taken", DEC, S, unit="hours", min_value=0, report_role=COL,
               column_width_pct=16.0),
             f("performedBy", "Performed by", T, S),
+            # ── ONE STEP, OR A BRACKET AROUND SEVERAL ────────────────────────────────────────────
+            #
+            # The record page fixes this at the moment a step is added — two buttons, "Sequential" and
+            # "Group of activities" — and prints it in every step header for the life of the record.
+            # A GROUP is not a step in the sequence, which is why `_step_lines` marks one, and until
+            # this box existed the distinction reached the workshop ONLY inside the flattened
+            # `documentedSteps` string on the hydrated singleton: a designer who watched three
+            # parallel activities bracketed together had no way to say so, and nothing queryable held
+            # it either.
+            #
+            # KEY_VALUE and NOT a sixth TABLE_COLUMN: the five declared widths on
+            # stepNumber/name/localName/description/timeTaken already sum to 100, and a sixth pushes
+            # the renderer onto its proportional fallback, re-laying-out a table that is already in
+            # submitted documents. `_render_rows` prints KEY_VALUE in the per-row block beneath.
+            #
+            # `f()` and not `fromref()`: a Process has MANY steps and hydration cannot choose which
+            # source step a row corresponds to — the same reason `name` above receives the PROCESS's
+            # name. See the note on `ENUMS["PROCESS_STEP_TYPE"]`.
+            f("stepType", "Step type", ENUM, S, enum="PROCESS_STEP_TYPE", report_role=KV),
             f("toolsUsed", "Tools used", TAGS, S),
             f("problems", "Problems at this step", LT, S),
             *photos("stepPhotos", "Step photographs", A, "Step photograph caption"),
             f("stepVideo", "Process video", VIDEO, A),
+            # ── THE ARTISAN EXPLAINING THIS STEP, WHICH ONLY THE WHOLE PROCESS COULD HOLD ─────────
+            #
+            # The record page mounts a media card per step with no `allowedTypes`, so it takes audio,
+            # and it carries its own in-browser recorder; the uploaded audio is then queued for
+            # transcription. This collection offered `stepPhotos` and `stepVideo` and nothing else, so
+            # a designer standing at one step with an artisan explaining THAT step could not record
+            # them: `traditionalProcess.artisanAudio` covers the process AS A WHOLE, which is a
+            # different scope and a different recording.
+            #
+            # The same pair, the same types and the same tier as that singleton's, so the affordance a
+            # designer already knows exists per step. NARRATIVE is safe on a many-row: `_render_rows`'
+            # per-row block renders NARRATIVE, KEY_VALUE, COVER_FIELD and BULLETS, so it prints.
+            f("stepAudio", "Spoken explanation of this step", AUDIO, A),
+            f("stepAudioTranscript", "Transcript of the recording", RICH, A, report_role=NARR),
         ), label_field="name"),
         many("tool", "DwTool", "Tools", (
             # The tool picker comes FIRST in the entity so the form draws it above the fields it
@@ -763,10 +903,45 @@ STAGE_5 = StageSpec(
             fromref("recordDistrict", "District on the record", T, S, max_length=80),
             fromref("recordVillage", "Village on the record", T, S, max_length=120),
             fromref("recordPincode", "PIN code on the record", T, S, max_length=10),
+            # THE PIN, WHICH IS THE HALF OF THE ADDRESS THAT IS NOT A STRING. The four boxes above
+            # carry what the record page's stated-address fields say; the record page ALSO lets a
+            # researcher drop a pin on the tool's own place with the map picker, and that coordinate
+            # is about the place rather than about the desk — which is the whole of invariant 4 and
+            # the distinction `_subject_point` exists to keep. GEO already renders as the map picker
+            # on the web and as the full location card on the handset, so the affordance the record
+            # page gives is the affordance this box gives.
+            fromref("recordSubjectLocation", "Pinned place on the tool record", GEO, A,
+                    help="The pin a researcher dropped on the place the tool was documented, not "
+                         "the device’s position when the record was typed."),
             fromref("usedByArtisans", "Also used by", LT, S, report_role=BULLETS,
                     help="Every artisan this tool is assigned to on the tool record. One per line."),
-            fromref("improvements", "Improvements suggested", LT, S),
-            fromref("remarks", "Remarks on the tool record", LT, S),
+            # HOW MUCH FOOTAGE THE TOOL RECORD CARRIES. The record page mounts its media card TWICE —
+            # once for the ordered "Process stages" sequence, whose captures are archived as
+            # STAGE_STEP_1, STAGE_STEP_2, …, and once for general video and audio — and `photo` below
+            # is a single IMAGE, so a tool whose making was documented as a nine-photograph sequence
+            # reached this row, and a ministry report, as one still with nothing admitting the rest.
+            # A sentence and never the ids; see `_media_note`. KEY_VALUE by omission — never a sixth
+            # TABLE_COLUMN, because this table's five declared widths already sum to exactly 100.
+            fromref("recordMediaNote", "Media on the tool record", T, S, max_length=200,
+                    help="How much footage the tool record carries. The files themselves stay on "
+                         "the record."),
+            # ── RICH, BECAUSE THESE ARE THE TWO NARRATIVE BOXES ON THE RECORD PAGE ───────────────
+            #
+            # `ToolForm` calls them exactly that and gives both the full editor, on the argument that
+            # they "hold prose a researcher would rather speak than thumb in"; the workshop gave the
+            # same two facts a plain textarea whose dictation button can only append a flat string to
+            # the end, while the RICH branch inserts at the caret. The promotion is the supported
+            # migration and blanks nothing: `coerce_value` reads a plain string as unformatted prose,
+            # which is what hydration writes here.
+            #
+            # WHAT THIS DOES NOT FIX, so nobody looks for it twice: `_reference_data` flattens every
+            # string in the payload, so a numbered improvement list a researcher wrote on the record
+            # page still ARRIVES as one paragraph. That flattening is load-bearing (it is what stopped
+            # `{"blocks":…}` printing into a ministry table) and making it target-type-aware is a
+            # separate change to a function with a long argued docstring. What this closes is the
+            # designer's own editor, on both surfaces, which is the requirement-(b) defect.
+            fromref("improvements", "Improvements suggested", RICH, S),
+            fromref("remarks", "Remarks on the tool record", RICH, S),
             # ── SEVEN MEASUREMENTS, TWO DIFFERENT STATES OF KNOWLEDGE ────────────────────────
             #
             # `lengthCm`/`breadthCm` are converted from `lengthInches`/`breadthInches`, which
@@ -786,6 +961,28 @@ STAGE_5 = StageSpec(
             # ordinary converted fields and these five can be deprecated with `replaced_by`.
             fromref("lengthCm", "Length", DEC, S, unit="cm", min_value=0),
             fromref("breadthCm", "Breadth", DEC, S, unit="cm", min_value=0),
+            # ── THE THIRD DIMENSION A PHOTOGRAPH CAN READ, WHICH HAD NOWHERE TO LAND ─────────────
+            #
+            # `measurableLengthFields` qualifies a field off its DECLARED length unit, so the
+            # photo-measure panel on `photo` below can propose into `lengthCm` and `breadthCm` and
+            # cannot see `heightAsRecorded` — correctly, because that box says only what the record
+            # said and the record states no unit. But the record page's grid capture DOES measure a
+            # height ("Side-on photo of the object against the grid — fills height"), so the
+            # affordance existed for two of the tool's dimensions and was missing for the third one a
+            # camera can read: at the workshop, height had to be eyeballed and typed.
+            #
+            # A UNIT-DECLARED TWIN AND NOT A RETYPE, which is invariant 6 read the right way round:
+            # giving `heightAsRecorded` a unit would turn an unknown into a stated wrong answer. It is
+            # `f()` and not `fromref()` for the same reason — nothing may map into it, because the
+            # source column's unit is unknown and a mapping would invent one. Same pairing, same
+            # argument, as `toolType` beside `toolFamily`.
+            #
+            # NOT extended to width/thickness/radius: the record page's grid offers no reading for
+            # those three, so twins there would be three new boxes buying nothing — and
+            # `weightAsRecorded` must never get one, because a photograph cannot weigh anything.
+            f("heightCm", "Height (measured)", DEC, S, unit="cm", min_value=0,
+              help="Measured at the workshop. The tool record’s own height is below, in whatever "
+                   "unit it was recorded in."),
             fromref("heightAsRecorded", "Height (as recorded)", DEC, S, min_value=0,
                     help="Copied from the tool record, which does not state the unit it was "
                          "measured in."),
@@ -920,11 +1117,31 @@ STAGE_6 = StageSpec(
             # here, so a reader who follows that sentence goes looking for wiring that does not
             # exist. Nothing to add: KEY_VALUE is the default role and the field already prints.
             fromref("costOfMaking", "Cost of making", MONEY, S, unit="INR", min_value=0),
-            fromref("material", "Material", T, S, report_role=COL, column_width_pct=16.0),
+            # ── THE FOUR NARRATIVE BOXES OF THE RECORD PAGE, WHICH ARRIVED AS ONE-LINE INPUTS ────
+            #
+            # The product form calls `material` / `mainToolsUsed` / `use` / `remarks` its narrative
+            # fields and gives all four the full editor, noting that raw materials "are lists as often
+            # as they are sentences, which is exactly what the editor's bullet button is for". The
+            # workshop gave `material` a SINGLE-LINE text box for the same fact and the other three a
+            # textarea whose dictation can only append to the end. RICH is the same control the record
+            # page uses, on both surfaces, by reuse rather than reimplementation.
+            #
+            # REPORT ROLES AND WIDTHS ARE UNTOUCHED, deliberately: changing where a value prints in
+            # documents already submitted is a different decision from changing the input affordance
+            # and must not ride along inside it. `material` stays a 16%-wide TABLE_COLUMN and is the
+            # first RICH field in a table cell anywhere in the registry — `_cell_runs` is called from
+            # the table path as well as the key-value path and holds runs either way, so it keeps its
+            # bold and loses its paragraph breaks to single spaces, which is what a cell can carry.
+            #
+            # The promotion blanks nothing: `coerce_value` reads a plain string as unformatted prose,
+            # and hydration writes exactly that (`_reference_data` flattens the source's own marks).
+            # Recovering the researcher's formatting through the carry is a separate change to
+            # `_reference_data` and is deliberately not attempted here.
+            fromref("material", "Material", RICH, S, report_role=COL, column_width_pct=16.0),
             f("materialFamily", "Material family", ENUM, S, enum="MATERIAL_FAMILY"),
-            fromref("mainToolsUsed", "Main tools used", LT, S),
+            fromref("mainToolsUsed", "Main tools used", RICH, S),
             f("technique", "Technique", T, S),
-            fromref("use", "Use", LT, S),
+            fromref("use", "Use", RICH, S),
             f("traditionType", "Traditional or contemporary", ENUM, S, enum="TRADITION_TYPE"),
             f("productionTimeDays", "Production time", DEC, S, unit="days", min_value=0),
             # BESIDE `productionTimeDays`, NOT INSTEAD OF IT, and not parsed into it. The source
@@ -968,7 +1185,26 @@ STAGE_6 = StageSpec(
             fromref("recordDistrict", "District on the record", T, S, max_length=80),
             fromref("recordVillage", "Village on the record", T, S, max_length=120),
             fromref("recordPincode", "PIN code on the record", T, S, max_length=10),
-            fromref("remarks", "Remarks on the product record", LT, S),
+            # THE PIN, WHICH IS THE HALF OF THE ADDRESS THAT IS NOT A STRING. The four boxes above
+            # are the record's stated address; this is the pin a researcher dropped on the product's
+            # own place with the map picker, which is about the place and not about the desk — the
+            # distinction invariant 4 turns on and `_subject_point` enforces. `participant` has
+            # carried its equivalent since it was written and this entity declared no GEO field at
+            # all, so the four strings landed and the one coordinate that is genuinely about the
+            # village reached nothing. GEO renders as the map picker on the web and as the location
+            # card on the handset, so the record page's affordance carries with the type.
+            fromref("recordSubjectLocation", "Pinned place on the product record", GEO, A,
+                    help="The pin a researcher dropped on the place the product was documented, "
+                         "not the device’s position when the record was typed."),
+            # See the note on `material` above for the promotion; this is the fourth of the record
+            # page's narrative boxes, and the one its EXIF summary is appended INTO as a paragraph.
+            fromref("remarks", "Remarks on the product record", RICH, S),
+            # WHAT THE RECORD HAS ATTACHED BEYOND THE PHOTOGRAPH SEEDED BELOW. `_reference_photos`
+            # resolves one IMAGE, so an audio note in which the artisan explains the piece, or a video
+            # of it being finished, existed on the record and was invisible to the workshop and to the
+            # report. A sentence and never the ids — see `_media_note`, and note that this is not the
+            # gallery rule: nothing here proposes overwriting the designer's own photographs.
+            fromref("recordMediaNote", "Media on the product record", T, S, max_length=200),
             fromref("documentedOn", "Product documented on", DATE, S),
             # Written out rather than built by ``photos()`` for the sake of the one extra
             # sentence: the documented product's own photograph is seeded into this gallery, and

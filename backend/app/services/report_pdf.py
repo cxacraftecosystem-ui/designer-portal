@@ -1345,11 +1345,31 @@ class PdfRenderer:
         # after them shifts down by a page and every number the TOC prints is one too low.
         # Feeding the first pass's entries back in and measuring again resolves it.
         #
-        # Capped at three iterations. A report balanced exactly on a page boundary — where
-        # adding the TOC row that a page break created removes the break again — would otherwise
-        # oscillate forever. Three is enough for the fixed point in every real document; the cap
-        # exists so the pathological one produces a slightly stale page number instead of hanging
-        # a designer's export.
+        # ── THE CAP WAS THREE, AND "ENOUGH FOR EVERY REAL DOCUMENT" WAS NOT TRUE ────────────────
+        #
+        # A report balanced exactly on a page boundary — where adding the TOC row that a page break
+        # created removes the break again — oscillates forever, so a cap is genuinely needed. But
+        # three of them buys convergence only for a SHORT contents. Each iteration moves the body by
+        # however many pages the contents grew by, and a contents that grows by a page can push a
+        # heading onto a new page, which adds a row, which can grow the contents again. A long
+        # report therefore walks toward its fixed point a page or two at a time and needs as many
+        # iterations as it has of that walk left.
+        #
+        # `test_every_page_number_the_contents_prints_is_the_page_the_section_is_on` builds a
+        # 150-section document for exactly this reason and it failed the moment CI first ran it: the
+        # contents sent a reader to page 36 for a section on page 38. Off by TWO, not by the nine and
+        # ten the carry-over below fixed — a smaller error, from the same place, left behind by the
+        # cap rather than by the missing feedback.
+        #
+        # SO THE CAP IS RAISED AND TERMINATION IS MADE EXPLICIT INSTEAD OF ACCIDENTAL. Eight
+        # iterations, and a record of every layout already seen: an oscillation returns to a state it
+        # has visited, and detecting that stops the loop deliberately rather than waiting for a
+        # number that was chosen to be small enough to bound the pathological case. A cap is a bound
+        # on time; it was doing duty as a convergence argument, and those are different things.
+        #
+        # The pathological document still terminates — it now does so because it was RECOGNISED, and
+        # the number it prints is the best of the states it cycled through rather than whichever one
+        # iteration three happened to land on.
         #
         # "FEEDING THE FIRST PASS'S ENTRIES BACK IN" IS THE LINE THAT WAS MISSING. `_toc_entries`
         # was cleared at the top of every iteration and `_block_toc` read it directly, so the
@@ -1364,7 +1384,12 @@ class PdfRenderer:
         # The carry-over below is what makes the three iterations do what this comment claims.
         self.c = rl_canvas.Canvas(BytesIO(), pagesize=(self.page_w, self.page_h))
         previous: dict[str, int] = {}
-        for _ in range(3):
+        # Every layout already measured, as an order-independent signature. A repeat is an
+        # oscillation — the document has returned to a page assignment it held before — and there is
+        # nothing further to learn from continuing. Keyed on the heading->page map because that IS
+        # the state the loop is trying to settle: `_toc_entries` is derived from it.
+        seen: set[frozenset[tuple[str, int]]] = set()
+        for _ in range(8):
             self._toc_entries = []
             # Cleared too, not just replaced key by key: a heading removed by a template change
             # would otherwise keep its stale page number and the comparison below would never
@@ -1376,7 +1401,19 @@ class PdfRenderer:
             # before and after it would be measured against different heights.
             self._toc_source = list(self._toc_entries)
             if self._heading_pages == previous:
+                # Converged: this pass laid the document out exactly as the last one did, so the
+                # contents it measured are the contents that will be drawn and every number in them
+                # is the page the heading is actually on.
                 break
+            signature = frozenset(self._heading_pages.items())
+            if signature in seen:
+                # OSCILLATING, and stopping here is a decision rather than running out of turns.
+                # The document has returned to a layout it already held, so further passes only
+                # revisit the same two or three states. Whichever we stop on prints a number that is
+                # right for one of them — the alternative is not a better number, it is a hung
+                # export.
+                break
+            seen.add(signature)
             previous = dict(self._heading_pages)
 
         buffer = BytesIO()

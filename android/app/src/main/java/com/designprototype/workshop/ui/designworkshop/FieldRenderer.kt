@@ -64,6 +64,11 @@ import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.FieldDateField
 import com.designprototype.workshop.ui.FieldTimeField
 import com.designprototype.workshop.ui.ArtisanPhoneField
+// The artisan record form's numbered Do's/Don'ts control and its stored-string codec, reused whole
+// for every LONG_TEXT field the report prints as bullets. See [DwNumberedPointsInput].
+import com.designprototype.workshop.ui.NumberedListInput
+import com.designprototype.workshop.ui.joinNumbered
+import com.designprototype.workshop.ui.splitNumbered
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.formatFieldDate
 import kotlinx.serialization.json.JsonElement
@@ -72,10 +77,12 @@ import java.io.File
 import java.time.LocalDate
 
 /**
- * ONE composable that can draw any of the registry's 496 fields, by dispatching on [FieldDto.type].
+ * ONE composable that can draw any of the registry's fields — 570 of them in the bundled asset as
+ * this was written, counted from it rather than remembered — by dispatching on [FieldDto.type].
  *
  * THIS IS THE WHOLE POINT OF THE FEATURE. There is no per-stage form code anywhere in this app and
- * there must never be: the 22 stages carry 496 typed fields across 43 entities, the tiers within them
+ * there must never be: the 22 stages carry 570 typed fields across 43 entities, that count moves with
+ * every registry edit, the tiers within them
  * move between studies, and hand-writing the forms would make every registry edit an app release
  * while guaranteeing that the phone, the web form, the validator and the report writer each end up
  * with their own opinion of what stage 14 contains. They would drift, and the first anyone would
@@ -372,11 +379,48 @@ fun FieldRenderer(
                 InlineError(error)
             }
 
-            DwFieldType.LONG_TEXT ->
+            /*
+             * ── A BULLETS LONG_TEXT IS A LIST, AND NOW GETS A LIST'S CONTROL ──────────────────
+             *
+             * The signal was already being read one arm up: RICH_TEXT opens inside an ORDERED_ITEM
+             * when `reportRole == "BULLETS"`, on the argument that "a BULLETS field IS a list — its
+             * help says 'One deliverable per line' and the report prints it as one — so open inside a
+             * numbered item rather than making the designer type '1. '". That argument is about the
+             * ROLE, not about the type, and it was not applied here. So `participant.dos` — the same
+             * fact the artisan record form collects through the numbered control this arm now calls,
+             * two taps away in the same app — was one undifferentiated box whose only statement of
+             * its own structure was the words "One point per line" in its help text. The newline
+             * boundaries are load-bearing: `report_builder` splits this string one bullet per line.
+             *
+             * FOUR FIELDS IN THE BUNDLED ASSET AS THIS WAS WRITTEN, counted from it rather than
+             * guessed: `participant.dos`, `participant.donts`, `traditionalProcess.documentedSteps`
+             * and `tool.usedByArtisans`. Every one of them says "one per line" or "one point per
+             * line" in its own help, so the control affords exactly what the registry already
+             * promised — which is the property `DwBulletListFieldTest` pins for the whole set rather
+             * than for those four. The set is OPEN BY DESIGN: the condition is the role, so a BULLETS
+             * field added on the server gets this control with no client change at all.
+             *
+             * ONE KNOWN COSMETIC COST, NAMED SO THE NEXT READER DOES NOT FILE IT AS A BUG.
+             * `documentedSteps` is hydrated from `_step_lines`, which numbers its own lines, so a
+             * carried value draws as "1. 1. Soaking · …" — the row's ordinal beside the record's own.
+             * Stripping the leading ordinal would be this client editing the record's text, which is
+             * a far worse trade than a doubled numeral a designer can read past. Drawing an unordered
+             * dot instead would avoid it and cost more: the record form and the browser both number
+             * these rows, so this surface alone would be the odd one out for the same field, which is
+             * the divergence that actually costs.
+             *
+             * `reportRole` is already published to both clients, so this moves no registry version.
+             */
+            DwFieldType.LONG_TEXT -> if (field.reportRole == "BULLETS") {
+                DwNumberedPointsInput(
+                    field, value, onChange, enabled, error, resetKey = resetKey, services = services,
+                )
+            } else {
                 ScalarInput(
                     field, value, onChange, enabled, error, minLines = 4, resetKey = resetKey,
                     services = services,
                 )
+            }
 
             // The numeric three take `rowValues` for one reason: a derived field is computed from its
             // SIBLINGS, so it cannot be drawn from its own value alone. See [ScalarInput]'s note.
@@ -575,8 +619,11 @@ fun FieldRenderer(
                     onPatch = onPatch,
                 )
 
+            // The number pad for the one TEXT shape whose content is digits — see
+            // [dwNumericTextField], which is also what takes the microphone off it.
             DwFieldType.TEXT -> ScalarInput(
                 field, value, onChange, enabled, error, resetKey = resetKey,
+                keyboard = if (dwNumericTextField(field)) KeyboardType.Number else KeyboardType.Text,
                 services = services,
             )
         }
@@ -603,7 +650,7 @@ fun FieldRenderer(
  * [FieldRenderer]'s `when` has no `else`, so the type set is closed and the compiler forces an arm
  * for every constant — which is exactly what makes adding a constant safe. But the token never
  * reaches that `when` as itself: [DwFieldType.of] degrades ANY unrecognised token to
- * [DwFieldType.TEXT], deliberately, because for the 496-field registry the alternative is one new
+ * [DwFieldType.TEXT], deliberately, because for a registry this size the alternative is one new
  * server type blanking all 22 stages on every handset that has not updated. For a designer's own
  * question that same forgiveness is the whole of the failure: an unknown type is drawn as an ordinary
  * editable box with no note, no disabled state and no caption, so the designer TYPES AN ANSWER INTO
@@ -716,6 +763,48 @@ private fun InlineError(error: String?) {
 }
 
 /**
+ * The TEXT fields whose content is digits, so their box opens the number pad and offers no microphone.
+ *
+ * ── WHY THERE IS A KEY LIST HERE AT ALL, AND WHY IT IS THE SECOND-BEST ANSWER ─────────────────────
+ *
+ * Every other predicate on this surface reads a DECLARATION: [dwMeasurableLengthFields] asks the
+ * registry's `unit`, [dwOffersPhotoMeasure] asks the types. There is no declaration for "this box
+ * holds digits" — the honest fix is a `FieldSpec` attribute (`input_mode`, or a narrow `pattern`)
+ * that the server emits and both clients read, and it is handed off as such. Until then the handset
+ * opens the ALPHABETIC keyboard on a PIN code, in a courtyard, on the surface the designer is
+ * actually holding — while the app's own record form gives the same fact
+ * `KeyboardOptions(keyboardType = KeyboardType.Number)` two taps away, which is the requirement this
+ * predicate is standing in for.
+ *
+ * ── WHY IT IS SAFE TO GUESS *THIS*, WHEN THE OTHER GUESSES WERE REFUSED ───────────────────────────
+ *
+ * It is bounded on both sides. A keyboard hint WRITES NOTHING and REFUSES NOTHING — Android's number
+ * pad is a soft-keyboard preference, not a filter, so a pasted or hardware-typed value still lands —
+ * and there is deliberately NO digits-only clamp here, because stripping keystrokes would refuse
+ * input a designer might be entitled to enter, which is the expensive class of wrong answer. The
+ * microphone's removal is the same shape: it subtracts a control whose best possible answer on this
+ * field is wrong.
+ *
+ * AN EXACT KEY SET RATHER THAN A PATTERN, so it cannot over-match. Measured against the bundled
+ * `design-workshop-schema.json` rather than assumed: of its 570 fields exactly three have a
+ * pincode-shaped key — `participant.pincode`, `tool.recordPincode` and `existingProduct.recordPincode`
+ * — and all three are TEXT. A future PIN-code field under a fourth name gets the alphabetic keyboard
+ * until somebody adds it here, which is the failure mode of a stopgap and the reason the declared
+ * attribute is the answer rather than this.
+ *
+ * NOT the place to fix `maxLength`. All three declare 10 where an Indian PIN code is 6, so the box
+ * accepts and the report prints a ten-character value the record page could not have produced. That
+ * is a registry declaration, it moves `registry_version()`, and a client that quietly enforced 6
+ * against a server that allows 10 would be the two-surfaces-disagree defect wearing a helpful hat.
+ */
+internal fun dwNumericTextField(field: FieldDto): Boolean {
+    if (DwFieldType.of(field.type) != DwFieldType.TEXT) return false
+    return field.key.lowercase(java.util.Locale.ROOT) in DW_PINCODE_KEYS
+}
+
+private val DW_PINCODE_KEYS = setOf("pincode", "recordpincode")
+
+/**
  * Every text-shaped type, with a local buffer so typing is not fought by the store.
  *
  * THE BUFFER IS THE POINT. The stored value for a MONEY field is "1250.00" and for an INT it is a
@@ -755,8 +844,13 @@ private fun ScalarInput(
     var spoken by remember(field.key, resetKey) { mutableStateOf("") }
 
     val dictationAvailable = rememberDictationAvailable()
+    // [dwNumericTextField] subtracts, and only ever subtracts. `dictatable` is right that a TEXT box
+    // is usually a name or a place a soft keyboard fights — but a recogniser hands back WORDS, so on
+    // a six-digit PIN code the microphone's best possible answer is "three zero three zero zero
+    // seven", which coerces cleanly (it is inside `maxLength`) and is not a PIN code. The browser's
+    // own TEXT branch already excludes URL, EMAIL and PHONE from dictation on exactly this ground.
     val canDictate = services != null && dictationAvailable &&
-        dictatable(DwFieldType.of(field.type))
+        dictatable(DwFieldType.of(field.type)) && !dwNumericTextField(field)
     // No `media` in this condition any more, and the removal is the point: the card control used to
     // need the stage's media bridge to get a file to photograph into, which tied it to a screen that
     // has one. It now owns its own scratch file (and deletes it), so the only thing it needs is a
@@ -893,6 +987,122 @@ private fun appendSpoken(existing: String, spoken: String): String = when {
     existing.isBlank() -> spoken
     existing.last().isWhitespace() -> existing + spoken
     else -> "$existing $spoken"
+}
+
+/**
+ * A LONG_TEXT field the report prints as bullets, drawn as the record forms' numbered points.
+ *
+ * THE CONTROL IS THE ARTISAN FORM'S OWN, not a stage-side lookalike: [NumberedListInput] moved out of
+ * `MainActivity.kt` for this call. A second numbered-list control would be a second opinion about the
+ * three-way contract this string sits in — the record API writes it newline-joined, that control and
+ * `MultiNoteInput` read it back into rows, and `report_builder` splits it one bullet per line — and
+ * the two would disagree about a trailing blank line inside one release.
+ *
+ * NOTHING IS MIGRATED AND NOTHING IS COERCED ON THE WAY IN. A hydrated value arrives already in
+ * exactly the shape this control reads, because the record column it was copied from was written by
+ * the same codec. So a row saved before this arm existed opens as rows, and a row saved through it
+ * opens on an older build as the same string in a textarea.
+ *
+ * THE WRITE GOES THROUGH [DwValues.coerce], like the typed path it replaces, so a `maxLength` on a
+ * BULLETS field would refuse here exactly as it refuses in [ScalarInput] rather than being enforced
+ * only on the server. None of the four such fields in the bundled asset declares one; the point is
+ * that the day one does, this box does not become the loose one.
+ */
+@Composable
+private fun DwNumberedPointsInput(
+    field: FieldDto,
+    value: JsonElement?,
+    onChange: (JsonElement?) -> Unit,
+    enabled: Boolean,
+    error: String?,
+    resetKey: Any = field.key,
+    services: DwFieldServices? = null,
+) {
+    /**
+     * The rows on screen, which the store does not own.
+     *
+     * Held locally for the same reason [ScalarInput] holds its text buffer: a designer who has just
+     * pressed "Add point" is looking at a trailing EMPTY row, and [joinNumbered] drops blanks, so
+     * re-deriving the rows from the stored string on every recomposition would delete that row out
+     * from under the cursor. Keyed on [resetKey] as well as the field key, because collection rows
+     * are drawn through the same slots — see [FieldRenderer]'s `resetKey`.
+     */
+    var rows by remember(field.key, resetKey) { mutableStateOf(splitNumbered(DwValues.text(value))) }
+    var localError by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
+    /** Which row the recogniser is speaking into, or -1. Paired with [spoken]; see [rowOverlay]. */
+    var spokenRow by remember(field.key, resetKey) { mutableStateOf(-1) }
+    var spoken by remember(field.key, resetKey) { mutableStateOf("") }
+
+    // Adopt an incoming value only when it differs AS STORED — a hydration landing on the row, or a
+    // fold from the server. Comparing the joined form rather than the row list is what stops the
+    // empty row a designer just added from being read as a difference and immediately discarded.
+    LaunchedEffect(value) {
+        val stored = DwValues.text(value)
+        if (joinNumbered(rows) != stored) rows = splitNumbered(stored)
+    }
+
+    fun emit(next: List<String>) {
+        rows = next
+        val coerced = DwValues.coerce(field, joinNumbered(next))
+        localError = coerced.error
+        // A value that will not coerce is not pushed to the store, exactly as [ScalarInput] does it:
+        // the rows on screen keep the designer's words and the draft keeps the last good answer.
+        if (coerced.error == null) onChange(coerced.value)
+    }
+
+    val dictationAvailable = rememberDictationAvailable()
+    val canDictate = services != null && dictationAvailable && dictatable(DwFieldType.LONG_TEXT)
+
+    NumberedListInput(
+        label = fieldLabel(field),
+        // `fieldLabel` has already added the asterisk if the registry says the field is required.
+        required = false,
+        // The stage form's own block-label treatment, so this field does not read as a different
+        // kind of question from the BOOL and TAGS blocks above and below it.
+        mutedLabel = true,
+        items = rows,
+        error = localError ?: error,
+        helper = field.help.takeIf { it.isNotBlank() },
+        enabled = enabled,
+        rowOverlay = { index ->
+            if (index != spokenRow || spoken.isBlank()) null
+            else appendSpoken(rows.getOrElse(index) { "" }, spoken)
+        },
+        // THE DOUBLE BRACES ARE NOT A TYPO. `else { … }` is a BLOCK, so a lambda passed on the else
+        // branch has to be the block's own last expression — the same shape [ScalarInput] uses for
+        // its `trailingIcon`. Written as `else { index -> … }` this is a block beginning with a
+        // destructuring arrow and does not compile.
+        rowTrailing = if (!canDictate) null else {
+            { index ->
+                DwDictationButton(
+                    enabled = enabled,
+                    // ONE MICROPHONE PER ROW, which is the whole reason [rowTrailing] exists. A
+                    // single button for the block cannot know which point a phrase belongs to, and
+                    // its only defensible guess — the last row — is wrong exactly when a designer
+                    // goes back to fill in point two.
+                    onPartial = { partial ->
+                        spokenRow = index
+                        spoken = partial
+                    },
+                    onCommit = { finalText ->
+                        val merged = appendSpoken(rows.getOrElse(index) { "" }, finalText)
+                        spoken = ""
+                        spokenRow = -1
+                        emit(rows.toMutableList().also { current ->
+                            if (index < current.size) current[index] = merged else current.add(merged)
+                        })
+                    },
+                    onError = { message ->
+                        spoken = ""
+                        spokenRow = -1
+                        services?.onError?.invoke(message)
+                    },
+                )
+            }
+        },
+        onChange = ::emit,
+    )
+    DwDictationHint(listening = spoken.isNotBlank())
 }
 
 @Composable

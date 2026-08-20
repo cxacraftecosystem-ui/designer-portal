@@ -355,6 +355,22 @@ class _SourceRow:
         )
 
 
+def _media(media_type: str, filename: str, purpose: str | None = None) -> _SourceRow:
+    """One ``MediaFile`` row as the ``media`` relation hands it to a data lambda.
+
+    All three attributes ``_media_note`` reads are always set, INCLUDING the ones it only reads on
+    some models: ``_SourceRow`` raises on a column it was not given, and ``getattr(row, name,
+    default)`` does not rescue that (the default only catches ``AttributeError``), which is the
+    behaviour that makes this fixture worth having.
+    """
+    return _SourceRow(mediaType=media_type, originalFilename=filename, extraMetadata=purpose
+                      and {"purpose": purpose})
+
+
+#: The catalogue photograph every record carries, and the one row `_reference_photos` would resolve.
+_MEDIA_IMAGE = _media("IMAGE", "saree-on-the-loom.jpg")
+
+
 #: The five source records, filled in completely. Every column any ``data`` lambda reads is here
 #: with a value that is recognisable in a rendered document — no empty strings, no zeroes — so an
 #: assertion that the value reached the page cannot pass by coincidence.
@@ -392,6 +408,17 @@ def _source_rows() -> dict[str, _SourceRow]:
                 village="Barpali", district="Bargarh", state="Odisha", pincode="768029",
                 address="Weavers' Lane, Barpali", subjectLatitude=21.1857, subjectLongitude=83.5876,
             ),
+            # WHERE THE RECORD WAS MADE, which the roster prints beside WHEN it was made. The picker
+            # this feeds is the one declared ALL_SCOPE, so this is routinely a different workshop from
+            # the one being written up.
+            workshop=_SourceRow(title="Barpali cluster documentation, 2025"),
+            # WHAT ELSE IS ON FILE. Only one photograph can ever cross (`_reference_photos` resolves
+            # a single IMAGE), so the audio row here is the material `recordMediaNote` exists to
+            # mention — and mentioning is all it does: no id from this tuple may reach the entry.
+            media=(
+                _MEDIA_IMAGE,
+                _media("AUDIO", "introduction.m4a"),
+            ),
             # THE LEGACY KEYS STAY, and they deliberately DISAGREE with the columns above (27/54 vs
             # 31 and a 1971 birthday). Matching values would let a reader believe either source was
             # being used; disagreeing ones mean the assertions can only pass if the COLUMN won,
@@ -421,6 +448,14 @@ def _source_rows() -> dict[str, _SourceRow]:
             lengthInches="18.00",
             breadthInches="12.00",
             heightInches="2.00",
+            # THE RECORD'S OWN STATED ADDRESS AND THE PIN ON THE PRODUCT'S PLACE. The stated strings
+            # and the subject pin cross; the device's fix is not on this row at all, which is the
+            # honest fixture for a rule whose whole content is that those columns never travel.
+            location=_SourceRow(
+                village="Barpali", district="Bargarh", state="Odisha", pincode="768029",
+                subjectLatitude=21.1857, subjectLongitude=83.5876,
+            ),
+            media=(_MEDIA_IMAGE, _media("VIDEO", "cutting-down-the-saree.mp4")),
         ),
         "ToolDocumentation": _SourceRow(
             id="tool-1",
@@ -446,6 +481,24 @@ def _source_rows() -> dict[str, _SourceRow]:
             thickness="6.50",
             weight="88.00",
             radius="14.00",
+            location=_SourceRow(
+                village="Barpali", district="Bargarh", state="Odisha", pincode="768029",
+                subjectLatitude=21.1857, subjectLongitude=83.5876,
+            ),
+            # THE ORDERED MAKING SEQUENCE, plus a grid frame. `ToolForm` renames every capture in the
+            # "Process stages" card `STAGE_STEP_n_…` on both the online and the queued path, which is
+            # what lets the carried sentence say the sequence is a sequence; the grid frame is a sheet
+            # of ruled paper and must not be counted as footage of the tool.
+            media=(
+                _media("IMAGE", "STAGE_STEP_1_warping.jpg"),
+                _media("IMAGE", "STAGE_STEP_2_treadles.jpg"),
+                _media("AUDIO", "weaver-explains.m4a"),
+                _media("IMAGE", "grid-length.jpg", purpose="MEASUREMENT_GRID"),
+            ),
+            artisanLinks=(
+                _SourceRow(artisan=_SourceRow(name="Bhikari Meher")),
+                _SourceRow(artisan=_SourceRow(name="Sanjukta Meher")),
+            ),
         ),
         "Process": _SourceRow(
             id="process-1",
@@ -454,18 +507,31 @@ def _source_rows() -> dict[str, _SourceRow]:
             preProcessAvailable=True,
             recordedAt="2025-03-14T11:00:00+05:30",
             product=_SourceRow(productName="Sambalpuri Ikat saree"),
+            # The pre-process clips the record form makes mandatory once the box is ticked, and one
+            # step's own captures — which is what `_process_media_note` counts on both sides.
+            media=(_media("VIDEO", "pre-process.mp4"),),
             steps=(
                 _SourceRow(sortOrder=1, name="Degumming the silk", stepType="STEP",
-                           notes="Boiled with soda ash."),
-                _SourceRow(sortOrder=2, name="Tying the bundles", stepType="STEP", notes=""),
+                           notes="Boiled with soda ash.", media=(_MEDIA_IMAGE,)),
+                _SourceRow(sortOrder=2, name="Tying the bundles", stepType="STEP", notes="",
+                           media=()),
                 _SourceRow(sortOrder=3, name="Dyeing", stepType="GROUP",
-                           notes="Lightest colour first."),
+                           notes="Lightest colour first.", media=()),
             ),
         ),
         "Craft": _SourceRow(
             id="craft-1",
             name="Sambalpuri Ikat",
             localName="ସମ୍ବଲପୁରୀ ବନ୍ଧା",
+            # The other four things the crafts page collects, all of which now cross into boxes of
+            # their own on the cover stage, plus where the craft was documented and what else is
+            # attached to the record.
+            category="Weaving",
+            place="Barpali",
+            description="Warp and weft are tied and dyed before the cloth is woven.",
+            recordedAt="2024-11-05T10:00:00+05:30",
+            workshop=_SourceRow(title="Barpali cluster documentation, 2024"),
+            media=(_MEDIA_IMAGE, _media("PDF", "gazetteer-page.pdf")),
         ),
     }
 

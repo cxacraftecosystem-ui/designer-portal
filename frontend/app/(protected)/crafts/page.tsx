@@ -8,9 +8,11 @@ import { CollabDialog } from "@/components/CollabDialog";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FieldProvenance } from "@/components/FieldProvenance";
-import { Field, TextArea, TextInput } from "@/components/FormControls";
+import { Field, TextInput } from "@/components/FormControls";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
+import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useEditDeepLink } from "@/components/hooks/useEditDeepLink";
+import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
@@ -293,8 +295,22 @@ function CraftsPageBody() {
         ) : null}
         {/* The workshop leads every other dropdown: it is the context the record belongs to. */}
         <WorkshopSelect state={workshop} onDirty={() => setDirty(true)} saving={saving} />
+        {/* TITLE-CASED, AND SAYING SO — the one record form on the web that was not.
+            `create_craft` and `update_craft` both call `clean_data(...)` with its default
+            `title_case=True`, and `records.TITLE_CASE_FIELDS` contains `name` and `place`, so a
+            researcher who typed "bagru block printing" here saved and the record silently became
+            something else. That is precisely the defect `TitleCasedInput`'s header was written for —
+            "the web showed nothing, so the value changed silently AFTER saving and the form and the
+            record disagreed" — and `ArtisanForm`, `ProductForm`, `ToolForm` and `ProcessForm` all
+            already use this control for exactly these columns, as does Android's `CraftForm`
+            (`titleCased = true` on both boxes). It is a drop-in for `TextInput`.
+
+            NOT `localName`, and never: it is Devanagari or Gujarati, where capitalising means
+            nothing, and `TITLE_CASE_FIELDS` leaves it out for that reason. `category` is left alone
+            too — it is not in that set, so a hint here would promise a normalisation the API does not
+            perform, which is worse than no hint. */}
         <Field label="Craft name" required>
-          <TextInput name="name" required defaultValue={editing?.name ?? ""} />
+          <TitleCasedInput name="name" required defaultValue={editing?.name ?? ""} />
         </Field>
         <Field label="Local name">
           <TextInput name="localName" defaultValue={editing?.localName ?? ""} />
@@ -303,12 +319,35 @@ function CraftsPageBody() {
           <TextInput name="category" defaultValue={editing?.category ?? ""} />
         </Field>
         <Field label="Place">
-          <TextInput name="place" defaultValue={editing?.place ?? ""} />
+          <TitleCasedInput name="place" defaultValue={editing?.place ?? ""} />
         </Field>
         <div className="md:col-span-2 lg:col-span-4">
-          <Field label="Description">
-            <TextArea name="description" defaultValue={editing?.description ?? ""} />
-          </Field>
+          {/*
+            DICTATION BUT NOT RICH TEXT, and the second half of that is a decision rather than an
+            omission.
+
+            Android's `CraftForm` draws this column as `TextInput("Description", …, dictate = true,
+            rich = true)` and the web drew it as a bare `<TextArea>`, so the web record form was the
+            poorer of the two for the same fact — a researcher who would rather speak three sentences
+            about a technique than thumb them in had no microphone here at all. `DictatedTextArea`
+            closes that half and changes nothing about what is stored: plain text in, plain text out,
+            exactly as Android's `recordStoredFromDoc` writes (`toPlain(doc)`, never JSON).
+
+            THE LIST AFFORDANCE IS NOT CLOSED HERE ON PURPOSE. Pointing `RichTextField` at this box
+            would make `Craft.description` a NINTH `String?` column holding `{"blocks":…}`, and
+            `RecordProseText.kt`'s storage block spells out what that costs in this repository
+            specifically: `record_fields.cell()`, the `/data/report` workbook, `details.txt`, both
+            `/export` CSVs and the review diff all read these columns as prose, so the braces print
+            verbatim into an exported cell and nothing crashes to say so. That is a storage decision
+            across three languages, not an input-method fix, and it belongs with the other eight —
+            `_reference_data`'s docstring names them — or nowhere.
+          */}
+          <DictatedTextArea
+            name="description"
+            label="Description"
+            defaultValue={editing?.description ?? ""}
+            onDirty={() => setDirty(true)}
+          />
         </div>
         <div className="md:col-span-2 lg:col-span-4">
           <MediaCaptureField

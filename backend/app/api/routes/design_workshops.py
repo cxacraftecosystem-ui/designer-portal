@@ -694,6 +694,51 @@ async def get_dictation_allowance(
     )
 
 
+@router.get("/ai-verb-allowance")
+async def get_ai_verb_allowance(
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """How many AI-verb runs this designer has left today, and where the day ends.
+
+    **THE ONE BACKEND CHANGE THE AI-VERB CLIENTS WERE WRITTEN AROUND, AND BOTH SAID SO.** The five
+    verb routes return ``allowance_payload`` on their 201, and ``ai_verb_cap.allowance_payload``
+    argues in its own docstring that this is not enough — *"a client that can learn the ceiling only
+    by being refused has to spend a run to learn it"* — and a run is a provider call somebody pays
+    for. The web's ``dwAiVerbAllowance`` has been calling this path since the verbs shipped, with a
+    comment recording in capitals that it DOES NOT EXIST YET and that every deployment therefore
+    answers 404; the Android data layer reached the same conclusion independently and wrote the same
+    caveat. Both degrade honestly — no countdown, nothing disabled on a ceiling nobody can see — and
+    both were waiting for this.
+
+    IT IS THE SIBLING OF ``/dictation-allowance`` AND IS DELIBERATELY IDENTICAL IN SHAPE: two
+    primary-key reads, no provider call, nothing spent. That symmetry is the point, because the two
+    caps are the same idea over different verbs and a client that reads one should not have to learn
+    a second protocol to read the other.
+
+    IT ANSWERS FOR THE CALLER AND FOR NOBODY ELSE. There is no ``userId`` parameter and there must
+    not be one: the allowance is a fact about the signed-in account, and a route that could be asked
+    about somebody else's spend would be a report on a colleague's working day.
+
+    ``aiVerbDay`` is the load-bearing key — the SERVER's India-time date — so a phone can tell a
+    cached spend that is still true from one that belongs to yesterday, and a mirror whose day no
+    longer matches resolves to *not spent* rather than silently withholding a capability at the
+    wrong midnight.
+
+    DECLARED ABOVE ``GET /{workshop_id}``, with the rest of the literals, and that placement is not
+    cosmetic: the banner above ``/ocr/identity`` records what happened when a literal GET was
+    missing here — ``{workshop_id}`` matches ``[^/]+``, so the request full-matched the by-id route,
+    looked up a workshop whose id was the literal word, answered 404, and the browser read that as
+    "this deployment does not offer the feature" and drew no control at all.
+
+    Gated on ``_require_designer`` and nothing else, matching both the verb routes it serves and the
+    dictation allowance beside it: no workshop is involved and the number is this account's own.
+    """
+    _require_designer(current_user)
+    return ai_verb_cap.allowance_payload(
+        await ai_verb_cap.load_allowance(current_user.id)
+    )
+
+
 @router.get("/dictate")
 async def dictation_probe(_: Any = Depends(get_current_user)) -> dict[str, Any]:
     """Does this deployment offer server-side dictation, and where does a clip go?

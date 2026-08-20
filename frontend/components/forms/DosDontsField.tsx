@@ -1,24 +1,8 @@
 "use client";
 
-import { Plus, X } from "lucide-react";
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 
-/** Android parity (MainActivity.kt splitNumbered): stored newline-joined string → editable rows. */
-function splitNumbered(value: string | null | undefined): string[] {
-  const rows = (value ?? "")
-    .split("\n")
-    .map((row) => row.trim())
-    .filter(Boolean);
-  return rows.length ? rows : [""];
-}
-
-/** Android parity (joinNumbered): rows → newline-joined stored string, blank rows dropped. */
-function joinNumbered(items: string[]): string {
-  return items
-    .map((row) => row.trim())
-    .filter(Boolean)
-    .join("\n");
-}
+import { NumberedPointRows, joinNumbered, splitNumbered } from "@/components/forms/NumberedListInput";
 
 /**
  * Web twin of Android's NumberedListInput (MainActivity.kt): a required, numbered multi-point input
@@ -27,6 +11,16 @@ function joinNumbered(items: string[]): string {
  * individually, and "Add point" appends an empty one. The rows serialize to the same
  * newline-joined string as Android via a zero-size mirror input under `name`, so the existing
  * FormData handlers (`requiredText(form, "dos"/"donts")`) are unchanged.
+ *
+ * THE ROWS THEMSELVES ARE NO LONGER HERE, and that is the point of the split rather than tidiness.
+ * They — and `splitNumbered`/`joinNumbered`, which decide where a bullet boundary is — moved to
+ * `components/forms/NumberedListInput`, because the design workshop renders the very same facts
+ * (`participant.dos`, `participant.donts`) through `FieldInput` and was giving them a bare textarea.
+ * One control means the artisan record page and the stage form cannot disagree about what one point
+ * is; two controls would eventually print two different lists from one stored string.
+ *
+ * WHAT STAYS HERE is everything about being a RECORD FORM field: the group heading, the helper, and
+ * the mirror that carries `required` into native constraint validation.
  */
 export function DosDontsField({
   name,
@@ -42,39 +36,9 @@ export function DosDontsField({
   required?: boolean;
 }) {
   const [items, setItems] = useState<string[]>(() => splitNumbered(defaultValue));
-  const rowRefs = useRef<Array<HTMLInputElement | null>>([]);
   const joined = joinNumbered(items);
   const groupId = useId();
   const helperId = `${groupId}-helper`;
-
-  function update(next: string[]) {
-    setItems(next.length ? next : [""]);
-  }
-
-  function focusRow(index: number) {
-    // After React commits the new row.
-    requestAnimationFrame(() => rowRefs.current[index]?.focus());
-  }
-
-  function changeRow(index: number, raw: string) {
-    if (raw.includes("\n")) {
-      // Pasted multi-line text: commit the first segment here, push the rest to new bullets.
-      const segments = raw.split("\n");
-      const next = [...items];
-      next[index] = segments[0].trim();
-      next.splice(index + 1, 0, ...segments.slice(1).map((segment) => segment.trim()));
-      update(next);
-    } else {
-      update(items.map((item, j) => (j === index ? raw : item)));
-    }
-  }
-
-  function addRowAfter(index: number) {
-    const next = [...items];
-    next.splice(index + 1, 0, "");
-    update(next);
-    focusRow(index + 1);
-  }
 
   return (
     /*
@@ -87,9 +51,9 @@ export function DosDontsField({
      * nothing, and the ordinal beside each row was decoration. Native validation then refused the
      * save on a mirror `<textarea>` the reader cannot reach at all.
      *
-     * The group carries the visible heading; each row carries the ordinal it is drawn with. Nothing
-     * here invents wording — "Do's (positive prompt)" and "1." are both already on screen, so what
-     * is announced and what is printed are the same two things.
+     * The group carries the visible heading; each row carries the ordinal it is drawn with (see
+     * `NumberedPointRows`). Nothing here invents wording — "Do's (positive prompt)" and "1." are
+     * both already on screen, so what is announced and what is printed are the same two things.
      */
     <div className="relative grid content-start gap-1.5" role="group" aria-labelledby={groupId} aria-describedby={helper ? helperId : undefined}>
       <span id={groupId} className="field-label">
@@ -101,50 +65,7 @@ export function DosDontsField({
           {helper}
         </p>
       ) : null}
-      {items.map((item, index) => (
-        <div key={index} className="flex items-center gap-2">
-          <span aria-hidden className="w-5 shrink-0 text-right text-sm text-ink-muted">
-            {index + 1}.
-          </span>
-          <input
-            ref={(el) => {
-              rowRefs.current[index] = el;
-            }}
-            className="field-input min-w-0 flex-1"
-            type="text"
-            aria-label={`Point ${index + 1}`}
-            value={item}
-            onChange={(event) => changeRow(index, event.target.value)}
-            onKeyDown={(event) => {
-              // Enter commits this point and starts the next one (instead of submitting the form).
-              if (event.key === "Enter") {
-                event.preventDefault();
-                addRowAfter(index);
-              }
-            }}
-          />
-          {items.length > 1 ? (
-            <button
-              type="button"
-              // Named by its ordinal for the same reason the box is: in a list of eight identical
-              // buttons, "Remove point" eight times tells a reader nothing about which one they are on.
-              aria-label={`Remove point ${index + 1}`}
-              className="shrink-0 rounded-md p-2 text-ink-muted transition hover:bg-field-100 hover:text-error-600"
-              onClick={() => update(items.filter((_, j) => j !== index))}
-            >
-              <X className="h-4 w-4" aria-hidden />
-            </button>
-          ) : null}
-        </div>
-      ))}
-      <button
-        type="button"
-        className="field-button-secondary inline-flex items-center gap-1 justify-self-start"
-        onClick={() => addRowAfter(items.length - 1)}
-      >
-        <Plus className="h-4 w-4" aria-hidden />
-        Add point
-      </button>
+      <NumberedPointRows items={items} onItems={setItems} />
       {/* Zero-size (not hidden) mirror: submits the newline-joined value under the existing field
           name AND makes `required` participate in native form validation.
 

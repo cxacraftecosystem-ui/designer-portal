@@ -226,6 +226,13 @@ ARTISAN_CARRIED = {
     "extraMetadata": "participant.experienceYears + participant.age + specialisation (legacy)",
     "craftId": "participant.specialisation",
     "locationId": "participant.village/state/district/pincode/subjectLocation",
+    # MOVED HERE FROM NOT_CARRIED, where it read "join key — the design workshop already knows which
+    # workshop it belongs to". That was true of the DESIGN workshop and false of this column:
+    # `participant.artisanRef` is the one artisan picker declared ALL_SCOPE, so a roster legitimately
+    # holds artisans documented at another cluster's workshop years earlier, and `documentedOn`
+    # answered when while nothing answered where. The TITLE crosses, through the `workshop` relation;
+    # the id itself still does not.
+    "workshopId": "participant.documentedAtWorkshop (Workshop.title, via the relation)",
 }
 ARTISAN_NOT_CARRIED = {
     "aadhaarNumber": (
@@ -242,16 +249,28 @@ ARTISAN_NOT_CARRIED = {
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping — the researcher who typed the record",
-    "workshopId": "join key — the design workshop already knows which workshop it belongs to",
 }
 
+# ONE LEDGER ROW, THREE REFERENCING MODELS, AND THE TARGETS ARE NAMED IN FULL FOR A REASON. `Location`
+# hangs off `Artisan`, `ProductDocumentation` and `ToolDocumentation`, and this list is parameterised
+# by MODEL, so it cannot be split per referencing model without inventing a model name `_columns`
+# could not resolve. What it can do is name every box each column reaches: while these values read
+# "participant.state" alone, the product and tool carries landed, the SUBJECT PIN did not, and this
+# file said nothing either way — the tripwire was blind to a missing target on two of the three
+# models because the column was already spoken for by the third.
 LOCATION_CARRIED = {
-    "state": "participant.state",
-    "district": "participant.district",
-    "village": "participant.village",
-    "pincode": "participant.pincode",
-    "subjectLatitude": "participant.subjectLocation",
-    "subjectLongitude": "participant.subjectLocation",
+    "state": "participant.state + existingProduct.recordState + tool.recordState",
+    "district": "participant.district + existingProduct.recordDistrict + tool.recordDistrict",
+    "village": "participant.village + existingProduct.recordVillage + tool.recordVillage",
+    "pincode": "participant.pincode + existingProduct.recordPincode + tool.recordPincode",
+    "subjectLatitude": (
+        "participant.subjectLocation + existingProduct.recordSubjectLocation "
+        "+ tool.recordSubjectLocation"
+    ),
+    "subjectLongitude": (
+        "participant.subjectLocation + existingProduct.recordSubjectLocation "
+        "+ tool.recordSubjectLocation"
+    ),
 }
 LOCATION_NOT_CARRIED = {
     "latitude": "provenance, not stated — the desk the record was typed at",
@@ -296,7 +315,10 @@ PRODUCT_CARRIED = {
     "recordedAt": "existingProduct.documentedOn",
     "artisanId": "join key — existingProduct.artisanRef, which fills artisanName",
     "craftId": "carried by value as craftName",
-    "locationId": "carried by value as place",
+    "locationId": (
+        "existingProduct.place (denormalised) + recordState/recordDistrict/recordVillage/"
+        "recordPincode + recordSubjectLocation. Provenance columns never cross — see LOCATION_*"
+    ),
 }
 PRODUCT_NOT_CARRIED = {
     "measurementImageId": (
@@ -353,7 +375,10 @@ TOOL_CARRIED = {
     "recordedAt": "tool.documentedOn",
     "artisanId": "carried by value as artisanName",
     "craftId": "carried by value as craftName",
-    "locationId": "carried by value as place",
+    "locationId": (
+        "tool.place (denormalised) + recordState/recordDistrict/recordVillage/recordPincode "
+        "+ recordSubjectLocation. Provenance columns never cross — see LOCATION_*"
+    ),
 }
 TOOL_NOT_CARRIED = {
     "measurementImageId": (
@@ -409,21 +434,30 @@ PROCESS_STEP_NOT_CARRIED = {
 CRAFT_CARRIED = {
     "name": "workshopSetup.craftName",
     "localName": "workshopSetup.craftLocalName",
+    # ── FOUR ENTRIES MOVED OUT OF NOT_CARRIED, AND THE REFUSALS THEY REPLACE ARE WORTH KNOWING ───
+    #
+    # `category`, `description` and `place` were refused on the argument that "stage 1 already asks
+    # all three of its own questions and asks them better". The answer, written out in full above
+    # `REFERENCE_MODELS["Craft"].data`, is that a value which must not overwrite the designer's own
+    # cover fields needs a BOX OF ITS OWN rather than silence — which is what the tool and product
+    # mappings had been doing with their own free-text `place` all along. `recordedAt` was filed as
+    # bookkeeping, which confused the WORKSHOP's dates (on the cover) with the provenance of the
+    # source record (every other reference model carries its own).
+    "category": "workshopSetup.craftCategory",
+    "description": "workshopSetup.documentedCraftNotes",
+    "place": "workshopSetup.craftPlace",
+    "recordedAt": "workshopSetup.craftDocumentedOn",
+    # `craftRef` is ALL_SCOPE, so a linked craft may belong to another cluster's study years earlier;
+    # `craftDocumentedOn` answers when and this answers under whose study. The TITLE crosses, through
+    # the `workshop` relation — the id does not.
+    "workshopId": "workshopSetup.craftDocumentedAtWorkshop (Workshop.title, via the relation)",
 }
 CRAFT_NOT_CARRIED = {
-    "category": "no counterpart on the cover page; stage 4 asks the craft's story in prose instead",
-    "description": "stage 4's craftIntroduction is a RICH_TEXT narrative the designer writes",
-    "place": (
-        "stage 1 asks state/district/block/village as four REQUIRED cover fields. One free-text "
-        "place cannot answer them and would disagree with them."
-    ),
     "extraMetadata": "bookkeeping",
-    "recordedAt": "bookkeeping — the cover carries the WORKSHOP's dates, not the craft record's",
-    "recordedTimezone": "bookkeeping",
+    "recordedTimezone": "the date is carried as a bare DATE, so the zone has nothing to qualify",
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping",
-    "workshopId": "join key",
 }
 
 # ── THE RELATION LEDGER — the blind spot, ledgered ────────────────────────────────────────────
@@ -446,12 +480,20 @@ RELATION_LEDGER = {
             "include={'location': True}. The PROVENANCE half of the same row does not cross."
         ),
         "createdBy": "bookkeeping — the researcher who typed the record",
-        "workshop": "join key — the design workshop already knows which workshop it belongs to",
+        "workshop": (
+            "read by the picker — participant.documentedAtWorkshop takes Workshop.title, via "
+            "include={'workshop': True}. The EXPLICIT column and not the WorkshopArtisan join, "
+            "which cannot answer 'which one documented it'."
+        ),
         "workshops": "join key — the WorkshopArtisan reading of 'was at this workshop'",
         "products": "reached by its own picker (existingProduct.productRef)",
         "tools": "reached by its own picker (tool.toolRef)",
         "toolLinks": "the tool-assignment join; see ToolDocumentation.artisanLinks below",
-        "media": "one photograph per record, through _reference_photos",
+        "media": (
+            "one photograph per record, through _reference_photos — AND counted, by type, into the "
+            "sentence participant.recordMediaNote carries, via include={'media': True}. The ids "
+            "never cross: see _media_note."
+        ),
         "questionnaireInterviews": "a different feature; the report reaches questionnaires directly",
         "sectionStatuses": "bookkeeping — questionnaire progress",
     },
@@ -471,13 +513,26 @@ RELATION_LEDGER = {
         ),
         "craft": "carried by value as craftName",
         "workshop": "join key",
+        # REWRITTEN, AND THE OLD TEXT IS WORTH KNOWING BECAUSE IT WAS RIGHT ABOUT THE MECHANISM. It
+        # read "NOT INCLUDED, and NOT a tidy-up to make", on the ground that `_reference_place`
+        # prefers `location.village` over the free-text place and runs at REPORT time. That hazard is
+        # real and is now closed by a condition rather than by the accident of an unloaded relation:
+        # `_reference_place` returns the denormalised `place` for every model except `Artisan`, so
+        # this include changes what SAVE-time hydration can offer and nothing about what an
+        # already-submitted document prints.
         "location": (
-            "NOT INCLUDED, and NOT a tidy-up to make. _reference_place prefers location.village "
-            "over the free-text place and runs at REPORT time, so turning this on would change the "
-            "place string printed in documents already submitted. See ReferenceModel.include."
+            "read by the picker — the STATED address columns and the SUBJECT pin, via "
+            "include={'location': True}, into existingProduct.recordState/recordDistrict/"
+            "recordVillage/recordPincode/recordSubjectLocation. The PROVENANCE half of the same row "
+            "(latitude/longitude/altitude/accuracy/capturedAt/placeName/address) never crosses; "
+            "_reference_place is guarded on the model name so RENDER-time behaviour is unchanged."
         ),
         "createdBy": "bookkeeping",
-        "media": "one photograph per record, through _reference_photos (media_field='productId')",
+        "media": (
+            "one photograph per record, through _reference_photos (media_field='productId') — AND "
+            "counted, by type, into existingProduct.recordMediaNote via include={'media': True}. A "
+            "sentence, never the ids: see _media_note."
+        ),
         "mediaProcessingJobs": "queue state; see measurementAnalysisStatus in the scalar list",
         "processes": "reached by its own picker (processStep.processRef / traditionalProcess)",
     },
@@ -485,21 +540,31 @@ RELATION_LEDGER = {
         "artisan": "NOT INCLUDED — see the identical note on ProductDocumentation.artisan",
         "craft": "carried by value as craftName",
         "workshop": "join key",
-        "location": "NOT INCLUDED — see the identical note on ProductDocumentation.location",
+        "location": "read by the picker — see the identical note on ProductDocumentation.location",
         "createdBy": "bookkeeping",
-        "media": "one photograph per record, through _reference_photos (media_field='toolId')",
+        # REWRITTEN OFF "one photograph per record", which was the whole answer here and was the gap:
+        # the tool record's media card is mounted TWICE — the ordered "Process stages" sequence
+        # (archived as STAGE_STEP_1, STAGE_STEP_2, …) and general "Tool media" — so a tool documented
+        # as a nine-photograph sequence, or explained on video, reached the workshop and the report as
+        # one still with nothing admitting the rest existed.
+        "media": (
+            "one photograph per record, through _reference_photos (media_field='toolId') — AND "
+            "counted into tool.recordMediaNote via include={'media': True}, which also names the "
+            "numbered making sequence by its STAGE_STEP_ prefix. A sentence, never the ids."
+        ),
         "mediaProcessingJobs": "queue state",
+        # BUILT, AND THIS ENTRY USED TO BE THE REASON THIS LEDGER EXISTS. It read "NOT BUILT" and
+        # listed what carrying the assignment would cost; every line of that list has since landed —
+        # the bounded join, the KEY_VALUE fromref, the frozen-at-pick-time label, the version bump and
+        # the regenerated asset. Kept rather than shortened because the shape of the omission is the
+        # thing this ledger is for: a whole feature (ToolAssignmentSection, four routes in tools.py, a
+        # data_browser filter) reaching no report, invisible to a scalar-column check.
         "artisanLinks": (
-            "NOT BUILT, and this entry is the reason this ledger exists. ToolArtisan is the whole "
-            "tool-assignment feature — ToolAssignmentSection.tsx, four routes in tools.py, a "
-            "data_browser filter — and none of it reaches a workshop or a report: tool.toolRef "
-            "prints 'Documented for: <the one denormalised artisanName>' and the artisans a "
-            "researcher assigned by hand appear nowhere. Carrying them is a PRODUCT decision and "
-            "not a bug fix, and it is not cheap: it needs a bounded 'assignedArtisans' join, a new "
-            "fromref() declared KEY_VALUE and never a sixth TABLE_COLUMN (the tool table's five "
-            "widths already sum to exactly 100), a label saying 'as documented' because the value "
-            "is frozen at pick time, a registry_version() bump, a regenerated "
-            "design-workshop-schema.json and the matching pair in DW_REFERENCE_HYDRATION."
+            "read by the picker — every assigned artisan's name, newline-separated, into "
+            "tool.usedByArtisans (report_role=BULLETS), via "
+            "include={'artisanLinks': {'include': {'artisan': True}}}. See _linked_artisan_names for "
+            "why it is ordered by name and de-duplicated, and why 'documented for' and 'used by' are "
+            "two boxes rather than one."
         ),
     },
     "Process": {
@@ -516,11 +581,22 @@ RELATION_LEDGER = {
     },
     "Craft": {
         "createdBy": "bookkeeping",
-        "workshop": "join key",
+        "workshop": (
+            "read by the picker — workshopSetup.craftDocumentedAtWorkshop takes Workshop.title, via "
+            "include={'workshop': True}. Deliberately the EXPLICIT column and not the WorkshopCraft "
+            "join below: a many-to-many cannot answer which workshop documented the craft."
+        ),
         "artisans": "reached by its own picker (participant.artisanRef)",
         "products": "reached by its own picker",
         "tools": "reached by its own picker",
-        "media": "media_field='craftId', but no Craft mapping carries a photograph",
+        # REWRITTEN: the photograph half of this stopped being true when the Craft lambda started
+        # reading the `photo` argument it had been throwing away, and the rest of what a craft carries
+        # (video, audio notes, a scanned gazetteer page) now reaches the cover stage as a count.
+        "media": (
+            "one photograph per record, through _reference_photos (media_field='craftId'), into "
+            "workshopSetup.craftPhoto/craftPhotoCaption — AND counted into "
+            "workshopSetup.craftMediaNote via include={'media': True}. MediaFile.craftId is indexed."
+        ),
         "workshops": "join key — the WorkshopCraft reading of workshop scope",
     },
 }
@@ -985,6 +1061,20 @@ def _location_row(**overrides):
     return SimpleNamespace(**fields)
 
 
+def _media_row(**overrides):
+    """One ``MediaFile`` row as the ``media`` relation hands it to a data lambda.
+
+    Only the three attributes ``_media_note`` reads: the type, the original filename (which is what
+    carries ``ToolForm``'s ``STAGE_STEP_n`` naming of an ordered making sequence) and
+    ``extraMetadata``, where the measurement-grid marker lives. A row is deliberately NOT a full
+    MediaFile: everything else on that model is entitlement-gated and must never reach a stage entry,
+    so a fixture that carried it would make a leak look normal.
+    """
+    fields = dict(id="med_x", mediaType="IMAGE", originalFilename="loom.jpg", extraMetadata=None)
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
 def _artisan_row(**overrides):
     fields = dict(
         id="art_1", name="Latha Devi", localName="ଲତା ଦେବୀ", gender="Female",
@@ -1002,6 +1092,16 @@ def _artisan_row(**overrides):
         dateOfBirth=None, experienceYears=None,
         recordedAt=datetime(2025, 3, 12, 9, 0), recordedTimezone="Asia/Kolkata",
         craft=SimpleNamespace(name="Sambalpuri Ikat"), location=_location_row(),
+        # WHERE the record was made, which `documentedOn` cannot say. `participant.artisanRef` is
+        # ALL_SCOPE, so this is routinely a different cluster's workshop from the one being written.
+        workshop=SimpleNamespace(title="Sambalpuri Ikat cluster survey, Barpali"),
+        # THE SPOKEN INTRODUCTION IS THE POINT OF THIS FIXTURE. The record form's media card asks for
+        # "images, audio introductions, videos, and documents" by name, and `_reference_photos`
+        # resolves one IMAGE — so the audio row here is the material that used to reach nothing.
+        media=[
+            _media_row(id="med_a1"),
+            _media_row(id="med_a2", mediaType="AUDIO", originalFilename="introduction.m4a"),
+        ],
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -1017,6 +1117,14 @@ def _product_row(**overrides):
         rawMaterialsUsed="Cotton yarn", mainToolsUsed="Pit loom, bobbin winder",
         productFunctionUse="Daily and festive wear", remarks="Second-quality weft in one panel.",
         recordedAt=datetime(2025, 4, 2, 11, 0),
+        # THE STATED ADDRESS AND THE SUBJECT PIN, both of which this fixture lacked while the mapping
+        # declared five targets for them — so "a fully documented product arrives whole" was asserting
+        # over a row that was not fully documented and the five boxes read as legitimately empty.
+        location=_location_row(),
+        media=[
+            _media_row(id="med_p1"),
+            _media_row(id="med_p2", mediaType="VIDEO", originalFilename="finishing.mp4"),
+        ],
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -1032,6 +1140,19 @@ def _tool_row(**overrides):
         maker="CARPENTER", traditionType="HYBRID", replacementCost=12000,
         suggestionsForToolImprovement="A higher bench would ease the back.",
         remarks="Rebuilt in 2019.", recordedAt=datetime(2025, 4, 3, 8, 30),
+        location=_location_row(),
+        # The record page's media card is mounted twice: the ordered "Process stages" sequence, whose
+        # captures ToolForm renames STAGE_STEP_n, and general footage. Both shapes are here, plus a
+        # measurement-grid frame, which is a sheet of ruled paper and not footage of the tool.
+        media=[
+            _media_row(id="med_t1", originalFilename="STAGE_STEP_1_warping.jpg"),
+            _media_row(id="med_t2", originalFilename="STAGE_STEP_2_treadles.jpg"),
+            _media_row(id="med_t3", mediaType="AUDIO", originalFilename="weaver-explains.m4a"),
+            _media_row(id="med_t4", originalFilename="grid-length.jpg",
+                       extraMetadata={"purpose": "MEASUREMENT_GRID"}),
+        ],
+        artisanLinks=[SimpleNamespace(artisan=SimpleNamespace(name="Latha Devi")),
+                      SimpleNamespace(artisan=SimpleNamespace(name="Bhima Meher"))],
     )
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -1042,11 +1163,18 @@ def _process_row(**overrides):
         id="prc_1", name="Tie and dye", notes="Yarn is tied in sections, dyed, untied, washed.",
         preProcessAvailable=True, recordedAt=datetime(2025, 4, 4, 7, 0),
         product=SimpleNamespace(productName="Sambalpuri saree"),
+        # THE PRE-PROCESS CLIPS THE RECORD FORM MAKES MANDATORY, plus one step's own captures. The
+        # fixture carried neither, so `recordMediaNote` — a declared target of this mapping — was
+        # blank for a row this file describes as fully documented, and the sibling assertion that no
+        # declared target is empty was reading it as a legitimate absence.
+        media=[_media_row(id="med_pr1", mediaType="VIDEO", originalFilename="pre-process.mp4")],
         steps=[
-            SimpleNamespace(name="Washing", stepType="SEQUENTIAL", sortOrder=2, notes=None),
+            SimpleNamespace(name="Washing", stepType="SEQUENTIAL", sortOrder=2, notes=None,
+                            media=[]),
             SimpleNamespace(name="Tying", stepType="SEQUENTIAL", sortOrder=0,
-                            notes="Cotton thread, section by section"),
-            SimpleNamespace(name="Dyeing", stepType="GROUP", sortOrder=1, notes=None),
+                            notes="Cotton thread, section by section",
+                            media=[_media_row(id="med_ps1")]),
+            SimpleNamespace(name="Dyeing", stepType="GROUP", sortOrder=1, notes=None, media=[]),
         ],
     )
     fields.update(overrides)
@@ -1056,13 +1184,29 @@ def _process_row(**overrides):
 def _craft_row(**overrides):
     """The fifth reference model's row fixture, and the one that was missing.
 
-    `Craft` carries two columns and both print on the COVER PAGE of every submitted report, which
-    made it the highest-visibility carry of the five and the only one with no database-free round
-    trip: `craftLocalName` was asserted by no backend test at all, and Craft's only executing round
-    trip lived in `test_reference_resolver.py` behind a Postgres skip that nobody's machine
-    satisfies. See `test_a_documented_craft_reaches_the_cover_page_whole`.
+    `Craft`'s two names print on the COVER PAGE of every submitted report, which made it the
+    highest-visibility carry of the five and the only one with no database-free round trip:
+    `craftLocalName` was asserted by no backend test at all, and Craft's only executing round trip
+    lived in `test_reference_resolver.py` behind a Postgres skip that nobody's machine satisfies.
+    See `test_a_documented_craft_reaches_the_cover_page_whole`.
+
+    EVERY COLUMN THE CRAFTS PAGE COLLECTS IS HERE NOW, and the fixture used to hold two of them —
+    which is why the sibling test could assert "no declared target is blank" while five of the eight
+    targets were empty for a reason the fixture, not the code, was responsible for. A row that is not
+    fully documented cannot pin what a fully documented one carries.
     """
-    fields = dict(id="crf_1", name="Sambalpuri Ikat", localName="ସମ୍ବଲପୁରୀ ବନ୍ଧ")
+    fields = dict(
+        id="crf_1", name="Sambalpuri Ikat", localName="ସମ୍ବଲପୁରୀ ବନ୍ଧ",
+        category="Weaving", place="Barpali",
+        description="Warp and weft are tied and dyed before the cloth is woven.",
+        recordedAt=datetime(2024, 11, 5, 10, 0),
+        workshop=SimpleNamespace(title="Sambalpuri Ikat cluster survey, Barpali"),
+        media=[
+            _media_row(id="med_c1"),
+            _media_row(id="med_c2", mediaType="AUDIO", originalFilename="elder-account.m4a"),
+            _media_row(id="med_c3", mediaType="PDF", originalFilename="gazetteer-page.pdf"),
+        ],
+    )
     fields.update(overrides)
     return SimpleNamespace(**fields)
 
@@ -1411,12 +1555,263 @@ async def test_a_documented_craft_reaches_the_cover_page_whole(monkeypatch):
     """
     data = await _hydrate(
         monkeypatch, "workshopSetup", {"craftRef": "crf_1"}, rows={"craft": [_craft_row()]},
+        photos={"crf_1": ("med_c1", "The loom shed at Barpali")},
     )
     blank = sorted(t for t in _targets("workshopSetup.craftRef") if not data.get(t))
     assert blank == [], f"a documented craft left these cover-page boxes empty: {blank}"
 
     assert data["craftName"] == "Sambalpuri Ikat"
     assert data["craftLocalName"] == "ସମ୍ବଲପୁରୀ ବନ୍ଧ"
+    # The four that landed earlier in this session, executed rather than declared.
+    assert data["craftCategory"] == "Weaving"
+    assert data["craftPlace"] == "Barpali"
+    assert data["craftDocumentedOn"] == "2024-11-05"
+    assert data["craftPhoto"] == "med_c1"
+    # And the two this lane adds: under whose study, and what else is on file.
+    assert data["craftDocumentedAtWorkshop"] == "Sambalpuri Ikat cluster survey, Barpali"
+    assert data["craftMediaNote"] == (
+        "Attached to the craft record: 1 photograph, 1 audio note, 1 document."
+    )
+
+
+async def test_where_a_record_was_documented_crosses_and_the_join_key_does_not(monkeypatch):
+    """THE HALF OF ``documentedOn``'S OWN SENTENCE THAT HAD NO FIELD.
+
+    ``participant.artisanRef`` and ``workshopSetup.craftRef`` are the two pickers declared
+    ALL_SCOPE, so a roster row and a cover page may both legitimately be filled from a record made
+    at a different cluster's workshop years earlier. ``documentedOn`` answers WHEN — its own comment
+    says the point is to "tell a roster row filled from a 2023 survey from one filled last week" —
+    and nothing answered WHERE, which is the reader's next question and the FIRST thing the record
+    page asks.
+
+    THE TITLE CROSSES AND THE ID DOES NOT, which is the same rule as every other by-value carry in
+    this table: a report is a historical document and must still print the workshop's name when the
+    workshop row has been renamed, merged or deleted.
+    """
+    roster = await _hydrate(
+        monkeypatch, "participant", {"artisanRef": "art_1"},
+        rows={"artisan": [_artisan_row()]},
+    )
+    assert roster["documentedAtWorkshop"] == "Sambalpuri Ikat cluster survey, Barpali"
+    assert "wsh_" not in str(roster), "the workshop id is a join key and must not be copied"
+
+    # NULLABLE, AND THE COMMON CASE. `Artisan.workshopId` is optional and the artisans documented
+    # before the column existed carry the WorkshopArtisan join instead, so an unset relation must
+    # leave the box blank rather than reaching for the join or inventing a name.
+    unlinked = await _hydrate(
+        monkeypatch, "participant", {"artisanRef": "art_1"},
+        rows={"artisan": [_artisan_row(workshop=None)]},
+    )
+    assert "documentedAtWorkshop" not in unlinked
+
+
+async def test_what_a_record_has_on_file_is_stated_and_never_copied(monkeypatch):
+    """``_reference_photos`` RESOLVES ONE IMAGE, AND THE REST OF THE RECORD'S MEDIA SAID NOTHING.
+
+    A researcher who recorded an artisan's spoken introduction — which the record form's media card
+    asks for by name — or filmed a product being finished, produced material a designer standing in
+    the room would want, and no box on the row could say it existed. So a reader of the printed
+    roster or product table could not know to ask for it.
+
+    WHAT IS ASSERTED IS THE SHAPE OF THE CARRY AS MUCH AS ITS PRESENCE: a SENTENCE crosses and no
+    media id does. Both refusals are load-bearing and neither is squeamishness —
+    ``hydrate_entries`` seeds a gallery only when it is empty because the designer's own workshop
+    photographs live there, and a referenced record's files are entitlement-gated per file, which
+    ``_reference_photos`` resolves for exactly one image and no more.
+    """
+    roster = await _hydrate(
+        monkeypatch, "participant", {"artisanRef": "art_1"},
+        rows={"artisan": [_artisan_row()]},
+    )
+    assert roster["recordMediaNote"] == (
+        "Attached to the artisan record: 1 photograph, 1 audio note."
+    )
+    # The ids of the counted rows are nowhere on the entry. `photo` is the ONE image
+    # `_reference_photos` resolves, and no photos were offered to this call, so any med_… string
+    # appearing here would be the count leaking the files it is deliberately not carrying.
+    assert "med_a1" not in str(roster) and "med_a2" not in str(roster)
+
+    product = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [_product_row()]},
+    )
+    assert product["recordMediaNote"] == (
+        "Attached to the product record: 1 photograph, 1 video."
+    )
+
+    # NOTHING ATTACHED SAYS NOTHING, rather than "0 files". A box reading zero in a submitted report
+    # is a claim about the record; a blank one is the absence of a claim, and hydration only fills
+    # blanks, so a wrong sentence here would be permanent.
+    silent = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [_product_row(media=[])]},
+    )
+    assert "recordMediaNote" not in silent
+
+
+async def test_a_tools_numbered_making_sequence_is_named_and_a_grid_frame_is_not_counted(
+    monkeypatch,
+):
+    """TWO MEDIA CARDS ON ONE RECORD PAGE, AND ONE STILL IMAGE REACHING THE REPORT.
+
+    The tool form mounts ``MediaCaptureField`` twice: "Process stages", whose captures it renames
+    ``STAGE_STEP_1``, ``STAGE_STEP_2``, … so they archive in order, and "Tool media" for video and
+    audio notes. A tool whose making was documented as a numbered sequence therefore reached the
+    workshop, and a ministry report, as a single photograph with nothing admitting the rest existed —
+    and the relation ledger's own entry for it said "one photograph per record" as though that were
+    the whole answer.
+
+    AND A SHEET OF RULED PAPER IS NOT FOOTAGE OF THE TOOL. The grid-measurement frame carries
+    ``extraMetadata.purpose = "MEASUREMENT_GRID"`` — the same three-surface marker
+    ``_reference_photos`` sorts LAST rather than counting as the record's photograph — so counting it
+    would overstate by one on exactly the tools that were measured most carefully.
+    """
+    data = await _hydrate(
+        monkeypatch, "tool", {"toolRef": "tul_1"}, rows={"tooldocumentation": [_tool_row()]},
+    )
+    assert data["recordMediaNote"] == (
+        "Attached to the tool record: 2 photographs, 1 audio note, "
+        "of which 2 document the making in order."
+    )
+
+    # ONE capture in the sequence, because a sentence in a ministry report reads as prose and not as
+    # a count: "of which 1 document the making" is the kind of thing a reader notices instead of the
+    # thing it is telling them.
+    single = await _hydrate(
+        monkeypatch, "tool", {"toolRef": "tul_1"},
+        rows={"tooldocumentation": [_tool_row(media=[
+            _media_row(id="med_s1", originalFilename="STAGE_STEP_1_warping.jpg"),
+        ])]},
+    )
+    assert single["recordMediaNote"] == (
+        "Attached to the tool record: 1 photograph, of which 1 documents the making in order."
+    )
+
+    only_grid = await _hydrate(
+        monkeypatch, "tool", {"toolRef": "tul_1"},
+        rows={"tooldocumentation": [_tool_row(media=[
+            _media_row(id="med_g1", originalFilename="grid-length.jpg",
+                       extraMetadata={"purpose": "MEASUREMENT_GRID"}),
+        ])]},
+    )
+    assert "recordMediaNote" not in only_grid, (
+        "a record whose only file is a measurement grid carries no footage of the tool"
+    )
+    assert dw.MEASUREMENT_GRID_PURPOSE == "MEASUREMENT_GRID", (
+        "the marker is written by three uploading clients; a tidied spelling silently starts "
+        "counting ruled paper as a photograph of the tool"
+    )
+
+
+def test_the_media_note_cannot_overrun_the_bound_its_field_declares():
+    """``coerce_value`` REFUSES an over-length value rather than truncating it, so the bound is real.
+
+    A refused hydration is not a small thing: the field stays blank, the designer is shown an error
+    on a box they never touched, and the sentence that was supposed to tell a reader the footage
+    exists says nothing at all. The four notes declare ``max_length=200``; this is the longest
+    sentence ``_media_note`` can build, measured rather than estimated.
+    """
+    crowded = (
+        [_media_row(mediaType="IMAGE", originalFilename="STAGE_STEP_1_x.jpg")] * 9999
+        + [_media_row(mediaType="VIDEO")] * 9999
+        + [_media_row(mediaType="AUDIO")] * 9999
+        + [_media_row(mediaType="PDF")] * 9999
+        + [_media_row(mediaType="OTHER")] * 9999
+    )
+    longest = dw._media_note("product", crowded, numbered_prefix="STAGE_STEP_")
+    assert longest is not None
+    for entity_key, field_key in (
+        ("participant", "recordMediaNote"),
+        ("existingProduct", "recordMediaNote"),
+        ("tool", "recordMediaNote"),
+        ("workshopSetup", "craftMediaNote"),
+        ("traditionalProcess", "recordMediaNote"),
+    ):
+        bound = _field(entity_key, field_key).max_length
+        assert bound and len(longest) <= bound, (
+            f"{entity_key}.{field_key} declares max_length={bound} and the longest note this "
+            f"function can build is {len(longest)} characters, which coerce_value would REFUSE"
+        )
+
+
+async def test_the_pin_on_the_subjects_place_now_crosses_for_all_three_models(monkeypatch):
+    """INVARIANT 4 HAS TWO HALVES AND ONLY THE ARTISAN HONOURED BOTH.
+
+    The device's fix never crosses as an address — on this database every one of those fixes is the
+    desk the record was typed at, routinely 1,500 km from the village named on the same row — and the
+    STATED columns and the SUBJECT pin do. The product and tool carries landed the stated strings and
+    left the one coordinate that is genuinely about the village reaching nothing, because neither
+    entity declared a GEO field at all.
+
+    The GEO type is also the requirement-(b) answer for this box on both surfaces: it renders as the
+    same map picker the record page mounts, so nothing client-side is needed.
+    """
+    product = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [_product_row()]},
+    )
+    tool = await _hydrate(
+        monkeypatch, "tool", {"toolRef": "tul_1"}, rows={"tooldocumentation": [_tool_row()]},
+    )
+    for data in (product, tool):
+        assert data["recordSubjectLocation"] == {"lat": 21.2, "lon": 83.6}
+        assert "accuracy" not in data["recordSubjectLocation"], (
+            "a hand-dropped pin has no error bar, and `coerce_value` keeps the key optional so "
+            "that 'somebody pointed at this' and 'a device measured this' stay distinguishable"
+        )
+        # THE DESK'S OWN FIX, WHICH IS THE POINT OF THE INVARIANT. The fixture's Location carries a
+        # real one (Kharagpur, against an Odisha village) and none of it may appear anywhere.
+        for provenance in ("22.314", "87.311", "Kharagpur", "Plot 14"):
+            assert provenance not in str(data), (
+                f"{provenance!r} is provenance — the desk the record was typed at — and must never "
+                "cross as part of an address"
+            )
+
+    half = _location_row(subjectLatitude=21.2, subjectLongitude=None)
+    assert dw._subject_point(half) is None, "half a coordinate is not a coordinate"
+
+
+async def test_a_field_promoted_to_rich_text_still_receives_the_records_prose(monkeypatch):
+    """THE PROMOTION THAT GIVES A DESIGNER THE EDITOR MUST NOT COST THEM THE CARRIED TEXT.
+
+    Seven hydration targets moved from TEXT/LONG_TEXT to RICH_TEXT so that the workshop offers the
+    same control the record page offers for the same fact — the record forms call these their
+    narrative boxes and give every one of them the full editor. The registry documents the promotion
+    as supported and backfill-free, on the grounds that ``coerce_value`` reads a plain string as
+    unformatted prose; this executes it, because "documented as safe" and "safe" are different
+    claims and the failure mode is a paragraph a researcher wrote arriving blank.
+
+    ``_reference_data`` flattens the source's own formatting on the way across (that is what stopped
+    ``{"blocks":…}`` printing into a ministry table), so what must survive is the TEXT.
+    """
+    from app.services import rich_text
+
+    product = await _hydrate(
+        monkeypatch, "existingProduct", {"productRef": "prd_1"},
+        rows={"productdocumentation": [_product_row()]},
+    )
+    tool = await _hydrate(
+        monkeypatch, "tool", {"toolRef": "tul_1"}, rows={"tooldocumentation": [_tool_row()]},
+    )
+    process = await _hydrate(
+        monkeypatch, "traditionalProcess", {"processRef": "prc_1"},
+        rows={"process": [_process_row()]},
+    )
+    for entity_key, data, field_key, expected in (
+        ("existingProduct", product, "material", "Cotton yarn"),
+        ("existingProduct", product, "mainToolsUsed", "Pit loom, bobbin winder"),
+        ("existingProduct", product, "use", "Daily and festive wear"),
+        ("existingProduct", product, "remarks", "Second-quality weft in one panel."),
+        ("tool", tool, "improvements", "A higher bench would ease the back."),
+        ("tool", tool, "remarks", "Rebuilt in 2019."),
+        ("traditionalProcess", process, "documentedProcessNotes",
+         "Yarn is tied in sections, dyed, untied, washed."),
+    ):
+        spec = _field(entity_key, field_key)
+        assert spec.type is FieldType.RICH_TEXT, f"{entity_key}.{field_key} is the field under test"
+        stored = data.get(field_key)
+        assert stored, f"{entity_key}.{field_key} arrived empty after the promotion"
+        assert rich_text.to_plain(rich_text.from_json(stored)).strip() == expected
 
 
 async def test_re_pointing_at_a_thinly_documented_record_clears_all_of_the_new_fields(
@@ -1434,6 +1829,11 @@ async def test_re_pointing_at_a_thinly_documented_record_clears_all_of_the_new_f
         id="art_2", name="Sita Bai", localName=None, gender=None, phone=None, email=None,
         aadhaarNumber=None, pehchanCardNumber=None, address=None, notes=None, dos=None,
         donts=None, extraMetadata={}, craft=None, location=None, place="Kutch",
+        # THIN MEANS THIN, INCLUDING THE RELATIONS. An artisan typed in during a workshop has no
+        # `workshopId` (the column is nullable) and nothing attached, and both have to be spelled
+        # here: the default fixture now carries a workshop and two files, so inheriting them would
+        # have left this test asserting that a well-documented record clears a well-documented one.
+        workshop=None, media=[],
     )
     filled = await _hydrate(
         monkeypatch, "participant", {"artisanRef": "art_1"},
@@ -1680,18 +2080,51 @@ def test_no_reference_model_joins_a_relation_none_of_its_lambdas_reads():
     was issued on every `reference_options` call, every `hydrate_entries` save and every
     `load_report_references`, and discarded.
 
-    THE OBVIOUS "FIX" IS THE DANGEROUS ONE AND THIS TEST PINS AGAINST IT TOO. Swapping in
-    `include={"location": True}` — because `_reference_place` reads `row.location` — would change
-    the place string PRINTED IN DOCUMENTS ALREADY SUBMITTED: `_reference_place` prefers
-    `location.village` over the free-text `place`, and `load_report_references` runs at REPORT time,
-    not at save time. That is the one thing the never-re-resolve rule exists to forbid.
-    """
-    assert dw.REFERENCE_MODELS["ProductDocumentation"].include == {}
-    assert dw.REFERENCE_MODELS["ToolDocumentation"].include == {}
+    THE OBVIOUS "FIX" WAS THE DANGEROUS ONE AND THIS TEST USED TO PIN AGAINST IT, by asserting that
+    `ProductDocumentation` and `ToolDocumentation` declared NO include at all. The hazard it was
+    guarding is real: `_reference_place` prefers `location.village` over the free-text `place` and
+    runs at REPORT time, so switching that relation on would have changed the place string printed in
+    documents already submitted. What has changed is not the hazard but the mechanism — that function
+    is now guarded on the MODEL NAME, so it returns the denormalised `place` for everything except an
+    artisan whether or not the relation is loaded, and the stated address reaches the workshop through
+    the data lambdas at SAVE time into boxes of its own instead.
 
-    # The two that DO declare one are read, which is what makes the rule a rule and not a ban.
-    assert dw.REFERENCE_MODELS["Artisan"].include == {"craft": True, "location": True}
-    assert dw.REFERENCE_MODELS["Process"].include == {"product": True, "steps": True}
+    SO THE RULE IS "EVERY DECLARED RELATION HAS A NAMED READER", not "declare none". This table is
+    that list, and it is the maintenance cost on purpose: an include added without a reader — a join
+    on every picker keystroke, every save and every report for a value nobody looks at — fails here.
+    """
+    readers = {
+        "Artisan": {
+            "craft": "participant.specialisation",
+            "location": "the STATED address columns and the subject pin",
+            "workshop": "participant.documentedAtWorkshop (Workshop.title)",
+            "media": "participant.recordMediaNote, counted by type in _media_note",
+        },
+        "ProductDocumentation": {
+            "location": "existingProduct.recordState/District/Village/Pincode/SubjectLocation",
+            "media": "existingProduct.recordMediaNote",
+        },
+        "ToolDocumentation": {
+            "location": "tool.recordState/District/Village/Pincode/SubjectLocation",
+            "media": "tool.recordMediaNote, including the STAGE_STEP_ making sequence",
+            "artisanLinks": "tool.usedByArtisans, via _linked_artisan_names",
+        },
+        "Process": {
+            "product": "processStep.documentedFor / traditionalProcess.documentedFor",
+            "steps": "traditionalProcess.documentedSteps, via _step_lines",
+            "media": "traditionalProcess.recordMediaNote, via _process_media_note",
+        },
+        "Craft": {
+            "media": "workshopSetup.craftMediaNote",
+            "workshop": "workshopSetup.craftDocumentedAtWorkshop (Workshop.title)",
+        },
+    }
+    for model, spec in dw.REFERENCE_MODELS.items():
+        assert set(spec.include or {}) == set(readers.get(model, {})), (
+            f"REFERENCE_MODELS[{model!r}].include and this test disagree about which relations are "
+            "joined. An include with no reader is a join issued on every picker keystroke for a "
+            "value nobody looks at; name the reader here, or drop the include."
+        )
 
 
 def test_the_photograph_lookup_carries_nothing_a_media_entitlement_would_gate():
@@ -1717,7 +2150,7 @@ def test_the_photograph_lookup_carries_nothing_a_media_entitlement_would_gate():
 # Eight of the columns the data lambdas read accept rich text and store it, as JSON, inside the
 # ``String?`` column that used to hold a paragraph — ``rich_text``'s module banner lists them and
 # ``records.prose_contains`` exists because the search had to be taught the same thing. Every
-# hydration target opposite one of them is a TEXT or LONG_TEXT box, ``coerce_value``'s text branch
+# hydration target opposite one of them WAS a TEXT or LONG_TEXT box, ``coerce_value``'s text branch
 # passes a string through ``clean_text`` unchanged, and ``report_builder.format_value`` only unwraps
 # a document for a RICH_TEXT field, where the value is a dict.
 #
@@ -1725,6 +2158,14 @@ def test_the_photograph_lookup_carries_nothing_a_media_entitlement_would_gate():
 # ``{"blocks": …}`` string in a table column of a document submitted to a ministry — and every
 # emptiness check upstream read that JSON-shaped string as a filled field, so nothing anywhere
 # reported a problem. ``design_workshops._reference_data`` is the flattening; these are its guards.
+#
+# SEVEN OF THOSE TARGETS ARE NOW RICH_TEXT THEMSELVES, which does not weaken the flattening and does
+# not change what it is for. It was promoted so the workshop offers the editor the record page offers
+# for the same fact; the carried value still arrives FLATTENED and is re-read as unformatted prose, so
+# the researcher's marks are still lost across the join (recovering them is a change to
+# ``_reference_data`` and is not this lane's). What the promotion changes is only the STORED SHAPE on
+# the workshop side, and the parametrised test below keys its assertion on the target's declared type
+# for exactly that reason.
 
 
 def _formatted(*paragraphs: str) -> str:
@@ -1801,6 +2242,20 @@ async def test_a_formatted_record_column_arrives_as_prose_and_never_as_json(
     SINGLE pair being missed — and the fix is a wrapper over the whole payload precisely so that no
     pair can be. If a column is promoted to rich text later, add its row here; if the wrapper is
     ever narrowed to a named list of keys, one of these fails.
+
+    ── THE ASSERTION IS KEYED ON THE TARGET'S TYPE, AND IT DID NOT USED TO BE ────────────────────
+    It read ``"blocks" not in landed`` for every pair, on the premise — stated in the block comment
+    above and in ``_reference_data``'s docstring — that "every hydration target opposite one of them
+    is a TEXT or LONG_TEXT box". Seven of these targets have since been promoted to RICH_TEXT so the
+    workshop offers the same editor the record page offers, and for those the stored value is a
+    document BY DESIGN: ``coerce_value``'s RICH_TEXT branch normalises it through the rich-text model
+    and ``report_builder.format_value`` unwraps it by TYPE, so a dict there prints as prose and is not
+    the defect. The defect is a JSON-shaped STRING sitting in a plain-text box, which is still exactly
+    what the other two pairs must never see.
+
+    So both arms assert the same thing about what a reader ends up with — the researcher's words, no
+    braces — and neither one weakens: a RICH target that received the raw JSON as a STRING would fail
+    the plain-text comparison below, because ``from_json`` of that string reads the braces as prose.
     """
     stored = _formatted("Tied with cotton thread", "then dipped in indigo.")
     row = globals()[row_builder](**{column: stored})
@@ -1812,6 +2267,17 @@ async def test_a_formatted_record_column_arrives_as_prose_and_never_as_json(
 
     landed = data.get(target)
     assert landed, f"{model}.{column} reached {entity_key}.{target} as nothing at all"
+    if _field(entity_key, target).type is FieldType.RICH_TEXT:
+        from app.services import rich_text
+
+        assert isinstance(landed, dict), (
+            f"{entity_key}.{target} is RICH_TEXT, so coerce_value must have normalised the carried "
+            f"prose into a document; it stored {landed!r}"
+        )
+        assert rich_text.to_plain(rich_text.from_json(landed)).strip() == (
+            "Tied with cotton thread\nthen dipped in indigo."
+        )
+        return
     assert "blocks" not in landed, (
         f"{model}.{column} reached {entity_key}.{target} as raw JSON: {landed!r}. "
         "design_workshops._reference_data is what flattens it; see its docstring."

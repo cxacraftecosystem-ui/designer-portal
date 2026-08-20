@@ -1,15 +1,19 @@
 /**
  * Which registry fields play a role the generic renderer cannot read off `field.type` alone.
  *
- * There are exactly five, and all are kept here rather than inline so that the day the registry
- * grows an explicit descriptor for any of them, ONE file changes and the guessing stops.
+ * There are seven, and all are kept here rather than inline so that the day the registry grows an
+ * explicit descriptor for any of them, ONE file changes and the guessing stops.
  *
- * FOUR OF THE FIVE GUESS, AND SAY SO. `stage_definitions.py` declares no "this image is an identity
+ * FIVE OF THE SEVEN GUESS, AND SAY SO. `stage_definitions.py` declares no "this image is an identity
  * card" flag, no "this text box holds a national identity number", no "these two dates are the ends
- * of one range" and no "this image is a signature", so those four are inferred from the field key. An
- * inference that is wrong there costs an offered button that finds nothing, which a designer
- * ignores. An inference that WROTE something would be a different matter entirely, which is why
- * nothing in the OCR path commits without a human pressing Confirm.
+ * of one range", no "this image is a signature" and no "this file is where a plate belongs", so those
+ * five are inferred from the field key. An inference that is wrong there costs an offered button that
+ * finds nothing, which a designer ignores. An inference that WROTE something would be a different
+ * matter entirely, which is why nothing in the OCR path commits without a human pressing Confirm.
+ *
+ * {@link addressListRole} IS THE ONE THAT COULD REFUSE AN ANSWER, so it does not guess at all: it
+ * matches six exact keys and no pattern. Its own doc block carries the reasoning and the measurement
+ * behind that list.
  *
  * THE FIFTH DOES NOT GUESS, and the difference is worth naming because it is the shape the other four
  * would like to be. {@link measurableLengthFields} never looks at a key: it asks whether the registry
@@ -280,4 +284,94 @@ export function sketchSourceFields(entity: DwEntity): DwField[] {
   return entity.fields.filter(
     (field) => !field.deprecated && (field.type === "IMAGE" || field.type === "IMAGE_LIST")
   );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The administrative half of an address
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Which part of an Indian address a TEXT field holds — state, district or PIN code — or null.
+ *
+ * WHAT THIS IS FOR. `Location.state` is stored as the canonical name from the closed list in
+ * `services/address.py`, which `api/routes/reference.py` also SERVES, so a form's dropdown and the
+ * validator can never hold different lists; the column's own docstring says free text there "would
+ * split one state across four spellings in every group-by and export, the way craft names did before
+ * title-casing". The record page honours that with two dependent `Select`s and a digits-only PIN box.
+ * The workshop rendered the same eleven facts as bare text inputs with a dictation button beside
+ * them, and a stage entry is a FROZEN COPY — nothing re-resolves it later, so a district typed under
+ * the wrong state is in the ministry's document for good. `DwLocationField.kt` puts the cost in this
+ * app's own live data: "fifteen live records that put Rajasthani artisans in West Bengal precisely
+ * because a form captured a coordinate and let a human type the administrative half from memory."
+ *
+ * THE MATCH IS BY EXACT KEY, and unlike the four inferences above it has to be, because this one
+ * REFUSES INPUT: a closed dropdown cannot be answered with a name it does not offer. The registry's
+ * eleven address fields are spelled exactly two ways — `state`/`district`/`pincode` on `participant`
+ * and `workshopSetup`, and the same three under a `record` prefix on `existingProduct` and `tool`,
+ * which is the by-value copy of the linked record's STATED address. Nothing else in the registry's
+ * 570 fields is named any of those six things (measured against the bundled schema dump, which is a
+ * pure `registry_to_dict()`), so there is no third spelling to catch and no near-miss to guess at. A
+ * loose regex here would eventually put a dropdown of Indian states on a field about the state of a
+ * loom, which is the one class of wrong answer this file's header refuses.
+ *
+ * DISTRICT REQUIRES ITS STATE ON THE SAME ENTITY, for the reason the record page clears one when the
+ * other changes: "Districts are only meaningful per state — several names are shared by two states —
+ * so the pair is validated together, never apart." A district box with no state box beside it has
+ * nothing to be scoped by and is left as the plain text input it is today.
+ *
+ * THE HONEST END STATE IS A DECLARATION, exactly as this file's header says of `dateRangePartner`: a
+ * `vocabulary="INDIAN_STATE"` / `depends_on` pair on `FieldSpec` would make this a read rather than a
+ * match, and would reach Android from the same asset. This is the stopgap until the registry carries
+ * it, and it is written as one key list in one file so that the day it does, one function dies.
+ */
+export type AddressListRole = "state" | "district" | "pincode";
+
+/** The six exact keys, and which part of the address each names. */
+const ADDRESS_FIELD_KEYS: Record<string, AddressListRole> = {
+  state: "state",
+  recordState: "state",
+  district: "district",
+  recordDistrict: "district",
+  pincode: "pincode",
+  recordPincode: "pincode"
+};
+
+/** The sibling address field of a given part, or null when this entity does not declare one. */
+function addressSibling(entity: DwEntity, own: DwField, want: AddressListRole): DwField | null {
+  return (
+    entity.fields.find(
+      (candidate) =>
+        candidate.key !== own.key &&
+        !candidate.deprecated &&
+        candidate.type === "TEXT" &&
+        ADDRESS_FIELD_KEYS[candidate.key] === want
+    ) ?? null
+  );
+}
+
+export type AddressFieldRole = {
+  role: AddressListRole;
+  /** The state box this district or PIN code is scoped by. Null on the state box itself. */
+  stateField: DwField | null;
+  /**
+   * The district box a change of state has to CLEAR. Null except on the state box.
+   *
+   * The record page clears it for a stated reason — "a Rajasthan district left standing under
+   * Uttarakhand is the staleness bug wearing a different hat, and the server would reject it anyway
+   * with a message about the wrong state" — and a stage entry is worse off than a record here,
+   * because only-fill-blanks (invariant 2) clears a mapped scalar on a re-POINT and never on an
+   * edit, so a stale district survives every later correction the designer makes.
+   */
+  districtField: DwField | null;
+};
+
+export function addressListRole(entity: DwEntity, field: DwField): AddressFieldRole | null {
+  if (field.type !== "TEXT" || field.deprecated) return null;
+  const role = ADDRESS_FIELD_KEYS[field.key];
+  if (!role) return null;
+  const stateField = role === "state" ? null : addressSibling(entity, field, "state");
+  // A district with no state to scope it stays a text box — see the doc block.
+  if (role === "district" && !stateField) return null;
+  const districtField = role === "state" ? addressSibling(entity, field, "district") : null;
+  return { role, stateField, districtField };
 }

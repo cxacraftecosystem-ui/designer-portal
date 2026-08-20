@@ -44,6 +44,7 @@ import { MediaAiVerbs } from "@/components/designworkshop/MediaAiVerbs";
 import { RichTextEditor } from "@/components/designworkshop/RichTextEditor";
 import { deriveValue, isDerived } from "@/lib/derivedFields";
 import {
+  addressListRole,
   dateRangePartner,
   identityNumberField,
   measurableLengthFields,
@@ -56,10 +57,24 @@ import {
 import { PhotoMeasureField } from "@/components/designworkshop/PhotoMeasureField";
 import { SketchRectifyField, type SketchSource } from "@/components/designworkshop/SketchRectifyField";
 import { SignaturePad } from "@/components/SignaturePad";
+import { StageAddressField } from "@/components/designworkshop/StageAddressField";
 import { StageGeoField } from "@/components/designworkshop/StageGeoField";
 import { StageReferenceSelect } from "@/components/designworkshop/StageReferenceField";
+/*
+ * THREE RECORD-FORM CONTROLS, MOUNTED WHOLE RATHER THAN REIMPLEMENTED.
+ *
+ * The owner's requirement is that "the fields have certain input methods that need to be emulated
+ * just as they are", and the only way to emulate a checksum, a dial-code column or a bullet boundary
+ * without eventually disagreeing with it is to render the same component. A second implementation of
+ * any of the three would be a second answer that drifts, and the drift would be invisible: the DATA
+ * carries fine either way, so nothing would report it — only the person typing pays.
+ */
+import { aadhaarValidationError } from "@/components/forms/AadhaarField";
 import { DateField, TimeField } from "@/components/forms/DateTimeField";
+import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
+import { NumberedListField } from "@/components/forms/NumberedListInput";
+import { PhoneField } from "@/components/forms/PhoneField";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { apiFetch } from "@/lib/api";
 import {
@@ -364,10 +379,91 @@ export function FieldInput({
   );
 
   switch (field.type) {
+    case "PHONE":
+      /*
+       * THE RECORD PAGE'S OWN PHONE FIELD, MOUNTED WHOLE — not a second one.
+       *
+       * This branch used to fold PHONE in with TEXT/URL/EMAIL and render one `<input type="tel">`,
+       * so a designer typing a participant's number into a stage got a box that accepted nine
+       * digits, or fourteen, or letters, and said nothing — while the same designer typing the same
+       * fact into the artisan record page two clicks away was told which of the two length rules
+       * they had broken while they were still typing. The number is then a permanent copy on a
+       * submitted roster, because a stage entry is never re-resolved (invariant 1).
+       *
+       * `PhoneField` brings the dial-code picker over all 246 entries of `lib/countries`, the
+       * "+91 is exactly 10 digits, anything else 4–14" rule surfaced AS IT IS TYPED, and the
+       * confirmation on leaving +91 that says what it means ("This marks the artisan as a foreign
+       * resident"). Writing a second one here would be a second answer to what a valid phone number
+       * is, and the two would drift — which is the argument `InlineRecordDialog` already makes for
+       * mounting the REAL `ArtisanForm` rather than a quick-create.
+       *
+       * THE HANDSET WAS ALREADY DOING THIS, which is what settles it as an oversight rather than a
+       * decision: `FieldRenderer.kt` gives `DwFieldType.PHONE` its own arm and calls
+       * `ArtisanPhoneField`, accepting a duplicated inner caption to get it.
+       *
+       * `unlabelled`, for the reason that moved this control from `Field` to `FieldBlock` on the
+       * record page: its first labelable descendant is the dial-code trigger, so a wrapping label
+       * would slam the country list shut on one pick and fold every country name into the field's
+       * accessible name. `field.maxLength` is deliberately not passed on either — the registry
+       * length has no meaning against a combined dial-code-plus-digits string.
+       */
+      return unlabelled(<StagePhoneField value={value} onChange={onChange} disabled={disabled} />);
+
     case "TEXT":
     case "URL":
-    case "PHONE":
-    case "EMAIL":
+    case "EMAIL": {
+      /*
+       * The state, district and PIN code boxes get the record page's closed lists and its numeric
+       * keypad instead of a bare input. See {@link StageAddressField} for what a hand-typed
+       * administrative half has already cost this repository's live data, and `addressListRole` for
+       * why this is the one role in `stageFieldRoles` that matches exact keys and never a pattern.
+       */
+      const address = field.type === "TEXT" ? addressListRole(entity, field) : null;
+      if (address) {
+        return unlabelled(
+          <StageAddressField
+            field={field}
+            role={address}
+            value={value}
+            row={row}
+            onChange={onChange}
+            onPatch={onPatch}
+            labelId={labelId}
+            describedBy={describedBy}
+            invalid={invalid}
+            disabled={disabled}
+          />
+        );
+      }
+      /*
+       * READ THE NUMBER OFF THE CARD, ON THE BOX THE NUMBER GOES IN.
+       *
+       * `IdentityCardReader` — the workshop's own OCR control — is mounted only under a MEDIA field,
+       * and it can only read images that are ALREADY `MediaFile` rows. So the only web path to card
+       * OCR on a roster row was: attach an unmasked PM Vishwakarma card to `participant.photo`,
+       * thereby REPLACING the portrait hydration had just copied in, read the number, and hope the
+       * designer then pressed Discard. `IdentityCardReader`'s own header states the cost of that
+       * route — "an unmasked identity document is in the repository before anybody has been asked
+       * whether it should be … It is a JPEG. Nothing downstream will ever redact it." That reasoning
+       * is right for a photograph a designer genuinely attached, and it is a trap when it is the only
+       * door.
+       *
+       * `IdentityCardCapture` is the record page's control and the never-stored route: the `File`
+       * goes into one request body and the input is cleared, `photograph.stored` is `false` on every
+       * answer the server sends, and nothing reaches the repository at all. It gates ITSELF on
+       * `canRunDesignWorkshops`, which on a design-workshop stage is the whole audience.
+       *
+       * `kind="PEHCHAN"` and not "AADHAAR", deliberately: the in-browser recogniser offers Aadhaar
+       * numbers only, and `IdentityCardCapture` already declines to offer it for PEHCHAN because a PM
+       * Vishwakarma artisan ID has no checksum and no fixed shape. `participant.artisanCardNo` is the
+       * only field in the registry this resolves to today (measured against the schema dump), and it
+       * carries a MASKED value from `mask_identity_number` when it was hydrated — which is why
+       * `currentValue` is passed: the control says what confirming would replace before it happens.
+       *
+       * `IdentityCardReader` stays exactly where it is. It is the right control for a card a designer
+       * really did attach, and it is the only one of the two that can offer a real delete.
+       */
+      const identityTarget = field.type === "TEXT" ? identityNumberField(entity) : null;
       return labelled(
         <>
           <input
@@ -376,8 +472,7 @@ export function FieldInput({
             // `type` carries the mobile keyboard as much as the validation: a phone field that opens
             // the alphabetic keyboard is a phone field a designer mistypes on a handset in a
             // courtyard. `url`/`email` also give the browser its own inline validation for free.
-            type={field.type === "URL" ? "url" : field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : "text"}
-            inputMode={field.type === "PHONE" ? "tel" : undefined}
+            type={field.type === "URL" ? "url" : field.type === "EMAIL" ? "email" : "text"}
             maxLength={field.maxLength || undefined}
             aria-describedby={describedBy}
             aria-invalid={invalid}
@@ -387,14 +482,74 @@ export function FieldInput({
           />
           {/* Prose only. A speech recogniser hands back words, so dictating into a URL, an email
               address or a phone number produces "double you double you double you dot" and a
-              designer who has to delete it — the button is a cost on those three, not a help. */}
+              designer who has to delete it — the button is a cost on those three, not a help. The
+              PIN code is the fourth of that kind and is refused the button in `StageAddressField`,
+              where the box itself lives. */}
           {field.type === "TEXT" ? (
             <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} workshopId={workshopId} />
           ) : null}
+          {identityTarget?.key === field.key ? (
+            <IdentityCardCapture
+              kind="PEHCHAN"
+              targetLabel={field.label}
+              currentValue={inputValue(value)}
+              aadhaarProblem={aadhaarValidationError}
+              onUse={(next) => onChange(next)}
+              disabled={disabled}
+            />
+          ) : null}
         </>
       );
+    }
 
     case "LONG_TEXT":
+      /*
+       * A BULLETS FIELD IS A LIST, SO IT GETS THE LIST CONTROL.
+       *
+       * The signal is already declared and already read one branch below: RICH_TEXT passes
+       * `listKind={field.reportRole === "BULLETS" ? "ORDERED_ITEM" : undefined}` on the reasoning
+       * that "a BULLETS field IS a list — its help says 'One deliverable per line' and the report
+       * prints it as one — so the editor opens inside a numbered item rather than making the designer
+       * type '1. ' to get the behaviour the label already promised them." That argument was written
+       * for RICH_TEXT and applies word for word to LONG_TEXT, where it was not applied: `participant.dos`
+       * and `participant.donts` are declared BULLETS with the help text "One point per line", the
+       * record page gives them `DosDontsField` — numbered rows, Enter-splits-a-point, a per-row
+       * Remove, multi-line paste exploded into rows — and the workshop gave them a bare textarea
+       * where the newline boundaries are load-bearing and invisible. A designer who typed "1. " out
+       * of habit got the numbers printed INSIDE the bullets.
+       *
+       * THE CONTROL IS THE RECORD PAGE'S, not a copy: `splitNumbered`/`joinNumbered` and the rows
+       * moved to `components/forms/NumberedListInput`, which `DosDontsField` now renders too. The
+       * newline-joined string is a three-way contract — this repository's record forms write it,
+       * Android's `NumberedListInput` reads it back into rows, `report_builder` splits it into
+       * bullets — so there may only ever be one function that decides where a point ends.
+       *
+       * The plain textarea stays for every other LONG_TEXT, so nothing is refused: the four BULLETS
+       * fields in the registry today are `participant.dos`, `participant.donts`,
+       * `tool.usedByArtisans` and `traditionalProcess.documentedSteps` (measured against the schema
+       * dump), and the last two arrive newline-joined from hydration in exactly this shape. Where a
+       * hydrated line already begins "1." — `_step_lines` writes its own ordinals — the rows draw
+       * their ordinal beside it and the duplication becomes visible instead of only being printed.
+       *
+       * `unlabelled`, because the rows carry a Remove button each and an "Add point" below them; the
+       * ordinal-named row labels do the naming, per the `<label>` rule in the file header.
+       */
+      if (field.reportRole === "BULLETS") {
+        return unlabelled(
+          <NumberedListField
+            value={inputValue(value)}
+            onChange={(next) => onChange(next || null)}
+            disabled={disabled}
+            describedBy={describedBy}
+            invalid={Boolean(error)}
+            // Committed into the row the designer is IN rather than appended to the end of the list —
+            // the reason `MultiNoteInput` gives one microphone per note on the record page.
+            renderDictation={(commit) => (
+              <DictationButton onCommit={commit} disabled={disabled} fieldLabel={field.label} workshopId={workshopId} />
+            )}
+          />
+        );
+      }
       return labelled(
         <>
           <textarea
@@ -922,6 +1077,69 @@ export function FieldInput({
       );
     }
   }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * PHONE
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * `PhoneField` against a stage entry's single stored string.
+ *
+ * THE ONE THING THIS ADAPTER IS FOR is hydration. `PhoneField` is an UNCONTROLLED control by design —
+ * it owns the split between dial code and national digits, seeds itself from `defaultValue` once, and
+ * reports the recombined string — and everything else in this file is controlled off `value`. Mounted
+ * naively that difference would be a regression rather than a detail: `REFERENCE_HYDRATION` writes
+ * `participant.phone` from the artisan record the moment a designer picks one, and an uncontrolled box
+ * seeded before that would keep showing the old number while the row held the new one. A form and a
+ * record that disagree after a write is the exact defect `TitleCasedInput` was built to end, and it
+ * must not be reintroduced by the act of closing a different gap.
+ *
+ * So the incoming value is compared against what this control last EMITTED, and only a value that
+ * came from somewhere else — hydration, a re-point, a draft adopted from another device — bumps the
+ * remount key and re-seeds the box. Keying on the value itself would remount on every keystroke and
+ * take the caret with it.
+ *
+ * `mirror={false}`: the stage page is not a `<form>` and reads nothing from FormData, so the zero-size
+ * mirror would contribute a stray `name="phone"` and a `pattern` to whatever a later change wrapped
+ * the page in. Native constraint validation is deliberately absent from the whole of this file — see
+ * the DATE branch on why `required` is never passed either.
+ */
+function StagePhoneField({
+  value,
+  onChange,
+  disabled
+}: {
+  value: DwValue | undefined;
+  onChange: (next: DwValue) => void;
+  disabled?: boolean;
+}) {
+  const incoming = inputValue(value);
+  const emitted = useRef(incoming);
+  const [seed, setSeed] = useState(incoming);
+  const [generation, setGeneration] = useState(0);
+
+  useEffect(() => {
+    if (incoming === emitted.current) return;
+    emitted.current = incoming;
+    setSeed(incoming);
+    setGeneration((current) => current + 1);
+  }, [incoming]);
+
+  return (
+    <PhoneField
+      key={generation}
+      defaultValue={seed}
+      disabled={disabled}
+      mirror={false}
+      onValueChange={(next) => {
+        emitted.current = next;
+        // "" means the digits box is empty, and an empty stage value is null, not "" — `isAnswered`
+        // treats the two the same but the server stores what it is sent.
+        onChange(next || null);
+      }}
+    />
+  );
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
