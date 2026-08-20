@@ -1320,7 +1320,15 @@ def test_reference_ids_of_an_empty_record_is_empty():
 def test_a_referenced_record_states_its_village_before_its_free_text_place():
     """``Location.village`` is the stated address a researcher typed into the closed hierarchy;
     ``Artisan.place`` is the free text that was all the corpus had before those columns existed.
-    Preferring the free text would ignore the better answer on every modern record."""
+    Preferring the free text would ignore the better answer on every modern record.
+
+    THE MODEL IS AN ARGUMENT NOW, and passing it is the whole of what changed here: this function
+    runs at RENDER time, so preferring ``location.village`` for a model whose relation had merely
+    been switched on would rewrite the place printed in documents already submitted. It therefore
+    keys on the model name instead of on whether the relation happens to be loaded, and only
+    ``Artisan`` reads the relation. Both calls below were left on the old one-argument signature
+    when that guard landed, and failed with a ``TypeError`` rather than a wrong answer.
+    """
     from app.services.design_workshops import _reference_place
 
     class _Location:
@@ -1329,18 +1337,32 @@ def test_a_referenced_record_states_its_village_before_its_free_text_place():
     class _Artisan:
         location, place = _Location(), "somewhere near Jaipur"
 
-    assert _reference_place(_Artisan()) == ("Bagru", "Jaipur", "Rajasthan")
+    assert _reference_place(_Artisan(), "Artisan") == ("Bagru", "Jaipur", "Rajasthan")
 
 
-def test_a_referenced_record_with_no_location_row_still_offers_its_place():
-    """Half the corpus predates the stated-address columns, and a model whose picker query does
-    not include the relation — a documented product — arrives with no location attribute at all."""
+def test_a_referenced_record_falls_back_to_its_free_text_place():
+    """Half the corpus predates the stated-address columns, and for every model but the artisan the
+    denormalised ``place`` is what render time prints — whether or not the relation is loaded.
+
+    THE OLD NAME AND REASON WERE "no location row", on the ground that a documented product's picker
+    query did not include the relation. It does now (the record's stated address reaches boxes of its
+    own at SAVE time), so the absence of the attribute is no longer what makes this true: the guard
+    on the model name is. A product row WITH a location must still print the free-text place here,
+    which is what keeps an already-submitted document unchanged, so that is what this asserts.
+    """
     from app.services.design_workshops import _reference_place
+
+    class _Location:
+        village, district, state = "Kutch", "Bhuj", "Gujarat"
 
     class _Product:
         place = "Barpali"
 
-    assert _reference_place(_Product()) == ("Barpali", "", "")
+    class _LoadedProduct:
+        location, place = _Location(), "Barpali"
+
+    assert _reference_place(_Product(), "ProductDocumentation") == ("Barpali", "", "")
+    assert _reference_place(_LoadedProduct(), "ProductDocumentation") == ("Barpali", "", "")
 
 
 # --------------------------------------------------------------------------------------

@@ -34,6 +34,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, Pencil, Plus, Search, X } from "lucide-react";
 
+import { useAuth } from "@/components/AuthProvider";
 import {
   INLINE_MODEL_NOUN,
   InlineRecordDialog,
@@ -57,6 +58,7 @@ import {
   type DwReferencePayload,
   type DwValue
 } from "@/lib/designWorkshops";
+import { canManageCrafts } from "@/lib/permissions";
 
 /**
  * How long after the last keystroke the search goes out.
@@ -411,6 +413,22 @@ const QUEUED_OFFLINE_NOTICE =
   "It has no repository id yet, so nothing could be linked here — reopen this list once it has been sent and " +
   "choose it then.";
 
+/**
+ * The two things the craft picker can say about a craft that is not in the register, by rank.
+ *
+ * TWO SENTENCES IN ONE PLACE for the same reason as the one above, and this pair has a second reader:
+ * Android's `DwReferenceSelectField` offers NEITHER today — its empty craft list says "No records on
+ * this device yet", which is a claim about this device's CACHE and an instruction to find a tower. For
+ * a craft that has never been documented anywhere, connecting achieves nothing, so that sentence sends
+ * a designer looking for signal instead of at the craft register. When the handset gains its half it
+ * must carry these words, not a second phrasing of them.
+ */
+const CRAFT_REGISTER_LINK = "Add or correct a craft on the crafts page (opens in a new tab)";
+
+const CRAFT_REGISTER_BLOCKED =
+  "Adding a craft to the register needs craft-creation access — ask the master admin. This link is optional: type " +
+  "the craft's name in the Craft box above and the stage still saves.";
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Single select
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -443,6 +461,16 @@ export function StageReferenceSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
+  /**
+   * May this designer add a row to the craft register?
+   *
+   * Read for the CRAFT branch below and nothing else — it decides which of two true sentences the
+   * picker offers, never whether the picker works. `canManageCrafts` is the same predicate
+   * `/crafts` uses to decide whether to render its form at all, so the two cannot disagree about who
+   * would arrive at a page they can act on.
+   */
+  const { user } = useAuth();
+  const craftManager = canManageCrafts(user);
   /**
    * The one line of amber under this control, and it has two authors.
    *
@@ -939,15 +967,37 @@ export function StageReferenceSelect({
               forward and never a gate.
             */}
             {field.refModel === "Craft" && !disabled ? (
-              <a
-                href="/crafts"
-                target="_blank"
-                rel="noopener"
-                className="flex w-full items-center gap-2 border-t border-line-200 px-3 py-2.5 text-left text-sm font-medium text-purple-700 transition hover:bg-purple-50"
-              >
-                <Plus className="h-4 w-4 shrink-0" aria-hidden />
-                Add or correct a craft on the crafts page (opens in a new tab)
-              </a>
+              craftManager ? (
+                <a
+                  href="/crafts"
+                  target="_blank"
+                  rel="noopener"
+                  className="flex w-full items-center gap-2 border-t border-line-200 px-3 py-2.5 text-left text-sm font-medium text-purple-700 transition hover:bg-purple-50"
+                >
+                  <Plus className="h-4 w-4 shrink-0" aria-hidden />
+                  {CRAFT_REGISTER_LINK}
+                </a>
+              ) : (
+                /*
+                 * BELOW PROFESSOR THE LINK ABOVE IS A DEAD END, so it is not offered.
+                 *
+                 * `/crafts` renders its form only when `canManageCrafts(user)` — `hasRank(user,
+                 * "PROFESSOR")` — and below that rank the page says "Browse the craft vocabulary
+                 * below. Ask the master admin for craft creation access to add or edit crafts." The
+                 * anchor was gated on `field.refModel === "Craft" && !disabled` and on nothing else,
+                 * so most designers read "Add or correct a craft on the crafts page", left the
+                 * picker, opened a new tab and landed on a read-only list. The one control in the
+                 * product added specifically so the remedy would not have to be remembered was
+                 * sending them somewhere they cannot act — at the first control they ever touch in
+                 * this app.
+                 *
+                 * A SENTENCE THEY CAN ACT ON, not an absence: the way forward for a craft that is
+                 * not in the register is the typed `craftName` box, and `craftRef` is optional, so
+                 * saying so keeps stage 1 unblocked without sending anybody looking for signal or
+                 * for a page they cannot use.
+                 */
+                <p className="border-t border-line-200 px-3 py-2.5 text-xs leading-5 text-ink-500">{CRAFT_REGISTER_BLOCKED}</p>
+              )
             ) : null}
             <ScopeNotice field={field} payload={payload} />
           </div>

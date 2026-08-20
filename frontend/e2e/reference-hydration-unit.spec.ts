@@ -242,6 +242,37 @@ test("a value that is not a string or a number is skipped rather than stringifie
   expect(hydrateFromReference(PARTICIPANT, ARTISAN_REF, odd, {}, "")).toEqual({ experienceYears: 22 });
 });
 
+test("a GEO target takes the subject pin as the object it is, and refuses half a coordinate", () => {
+  /*
+   * THE ONE EXCEPTION TO THE RULE ABOVE, and it had to be made explicit because the two surfaces
+   * were disagreeing in silence. `_subject_point` carries the pin a researcher dropped on the place
+   * itself — the half of invariant 4 that is allowed to cross, the device's own fix never being —
+   * as `{lat, lon}`, and the target (`participant.subjectLocation`, and the two `recordSubjectLocation`
+   * boxes added on the product and tool rows) is declared GEO. The scalar guard skipped it as "an
+   * object the payload grew later", so `hydrate_entries` wrote the pin at SAVE while the browser
+   * showed an empty map card until the page was reloaded — and a designer looking at that empty card
+   * drops their own pin, which only-fill-blanks then keeps for ever in place of the village's.
+   *
+   * `geoValue` remains the guard: a coordinate missing its longitude is still refused outright,
+   * because half a coordinate on a map is a claim about a place nobody visited.
+   */
+  const withPin: DwEntity = {
+    ...PARTICIPANT,
+    fields: [...PARTICIPANT.fields, field("subjectLocation", "GEO")]
+  };
+  const pinned = option("artisan-5", {
+    name: "Sushila Meher",
+    subjectLocation: { lat: 21.1938, lon: 83.5945 }
+  });
+  expect(hydrateFromReference(withPin, ARTISAN_REF, pinned, {}, "")).toEqual({
+    name: "Sushila Meher",
+    subjectLocation: { lat: 21.1938, lon: 83.5945 }
+  });
+
+  const halved = option("artisan-6", { name: "Kailash Bhoi", subjectLocation: { lat: 21.1938 } });
+  expect(hydrateFromReference(withPin, ARTISAN_REF, halved, {}, "")).toEqual({ name: "Kailash Bhoi" });
+});
+
 test("null, undefined and empty string in the payload write nothing", () => {
   const sparse = option("artisan-4", { name: "Kailash Bhoi", village: "", specialisation: null });
   expect(hydrateFromReference(PARTICIPANT, ARTISAN_REF, sparse, {}, "")).toEqual({

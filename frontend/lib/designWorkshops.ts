@@ -1197,6 +1197,13 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     craftPlace: "craftPlace",
     craftDescription: "documentedCraftNotes",
     craftDocumentedOn: "craftDocumentedOn",
+    // WHERE the craft was documented, beside WHEN. `craftRef` is ALL_SCOPE, so a linked craft may
+    // belong to another cluster's study — legitimate reuse, and only readable if it is printed.
+    craftDocumentedAtWorkshop: "craftDocumentedAtWorkshop",
+    // How much footage the craft record carries. A sentence counting the files and never the ids:
+    // the gallery rule forbids seeding the designer's own photographs and a referenced record's
+    // files are entitlement-gated per file. `_media_note` on the server carries both reasons.
+    craftMediaNote: "craftMediaNote",
     craftPhoto: "craftPhoto",
     craftPhotoCaption: "craftPhotoCaption"
   },
@@ -1222,6 +1229,13 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     pehchanCardAvailable: "pehchanCardAvailable",
     pehchanCardNumber: "artisanCardNo",
     documentedOn: "documentedOn",
+    // THE OTHER HALF OF `documentedOn`'S OWN JOB. This is the one artisan picker declared ALL_SCOPE
+    // — a roster legitimately holds artisans documented at other workshops — so a printed roster
+    // could say WHEN a row was documented and never WHERE.
+    documentedAtWorkshop: "documentedAtWorkshop",
+    // What the record has attached beyond the single photograph: audio introductions, video,
+    // documents. A sentence and never the ids — see `_media_note` on the server for both reasons.
+    recordMediaNote: "recordMediaNote",
     age: "age",
     state: "state",
     district: "district",
@@ -1263,6 +1277,11 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     recordDistrict: "recordDistrict",
     recordVillage: "recordVillage",
     recordPincode: "recordPincode",
+    // The SUBJECT pin — the half of invariant 4 the stated-address carry left behind. The device's
+    // own fix is not here and never will be: it is the desk the record was typed at.
+    subjectLocation: "recordSubjectLocation",
+    // The ordered making sequence and everything else on file, as a sentence. Never the ids.
+    recordMediaNote: "recordMediaNote",
     usedByArtisans: "usedByArtisans",
     documentedOn: "documentedOn",
     photoCaption: "photoCaption"
@@ -1299,6 +1318,13 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     recordDistrict: "recordDistrict",
     recordVillage: "recordVillage",
     recordPincode: "recordPincode",
+    // The SUBJECT pin. The artisan mapping has carried its own since it was written; this side
+    // carried the four stated strings and not the one coordinate that is about the village rather
+    // than about the desk.
+    subjectLocation: "recordSubjectLocation",
+    // An audio note explaining the piece, a video of it being finished — the record holds them and
+    // one IMAGE could not say so. A sentence; see `_media_note` on the server.
+    recordMediaNote: "recordMediaNote",
     photo: "productPhotos",
     // `lengthCm`/`widthCm`/`heightCm` are the inches columns converted ×2.54 on the server. The boxes
     // print "cm", so a raw copy would have understated every measurement by a factor of 2.54 in a
@@ -1453,8 +1479,29 @@ export function hydrateFromReference(
     if (!target || target.deprecated) continue;
     const multi = isMultiField(target);
     if (isFilled(row[targetKey]) && (!replaced || multi)) continue;
-    // Only the two JSON scalars a display field can legitimately be. Anything else — an object the
-    // payload grew later, a nested record — is skipped rather than stringified: "[object Object]"
+    /*
+     * A GEO TARGET IS THE ONE PLACE AN OBJECT IS THE CORRECT SHAPE, and it was being dropped.
+     *
+     * `_subject_point` carries the SUBJECT pin — the coordinate a researcher dropped on the place
+     * itself, which invariant 4 permits and the device's own fix never crosses — as `{lat, lon}`.
+     * It lands on `participant.subjectLocation`, `existingProduct.recordSubjectLocation` and
+     * `tool.recordSubjectLocation`, all declared GEO. The scalar guard below refused it as "an
+     * object the payload grew later", so `hydrate_entries` wrote the pin at SAVE and the browser
+     * showed an empty map card until the page was reloaded — and worse than cosmetic: a designer
+     * looking at that empty card drops their own pin (the card offers "use the place this stage was
+     * recorded", which is the DESK), the box is then filled, and only-fill-blanks means the
+     * village's own coordinate never arrives at all. The two surfaces have to agree here.
+     *
+     * `geoValue` is the guard, not a type test: it returns null unless both numbers are finite, so a
+     * half-written coordinate is still refused and nothing else object-shaped can get through.
+     */
+    if (target.type === "GEO") {
+      const point = geoValue(raw as DwValue);
+      if (point) patch[targetKey] = point;
+      continue;
+    }
+    // Only the two JSON scalars a display field can legitimately be. Anything else — a nested
+    // record, a list the payload grew later — is skipped rather than stringified: "[object Object]"
     // in a participant table is a value that looks answered and is not.
     if (typeof raw !== "string" && typeof raw !== "number") continue;
     patch[targetKey] = multi ? [String(raw)] : raw;

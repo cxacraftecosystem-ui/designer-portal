@@ -40,15 +40,36 @@ function parsePhone(raw: string | null | undefined): { iso2: string; digits: str
  * FormData handlers and API payload are unchanged. +91 requires exactly 10 digits; any other code
  * 4-14 digits (both blocked natively via the mirror's pattern AND surfaced as an inline error).
  * Switching away from +91 asks for confirmation — it marks the artisan as a foreign resident.
+ *
+ * ALSO MOUNTED BY THE DESIGN WORKSHOP, on every registry field the registry typed `PHONE`
+ * (`participant.phone`, `surveyResponse.contact`). That is why the two props below exist and why
+ * neither has a default that changes anything for the record forms:
+ *
+ * - `disabled` — a stage that has been submitted is read-only, and a control with no way to say so
+ *   is a control a designer can edit after the report has gone to the ministry.
+ * - `mirror` — a stage form is not a `<form>` and reads nothing from FormData, so the zero-size
+ *   mirror there would contribute a stray `name="phone"` and a `pattern` to any form a later change
+ *   happened to wrap the page in. Native constraint validation is deliberately absent from the
+ *   workshop (see `FieldInput`'s DATE branch on why `required` is never passed): completeness is
+ *   judged by `stage_completeness` when a report is generated, not by the browser at save time.
+ *
+ * The handset makes the same choice and states it: `FieldRenderer.kt` gives `DwFieldType.PHONE` its
+ * own arm and calls `ArtisanPhoneField`, the record form's control reused whole, "because the
+ * alternative is a second phone field without the measured dial column, the country search and the
+ * foreign-resident confirmation this one already carries."
  */
 export function PhoneField({
   name = "phone",
   defaultValue,
-  onValueChange
+  onValueChange,
+  disabled,
+  mirror = true
 }: {
   name?: string;
   defaultValue?: string | null;
   onValueChange?: (value: string) => void;
+  disabled?: boolean;
+  mirror?: boolean;
 }) {
   const [{ iso2, digits }, setState] = useState(() => parsePhone(defaultValue));
   const errorId = useId();
@@ -105,6 +126,7 @@ export function PhoneField({
           value={iso2}
           onChange={handleCountry}
           options={options}
+          disabled={disabled}
           ariaLabel="Country dial code"
         />
         <input
@@ -128,6 +150,7 @@ export function PhoneField({
           // the REASON — which of the two length rules was broken — was painted in red under the
           // box and announced nowhere. The two halves only work as a pair.
           aria-describedby={error ? errorId : undefined}
+          disabled={disabled}
           onChange={(event) => emit({ iso2, digits: event.target.value.replace(/\D/g, "").slice(0, 15) })}
         />
       </div>
@@ -139,17 +162,21 @@ export function PhoneField({
         </p>
       ) : null}
       {/* Zero-size (not hidden) mirror input: submits the single combined value under the existing
-          field name AND participates in native constraint validation via the pattern. */}
-      <input
-        type="text"
-        name={name}
-        value={combined}
-        pattern={digits ? (dialCode === DEFAULT_DIAL_CODE ? "\\+91 \\d{10}" : "\\+\\d{1,4} \\d{4,14}") : undefined}
-        onChange={() => undefined}
-        tabIndex={-1}
-        aria-hidden="true"
-        className="pointer-events-none absolute h-0 w-0 border-0 p-0 opacity-0"
-      />
+          field name AND participates in native constraint validation via the pattern. Suppressed by
+          `mirror={false}` for a caller that reads the value through `onValueChange` and has no form
+          to submit — see the component doc block. */}
+      {mirror ? (
+        <input
+          type="text"
+          name={name}
+          value={combined}
+          pattern={digits ? (dialCode === DEFAULT_DIAL_CODE ? "\\+91 \\d{10}" : "\\+\\d{1,4} \\d{4,14}") : undefined}
+          onChange={() => undefined}
+          tabIndex={-1}
+          aria-hidden="true"
+          className="pointer-events-none absolute h-0 w-0 border-0 p-0 opacity-0"
+        />
+      ) : null}
     </div>
   );
 }

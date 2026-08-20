@@ -552,15 +552,46 @@ test("Craft is still not inline-creatable, and now the reason is written down", 
   expect(dialog).toContain("IF THIS IS EVER REVERSED");
 });
 
-test("the craft picker offers the crafts page instead, in a new tab", () => {
+test("the craft picker offers the crafts page in a new tab, and only to somebody who can act on it", () => {
   const source = read(PICKER);
   const branch = source.slice(source.indexOf('{field.refModel === "Craft" && !disabled ? ('));
-  expect(branch.slice(0, 600)).toContain('href="/crafts"');
+  const head = branch.slice(0, 2400);
+  expect(head).toContain('href="/crafts"');
   // A NEW TAB, which is the whole point of this lane rather than a stylistic choice: the stage stays
   // open behind it, exactly as the dialog keeps it open for the other four models.
-  expect(branch.slice(0, 600)).toContain('target="_blank"');
-  expect(branch.slice(0, 600)).toContain('rel="noopener"');
-  expect(branch.slice(0, 600)).toContain("opens in a new tab");
+  expect(head).toContain('target="_blank"');
+  expect(head).toContain('rel="noopener"');
+  expect(head).toContain("{CRAFT_REGISTER_LINK}");
+  expect(source).toContain('const CRAFT_REGISTER_LINK = "Add or correct a craft on the crafts page (opens in a new tab)";');
+
+  /*
+   * AND THE RANK GATE, which is the half that was missing and which turned this control into a dead
+   * end for most of the people it was written for.
+   *
+   * `/crafts` renders its form only when `canManageCrafts(user)` — Professor and above — and below
+   * that rank the page says "Ask the master admin for craft creation access". The anchor was gated on
+   * `field.refModel === "Craft" && !disabled` and on NOTHING else, so a designer at stage 1 read
+   * "Add or correct a craft on the crafts page", left the picker, opened a new tab and landed on a
+   * read-only vocabulary list. The one control in the product added specifically so the remedy would
+   * not have to be remembered was sending them somewhere they cannot act.
+   *
+   * Asserted through the SAME predicate the page uses rather than a rank comparison of its own: two
+   * opinions about who may edit the taxonomy is how the two screens come to disagree.
+   */
+  expect(head).toContain("craftManager ? (");
+  expect(source).toContain('import { canManageCrafts } from "@/lib/permissions";');
+  expect(source).toContain("const craftManager = canManageCrafts(user);");
+
+  // AND BELOW THAT RANK, A SENTENCE THAT IS BOTH TRUE AND ACTIONABLE — not an absence. The way
+  // forward for a craft that is not in the register is the typed `craftName` box, and `craftRef` is
+  // optional, so saying so keeps stage 1 unblocked instead of sending anybody looking for signal or
+  // for a page they cannot use.
+  expect(head).toContain("{CRAFT_REGISTER_BLOCKED}");
+  expect(source).toContain("Adding a craft to the register needs craft-creation access");
+  expect(source).toContain("the craft's name in the Craft box above and the stage still saves");
+  // Android's picker offers NEITHER sentence today — its empty craft list is a claim about this
+  // device's cache. When it gains its half it must carry these words, not a second phrasing.
+  expect(source).toContain("DwReferenceSelectField");
 });
 
 test("the roster picker says why it does not edit, rather than leaving the asymmetry unexplained", () => {

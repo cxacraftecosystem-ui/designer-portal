@@ -116,8 +116,16 @@ export function loadAddressReference(): Promise<AddressReference> {
   return addressReferenceRequest;
 }
 
-/** Indian PIN codes are six digits and never begin with 0 (the first digit is the postal zone). */
-const PINCODE_LENGTH = 6;
+/**
+ * Indian PIN codes are six digits and never begin with 0 (the first digit is the postal zone).
+ *
+ * EXPORTED so the design workshop's own PIN box slices to the same six rather than restating the
+ * number. The registry declares `participant.pincode` and the two `recordPincode` fields
+ * `max_length=10`, which is four characters more than a PIN code has, so the workshop box was
+ * accepting and printing values the record page could not have produced. Six is stated once, here,
+ * beside the zone table that depends on it.
+ */
+export const PINCODE_LENGTH = 6;
 
 /**
  * Postal zone (the first digit of a PIN) to the states and union territories that zone serves.

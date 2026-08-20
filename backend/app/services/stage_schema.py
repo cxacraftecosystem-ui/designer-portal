@@ -385,6 +385,26 @@ ENUMS: dict[str, dict[str, str]] = {
         "CONTEMPORARY": "Contemporary",
         "TRANSITIONAL": "Traditional form, contemporary use",
     },
+    # Whether a step is one step in the sequence or a BRACKET around several of them, mirroring
+    # Prisma's `ProcessStepType` member for member — the same arrangement as `PRODUCT_TYPE` and
+    # `MAKER_TYPE` above, and the labels are the ones the record page's own "Add Another Step"
+    # popover prints ("Sequential" / "Group of activities") so the two surfaces read the same words.
+    #
+    # THE DISTINCTION IS LOAD-BEARING FOR A READER COUNTING STEPS, which is why `_step_lines` appends
+    # " (group)" to a documented group's line. Until `processStep.stepType` existed, the only place it
+    # landed was inside that flattened string on the HYDRATED singleton: a designer who observed
+    # three parallel activities bracketed together at the workshop had no box to say so, and "how
+    # many clusters group their dyeing activities" was unanswerable across workshops — the same
+    # failure written out above `TOOL_TYPE`.
+    #
+    # A DESIGNER-ANSWERED FIELD AND NOT A CARRY, deliberately: `processStep.processRef` points at a
+    # Process, a Process has MANY steps, and hydration cannot choose which source step a row
+    # corresponds to. It is the same reason `processStep.name` receives the process's name and not a
+    # step's, and it is why no mapping pair exists for this list.
+    "PROCESS_STEP_TYPE": {
+        "SEQUENTIAL": "Sequential",
+        "GROUP": "Group of activities",
+    },
     "MARKET_CHANNEL": {
         "LOCAL_HAAT": "Local haat / weekly market",
         "EMPORIUM": "Government emporium",
@@ -633,6 +653,13 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "craftPlace": "craftPlace",
         "craftDescription": "documentedCraftNotes",
         "craftDocumentedOn": "craftDocumentedOn",
+        # WHERE the craft was documented, beside WHEN. `craftRef` is ALL_SCOPE, so a linked craft may
+        # belong to another cluster's study — which is legitimate reuse and only readable if it is
+        # printed. See the `workshop` include on `REFERENCE_MODELS["Craft"]`.
+        "craftDocumentedAtWorkshop": "craftDocumentedAtWorkshop",
+        # How much footage the craft record carries. A sentence counting the files, never the ids:
+        # `_media_note` gives both reasons (the gallery rule, and per-file entitlement).
+        "craftMediaNote": "craftMediaNote",
         "craftPhoto": "craftPhoto",
         "craftPhotoCaption": "craftPhotoCaption",
     },
@@ -673,6 +700,14 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "dos": "dos",
         "donts": "donts",
         "documentedOn": "documentedOn",
+        # THE OTHER HALF OF `documentedOn`'S OWN JOB. This is the one artisan picker declared
+        # ALL_SCOPE — a roster legitimately holds artisans documented at other workshops — so a
+        # printed roster could say when a row was documented and never where. See the `workshop`
+        # include on `REFERENCE_MODELS["Artisan"]`.
+        "documentedAtWorkshop": "documentedAtWorkshop",
+        # What the record has attached beyond the single photograph below: audio introductions,
+        # video, documents. A sentence and never the ids — see `_media_note` for both reasons.
+        "recordMediaNote": "recordMediaNote",
         "photo": "photo",
         "photoCaption": "photoCaption",
     },
@@ -721,6 +756,11 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "recordDistrict": "recordDistrict",
         "recordVillage": "recordVillage",
         "recordPincode": "recordPincode",
+        # The SUBJECT pin, which is the half of invariant 4 the stated-address carry left behind.
+        # The device's own fix is not here and never will be — see `_subject_point`.
+        "subjectLocation": "recordSubjectLocation",
+        # The ordered making sequence and everything else on file, as a sentence. Never the ids.
+        "recordMediaNote": "recordMediaNote",
         "usedByArtisans": "usedByArtisans",
         "documentedOn": "documentedOn",
         "photo": "photo",
@@ -851,6 +891,13 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "recordDistrict": "recordDistrict",
         "recordVillage": "recordVillage",
         "recordPincode": "recordPincode",
+        # The SUBJECT pin. The artisan mapping has carried its own since it was written; this side
+        # carried the four stated strings and not the one coordinate that is about the village rather
+        # than about the desk. See `_subject_point`.
+        "subjectLocation": "recordSubjectLocation",
+        # An audio note explaining the piece, a video of it being finished — the record holds them
+        # and one IMAGE could not say so. A sentence; see `_media_note`.
+        "recordMediaNote": "recordMediaNote",
         "documentedOn": "documentedOn",
         "photo": "productPhotos",
         "photoCaption": "productPhotosCaption",

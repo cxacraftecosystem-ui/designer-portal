@@ -438,6 +438,114 @@ def _process_media_note(process: Any) -> str | None:
     return "Attached to the process record: " + ", ".join(parts) + "."
 
 
+#: What one attached file is counted as, in the order :func:`_media_note` names them.
+#:
+#: PDF and DOCUMENT collapse onto one word because the difference is a mime type and not a fact a
+#: reader of the printed report can act on — "2 documents" is what they would ask the researcher
+#: for either way. ``OTHER`` keeps a word of its own ("file") rather than being folded into
+#: documents, because it is the bucket ``media.py`` puts anything it could not classify in, and
+#: calling an unclassified upload a document is a claim about it.
+#:
+#: EVERY MEMBER OF THE PRISMA ``MediaType`` ENUM APPEARS HERE, and ``_media_note`` counts any token
+#: it does not know into the ``OTHER`` word rather than dropping it: a member added to the enum must
+#: not silently stop being counted, because the symptom is a sentence that says a record carries
+#: three files when it carries five, and nothing anywhere would contradict it.
+_MEDIA_NOTE_WORDS: tuple[tuple[tuple[str, ...], str, str], ...] = (
+    (("IMAGE",), "photograph", "photographs"),
+    (("VIDEO",), "video", "videos"),
+    (("AUDIO",), "audio note", "audio notes"),
+    (("PDF", "DOCUMENT"), "document", "documents"),
+    (("OTHER",), "file", "files"),
+)
+
+
+def _media_note(subject: str, rows: Any, *, numbered_prefix: str = "") -> str | None:
+    """How much footage ONE record carries, as a sentence, or ``None`` when it carries none.
+
+    ── WHAT THIS CLOSES ─────────────────────────────────────────────────────────────────────────
+    ``_reference_photos`` resolves EXACTLY ONE image per record and no non-image row at all, and
+    ``photo``/``photoCaption`` are the only media keys the artisan, product, tool and craft lambdas
+    produce. So a researcher who recorded an artisan's spoken introduction — which
+    ``MediaCaptureField``'s own description asks for by name — or filmed a tool being used, or
+    documented a tool's making as a numbered nine-photograph sequence, produced material a designer
+    standing in the room would want, and NOTHING on the workshop row could even say it existed. A
+    reader of the printed roster or tool table could not know to ask for it.
+
+    ── A SENTENCE AND NEVER THE IDS ─────────────────────────────────────────────────────────────
+    The same two rules :func:`_process_media_note` sets out, which is the precedent this generalises:
+    a stage entry's galleries hold the photographs the DESIGNER took at the workshop and hydration
+    may never overwrite them; and a referenced record's files are entitlement-gated per file, which
+    ``_reference_photos`` resolves for one image and no more. Copying ids would either freeze ids the
+    report cannot fetch or bypass the gate that decides. The FACT that the footage exists is what a
+    reader needs in order to ask for it, and it is the part that is safe to freeze.
+
+    ── COUNTED OFF THE ``media`` RELATION, AND THE ALTERNATIVE WAS TRIED AND REFUSED ─────────────
+    The cheaper shape is a grouped ``query_raw`` over ``MediaFile`` — one small result set instead of
+    every media row of every row the picker returns — and it cannot be used, for two reasons that are
+    both about a caller outside this module:
+
+    * ``entry_provenance.canonical_divergence`` resolves a canonical value by calling
+      ``spec.data(rec, photo)`` DIRECTLY, with two arguments. So the counts cannot be a third
+      parameter of the lambda (that call would raise), and they cannot be injected by
+      ``_reference_data`` either (that function is not on the divergence path).
+    * A key the divergence path cannot recompute is reported to an admin as ``diverged`` on every
+      audit, for ever. That view's own comment records what this already cost once — a photograph
+      the canonical resolution did not load made "EVERY artisan with a photograph" read as diverged
+      — and an audit that flags everything flags nothing.
+
+    Counted off the relation, the note is recomputed identically wherever ``spec.data`` is called, so
+    a divergence on it means what it says: the record has gained or lost footage since the pick.
+
+    THE COST, STATED AND NOT HIDDEN: ``include={"media": True}`` loads every media row of every row
+    the picker returns, bounded by ``REFERENCE_LIMIT_MAX``. It is ONE extra read for the whole page
+    and it is indexed — the parent foreign keys on ``MediaFile`` exist for precisely this reverse
+    walk, as that model's own schema comment says ("for the reverse walk `include: {media: true}`
+    generates, which Prisma issues as a separate `WHERE "<fk>" IN (…)`") — but the ROWS are wide
+    (``extraMetadata`` carries an EXIF summary), and a roster of forty long-documented artisans is
+    the worst case in the repository. I could not measure it here: the compose stack is down, so
+    there is no Postgres on this machine to time it against.
+
+    A MEASUREMENT-GRID FRAME IS NOT FOOTAGE OF THE SUBJECT and is not counted. Same marker,
+    same spelling, as the sort key in ``_reference_photos`` — a sheet of ruled paper photographed to
+    fill a dimension box is not a picture of the tool, and counting it would overstate by one on
+    exactly the records that were measured most carefully. Only the structural marker is read here,
+    not that function's transitional caption/filename clauses: those exist to decide which single
+    image WINS, and a caption a researcher could also have typed by hand is too weak a signal to
+    subtract from a count.
+    """
+    counts: dict[str, int] = {}
+    numbered = 0
+    for row in rows or []:
+        if str(_meta(row).get("purpose") or "") == MEASUREMENT_GRID_PURPOSE:
+            continue
+        token = _enum_token(getattr(row, "mediaType", None))
+        counts[token] = counts.get(token, 0) + 1
+        if numbered_prefix and str(getattr(row, "originalFilename", "") or "").startswith(
+            numbered_prefix
+        ):
+            numbered += 1
+    if not counts:
+        return None
+    known = {token for tokens, _one, _many in _MEDIA_NOTE_WORDS for token in tokens}
+    parts: list[str] = []
+    for tokens, one, many in _MEDIA_NOTE_WORDS:
+        total = sum(counts.get(token, 0) for token in tokens)
+        if "OTHER" in tokens:
+            # Anything the enum has gained since this table was written, counted rather than lost.
+            total += sum(n for token, n in counts.items() if token not in known)
+        if total:
+            parts.append(f"{total} {one if total == 1 else many}")
+    note = f"Attached to the {subject} record: " + ", ".join(parts)
+    if numbered:
+        # The ordered making sequence, which is a different thing from a batch of photographs and is
+        # the reason the tool record's media card exists twice. `ToolForm` renames every capture in
+        # that card to `STAGE_STEP_<n>_<name>` on BOTH the online upload loop and the queued offline
+        # array, so this reads the same on a handset that has never had a signal.
+        verb = "documents" if numbered == 1 else "document"
+        note += f", of which {numbered} {verb} the making in order"
+    return note + "."
+
+
 def _money(value: Any) -> str | None:
     """A Prisma Decimal as the two-place string a MONEY field is stored as.
 
@@ -466,10 +574,19 @@ def _reference_data(spec: "ReferenceModel", row: Any, photo: Any) -> dict[str, A
     "no migration, no new column", so a row somebody formatted holds ``{"blocks":[…]}`` where prose
     used to be.
 
-    Every hydration target opposite those columns is a TEXT or LONG_TEXT box —
-    ``participant.recordNotes``, ``existingProduct.material`` / ``mainToolsUsed`` / ``use`` /
-    ``remarks``, ``tool.improvements`` / ``remarks``, ``processStep.description`` and
-    ``traditionalProcess.documentedProcessNotes`` — and ``coerce_value``'s text branch passes a
+    Every hydration target opposite those columns USED TO BE a TEXT or LONG_TEXT box, and two still
+    are — ``participant.recordNotes`` and ``processStep.description``. The other seven
+    (``existingProduct.material`` / ``mainToolsUsed`` / ``use`` / ``remarks``, ``tool.improvements`` /
+    ``remarks`` and ``traditionalProcess.documentedProcessNotes``) are declared RICH_TEXT now, so that
+    the workshop offers the same editor the record page offers for the same fact — which changes
+    nothing about the flattening below and is worth saying so nobody reads a promotion as a fix for
+    this: the value still arrives here FLATTENED and ``coerce_value`` re-reads it as unformatted
+    prose, so a numbered improvement list a researcher wrote is still one paragraph on the other side.
+    Making the flattening target-type-aware — so the source's own structure could survive the carry —
+    is a real and separate change, and the ``isinstance(value, str)`` guard at the bottom of this
+    docstring must not be widened while doing it.
+
+    For the two remaining plain-text targets ``coerce_value``'s text branch passes a
     string through ``clean_text`` unchanged. So the JSON was copied onto the stage entry verbatim,
     and ``format_value`` only unwraps a document for a RICH_TEXT field, where the value is a dict.
     ``{"blocks": [{"kind": "PARAGRAPH", "spans": [{"text": "Tied with cotton thread"…`` therefore
@@ -908,7 +1025,27 @@ def _artisan_workshop_where(workshop_id: str) -> dict[str, Any]:
 REFERENCE_MODELS: dict[str, ReferenceModel] = {
     "Artisan": ReferenceModel(
         delegate="artisan",
-        include={"craft": True, "location": True},
+        # ── `workshop` AND `media`: WHERE THE ARTISAN WAS DOCUMENTED, AND WHAT IS ATTACHED ───────
+        #
+        # `workshop` IS SAFE TO SWITCH ON, AND THE CHECK IS THE ONE THE `location` INCLUDE HAD TO
+        # PASS. `_reference_place` runs at RENDER time and reads `row.location`, which is why adding
+        # THAT include could have changed the place printed in already-submitted documents and why it
+        # now guards on the model name. Nothing anywhere reads `row.workshop`: that function reads
+        # `location` and `place` and nothing else, `label`/`sublabel` read neither, and
+        # `ReferencedRecord` carries only label, photo, place, district and state. So this include
+        # changes what SAVE-time hydration can offer and nothing about what render time prints.
+        #
+        # WHY IT IS WORTH A JOIN AT ALL: `participant.artisanRef` is the ONE artisan field declared
+        # ALL_SCOPE — "this is where the roster is built" — so a roster legitimately holds artisans
+        # documented at other workshops, in other clusters, years earlier. `documentedOn` answers
+        # WHEN and nothing answered WHERE, which is half of the job that field's own comment claims
+        # for it ("it lets a reader of the printed report tell a roster row filled from a 2023 survey
+        # from one filled last week"). `Artisan.workshop` is the explicit column, not the
+        # `WorkshopArtisan` join: a many-to-many cannot answer "which one documented it".
+        #
+        # `media` is the count behind `recordMediaNote` — see `_media_note` for what it costs, why
+        # the cheaper grouped query cannot be used, and why the FACT and never the ids cross.
+        include={"craft": True, "location": True, "workshop": True, "media": True},
         order={"name": "asc"},
         search_fields=("name", "localName", "place"),
         workshop_where=_artisan_workshop_where,
@@ -1025,6 +1162,18 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # documented. Same job as `processStep.documentedFor` — it lets a reader of the printed
             # report tell a roster row filled from a 2023 survey from one filled last week.
             "documentedOn": _iso_date(r.recordedAt),
+            # THE OTHER HALF OF THAT SENTENCE, WHICH HAD NO FIELD. `documentedOn` answers when; this
+            # answers under whose study, which is the reader's next question about a roster row
+            # imported from another cluster. `Workshop.title` is the display column, and `_rel`
+            # answers None for the common case: `Artisan.workshopId` is nullable and the artisans
+            # documented before the column existed carry the `WorkshopArtisan` join instead.
+            "documentedAtWorkshop": _rel(r, "workshop", "title"),
+            # WHAT THE RECORD HAS ATTACHED BEYOND THE ONE PHOTOGRAPH BELOW. `_reference_photos`
+            # resolves a single IMAGE and no other kind of row, so an artisan's recorded spoken
+            # introduction — the thing the record form's media card asks for by name — existed on the
+            # record and could not be mentioned anywhere on the roster row. A sentence, never the
+            # ids: see `_media_note`.
+            "recordMediaNote": _media_note("artisan", _rel_obj(r, "media")),
             "photo": photo.id if photo else None,
             "photoCaption": photo.caption if photo else None,
         },
@@ -1049,7 +1198,16 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # STATED COLUMNS ONLY. `latitude`/`longitude`/`altitude`/`accuracy`/`capturedAt`/`placeName`
         # are the fix of the desk the record was typed at — routinely 1,500 km from the village named
         # beside it — and they never cross as an address. Same rule, same reason, as the artisan.
-        include={"location": True},
+        #
+        # AND THE ONE COORDINATE THAT IS NOT THE DESK. `subjectLatitude`/`subjectLongitude` are the
+        # pin a researcher DROPPED on the product's own place with the map picker, which is the other
+        # half of the rule the artisan side has always honoured: the device fix never crosses as an
+        # address, the STATED columns and the SUBJECT pin do. It needs no additional column here —
+        # `_subject_point` reads the same relation this include already loads, and refuses half a
+        # coordinate.
+        #
+        # `media` is the count behind `recordMediaNote`; see `_media_note`.
+        include={"location": True, "media": True},
         workshop_where=lambda wid: {"workshopId": wid},
         artisan_field="artisanId",
         media_field="productId",
@@ -1154,6 +1312,15 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "recordDistrict": _rel(r, "location", "district"),
             "recordVillage": _rel(r, "location", "village"),
             "recordPincode": _rel(r, "location", "pincode"),
+            # THE PIN ON THE PRODUCT'S OWN PLACE, which is the half of invariant 4 this model had
+            # been missing while the artisan honoured both. See `_subject_point`: the subject pin and
+            # the device fix are different columns answering different questions, and only this one
+            # is about the village.
+            "subjectLocation": _subject_point(_rel_obj(r, "location")),
+            # How much footage the product record carries — an audio note in which the artisan
+            # explains the piece, a video of it being finished — none of which one IMAGE can say
+            # exists. A sentence and never the ids; see `_media_note`.
+            "recordMediaNote": _media_note("product", _rel_obj(r, "media")),
             "documentedOn": _iso_date(r.recordedAt),
             "photo": photo.id if photo else None,
             "photoCaption": photo.caption if photo else None,
@@ -1195,7 +1362,15 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # STATED COLUMNS ONLY. `latitude`/`longitude`/`altitude`/`accuracy`/`capturedAt`/`placeName`
         # are the fix of the desk the record was typed at — routinely 1,500 km from the village named
         # beside it — and they never cross as an address. Same rule, same reason, as the artisan.
-        include={"location": True, "artisanLinks": {"include": {"artisan": True}}},
+        #
+        # AND THE SUBJECT PIN, for the same reason it is now read on the product: the map picker on
+        # the record page writes `subjectLatitude`/`subjectLongitude` for a tool exactly as it does
+        # for a product, and the pin is about the place, not about the desk. `media` is the count
+        # behind `recordMediaNote` — the tool record's media card is mounted TWICE, once for the
+        # ordered "Process stages" sequence and once for general footage, and one still image was the
+        # whole of what could reach a report. See `_media_note`.
+        include={"location": True, "media": True,
+                 "artisanLinks": {"include": {"artisan": True}}},
         label=lambda r: str(r.toolkitName or ""),
         sublabel=lambda r: _joined(r.englishName, r.artisanName, r.place, _review_flag(r)),
         data=lambda r, photo: {
@@ -1253,6 +1428,17 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "recordDistrict": _rel(r, "location", "district"),
             "recordVillage": _rel(r, "location", "village"),
             "recordPincode": _rel(r, "location", "pincode"),
+            # The pin on the tool's own place, never the device's fix — see `_subject_point`, and
+            # the same note on `ProductDocumentation` above.
+            "subjectLocation": _subject_point(_rel_obj(r, "location")),
+            # THE NUMBERED MAKING SEQUENCE AND EVERYTHING ELSE ATTACHED. The tool record's media
+            # card is mounted twice — "Process stages", whose captures `ToolForm` renames
+            # `STAGE_STEP_<n>_…` so they archive in order, and "Tool media" for video and audio —
+            # and `_reference_photos` resolves ONE image, so a tool documented as a nine-photograph
+            # sequence reached the report as a single still with nothing admitting the rest existed.
+            # `numbered_prefix` is what lets the sentence say the sequence is a sequence.
+            "recordMediaNote": _media_note("tool", _rel_obj(r, "media"),
+                                           numbered_prefix="STAGE_STEP_"),
             "usedByArtisans": _linked_artisan_names(r),
             "documentedOn": _iso_date(r.recordedAt),
             "photo": photo.id if photo else None,
@@ -1345,6 +1531,28 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
     ),
     "Craft": ReferenceModel(
         delegate="craft",
+        # ── THE FIRST INCLUDE THIS MODEL HAS EVER DECLARED, AND BOTH HALVES ANSWER A STAGE-1 BOX ──
+        #
+        # `media`: the crafts page mounts `MediaCaptureField` with no `allowedTypes`, so a craft may
+        # carry unlimited images, video, audio notes and documents — and exactly one still image
+        # crossed, through `_reference_photos`. A craft documented with fifteen loom photographs, a
+        # recorded elder's account of the technique and a scanned gazetteer page contributed one
+        # picture to a report whose cover page names that craft, with nothing saying the rest was
+        # there. `MediaFile.craftId` is indexed (checked in `prisma/schema.prisma`, whose own comment
+        # says those parent keys exist FOR this reverse walk), so this is one indexed read for the
+        # page and not a scan.
+        #
+        # `workshop`: `workshopSetup.craftRef` is ALL_SCOPE, so a designer may legitimately link a
+        # craft documented in another cluster by another study years earlier. `craftDocumentedOn`
+        # already answers WHEN; nothing answered under whose study, which is the next question a
+        # reader asks of a cover page naming a craft this designer never surveyed. `Craft.workshop`
+        # is the explicit column and NOT the `WorkshopCraft` join — the picker's `workshop_where`
+        # reads both, but a many-to-many cannot answer "which one documented it" and would need the
+        # BULLETS treatment `tool.usedByArtisans` got, which is a much larger change for a much
+        # weaker fact. Nothing at render time reads `row.workshop` (`_reference_place` reads
+        # `location` and `place`), so this include cannot change what an already-submitted report
+        # prints — the check the `location` include on the product and the tool had to pass.
+        include={"media": True, "workshop": True},
         order={"name": "asc"},
         search_fields=("name", "localName", "category"),
         workshop_where=lambda wid: {
@@ -1391,6 +1599,13 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "craftPlace": r.place,
             "craftDescription": r.description,
             "craftDocumentedOn": _iso_date(r.recordedAt),
+            # WHERE THE CRAFT WAS DOCUMENTED, beside WHEN. `_rel` answers None for the common case
+            # and that is correct rather than a gap: `Craft.workshopId` is nullable and the seeded
+            # taxonomy rows belong to no workshop at all.
+            "craftDocumentedAtWorkshop": _rel(r, "workshop", "title"),
+            # Everything attached that is not the one still image below. A sentence, never the ids —
+            # see `_media_note`.
+            "craftMediaNote": _media_note("craft", _rel_obj(r, "media")),
             "craftPhoto": photo.id if photo else None,
             "craftPhotoCaption": photo.caption if photo else None,
         },
