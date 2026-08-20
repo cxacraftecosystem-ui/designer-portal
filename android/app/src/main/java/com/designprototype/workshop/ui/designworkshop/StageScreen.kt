@@ -2186,8 +2186,8 @@ private fun CollectionRowCard(
  *
  * A null value REMOVES the key rather than storing JSON null. The server's `_is_filled` treats an
  * explicit null as unfilled either way, but a document that accumulates a null for every field a
- * designer ever touched and cleared grows without bound across 496 fields and 22 stages, and every
- * one of those nulls is re-sent on every sync over a metered connection.
+ * designer ever touched and cleared grows without bound across hundreds of fields and 22 stages, and
+ * every one of those nulls is re-sent on every sync over a metered connection.
  */
 private fun Map<String, JsonElement>.put(key: String, value: JsonElement?): Map<String, JsonElement> =
     if (value == null) this - key else this + (key to value)
@@ -2203,8 +2203,8 @@ private fun Map<String, JsonElement>.put(key: String, value: JsonElement?): Map<
  * watch a picker fill in one field out of eight and conclude the reference record was incomplete.
  *
  * Same null convention as [put] — a null value REMOVES the key rather than storing JSON null, so
- * clearing the previous record's leftovers does not leave 496 nulls accumulating in a document that
- * is re-sent on every sync over a metered connection.
+ * clearing the previous record's leftovers does not leave a null per registry field accumulating in a
+ * document that is re-sent on every sync over a metered connection.
  */
 private fun Map<String, JsonElement>.putAll(patch: Map<String, JsonElement?>): Map<String, JsonElement> {
     if (patch.isEmpty()) return this

@@ -1,6 +1,9 @@
 package com.designprototype.workshop.data
 
 import android.content.Context
+// The ONE grouping in this app, so a number in a refusal reads the way the same number reads in the
+// report's own cost table. See its KDoc: a second grouping is how one figure becomes two numbers.
+import com.designprototype.workshop.report.groupIndian
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -104,6 +107,31 @@ const val DW_VERB_MAX_TEXT_CHARS: Int = 20_000
 
 /** `ai_verbs.MAX_LANGUAGE_CHARS`, and the `max_length` on both language fields of `AiTranslateIn`. */
 const val DW_VERB_MAX_LANGUAGE_CHARS: Int = 40
+
+/**
+ * `schemas.design_workshops.MAX_LAYER_NOTE_CHARS`, the `max_length` on [DwAiLayerDecisionBody.note].
+ *
+ * MIRRORED HERE THOUGH NOTHING CHECKS IT YET, because the third of the server's three bounds was the
+ * only one this file did not name, and an unnamed bound is one nobody knows to check. The other two
+ * are checked before the press with the argument written out on [DW_VERB_MAX_TEXT_CHARS] — *"a
+ * designer who … gets a bare 422 after the round trip learns only that the button is broken"*.
+ *
+ * **THERE IS NOTHING TO CHECK ON THIS CLIENT TODAY AND THAT IS WHY THERE IS NO REFUSAL FUNCTION.**
+ * `DwAiVerbReviewSheet` calls `acceptDesignWorkshopAiLayer(serverWorkshopId, layer.id)` with no note,
+ * and `unacceptDesignWorkshopAiLayer` has no caller at all, so no box on this handset can produce an
+ * over-long one. A refusal with no call site would be an API surface bought for nothing.
+ *
+ * **THE TRAP FOR WHOEVER ADDS THE FIRST NOTE BOX**, which is what this constant is really for: the
+ * server's own refusal for this field is pydantic's, *"String should have at most 500 characters"*,
+ * rendered through `detailMessage`'s JsonArray branch — not field copy, and not a sentence naming a
+ * next move. So a withdrawal note typed past this bound is lost to a 422 nobody can act on. Check it
+ * against this constant BEFORE the press, in the shape [dwVerbLanguageRefusal] already has.
+ *
+ * The bound itself is the schema's and its reason is worth keeping in view: the note is *"read back on
+ * every listing of a layer's history, so an uncapped one is paid for by every later reader rather than
+ * by the writer."* 500 characters is a full paragraph.
+ */
+const val DW_LAYER_NOTE_MAX_CHARS: Int = 500
 
 /**
  * The shape a language name must have — `ai_verbs._LANGUAGE_TOKEN`, copied character for character.
@@ -536,6 +564,29 @@ data class DwAiVerbAllowance(
  * freshness test, and the day they drift the phone prints yesterday's ceiling beside today's refusal.
  */
 data class DwAiVerbCapView(
+    /**
+     * **WHETHER THIS PHONE HAS BEEN TOLD AN ALLOWANCE AT ALL, for this designer and this day.**
+     *
+     * Carried as its own fact because the other three CANNOT express it. `limit == null &&
+     * remaining == null` is the shape of TWO different facts — [DW_AI_VERB_CAP_UNKNOWN], where nothing
+     * fresh is stored, and an uncapped deployment that HAS answered, where `allowance_payload` sends
+     * both as null *"because 0 remaining and 'no ceiling' must not look alike"*. A surface that reads
+     * the pair told an uncapped deployment its allowance "is not known until one goes through", which
+     * is the same defect as the `?: 0` this file argues against, arrived at from the other direction:
+     * a designer on a server with no ceiling was warned about a ceiling nobody can see.
+     *
+     * [DwAiVerbAllowance.limit]'s own rule is what this makes reachable — *"NULL IS NOT ZERO AND NOT
+     * 'UNCAPPED' … a phone that has never had an answer has neither fact. All three read differently
+     * to a designer, so all three are kept apart."* Three facts need three readings, so:
+     *
+     *     told = false                         -> nothing is known; the pre-flight route does not exist
+     *     told = true,  limit/remaining null   -> this server sets no daily ceiling
+     *     told = true,  numbers present        -> today's ceiling, and what is left of it
+     *
+     * NOT DEFAULTED, so a new construction has to decide which of the two nulls it means rather than
+     * inheriting the answer that reads as a warning.
+     */
+    val told: Boolean,
     val spent: Boolean,
     val limit: Int?,
     val remaining: Int?,
@@ -544,7 +595,8 @@ data class DwAiVerbCapView(
 )
 
 /** Nothing known: not spent, and no number to name. The honest answer, and the safe one. */
-private val DW_AI_VERB_CAP_UNKNOWN = DwAiVerbCapView(spent = false, limit = null, remaining = null)
+private val DW_AI_VERB_CAP_UNKNOWN =
+    DwAiVerbCapView(told = false, spent = false, limit = null, remaining = null)
 
 /**
  * Resolve a stored allowance against who is signed in and what day it is here.
@@ -560,6 +612,12 @@ private val DW_AI_VERB_CAP_UNKNOWN = DwAiVerbCapView(spent = false, limit = null
  *
  * With all four passed, "spent" is `remaining <= 0`. A null `remaining` is an uncapped deployment and
  * can never be spent, which is the reading the obvious `?: 0` gets exactly backwards.
+ *
+ * ALL FOUR WAYS OUT OF THE FIRST FOUR CHECKS ANSWER `told = false`, and passing them all answers
+ * `told = true` WHATEVER THE NUMBERS ARE — including the uncapped row, where both are null. That is
+ * the distinction [DwAiVerbCapView.told] exists for: without it the fresh uncapped row and the empty
+ * mirror are the same four values, and a surface has no way to tell "there is no ceiling" from "nobody
+ * here knows".
  */
 fun dwAiVerbCapView(
     stored: DwAiVerbAllowance?,
@@ -572,12 +630,16 @@ fun dwAiVerbCapView(
     }
     val remaining = stored.remaining
         ?: return DwAiVerbCapView(
+            // TOLD, AND TOLD THAT THERE IS NO CEILING. The row is this designer's and today's, so the
+            // server answered; both numbers being null is the answer rather than the absence of one.
+            told = true,
             spent = false,
             limit = stored.limit,
             remaining = null,
             byVerb = stored.byVerb,
         )
     return DwAiVerbCapView(
+        told = true,
         spent = remaining <= 0,
         limit = stored.limit,
         remaining = remaining,
@@ -856,8 +918,33 @@ data class DwVerbConditions(
  * and rendered live buttons during the IndexedDB read. Kotlin has no truthiness, so the trap does not
  * transfer; what does transfer is the property the trap was protecting, which is that "still reading"
  * is a REFUSAL TO PROCEED that happens to have nothing to say. A closed hierarchy makes that
- * unrepresentable as a sentence and makes forgetting a branch a compile error. **This is a divergence
- * in shape and not in behaviour: the rungs and their order are the browser's, unchanged.**
+ * unrepresentable as a sentence and makes forgetting a branch a compile error.
+ *
+ * ── THE SHAPE IS A DIVERGENCE, AND SO IS ONE RUNG. BOTH ARE DELIBERATE ──────────────────────────
+ *
+ * This paragraph used to end *"a divergence in shape and not in behaviour: the rungs and their order
+ * are the browser's, unchanged."* The shape half is true. The rungs half was not, and a comment that
+ * misdescribes the code is worse than no comment: **[dwVerbGate]'s rung 4, NO CONNECTION, is a rung
+ * the browser does not have before the press at all.** `verbWorkshopRefusal` has exactly three —
+ * ready, consent, serverId — and all three of `AiLayersPanel`, `AiVerbSelectionMenu` and
+ * `MediaAiVerbs` compose the ladder as `verbWorkshopRefusal(…) ?? verbAllowanceRefusal(…)`. The
+ * browser reaches `VERBS_NEED_A_CONNECTION` only from a CAUGHT error —
+ * `setProblem(isVerbOffline(err) ? VERBS_NEED_A_CONNECTION : …)`, where `isVerbOffline` reads an
+ * `ApiError` status of 408 or an unreachable fetch — so the same fact is reported AFTER the press
+ * there and BEFORE it here.
+ *
+ * MOVED BECAUSE THE HANDSET'S PRIMARY PATH IS OFFLINE. A stage save with no signal is the ordinary
+ * case in this app, not the exception, so a control that has to be pressed to find out would be
+ * pressed into a certain failure many times a day; and the sentence has a second half no post-press
+ * refusal can carry as well — *nothing has been queued* — which is the reading a designer will
+ * otherwise get wrong on a device where every other write does bank itself. `ConnectivityObserver`
+ * makes the fact cheap and reliable to ask for in advance, which a browser's `navigator.onLine`
+ * notoriously does not.
+ *
+ * THE BROWSER'S POST-PRESS PATH IS NOT LOST, ONLY PRECEDED. Signal goes between a card being drawn
+ * and its button being pressed, and that press is answered by `dwAiVerbProblem`, whose `IOException`
+ * arm returns this same [DW_VERBS_NEED_A_CONNECTION] — the browser's mechanism, kept, underneath a
+ * rung it does not have.
  */
 sealed interface DwVerbGate {
     /** Nothing at the workshop level stands in the way. A caller may go on to its own checks. */
@@ -894,9 +981,14 @@ sealed interface DwVerbGate {
  *     sentence would be shown on workshops where it is not the whole truth: it promises the verbs
  *     *become available* after the next sync, and on a workshop whose recorded answer is REFUSED they
  *     will not. Underneath, all four combinations get a sentence that is unconditionally true.
- *  4. **NO CONNECTION.** Below the two facts a connection cannot change, so a designer in a courtyard
- *     with a REFUSED workshop is told the thing that is actually in their way. Nothing is queued, and
- *     the sentence says so.
+ *  4. **NO CONNECTION — AND THIS RUNG IS NOT THE BROWSER'S.** `verbWorkshopRefusal` has three rungs
+ *     and none of them is connectivity; the browser shows `VERBS_NEED_A_CONNECTION` from a caught
+ *     error after the press instead. Moved in front of the press here because offline is this app's
+ *     primary path rather than its exception — see [DwVerbGate], which argues it in full and is where
+ *     the divergence is recorded rather than being left to be discovered by comparing the two files.
+ *     Its POSITION within the ladder is then the same reasoning as the rungs above: below the two
+ *     facts a connection cannot change, so a designer in a courtyard with a REFUSED workshop is told
+ *     the thing that is actually in their way. Nothing is queued, and the sentence says so.
  *  5. **THE CEILING.** Last, because it is the only rung this phone may not have been told about —
  *     see [DwAiVerbAllowance] on the missing pre-flight route.
  *
@@ -993,9 +1085,31 @@ fun dwVerbLanguageRefusal(raw: String?, what: String): String? {
  * THE PRE-PRESS STATES. Written ONCE here and read by every call site, because the alternative is
  * several paraphrases of one rule — and the cross-surface rule for this feature is that the only
  * strings either client authors are these, and they are TRANSLITERATED from `frontend/lib/aiVerbs.ts`
- * rather than reworded. Where a sentence differs from the browser's it is because the browser's names
- * a browser thing (IndexedDB, a page) and the handset's names the handset's; the claim each makes is
- * the same claim.
+ * rather than reworded. Where a sentence differs from the browser's it is usually because the
+ * browser's names a browser thing (IndexedDB, a page) and the handset's names the handset's; the claim
+ * each makes is the same claim.
+ *
+ * ── AND THE FOUR THAT DIFFER BEYOND THE DEVICE NOUNS, LISTED RATHER THAN GLOSSED OVER ───────────
+ *
+ * "the same eight sentences with only the device nouns changed" was claimed for this set and is not
+ * true of four of them. None is wrong and none makes a different claim, but a reader diffing the two
+ * files should find the differences written down here rather than discover them:
+ *
+ *  · [DW_AI_VERBS_SPENT] appends *"— and everything you have written is untouched."* The browser's
+ *    `verbAllowanceRefusal` fallback stops at "is unaffected". Kept because on a handset the ceiling is
+ *    read off a MIRROR rather than from a live answer, and a designer refused by a stored number is the
+ *    one most likely to wonder whether the refusal cost them their draft.
+ *  · [dwVerbPassageTooLong] capitalises "EVIDENCE" where the web has lowercase "evidence", inside a
+ *    designer-facing sentence. Emphasis only, and the one thing in that sentence a designer is likely
+ *    to misread as being about the verb.
+ *  · [DW_VERBS_MEDIA_NOT_UPLOADED] says *"It goes up"* where the web says *"It will go up"*.
+ *  · [DW_VERBS_NOTHING_SELECTED] says *"These run"* where the web says *"These verbs run"* — matching
+ *    [DW_NO_PARAGRAPH_TO_WORK_ON], the handset's own substitute for this very sentence, so the two
+ *    strings a designer may see in the same place read alike.
+ *
+ * `DwSubtitleFormat.SRT.label` also reorders the web's `SUBTITLE_FORMAT_LABELS.srt` — "the phone
+ * gallery, VLC, an email attachment" against "VLC, a phone gallery, an email attachment" — putting
+ * first the player a designer on this device actually has.
  */
 
 /** Nothing is selected, so there is nothing to send. */
@@ -1003,12 +1117,28 @@ const val DW_VERBS_NOTHING_SELECTED: String =
     "Select the words you want worked on first. These run over a passage rather than over the whole " +
         "field, so what is selected is what is sent — and is what the layer records as its source."
 
-/** The selection is longer than the server will accept as evidence for one layer. */
+/**
+ * The selection is longer than the server will accept as evidence for one layer.
+ *
+ * **BOTH NUMBERS ARE GROUPED**, because they were not and "20001 characters and at most 20000" is a
+ * pair a designer has to count digits to compare — in the one sentence whose entire job is to let them
+ * judge how much shorter to make the selection. The browser groups them too (`chars.toLocaleString()`).
+ *
+ * EXACT PARITY WITH THE BROWSER IS NOT AVAILABLE HERE, so this does not pretend to it: the web calls
+ * `toLocaleString()` with NO locale, which means the grouping is whatever the reader's browser is set
+ * to — "200,001" on en-US and "2,00,001" on en-IN, from one line of code. [groupIndian] is the choice
+ * because it is what every other grouped number this app prints uses, server included (`_group_indian`
+ * groups the price bands the report writer labels), and because the phone is used in India. The two
+ * groupings only diverge above 99,999, so this is a difference of one comma's position in a sentence a
+ * designer sees at all only for a single paragraph that long — and it is stated rather than glossed
+ * because the alternative is a reader believing the two clients print the same string here.
+ */
 fun dwVerbPassageTooLong(chars: Int): String =
-    "That selection is $chars characters and at most $DW_VERB_MAX_TEXT_CHARS can be sent. This is a " +
-        "bound on the EVIDENCE rather than on the verb: a proofread of the first ten pages of a " +
-        "twelve-page note, recorded as a proofread of the note, is a layer whose source is not what " +
-        "it says. Select a shorter passage."
+    "That selection is ${groupIndian(chars.toString())} characters and at most " +
+        "${groupIndian(DW_VERB_MAX_TEXT_CHARS.toString())} can be sent. This is a bound on the " +
+        "EVIDENCE rather than on the verb: a proofread of the first ten pages of a twelve-page note, " +
+        "recorded as a proofread of the note, is a layer whose source is not what it says. Select a " +
+        "shorter passage."
 
 /**
  * There is no connection, so the verb genuinely cannot happen — **AND NOTHING HAS BEEN QUEUED.**

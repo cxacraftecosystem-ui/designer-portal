@@ -720,12 +720,20 @@ fun RichTextEditor(
           menu, a language field, a round trip, a review dialog — where a mark toggle survives only
           because `RichTextToolbar` refuses focus outright and a press is instantaneous.
 
-          GATED ON `enabled && media != null`, WHICH IS THE PHOTOGRAPH BUTTON'S OWN GATE AND ITS
-          ARGUMENT: a bridge is the one thing only the stage screen can supply, so its absence means
-          this field is being PREVIEWED rather than edited. A verb offered in a preview would spend a
-          real provider run against whichever workshop the stage screen last published, from a
-          surface that cannot save anything. The verbs' own ladder would also refuse most of those
-          cases in words, and this is the rung that means it never has to.
+          GATED ON `enabled && media != null`, AND THE ARGUMENT IS THE `media` PARAMETER'S OWN: a
+          bridge is the one thing only the stage screen can supply, so its absence means this field is
+          being PREVIEWED rather than edited. A verb offered in a preview would spend a real provider
+          run against whichever workshop the stage screen last published, from a surface that cannot
+          save anything. The verbs' own ladder would also refuse most of those cases in words, and
+          this is the rung that means it never has to.
+
+          NOT THE PHOTOGRAPH BUTTON'S GATE, which this comment claimed it was. That button requires
+          `media != null && mediaField != null` and sits inside the toolbar's own
+          `focusedBlock != null && enabled`. The extra `mediaField` is not wanted here — it exists so
+          an imported photograph's descriptor records WHICH field it answers, and a verb writes no
+          descriptor — and the focus condition is the one this card exists to escape (reason 2 of
+          [DwAiVerbsPanel]'s placement argument). Same first half, different second half, and stating
+          them as one gate would send a reader to the wrong line to change either.
         */
         if (enabled && media != null) {
             Spacer(Modifier.height(8.dp))
@@ -733,6 +741,13 @@ fun RichTextEditor(
             // substring, but the card asks for its length and its opening, and the third reader is a
             // callback that deliberately runs later.
             val passageNow = dwVerbPassageOf(doc, selection)
+            // AND THE OPENING IS REMEMBERED ON THE PASSAGE, not recomputed on every recomposition of
+            // a composable this file's own header says recomposes on every keystroke. It changes only
+            // when the paragraph or the selection does, so a keystroke in ANOTHER block, a toolbar
+            // press, an undo or a focus change now costs nothing here. The per-character cost inside
+            // the block is bounded by `dwVerbPassagePreview` itself — see its KDoc, which stops after
+            // DW_VERB_PREVIEW_CHARS rather than collapsing the whole paragraph first.
+            val passageSummary = remember(passageNow) { dwVerbPassagePreview(passageNow) }
             DwAiVerbsPanel(
                 enabled = enabled,
                 // ONLY THE LENGTH AND THE OPENING TRAVEL THROUGH THE RENDER PATH. Both are read off
@@ -740,7 +755,7 @@ fun RichTextEditor(
                 // rebuild of a forty-page narrative — which is the cost that made the web pass a
                 // callback for the words themselves.
                 passageChars = passageNow.length,
-                passagePreview = dwVerbPassagePreview(passageNow),
+                passagePreview = passageSummary,
                 // Read at the moment of the press, so a caret the designer moved after opening the
                 // card is honoured rather than a snapshot taken when it was drawn.
                 readPassage = { dwVerbPassageOf(doc, selection) },

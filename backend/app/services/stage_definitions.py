@@ -961,6 +961,26 @@ STAGE_5 = StageSpec(
             # ordinary converted fields and these five can be deprecated with `replaced_by`.
             fromref("lengthCm", "Length", DEC, S, unit="cm", min_value=0),
             fromref("breadthCm", "Breadth", DEC, S, unit="cm", min_value=0),
+            # ── WHO OR WHAT MEASURED THE TWO NUMBERS ABOVE ────────────────────────────────────
+            #
+            # The same box as `existingProduct.measurementMethodNote`, for the same reason and with
+            # the same wording rule — read that field's note and
+            # `design_workshops._measurement_method_note` before changing either.
+            #
+            # IT COVERS THE TWO CONVERTED FIGURES AND NOTHING ELSE, which is a fact about the record
+            # rather than a decision made here: `measurement_provenance.DIMENSION_FIELDS` is
+            # `{lengthInches, breadthInches, heightInches}`, so no stamp is ever written for the
+            # `height`, `width`, `thickness`, `weight` and `radius` columns behind the five
+            # "(as recorded)" boxes below. Those five state neither their unit nor their method, and
+            # both silences are the tool record's. `heightCm` above it is measured AT the workshop by
+            # the designer, so it needs no clause from the record at all.
+            fromref("measurementMethodNote", "How the record's measurements were taken", T, S,
+                    max_length=200,
+                    help="How the tool record's own length and breadth were arrived at — a tape "
+                         "reading, marks on a photograph, or a vision model's estimate. It "
+                         "describes the record, not a number you type here. The five "
+                         "“(as recorded)” measurements below carry no method: the record does not "
+                         "store one for them."),
             # ── THE THIRD DIMENSION A PHOTOGRAPH CAN READ, WHICH HAD NOWHERE TO LAND ─────────────
             #
             # `measurableLengthFields` qualifies a field off its DECLARED length unit, so the
@@ -1100,6 +1120,31 @@ STAGE_6 = StageSpec(
             fromref("lengthCm", "Length", DEC, B, unit="cm", min_value=0),
             fromref("widthCm", "Width", DEC, B, unit="cm", min_value=0),
             fromref("heightCm", "Height", DEC, S, unit="cm", min_value=0),
+            # ── WHO OR WHAT MEASURED THE THREE NUMBERS ABOVE ─────────────────────────────────
+            #
+            # Some of them are a vision model's reading of a photograph of the product on graph
+            # paper. `records.merge_field_provenance` has stamped that on the record's own inch
+            # columns since the record half landed, and `record_fields.dims_with_method` prints it on
+            # the record sheet — but hydration copied only the NUMBER, so a designer, a reviewer and
+            # a ministry officer read a machine's estimate as a measurement somebody took, under the
+            # NAME of whoever saved the record. `design_workshops._measurement_method_note` carries
+            # the answer; read it before changing this field.
+            #
+            # ONE BOX AND NOT ONE PER DIMENSION, AND THE WORDING IS WHY. Hydration only fills BLANKS,
+            # so a designer who measured the saree themselves keeps their own length beside a
+            # hydrated width — and a per-dimension label would then sit over the designer's own
+            # figure and call it a model's estimate. This sentence is about the RECORD's columns, so
+            # it stays true whatever the designer typed into the boxes above.
+            #
+            # It says BREADTH where the box above says Width because the product record's column is
+            # `breadthInches`; the two words are one measurement and the record's word is the honest
+            # one in a sentence about the record. TEXT and never a TABLE_COLUMN — this table's
+            # declared widths already sum to 100, and invariant 7 forbids rebalancing them.
+            fromref("measurementMethodNote", "How the record's measurements were taken", T, S,
+                    max_length=200,
+                    help="How the product record's own length, breadth and height were arrived "
+                         "at — a tape reading, marks on a photograph, or a vision model's "
+                         "estimate. It describes the record, not a number you type here."),
             f("weightG", "Weight", DEC, S, unit="g", min_value=0),
             fromref("dimensionsNote", "Dimensions (as described)", T, B, report_role=COL,
                     column_width_pct=18.0,

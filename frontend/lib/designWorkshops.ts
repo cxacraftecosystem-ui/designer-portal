@@ -1282,6 +1282,14 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     subjectLocation: "recordSubjectLocation",
     // The ordered making sequence and everything else on file, as a sentence. Never the ids.
     recordMediaNote: "recordMediaNote",
+    // HOW THE RECORD'S MEASUREMENTS WERE TAKEN, in the record sheet's own words. A vision model
+    // estimates a dimension from a grid-sheet photograph and `merge_field_provenance` stamps
+    // `method: "VISION_MODEL"` on the record's inch column — but hydration copies only the NUMBER, so
+    // the workshop entry carried a machine's guess stamped with a named human's authorship. One
+    // sentence about the RECORD's columns rather than a label per box: hydration only fills blanks, so
+    // a per-box label would sit over a length the designer typed themselves and call it an estimate,
+    // which replaces one false claim with another.
+    measurementMethodNote: "measurementMethodNote",
     usedByArtisans: "usedByArtisans",
     documentedOn: "documentedOn",
     photoCaption: "photoCaption"
@@ -1325,6 +1333,10 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     // An audio note explaining the piece, a video of it being finished — the record holds them and
     // one IMAGE could not say so. A sentence; see `_media_note` on the server.
     recordMediaNote: "recordMediaNote",
+    // The product record's measurement methods, in the record sheet's own words — see the same
+    // pair on `tool.toolRef` above for why this is one sentence about the RECORD rather than a
+    // label per dimension box.
+    measurementMethodNote: "measurementMethodNote",
     photo: "productPhotos",
     // `lengthCm`/`widthCm`/`heightCm` are the inches columns converted ×2.54 on the server. The boxes
     // print "cm", so a raw copy would have understated every measurement by a factor of 2.54 in a

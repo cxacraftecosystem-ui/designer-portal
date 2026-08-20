@@ -448,6 +448,25 @@ def _source_rows() -> dict[str, _SourceRow]:
             lengthInches="18.00",
             breadthInches="12.00",
             heightInches="2.00",
+            # AND HOW THOSE THREE INCH FIGURES CAME TO BE KNOWN, in the shape
+            # `records.merge_field_provenance` writes it: `{by, byName, at}` with `method` merged in
+            # BESIDE it. Length and breadth were a vision model's reading of a photograph of the
+            # saree on a grid sheet; the height was typed. This is what
+            # `existingProduct.measurementMethodNote` prints, and it is the reason it exists: without
+            # it the document states three centimetre figures under the NAME of whoever saved the
+            # record, and a ministry officer reads a machine's estimate as a tape reading.
+            extraMetadata={
+                "fieldProvenance": {
+                    "lengthInches": {"by": "usr_3", "byName": "R. Menon",
+                                     "at": "2025-03-12T10:40:00+05:30",
+                                     "method": "VISION_MODEL", "methodProvider": "gemini"},
+                    "breadthInches": {"by": "usr_3", "byName": "R. Menon",
+                                      "at": "2025-03-12T10:40:00+05:30",
+                                      "method": "VISION_MODEL", "methodProvider": "gemini"},
+                    "heightInches": {"by": "usr_3", "byName": "R. Menon",
+                                     "at": "2025-03-12T10:40:00+05:30", "method": "TYPED"},
+                },
+            },
             # THE RECORD'S OWN STATED ADDRESS AND THE PIN ON THE PRODUCT'S PLACE. The stated strings
             # and the subject pin cross; the device's fix is not on this row at all, which is the
             # honest fixture for a rule whose whole content is that those columns never travel.
@@ -481,6 +500,24 @@ def _source_rows() -> dict[str, _SourceRow]:
             thickness="6.50",
             weight="88.00",
             radius="14.00",
+            # THE METHOD FOR THE TWO COLUMNS THAT CAN CARRY ONE, AND FOR NO OTHERS. Both were
+            # computed from marks a person placed on a photograph — deterministic, re-derivable, and
+            # printed as "photo measurement" on every record surface, so the workshop prints the same
+            # phrase. The five unit-less columns above (`height`, `width`, `thickness`, `weight`,
+            # `radius`) get NO stamp and cannot: `measurement_provenance.DIMENSION_FIELDS` is
+            # `{lengthInches, breadthInches, heightInches}` and `method_stamps` drops any marker
+            # naming a column outside it. So this row is the honest state of a measured tool: two
+            # dimensions that state both their unit and their method, five that state neither.
+            extraMetadata={
+                "fieldProvenance": {
+                    "lengthInches": {"by": "usr_4", "byName": "S. Bal",
+                                     "at": "2025-03-13T08:05:00+05:30",
+                                     "method": "PHOTO_GEOMETRY", "methodTechnique": "SCALE"},
+                    "breadthInches": {"by": "usr_4", "byName": "S. Bal",
+                                      "at": "2025-03-13T08:05:00+05:30",
+                                      "method": "PHOTO_GEOMETRY", "methodTechnique": "SCALE"},
+                },
+            },
             location=_SourceRow(
                 village="Barpali", district="Bargarh", state="Odisha", pincode="768029",
                 subjectLatitude=21.1857, subjectLongitude=83.5876,

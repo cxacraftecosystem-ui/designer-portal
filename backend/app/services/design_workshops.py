@@ -61,6 +61,13 @@ from app.services.report_questionnaires import attach_questionnaires, questionna
 # `pehchanCardNumber` in the Artisan reference model for why a card number crossing into a stage
 # entry has to go through it, and `record_fields.py:270-283` for the defect that settled it.
 from app.services.records import derive_age, mask_identity_number
+# THE MEASUREMENT-METHOD VOCABULARY, IMPORTED AND NOT RESTATED. `METHOD_CLAUSES` is the two phrases
+# the record sheet, every .xlsx sheet and both CSV exports already print for a machine-produced
+# dimension; `field_method` is the one reader of the stamp `records.merge_field_provenance` writes.
+# `_measurement_method_note` builds the workshop's sentence out of both, because a second spelling of
+# "vision model estimate" is how the record sheet and the workshop report come to describe one stamp
+# in two vocabularies — which that dict's own comment calls a requirement rather than a nicety.
+from app.services.record_fields import METHOD_CLAUSES, field_method
 from app.services.report_templates import apply_report_settings, template as get_template
 from app.services.report_theme import resolve_accent, resolve_font, theme_from_accent
 from app.services.stage_schema import (
@@ -512,6 +519,32 @@ def _media_note(subject: str, rows: Any, *, numbered_prefix: str = "") -> str | 
     not that function's transitional caption/filename clauses: those exist to decide which single
     image WINS, and a caption a researcher could also have typed by hand is too weak a signal to
     subtract from a count.
+
+    ── FOUR OF THE FIVE NOTES COME FROM HERE; THE PROCESS KEEPS ITS OWN FUNCTION ──────────────────
+    ``_process_media_note`` above fills the fifth (``traditionalProcess.recordMediaNote``) and was
+    NOT absorbed into this one, so a reader comparing two boxes a designer sees as the same box has
+    the difference written down rather than having to diff two functions:
+
+    * IT COUNTS A TOTAL, NOT A BREAKDOWN, because the question a process asks is *where* the footage
+      is and not what type it is: "N on the process itself, N across N step(s)". A process's files are
+      pre-process clips and per-step captures, and which step carries how many is the fact a reader
+      needs in order to ask for one. Nothing else in the registry has that shape.
+    * IT DOES NOT SKIP A MEASUREMENT-GRID FRAME, and today that asymmetry cannot show: the marker is
+      written only from the product and tool record forms — ``ProductForm.tsx`` and ``ToolForm.tsx``
+      on the web (each on both its online and its offline path), and ``GridMeasurementSection`` on the
+      handset, whose value reaches the wire through ``Offline.kt`` and ``WorkshopRepository`` — and
+      ``MediaFile`` has no ``processId`` at all, so a process's media arrive through
+      ``linkedRecordType``/``linkedRecordId``. A skip there would be a branch nothing can reach,
+      which is worse than the asymmetry: it would read as a guard against a live hazard. If a grid
+      capture is ever offered on a process record, the skip lands there in the same change.
+
+    NOT DELEGATED, and the reason is the one this file gives everywhere else about hydrated values.
+    A stored note is a permanent COPY, and ``entry_provenance.canonical_divergence`` recomputes the
+    canonical value by calling ``spec.data`` again — so changing the process's grammar would report
+    EVERY process entry that carries a media note as diverged to an admin, for ever, which is the
+    exact failure the divergence view's own comment records ("a photograph the canonical resolution
+    did not load made 'EVERY artisan with a photograph' read as diverged"). Two grammars written down
+    cost less than one migration nobody asked for.
     """
     counts: dict[str, int] = {}
     numbered = 0
@@ -704,6 +737,106 @@ def _inches_to_cm(value: Any) -> float | None:
         return round(float(value) * _CM_PER_INCH, 2)
     except (TypeError, ValueError):
         return None
+
+
+#: The dimensions whose METHOD can be carried onto a workshop entry, as
+#: ``(payload key, source column)`` per reference model.
+#:
+#: EXPLICIT, PER MODEL, AND NOT INFERRED FROM EITHER SIDE, because the payload renames the key and
+#: changes its unit in one step: ``widthCm`` <- ``breadthInches`` on the product, ``breadthCm`` <-
+#: ``breadthInches`` on the tool. Matching key names is what once wrote an artisan's name into a
+#: product column, and here it would attach one dimension's method to another dimension's number.
+#:
+#: THE FIVE UNIT-LESS TOOL COLUMNS ARE ABSENT AND A PAIR FOR ONE OF THEM WOULD BE A FALSE PROMISE.
+#: ``measurement_provenance.DIMENSION_FIELDS`` is ``{lengthInches, breadthInches, heightInches}`` and
+#: ``method_stamps`` drops a marker naming anything outside it, so ``height``, ``width``,
+#: ``thickness``, ``weight`` and ``radius`` never receive a method to copy — that module says so
+#: itself under WHAT THE RECORD HALF STILL CANNOT REACH, and names the tool's missing
+#: ``heightInches`` column as the reason an accepted vision-model tool height is recorded as
+#: nothing. A pair here for one of those five would print a sentence about a stamp nothing writes.
+#: When ``DIMENSION_FIELDS`` widens, this table widens with it and the note starts saying so.
+_METHOD_CARRIED_DIMENSIONS: dict[str, tuple[tuple[str, str], ...]] = {
+    "ProductDocumentation": (
+        ("lengthCm", "lengthInches"),
+        ("widthCm", "breadthInches"),
+        ("heightCm", "heightInches"),
+    ),
+    "ToolDocumentation": (
+        ("lengthCm", "lengthInches"),
+        ("breadthCm", "breadthInches"),
+    ),
+}
+
+
+def _measurement_method_note(subject: str, model: str, row: Any) -> str | None:
+    """How the record's own dimensions were arrived at, as a sentence, or ``None`` when nothing says.
+
+    ── THE FALSE CLAIM THIS ENDS, WHICH IS THE MEASUREMENT DEFECT ONE LAYER OUT ──────────────────
+    ``records.merge_field_provenance`` stamps ``method: "VISION_MODEL"`` beside ``{by, byName, at}``
+    on a dimension a model estimated off a photograph of the object on a grid sheet, and
+    ``record_fields.dims_with_method`` prints that on the record sheet. Hydration copied the NUMBER
+    onto a workshop entry and the stamp stayed behind: ``hydrate_entries`` writes
+    ``HydrationSource(..., author_id=row.createdById)``, both field-provenance views render that
+    account's NAME, and the .docx then attributed a machine's guess to a person. That is exactly the
+    defect ``services/measurement_provenance`` was built to end — "a wrong dimension wearing somebody
+    else's name is a costing error nobody can trace and that person cannot disown" — arriving through
+    the door beside it.
+
+    ── A SENTENCE ABOUT THE RECORD, NOT A LABEL ON THE BOX, AND THAT WORDING IS THE HONEST ONE ────
+    The alternative was a method box per dimension per entity — five new fields — and it would have
+    made a claim this function cannot support. Hydration only fills BLANKS: a designer who measured
+    the saree themselves and typed a length keeps their number, while the neighbouring width is
+    hydrated. A per-box label would then sit over a figure the designer produced and call it a model's
+    estimate. Stating it about the RECORD's own columns stays true whatever the designer did with the
+    boxes, which is why the sentence names the record and the record's words for its dimensions.
+
+    Those words are DERIVED from the source column (``lengthInches`` -> "length"), the same rule
+    ``dims_with_method`` derives its "L: " initials by and for the same reason it gives: a fourth
+    dimension column added later cannot get the wrong word. It is also why the product's note says
+    BREADTH where the box above it says Width — the note describes ``breadthInches`` on the product
+    record, and the registry help on the field says so.
+
+    ── ONLY THE TWO METHODS A READER CAN ACT ON, AND THE PHRASES ARE NOT OURS TO CHOOSE ──────────
+    ``METHOD_CLAUSES`` is imported, so TYPED and UNRECORDED print nothing here for the reasons that
+    dict argues at length: every row written before ``measurement_provenance`` existed is UNRECORDED,
+    and appending "method not recorded" to most of the database trains a reader to skip the clause on
+    the one row where it matters. A record whose dimensions are all typed or all legacy therefore
+    hydrates NOTHING into this box, and the blank is the honest rendering.
+
+    ── COMPUTED HERE, WHICH IS WHAT MAKES IT SAFE ────────────────────────────────────────────────
+    The method is read off ``extraMetadata.fieldProvenance`` — a scalar column every row this
+    module's ``find_many`` calls already return, so this costs no extra read and needs no new
+    ``include`` (see the note on ``ReferenceModel.include`` for why a new one is not free).
+    Building it inside ``spec.data`` rather than inside ``hydrate_entries`` also means
+    ``entry_provenance.canonical_divergence`` recomputes it identically — the property ``_media_note``
+    documents at length, and the reason a key the divergence path cannot reproduce is reported as
+    diverged to an admin for ever. And it is copied AT SAVE like every other hydrated value: nothing
+    re-resolves it at render, so re-measuring the record next year cannot change a submitted report.
+
+    ── AND THE CENTIMETRE FIGURE'S METHOD IS INHERITED, NEVER "CONVERTED" ────────────────────────
+    ``lengthCm`` is ``_inches_to_cm`` of a column whose method was recorded, so the strongest true
+    sentence about it is the method of the INCH figure it came from. The conversion is arithmetic on
+    somebody else's measurement and is not itself a measurement; a clause reading "converted" would
+    describe the multiplication and hide the estimate underneath it.
+    """
+    grouped: dict[str, list[str]] = {}
+    for _payload_key, column in _METHOD_CARRIED_DIMENSIONS.get(model, ()):
+        # The same presence test the payload applies, so the note can only ever name a dimension
+        # that has a number to qualify. `_inches_to_cm` answers None for an absent or unreadable
+        # source, which is exactly when nothing is written into the box the clause would describe.
+        if _inches_to_cm(getattr(row, column, None)) is None:
+            continue
+        clause = METHOD_CLAUSES.get(field_method(row, column) or "")
+        if clause:
+            grouped.setdefault(clause, []).append(column.removesuffix("Inches").lower())
+    if not grouped:
+        return None
+    # Grouped by clause and joined the way `dims_with_method` joins its own — one parenthesis per
+    # method, so a record whose length a model guessed and whose breadth a person measured off marks
+    # says both instead of collapsing to whichever is listed first.
+    return f"On the {subject} record: " + ", ".join(
+        f"{', '.join(words)} ({clause})" for clause, words in grouped.items()
+    )
 
 
 def _enum_token(value: Any) -> str:
@@ -1241,59 +1374,48 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             #
             # `weightG` has no source column at all and stays a workshop-only answer.
             #
-            # ── AND WHAT DOES NOT CROSS WITH THE NUMBER: HOW IT WAS ARRIVED AT ──────────────
+            # ── AND HOW THE NUMBER WAS ARRIVED AT, WHICH NOW CROSSES BESIDE IT ──────────────
             #
-            # WRITTEN DOWN BECAUSE NOTHING IN THIS LANE SAID IT AND A READER WOULD ASSUME A HAND
-            # AND A TAPE. `measurementImageId`, `measurementAnalysis` and `measurementAnalysisStatus`
-            # deliberately do not cross — the ledger in `tests/test_reference_carry.py` gives the
-            # reason for each — so the centimetre figure arrives with NO STATEMENT OF ITS METHOD,
-            # and a designer, a reviewer and a ministry officer all read it as a measurement
-            # somebody took. Some of these numbers are: `GridMeasurement.tsx` auto-fills the inches
-            # box from a vision model's reading of a photograph of the object on graph paper, and
-            # the researcher then saves the form. `measurement_provenance.py` states the law this
-            # falls short of in the block at the top of its module docstring — "EVERY STORED
-            # DIMENSION STATES ITS METHOD" — and calls that save the acceptance: "The acceptance IS
-            # the save, once the method sits next to the signature."
+            # THE THREE MEASUREMENT COLUMNS THEMSELVES STILL DO NOT CROSS. `measurementImageId`,
+            # `measurementAnalysis` and `measurementAnalysisStatus` are refused for reasons the
+            # ledger in `tests/test_reference_carry.py` gives one by one — a working photograph of a
+            # ruler, raw machine prose with none of the treatment `report_templates` requires, and a
+            # queue state. What was missing was not those columns but the one FACT they imply: some
+            # of these numbers were not measured by a hand and a tape. `GridMeasurement.tsx`
+            # auto-fills the inches box from a vision model's reading of a photograph of the object
+            # on graph paper, and the researcher then saves the form; `measurement_provenance.py`
+            # calls that save the acceptance — "The acceptance IS the save, once the method sits next
+            # to the signature" — under the law it states at the top of its module docstring, "EVERY
+            # STORED DIMENSION STATES ITS METHOD".
             #
             # `hydrate_entries` stamps every value it writes with `HydrationSource(..., author_id=
             # row.createdById)`. THAT ID IS THE PERSON WHO SAVED THE RECORD, and the field-provenance
             # views on web and handset show their name. It is not, and must not be read as, a claim
-            # that they held a tape against the saree.
+            # that they held a tape against the saree. That is why the method has to travel with the
+            # figure rather than be inferred from the name beside it.
             #
-            # THE MISSING HALF IS NO LONGER THE RECORD SIDE — THAT ONE LANDED, and this paragraph is
-            # rewritten rather than deleted because it used to name the record side and a reader who
-            # remembers it would otherwise go looking for work that is done.
-            # `records.merge_field_provenance` now calls `measurement_provenance.method_stamps` and
+            # BOTH HALVES HAVE NOW LANDED, and this paragraph names them rather than describing a gap
+            # because a reader who remembers the gap would otherwise go looking for work that is
+            # done. `records.merge_field_provenance` calls `measurement_provenance.method_stamps` and
             # merges `method` — plus `methodProvider` / `methodModelId` / `methodConfidence` /
             # `methodTechnique` when the marker carries them — onto each dimension column BESIDE the
-            # `{by, byName, at}` described above. The source row does now state how each inch figure
-            # was arrived at.
+            # `{by, byName, at}` described above; and `_measurement_method_note` below reads that
+            # stamp off this very row and carries it into `measurementMethodNote` as one sentence
+            # about the RECORD's dimensions. Read that function before touching either: it says why a
+            # sentence about the record is the only claim that stays true under the only-fill-blanks
+            # rule, why the phrases are imported from `record_fields.METHOD_CLAUSES` rather than
+            # written here, and why the centimetre figure's method is INHERITED from the inch figure
+            # and never "converted" as though the multiplication were the measurement.
             #
-            # WHAT IS STILL MISSING IS THIS SIDE. `hydrate_entries` never reads those stamps, so the
-            # method stops at the record and the centimetre figure still arrives with no statement of
-            # it — which is why the paragraphs above are still the operative description of what a
-            # ministry officer reads. Do NOT implement it "off the source row": at the
-            # `HydrationSource(...)` construction there is no row in hand. That loop holds
-            # `spec.ref_model`, `ref_id`, `source_key`, and the payload out of `resolved` — which is
-            # this very mapping, already renamed AND unit-converted — plus the `authors` map. Build a
-            # second precomputed map beside `authors`, in the same loop over `wanted` that builds it,
-            # and pair it with an EXPLICIT payload-key -> source-column table: `lengthCm` <-
-            # `lengthInches`, `widthCm` <- `breadthInches`, `heightCm` <- `heightInches`, with
-            # `ToolDocumentation`'s own pairing written out separately. No key match can be inferred,
-            # because this payload renames the keys and changes their unit in the same step.
             # `dimensionsNote` (<- `size`) is free text and carries no method; do not invent one.
-            # `entry_provenance.HydrationSource` is frozen and has no method fields yet, so it gains
-            # them in the same change or there is nowhere to put the answer.
-            #
-            # AND THE CENTIMETRE FIGURE'S METHOD IS INHERITED, NOT MEASURED. It is `_inches_to_cm` of
-            # a column whose method was recorded, so the strongest true sentence about it is the
-            # method of the inch figure it was derived from — never a stronger one, and never
-            # "converted" as though the conversion were the measurement. Copied AT SAVE, like every
-            # other hydrated value — never re-resolved from the live record at render time, or a
-            # submitted document changes the day somebody re-measures.
             "lengthCm": _inches_to_cm(r.lengthInches),
             "widthCm": _inches_to_cm(r.breadthInches),
             "heightCm": _inches_to_cm(r.heightInches),
+            # THE SENTENCE THAT STOPS THE THREE NUMBERS ABOVE BEING READ AS A PERSON'S MEASUREMENT.
+            # `None` for a record whose dimensions are all typed or all legacy, which leaves the box
+            # blank — see `_measurement_method_note` for why silence is the honest rendering there.
+            "measurementMethodNote": _measurement_method_note(
+                "product", "ProductDocumentation", r),
             # The free-text size, which is what a product the measured boxes do not suit is
             # actually described by ("king size", "9 yards"). It lands on `dimensionsNote`, which
             # is the box that was already sitting opposite it.
@@ -1405,12 +1527,23 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # `_inches_to_cm` exists to prevent, and guessing one is the same failure with a
             # shrug in front of it.
             #
-            # WHAT CROSSES WITH THE TWO CONVERTED NUMBERS, AND WHAT DOES NOT: see the same note on
-            # `ProductDocumentation` above. The method is not carried, and the `HydrationSource`
-            # author is the record's `createdById` — the person who saved it, not a claim that they
-            # measured it.
+            # WHAT CROSSES WITH THE TWO CONVERTED NUMBERS: see the same note on
+            # `ProductDocumentation` above. Their METHOD does, now, in `measurementMethodNote` below;
+            # the `HydrationSource` author is still the record's `createdById` — the person who saved
+            # it, not a claim that they measured it, which is why the method had to travel too.
+            #
+            # AND THE FIVE UNIT-LESS ONES CARRY NO METHOD, WHICH IS NOT AN OVERSIGHT IN THIS FILE.
+            # `measurement_provenance.DIMENSION_FIELDS` is `{lengthInches, breadthInches,
+            # heightInches}`, so `method_stamps` drops a marker naming `height`, `width`,
+            # `thickness`, `weight` or `radius` and nothing ever writes a stamp for them. That module
+            # states the consequence itself — `ToolDocumentation` has no `heightInches`, so an
+            # accepted vision-model tool height "is recorded as nothing" — and calls widening the
+            # list the repo owner's call. These five therefore state neither their unit nor their
+            # method, and the second silence is the record's, not this carry's.
             "lengthCm": _inches_to_cm(r.lengthInches),
             "breadthCm": _inches_to_cm(r.breadthInches),
+            # Only ever about the two converted figures above — see `_METHOD_CARRIED_DIMENSIONS`.
+            "measurementMethodNote": _measurement_method_note("tool", "ToolDocumentation", r),
             "heightAsRecorded": _decimal(r.height),
             "widthAsRecorded": _decimal(r.width),
             "thicknessAsRecorded": _decimal(r.thickness),

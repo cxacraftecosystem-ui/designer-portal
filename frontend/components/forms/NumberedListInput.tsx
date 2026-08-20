@@ -181,6 +181,7 @@ export function NumberedPointRows({
 export function NumberedListField({
   value,
   onChange,
+  labelId,
   disabled,
   describedBy,
   invalid,
@@ -188,6 +189,17 @@ export function NumberedListField({
 }: {
   value: string;
   onChange: (next: string) => void;
+  /**
+   * The id of the `<span className="field-label">` naming this list. REQUIRED, not optional.
+   *
+   * Without it the rows announce themselves as "Point 1"…"Point n" and nothing says which list they
+   * belong to — and `participant.dos` and `participant.donts` sit next to each other on one stage,
+   * so a reader using a screen reader got two identical runs of ordinals. `DosDontsField` had
+   * already paid for that defect on the record page and carries `role="group"
+   * aria-labelledby={groupId}` for it; the wrapper below is the same group for the caller that owns
+   * the string instead of the array. Required so a third caller cannot quietly land unnamed.
+   */
+  labelId: string;
   disabled?: boolean;
   describedBy?: string;
   invalid?: boolean;
@@ -236,7 +248,13 @@ export function NumberedListField({
   }
 
   return (
-    <div className="grid content-start gap-1.5">
+    /*
+     * The group is named by the caller's field label, for the reason `DosDontsField` states: the rows
+     * are named by their ordinal only, so a group with no name leaves two adjacent lists announced
+     * identically. `NumberedPointRows` itself stays unnamed — `DosDontsField` supplies its own group,
+     * and a group inside a group would announce the heading twice.
+     */
+    <div className="grid content-start gap-1.5" role="group" aria-labelledby={labelId}>
       <NumberedPointRows
         items={items}
         onItems={commit}

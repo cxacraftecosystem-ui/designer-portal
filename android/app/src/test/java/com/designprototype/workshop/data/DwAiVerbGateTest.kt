@@ -1,6 +1,7 @@
 package com.designprototype.workshop.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -242,8 +243,24 @@ class DwAiVerbGateTest {
     fun `a selection over the server's bound is refused with the reason in it`() {
         val tooLong = "अ".repeat(DW_VERB_MAX_TEXT_CHARS + 1)
         val refusal = dwVerbPassageRefusal(tooLong)!!
-        assertTrue(refusal.contains("${DW_VERB_MAX_TEXT_CHARS + 1}"))
-        assertTrue(refusal.contains("$DW_VERB_MAX_TEXT_CHARS"))
+        /*
+          BOTH NUMBERS ARE GROUPED, and this asserted the ungrouped spellings before they were.
+          "20001 characters and at most 20000" is a pair a designer has to count digits to compare, in
+          the one sentence whose whole job is to let them judge how much shorter to make the
+          selection; the browser groups them through `chars.toLocaleString()`.
+
+          THE GROUPED FORMS ARE WRITTEN OUT AS LITERALS rather than derived through `groupIndian`,
+          because a test that re-derives the expectation from the same helper the sentence uses passes
+          for any helper — including one that has stopped grouping. The bound is pinned beside them so
+          a registry-side change to it fails here as a number rather than as a mystery.
+        */
+        assertEquals(20_000, DW_VERB_MAX_TEXT_CHARS)
+        assertTrue(refusal, refusal.contains("20,001"))
+        assertTrue(refusal, refusal.contains("20,000"))
+        // AND THE UNGROUPED SPELLINGS ARE GONE. Without these two, the assertions above would also
+        // pass on a sentence that carried both forms, which is what a half-applied change looks like.
+        assertFalse(refusal, refusal.contains("20001"))
+        assertFalse(refusal, refusal.contains("20000"))
         assertTrue(refusal.contains("Select a shorter passage"))
         // Exactly at the bound is allowed, because the server's check is `max_length` and not "under".
         assertNull(dwVerbPassageRefusal("अ".repeat(DW_VERB_MAX_TEXT_CHARS)))

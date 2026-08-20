@@ -66,6 +66,53 @@ class DwAiVerbAllowanceTest {
         assertNull(view.limit)
         assertNull(view.remaining)
         assertTrue(view.byVerb.isEmpty())
+        // AND IT IS NOT AN UNCAPPED DEPLOYMENT EITHER — see the test below, which is the other half of
+        // this one and the reason `told` exists at all.
+        assertFalse(view.told)
+    }
+
+    /**
+     * **"NO CEILING" AND "NOBODY HERE KNOWS" ARE THE SAME FOUR NUMBERS AND MUST NOT BE THE SAME
+     * ANSWER.** `allowance_payload` sends `limit` and `remaining` both null where there is no cap,
+     * deliberately, *because 0 remaining and "no ceiling" must not look alike* — and an empty mirror
+     * has both null as well. A surface that read the pair told an uncapped deployment its allowance
+     * "is not known until one goes through", which warns a designer about a ceiling that does not
+     * exist; `DwAiVerbsPanel` did exactly that until `told` was carried separately.
+     *
+     * This is the assertion that fails if `told` is ever computed FROM the numbers rather than from
+     * the freshness of the row.
+     */
+    @Test
+    fun `a told uncapped allowance is not an unknown one`() {
+        val uncapped = dwAiVerbCapView(stored(limit = null, remaining = null), designer, today)
+        val unknown = dwAiVerbCapView(null, designer, today)
+
+        // The four values a surface used to branch on are identical...
+        assertEquals(unknown.limit, uncapped.limit)
+        assertEquals(unknown.remaining, uncapped.remaining)
+        assertEquals(unknown.spent, uncapped.spent)
+
+        // ...and the fifth is what tells them apart.
+        assertTrue(uncapped.told)
+        assertFalse(unknown.told)
+    }
+
+    /**
+     * A ROW FROM ANOTHER DAY OR ANOTHER DESIGNER IS NOT SOMETHING THIS PHONE HAS BEEN TOLD.
+     *
+     * `told` follows the FRESHNESS rule and not the presence of a file: yesterday's ceiling is not an
+     * answer about today, and the colleague who signed in after lunch has not been told anything. Both
+     * must read as unknown, or the panel would print "this server sets no daily ceiling" off a stale
+     * uncapped row belonging to somebody else.
+     */
+    @Test
+    fun `a stale or borrowed row has told nobody anything`() {
+        assertFalse(dwAiVerbCapView(stored(day = yesterday), designer, today).told)
+        assertFalse(dwAiVerbCapView(stored(), colleague, today).told)
+        assertFalse(dwAiVerbCapView(stored(), null, today).told)
+        assertFalse(dwAiVerbCapView(stored(day = ""), designer, today).told)
+        // The fresh, own-account row is the only one that has.
+        assertTrue(dwAiVerbCapView(stored(), designer, today).told)
     }
 
     /** Nobody signed in: read as unknown rather than as the last account's allowance. */
