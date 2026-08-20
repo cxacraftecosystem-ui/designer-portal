@@ -899,11 +899,33 @@ class PdfRenderer:
             self.c.addOutlineEntry(f"{block.number} {runs_text(block.runs)}".strip(),
                                    block.bookmark, level=block.level - 1)
         self._draw_lines(lines, self.margin, self.text_w, Align.LEFT, color)
-        if block.level == 1 and self._drawing:
+        if block.level == 1:
+            # ── THE SAME DEFECT AS THE RUNNING-HEAD CLEARANCE IN `_new_page`, SECOND INSTANCE ────
+            #
+            # The rule under a level-1 heading COSTS 1.2 mm of vertical space, and the whole block —
+            # the space and the stroke together — used to sit behind `and self._drawing`. So the
+            # measuring pass believed a level-1 heading was 1.2 mm shorter than the drawing pass
+            # would make it, and this document has a hundred and fifty of them: the drawn report ran
+            # long enough to break pages the measuring pass had not, and every contents entry after
+            # the drift crossed a page boundary pointed at the wrong page.
+            #
+            # `_new_page` already carries this lesson in as many words — "an earlier version guarded
+            # this with `self._drawing` … The two passes must see identical geometry" — and this is
+            # the second place the same guard was wrapped around a measurement. The rule for the file
+            # is: `self._drawing` may guard a DRAW CALL and must never guard a change to `self.y`.
+            #
+            # IT HID BEHIND THE FONT, WHICH IS WHY IT SURVIVED. 1.2 mm × 150 headings is under a page
+            # of raw drift, and whether that drift actually moves a section across a page boundary
+            # depends on where the text happens to wrap — which depends on the face this module
+            # resolved from the host (see the banner: Noto, DejaVu, Liberation, then Helvetica). The
+            # contents test passed on a developer's Windows box under Nirmala and failed on the CI
+            # runner under DejaVu, on the identical commit, off by exactly two pages. Reproduced
+            # locally by pointing `REPORT_PDF_FONT` at reportlab's bundled Vera.
             self.y -= 1.2 * MM
-            self.c.setStrokeColorRGB(*_rgb(t.rule))
-            self.c.setLineWidth(0.7)
-            self.c.line(self.margin, self.y, self.margin + self.text_w, self.y)
+            if self._drawing:
+                self.c.setStrokeColorRGB(*_rgb(t.rule))
+                self.c.setLineWidth(0.7)
+                self.c.line(self.margin, self.y, self.margin + self.text_w, self.y)
         self.y -= 2.4 * MM
 
     def _block_paragraph(self, block: ParagraphBlock) -> None:
@@ -1415,6 +1437,35 @@ class PdfRenderer:
                 break
             seen.add(signature)
             previous = dict(self._heading_pages)
+
+        # ── RECONCILE, SO THE NUMBERS BELONG TO THE CONTENTS THAT IS ACTUALLY DRAWN ──────────────
+        #
+        # THE BUG THIS CLOSES IS NOT THE CAP, AND RAISING THE CAP DID NOT CLOSE IT. Each iteration
+        # measures a layout using the PREVIOUS iteration's contents, then adopts its own contents for
+        # the next one — so on any exit that is not a clean convergence, `_heading_pages` was measured
+        # against `_toc_source`'s predecessor, and the draw pass then prints those numbers beside a
+        # DIFFERENT contents block. The numbers and the pagination come from two different layouts.
+        #
+        # It stayed hidden because it only shows when the loop fails to converge, and whether a given
+        # document converges depends on the FONT: this module resolves faces from the host (see the
+        # banner — Noto, DejaVu, Liberation, falling back to Helvetica), so the same report wraps
+        # differently on a developer's machine and on a CI runner, paginates differently, and settles
+        # differently. `test_every_page_number_the_contents_prints_is_the_page_the_section_is_on`
+        # passed locally and failed in CI on the identical commit for exactly that reason — off by
+        # two, from a document that oscillates under one font and settles under another.
+        #
+        # One more measuring pass, with `_toc_source` LEFT EXACTLY AS THE LOOP LEFT IT, makes the two
+        # agree by construction: the page map now describes the layout that this contents block
+        # produces, which is the layout about to be drawn. A bistable document still has two possible
+        # paginations — nothing can change that — but the numbers it prints are the pages of the one
+        # the reader is holding, which is the only property that was ever worth asserting.
+        #
+        # `_toc_source` is deliberately NOT reassigned from `_toc_entries` afterwards. Adopting this
+        # pass's entries would put the contents one step ahead of the map again and reintroduce the
+        # defect one iteration later, which is the shape of the original.
+        self._toc_entries = []
+        self._heading_pages = {}
+        self._run_pass(drawing=False)
 
         buffer = BytesIO()
         meta = self.doc.meta
