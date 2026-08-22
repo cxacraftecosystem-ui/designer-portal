@@ -24,6 +24,15 @@
  *          three deliberate abstentions that keep it from crying wolf, and `selfTestDrift` for the
  *          cases that hold it to its word on every run.
  *      Citations are also reported as a per-document count, so the number never grows unnoticed.
+ *   4. DEPLOY TARGETS AND THE INDEX — two claims that are not prose at all. The host a handset build
+ *      compiles in is a string literal in `android/app/build.gradle.kts`, and the set of documents
+ *      in `docs/` is a directory listing; both are mechanically comparable with the document that
+ *      claims to describe them, and both had drifted. See `checkAndroidApiHost` (which deliberately
+ *      does NOT pick a side in an unresolved question, only refuses to let it go unrecorded) and
+ *      `checkIndexListsEveryDoc` (the failure mode README.md names and could not test on itself).
+ *      `checkVercelIds` is the third of that kind: a Vercel project id is written down in three
+ *      tracked files and is the DEPLOY TARGET, so they are tied to each other rather than trusted
+ *      to be threaded by hand — which is exactly what failed on 2026-08-22, three files out of four.
  *
  * What it deliberately does NOT do: check that a sentence is true. Nothing can. The per-document
  * "How this document is kept true" section names the human check for the rest.
@@ -606,7 +615,15 @@ const CREATED_BY_THE_DEVELOPER = [
   ["frontend/node_modules", "gitignored — produced by npm install"],
   ["android/local.properties", "gitignored — written by Android Studio on first open"],
   ["android/app/libs/", "gitignored — the sherpa-onnx AAR the CI workflow fetches at build time"],
-  ["infra/terraform/fieldrepo-deploy.pem", "a private key, never committed — CI.md names it as the file an operator holds"],
+  // Both deploy keys are named in CI.md on purpose, and the PAIRING is the point: one opens this
+  // portal's API box and one opens the field repository's, and that document's job is to stop a
+  // reader reaching for the wrong one. Exempting only whichever is current would make the warning
+  // half of the pair the thing that turns the docs run red.
+  ["infra/terraform/designrepo-deploy.pem", "a private key, never committed — CI.md names it as the file an operator holds for THIS portal's box"],
+  ["infra/terraform/fieldrepo-deploy.pem", "a private key, never committed — CI.md names it as the one that must NOT be pasted here"],
+  ["infra/terraform/terraform.tfstate", "gitignored — local Terraform state, including the per-workspace copies under terraform.tfstate.d/"],
+  ["infra/terraform/.terraform", "gitignored — Terraform's working directory; `.terraform/environment` is the machine-local workspace marker"],
+  ["frontend/.vercel", "gitignored — written by `vercel link`/`vercel pull`; it is what says which Vercel project a checkout deploys to"],
 ];
 
 function expectedAbsent(p) {
@@ -1019,6 +1036,231 @@ function checkMermaid() {
   note(`${blocks} mermaid blocks linted (structure only — parse them for certainty)`);
 }
 
+/** 8. The Android default API host is tied to the infrastructure table that claims to describe it.
+ *
+ *  `android/app/build.gradle.kts` compiles a default `apiBaseUrl` into every handset build that has
+ *  no `local.properties` override — which is every CI build and every APK anyone sideloads. It is a
+ *  deploy target written as a string literal, and nothing anywhere checked it against the document
+ *  that tells an operator which distribution belongs to this portal.
+ *
+ *  The two disagree today, and the disagreement is the reason this check exists rather than a
+ *  reason to defer it. ENVIRONMENT.md's own §"Where each file lives" rule 4 table names
+ *  `d3ekigkotd1xa2.cloudfront.net` (origin id `designrepo-ec2-origin`) as this portal's CloudFront;
+ *  the gradle default, the committed web production value and a dozen other documents all name
+ *  `d2b34i3e92al6i.cloudfront.net`, which README.md pairs with the Elastic IP `15.207.145.174` —
+ *  the field repository's box, per the default Terraform workspace. Which is true cannot be settled
+ *  from a checkout: no CloudFront resource exists in `infra/terraform/`, because the distributions
+ *  are console state (CDN.md says so).
+ *
+ *  SO THIS DOES NOT PICK A SIDE. It asserts the two things that can be checked, in both directions:
+ *
+ *    * the literal in the gradle file is the literal ENVIRONMENT.md documents for `apiBaseUrl`, so
+ *      changing the handset's default without the document is a red run rather than a silent drift;
+ *    * while the gradle host and the infrastructure table's CloudFront row DISAGREE, the document
+ *      must carry the dated open question naming both hosts — and once they AGREE, that block must
+ *      be gone. An unresolved question that outlives its resolution is the next reader's wild goose
+ *      chase, and an unrecorded contradiction is how this one survived four documents.
+ */
+const API_HOST_QUESTION = "UNRESOLVED — WHICH CLOUDFRONT DISTRIBUTION IS THIS PORTAL'S?";
+
+function hostOf(url) {
+  return String(url).replace(/^[a-zA-Z][\w+.-]*:\/\//, "").replace(/[/?].*$/, "");
+}
+
+function checkAndroidApiHost() {
+  const gradlePath = join(REPO, "android", "app", "build.gradle.kts");
+  const gradle = read(gradlePath);
+  const declared = gradle.match(/"apiBaseUrl",\s*\n?\s*"([^"]+)"/);
+  if (!declared) {
+    fail("android/app/build.gradle.kts: no `apiBaseUrl` default found — this check can no longer say what the handset ships with");
+    return;
+  }
+  const gradleUrl = declared[1];
+  const gradleHost = hostOf(gradleUrl);
+
+  const env = read(join(DOCS, "ENVIRONMENT.md"));
+  if (!env.includes(gradleUrl)) {
+    fail(
+      `ENVIRONMENT.md does not document the handset's compiled-in default \`${gradleUrl}\` ` +
+      "(android/app/build.gradle.kts). One of the two moved without the other.",
+    );
+  }
+
+  // The CloudFront row of the "THIS PORTAL HAS ITS OWN INFRASTRUCTURE" table.
+  // The table is indented inside a numbered list item, so the row does not start at column 0.
+  const row = env.match(/^[ \t]*\|\s*CloudFront\s*\|\s*`([^`]+)`/m);
+  if (!row) {
+    fail("ENVIRONMENT.md: no `| CloudFront | ... |` row in the infrastructure table — the gradle default has nothing to be checked against");
+    return;
+  }
+  const tableHost = hostOf(row[1]);
+  const asks = env.includes(API_HOST_QUESTION);
+
+  if (tableHost !== gradleHost && !asks) {
+    fail(
+      `ENVIRONMENT.md says this portal's CloudFront is ${tableHost} while android/app/build.gradle.kts ships ` +
+      `${gradleHost}, and no open question records it. Add the "${API_HOST_QUESTION}" block, or make the two agree.`,
+    );
+  }
+  if (tableHost === gradleHost && asks) {
+    fail(
+      `ENVIRONMENT.md still carries "${API_HOST_QUESTION}" although the table and the gradle default now both say ` +
+      `${gradleHost}. Answer it in the document and delete the block.`,
+    );
+  }
+  // The note says what is actually true in all three states, including the two that FAIL above. A
+  // reassuring note printed over its own failure is how a reader learns to skim this output.
+  note(
+    tableHost === gradleHost
+      ? asks
+        ? `the handset default and ENVIRONMENT.md's infrastructure table agree on ${gradleHost}, and the open question about it is stale (see FAIL below)`
+        : `the handset default and ENVIRONMENT.md's infrastructure table agree on ${gradleHost}`
+      : asks
+        ? `the handset ships ${gradleHost}, the infrastructure table says ${tableHost} — recorded as an open question, not settled`
+        : `the handset ships ${gradleHost}, the infrastructure table says ${tableHost}, and nothing records the contradiction (see FAIL below)`,
+  );
+}
+
+/** 8b. The Vercel project and team ids agree across every tracked file that writes one down.
+ *
+ *  WHY THIS EXISTS. On 2026-08-22 a wave went through this repository specifically to stop the
+ *  FIELD REPOSITORY's Vercel project id being handed to a reader as this portal's deploy secret.
+ *  It corrected docs/CI.md §2, the banner above it and `.github/workflows/deploy-frontend.yml`'s
+ *  header — and left ENVIRONMENT.md's Actions-secrets table, the one document a reader is
+ *  likeliest to open to look up a variable's value, still naming `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0`
+ *  and calling it "an identifier, not a credential", i.e. harmless. Three of four is the normal
+ *  outcome of threading a value through prose by hand, which is why it is checked here instead.
+ *
+ *  A project id is not a credential and it is not cosmetic either: it is the DEPLOY TARGET. The
+ *  wrong one does not fail the run — it publishes this portal's build over another live product.
+ *
+ *  Ground truth is docs/CI.md §2, the row that tells a human what to paste. Both other files must
+ *  state the same id. `frontend/.vercel/project.json` is the real article, but it is gitignored and
+ *  absent from a fresh clone, so it is consulted when present and reported as unavailable when not
+ *  — it can only ever add confidence, never be the thing this check depends on.
+ *
+ *  The second half is the more useful one: the field repository's id is deliberately QUOTED in all
+ *  three files, as the value never to use. So a bare `prj_` that is not the canonical one is only
+ *  acceptable where the surrounding lines say whose it is. The window is ±2 lines because in the
+ *  workflow header the id and the words "field-repository" are one line apart. */
+const VERCEL_ID_FILES = [
+  ["docs/CI.md", join(DOCS, "CI.md")],
+  ["docs/ENVIRONMENT.md", join(DOCS, "ENVIRONMENT.md")],
+  [".github/workflows/deploy-frontend.yml", join(REPO, ".github", "workflows", "deploy-frontend.yml")],
+];
+
+function checkVercelIds() {
+  // The canonical pair: the first id quoted on CI.md's own `| \`VERCEL_PROJECT_ID\` |` table row.
+  const ci = read(join(DOCS, "CI.md"));
+  const canonical = {};
+  for (const [name, prefix] of [["VERCEL_PROJECT_ID", "prj_"], ["VERCEL_ORG_ID", "team_"]]) {
+    const row = ci.match(new RegExp(`^\\|\\s*\`${name}\`[^\\n]*$`, "m"));
+    const id = row && row[0].match(new RegExp(`${prefix}[A-Za-z0-9]+`));
+    if (!id) {
+      fail(`docs/CI.md §2 has no \`${name}\` row naming a \`${prefix}\` id — the value the other files are checked against no longer exists`);
+      return;
+    }
+    canonical[name] = id[0];
+  }
+
+  for (const [rel, abs] of VERCEL_ID_FILES) {
+    if (rel === "docs/CI.md") continue;
+    const text = read(abs);
+    for (const [name, prefix] of [["VERCEL_PROJECT_ID", "prj_"], ["VERCEL_ORG_ID", "team_"]]) {
+      // The line where this file states the variable's value: a markdown table row or a header
+      // comment line, both of which put the name and the id together. FIRST such line wins,
+      // because every one of these files states the value once at the top and then discusses the
+      // wrong one below it — the workflow's own guard prints both names on adjacent lines. A file
+      // that loses its stating line falls through to the discussion and fails, which is right: it
+      // no longer tells a reader what to paste.
+      const stated = text
+        .split("\n")
+        .map((line) => (line.includes(name) ? line.match(new RegExp(`${prefix}[A-Za-z0-9]+`)) : null))
+        .find(Boolean);
+      if (!stated) {
+        fail(`${rel} names ${name} but never gives a \`${prefix}\` id for it — docs/CI.md §2 says it is ${canonical[name]}`);
+      } else if (stated[0] !== canonical[name]) {
+        fail(
+          `${rel} gives ${name} as ${stated[0]} while docs/CI.md §2 gives ${canonical[name]}. ` +
+          "A project id is the deploy target: the wrong one publishes this build over another product's live site.",
+        );
+      }
+    }
+  }
+
+  // Any other id must be labelled with whose it is, within two lines.
+  let quoted = 0;
+  for (const [rel, abs] of VERCEL_ID_FILES) {
+    const lines = read(abs).split("\n");
+    lines.forEach((line, i) => {
+      for (const id of line.match(/prj_[A-Za-z0-9]+|team_[A-Za-z0-9]+/g) || []) {
+        if (id === canonical.VERCEL_PROJECT_ID || id === canonical.VERCEL_ORG_ID) return;
+        const window = lines.slice(Math.max(0, i - 2), i + 3).join("\n");
+        if (/field[- ]repository/i.test(window)) {
+          quoted += 1;
+        } else {
+          fail(
+            `${rel}:${i + 1} names ${id}, which is neither this portal's project nor its team, and nothing within two lines says whose it is. ` +
+            "Either it is stale, or it is the field repository's and must be labelled as the value never to use here.",
+          );
+        }
+      }
+    });
+  }
+
+  // The article itself, when this checkout has one. `vercel link` writes it and `.gitignore`
+  // keeps it out, so its absence is the normal state in CI and is not a finding.
+  const linkFile = join(REPO, "frontend", ".vercel", "project.json");
+  let confirmed = "not in this checkout (`.vercel/` is gitignored)";
+  if (existsSync(linkFile)) {
+    try {
+      const link = JSON.parse(read(linkFile));
+      if (link.projectId !== canonical.VERCEL_PROJECT_ID) {
+        fail(
+          `frontend/.vercel/project.json links this checkout to ${link.projectId} while docs/CI.md §2 says the deploy target is ` +
+          `${canonical.VERCEL_PROJECT_ID}. One of the two is describing a different product.`,
+        );
+      }
+      confirmed = `confirmed by frontend/.vercel/project.json (${link.projectName ?? "no projectName"})`;
+    } catch {
+      fail("frontend/.vercel/project.json exists but is not readable JSON — delete it and re-run `vercel link`");
+    }
+  }
+  note(
+    `Vercel ids agree across ${VERCEL_ID_FILES.length} tracked files (${canonical.VERCEL_PROJECT_ID}, ${canonical.VERCEL_ORG_ID}); ` +
+    `${quoted} labelled mention(s) of another product's id; ${confirmed}`,
+  );
+}
+
+/** 9. Every document in docs/ is listed in docs/README.md.
+ *
+ *  README.md states this rule about itself — "an unlisted document is the one failure mode this
+ *  index cannot check for itself" — under a table of two documents added to close it. It was wrong
+ *  by nineteen when this check was written, including the 2026-08-15 audit and OPEN_FINDINGS.md,
+ *  which are the two a reader is most likely to go looking for and least likely to guess the name
+ *  of. An index that says it is complete and is not is worse than one that admits a gap.
+ *
+ *  Cheap, exact, and it closes the failure mode the index named and could not test: the file must
+ *  simply mention each basename somewhere. Not "link", deliberately — one listed document is
+ *  gitignored and absent from a clone, so a link to it would fail the cross-link check instead. */
+function checkIndexListsEveryDoc() {
+  const index = read(join(DOCS, "README.md"));
+  const missing = readdirSync(DOCS)
+    .filter((f) => f.endsWith(".md") && f !== "README.md")
+    .filter((f) => !index.includes(f));
+  const total = readdirSync(DOCS).filter((f) => f.endsWith(".md")).length - 1;
+  for (const base of missing) {
+    fail(`docs/README.md does not list ${base} — an unlisted document is invisible to every reader who does not already know it exists`);
+  }
+  // Say what was actually true. A note reading "each named in the index" printed directly above
+  // nineteen FAILs saying otherwise is the tone that teaches a reader to skim the notes.
+  note(
+    missing.length
+      ? `${total} documents in docs/, ${missing.length} of them unlisted in docs/README.md (see FAIL below)`
+      : `${total} documents, each named in docs/README.md`,
+  );
+}
+
 /** Blank out fenced blocks and inline code spans, keeping the byte count and the line structure.
  *
  *  ONLY THE LINK CHECK USES THIS, and the asymmetry is deliberate. A path or a citation is normally
@@ -1061,6 +1303,9 @@ checkCitations();
 checkMaintenanceSections();
 checkMermaid();
 checkCrossLinks();
+checkAndroidApiHost();
+checkVercelIds();
+checkIndexListsEveryDoc();
 
 if (!QUIET) for (const n of notes) console.log(`  ok    ${n}`);
 for (const w of warnings) console.log(`  warn  ${w}   [owned by another workstream]`);

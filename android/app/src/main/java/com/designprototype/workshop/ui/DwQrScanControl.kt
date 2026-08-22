@@ -1,7 +1,10 @@
 package com.designprototype.workshop.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -18,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,14 +52,20 @@ import java.io.File
 /**
  * Scan a QR code, or read one out of a picture the designer already has. ONE control, both surfaces.
  *
- * ── WHY ONE CONTROL AND NOT TWO ───────────────────────────────────────────────────────────────
+ * ── WHY ONE CONTROL AND NOT THREE ───────────────────────────────────────────────────────────────
  *
- * There are two places a code is read back — the workshop's Cards & tags screen and the record-code
- * panel on Search — and the web made the same call for the same reason: two copies of a scanner
- * drift, and the half that drifts is always the refusal wording. Here they would drift on the one
- * sentence that matters, the one that tells a designer whether the card is bad or the picture is.
- * Everything below is offered to both, identically, and the caller supplies only what to do with the
- * text.
+ * THERE WERE TWO PLACES A CODE IS READ BACK AND THERE ARE NOW THREE — the workshop's Cards & tags
+ * screen, the record-code panel on Search, and the reference picker inside a stage
+ * (`DwReferenceField.DwReferenceScanPanel`), where a scanned card LINKS a record rather than opening
+ * it. The web made the same call for the same reason: copies of a scanner drift, and the half that
+ * drifts is always the refusal wording. Here they would drift on the one sentence that matters, the
+ * one that tells a designer whether the card is bad or the picture is. Everything below is offered to
+ * all three, identically, and the caller supplies only what to do with the text.
+ *
+ * WHAT THE THIRD SURFACE DOES **NOT** SHARE is what a code MEANS to it, and that is the correct seam.
+ * This control hands back a raw payload; the picker judges it against its own `refModel`, its own
+ * workshop scope and its own cascade, and has three refusals of its own that would mean nothing on
+ * the other two. Pushing any of that down here would make this file know about stages.
  *
  * ── BOTH DOORS ARE ALWAYS OPEN, WHICH IS THE POINT OF THE FEATURE ─────────────────────────────
  *
@@ -65,10 +75,12 @@ import java.io.File
  * last week, a card sheet printed in an office two districts away. In the second case there is no
  * card to point a camera at, which is exactly why a typed box does not cover it either.
  *
- * THE TYPED BOX IS NOT REMOVED FROM EITHER SURFACE. `docs/DECISION-qr-scanning-on-android.md` names
- * it as the guaranteed path, and it stays that: it needs no permission, no lens and no library, and
- * it is the only route that works when a card's QR is smudged but the characters under it are not.
- * A surface that ever hides it invalidates that decision rather than merely degrading it.
+ * THE TYPED BOX IS NOT REMOVED FROM ANY SURFACE THAT MOUNTS THIS. `docs/DECISION-qr-scanning-on-
+ * android.md` names it as the guaranteed path, and it stays that: it needs no permission, no lens
+ * and no library, and it is the only route that works when a card's QR is smudged but the characters
+ * under it are not. A surface that ever hides it invalidates that decision rather than merely
+ * degrading it — which is why the reference picker carries one too, beside a dropdown that already
+ * needs no camera at all.
  *
  * ── THE PHOTOGRAPH IS DELETED, ALWAYS ─────────────────────────────────────────────────────────
  *
@@ -79,6 +91,25 @@ import java.io.File
  * handset that quietly accumulates one per scan is one whose storage fills for no purpose.
  *
  * A PICKED picture is never copied at all — its bytes are read straight from the content Uri.
+ *
+ * ── A REFUSED CAMERA AND A BLOCKED ONE ARE DIFFERENT SITUATIONS AND USED TO READ ALIKE ────────
+ *
+ * This control used to answer both with one sentence: "The camera permission was refused, so a code
+ * cannot be photographed." That is true of both and useful for only one of them. A designer who
+ * tapped Deny once can tap Scan again and get the prompt back; a designer Android has stopped asking
+ * for — the permission denied twice, or "Don't allow" chosen on a build that treats it as permanent —
+ * can tap Scan for ever and see nothing happen at all, because the launcher returns denied without
+ * showing a dialog. The two need opposite next actions, and the second one needs a destination.
+ *
+ * [scanHostActivity] plus `shouldShowRequestPermissionRationale` tells them apart. It is read INSIDE
+ * the permission callback, which is the only place it can be read honestly: the flag is false both
+ * before the first prompt and after a permanent denial (see `LocationCapture.diagnose`, which needs
+ * a `promptShown` latch for exactly that reason), and inside the callback the prompt has by
+ * definition just been made, so a false there means blocked and nothing else.
+ *
+ * NEITHER SENTENCE IS A DEAD END, and both name the routes that need no lens: the picture picker and
+ * the typed code. The blocked one additionally offers Android's own permission page, because that is
+ * the only place a blocked permission can be undone and nothing on this screen could say so.
  */
 
 /** The scratch directory a scanned photograph lives in for the second it exists. */
@@ -89,6 +120,50 @@ private fun qrScratchDir(context: Context): File =
 private fun sweepQrScratch(context: Context) {
     runCatching { qrScratchDir(context).listFiles()?.forEach { it.delete() } }
 }
+
+/**
+ * The Activity behind the Compose context, which `shouldShowRequestPermissionRationale` needs.
+ *
+ * A THIRD COPY OF THIS FIVE-LINE LOOP, and it is a deliberate copy rather than an oversight.
+ * `LocationCapture.kt` and `Theme.kt` each declare their own, both file-`private`, and promoting
+ * either to `internal` would leave two same-signature top-level functions visible in one package at
+ * the call sites inside the file that still declares the private one. The loop is platform plumbing
+ * with no behaviour to drift; the thing this file refuses to duplicate is the refusal WORDING, and
+ * that still lives in exactly one place.
+ */
+private fun Context.scanHostActivity(): Activity? {
+    var cursor: Context? = this
+    while (cursor is ContextWrapper) {
+        if (cursor is Activity) return cursor
+        cursor = cursor.baseContext
+    }
+    return null
+}
+
+/** Android's own permission page for this app — the only place a blocked permission can be undone. */
+private fun Context.openAppPermissionSettings() {
+    runCatching {
+        startActivity(
+            // Fully qualified: `Settings` is the material icon in this file's imports, and the
+            // system class and the picture of a cog must not be made to look like one name.
+            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+}
+
+/** Tapped Deny, and Android will ask again next time. */
+private const val CAMERA_DENIED_MESSAGE =
+    "The camera permission was refused, so a code cannot be photographed. Press “Scan a code” again " +
+        "to be asked once more — or, without the camera at all, choose a picture of the code that is " +
+        "already on this phone, or type the code printed under the QR."
+
+/** Android has stopped asking, so pressing Scan again would do nothing at all. */
+private const val CAMERA_BLOCKED_MESSAGE =
+    "The camera is blocked for this app, so Android will not ask again and pressing Scan will do " +
+        "nothing. Turn it back on in this app's permission settings — the button below opens them — " +
+        "or carry on without the camera: choose a picture of the code that is already on this phone, " +
+        "or type the code printed under the QR."
 
 /**
  * The two buttons and the sentence under them.
@@ -115,6 +190,14 @@ fun DwQrScanControl(
     var working by remember { mutableStateOf(false) }
     /** The scratch file the camera is writing into, so it can be deleted whatever happens next. */
     var pending by remember { mutableStateOf<File?>(null) }
+    /**
+     * Android has stopped asking for the camera, so a third button is offered.
+     *
+     * Only ever set from inside the permission callback — see the header — and cleared the moment the
+     * permission is found granted again, so a designer who goes to Settings, turns it on and comes
+     * back is not left looking at a button for a problem they have already fixed.
+     */
+    var cameraBlocked by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         sweepQrScratch(context)
@@ -153,15 +236,22 @@ fun DwQrScanControl(
         if (!granted || file == null) {
             discardPhoto()
             if (!granted) {
-                // NAMES THE OTHER DOOR, which is the whole reason a refused permission is not a dead
-                // end here. Both remaining routes still work and neither needs a lens.
-                onRefusal(
-                    "The camera permission was refused, so a code cannot be photographed. You can " +
-                        "still choose a picture of the code that is already on this phone, or type " +
-                        "the code printed under the QR."
-                )
+                // READ HERE AND NOWHERE ELSE. Inside this callback the prompt has by definition just
+                // been made, which is the only state in which `shouldShowRequestPermissionRationale`
+                // separates "denied once" from "Android has stopped asking" — see the header.
+                val activity = context.scanHostActivity()
+                val canAskAgain = activity != null &&
+                    androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+                        activity,
+                        Manifest.permission.CAMERA
+                    )
+                cameraBlocked = !canAskAgain
+                // BOTH SENTENCES NAME THE OTHER DOORS, which is the whole reason a refused permission
+                // is not a dead end here. Both remaining routes still work and neither needs a lens.
+                onRefusal(if (canAskAgain) CAMERA_DENIED_MESSAGE else CAMERA_BLOCKED_MESSAGE)
             }
         } else {
+            cameraBlocked = false
             takePhoto.launch(dwCaptureUri(context, file))
         }
     }
@@ -179,6 +269,9 @@ fun DwQrScanControl(
                     val file = File(qrScratchDir(context), "qr-${System.currentTimeMillis()}.jpg")
                     pending = file
                     if (hasPermission(context, Manifest.permission.CAMERA)) {
+                        // Granted since the last refusal — the designer has been to Settings and
+                        // back — so the way-forward button has done its job and goes away.
+                        cameraBlocked = false
                         takePhoto.launch(dwCaptureUri(context, file))
                     } else {
                         cameraPermission.launch(Manifest.permission.CAMERA)
@@ -211,11 +304,33 @@ fun DwQrScanControl(
                 Spacer(Modifier.width(6.dp))
                 Text("Use a picture", fontSize = 13.sp)
             }
+            /*
+             * THE WAY FORWARD, and it appears only once there is nowhere else to go.
+             *
+             * Offered when and only when Android has stopped asking: before that, "Scan a code" is
+             * itself the way forward and a settings button beside it would send a designer on a
+             * detour through a system screen for a prompt they could have answered in place. It is
+             * NOT enabled by `enabled && !working` like the two above — a blocked permission is worth
+             * fixing while a picture is decoding, and this button neither reads nor writes a code.
+             */
+            if (cameraBlocked) {
+                OutlinedButton(
+                    onClick = { context.openAppPermissionSettings() },
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Camera settings", fontSize = 13.sp)
+                }
+            }
         }
         Text(
             "Photograph the code, or pick a picture of one you were sent — a screenshot or a " +
                 "forwarded photograph reads just as well. The photograph is not kept. Everything " +
-                "here works with no connection; only opening the record needs one.",
+                // "looking the record up" and not "opening the record": on the reference picker a
+                // code LINKS a record rather than navigating to it, and this one sentence is read on
+                // all three surfaces.
+                "here works with no connection; only looking the record up needs one.",
             color = MaterialTheme.field.muted,
             fontSize = 11.sp,
             lineHeight = 16.sp,

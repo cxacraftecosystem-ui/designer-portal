@@ -7,6 +7,13 @@ algorithm rather than the same library:
     measure a block against the text column  ->  does it fit in the space left on this page?
     ->  no: finish the page, start a new one  ->  draw it at the cursor  ->  advance the cursor
 
+with one case the loop cannot answer on its own: A BLOCK THAT FITS ON NO PAGE AT ALL. A table row
+carrying a 6,000-character LONG_TEXT answer is taller than A4, so "start a new one" never makes it
+fit, and the lock that keeps a row from breaking between two of its own lines then suppressed every
+break there was — the remainder was drawn at a negative y, outside the paper, in a file that opens
+perfectly. :meth:`PdfRenderer._cut_row` is the answer: the row is CUT at the foot of the page and
+continued overleaf, which is what Word does for the .docx twin of the same document.
+
 Every block below is laid out by that loop, on ReportLab's low-level ``canvas`` API. Platypus
 would have been shorter and is the obvious choice for a Python-only report — it is not used
 here precisely because its ``Flowable`` machinery has no counterpart on Android, and a report
@@ -282,10 +289,20 @@ class FontSet:
         )
         #: What the bound faces will draw as empty boxes, as ``[(character, why)]``. Read by
         #: ``design_workshops.render_report`` so the designer is told BEFORE they attach the file.
+        #:
+        #: BOTH WEIGHTS ARE PROBED, and the bold one is not a formality. A family is bound as a
+        #: PAIR of files (see ``_bind``) and the two need not have the same coverage: pointing
+        #: ``REPORT_PDF_FONT`` at a face that carries the rupee sign and ``REPORT_PDF_FONT_BOLD``
+        #: at one that does not — Vera Bold, say — reported nothing at all, while every bold
+        #: rupee in the document printed as an empty box. And the bold face is exactly where the
+        #: money is: ``_block_metrics`` draws each headline figure in bold, a table's total row is
+        #: bold, and so is every column heading. Reporting the regular face alone left the one
+        #: place a reader looks first unchecked.
         self.missing_glyphs: list[tuple[str, str]] = [
             (character, purpose)
             for character, script, purpose in _REQUIRED_GLYPHS
-            if _drawable(self.pick_for(script, bold=False), character) is False
+            if any(_drawable(self.pick_for(script, bold=bold), character) is False
+                   for bold in (False, True))
         ]
 
     def pick_for(self, script: Script, *, bold: bool) -> str:
@@ -476,6 +493,9 @@ class PdfRenderer:
         self.dropped_images: list[str] = []
         self._image_cache: dict[str, ImageReader | None] = {}
         self._locked_depth = 0
+        #: Which piece of running furniture has already been reported as too long to fit in the
+        #: margin, so a 200-page report says it once rather than two hundred times.
+        self._furniture_warned: set[str] = set()
         # Rasterised map and chart bytes, so the picture path can load them like any other image.
         # See the note beside ``DocxWriter._figures``; the same reasoning applies here, plus one
         # that does not apply there: THIS RENDERER LAYS THE DOCUMENT OUT TWICE. Pass one measures
@@ -628,17 +648,125 @@ class PdfRenderer:
     def _fits(self, height: float) -> bool:
         return self.y - height >= self.bottom
 
+    def _cut_row(self, columns: list[list[_Line]], height: float, padding: float,
+                 *, force: bool = False,
+                 ) -> tuple[list[list[_Line]], float, list[list[_Line]] | None, float] | None:
+        """How much of a table row can be drawn here, and what is left over for the next page.
+
+        ── A CELL TALLER THAN THE TEXT COLUMN USED TO BE DRAWN OFF THE BOTTOM OF THE SHEET ───
+
+        ``_simple_grid`` and ``_block_table.draw_row`` draw a row inside :meth:`_locked` after a
+        single :meth:`_ensure`, and that is right for every row that fits on a page: it is what
+        stops a break landing between two lines of one cell, with the row's background rectangle
+        and its vertical rules on one page and the words on the next. But a row TALLER than a
+        page never fits, the lock suppresses every break, and ``self.y`` simply kept going
+        negative — one 6,000-character LONG_TEXT answer put 395 of 1,092 text pieces below y=0,
+        the lowest at y=-415.5 against a MediaBox 841.89 high. Nothing raises and the file opens;
+        the words are drawn outside the paper and no reader ever sees them. The .docx generated
+        in the SAME download keeps every one of them, because Word splits a ``<w:tr>`` that has
+        no ``<w:cantSplit/>`` — so a ministry reader comparing the two finds the PDF has silently
+        eaten paragraphs. All thirty LONG_TEXT registry fields have ``max_length == 0``, so
+        nothing upstream stops a designer writing one.
+
+        Clipping the overflow would have been shorter and is the wrong answer: this repository's
+        rule, stated in ``stage_schema.coerce_value``, is A REFUSAL, NOT A TRUNCATION. Losing a
+        designer's words silently is the defect, not the fix. So the row is CUT instead — the
+        same thing the .docx does — and the caller draws the pieces on consecutive pages.
+
+        ``None`` means "nothing useful fits here; turn the page and ask again", which is how the
+        caller learns to break WITHOUT this method ever breaking a page itself. Otherwise
+        ``(head, head_height, tail, tail_height)``, and ``tail is None`` is the ordinary case:
+        the whole row fits and the caller draws exactly what it always drew.
+
+        ``force`` is set by a caller that has just turned the page, and defends only the
+        pathological document whose single line of type is taller than a whole sheet: without it
+        that row would turn pages for ever.
+        """
+        if self._locked_depth:
+            # Inside a region the caller has already reserved and sized — the cover — a row may
+            # not break at all. That is the whole meaning of `_locked`, and `_block_cover`
+            # depends on it: its info grid is measured into a page the cover has budgeted for.
+            return columns, height, None, 0.0
+        if self._fits(height):
+            return columns, height, None, 0.0
+        if height <= self.top - 6 * MM - self.bottom and not force:
+            # It fits on a page, just not on what is left of this one. An ordinary break.
+            return None
+        budget = self.y - self.bottom - padding
+        head: list[list[_Line]] = []
+        tail: list[list[_Line]] = []
+        used = 0.0
+        left = 0.0
+        for column in columns:
+            taken = 0.0
+            k = 0
+            while k < len(column) and taken + column[k].height <= budget:
+                taken += column[k].height
+                k += 1
+            if force and k == 0 and column:
+                taken = column[0].height
+                k = 1
+            head.append(column[:k])
+            tail.append(column[k:])
+            used = max(used, taken)
+            left = max(left, sum(line.height for line in column[k:]))
+        if used <= 0.0:
+            return None
+        if not any(tail):
+            return head, used + padding, None, 0.0
+        return head, used + padding, tail, left + padding
+
     def _draw_furniture(self) -> None:
-        """Running head and foot. Suppressed on page 1, which is the cover."""
+        """Running head and foot. Suppressed on page 1, which is the cover.
+
+        BOTH ARE WRAPPED, because both are free text a designer types into stage 20 and neither
+        was. ``header_text`` defaults to "craft — cluster" and ``footer_text`` to
+        "template · workshop code", and a real ministry line — "Sambalpuri Bandha Ikat handloom
+        weaving cluster — Bargarh, Odisha — Ministry of Textiles, Office of the Development
+        Commissioner (Handicrafts)" — measures 509.5 pt against a 453.5 pt text column, so the
+        single ``drawString`` this used to be ran it 55.9 pt past the column and straight through
+        the page number beside it. The .docx wraps the same line inside its header part, so one
+        download carried two different running heads.
+
+        The lines stack INTO THE MARGIN — upward for the head, downward for the foot — and never
+        into the text column, so nothing here moves ``self.y`` and pagination is untouched. The
+        margin is finite, so the stack stops at the edge of the sheet and what did not fit is
+        reported once: running furniture is a repeated label rather than the designer's prose,
+        and a label too long for the paper has to be shortened by the person who wrote it.
+
+        WHEN IT HAS TO DROP SOMETHING, BOTH ENDS DROP THE TAIL. The head is stacked upward, so
+        the natural loop — walk the wrapped lines backwards from the rule and stop at the sheet
+        edge — dropped its FIRST lines instead, which on a ministry running head is the
+        organisation that owns the document: the head kept "…, Bargarh district, Odisha" and
+        threw away "Office of the Development Commissioner (Handicrafts), Ministry of Textiles".
+        The foot, iterating forward, dropped its tail. Two ends of the same clipped line in one
+        file is not a decision, it is an accident of which direction each loop ran. A running
+        line is read from its start and its opening is what identifies the document, so the head
+        now chooses how many lines fit FIRST and then places them bottom-up, and the two agree.
+        """
         if self._page <= 1:
             return
         meta = self.doc.meta
         t = self.theme
-        self.c.setFont(self.fonts.regular, 7.8)
         self.c.setFillColorRGB(*_rgb(t.muted))
+        head_baseline = self.page_h - self.margin + 4 * MM
         if meta.header_text:
-            self.c.drawRightString(self.page_w - self.margin, self.page_h - self.margin + 4 * MM,
-                                   meta.header_text)
+            lines = self._wrap(runs_of(meta.header_text), self.text_w, 7.8)
+            # How many fit, counted from the FIRST line — see the note above on which end drops.
+            kept: list[_Line] = []
+            baseline = head_baseline
+            for line in lines:
+                if kept and baseline + line.height > self.page_h - 2 * MM:
+                    break
+                kept.append(line)
+                baseline += line.height
+            # Then placed bottom line nearest the rule, the rest climbing towards the edge of the
+            # sheet, so the kept opening still reads downward into the rule in writing order.
+            baseline = head_baseline
+            for line in reversed(kept):
+                self._draw_line(line, self.margin, self.text_w, Align.RIGHT, t.muted, baseline)
+                baseline += line.height
+            self._note_clipped_furniture("header", len(lines) - len(kept))
             self.c.setStrokeColorRGB(*_rgb(t.rule))
             self.c.setLineWidth(0.5)
             self.c.line(self.margin, self.page_h - self.margin + 2.6 * MM,
@@ -647,58 +775,95 @@ class PdfRenderer:
         self.c.setStrokeColorRGB(*_rgb(t.rule))
         self.c.setLineWidth(0.5)
         self.c.line(self.margin, foot_y + 4 * MM, self.page_w - self.margin, foot_y + 4 * MM)
+        page_label = f"Page {self._page}" if meta.show_page_numbers else ""
+        page_w = self._string_width(page_label, self.fonts.regular, 7.8) if page_label else 0.0
+        # The foot shares its first line with the page number, so it gets the column MINUS that.
+        foot_w = max(self.text_w - (page_w + 4 * MM if page_label else 0.0), 20 * MM)
         if meta.footer_text:
-            self.c.drawString(self.margin, foot_y, meta.footer_text)
-        if meta.show_page_numbers:
-            self.c.drawRightString(self.page_w - self.margin, foot_y, f"Page {self._page}")
+            lines = self._wrap(runs_of(meta.footer_text), foot_w, 7.8)
+            baseline = foot_y
+            drawn = 0
+            for line in lines:
+                if drawn and baseline - line.height < 2 * MM:
+                    break
+                self._draw_line(line, self.margin, foot_w, Align.LEFT, t.muted, baseline)
+                baseline -= line.height
+                drawn += 1
+            self._note_clipped_furniture("footer", len(lines) - drawn)
+        if page_label:
+            self.c.setFont(self.fonts.regular, 7.8)
+            self.c.setFillColorRGB(*_rgb(t.muted))
+            self.c.drawRightString(self.page_w - self.margin, foot_y, page_label)
+
+    def _note_clipped_furniture(self, which: str, lines: int) -> None:
+        """Say once that a running line was too long for the margin to hold all of it."""
+        if lines <= 0 or which in self._furniture_warned:
+            return
+        self._furniture_warned.add(which)
+        logger.warning(
+            "report_pdf: the running %s does not fit in the page margin and %d line(s) of it "
+            "are not printed. Shorten it in stage 20; the .docx export is unaffected.",
+            which, lines,
+        )
 
     # -- drawing helpers --------------------------------------------------------------
+
+    def _draw_line(self, line: _Line, x: float, width: float, align: Align,
+                   default_color: str, baseline: float) -> None:
+        """Draw ONE laid-out line at an explicit baseline, leaving the cursor alone.
+
+        Split out of :meth:`_draw_lines` so the running head and foot can be wrapped like any
+        other text: they are drawn in the MARGIN, outside the text column, so they must not move
+        ``self.y`` — and everything a line needs beyond its glyphs (the highlight fill, the
+        underline and strike rules, the per-piece font and colour) has to keep working there too.
+        """
+        if align is Align.CENTER:
+            cursor = x + (width - line.width) / 2
+        elif align is Align.RIGHT:
+            cursor = x + width - line.width
+        else:
+            cursor = x
+        for text, font, size, color, underline, strike, rise, highlight in line.pieces:
+            # `rise` is 0 for ordinary text, so this is the same baseline it always was.
+            # The RULES below use it too: an underline under a subscript belongs under the
+            # subscript, not under the line it was lowered from.
+            piece_baseline = baseline + rise
+            advance = self._string_width(text, font, size)
+            if highlight:
+                # BEFORE the glyphs, or the fill paints over the words. The box is the
+                # piece's own extent — the same unit the underline uses, and the only one
+                # that stops a highlighted phrase tinting the whole line it sits on. The
+                # trailing space each token carries is deliberately included: Word's own
+                # highlight runs through the spaces inside a highlighted phrase, and a
+                # gapped fill reads as several highlights rather than one.
+                self.c.setFillColorRGB(*_rgb(HIGHLIGHT_FILL))
+                self.c.rect(cursor, piece_baseline - size * 0.24, advance, size * 1.14,
+                            stroke=0, fill=1)
+            self.c.setFont(font, size)
+            self.c.setFillColorRGB(*_rgb(color or default_color))
+            self.c.drawString(cursor, piece_baseline, text)
+            if (underline or strike) and text.strip():
+                # Ruled per PIECE, not per line: a line where only one phrase is
+                # underlined must not get a rule under the whole of it. The offsets are
+                # fractions of the point size so they track the type rather than being
+                # a fixed gap that looks wrong at every size but one.
+                self.c.setStrokeColorRGB(*_rgb(color or default_color))
+                self.c.setLineWidth(max(0.4, size * 0.05))
+                if underline:
+                    self.c.line(cursor, piece_baseline - size * 0.13,
+                                cursor + advance, piece_baseline - size * 0.13)
+                if strike:
+                    self.c.line(cursor, piece_baseline + size * 0.26,
+                                cursor + advance, piece_baseline + size * 0.26)
+            cursor += advance
 
     def _draw_lines(self, lines: list[_Line], x: float, width: float, align: Align,
                     default_color: str) -> None:
         for line in lines:
             self._ensure(line.height)
             if self._drawing:
-                if align is Align.CENTER:
-                    cursor = x + (width - line.width) / 2
-                elif align is Align.RIGHT:
-                    cursor = x + width - line.width
-                else:
-                    cursor = x
-                line_baseline = self.y - line.height * 0.78
-                for text, font, size, color, underline, strike, rise, highlight in line.pieces:
-                    # `rise` is 0 for ordinary text, so this is the same baseline it always was.
-                    # The RULES below use it too: an underline under a subscript belongs under the
-                    # subscript, not under the line it was lowered from.
-                    baseline = line_baseline + rise
-                    advance = self._string_width(text, font, size)
-                    if highlight:
-                        # BEFORE the glyphs, or the fill paints over the words. The box is the
-                        # piece's own extent — the same unit the underline uses, and the only one
-                        # that stops a highlighted phrase tinting the whole line it sits on. The
-                        # trailing space each token carries is deliberately included: Word's own
-                        # highlight runs through the spaces inside a highlighted phrase, and a
-                        # gapped fill reads as several highlights rather than one.
-                        self.c.setFillColorRGB(*_rgb(HIGHLIGHT_FILL))
-                        self.c.rect(cursor, baseline - size * 0.24, advance, size * 1.14,
-                                    stroke=0, fill=1)
-                    self.c.setFont(font, size)
-                    self.c.setFillColorRGB(*_rgb(color or default_color))
-                    self.c.drawString(cursor, baseline, text)
-                    if (underline or strike) and text.strip():
-                        # Ruled per PIECE, not per line: a line where only one phrase is
-                        # underlined must not get a rule under the whole of it. The offsets are
-                        # fractions of the point size so they track the type rather than being
-                        # a fixed gap that looks wrong at every size but one.
-                        self.c.setStrokeColorRGB(*_rgb(color or default_color))
-                        self.c.setLineWidth(max(0.4, size * 0.05))
-                        if underline:
-                            self.c.line(cursor, baseline - size * 0.13,
-                                        cursor + advance, baseline - size * 0.13)
-                        if strike:
-                            self.c.line(cursor, baseline + size * 0.26,
-                                        cursor + advance, baseline + size * 0.26)
-                    cursor += advance
+                self._draw_line(line, x, width, align, default_color,
+                                self.y - line.height * 0.78)
             self.y -= line.height
 
     def _image_reader(self, ref: ImageRef) -> ImageReader | None:
@@ -716,12 +881,17 @@ class PdfRenderer:
         self._image_cache[ref.source] = reader
         return reader
 
-    def _draw_image(self, ref: ImageRef, x: float, width: float, max_height: float,
-                    align: Align) -> float:
-        """Draw ``ref`` fitted into the box and return the height it consumed."""
+    def _image_box(self, ref: ImageRef, width: float,
+                   max_height: float) -> tuple[float, float] | None:
+        """The box :meth:`_draw_image` will fit ``ref`` into, or ``None`` if it cannot draw it.
+
+        Split out so a caller can RESERVE the picture's height before committing to anything —
+        `_block_figure` has to keep a chart's title on the same page as the chart, and it cannot
+        do that by guessing. Cheap to call twice: the reader is memoised by source.
+        """
         reader = self._image_reader(ref)
         if reader is None:
-            return 0.0
+            return None
         try:
             iw, ih = reader.getSize()
         except Exception:  # noqa: BLE001
@@ -735,6 +905,16 @@ class PdfRenderer:
         if h > max_height:
             h = max_height
             w = h * aspect
+        return w, h
+
+    def _draw_image(self, ref: ImageRef, x: float, width: float, max_height: float,
+                    align: Align) -> float:
+        """Draw ``ref`` fitted into the box and return the height it consumed."""
+        box = self._image_box(ref, width, max_height)
+        if box is None:
+            return 0.0
+        reader = self._image_cache[ref.source]
+        w, h = box
 
         self._ensure(h)
         if self._drawing:
@@ -847,6 +1027,20 @@ class PdfRenderer:
         self._draw_lines(self._wrap(runs_of(block.title, bold=True), self.text_w, 16),
                          x, self.text_w, Align.LEFT, t.accent)
         self.y -= 4 * MM
+        # ── A CONTENTS ENTRY IS WRAPPED LIKE EVERY OTHER PIECE OF TEXT IN THIS FILE ───────────
+        #
+        # It used to be a bare ``drawString``, so a section title ran straight off the sheet: the
+        # heading "Prototype development and iterative refinement of the traditional Sambalpuri
+        # ikat weave for contemporary furnishing applications in the Bargarh cluster" measures
+        # 688.6 pt as a contents line against a 453.5 pt column — 235.1 pt past the column and
+        # 164.2 pt past the edge of the paper, taking its own page number with it. Section titles
+        # are the designer's stage names, so this is ordinary content and not a pathological case.
+        #
+        # Going through ``_wrap`` also gives each entry the SCRIPT-CORRECT face, which the
+        # single-font ``drawString`` could not: an Odia section name in the contents was sent to
+        # the Latin face and printed as boxes above the same words rendering correctly in the
+        # body. The page number and the dot leader ride on the LAST line, where the eye expects
+        # to find them.
         for level, number, text, bookmark in self._toc_source:
             if level > block.depth:
                 continue
@@ -855,26 +1049,53 @@ class PdfRenderer:
             label = f"{number}. {text}" if number else text
             page = self._heading_pages.get(bookmark)
             page_label = str(page) if page else ""
-            self._ensure(size * 1.6)
-            if self._drawing:
-                font = self.fonts.bold if level == 1 else self.fonts.regular
+            font = self.fonts.bold if level == 1 else self.fonts.regular
+            # ── THE GUTTER IS RESERVED IN BOTH PASSES, NUMBER OR NO NUMBER ────────────────────
+            #
+            # Sizing the wrap column from `page_label` made the two passes see DIFFERENT geometry,
+            # which is the one thing this renderer may not do (`_new_page`: "The two passes must
+            # see identical geometry"). `build` clears `_heading_pages` before every measuring
+            # pass including the reconciliation one, and the contents block is laid out before the
+            # first heading fills it again — so the label is ALWAYS empty while measuring and
+            # ALWAYS present while drawing. Measured: the entries were wrapped into 453.5 pt while
+            # measuring and 431.4 pt while drawing, and for a 60-section report whose entries wrap
+            # that put the contents on 5 pages when measured and 6 when drawn — all 60 printed
+            # numbers one page short, in a file whose bookmark outline is perfectly correct.
+            #
+            # So the room for the number comes from a CONSTANT instead: four of the widest digit,
+            # the widest label a 9,999-page report can print. `page_label` still governs whether a
+            # number and a leader are DRAWN — it no longer governs how wide the column is.
+            gutter = 4 * max(self._string_width(digit, font, size) for digit in "0123456789")
+            # The number and its leader need room on the last line, so the label gets the column
+            # minus both. Floored, because a deep indent plus a wide number must still leave a
+            # column to wrap into rather than a negative one.
+            avail = max(self.text_w - indent - (gutter + 4 * MM), 30 * MM)
+            color = t.ink if level == 1 else t.muted
+            # 1.6 is the entry leading this block has always used; keeping it as the wrap's
+            # leading factor is what makes a one-line entry occupy exactly what it used to.
+            lines = self._wrap(runs_of(label, bold=(level == 1)), avail, size,
+                               leading_factor=1.6)
+            self._draw_lines(lines, x + indent, avail, Align.LEFT, color)
+            if page_label and self._drawing:
+                last = lines[-1]
+                # `_draw_lines` has left the cursor under the last line; its baseline is the
+                # same 0.78 of the leading above that, which is where the number must sit.
+                baseline = self.y + last.height * 0.22
                 self.c.setFont(font, size)
-                self.c.setFillColorRGB(*_rgb(t.ink if level == 1 else t.muted))
-                baseline = self.y - size
-                self.c.drawString(x + indent, baseline, label)
-                if page_label:
-                    self.c.drawRightString(x + self.text_w, baseline, page_label)
-                    # Dot leader between the title and the page number.
-                    label_w = self._string_width(label, font, size)
-                    page_w = self._string_width(page_label, font, size)
-                    lead_from = x + indent + label_w + 2 * MM
-                    lead_to = x + self.text_w - page_w - 2 * MM
-                    if lead_to > lead_from:
-                        self.c.setFillColorRGB(*_rgb(t.rule))
-                        dot_w = self._string_width(".", font, size)
-                        count = max(0, int((lead_to - lead_from) / max(dot_w, 0.1)))
-                        self.c.drawString(lead_from, baseline, "." * count)
-            self.y -= size * 1.6
+                self.c.setFillColorRGB(*_rgb(color))
+                self.c.drawRightString(x + self.text_w, baseline, page_label)
+                # Dot leader between the title and the page number. It runs up to the NUMBER'S own
+                # width, not to the reserved gutter: the gutter is sized for the widest label the
+                # document could carry, and stopping the dots there would leave a visible gap in
+                # front of every number shorter than that.
+                page_w = self._string_width(page_label, font, size)
+                lead_from = x + indent + last.width + 2 * MM
+                lead_to = x + self.text_w - page_w - 2 * MM
+                if lead_to > lead_from:
+                    self.c.setFillColorRGB(*_rgb(t.rule))
+                    dot_w = self._string_width(".", font, size)
+                    count = max(0, int((lead_to - lead_from) / max(dot_w, 0.1)))
+                    self.c.drawString(lead_from, baseline, "." * count)
         self._new_page()
 
     def _block_heading(self, block: HeadingBlock) -> None:
@@ -885,10 +1106,28 @@ class PdfRenderer:
         label = f"{block.number}. " if block.number else ""
         runs = runs_of(label + runs_text(block.runs), bold=True)
         lines = self._wrap(runs, self.text_w, size)
-        needed = sum(line.height for line in lines) + 6 * MM
-        # keepNext: a heading alone at the foot of a page is worse than a slightly short page.
+        # ── KEEPNEXT HAS TO RESERVE WHAT THE HEADING ACTUALLY COSTS, WHICH IS NOT ITS LINES ────
+        #
+        # This reserved a flat 6 mm (17.0 pt) around the text. A level-1 heading spends 6.5 mm
+        # above it, 1.2 mm on the rule beneath it and 2.4 mm after that — 10.1 mm, 28.6 pt, and
+        # every one of those millimetres is taken AFTER the `_ensure` that was supposed to have
+        # accounted for them. So a heading could pass the fit test and then walk past the bottom
+        # margin on its own: measured over 300 level-1 headings, 13 of them ended with less than
+        # one body line of room beneath them and the worst finished 5.7 pt BELOW the margin,
+        # while the comment above the `_ensure` asserted that could not happen. Both siblings
+        # deliver keepNext properly — the .docx sets `<w:keepNext/>` and the web report sheet
+        # uses `break-after: avoid` — so the PDF alone orphaned headings.
+        #
+        # Bound once, used twice: the same `lead` and `trail` are reserved here and spent below,
+        # which is what makes the reservation true by construction rather than by arithmetic
+        # somebody has to redo whenever a gap changes. The trailing body line is the other half
+        # of keepNext: a heading with nothing under it is still an orphan even if it fits.
+        lead = (4.5 if block.level > 1 else 6.5) * MM
+        trail = (1.2 * MM if block.level == 1 else 0.0) + 2.4 * MM
+        needed = (lead + sum(line.height for line in lines) + trail
+                  + self.base_size * 1.32)
         self._ensure(needed)
-        self.y -= (4.5 if block.level > 1 else 6.5) * MM
+        self.y -= lead
         if not self._drawing:
             self._heading_pages[block.bookmark] = self._page
             self._toc_entries.append(
@@ -927,6 +1166,8 @@ class PdfRenderer:
                 self.c.setLineWidth(0.7)
                 self.c.line(self.margin, self.y, self.margin + self.text_w, self.y)
         self.y -= 2.4 * MM
+        # `lead` and `trail` above reserved exactly what has now been spent: 6.5 + 1.2 + 2.4 mm
+        # at level 1, 4.5 + 2.4 mm below it. Change a gap here and change it there.
 
     def _block_paragraph(self, block: ParagraphBlock) -> None:
         t = self.theme
@@ -991,20 +1232,36 @@ class PdfRenderer:
             val_lines = self._wrap(value, value_w - 3 * MM, self.base_size)
             height = max(sum(line.height for line in lab_lines),
                          sum(line.height for line in val_lines)) + 1.8 * MM
-            self._ensure(height)
-            row_top = self.y
-            if self._drawing and i % 2 == 1:
-                self.c.setFillColorRGB(*_rgb(t.zebra_fill))
-                self.c.rect(self.margin, row_top - height, self.text_w, height,
-                            stroke=0, fill=1)
-            with self._locked():
-                self.y = row_top - 0.9 * MM
-                self._draw_lines(lab_lines, self.margin + 1.5 * MM, label_w - 3 * MM,
-                                 Align.LEFT, t.muted)
-                self.y = row_top - 0.9 * MM
-                self._draw_lines(val_lines, self.margin + label_w, value_w - 3 * MM,
-                                 Align.LEFT, t.ink)
-            self.y = row_top - height
+            # A value taller than the page is cut across pages instead of being drawn off the
+            # bottom of this one; see `_cut_row`, which is also what keeps the COVER's info grid
+            # unbroken (it runs inside `_locked`, and a cut there is refused).
+            rest: list[list[_Line]] = [lab_lines, val_lines]
+            rest_h = height
+            turned = False
+            while True:
+                cut = self._cut_row(rest, rest_h, 1.8 * MM, force=turned)
+                if cut is None:
+                    self._new_page()
+                    turned = True
+                    continue
+                turned = False
+                head, head_h, tail, tail_h = cut
+                row_top = self.y
+                if self._drawing and i % 2 == 1:
+                    self.c.setFillColorRGB(*_rgb(t.zebra_fill))
+                    self.c.rect(self.margin, row_top - head_h, self.text_w, head_h,
+                                stroke=0, fill=1)
+                with self._locked():
+                    self.y = row_top - 0.9 * MM
+                    self._draw_lines(head[0], self.margin + 1.5 * MM, label_w - 3 * MM,
+                                     Align.LEFT, t.muted)
+                    self.y = row_top - 0.9 * MM
+                    self._draw_lines(head[1], self.margin + label_w, value_w - 3 * MM,
+                                     Align.LEFT, t.ink)
+                self.y = row_top - head_h
+                if tail is None:
+                    break
+                rest, rest_h = tail, tail_h
         self.y -= 2.4 * MM
 
     def _block_key_values(self, block: KeyValueBlock) -> None:
@@ -1040,17 +1297,25 @@ class PdfRenderer:
             return laid, height + 1.8 * MM
 
         def draw_row(laid: list[list[_Line]], height: float, fill: str | None,
-                     text_color: str, top_rule: bool = False) -> None:
-            """Draw one row at the cursor. The caller guarantees it fits; this never breaks."""
+                     text_color: str, top_rule: bool = False,
+                     bottom_rule: bool = True) -> None:
+            """Draw one row at the cursor. The caller guarantees it fits; this never breaks.
+
+            ``bottom_rule`` is False for every fragment of a row that `_cut_row` split across a
+            page boundary except the last: a rule under the half-row would read as the end of a
+            record that is in fact continued overleaf.
+            """
             top = self.y
             if self._drawing:
                 if fill:
                     self.c.setFillColorRGB(*_rgb(fill))
                     self.c.rect(self.margin, top - height, self.text_w, height,
                                 stroke=0, fill=1)
-                self.c.setStrokeColorRGB(*_rgb(t.rule))
-                self.c.setLineWidth(0.4)
-                self.c.line(self.margin, top - height, self.margin + self.text_w, top - height)
+                if bottom_rule:
+                    self.c.setStrokeColorRGB(*_rgb(t.rule))
+                    self.c.setLineWidth(0.4)
+                    self.c.line(self.margin, top - height,
+                                self.margin + self.text_w, top - height)
                 if top_rule:
                     self.c.setStrokeColorRGB(*_rgb(t.accent))
                     self.c.setLineWidth(0.9)
@@ -1071,6 +1336,43 @@ class PdfRenderer:
                     cursor_x += widths[j]
             self.y = top - height
 
+        def place_row(laid: list[list[_Line]], height: float, fill: str | None,
+                      text_color: str, *, top_rule: bool = False,
+                      repeat_header: bool = True) -> None:
+            """Put one row on the page, breaking it across pages when it is taller than one.
+
+            THE BREAK IS DECIDED BEFORE ANYTHING IS DRAWN, so a row is never split by accident
+            and never drawn twice. An older version drew the row, noticed the page had turned,
+            and then redrew both the header and the row — duplicating a line of a cost sheet.
+
+            A row that does not fit on ANY page is cut by `_cut_row` and continued on the next,
+            with the header repeated above it exactly as Word repeats a ``<w:tblHeader/>`` row
+            over a body row it has split. Before that, the lock inside `draw_row` suppressed
+            every break and the rest of the cell was drawn at a negative y — off the paper.
+            """
+            rest = laid
+            rest_h = height
+            first = True
+            turned = False
+            while True:
+                cut = self._cut_row(rest, rest_h, 1.8 * MM, force=turned)
+                if cut is None:
+                    self._new_page()
+                    if repeat_header:
+                        place_header()
+                    turned = True
+                    # Re-cut against the page the header has just been placed on, not against
+                    # the one that was measured before it.
+                    continue
+                turned = False
+                head, head_h, tail, tail_h = cut
+                draw_row(head, head_h, fill, text_color,
+                         top_rule=top_rule and first, bottom_rule=tail is None)
+                first = False
+                if tail is None:
+                    return
+                rest, rest_h = tail, tail_h
+
         has_header = any(c.header for c in block.columns)
         header_laid, header_h = row_lines(
             tuple(runs_of(c.header) for c in block.columns), header_size, True
@@ -1078,32 +1380,34 @@ class PdfRenderer:
 
         def place_header() -> None:
             if has_header:
-                draw_row(header_laid, header_h, t.table_header_fill, t.table_header_text)
+                # NEVER with `repeat_header`: a header taller than a page would otherwise place
+                # itself above each of its own fragments, for ever.
+                place_row(header_laid, header_h, t.table_header_fill, t.table_header_text,
+                          repeat_header=False)
 
         # Reserve the header plus the first body row together: a header stranded at the foot of
         # a page reads as an empty table.
         first_h = row_lines(block.rows[0], body_size, False)[1] if block.rows else 0.0
+        if header_h + first_h > self.top - 6 * MM - self.bottom:
+            # A FIRST ROW TALLER THAN A PAGE CANNOT BE RESERVED WHOLE, and asking for the
+            # impossible turned a page the row was going to start on anyway: the table's own
+            # first page came out completely blank. What this reservation is for is stopping a
+            # header being stranded alone at the foot, so an over-tall row asks for the header
+            # plus one line of itself and `place_row` cuts the rest.
+            first_h = body_size * 1.32 + 1.8 * MM
         if not self._fits(header_h + first_h):
             self._new_page()
         place_header()
 
         for i, row in enumerate(block.rows):
             laid, height = row_lines(row, body_size, False)
-            # Decide the break BEFORE drawing, so a row is never split and never drawn twice.
-            # The previous version drew the row, noticed the page had turned, and then redrew
-            # both the header and the row — duplicating it.
-            if not self._fits(height):
-                self._new_page()
-                place_header()
-            draw_row(laid, height, t.zebra_fill if (block.zebra and i % 2 == 1) else None, t.ink)
+            place_row(laid, height,
+                      t.zebra_fill if (block.zebra and i % 2 == 1) else None, t.ink)
 
         if block.total_row:
             laid, height = row_lines(block.total_row, body_size, True)
             # The total must never be orphaned from the figures it totals.
-            if not self._fits(height):
-                self._new_page()
-                place_header()
-            draw_row(laid, height, t.zebra_fill, t.ink, top_rule=True)
+            place_row(laid, height, t.zebra_fill, t.ink, top_rule=True)
 
         self.y -= 2.2 * MM
         self._caption(block.caption, self.margin, self.text_w)
@@ -1126,29 +1430,31 @@ class PdfRenderer:
         cell_w = self.text_w / columns
         cap_size = 7.6
 
+        max_image_h = (self.top - self.bottom) * 0.30
         for start in range(0, len(block.images), columns):
             chunk = list(block.images[start:start + columns])
+            # MEASURED ONCE PER CELL, and the caption is now wrapped in the same italic it is
+            # drawn in. The old code measured with an upright run and drew an italic one, which
+            # only agreed because ReportLab has no italic face bound; and the split below needs
+            # the picture's height and the caption's LINES apart from each other, which three
+            # separate re-measurements could not give it.
+            cells: list[tuple[ImageRef, float, list[_Line]]] = []
             heights: list[float] = []
             for ref, caption in chunk:
-                reader = self._image_reader(ref)
-                if reader is None:
+                box = self._image_box(ref, cell_w - 4 * MM, max_image_h)
+                if box is None:
+                    cells.append((ref, 0.0, []))
                     heights.append(0.0)
                     continue
-                try:
-                    iw, ih = reader.getSize()
-                except Exception:  # noqa: BLE001
-                    iw, ih = 0, 0
-                if ref.rotation_deg in (90, 270):
-                    iw, ih = ih, iw
-                aspect = (iw / ih) if iw and ih else ref.aspect
-                h = min((cell_w - 4 * MM) / aspect, (self.top - self.bottom) * 0.30)
-                cap_h = sum(
-                    line.height
-                    for line in self._wrap(runs_of(caption), cell_w - 4 * MM, cap_size)
-                ) if caption else 0.0
-                heights.append(h + cap_h + 3 * MM)
+                lines = (self._wrap(runs_of(caption, italic=True), cell_w - 4 * MM, cap_size)
+                         if caption else [])
+                cells.append((ref, box[1], lines))
+                heights.append(box[1] + sum(line.height for line in lines) + 3 * MM)
             row_h = max(heights) if heights else 0.0
             if row_h <= 0:
+                continue
+            if row_h > self.top - 6 * MM - self.bottom:
+                self._place_tall_grid_row(cells, cell_w, max_image_h)
                 continue
             self._ensure(row_h)
             row_top = self.y
@@ -1156,20 +1462,76 @@ class PdfRenderer:
             # cell breaks the page and the remaining photos of the row land under the header
             # of the next one, detached from their captions.
             with self._locked():
-                for i, (ref, caption) in enumerate(chunk):
+                for i, (ref, _image_h, lines) in enumerate(cells):
                     x = self.margin + i * cell_w
                     self.y = row_top
                     drawn = self._draw_image(ref, x + 2 * MM, cell_w - 4 * MM,
-                                             (self.top - self.bottom) * 0.30, Align.CENTER)
-                    if drawn and caption:
+                                             max_image_h, Align.CENTER)
+                    if drawn and lines:
                         self.y -= 1.2 * MM
-                        self._draw_lines(
-                            self._wrap(runs_of(caption, italic=True), cell_w - 4 * MM, cap_size),
-                            x + 2 * MM, cell_w - 4 * MM, Align.CENTER, self.theme.muted,
-                        )
+                        self._draw_lines(lines, x + 2 * MM, cell_w - 4 * MM,
+                                         Align.CENTER, self.theme.muted)
             self.y = row_top - row_h
         self.y -= 1.6 * MM
         self._caption(block.caption, self.margin, self.text_w)
+
+    def _place_tall_grid_row(self, cells: list[tuple[ImageRef, float, list[_Line]]],
+                             cell_w: float, max_image_h: float) -> None:
+        """Draw a grid row whose captions run past the page, without losing a word of them.
+
+        A photograph is capped at 0.30 of the text column, so the PICTURES always fit and it is a
+        caption that can overrun — and every one of the registry's twenty-five caption fields is a
+        TEXT field with ``max_length == 0``, so nothing upstream bounds one. The locked region that
+        keeps a row of photographs together then suppressed the break the row needed and the tail
+        of the caption was drawn below the foot of the sheet: 442 of 1,084 pieces, measured.
+
+        Same answer as `_cut_row` gives a table row, in the shape a grid needs: the pictures and as
+        much of every caption as this page holds go here, and each caption continues IN ITS OWN
+        COLUMN overleaf, so a reader still knows which photograph it belongs to.
+        """
+        gap = 1.2 * MM
+        remaining = [list(lines) for _ref, _h, lines in cells]
+        image_h = max((h for _ref, h, _lines in cells), default=0.0)
+        first_line = max((lines[0].height for lines in remaining if lines), default=0.0)
+        # The pictures and at least one line of caption belong on the same page as each other.
+        self._ensure(image_h + gap + first_line + 3 * MM)
+        first = True
+        while True:
+            row_top = self.y
+            # Budgeted against the TALLEST picture in the row, so a cell whose own photograph is
+            # shorter merely has room to spare rather than a caption that outruns the fragment.
+            room = row_top - self.bottom - 3 * MM - ((image_h + gap) if first else 0.0)
+            taken: list[list[_Line]] = []
+            used = 0.0
+            for j, lines in enumerate(remaining):
+                consumed = 0.0
+                k = 0
+                while k < len(lines) and consumed + lines[k].height <= room:
+                    consumed += lines[k].height
+                    k += 1
+                if k == 0 and lines:
+                    # A page too short for one line of caption. Take it anyway; an endless loop
+                    # is not the better failure.
+                    k, consumed = 1, lines[0].height
+                taken.append(lines[:k])
+                remaining[j] = lines[k:]
+                used = max(used, consumed)
+            part_h = ((image_h + gap) if first else 0.0) + used + 3 * MM
+            with self._locked():
+                for i, (ref, _h, _lines) in enumerate(cells):
+                    x = self.margin + i * cell_w
+                    self.y = row_top
+                    if first and self._draw_image(ref, x + 2 * MM, cell_w - 4 * MM,
+                                                  max_image_h, Align.CENTER):
+                        self.y -= gap
+                    if taken[i]:
+                        self._draw_lines(taken[i], x + 2 * MM, cell_w - 4 * MM,
+                                         Align.CENTER, self.theme.muted)
+            self.y = row_top - part_h
+            first = False
+            if not any(remaining):
+                return
+            self._new_page()
 
     # -- figures: the map and the infographics -------------------------------------------
 
@@ -1218,17 +1580,55 @@ class PdfRenderer:
             if fallback_source not in self.dropped_images:
                 self.dropped_images.append(fallback_source)
             return
+        # ── THE LOCKED REGION THIS CLAIMED TO OPEN WAS NEVER OPENED ────────────────────────
+        #
+        # The comment here said the title was drawn "inside the same locked region as the image
+        # below". There was no locked region, and the 6 mm reserved for the title said nothing
+        # about the picture, which reserves its own space inside `_draw_image` and breaks the
+        # page there. So the title stayed at the foot of one page and the chart it names moved to
+        # the next: measured over 80 chart figures, 32 of them were separated from their picture.
+        # A figure title is a LABEL — it is not in the contents and there is no other way to tell
+        # which picture it belongs to, so a reader finds a bare "Figure 12: designs by status"
+        # over somebody else's chart.
+        #
+        # Reserved together and then drawn with breaks suppressed. The picture is capped at 0.58
+        # of the text column — but ONLY the picture is, and the title is not, so "title plus
+        # picture always fits a page" is not something this method may simply assert. A title
+        # long enough to eat the other 0.42 would be drawn inside a lock that suppresses every
+        # break, which is precisely the shape `_cut_row` exists to undo. Today's figure titles
+        # are developer-authored constants in `report_builder` ("Prototypes by review decision"),
+        # so the case is unreachable in this repository as it stands; it becomes reachable the
+        # day a template puts a designer's own text in a chart title.
+        #
+        # So the guarantee is CHECKED rather than claimed: when the pair genuinely fits no page,
+        # the title falls back to paginating line by line outside the lock — the figure title is
+        # separated from its picture, which is the defect this block was opened for, but a
+        # separated title is recoverable and words drawn at a negative y are not.
         title = block.title
-        if title:
-            # A figure title is a label, not a heading: it must not enter the table of contents,
-            # and it must not be separated from its picture by a page break. Drawn as bold accent
-            # text immediately above, inside the same locked region as the image below.
-            self._ensure(6 * MM)
-            lines = self._wrap(runs_of(title, bold=True), self.text_w, self.base_size)
-            self._draw_lines(lines, self.margin, self.text_w, Align.LEFT, self.theme.accent)
-            self.y -= 1.2 * MM
-        drawn = self._draw_image(ref, self.margin, self._figure_width(block.width_pct),
-                                 (self.top - self.bottom) * 0.58, block.align)
+        max_h = (self.top - self.bottom) * 0.58
+        figure_w = self._figure_width(block.width_pct)
+        box = self._image_box(ref, figure_w, max_h)
+        title_lines = (self._wrap(runs_of(title, bold=True), self.text_w, self.base_size)
+                       if title else [])
+        reserve = sum(line.height for line in title_lines) + (1.2 * MM if title_lines else 0.0)
+        box_h = box[1] if box else 0.0
+        # The text column of a continuation page: `_new_page` drops the cursor 6 mm below the
+        # top for the running head, so this is the most any locked region may ever ask for.
+        column_h = self.top - 6 * MM - self.bottom
+        if reserve + box_h > column_h:
+            if title_lines:
+                self._draw_lines(title_lines, self.margin, self.text_w, Align.LEFT,
+                                 self.theme.accent)
+                self.y -= 1.2 * MM
+            drawn = self._draw_image(ref, self.margin, figure_w, max_h, block.align)
+        else:
+            self._ensure(reserve + box_h)
+            with self._locked():
+                if title_lines:
+                    self._draw_lines(title_lines, self.margin, self.text_w, Align.LEFT,
+                                     self.theme.accent)
+                    self.y -= 1.2 * MM
+                drawn = self._draw_image(ref, self.margin, figure_w, max_h, block.align)
         if drawn:
             self._caption(block.caption, self.margin, self.text_w)
             self.y -= 1.6 * MM
@@ -1278,19 +1678,45 @@ class PdfRenderer:
         body_lines = self._wrap(block.runs, inner_w, self.base_size - 0.6)
         height = (sum(line.height for line in title_lines)
                   + sum(line.height for line in body_lines) + 6 * MM)
-        self._ensure(height)
-        top = self.y
-        if self._drawing:
-            self.c.setFillColorRGB(*_rgb(fill))
-            self.c.rect(self.margin, top - height, self.text_w, height, stroke=0, fill=1)
-            self.c.setFillColorRGB(*_rgb(edge))
-            self.c.rect(self.margin, top - height, 1.4 * MM, height, stroke=0, fill=1)
-        with self._locked():
-            self.y = top - 3 * MM
-            if title_lines:
-                self._draw_lines(title_lines, self.margin + 5 * MM, inner_w, Align.LEFT, edge)
-            self._draw_lines(body_lines, self.margin + 5 * MM, inner_w, Align.LEFT, t.ink)
-        self.y = top - height - 3 * MM
+        # A callout longer than a page is CUT and continued overleaf rather than drawn past the
+        # bottom of its own box: the same defect `_cut_row` was written for, in the third of this
+        # file's locked regions. Measured before the fix, a page-and-a-bit callout put 72 pieces
+        # below y=0. Title and body are one column here because they are STACKED, not side by
+        # side; `titles_left` is how the split remembers which of the lines it has handed out were
+        # the title's and so must keep the edge colour.
+        flow = list(title_lines) + list(body_lines)
+        titles_left = len(title_lines)
+        rest: list[list[_Line]] = [flow]
+        rest_h = height
+        turned = False
+        while True:
+            cut = self._cut_row(rest, rest_h, 6 * MM, force=turned)
+            if cut is None:
+                self._new_page()
+                turned = True
+                continue
+            turned = False
+            head, head_h, tail, tail_h = cut
+            part = head[0]
+            top = self.y
+            if self._drawing:
+                self.c.setFillColorRGB(*_rgb(fill))
+                self.c.rect(self.margin, top - head_h, self.text_w, head_h, stroke=0, fill=1)
+                self.c.setFillColorRGB(*_rgb(edge))
+                self.c.rect(self.margin, top - head_h, 1.4 * MM, head_h, stroke=0, fill=1)
+            with self._locked():
+                self.y = top - 3 * MM
+                head_title = part[:titles_left]
+                if head_title:
+                    self._draw_lines(head_title, self.margin + 5 * MM, inner_w, Align.LEFT, edge)
+                self._draw_lines(part[len(head_title):], self.margin + 5 * MM, inner_w,
+                                 Align.LEFT, t.ink)
+            titles_left = max(0, titles_left - len(part))
+            self.y = top - head_h
+            if tail is None:
+                break
+            rest, rest_h = tail, tail_h
+        self.y -= 3 * MM
 
     def _block_signatures(self, block: SignatureBlock) -> None:
         if not block.signatories:
@@ -1463,6 +1889,12 @@ class PdfRenderer:
         # `_toc_source` is deliberately NOT reassigned from `_toc_entries` afterwards. Adopting this
         # pass's entries would put the contents one step ahead of the map again and reintroduce the
         # defect one iteration later, which is the shape of the original.
+        #
+        # NOTHING LAID OUT BEFORE THE FIRST HEADING MAY TAKE ITS GEOMETRY FROM `_heading_pages`.
+        # This clear is why: the contents block runs before any heading in every measuring pass,
+        # including this one, so it always sees an empty map here and always sees a full one on the
+        # drawing pass below. `_block_toc` reserves the room for its page numbers from a constant
+        # for exactly that reason — see the note there for what it cost when it did not.
         self._toc_entries = []
         self._heading_pages = {}
         self._run_pass(drawing=False)

@@ -99,9 +99,19 @@ class DwReferenceWireTest {
 
     private companion object {
         /**
-         * HTTP 200 from the running API, verbatim but for the option list being cut to two. The six
-         * top-level keys are exactly `filtered, model, options, scope, scopedToWorkshop, truncated`
-         * — `items` is absent, and always was.
+         * HTTP 200 from the running API, verbatim but for the option list being cut to two. Its
+         * top-level keys are `filtered, model, options, scope, scopedToWorkshop, truncated` —
+         * `items` is absent, and always was.
+         *
+         * A CAPTURE IS DATED AND THIS ONE HAS BEEN OVERTAKEN. `_reference_payload` has since grown
+         * two more keys — `outOfScope` and `outOfScopeOption` — which answer a by-id lookup that the
+         * reference picker's card reader now DOES make
+         * (`WorkshopRepository.designWorkshopReferenceById`). The capture is left as it was because
+         * it is a capture of the LIST request, which never sends `recordId` and can therefore never
+         * be answered with either key — and because `ignoreUnknownKeys = true` means an added key
+         * changes nothing here either way. `DwReferenceScanTest` is where the by-id shape is pinned.
+         * Do not read the list above as the current shape of the payload; read
+         * `_reference_payload` in `design_workshops.py`, which is the authority.
          */
         const val LIVE_PAYLOAD = """
 {

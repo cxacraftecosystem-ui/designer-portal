@@ -32,8 +32,7 @@ import pytest
 
 # Importing this module is what installs the twenty-two stages into the registry.
 import app.services.stage_definitions  # noqa: F401
-from app.services import design_workshops as dw
-from app.services import entry_provenance as ep
+from app.services import design_workshops as dw, entry_provenance as ep
 from app.services.stage_schema import all_entities
 
 ASHA = SimpleNamespace(id="usr_asha", name="Asha Patel", role="DESIGNER")

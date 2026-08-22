@@ -451,9 +451,12 @@ class DwDeviceTierTest {
     fun `with the engine in the APK, Tier 1 goes straight to the model question`() {
         /*
          * **THE SHIPPED WORLD, PINNED.** `DW_TIER1_RUNTIME_PRESENT` is true, so no handset is told
-         * "This app has no speech engine of its own on this phone" — which is the sentence a designer
-         * was reading on a phone carrying 23.6 MB of exactly that, and the defect this lane existed
-         * to close.
+         * there is no engine here. The sentence a designer was reading on a phone carrying 23.6 MB of
+         * exactly that opened, at `ec46d2a`, *"This app has no speech engine of its own on this phone,
+         * and there is none published for it to fetch"*; `db97489` shortened that arm and kept the
+         * claim, so today's wording is *"This app has no speech engine of its own yet"*. Either way it
+         * is the defect this lane existed to close, and the quotation is dated because three other
+         * copies of it in this repository were not, and read as a quote of the current constant.
          *
          * Every answer below is now about the MODEL: whether this handset can hold 1.26 GB of
          * resident set with the margins intact. That is a fact about the phone, which is what this

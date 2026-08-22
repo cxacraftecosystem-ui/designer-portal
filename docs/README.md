@@ -86,11 +86,68 @@ flowchart TD
 | [RESEARCH_NOTES.md](RESEARCH_NOTES.md) | The measurement write-ups behind the engineering results |
 | [REPO_FACTS.md](REPO_FACTS.md) | **Generated.** Model and enum counts, the API surface, the role ladder, test counts, code volume |
 
+### Findings registers
+
+Two documents record what is **wrong** rather than how something works. They are separate on
+purpose and the difference decides which one you write in.
+
+| Document | Answers |
+|---|---|
+| [OPEN_FINDINGS.md](OPEN_FINDINGS.md) | The short, wholly actionable register: defects that have been through the fix-and-pin cycle, each with the test that pins it. Its header carries the open/closed counts, and its own worst failure has twice been an inaccurate count in that header |
+| [AUDIT-2026-08-15.md](AUDIT-2026-08-15.md) | A dated, frozen snapshot: the 2026-08-15 correctness audit of frontend, backend and Android, every finding anchored to a `file:line` in the tree **as it stood that day** and put through an adversarial verification pass. Its line pins are the record and are never re-pinned; closures are appended as dated `CLOSED` paragraphs. Items move from here into `OPEN_FINDINGS.md` when they are taken on |
+
+### Decisions
+
+Each records a choice, the argument for it, and — where it was later reversed — the losing argument
+kept in full, because a decision record that deletes the case it lost is worse than no record.
+
+| Document | The decision |
+|---|---|
+| [DECISION-identity-card-ocr-on-android.md](DECISION-identity-card-ocr-on-android.md) | Whether to bundle an on-device text recogniser to read an Aadhaar card on the handset. Argued no, on APK cost; **reversed by the user, and the recogniser ships** |
+| [DECISION-identity-card-ocr-on-web.md](DECISION-identity-card-ocr-on-web.md) | The same capability in the browser: no recogniser is bundled, lazily imported or fetched. The browser reads the card where it already can, through the Shape Detection API; everywhere else the server route does it |
+| [DECISION-qr-scanning-on-android.md](DECISION-qr-scanning-on-android.md) | Which QR decoder the handset uses, and the history of changing that answer twice. **Built:** ZXing, on both read surfaces, with the typed box never hidden |
+| [SALVAGED-BRANCHES-SUPERSEDED.md](SALVAGED-BRANCHES-SUPERSEDED.md) | Four `worktree-*` branches that look like unmerged feature work. Merging any of them regresses `main`; the table says why, branch by branch |
+| [PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md](PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md) | The three-tier AI plan and designer-defined sections. **Agreed in principle, not started** — and half of it is "stop building what already exists" |
+
+### Measurements
+
+Numbers taken off real hardware or real builds, kept apart from the documents that quote them so a
+figure has exactly one home. Every one of them states what was measured, when, and with what — and
+spells an unmeasured cell **unmeasured** rather than filling it from a spec sheet.
+
+| Document | What was measured |
+|---|---|
+| [DEVICE-TIER-MEASUREMENT.md](DEVICE-TIER-MEASUREMENT.md) | What each class of handset can actually run, through this app's own device-tier probe on the fleet's phone |
+| [TIER2-LANGUAGE-MODEL-MEASUREMENT.md](TIER2-LANGUAGE-MODEL-MEASUREMENT.md) | The on-device language model: what it costs and what it does on that handset |
+| [ASR-RUNTIME-MEASUREMENT.md](ASR-RUNTIME-MEASUREMENT.md) | The offline speech runtime weighed across eight real release builds — and why it is not in the build |
+| [DICTATION-LANGUAGE-PACK-MEASUREMENT.md](DICTATION-LANGUAGE-PACK-MEASUREMENT.md) | Which speech language packs the handset will actually admit to downloading, from raw logcat, read twice four days apart |
+| [DICTATION-DEVICE-VERIFICATION.md](DICTATION-DEVICE-VERIFICATION.md) | The microphone `ERROR_LANGUAGE_UNAVAILABLE` fix, verified on a Samsung SM-M325F rather than reasoned about |
+| [R8-MEASUREMENT.md](R8-MEASUREMENT.md) | What R8 shrinking takes off the release APK, both builds run on an idle machine |
+
+### The offline speech model
+
+Three documents about one capability, split by which half of it they specify.
+
+| Document | Answers |
+|---|---|
+| [ASR-RUNTIME-DOWNLOAD-CONTRACT.md](ASR-RUNTIME-DOWNLOAD-CONTRACT.md) | The client half: what the handset expects of an opt-in install, written as a specification for the server half before it existed |
+| [ASR-MODEL-HOSTING.md](ASR-MODEL-HOSTING.md) | The server half, as built: what an operator does to host the model and what the endpoint promises |
+| [ASR-MODEL-SIDELOAD.md](ASR-MODEL-SIDELOAD.md) | Getting the model onto a phone with a cable, for a handset with no data allowance. Same fingerprint check as a download, because it is the same code |
+
+### One-offs worth keeping
+
+| Document | Answers |
+|---|---|
+| [REPORT-DATA-WIRING.md](REPORT-DATA-WIRING.md) | The read-only research behind wiring artisan, product, process, tool and questionnaire data into the report. Notable for having had its `file:line` pins **removed** when they rotted — the episode that produced the checker's citation-drift test |
+| [STALE-IMAGE-TRAP.md](STALE-IMAGE-TRAP.md) | Two incidents in one day where the code was correct and the running container was not. Written down because the third will look different and cost the same hour |
+| [MARKET_RESEARCH.md](MARKET_RESEARCH.md) | The fourth, **dormant** capability of `backend/app/ai_features/`: finding what comparable products cost and who sells them. Off by default; a fresh clone behaves exactly as it did before it existed |
+
 ### Reference, not specification
 
 These two describe something other than this checkout's current behaviour, and each says so in its
-own opening lines. They are listed so that nothing in `docs/` is unlisted — an unlisted document is
-the one failure mode this index cannot check for itself.
+own opening lines. They are listed because everything in `docs/` is listed — a rule this page used
+to call "the one failure mode this index cannot check for itself" while being wrong about nineteen
+other documents, and which `docs/tools/check-docs.mjs` has enforced since 2026-08-22.
 
 | Document | What it actually is |
 |---|---|
@@ -138,6 +195,8 @@ It verifies the four things about documentation that *can* be verified:
 | **Line citations land inside their file** | `media.py:198-264` after the file shrank. It also *counts* citations per document and warns, because a citation that still fits is only possibly right — the durable fix is to cite symbol names |
 | **The backend and web role ladders agree** | `ROLE_RANK` drifting between `backend/app/core/deps.py` and `frontend/lib/permissions.ts`. This is the one genuine correctness check in the set |
 | **Every document has a maintenance section** | A new document shipping with no story for how it stays true |
+| **Every document in `docs/` is listed on this page** | The one failure mode an index cannot check by reading itself. It was wrong by nineteen documents — including the 2026-08-15 audit and the open-findings register — while the section below claimed the opposite in as many words |
+| **The handset's compiled-in API host matches the document that describes it** | `android/app/build.gradle.kts`'s `apiBaseUrl` default is a deploy target written as a string literal. The check ties it to [ENVIRONMENT.md](ENVIRONMENT.md)'s infrastructure table in **both** directions: while the two name different CloudFront distributions the document must carry the dated open question, and once they agree that block must be gone |
 | **Mermaid blocks are structurally sane** | An unclosed fence, a block with no diagram type, and the specific bug that broke a diagram here: a **semicolon inside a sequence-diagram message**, which Mermaid reads as a statement separator so everything after it parses as a new statement and the whole diagram renders as a red error box |
 
 It deliberately does **not** check whether a sentence is true. Nothing can. That is what each
@@ -241,9 +300,20 @@ Honest about its own state, since that is the standard the rest of the set is he
 It is an index, so it has exactly two ways to be wrong: a document exists and is not listed, or a
 document is listed and does not exist.
 
-The second is checked — `docs/tools/check-docs.mjs` resolves every relative link here and fails on a
-broken one. The first is not, and is the one to watch: **a new document must be added to the tables
-above in the same commit that creates it.** `ls docs/*.md` against this page's tables is the check,
-and it takes ten seconds.
+**Both are now checked.** The second always was — `docs/tools/check-docs.mjs` resolves every
+relative link here and fails on a broken one. The first is `checkIndexListsEveryDoc`, added
+2026-08-22, and it was added because the sentence that used to stand here said the first was *not*
+checked and asked a human to run `ls docs/*.md` against these tables — a ten-second check that
+nobody ran, so nineteen documents were missing, among them the 2026-08-15 audit and
+[OPEN_FINDINGS.md](OPEN_FINDINGS.md). "The one failure mode this index cannot check for itself" was
+true of the index and never true of the checker. **A new document must still be added to the tables
+above in the same commit that creates it** — the difference is that forgetting is now a red run
+rather than an invisible gap.
+
+The check tests only that each basename is *mentioned* here, not linked: one listed document is
+gitignored and absent from a clone, so requiring a link would fail the cross-link check instead. It
+cannot tell you whether the sentence beside a document is a fair description of it. That remains
+hand work, and it is the reason each row says what the document ANSWERS rather than what it is
+called.
 
 The "Known gaps" table is kept true by being embarrassing. Each row names the thing that closes it.

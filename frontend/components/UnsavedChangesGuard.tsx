@@ -26,6 +26,7 @@ export type LeaveInterceptor = () => boolean;
 type GuardApi = {
   /** Push an interceptor and get back the one call that removes THAT entry. */
   register: (interceptor: LeaveInterceptor) => () => void;
+  /** Ask the stack, innermost first, stopping at the first that blocks. See the provider. */
   intercept: () => boolean;
 };
 
@@ -45,15 +46,29 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
     interceptor for the rest of its life, so its back arrow silently stopped warning about unsaved
     work. Nothing on screen would say so, and the work is lost the first time somebody presses it.
 
-    Nothing in the tree hits that today — the design-workshop stage page keeps its draft in
-    IndexedDB and registers no guard, so no screen that currently hosts a reference picker also
-    holds one — which is exactly why it is worth fixing now, while it is cheap and while the reason
-    is still legible.
+    THE STAGE PAGE NOW HITS IT, WHICH IT DID NOT WHEN THE PARAGRAPH ABOVE WAS WRITTEN. Its own
+    draft is still durable in IndexedDB and it still registers no guard of its own — but four of its
+    entities now EMBED a repository record page (`StageRecordEmbed`), so the page hosts one or two of
+    those four forms directly, each with its own `useLeaveGuard`. Stage
+    TRADITIONAL_PROCESS_BASELINE is the two: `traditionalProcess` is a mirror-point SINGLETON, so its
+    `ProcessForm` is mounted from first paint, and `tool` is a mirror-point COLLECTION, so a
+    `ToolForm` joins it the moment any tool row is opened.
 
-    The TOPMOST registration answers, because the innermost form is the one the reader is typing in
-    and it is the one whose "Unsaved changes" dialog is on top of the stack of dialogs. Removal is
-    BY IDENTITY rather than by popping, so a teardown order React is free to choose cannot disarm
-    the wrong form.
+    ASKED IN ORDER, TOPMOST FIRST, UNTIL ONE TAKES RESPONSIBILITY — and it used to be "the topmost
+    answers, full stop". That was right while the stack could only be a page under a dialog, where
+    the top entry is the one the reader is typing in. It is wrong for two SIBLING forms on one page:
+    a dirty `ProcessForm` plus a freshly opened, clean `ToolForm` row meant the back arrow asked the
+    tool form, was told there was nothing to save, and navigated — the half-typed process gone with
+    no prompt. Walking down until something blocks keeps the innermost-first ordering that was
+    right about dialogs and stops a clean neighbour answering for a dirty one.
+
+    STILL AT MOST ONE DIALOG. The walk STOPS at the first interceptor that returns true, because
+    returning true means that form has already put its own "Unsaved changes" dialog on screen;
+    asking the rest would stack a second and a third over it. The designer answers one, and if
+    another form is also dirty the next attempt to leave meets that one.
+
+    Removal is BY IDENTITY rather than by popping, so a teardown order React is free to choose cannot
+    disarm the wrong form.
   */
   const interceptors = useRef<LeaveInterceptor[]>([]);
 
@@ -64,8 +79,13 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
     };
   }, []);
   const intercept = useCallback(() => {
-    const top = interceptors.current[interceptors.current.length - 1];
-    return top?.() ?? false;
+    // Copied before the walk: an interceptor may unregister as a side effect of being asked, and
+    // mutating the array being iterated would skip its neighbour.
+    const stack = [...interceptors.current];
+    for (let index = stack.length - 1; index >= 0; index -= 1) {
+      if (stack[index]()) return true;
+    }
+    return false;
   }, []);
   const value = useMemo(() => ({ register, intercept }), [register, intercept]);
 

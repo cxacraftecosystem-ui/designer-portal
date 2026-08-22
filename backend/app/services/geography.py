@@ -288,6 +288,50 @@ class _Votes:
 #: do not create it, and the atlas seed survives underneath.
 MAX_ANCHOR_ROWS = 5000
 
+#: THE OTHER HALF OF "WHICH ROWS MAY TEACH AN ANCHOR": only a ``Location`` some record still points
+#: at. AND this into both anchor reads.
+#:
+#: It lives beside the cap above and for the identical reason — two readers, and a predicate that
+#: differed between them would place the same district in two positions in two products of the same
+#: data.
+#:
+#: WHY IT IS NEEDED AT ALL: ``records.attach_location`` is INSERT-ONLY on the update path as well as
+#: the create path, and nothing in the backend ever updates or deletes a ``Location``. A CREATE is
+#: not the problem — ``attach_location`` ends with ``data["locationId"] = created.id``, so the row
+#: it mints is referenced by the record being written, and the media route does the same for each
+#: photograph. THE UPDATE PATH IS. Re-saving a record calls ``attach_location`` again, which INSERTS
+#: a second row and repoints ``locationId`` at it, abandoning the first — one orphan per re-save of
+#: a record whose pin was touched, for ever. Those abandoned rows are indistinguishable
+#: from live ones to a predicate that asks only for a subject pin — so a pin a researcher CORRECTED
+#: went on voting from beyond the grave, and every correction pulled the district mean back toward
+#: the place that had just been rejected. An anchor is a MEAN, which is what makes this quiet: the
+#: district still has a pin, it is simply in the wrong place by an amount nobody can see.
+#:
+#: THE SIX BRANCHES ARE THE SIX BACK-RELATIONS ``Location`` DECLARES, and that is the whole rule:
+#: referenced by anything, from any model, counts. ``tests/test_geography_anchor_scope.py`` reads the
+#: relation list out of ``prisma/schema.prisma`` and fails if a seventh model starts pointing here
+#: without being added — a missing branch would silently stop a whole record type's pins from voting,
+#: which is a worse failure than the one this fixes.
+#:
+#: This narrows what LEARNS an anchor. It does not narrow what is drawn on the map: a pin is drawn
+#: from the record that carries it, and a record's own location is referenced by definition.
+#:
+#: ``{"some": {}}`` — a relation filter with an EMPTY inner where, meaning "at least one, of any
+#: shape" — is not a form invented here. ``api/routes/data_browser.py:1359`` issues
+#: ``{"media": {"some": _and({}, scope.media)}}`` and ``_and`` returns its first argument untouched
+#: when the second is empty, so an unrestricted caller (which is every caller today) sends literally
+#: ``{"media": {"some": {}}}`` to the same query engine on the data-browser's hot path.
+REFERENCED_BY_A_RECORD: dict[str, list[dict[str, dict[str, dict]]]] = {
+    "OR": [
+        {"artisans": {"some": {}}},
+        {"workshops": {"some": {}}},
+        {"products": {"some": {}}},
+        {"tools": {"some": {}}},
+        {"media": {"some": {}}},
+        {"questionnaireInterviews": {"some": {}}},
+    ]
+}
+
 
 class DistrictAnchors:
     """Where each district IS, as far as this repository can tell.

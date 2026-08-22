@@ -1340,7 +1340,14 @@ async def save_answers(
     to_create: list[dict[str, Any]] = []
     to_update: list[tuple[str, dict[str, Any]]] = []
     unchanged = 0
-    for answer in answers:
+    # ONE ENTRY PER QUESTION, LAST WINS — the same collapse the validation above already performs
+    # with ``sorted({...})``. ``QuestionnaireFormAnswer`` is UNIQUE on ``(entryId, questionId)``, so a
+    # body naming one question twice built two INSERTs for it and the save came back as a bare 500
+    # instead of a saved sitting. Last wins rather than ``skip_duplicates`` (which would drop an
+    # answer the designer typed) and rather than first-wins (which would contradict the update
+    # branch below, where two entries for one stored row run two updates and the later one stands).
+    deduped = {answer.questionId: answer for answer in answers}
+    for answer in deduped.values():
         current = by_question.get(answer.questionId)
         if current is None:
             to_create.append(

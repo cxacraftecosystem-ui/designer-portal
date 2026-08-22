@@ -32,7 +32,7 @@ working one:
 
 WHAT WAS MISSING IS THE SURFACE THIS REPOSITORY EXISTS FOR: the 22-stage design workshop. A
 ``DwStageEntry`` carries a ``createdById`` — who created the ROW — and nothing else. A workshop is
-run by two designers sharing one set of rows through ``DesignWorkshopViewer``, and 81 field-pairs
+run by two designers sharing one set of rows through ``DesignWorkshopViewer``, and 107 field-pairs
 across 8 mappings are COPIED onto those rows from the shared records by ``hydrate_entries``. So on
 the one surface where a duplicate per designer genuinely exists, there was no answer at all to
 "who set this field" — not for the co-designer who typed over a hydrated value, and not for the
@@ -67,7 +67,7 @@ THE BOUNDARY, THEN, IS THE VALUE/AUTHORSHIP LINE, and it runs like this:
 
   * THE VALUE IS COPIED AND STAYS COPIED. This module does not make a stage entry sparse, does not
     resolve a hydrated field through its ``refId`` at read time, and does not remove a single one
-    of the 81 field-pairs. Doing any of those would be the exact defect ``REFERENCE_HYDRATION``
+    of the 107 field-pairs. Doing any of those would be the exact defect ``REFERENCE_HYDRATION``
     was written to prevent, and it would arrive on the surface where it costs the most: a .docx
     already in a ministry's files.
   * AUTHORSHIP IS NOT COPIED — IT IS ATTRIBUTED. A hydrated field's value belongs to the workshop

@@ -190,9 +190,34 @@ const EMPTY_STAGING_SUMMARY: EagerStagingSummary = {
  * Removal, failure, navigation and tab-close are all handled by the store in `lib/media`: discarding
  * a file aborts and deletes its object, an unmounted owner's unclaimed objects are deleted after a
  * short grace period, and anything that still slips through is reclaimed by the orphan sweep.
+ *
+ * ── `ownerKey`: WHEN THE SURFACE OUTLIVES THE COMPONENT ───────────────────────────────────────
+ * The default owner is `useId()`, which is a PER-MOUNT string, and that is right whenever the
+ * component's lifetime IS the surface's: the files were attached here, and when this goes away
+ * nobody is holding them any more.
+ *
+ * It is wrong wherever the same surface is unmounted and remounted while the files it attached stay
+ * alive somewhere above it. A design-workshop COLLECTION row does exactly that — the row's panel is
+ * unmounted the moment the row is collapsed, and the 244-row flagship workshop is why it must be —
+ * so a `useId()` owner made "collapse the row" indistinguishable from "the surface is gone": the
+ * two-second grace period expired, the in-flight transfer was aborted and the object ALREADY IN S3
+ * was deleted. Reopening the row said "Nothing attached yet". A caller that keeps its files above
+ * the mount passes a key derived from WHERE the files live rather than from this instance, so a
+ * remount inside the grace period cancels the release instead of racing it (`stageFiles` cancels a
+ * pending release for the owner it is called with, which is the whole mechanism).
+ *
+ * IT IS NOT ENOUGH ON ITS OWN, and must not be shipped on its own: a stable owner keeps the OBJECT
+ * alive across the remount, while the remounted component starts with an empty `files` array and so
+ * has nothing to link it to. The caller has to hoist the file list as well. See the note on
+ * `StagePendingMediaProvider` in `components/designworkshop/FieldInput.tsx` for the pairing.
  */
-export function useEagerStaging(files: File[], label = "Attach media"): EagerStagingSummary {
-  const ownerId = useId();
+export function useEagerStaging(
+  files: File[],
+  label = "Attach media",
+  ownerKey?: string
+): EagerStagingSummary {
+  const mountId = useId();
+  const ownerId = ownerKey || mountId;
   const { reportSection } = useUploads();
   const snapshot = useSyncExternalStore(subscribeStaging, getStagingSnapshot, getServerStagingSnapshot);
   const trackedRef = useRef<File[]>([]);

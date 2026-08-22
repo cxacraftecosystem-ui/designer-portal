@@ -351,7 +351,9 @@ just a yes.*
 ~~So today a designer sees a cost-integrity finding **on Android … and nowhere in a browser.** The web
 is the half that is still missing, and it is missing entirely: no port, no panel, no call to the
 endpoint.~~ **Closed 2026-08-20, and struck rather than deleted because it was quoted onward — into
-§4's re-run greps below and into the `workshop_cost_integrity` docstring.** A designer now sees the
+§4's re-run greps below and into the `workshop_cost_integrity` docstring (that docstring was
+corrected on 2026-08-22 and now states the two surfaces with the greps that check them — see §7).**
+A designer now sees the
 cost findings beside the costing stage in the browser as well, from `CostFindingsPanel` over the
 TypeScript port, with the endpoint as the fallback for a browser that holds no collections. **What
 the paragraph said about the ENDPOINT is still the interesting part and is unchanged**: neither
@@ -486,21 +488,27 @@ module. *Re-checked 2026-08-19; the Status column is that recheck.*
 |---|---|---|---|
 | ~~`cost_integrity.py` module docstring, and the comment in `analyse_cost_integrity`~~ | ~~`report_builder._child_groups`~~ | The method is `_parent_groups` | **CLOSED.** Both now cite `report_builder._parent_groups`; `grep -rn "_child_groups" backend/` is empty |
 | `backend/tests/test_report_child_grouping.py`, the docstring on `test_a_sheet_that_has_not_synced_yet_claims_none_of_the_orphans` | "`cost_integrity.summarise_sheets` guards the identical join" | There is no `summarise_sheets`. The join is in `analyse_cost_integrity` | **OPEN**, and it MOVED: `report_builder._parent_groups` was fixed and the test that repeats the same citation was missed. This one line is why §7's closure grep can never come back empty |
-| `workshop_cost_integrity` docstring in `backend/app/api/routes/design_workshops.py` | *now the opposite*: "a Kotlin `DwCostIntegrity` exists that nothing calls. **So no designer sees a cost-integrity finding on any surface today**", ending "Delete this paragraph when the ports and a panel land, not before" | The Kotlin port IS called — `DwFindingsPanel.CostFindingsCard`, mounted through `DwStageFindings` in `StageScreen`. **The browser half stopped being true on 2026-08-20**: `CostFindingsPanel` renders the findings over `lib/costIntegrity.ts` at the costing stage. §3.6 | **OPEN, wholly stale, and now safe to close.** The row used to record the docstring over-claiming ("also runs in the browser and on the handset"); somebody corrected it past true, and its closing instruction — "Delete this paragraph when the ports and a panel land, not before" — has been met on both surfaces. **The paragraph is in `backend/app/api/routes/design_workshops.py`, which this document does not own**: delete it there, then delete this row |
 | `frontend/lib/designWorkshopViewers.ts` header | "A design workshop is **currently** visible to exactly ONE account", and describes the viewer routes as "being built in parallel with this screen" | `load_workshop_or_404` has consulted `has_viewer_grant` since the grant landed, and all three routes exist | **OPEN.** The quoted `createdById != user.id and not admin` two-liner no longer exists in `design_workshops.py`; the live condition also consults `has_viewer_grant` |
 
-Rows 1 and 2 were the same mistake in both directions — two modules citing each other by a symbol
-neither has — and they matter more than they look, because both comments exist precisely to tell a
-future reader that the two joins must stay in step. **Fixing one side and not the other, which is
+The `_child_groups` / `summarise_sheets` pair — the first two rows — were the same mistake in both
+directions, two modules citing each other by a symbol neither has, and they matter more than they
+look, because both comments exist precisely to tell a future reader that the two joins must stay in
+step. **Fixing one side and not the other, which is
 what happened here, is the worst of the three outcomes:** a maintainer who greps for
 `summarise_sheets` now finds only the test, concludes the sibling guard was deleted, and edits one
 side of a join whose disagreement prints a fabricated material-cost breakdown under the wrong
 product.
 
-Row 3 is the pattern worth naming on its own. A docstring that ends "delete this paragraph when X
-lands, not before" is an instruction the next reader obeys — so when X lands and nobody deletes it,
-the sentence is not merely stale, it is armed. Prefer "true as of «date»; check `«grep»`" over an
-instruction that only a person who already knows the answer can act on.
+**The row this table no longer has is the pattern worth naming on its own, and it is named here
+rather than left as a numbered pointer that the next deletion would orphan.** The
+`workshop_cost_integrity` docstring in `backend/app/api/routes/design_workshops.py` said "no
+designer sees a cost-integrity finding on any surface today" and ended "delete this paragraph when
+the ports and a panel land, not before". A docstring that ends that way is an instruction the next
+reader obeys — so when X lands and nobody deletes it, the sentence is not merely stale, it is armed:
+the only reader who can act on it is one who already knows the answer, and the claim above it is
+exactly what stops them looking. Both ports landed (§3.6) and the paragraph outlived them.
+**Closed 2026-08-22**: the docstring now carries a dated statement and the two greps that re-check
+it, which is the shape to prefer over an instruction — "true as of «date»; check `«grep»`".
 
 ---
 

@@ -14,7 +14,7 @@ import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
 import { DosDontsField } from "@/components/forms/DosDontsField";
 import { DuplicateArtisanDialog } from "@/components/forms/DuplicateArtisanDialog";
-import type { InlineHostSeed, UseExistingArtisan } from "@/components/forms/inlineRecordHost";
+import type { InlineHostSeed, InlineRecordSurfaceProps, UseExistingArtisan } from "@/components/forms/inlineRecordHost";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
@@ -23,6 +23,7 @@ import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { RichTextField } from "@/components/richtext/RichTextField";
 import { appendStoredParagraph } from "@/components/richtext/storedRichText";
@@ -324,8 +325,10 @@ function StatusField({
 export function ArtisanForm({
   initial,
   seed,
+  footerFields,
   onCreated,
   onCancel,
+  onDiscardAndLeave,
   onQueued,
   onUseExisting
 }: {
@@ -361,7 +364,7 @@ export function ArtisanForm({
    * dialog and selects the record.
    */
   onCreated?: (record: Artisan) => void;
-}) {
+} & InlineRecordSurfaceProps) {
   const router = useRouter();
   const { user } = useAuth();
   const canSetStatus = hasRank(user, "PROFESSOR");
@@ -390,8 +393,41 @@ export function ArtisanForm({
   // the state living inside the field components — the Aadhaar digits, the Pehchan pair, the notes
   // rows, the Do's/Don'ts lists — which no amount of `form.reset()` can reach.
   const [formKey, setFormKey] = useState(0);
-  const { dirty, markDirty, resetDirty } = useUnsavedChanges();
+  const { dirty: typedSinceMount, markDirty, resetDirty } = useUnsavedChanges();
   const [backPromptOpen, setBackPromptOpen] = useState(false);
+  /**
+   * WHICH EXIT IS WAITING ON THAT PROMPT — this form's own Cancel button, or the back arrow in the
+   * page header. Both raise the same dialog, and until this flag existed both got the same answer.
+   *
+   * ── THE DEFECT ────────────────────────────────────────────────────────────────────────────
+   * "Discard" ran `resetDirty()` and then `leave()`, and `leave()` is `onCancel` — which in the
+   * design-workshop stage embed REMOUNTS THIS FORM IN PLACE, because that host is not a dialog and
+   * has nowhere to go. So a designer pressed Back, was asked, answered Discard, lost everything
+   * they had typed AND STAYED ON THE PAGE, with a second press of Back still needed to do the thing
+   * they had asked for. In a dialog the same wiring reads correctly, because the dialog visibly
+   * closes; that is why this went unnoticed until the form had a third host.
+   *
+   * ── WHY THE FLAG MARKS THE CANCEL BUTTON AND NOT THE ARROW ────────────────────────────────
+   * The arrow's route into the prompt is `useLeaveGuard`, which is handed a bare `onBlocked`
+   * callback and is registered once for the life of the mount — there is no per-press hook to set a
+   * flag from. The Cancel button is a call site of this component's own, so it is the one that can
+   * say who it is. It is cleared on every way OUT of the prompt, so "set" only ever describes the
+   * prompt currently on screen.
+   */
+  const [promptFromCancel, setPromptFromCancel] = useState(false);
+  /**
+   * Whether there is unsaved work this form must ask about before it is abandoned.
+   *
+   * THERE IS DELIBERATELY NO "EMBEDDED, SO DO NOT PROMPT" FLAG. The argument is written out in full
+   * in `inlineRecordHost.ts`'s header, and it is worth knowing here because the flag looks obviously
+   * right: the design-workshop stage page dropped its own unsaved-changes prompt on the grounds that
+   * every stage edit lands in a durable IndexedDB draft, so nothing is lost by leaving. That
+   * durability is a property of the STAGE's fields. It is not a property of this form's — the boxes
+   * here live in React state and in uncontrolled DOM and are read only at submit — so a host that
+   * suppressed the question would be discarding real work in silence, which is the one case that
+   * page's own reasoning reserves the prompt for. Make these fields durable first, or keep asking.
+   */
+  const dirty = typedSinceMount;
   // Hands the prompt to the round back control in the page header, which is now the only back
   // control on the page.
   useLeaveGuard(dirty, () => setBackPromptOpen(true));
@@ -513,9 +549,32 @@ export function ArtisanForm({
     else router.back();
   }
 
-  function handleBack() {
-    if (dirty) setBackPromptOpen(true);
+  /**
+   * Finish the exit the HOST'S OWN back control began, after "Discard" has answered for the typing.
+   *
+   * `useLeaveGuard` does not delay a navigation, it REFUSES one: the interceptor returns true, the
+   * back control abandons what it was doing, and this form is handed the question instead. So
+   * nothing is left in flight to resume — only the host knows where the arrow was going, and only
+   * the host can start it again. `onDiscardAndLeave` is how it says so.
+   *
+   * Falls back to the ordinary exit when no host supplies it, which is right for both other hosts:
+   * on this form's own route `leave()` is `router.back()`, which IS the navigation the arrow
+   * wanted, and in `InlineRecordDialog` closing the dialog is the whole of leaving it. Only a host
+   * that can be left without being closed — the stage embed — has anything to add. See
+   * `InlineRecordHostProps.onDiscardAndLeave`.
+   */
+  function leaveAfterDiscard() {
+    if (onDiscardAndLeave) onDiscardAndLeave();
     else leave();
+  }
+
+  function handleBack() {
+    // `promptFromCancel`: this is the form's own Cancel, so "Discard" must NOT complete a
+    // navigation nobody started — see the flag's declaration.
+    if (dirty) {
+      setPromptFromCancel(true);
+      setBackPromptOpen(true);
+    } else leave();
   }
 
   /**
@@ -696,6 +755,22 @@ export function ArtisanForm({
               "The artisan record was saved; re-open it to retry those files."
           );
           setSaving(false);
+          /*
+            ── THE RECORD IS REPORTED FIRST, THE UPLOAD FAILURE SECOND ────────────────────────
+            This branch used to `return` here, and the sentence it had just written says why that
+            was wrong: the artisan IS in the repository. Only the photographs are missing. But the
+            host was never told, so the stage row that opened this form stayed unlinked over a
+            record that exists — and an unlinked REF is not something the designer can see and
+            repair later: the stage 422s on submit, hours afterwards, naming a required reference
+            for a person they remember creating. A missing photograph is recoverable by re-opening
+            the record, which is what the message above tells them to do; a link nobody made is not.
+
+            THE ERROR IS SET BEFORE THE HANDOFF AND NOT INSTEAD OF IT. On the form's own page there
+            is no host, nothing unmounts, and the banner is read exactly as it always was. In the
+            dialog the host closes over it — that is the trade, and it is the same one the queued
+            branch above already makes.
+          */
+          if (onCreated) onCreated(saved);
           return;
         }
       }
@@ -748,6 +823,20 @@ export function ArtisanForm({
             </button>
           </div>
         </div>
+        {/*
+          THE CODE FOR THE RECORD THAT WAS JUST MADE, at the one moment somebody wants it.
+
+          The card is otherwise only on `/artisans/{id}/edit`, so a researcher who wanted to print a
+          tag for the artisan sitting in front of them had to save, find the record in a list and
+          re-open it — three navigations to reach a symbol that is a pure function of the id they
+          were just handed. Nothing is fetched and nothing is stored: `RecordCodeCard` draws it from
+          the type and the id (see its header).
+
+          THIS PANEL IS THE HOST-FREE PATH BY CONSTRUCTION. `savedRecord` is only ever set in the
+          `else` of `if (onCreated) … else if (initial) …`, so a dialog host — which closes on
+          create and never renders this — cannot reach it.
+        */}
+        <RecordCodeCard recordType="artisan" id={savedRecord.id} title={savedRecord.name} />
         <CarryForwardCards
           context={{
             artisanId: savedRecord.id,
@@ -762,6 +851,13 @@ export function ArtisanForm({
       </div>
     );
   }
+
+  /**
+   * The artisan named by the conflict panel, lifted into a const so the branch below can close over
+   * it. `conflict?.existingArtisan` is a property access, and a property narrowed in a test is not
+   * narrowed again inside the click handler that reads it.
+   */
+  const conflictArtisan = conflict?.existingArtisan ?? null;
 
   return (
     <>
@@ -778,13 +874,47 @@ export function ArtisanForm({
         {conflict ? (
           <div role="alert" className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm text-amber-800">
             <p className="font-medium">{conflict.message}</p>
-            {conflict.existingArtisan ? (
-              <Link className="mt-1 inline-block font-medium underline" href={`/artisans/${conflict.existingArtisan.id}/edit`}>
-                Open {conflict.existingArtisan.name}
-                {conflict.existingArtisan.place ? ` (${conflict.existingArtisan.place})` : ""}
-              </Link>
+            {/*
+              ── THE PANEL'S OWN WAY OUT IS HOST-AWARE, LIKE THE DIALOG'S ──────────────────────
+              `DuplicateArtisanDialog` is the one-time question and it was taught to hand the
+              artisan back (see `onOpenExisting` below); THIS panel is the reminder that stays on
+              screen after the question has been dismissed, and it still ended in a `<Link>` to
+              /artisans/{id}/edit. So the two controls that say the same thing disagreed about what
+              acting on it costs: dismiss the dialog, read the amber panel, follow its link, and the
+              half-filled 22-stage record the designer was standing in is gone — from the surface
+              that exists precisely so they never have to leave it.
+
+              A button and not an intercepted link, for the reason `AadhaarField` gives beside its
+              own copy of this control: with a host there is no navigation to intercept, and an
+              anchor is a middle-click away from leaving anyway. Only the id and the name cross —
+              `maskedValue` sits on the same payload and must never reach a stage entry, see
+              {@link UseExistingArtisan}.
+            */}
+            {conflictArtisan ? (
+              onUseExisting ? (
+                <button
+                  type="button"
+                  className="mt-1 inline-block font-medium underline"
+                  onClick={() => {
+                    // Same reasoning as the dialog's branch: taking the other record discards this
+                    // entry either way, so do not make them answer a second prompt on the way.
+                    resetDirty();
+                    onUseExisting(conflictArtisan);
+                  }}
+                >
+                  Use {conflictArtisan.name}
+                  {conflictArtisan.place ? ` (${conflictArtisan.place})` : ""}
+                </button>
+              ) : (
+                <Link className="mt-1 inline-block font-medium underline" href={`/artisans/${conflictArtisan.id}/edit`}>
+                  Open {conflictArtisan.name}
+                  {conflictArtisan.place ? ` (${conflictArtisan.place})` : ""}
+                </Link>
+              )
             ) : null}
-            <p className="mt-1 text-xs">Nothing was saved. Correct the number, or edit the existing record instead.</p>
+            <p className="mt-1 text-xs">
+              Nothing was saved. Correct the number, or {onUseExisting ? "use" : "edit"} the existing record instead.
+            </p>
           </div>
         ) : null}
         <div className="grid gap-3 md:grid-cols-2">
@@ -960,6 +1090,10 @@ export function ArtisanForm({
               // photographing it instead of typing twelve digits is the right offer. Android's
               // artisan form carries the same control under the same box.
               offerCardCapture
+              // The field's own duplicate warning ends in a link to the other artisan's edit page,
+              // which is a trapdoor out of a hosted form. Handed the same callback the duplicate
+              // dialog uses, it offers to USE that artisan instead. See `AadhaarField`'s prop.
+              onUseExisting={onUseExisting}
               onValueChange={markDirty}
             />
             <PehchanFields
@@ -1005,6 +1139,15 @@ export function ArtisanForm({
           statedPlace={initial?.place}
         />
         {uploadProgress ? <UploadProgress progress={uploadProgress} /> : null}
+        {/*
+          THE HOST'S OWN QUESTIONS, AT THE BOTTOM OF THE SAME LIST OF FIELDS — see
+          `InlineRecordHostProps.footerFields`. Inside the `<form>` and above the buttons, because a
+          design-workshop stage embedding this page asks a few things the artisan record does not
+          hold, and they have to read as the last fields of one form rather than as a second panel
+          under a form that has already ended. The separator is the only styling: nothing above it
+          is touched, and with no host there is no element at all.
+        */}
+        {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
         <div className="flex justify-end gap-2">
           <button type="button" className="field-button-secondary" onClick={handleBack}>
             Cancel
@@ -1055,17 +1198,31 @@ export function ArtisanForm({
       <UnsavedChangesDialog
         open={backPromptOpen}
         saving={saving}
-        onKeepEditing={() => setBackPromptOpen(false)}
+        onKeepEditing={() => {
+          setBackPromptOpen(false);
+          setPromptFromCancel(false);
+        }}
         onDiscard={() => {
           setBackPromptOpen(false);
+          setPromptFromCancel(false);
           resetDirty();
-          // `leave`, not `router.back()`: the prompt is as load-bearing in a dialog as on a page —
-          // closing the dialog still throws the typing away — but what "discard" DOES afterwards
-          // belongs to the host. See `leave`.
-          leave();
+          /*
+            NEITHER BRANCH IS `router.back()`: the prompt is as load-bearing in a dialog as on a
+            page — closing the dialog still throws the typing away — but what "discard" DOES
+            afterwards belongs to the host.
+
+            WHICH host act, though, depends on which control asked. Cancel means "empty this form,
+            I am staying", and in the stage embed that is exactly what `leave()` does. The back
+            arrow means "take me off this screen", and answering it with `leave()` alone is the
+            defect `promptFromCancel` exists for: the work was discarded and the designer did not
+            go anywhere.
+          */
+          if (promptFromCancel) leave();
+          else leaveAfterDiscard();
         }}
         onSave={() => {
           setBackPromptOpen(false);
+          setPromptFromCancel(false);
           formRef.current?.requestSubmit();
         }}
       />

@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * The QR code for one record, drawn live wherever that record is open, with an expanded view and a
- * download.
+ * The QR code for one record, drawn live wherever that record is open, with an expanded view, a
+ * download and a print.
  *
  * ── WHY THE CODE IS ON THE RECORD AND NOT ONLY ON A PRINT SHEET ──────────────────────────────
  *
@@ -11,6 +11,17 @@
  * tool wants the code for THAT tool: to stick on the tool, to hand to the officer asking which
  * record a photograph belongs to, to paste into a report. That is one code, from the screen the
  * record is already open on, and it must be reachable without printing forty of them.
+ *
+ * ── AND WHY PRINT STILL GOES THROUGH THAT SHEET ──────────────────────────────────────────────
+ *
+ * The Print control here does not draw a card of its own; it hands ONE card to the same
+ * `WorkshopCodeSheet` (`WorkshopCodePrintout`). Everything a printed tag needs is decided there and
+ * decided in millimetres — the 26mm QR box that keeps a module above the resolution floor of a
+ * handset camera, the cut guide, the name clamp that protects the printed code — and a second
+ * layout would be a second copy of those numbers, drifting quietly until a tag scanned on the
+ * designer's phone and on nobody else's. Same payload, same error-correction level Q, same geometry:
+ * one record has ONE symbol, whether it came off this screen or off a sheet of thirty. Two
+ * different-looking symbols for one record is exactly what makes somebody distrust a scan.
  *
  * ── IT IS GENERATED IN REAL TIME AND NOTHING IS SAVED ────────────────────────────────────────
  *
@@ -28,9 +39,10 @@
  *
  * ── WHAT IT WILL NOT DO ──────────────────────────────────────────────────────────────────────
  *
- * It prints no field of the record except the title its caller passes, and never an identity
- * number: `workshopCodes.ts` refuses to encode anything shaped like an Aadhaar or Pehchan number
- * before this component ever sees it, and a refusal is rendered as a sentence rather than swallowed.
+ * It shows and prints no field of the record except the title its caller passes, and never an
+ * identity number: `workshopCodes.ts` refuses to encode anything shaped like an Aadhaar or Pehchan
+ * number before this component ever sees it, and a refusal is rendered as a sentence rather than
+ * swallowed.
  * The DOWNLOADED FILE IS NAMED AFTER THE CODE, not after the record — a file called
  * `DPW1-A-CMSIK….png` can be mailed to anybody, and a file called `ram-kumar-aadhaar-card.png`
  * cannot. The code is the one string here that is opaque by construction.
@@ -44,9 +56,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Maximize2, QrCode } from "lucide-react";
+import { Download, Maximize2, Printer, QrCode } from "lucide-react";
 
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
+import { WorkshopCodePrintout } from "@/components/designworkshop/WorkshopCodeSheet";
 import { encodeQr, qrSvgPath, QrEncodeError, type QrSymbol } from "@/lib/qrEncode";
 import {
   encodeWorkshopCode,
@@ -62,7 +75,9 @@ import {
  * spends a fortnight in a workshop, where a thumbprint, a smear of dye or a fold across a corner is
  * the normal condition of a tag by day ten. Two surfaces drawing one record at two levels would
  * also produce two different-looking symbols for one record, which is exactly the kind of thing
- * that makes somebody doubt a scan.
+ * that makes somebody doubt a scan — and since the Print control below renders THROUGH the sheet,
+ * the two levels being equal is what makes the paper and the screen the same symbol rather than
+ * merely similar ones. `e2e/qr-surfaces-unit.spec.ts` pins them equal.
  */
 const ECC_LEVEL = "Q" as const;
 
@@ -263,8 +278,10 @@ function DownloadButtons({
 /**
  * The record's code, on the record.
  *
- * `title` is only ever used to NAME the symbol for a screen reader ("Code for Ram's loom") and to
- * head the expanded view. It is never encoded and never put in a file name — see the file header.
+ * `title` is only ever used to NAME the symbol for a screen reader ("Code for Ram's loom"), to head
+ * the expanded view, and to head the printed card — the same one line the print sheet already gives
+ * an artisan card, and for the same reason: a tag nobody can identify by eye is a tag that gets tied
+ * to the wrong object. It is never encoded and never put in a file name — see the file header.
  */
 export function RecordCodeCard({
   recordType,
@@ -281,6 +298,7 @@ export function RecordCodeCard({
 }) {
   const entry = useMemo(() => render(recordType, id), [recordType, id]);
   const [expanded, setExpanded] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -293,6 +311,28 @@ export function RecordCodeCard({
   const typeLabel = workshopRecordTypeLabel(recordType);
   const heading = title?.trim() || typeLabel;
   const symbolLabel = `Code for ${heading}`;
+
+  /**
+   * Put one card on paper.
+   *
+   * The check for `<main>` is here rather than inside the printout because THIS is where there is
+   * somewhere to say it. The print block un-hides a direct child of `#main-content`; with no such
+   * element the sheet would be mounted, hidden, and silently never printed — a Print button that
+   * does nothing, which is the worst of the three possible outcomes.
+   */
+  const startPrint = useCallback(() => {
+    if (!document.getElementById("main-content")) {
+      setProblem(
+        "This screen cannot be prepared for printing. Download the code as a PNG or an SVG and print the file instead."
+      );
+      return;
+    }
+    setProblem(null);
+    setPrinting(true);
+  }, []);
+
+  // Stable, because `WorkshopCodePrintout` re-runs its print effect when this identity changes.
+  const finishPrint = useCallback(() => setPrinting(false), []);
 
   const copy = useCallback(async (code: string) => {
     try {
@@ -352,6 +392,15 @@ export function RecordCodeCard({
                 <Maximize2 className="h-4 w-4" aria-hidden />
                 Expand
               </button>
+              {/* Offered here and NOT in the expanded dialog's footer, for the same reason Copy is
+                  only here: the dialog is portalled to <body>, so it is outside the group the print
+                  block hides, and printing from inside it would put a modal backdrop over the card.
+                  The stylesheet drops the overlay defensively anyway, but the button belongs where
+                  the page behind it is the thing being replaced. */}
+              <button type="button" className="field-button-secondary" onClick={startPrint} disabled={printing}>
+                <Printer className="h-4 w-4" aria-hidden />
+                {printing ? "Printing…" : "Print"}
+              </button>
               <DownloadButtons entry={entry} onProblem={setProblem} compact />
               <button type="button" className="field-button-secondary" onClick={() => copy(entry.code)}>
                 {copied ? "Copied" : "Copy code"}
@@ -375,6 +424,16 @@ export function RecordCodeCard({
         <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="status">
           {problem}
         </p>
+      ) : null}
+
+      {/* Mounted only for the length of one print: it carries the card sheet's global stylesheet,
+          whose @media print block hides most of the page, and a record screen that quietly printed
+          like a sheet of tags would be a surprise nobody asked for. */}
+      {entry.ok && printing ? (
+        <WorkshopCodePrintout
+          card={{ recordType, id, title: heading, key: entry.code }}
+          onFinished={finishPrint}
+        />
       ) : null}
 
       {entry.ok ? (

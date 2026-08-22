@@ -422,3 +422,96 @@ def test_the_search_route_carries_the_escape_all_the_way_into_the_where():
     """The funnel is only a funnel if the routes actually go through it."""
     wheres = asyncio.run(build_record_wheres(ADMIN, q="first_last@org"))
     assert wheres["artisans"]["OR"][0]["name"]["contains"] == r"first\_last@org"
+
+
+def test_no_route_still_hand_rolls_a_contains_filter():
+    r"""THE SWEEP, and the sweep IS the fix — five per-endpoint cases would not have stopped a sixth.
+
+    ``contains`` does two things no route can be relied on to remember: it strips the C0 control
+    bytes Postgres cannot store in a ``text`` column (a pasted NUL was a bare 500 from every search
+    box in the product) and it escapes the LIKE metacharacters, so a term holding ``_`` or ``%``
+    is MATCHED rather than honoured as a wildcard. Its docstring has claimed for a while that every
+    text search funnels through it. Five did not, and no count of the funnel's call sites could ever
+    have found them — a route that bypasses the funnel is, by construction, absent from the count:
+
+        access.py            the platform allow-list roster (email / fullName / notes)
+        designers.py         the designer roster (email / fullName / institution)
+        designers.py         the designer directory (name / email)
+        questionnaire_forms.py   the questionnaire list (title / description)
+        services/design_workshops.py   the REF picker's search box (spec.search_fields)
+
+    So this asserts the property instead of the five instances: a literal ``"contains"`` KEY in a
+    filter dict, anywhere under ``app/api/routes`` or ``app/services``, is a search box that skipped
+    the sanitiser. ``records.contains`` itself is the one legitimate writer of that key.
+
+    ``prose_contains`` is not an exception — it composes ``contains`` and returns its dict — so a
+    rich-text column is served by calling that, never by writing the key out by hand.
+    """
+    import ast
+    import pathlib
+
+    backend = pathlib.Path(__file__).resolve().parents[1] / "app"
+
+    # PARSED, NOT GREPPED, AND THE DIFFERENCE IS NOT PEDANTRY. This scan began as a regex over raw
+    # lines, and the first thing it did once the last real offender was fixed was fail on the
+    # COMMENT that records the fix: ``design_workshops.py`` explains at the top of the file that the
+    # REF picker "composed ``{"contains": …, "mode": "insensitive"}`` by hand", and to a text search
+    # a sentence quoting the defect is indistinguishable from the defect. That is a bad failure in
+    # the specific way a sweep cannot afford: it fires on the prose a fix is obliged to leave
+    # behind, so the cheapest way to make the suite green is to stop describing the bug — this
+    # repository's comments are load-bearing, and a test that taxes them will be obeyed.
+    #
+    # Walking the AST asserts the actual property instead: a ``contains`` key WRITTEN OUT IN CODE,
+    # which is what reaches Prisma. Comments and docstrings are not in the tree at all, so they cost
+    # nothing and no exemption has to be invented for them.
+    #
+    # ALL THREE SPELLINGS, because narrowing to the dict literal would have narrowed the sweep as
+    # well as sharpening it — the raw-line scan this replaced did catch ``d["contains"] = term``,
+    # and the sixth offender somebody writes is as likely to be built up key by key as declared in
+    # one literal. None of the three can occur inside a comment or a docstring, so widening this way
+    # does not reintroduce the failure the AST walk exists to prevent.
+    def _hand_rolled_lines(source: str) -> list[int]:
+        found: set[int] = set()
+        for node in ast.walk(ast.parse(source)):
+            # 1. the literal: {"email": {"contains": term, "mode": "insensitive"}}
+            if isinstance(node, ast.Dict):
+                if any(isinstance(k, ast.Constant) and k.value == "contains" for k in node.keys):
+                    found.add(node.lineno)
+            # 2. built up by subscript: clause["contains"] = term (also a read, which is just as
+            #    much a sign that a route is handling the raw filter itself).
+            elif isinstance(node, ast.Subscript):
+                index = node.slice
+                if isinstance(index, ast.Constant) and index.value == "contains":
+                    found.add(node.lineno)
+            # 3. the dict() constructor: dict(contains=term, mode="insensitive"). Only ``dict``,
+            #    because ``contains=`` is an ordinary keyword on anything else.
+            elif isinstance(node, ast.Call):
+                func = node.func
+                name = func.id if isinstance(func, ast.Name) else None
+                if name == "dict" and any(kw.arg == "contains" for kw in node.keywords):
+                    found.add(node.lineno)
+        return sorted(found)
+
+    # THERE IS NO ALLOW-LIST ANY MORE, AND THAT IS THE POINT OF THIS LINE STILL BEING HERE.
+    # ``services/design_workshops.py`` held the last exemption — the REF picker composed the raw
+    # filter for ``spec.search_fields`` — and it was carved out only because another change was in
+    # flight in that file. It now calls ``records.contains`` like the other five, so the set is
+    # empty. Do not reintroduce it: an allowance that outlives its reason is how a sweep stops
+    # sweeping, and the whole argument of this test is that the property beats the instances.
+    ALLOWED: set[str] = set()
+
+    offenders = []
+    for path in sorted([*(backend / "api" / "routes").glob("*.py"), *(backend / "services").glob("*.py")]):
+        # The helper's own definition is where the key is supposed to be written.
+        if path.name == "records.py" and path.parent.name == "services":
+            continue
+        if f"{path.parent.name}/{path.name}" in ALLOWED:
+            continue
+        for lineno in _hand_rolled_lines(path.read_text(encoding="utf-8")):
+            offenders.append(f"{path.parent.name}/{path.name}:{lineno}")
+
+    assert not offenders, (
+        "these compose a Prisma `contains` filter by hand, so the NUL strip and the LIKE escape in "
+        "`records.contains` never run for them — a pasted control byte is a 500 and a typed `_` "
+        "silently widens the result:\n" + "\n".join(offenders)
+    )

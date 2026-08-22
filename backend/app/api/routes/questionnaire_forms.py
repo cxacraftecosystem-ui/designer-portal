@@ -86,7 +86,13 @@ from app.services.questionnaire_xlsx import (
     parse_questionnaire_workbook,
     question_set_filename,
 )
-from app.services.records import clean_data, public_encode, require_record
+from app.services.records import (
+    clean_data,
+    contains,
+    public_encode,
+    require_record,
+    with_id_tiebreak,
+)
 
 router = APIRouter(prefix="/questionnaires", tags=["questionnaires"])
 
@@ -96,6 +102,42 @@ router = APIRouter(prefix="/questionnaires", tags=["questionnaires"])
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 _XLSX_SUFFIXES = (".xlsx", ".xlsm", ".xltx")
+
+
+# EACH PATCH'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null`` through
+# for, so emptying a box on the questionnaire editor actually empties the column instead of answering
+# 200 and keeping the old text. Four models, four different lists, for the reason ``clean_data``'s
+# ``clearable`` docstring gives: the set is per MODEL and a global one would trade a silent no-op on
+# one table for a constraint violation on another.
+#
+# MODULE CONSTANTS RATHER THAN TUPLES WRITTEN INLINE AT THE CALL, matching the four record routes.
+# That is what lets ``tests/test_record_patch_clearing`` derive each expected list from
+# ``schema.prisma`` and compare it with what the ROUTE declares. A test that retyped these names
+# would agree with itself and would never notice a newly nullable column nobody wired up — which is
+# exactly how ``description`` here, and ``phone`` on the artisan route, became a 200 that did nothing.
+#
+# Every one of these is only sound because its PATCH dumps with ``exclude_unset=True``; see the note
+# at each call site.
+
+#: ``Questionnaire``. ``sourceFilename`` is nullable too but ``QuestionnaireUpdate`` does not accept
+#: it — the uploader names the file, not an editor — and ``title``/``isActive`` are NOT NULL.
+_QUESTIONNAIRE_CLEARABLE_COLUMNS = ("description", "designWorkshopId")
+
+#: ``QuestionnaireFormQuestion``. ``retiredAt`` and ``supersededById`` are nullable as well, but they
+#: belong to the retirement machinery — written by the supersede branch in ``update_question``, never
+#: by an editor — and ``CustomQuestionUpdate`` cannot reach either.
+_QUESTION_CLEARABLE_COLUMNS = ("helpText",)
+
+#: ``QuestionnaireFormEntry``, and here the PII case is the whole point: ``respondentName`` is the
+#: person interviewed and ``notes`` is what was written down about them during the sitting. ``title``
+#: is NOT NULL.
+_ENTRY_CLEARABLE_COLUMNS = ("respondentName", "notes")
+
+#: ``QuestionnaireFormSection`` — EMPTY, and empty on purpose rather than by omission. The model has
+#: no nullable column at all, so there is nothing an explicit null could legitimately clear. It is
+#: still declared, and still passed, so that the completeness test reads a route's answer for this
+#: model instead of a silence it would have to interpret.
+_SECTION_CLEARABLE_COLUMNS: tuple[str, ...] = ()
 
 
 # --- Access -------------------------------------------------------------------------------------
@@ -585,9 +627,12 @@ async def list_questionnaires(
     if designWorkshopId:
         where["designWorkshopId"] = designWorkshopId
     if search:
+        # ``records.contains``, not a hand-rolled filter: it strips the control bytes Postgres cannot
+        # store (a pasted NUL was a bare 500 from this box) and escapes the LIKE metacharacters, so a
+        # title typed with an underscore matches that title rather than every questionnaire.
         where["OR"] = [
-            {"title": {"contains": search, "mode": "insensitive"}},
-            {"description": {"contains": search, "mode": "insensitive"}},
+            {"title": contains(search)},
+            {"description": contains(search)},
         ]
     if mineOnly:
         # An explicit "mine" means MINE — the ones this designer uploaded — and must not quietly
@@ -604,7 +649,9 @@ async def list_questionnaires(
         where=where,
         skip=skip,
         take=clean_size,
-        order={"createdAt": "desc"},
+        # Paged over a non-unique sort key, so the ``id`` tiebreak is what stops a questionnaire
+        # appearing on two pages while another appears on none. See ``records.with_id_tiebreak``.
+        order=with_id_tiebreak({"createdAt": "desc"}),
         include={"owner": True, "designWorkshop": True},
     )
     summaries = [
@@ -756,16 +803,25 @@ async def update_questionnaire(
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
-    data = clean_data(payload.model_dump(exclude_unset=True), title_case=False)
-    # designWorkshopId is the one field here that is meaningfully NULLABLE — sending null detaches
-    # the questionnaire from its workshop — so it is put back after clean_data drops it.
-    if "designWorkshopId" in payload.model_fields_set:
-        data["designWorkshopId"] = payload.designWorkshopId
-        if payload.designWorkshopId:
-            # `_require_owner` above answered a DIFFERENT question — who owns this QUESTIONNAIRE —
-            # and owning the form has never said anything about the workshop it is being pointed at.
-            # The `if` is the detach case passing through unchecked, on purpose; see the helper.
-            await _require_attachable_workshop(payload.designWorkshopId, current_user)
+    # ``Questionnaire``'s own nullable scalars; the list and the reasoning for what is left out of it
+    # are at ``_QUESTIONNAIRE_CLEARABLE_COLUMNS`` above. ``designWorkshopId`` used to be the only one
+    # named here, and it was named by hand — put back into ``data`` after ``clean_data`` had dropped it —
+    # on the claim that it was "the one field here that is meaningfully NULLABLE". It was not:
+    # ``description`` is ``String?`` too, so emptying the description box answered 200 and left the
+    # old description in the database and in every render of the form. Both go through ``clearable``
+    # now, which is the mechanism the rest of the write paths use, so there is one rule to keep in
+    # step instead of two. Valid only because this dump is ``exclude_unset=True``.
+    data = clean_data(
+        payload.model_dump(exclude_unset=True),
+        title_case=False,
+        clearable=_QUESTIONNAIRE_CLEARABLE_COLUMNS,
+    )
+    if data.get("designWorkshopId"):
+        # `_require_owner` above answered a DIFFERENT question — who owns this QUESTIONNAIRE —
+        # and owning the form has never said anything about the workshop it is being pointed at.
+        # The truthiness test is the detach case (`None`) passing through unchecked, on purpose;
+        # see the helper.
+        await _require_attachable_workshop(data["designWorkshopId"], current_user)
     if "title" in data:
         data["title"] = data["title"].strip()
     if data:
@@ -827,7 +883,20 @@ async def update_section(
     section = await require_record(db.questionnaireformsection, section_id)
     if section.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-    data = clean_data(payload.model_dump(exclude_unset=True), title_case=False)
+    # AN EMPTY ``clearable``, AND THAT IS THE MEASURED ANSWER RATHER THAN AN OVERSIGHT.
+    # ``model QuestionnaireFormSection`` has no nullable column at all — id, questionnaireId, code,
+    # title, sortOrder, isActive, createdAt, updatedAt are every one of them NOT NULL — so there is
+    # nothing on this model an explicit null could legitimately clear. The three sibling PATCHes in
+    # this module each name their own; this one names none because it has none.
+    #
+    # Passed EXPLICITLY, as ``_SECTION_CLEARABLE_COLUMNS``, rather than left off the call: an omitted
+    # argument and a deliberately empty one look identical from here, and the completeness test needs
+    # this route to have stated an answer for this model rather than said nothing.
+    data = clean_data(
+        payload.model_dump(exclude_unset=True),
+        title_case=False,
+        clearable=_SECTION_CLEARABLE_COLUMNS,
+    )
     if "title" in data:
         data["title"] = data["title"].strip()
     if data:
@@ -902,9 +971,16 @@ async def update_question(
             }
         )
 
-    data = clean_data(payload.model_dump(exclude_unset=True), title_case=False)
-    if "helpText" in payload.model_fields_set:
-        data["helpText"] = payload.helpText
+    # ``helpText`` is the only nullable column ``CustomQuestionUpdate`` can reach; the list and what
+    # is left out of it are at ``_QUESTION_CLEARABLE_COLUMNS`` above, including why the retirement
+    # machinery's columns stay out. It used to be put back by hand after ``clean_data`` had dropped it; it goes
+    # through ``clearable`` now so this route uses the same mechanism as its siblings instead of a
+    # second one that has to be remembered. Valid only because this dump is ``exclude_unset=True``.
+    data = clean_data(
+        payload.model_dump(exclude_unset=True),
+        title_case=False,
+        clearable=_QUESTION_CLEARABLE_COLUMNS,
+    )
     if "prompt" in data:
         data["prompt"] = data["prompt"].strip()
     section_id = data.pop("sectionId", None)
@@ -1060,7 +1136,19 @@ async def update_entry(
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=True
     )
-    data = clean_data(payload.model_dump(exclude_unset=True), title_case=False)
+    # ``QuestionnaireFormEntry``'s own nullable scalars — the list is at
+    # ``_ENTRY_CLEARABLE_COLUMNS`` above — and on this route the PII case is the whole point:
+    # ``respondentName`` is the name of the person interviewed and ``notes`` is what was written down
+    # about them during the sitting. A researcher told to retract either had no way to do it — the
+    # null was stripped, the PATCH answered 200, and the name stayed on the row and in the
+    # questionnaire annexure. ``title`` is NOT NULL (and stripped below), ``source`` and
+    # ``createdById`` are NOT NULL and not on the schema. Valid only because this dump is
+    # ``exclude_unset=True``.
+    data = clean_data(
+        payload.model_dump(exclude_unset=True),
+        title_case=False,
+        clearable=_ENTRY_CLEARABLE_COLUMNS,
+    )
     if "title" in data:
         data["title"] = data["title"].strip()
     if data:

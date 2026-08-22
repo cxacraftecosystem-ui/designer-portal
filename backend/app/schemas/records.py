@@ -307,6 +307,39 @@ class WorkshopUpdate(APIModel):
         return self
 
 
+# ---------------------------------------------------------------------------------------------
+# NON_NEGATIVE_MEASURES — why every dimension and every money column on Product and Tool carries
+# ``ge=0``, on BOTH the create and the update model.
+#
+# A length, a weight, a radius, a cost of making, a replacement cost: none of them has a negative
+# value that means anything. The design-workshop registry already says so — the fields these
+# columns are carried into (``product.lengthCm``, ``product.costOfMaking``, ``tool.lengthCm``,
+# ``tool.cost``) are declared ``min_value=0`` in ``services/stage_definitions.py``. Without the
+# bound here a researcher could type "-40", have it stored, have it hydrated into a workshop stage,
+# and only THEN meet the refusal — on a row the repository itself had filled in.
+#
+# THE BOUND IS A PAIR, AND ONE HALF ALONE IS WORSE THAN NEITHER. The browser half (``min={0}`` on
+# the inputs in ``frontend/components/forms/ProductForm.tsx`` and ``ToolForm.tsx``) is what names
+# the offending box to the researcher — the forms set no ``noValidate``, so constraint validation
+# runs, blocks the submit and focuses the input. This half is what holds for Android, for the
+# outbox replaying a queued body, and for anything speaking to the API directly. Only ``yearsInUse``
+# (and ``experienceYears`` on Artisan) had both halves before; the rest had neither.
+#
+# THE UPDATE MODELS ARE BOUNDED TOO, DELIBERATELY, AND IT IS NOT FREE. The web forms PATCH the WHOLE
+# payload, not a delta, so a row already holding a negative would post that negative back on the
+# next edit and 422 the record as a whole. That is why the browser half matters: on the web the
+# refusal arrives as "Value must be greater than or equal to 0" against the named box, before any
+# request, and correcting it is one keystroke in the edit the researcher was already making.
+# Leaving update unbounded was the alternative, and it would have left the hole the pair exists to
+# close — every non-browser client could still write a negative into a column create refuses.
+# ``yearsInUse`` and ``experienceYears`` already made this trade the same way.
+#
+# NOT MEASURED: whether any stored row is negative today. Postgres is not reachable on this machine
+# (Docker down), so the count is unknown rather than zero. If one exists, its next edit is refused
+# at the box until the number is corrected.
+# ---------------------------------------------------------------------------------------------
+
+
 class ProductCreate(APIModel):
     craftName: str = Field(min_length=1, max_length=180)
     place: str = Field(min_length=1, max_length=180)
@@ -316,14 +349,16 @@ class ProductCreate(APIModel):
     productType: str = "OTHER"
     timeTakenToCompleteProduct: str | None = None
     size: str | None = None
-    lengthInches: Decimal | None = None
-    breadthInches: Decimal | None = None
-    heightInches: Decimal | None = None
+    # QUANTITIES THAT CANNOT BE NEGATIVE, BOUNDED HERE AND IN THE BOX. See NON_NEGATIVE_MEASURES
+    # above for why both halves are needed and what the update half costs.
+    lengthInches: Decimal | None = Field(default=None, ge=0)
+    breadthInches: Decimal | None = Field(default=None, ge=0)
+    heightInches: Decimal | None = Field(default=None, ge=0)
     measurementImageId: str | None = None
     measurementAnalysis: dict[str, Any] | None = None
     measurementAnalysisStatus: str | None = None
-    costOfMaking: Decimal | None = None
-    sellingPrice: Decimal | None = None
+    costOfMaking: Decimal | None = Field(default=None, ge=0)
+    sellingPrice: Decimal | None = Field(default=None, ge=0)
     marketDemand: str = "UNKNOWN"
     rawMaterialsUsed: str | None = None
     mainToolsUsed: str | None = None
@@ -353,14 +388,15 @@ class ProductUpdate(APIModel):
     productType: str | None = None
     timeTakenToCompleteProduct: str | None = None
     size: str | None = None
-    lengthInches: Decimal | None = None
-    breadthInches: Decimal | None = None
-    heightInches: Decimal | None = None
+    # Bounded on update as well as create — see NON_NEGATIVE_MEASURES above.
+    lengthInches: Decimal | None = Field(default=None, ge=0)
+    breadthInches: Decimal | None = Field(default=None, ge=0)
+    heightInches: Decimal | None = Field(default=None, ge=0)
     measurementImageId: str | None = None
     measurementAnalysis: dict[str, Any] | None = None
     measurementAnalysisStatus: str | None = None
-    costOfMaking: Decimal | None = None
-    sellingPrice: Decimal | None = None
+    costOfMaking: Decimal | None = Field(default=None, ge=0)
+    sellingPrice: Decimal | None = Field(default=None, ge=0)
     marketDemand: str | None = None
     rawMaterialsUsed: str | None = None
     mainToolsUsed: str | None = None
@@ -425,20 +461,22 @@ class ToolCreate(APIModel):
     englishName: str | None = None
     processUsedIn: str | None = None
     material: str | None = None
+    # `yearsInUse` has carried this bound since it was added; every measurement beside it and the
+    # replacement cost below now do too. See NON_NEGATIVE_MEASURES above.
     yearsInUse: int | None = Field(default=None, ge=0)
-    height: Decimal | None = None
-    width: Decimal | None = None
-    lengthInches: Decimal | None = None
-    breadthInches: Decimal | None = None
+    height: Decimal | None = Field(default=None, ge=0)
+    width: Decimal | None = Field(default=None, ge=0)
+    lengthInches: Decimal | None = Field(default=None, ge=0)
+    breadthInches: Decimal | None = Field(default=None, ge=0)
     measurementImageId: str | None = None
     measurementAnalysis: dict[str, Any] | None = None
     measurementAnalysisStatus: str | None = None
-    thickness: Decimal | None = None
-    weight: Decimal | None = None
-    radius: Decimal | None = None
+    thickness: Decimal | None = Field(default=None, ge=0)
+    weight: Decimal | None = Field(default=None, ge=0)
+    radius: Decimal | None = Field(default=None, ge=0)
     maker: str = "UNKNOWN"
     traditionType: str = "UNKNOWN"
-    replacementCost: Decimal | None = None
+    replacementCost: Decimal | None = Field(default=None, ge=0)
     suggestionsForToolImprovement: str | None = None
     remarks: str | None = None
     artisanId: str | None = None
@@ -465,20 +503,21 @@ class ToolUpdate(APIModel):
     englishName: str | None = None
     processUsedIn: str | None = None
     material: str | None = None
+    # Bounded on update as well as create — see NON_NEGATIVE_MEASURES above.
     yearsInUse: int | None = Field(default=None, ge=0)
-    height: Decimal | None = None
-    width: Decimal | None = None
-    lengthInches: Decimal | None = None
-    breadthInches: Decimal | None = None
+    height: Decimal | None = Field(default=None, ge=0)
+    width: Decimal | None = Field(default=None, ge=0)
+    lengthInches: Decimal | None = Field(default=None, ge=0)
+    breadthInches: Decimal | None = Field(default=None, ge=0)
     measurementImageId: str | None = None
     measurementAnalysis: dict[str, Any] | None = None
     measurementAnalysisStatus: str | None = None
-    thickness: Decimal | None = None
-    weight: Decimal | None = None
-    radius: Decimal | None = None
+    thickness: Decimal | None = Field(default=None, ge=0)
+    weight: Decimal | None = Field(default=None, ge=0)
+    radius: Decimal | None = Field(default=None, ge=0)
     maker: str | None = None
     traditionType: str | None = None
-    replacementCost: Decimal | None = None
+    replacementCost: Decimal | None = Field(default=None, ge=0)
     suggestionsForToolImprovement: str | None = None
     remarks: str | None = None
     artisanId: str | None = None

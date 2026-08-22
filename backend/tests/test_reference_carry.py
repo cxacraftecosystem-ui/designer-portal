@@ -2887,8 +2887,17 @@ def test_the_hydration_table_grew_and_no_pair_was_lost():
     ):
         assert REFERENCE_HYDRATION[path][source] == target
 
+    # THE FLOOR IS MEASURED, NOT REMEMBERED. It said 81 until 2026-08-22, which was the count at
+    # some earlier point in the same lane — the table had already grown past it, so the assertion
+    # was passing with 26 pairs of slack and would have gone on passing through the removal of a
+    # quarter of the carry. A floor with slack in it is a floor that is not holding anything up.
+    # Re-measure before raising it again:
+    #   PYTHONUTF8=1 .venv/Scripts/python.exe -c "import app.services.stage_definitions; \
+    #     from app.services.stage_schema import REFERENCE_HYDRATION; \
+    #     print(sum(len(m) for m in REFERENCE_HYDRATION.values()))"
     pairs = sum(len(m) for m in REFERENCE_HYDRATION.values())
-    assert pairs >= 81, (
-        f"the carry is down to {pairs} field-pairs; it was 32 before this lane and 81 after, and "
-        "a drop means a mapping was removed rather than a source column disappearing"
+    assert pairs >= 107, (
+        f"the carry is down to {pairs} field-pairs; it was 32 before this lane and 107 as measured "
+        "on 2026-08-22, and a drop means a mapping was removed rather than a source column "
+        "disappearing"
     )

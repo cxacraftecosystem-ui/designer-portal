@@ -1,16 +1,25 @@
 # Scanning a QR code on the handset: ZXing, not ML Kit — and in the end, neither, and now ZXing after all
 
-> ## STATUS, 2026-08-16: BUILT. ZXing SHIPS, AND BOTH READ SURFACES SCAN AND ACCEPT A PICTURE.
+> ## STATUS, 2026-08-22: BUILT. ZXing SHIPS, AND EVERY CODE SURFACE SCANS AND ACCEPTS A PICTURE.
 >
 > This supersedes the 2026-08-15 banner, which is kept immediately below because the shape of this
 > file's history is most of what makes it useful.
 >
 > * **Shipping:** `com.google.zxing:core:3.5.3` in `android/app/build.gradle.kts`.
-> * **Where:** one shared control, `ui/DwQrScanControl.kt`, mounted on BOTH read surfaces —
->   `WorkshopCodesScreen.kt` (Cards & tags) and `RecordCodeLookup.kt` (Search). Each offers a camera
->   photograph AND a picture the designer already holds. The decoding lives in `data/DwQrDecode.kt`.
-> * **The typed box is untouched on both surfaces** and is still never hidden. That was this
->   document's load-bearing condition and it remains satisfied.
+> * **Where:** one shared control, `ui/DwQrScanControl.kt`, mounted on THREE surfaces —
+>   `WorkshopCodesScreen.kt` (Cards & tags), `RecordCodeLookup.kt` (Search), and
+>   `ui/designworkshop/DwReferenceField.kt` (`DwReferenceScanPanel`, the reference picker inside a
+>   stage, added 2026-08-22). Each offers a camera photograph AND a picture the designer already
+>   holds. The decoding lives in `data/DwQrDecode.kt`.
+> * **The third surface LINKS rather than OPENS**, and it is the reason the count moved from two to
+>   three. The first two answer "what record is this" and navigate to it; the picker judges the same
+>   payload against a field's own `refModel`, workshop scope and cascade, and a code that resolves
+>   fills a join key on the row being typed. The shared control is unchanged by that — it still hands
+>   back a raw payload and knows nothing of the grammar — which is what let a third mount cost no
+>   second copy of the refusal wording.
+> * **The typed box is untouched on all three surfaces** and is still never hidden. That was this
+>   document's load-bearing condition and it remains satisfied; on the picker it sits beside a
+>   searchable dropdown that needs no camera either, so that surface has two lensless routes.
 > * **The camera is a SHUTTER, not a live preview.** No CameraX, no frame loop — a photograph is
 >   taken and decoded, the same shape `DwIdentityCardControl` uses. A live scanner is still the next
 >   thing to add and CameraX is still what it costs.
@@ -172,7 +181,8 @@ to agree with later code, but a reader has to be told which sentences still desc
 *This section described the state of the tree from 2026-08-08 to 2026-08-16 and is kept because the
 account of how a decision came to be un-built is the most useful thing in this file. Everything below
 this paragraph is history: `com.google.zxing:core:3.5.3` is in the build file, `data/DwQrDecode.kt`
-decodes with it, and `ui/DwQrScanControl.kt` is mounted on both surfaces. See the status banner.*
+decodes with it, and `ui/DwQrScanControl.kt` is mounted on three surfaces — two as of 2026-08-16 and
+the reference picker since 2026-08-22. See the status banner.*
 
 *Re-checked against the tree on 2026-08-15: still true, still nothing. This finding is now also stated
 in the banner at the top of the file — it was written here first and, being here, it was reaching
@@ -214,11 +224,14 @@ kept because it is the reasoning that led to the work.
 | The artifact sizes in the table | Read from the publishing repositories on 2026-08-08 at the pinned versions, and true only of those versions. Re-read from Maven Central before quoting one; never infer a current size from a version bump. |
 | "The unbundled variant downloads its model on first use" | A property of the library, not of this repository — the one claim here that cannot rot under us. It is the load-bearing premise, so if it is ever wrong the whole decision reopens. |
 | What actually ships | `android/app/build.gradle.kts`, plus the two file headers named above. **Check the code, not this heading** — that is the lesson of §1. |
-| "The typed code remains on every surface and is the guaranteed path" | `frontend/components/designworkshop/WorkshopCodeScanner.tsx`, `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/WorkshopCodesScreen.kt`, `android/app/src/main/java/com/designprototype/workshop/ui/RecordCodeLookup.kt`. This is now doing more work than it was when it was written: with no camera on Android at all, it is not a safety net, it is the entire feature. A surface that ever hides the typed field invalidates the decision rather than merely degrading it. |
+| "The typed code remains on every surface and is the guaranteed path" | `frontend/components/designworkshop/WorkshopCodeScanner.tsx`, `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/WorkshopCodesScreen.kt`, `android/app/src/main/java/com/designprototype/workshop/ui/RecordCodeLookup.kt`, and — since 2026-08-22 — `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwReferenceField.kt` (`DwReferenceScanPanel`, where a code links a record onto a stage row rather than opening it). **This list is the evidence and it has to grow with the mounts**; it was written when there were two and stayed at two through a third, which is the same rot as §1 one size down. A surface that ever hides the typed field invalidates the decision rather than merely degrading it. |
 
 **Review triggers:** ~~any barcode or QR dependency appearing in `android/app/build.gradle.kts`~~
 — *this one fired on 2026-08-16 and the document was updated rather than left to rot; it stands for
-any FURTHER change to that dependency*; a change to either scanner header above; the arrival of
+any FURTHER change to that dependency*; **a NEW MOUNT of `DwQrScanControl`** — this one fired on
+2026-08-22 and the mount list, the "how many surfaces" phrasing and the evidence row above all had to
+move together, which is why it is written down as a trigger rather than left to be noticed; a change
+to any scanner header above; the arrival of
 CameraX or any live-preview scanning, which is the one capability deliberately not built here;
 a change to `DW_QR_SAMPLE_LADDER`, whose rungs depend on the 2-pixels-per-module floor measured in
 `DwQrDecodeTest`.

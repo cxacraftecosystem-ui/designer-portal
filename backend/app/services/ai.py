@@ -20,12 +20,12 @@ from app.services import (
     user_ai_keys,
 )
 from app.services.ai_providers import AiProvider, AiTask
-from app.services.user_ai_keys import AiCredential
 from app.services.measurement_provenance import (
     MeasurementProvenance,
     self_reported_confidence,
     vision_model_provenance,
 )
+from app.services.user_ai_keys import AiCredential
 
 logger = logging.getLogger(__name__)
 

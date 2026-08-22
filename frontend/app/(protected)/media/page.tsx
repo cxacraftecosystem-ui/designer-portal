@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AudioLines, Images, Loader2, Upload } from "lucide-react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { AudioLines, Images, Loader2, QrCode, Upload } from "lucide-react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
@@ -17,6 +17,7 @@ import { UploadProgress } from "@/components/media/UploadProgress";
 import { UploadTray } from "@/components/media/UploadTray";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -237,6 +238,14 @@ function MediaPageBody() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [transcribingId, setTranscribingId] = useState<string | null>(null);
+  /**
+   * Which file has its code open, or null.
+   *
+   * ONE AT A TIME, and by id rather than a flag per row: a page of twenty codes is twenty QR symbols
+   * drawn at once for a screen where at most one is being scanned or printed, and the row somebody
+   * opened is the file they are working on.
+   */
+  const [codeFor, setCodeFor] = useState<string | null>(null);
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [linkedType, setLinkedType] = useState("");
@@ -550,23 +559,13 @@ function MediaPageBody() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((item) => (
-                  <tr key={item.id}>
-                    <td className="px-4 py-3">
-                      {item.url ? (
-                        <div className="w-36">
-                          <MediaPreviewTile
-                            item={{
-                              key: item.id,
-                              id: item.id,
-                              name: item.originalFilename,
-                              mediaType: item.mediaType,
-                              mimeType: item.mimeType,
-                              sizeBytes: item.sizeBytes,
-                              url: item.url,
-                              caption: item.caption
-                            }}
-                            onOpen={() =>
-                              setActivePreview({
+                  <Fragment key={item.id}>
+                    <tr>
+                      <td className="px-4 py-3">
+                        {item.url ? (
+                          <div className="w-36">
+                            <MediaPreviewTile
+                              item={{
                                 key: item.id,
                                 id: item.id,
                                 name: item.originalFilename,
@@ -574,58 +573,81 @@ function MediaPageBody() {
                                 mimeType: item.mimeType,
                                 sizeBytes: item.sizeBytes,
                                 url: item.url,
-                                caption: item.caption,
-                                transcriptStatus: item.transcriptStatus,
-                                transcriptText: item.transcriptText,
-                                transcriptError: item.transcriptError
-                              })
-                            }
-                          />
-                        </div>
-                      ) : (
-                        <span className="text-ink-500">No URL</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-ink-900">{item.originalFilename}</div>
-                      {item.caption ? <div className="max-w-xs truncate text-xs text-ink-500">{item.caption}</div> : null}
-                    </td>
-                    <td className="px-4 py-3 text-ink-700">{item.mediaType}</td>
-                    <td className="px-4 py-3 text-ink-700">{bytes(item.sizeBytes)}</td>
-                    <td className="px-4 py-3 text-ink-700">
-                      {item.linkedRecordType ? LINK_TYPE_LABEL.get(item.linkedRecordType) ?? item.linkedRecordType : "-"}
-                    </td>
-                    <td className="px-4 py-3 text-ink-700">
-                      {item.transcriptText ? (
-                        <details>
-                          <summary className="cursor-pointer font-semibold text-field-700">View transcript</summary>
-                          <div className="mt-2 max-h-64 min-w-64 overflow-auto rounded-md bg-field-100 p-3">
-                            <Markdown text={item.transcriptText} />
+                                caption: item.caption
+                              }}
+                              onOpen={() =>
+                                setActivePreview({
+                                  key: item.id,
+                                  id: item.id,
+                                  name: item.originalFilename,
+                                  mediaType: item.mediaType,
+                                  mimeType: item.mimeType,
+                                  sizeBytes: item.sizeBytes,
+                                  url: item.url,
+                                  caption: item.caption,
+                                  transcriptStatus: item.transcriptStatus,
+                                  transcriptText: item.transcriptText,
+                                  transcriptError: item.transcriptError
+                                })
+                              }
+                            />
                           </div>
-                        </details>
-                      ) : (
-                        <>
-                          <div>{item.transcriptStatus ?? "-"}</div>
-                          {/* The status alone was the whole of what this cell said, so a transcript
-                              that failed read as one word with no cause and no recourse. The reason
-                              is stored on the row; print it. */}
-                          {item.transcriptError ? (
-                            <div className="mt-1 max-w-xs text-xs text-red-700">{item.transcriptError}</div>
-                          ) : null}
-                        </>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={item.status} />
-                    </td>
-                    <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
-                    <td className="px-4 py-3 text-right">
-                      {/* Two different gates, on purpose. Delete keeps the page's existing admin-VIEW
-                          gate; re-transcribing mirrors its route (`require_admin` + AUDIO) and is not
-                          ANDed with the toggle — it is a repair an admin needs whether or not admin
-                          chrome is switched on, and it destroys nothing. */}
-                      {adminMode || (canTranscribe && item.mediaType === "AUDIO") ? (
+                        ) : (
+                          <span className="text-ink-500">No URL</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-ink-900">{item.originalFilename}</div>
+                        {item.caption ? <div className="max-w-xs truncate text-xs text-ink-500">{item.caption}</div> : null}
+                      </td>
+                      <td className="px-4 py-3 text-ink-700">{item.mediaType}</td>
+                      <td className="px-4 py-3 text-ink-700">{bytes(item.sizeBytes)}</td>
+                      <td className="px-4 py-3 text-ink-700">
+                        {item.linkedRecordType ? LINK_TYPE_LABEL.get(item.linkedRecordType) ?? item.linkedRecordType : "-"}
+                      </td>
+                      <td className="px-4 py-3 text-ink-700">
+                        {item.transcriptText ? (
+                          <details>
+                            <summary className="cursor-pointer font-semibold text-field-700">View transcript</summary>
+                            <div className="mt-2 max-h-64 min-w-64 overflow-auto rounded-md bg-field-100 p-3">
+                              <Markdown text={item.transcriptText} />
+                            </div>
+                          </details>
+                        ) : (
+                          <>
+                            <div>{item.transcriptStatus ?? "-"}</div>
+                            {/* The status alone was the whole of what this cell said, so a transcript
+                                that failed read as one word with no cause and no recourse. The reason
+                                is stored on the row; print it. */}
+                            {item.transcriptError ? (
+                              <div className="mt-1 max-w-xs text-xs text-red-700">{item.transcriptError}</div>
+                            ) : null}
+                          </>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={item.status} />
+                      </td>
+                      <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
+                      <td className="px-4 py-3 text-right">
+                        {/* THREE different gates, on purpose. Delete keeps the page's existing
+                            admin-VIEW gate; re-transcribing mirrors its route (`require_admin` +
+                            AUDIO) and is not ANDed with the toggle — it is a repair an admin needs
+                            whether or not admin chrome is switched on, and it destroys nothing. The
+                            code is gated on nothing at all: it shows an opaque reference to a row this
+                            person is already reading, and a designer who can see the file but not the
+                            tag that opens it is the exact gap the tag exists to close. The "Admin only"
+                            line this cell used to fall back to is gone with it — the cell is never
+                            empty now. */}
                         <RowActions>
+                          <button
+                            className={rowAction("neutral", codeFor === item.id ? "bg-surface-50" : undefined)}
+                            onClick={() => setCodeFor(codeFor === item.id ? null : item.id)}
+                            aria-expanded={codeFor === item.id}
+                          >
+                            <QrCode className="h-3.5 w-3.5" aria-hidden />
+                            {codeFor === item.id ? "Hide code" : "Code"}
+                          </button>
                           {canTranscribe && item.mediaType === "AUDIO" ? (
                             <button
                               className={rowAction("edit")}
@@ -651,11 +673,32 @@ function MediaPageBody() {
                             </button>
                           ) : null}
                         </RowActions>
-                      ) : (
-                        <span className="text-xs text-ink-500">Admin only</span>
-                      )}
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
+                    {codeFor === item.id ? (
+                      /* An expanded row and not a route, because a media file has no per-record page
+                         on the web — `lib/workshopCodeLookup.ts` says so in as many words and lands a
+                         scanned M code on the stored object or, when the caller is not entitled to the
+                         bytes, on this list. This row is the closest thing a designer opens for ONE
+                         file, so it is where the code for one file belongs. Android shows the same
+                         card on its own media detail (`RecordCodeSection(..., MEDIA, ...)` in
+                         MainActivity); until now the web showed none, and two clients disagreeing
+                         about which records have a code is a defect in itself.
+
+                         The title is the caption or, failing that, the filename — the SAME line
+                         `workshopCodeLookup` puts on a resolved media hit, so the card a designer
+                         prints and the row a scan reports name the file the same way. */
+                      <tr className="bg-surface-50">
+                        <td className="px-4 py-3" colSpan={9}>
+                          <RecordCodeCard
+                            recordType="media"
+                            id={item.id}
+                            title={item.caption?.trim() || item.originalFilename}
+                          />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

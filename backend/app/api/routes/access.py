@@ -63,6 +63,7 @@ from app.schemas.access_roster import AccessDecision, AccessRosterCreate, Access
 from app.services import access_roster
 from app.services.access_roster import access_payload, normalise_email
 from app.services.pagination import normalize_pagination, page_payload
+from app.services.records import contains, with_id_tiebreak
 
 router = APIRouter(prefix="/access", tags=["access"])
 
@@ -139,16 +140,28 @@ async def list_access_roster(
         where["status"] = wanted
     if search:
         token = search.strip()
+        # ``records.contains`` and not a hand-rolled filter: it strips the control bytes Postgres
+        # cannot store (a pasted NUL was a bare 500 from this box) and escapes the LIKE
+        # metacharacters, so an admin pasting ``first_last@org`` to find one colleague gets that
+        # colleague rather than every row where ``_`` matched any character.
         where["OR"] = [
-            {"email": {"contains": token, "mode": "insensitive"}},
-            {"fullName": {"contains": token, "mode": "insensitive"}},
-            {"notes": {"contains": token, "mode": "insensitive"}},
+            {"email": contains(token)},
+            {"fullName": contains(token)},
+            {"notes": contains(token)},
         ]
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
     total, rows = await asyncio.gather(
         db.accessroster.count(where=where),
         db.accessroster.find_many(
-            where=where, skip=skip, take=clean_size, order={"createdAt": "desc"}
+            where=where,
+            skip=skip,
+            take=clean_size,
+            # TOTAL ORDER, and on this table the ties are a certainty rather than a risk: the
+            # migration that grandfathered the existing accounts onto the roster inserted every one
+            # of them with a single ``CURRENT_TIMESTAMP``. Paging four hundred rows that share a
+            # sort key without a tiebreaker hands some of them over twice and never shows others.
+            # This read bypasses ``count_and_page``, so it appends the tiebreak itself.
+            order=with_id_tiebreak({"createdAt": "desc"}),
         ),
     )
     return page_payload([access_payload(r) for r in rows], total, clean_page, clean_size)

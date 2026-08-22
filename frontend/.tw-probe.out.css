@@ -1,0 +1,39 @@
+.border-line-200 {
+  --tw-border-opacity: 1;
+  border-color: rgb(var(--line-200) / var(--tw-border-opacity, 1))
+}
+
+.bg-card {
+  --tw-bg-opacity: 1;
+  background-color: rgb(var(--card) / var(--tw-bg-opacity, 1))
+}
+
+.bg-field-100 {
+  --tw-bg-opacity: 1;
+  background-color: rgb(var(--surface-100) / var(--tw-bg-opacity, 1))
+}
+
+.bg-field-200 {
+  --tw-bg-opacity: 1;
+  background-color: rgb(var(--surface-200) / var(--tw-bg-opacity, 1))
+}
+
+.bg-purple-950 {
+  --tw-bg-opacity: 1;
+  background-color: oklch(0.255 0.108 305 / var(--tw-bg-opacity, 1))
+}
+
+.bg-surface-50 {
+  --tw-bg-opacity: 1;
+  background-color: rgb(var(--surface-50) / var(--tw-bg-opacity, 1))
+}
+
+.text-ink-900 {
+  --tw-text-opacity: 1;
+  color: rgb(var(--ink-900) / var(--tw-text-opacity, 1))
+}
+
+.text-white {
+  --tw-text-opacity: 1;
+  color: rgb(255 255 255 / var(--tw-text-opacity, 1))
+}

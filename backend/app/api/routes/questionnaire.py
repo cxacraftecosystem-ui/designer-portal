@@ -291,7 +291,17 @@ async def upsert_responses(interview_id: str, responses: list[Any], current_user
 
     to_create: list[dict[str, Any]] = []
     to_update: list[tuple[str, dict[str, Any]]] = []
-    for response in responses:
+    # ONE ENTRY PER QUESTION, LAST WINS. ``QuestionnaireResponse`` is UNIQUE on
+    # ``(interviewId, questionId)``, and a body naming the same question twice built two INSERTs for
+    # it — a unique-violation escaping as a bare 500, i.e. a schema-valid request turned into a
+    # server error. The validation pass above already collapses the ids (``sorted({...})``); only
+    # this loop did not, so the two disagreed about what the batch contained.
+    #
+    # LAST WINS, and not ``skip_duplicates`` on the insert: skipping would silently drop an answer a
+    # researcher typed, and first-wins would contradict the update branch below, where two entries
+    # for one stored row simply run two updates and the later one stands.
+    deduped = {response.questionId: response for response in responses}
+    for response in deduped.values():
         existing = by_question.get(response.questionId)
         if existing is None:
             to_create.append(
@@ -721,10 +731,36 @@ async def merge_into_interview(
     if "workshopId" in fill:
         # Seed from the stored metadata so stamping the submission never drops the canonical
         # interview's existing extraMetadata (field provenance and anything else already recorded).
+        #
+        # THIS SEED IS NOT THE ONE ``merge_field_provenance`` NOW DOES, AND DELETING IT AS A
+        # DUPLICATE REOPENS THE LOSS IT LOOKS LIKE A COPY OF. That function grew its own seed off
+        # the stored row so an ordinary PATCH stops destroying the column — but this fold path
+        # never calls it. What runs here is ``stamp_workshop_submission`` -> ``merge_extra``, and
+        # ``merge_extra`` bases its result on ``data["extraMetadata"]``, i.e. on THIS payload,
+        # never on the record. ``fill`` is built fresh from the incoming body a dozen lines up, so
+        # with this seed removed the update would write ``{"workshopSubmission": ...}`` and nothing
+        # else over a live row's whole metadata column — the same silent, unrevisioned deletion,
+        # reached by folding a create into an existing artisan set instead of by editing.
+        #
+        # Seeding the SERVER-OWNED ``workshopSubmission`` key along with the rest is safe here and
+        # deliberate: ``stamp_workshop_submission`` runs immediately after and is its single writer,
+        # so whatever the seed carried in is replaced from the authoritative value or dropped
+        # outright when there is none. It cannot be laundered in from the caller either, because
+        # ``fill`` holds only the six ``_MERGEABLE_FILL_FIELDS`` scalars.
+        #
+        # ``record=existing`` IS WHAT MAKES THAT REPLACEMENT HONEST, and this is the one path where
+        # forgetting it looks harmless. The other bare ``stamp_workshop_submission(data, check=...)``
+        # calls are true creates with no row behind them; this one is a fold onto a row that already
+        # exists and may already carry an unapproved late stamp while unlinked (PATCHing
+        # ``workshopId`` to null yields an empty check, so the stamp is CARRIED and the link is the
+        # only thing cleared). Stamped from the fresh in-window check alone, ``needsAdminApproval``
+        # would come back False and a late interview would become approvable by any reviewer — the
+        # laundering-by-re-link that ``stamp_workshop_submission``'s own docstring says a move must
+        # not achieve. With the record passed, the re-link branch fires and the flag survives.
         existing_extra = get_value(existing, "extraMetadata")
         if isinstance(existing_extra, dict):
             fill["extraMetadata"] = dict(existing_extra)
-        stamp_workshop_submission(fill, check=check)
+        stamp_workshop_submission(fill, check=check, record=existing)
         pin_pending_if_late(fill, current_user, check=check, record=existing)
         jsonify_metadata(fill)
     # ``existing`` is passed in bare — only its scalar columns are read above — and ``update`` hands
@@ -1063,7 +1099,16 @@ async def update_interview(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     interview = await require_record(db.questionnaireinterview, interview_id)
-    data = clean_data(payload.model_dump(exclude_unset=True, exclude={"artisanIds", "responses"}))
+    data = clean_data(
+        payload.model_dump(exclude_unset=True, exclude={"artisanIds", "responses"}),
+        # ``QuestionnaireInterview``'s own nullable scalars, so an explicit null actually CLEARS
+        # them. Without this the null was stripped and the PATCH answered 200 having changed
+        # nothing — the box looked empty on the form and the old value stayed in the database,
+        # which for ``notes`` (free text about the people interviewed) means a retraction the
+        # researcher believed they had made and had not. ``workshopId`` is already global; ``title``,
+        # ``status``, ``recordedAt`` and ``recordedTimezone`` are NOT NULL and stay out.
+        clearable=("interviewDate", "place", "language", "notes"),
+    )
     data = await attach_location(data)
     # Moving a record into (or between) workshops is a workshop submission too, so the create-time
     # guard can't be bypassed by PATCHing the workshop in afterwards.

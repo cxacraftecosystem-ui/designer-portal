@@ -201,13 +201,22 @@ summary:focus-visible {
 }
 
 /*
- * Background scroll lock, worn by <html> while the navigation sheet is open.
+ * Background scroll lock, worn by <html> while any surface is covering the page.
+ *
+ * THREE SURFACES WEAR IT — the navigation sheet, every `FieldDialog`, and the rich-text editor's
+ * full-screen mode — and none of them writes it directly any more. `lib/scrollLock.ts` owns the
+ * class and refcounts it, because two of the three used to add and remove it themselves and the
+ * third locked `overflow` on <body> instead: a dialog mounted in the protected layout closing while
+ * the sheet or the editor was still open took the class off with it, and the page behind started
+ * panning again. The name still says "nav" because the sheet needed it first; it is not renamed
+ * because these rules, `nav-sheet-scroll.spec.ts` and the fixed chrome that re-pays the gutter all
+ * spell it out and a rename that missed one would be silent.
  *
  * It is the root element and not <body> because iOS Safari quietly ignores `overflow: hidden` on the
- * body and keeps panning the page under the open menu — the exact complaint this answers. The gutter
- * variable is measured and set by the sheet in the instant before this class lands: freezing the
- * document takes the scrollbar away with it, and without paying that width back as padding every
- * centred thing on the page jumps sideways as the menu opens.
+ * body and keeps panning the page under the open surface — the exact complaint this answers. The
+ * gutter variable is measured and set in the instant before this class lands: freezing the document
+ * takes the scrollbar away with it, and without paying that width back as padding every centred
+ * thing on the page — an open dialog's own panel included — jumps sideways as it opens.
  */
 html.nav-scroll-locked,
 html.nav-scroll-locked body {
@@ -370,6 +379,11 @@ input[type="number"] {
    * Both of these are position:fixed, so their containing block is the viewport rather than <body>
    * and the padding the lock puts on the body cannot reach them. They pay the vanished scrollbar
    * back themselves, otherwise the island and the sheet drift right as the menu opens.
+   *
+   * The overlay's z-index is set in DynamicIslandNav, not here, but it belongs to the same story:
+   * it is `z-[90]` because `AppShell`'s <main> no longer carries a z-index, so a page's own fixed
+   * chrome — `UploadTray` at `z-40` — competes with this scrim in the root stacking context and
+   * would win the tie on tree order. A modal scrim has to out-rank in-page chrome.
    */
   .nav-sheet-overlay {
     padding-right: var(--nav-scroll-gutter, 0px);

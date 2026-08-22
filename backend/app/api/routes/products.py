@@ -51,6 +51,40 @@ RELATIONS = (
 )
 INCLUDE = include_of(RELATIONS)
 
+# PRODUCTDOCUMENTATION'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null``
+# through for on this model, so emptying a box on the product form actually empties the column
+# instead of answering 200 and keeping the old value.
+#
+# PER-MODEL AND NOT GLOBAL, for the reason ``clean_data``'s ``clearable`` docstring gives: the global
+# set cannot know which table a payload is bound for. Derived from ``model ProductDocumentation`` in
+# prisma/schema.prisma, intersected with what ``ProductUpdate`` actually accepts — do not copy this
+# tuple to Tool or Artisan, whose nullable columns are a different list.
+#
+# Only valid because ``update_product`` dumps with ``exclude_unset=True``; see the note at that call.
+#
+# DELIBERATELY ABSENT: ``craftName``/``place``/``artisanName``/``productName`` (NOT NULL), the two
+# enums ``productType``/``marketDemand`` and ``status``/``recordedAt``/``recordedTimezone`` (NOT NULL
+# with defaults), ``artisanId``/``craftId``/``workshopId``/``locationId`` (already global), and the
+# measurement trio ``measurementImageId``/``measurementAnalysis``/``measurementAnalysisStatus``,
+# which ``services/media_queue`` owns — ``records.PROVENANCE_SKIP_FIELDS`` already classes all three
+# as system-managed, and no client form sends them. ``extraMetadata`` is left out because naming it
+# would be inert: ``merge_field_provenance`` rebuilds and reassigns that column further down this
+# route, so a null could never reach Prisma anyway.
+_CLEARABLE_COLUMNS = (
+    "localName",
+    "timeTakenToCompleteProduct",
+    "size",
+    "lengthInches",
+    "breadthInches",
+    "heightInches",
+    "costOfMaking",
+    "sellingPrice",
+    "rawMaterialsUsed",
+    "mainToolsUsed",
+    "productFunctionUse",
+    "remarks",
+)
+
 # WHY EVERY ENCODE BELOW NAMES THE CALLER. ``public_encode(obj)`` with no viewer is not "the default";
 # it is the CHEAPEST SAFE answer — mask every identity number and withhold every media URL — and it is
 # the answer a route reaches by not thinking about the question. This module used to take it on all
@@ -197,7 +231,12 @@ async def update_product(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     product = await require_record(db.productdocumentation, product_id)
-    data = decimal_to_string(clean_data(payload.model_dump(exclude_unset=True)))
+    # ``exclude_unset=True`` IS THE PRECONDITION OF ``clearable``, not a stylistic choice: it is what
+    # makes a present key mean "the caller sent this". Drop it and every optional the client left
+    # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
+    data = decimal_to_string(
+        clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
+    )
     data = await attach_location(data)
     # Moving a record into (or to a different) workshop is a workshop submission too — re-check
     # assignment + window, so the create-time guard can't be bypassed by PATCHing the workshop in later.

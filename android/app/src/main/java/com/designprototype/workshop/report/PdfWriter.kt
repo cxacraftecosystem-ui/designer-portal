@@ -21,6 +21,13 @@ import kotlin.math.roundToInt
  *     measure a block against the text column  ->  does it fit in the space left on this page?
  *     ->  no: finish the page, start a new one  ->  draw it at the cursor  ->  advance the cursor
  *
+ * with one case the loop cannot answer on its own: A BLOCK THAT FITS ON NO PAGE AT ALL. A table row
+ * carrying a 6,000-character LONG_TEXT answer is taller than A4, so "start a new one" never makes it
+ * fit, and the lock that keeps a row from breaking between two of its own lines then suppressed every
+ * break there was — the remainder was drawn at a negative y, outside the paper, in a file that opens
+ * perfectly. [cutRow] is the answer: the row is CUT at the foot of the page and continued overleaf,
+ * which is what Word does for the .docx twin of the same document.
+ *
  * Every block below is laid out by that loop. The server uses ReportLab's low-level `canvas` API for
  * exactly this reason — Platypus would have been shorter and its `Flowable` machinery has no
  * counterpart here, and a report whose server copy and phone copy paginate differently is a support
@@ -106,6 +113,19 @@ class PdfWriter(
 
     /** Sources that could not be drawn, for the caller to surface as export warnings. */
     val droppedImages = ArrayList<String>()
+
+    /**
+     * Wrapped lines of running head and foot the page margin could not hold, over the whole render.
+     *
+     * The server logs the same fact once per export (`report_pdf._note_clipped_furniture`) and this
+     * had no counterpart at all, so a designer exporting from a phone lost the tail of their running
+     * line in silence — a real server/handset divergence rather than a documented one. Counted here
+     * because counting costs nothing and needs no other file; SURFACING it does, and would mean a
+     * third warning list beside `ReportExport.Result.droppedImages` and the banner that reads it in
+     * `ReportScreen`. Left for whoever owns those two.
+     */
+    var clippedFurnitureLines = 0
+        private set
 
     /**
      * Rasterised map and chart bytes, so the picture path can load them like any other image, and the
@@ -407,19 +427,127 @@ class PdfWriter(
 
     private fun fits(height: Float): Boolean = y - height >= bottom
 
-    /** Running head and foot. Suppressed on page 1, which is the cover. */
+    /** What [cutRow] answers: the part that fits here, and the part that does not. */
+    private class RowCut(
+        val head: List<List<Line>>,
+        val headHeight: Float,
+        val tail: List<List<Line>>?,
+        val tailHeight: Float,
+    )
+
+    /**
+     * How much of a table row can be drawn here, and what is left over for the next page.
+     *
+     * ── A CELL TALLER THAN THE TEXT COLUMN USED TO BE DRAWN OFF THE BOTTOM OF THE SHEET ───────
+     *
+     * [simpleGrid] and [blockTable]'s `drawRow` draw a row inside [locked] after a single [ensure],
+     * and that is right for every row that fits on a page: it is what stops a break landing between
+     * two lines of one cell, with the row's background rectangle and its vertical rules on one page
+     * and the words on the next. But a row TALLER than a page never fits, the lock suppresses every
+     * break, and `y` simply kept going negative. On the server, where the same defect was measured,
+     * one 6,000-character LONG_TEXT answer put 395 of 1,092 text pieces below y=0 — drawn outside
+     * the paper, where no reader ever sees them. The .docx generated from the same document keeps
+     * every one of them, because Word splits a `<w:tr>` carrying no `<w:cantSplit/>`.
+     *
+     * Clipping would have been shorter and is the wrong answer: the rule this repository states in
+     * `stage_schema.coerce_value` is A REFUSAL, NOT A TRUNCATION. So the row is CUT instead — the
+     * same thing the .docx does — and the caller draws the pieces on consecutive pages.
+     *
+     * `null` means "nothing useful fits here; turn the page and ask again", which is how the caller
+     * learns to break WITHOUT this ever breaking a page itself. A [RowCut] whose `tail` is null is
+     * the ordinary case: the whole row fits and the caller draws exactly what it always drew.
+     *
+     * [force] is set by a caller that has just turned the page, and defends only the pathological
+     * document whose single line of type is taller than a sheet: without it that row turns pages for
+     * ever.
+     */
+    private fun cutRow(
+        columns: List<List<Line>>,
+        height: Float,
+        padding: Float,
+        force: Boolean = false,
+    ): RowCut? {
+        if (lockedDepth > 0) {
+            // Inside a region the caller has already reserved and sized — the cover — a row may not
+            // break at all. That is the whole meaning of [locked], and [blockCover] depends on it.
+            return RowCut(columns, height, null, 0f)
+        }
+        if (fits(height)) return RowCut(columns, height, null, 0f)
+        if (height <= top - 6 * MM - bottom && !force) {
+            // It fits on a page, just not on what is left of this one. An ordinary break.
+            return null
+        }
+        val budget = y - bottom - padding
+        val head = ArrayList<List<Line>>(columns.size)
+        val tail = ArrayList<List<Line>>(columns.size)
+        var used = 0f
+        var left = 0f
+        for (column in columns) {
+            var taken = 0f
+            var k = 0
+            while (k < column.size && taken + column[k].height <= budget) {
+                taken += column[k].height
+                k += 1
+            }
+            if (force && k == 0 && column.isNotEmpty()) {
+                taken = column[0].height
+                k = 1
+            }
+            head.add(column.subList(0, k).toList())
+            val rest = column.subList(k, column.size).toList()
+            tail.add(rest)
+            used = max(used, taken)
+            left = max(left, rest.sumOf { it.height.toDouble() }.toFloat())
+        }
+        if (used <= 0f) return null
+        if (tail.all { it.isEmpty() }) return RowCut(head, used + padding, null, 0f)
+        return RowCut(head, used + padding, tail, left + padding)
+    }
+
+    /**
+     * Running head and foot. Suppressed on page 1, which is the cover.
+     *
+     * BOTH ARE WRAPPED, because both are free text a designer types into stage 20 and neither was.
+     * `headerText` defaults to "craft — cluster" and `footerText` to "template · workshop code", and
+     * a real ministry line measured 509.5 pt on the server against a 453.5 pt text column: the single
+     * `drawText` this used to be put the running head 265 pt off the LEFT edge of the sheet and the
+     * running foot 265 pt past the right one, on every page. The .docx wraps the same line inside its
+     * header part, so one download carried two different running heads.
+     *
+     * The lines stack INTO THE MARGIN — upward for the head, downward for the foot — and never into
+     * the text column, so nothing here moves `y` and pagination is untouched. The margin is finite,
+     * so the stack stops at the edge of the sheet, and both ends drop the TAIL of the line — see the
+     * note inside on why the head had to be turned round to do that. What was dropped is counted in
+     * [clippedFurnitureLines]; the server logs the same fact, and neither number reaches a designer
+     * on the handset yet.
+     */
     private fun drawFurniture() {
         if (pageNo <= 1) return
         val meta = doc.meta
         val t = theme
-        textPaint.typeface = regularFace
-        textPaint.textSize = 7.8f
-        textPaint.color = argb(t.muted)
         if (meta.headerText.isNotEmpty()) {
-            val w = textPaint.measureText(meta.headerText)
-            canvas.drawText(
-                meta.headerText, pageW - margin - w, cy(pageH - margin + 4 * MM), textPaint
-            )
+            val lines = wrap(runsOf(meta.headerText), textW, 7.8f)
+            // WHEN IT HAS TO DROP SOMETHING, BOTH ENDS DROP THE TAIL. The head is stacked upward, so
+            // the natural loop — walk the wrapped lines backwards from the rule and stop at the sheet
+            // edge — dropped its FIRST lines instead, which on a ministry running head is the
+            // organisation that owns the document, while the foot below drops its tail. Two ends of
+            // the same clipped line in one file is not a decision, it is an accident of which
+            // direction each loop ran. A running line is read from its start, so how many fit is
+            // counted from the FIRST line here and the kept lines are placed bottom-up after.
+            val kept = ArrayList<Line>()
+            var baseline = pageH - margin + 4 * MM
+            for (line in lines) {
+                if (kept.isNotEmpty() && baseline + line.height > pageH - 2 * MM) break
+                kept.add(line)
+                baseline += line.height
+            }
+            // Bottom line nearest the rule, the rest climbing towards the edge of the sheet.
+            baseline = pageH - margin + 4 * MM
+            for (line in kept.asReversed()) {
+                drawLine(line, margin, textW, Align.RIGHT, t.muted, baseline)
+                baseline += line.height
+            }
+            clippedFurnitureLines += lines.size - kept.size
             strokePaint.color = argb(t.rule)
             strokePaint.strokeWidth = 0.5f
             val ruleY = cy(pageH - margin + 2.6f * MM)
@@ -429,12 +557,28 @@ class PdfWriter(
         strokePaint.color = argb(t.rule)
         strokePaint.strokeWidth = 0.5f
         canvas.drawLine(margin, cy(footY + 4 * MM), pageW - margin, cy(footY + 4 * MM), strokePaint)
+        val pageLabel = if (meta.showPageNumbers) "Page $pageNo" else ""
+        val pageLabelW =
+            if (pageLabel.isNotEmpty()) stringWidth(pageLabel, regularFace, 7.8f) else 0f
+        // The foot shares its first line with the page number, so it gets the column MINUS that.
+        val footW = max(textW - (if (pageLabel.isNotEmpty()) pageLabelW + 4 * MM else 0f), 20 * MM)
         if (meta.footerText.isNotEmpty()) {
-            canvas.drawText(meta.footerText, margin, cy(footY), textPaint)
+            val lines = wrap(runsOf(meta.footerText), footW, 7.8f)
+            var baseline = footY
+            var placed = 0
+            for (line in lines) {
+                if (placed > 0 && baseline - line.height < 2 * MM) break
+                drawLine(line, margin, footW, Align.LEFT, t.muted, baseline)
+                baseline -= line.height
+                placed += 1
+            }
+            clippedFurnitureLines += lines.size - placed
         }
-        if (meta.showPageNumbers) {
-            val label = "Page $pageNo"
-            canvas.drawText(label, pageW - margin - textPaint.measureText(label), cy(footY), textPaint)
+        if (pageLabel.isNotEmpty()) {
+            textPaint.typeface = regularFace
+            textPaint.textSize = 7.8f
+            textPaint.color = argb(t.muted)
+            canvas.drawText(pageLabel, pageW - margin - pageLabelW, cy(footY), textPaint)
         }
     }
 
@@ -449,76 +593,93 @@ class PdfWriter(
     ) {
         for (line in lines) {
             ensure(line.height)
-            if (drawing) {
-                var cursor = when (align) {
-                    Align.CENTER -> x + (width - line.width) / 2
-                    Align.RIGHT -> x + width - line.width
-                    else -> x
+            if (drawing) drawLine(line, x, width, align, defaultColor, y - line.height * 0.78f)
+            y -= line.height
+        }
+    }
+
+    /**
+     * Draw ONE laid-out line at an explicit baseline, leaving the cursor alone.
+     *
+     * Split out of [drawLines] so the running head and foot can be wrapped like any other text: they
+     * are drawn in the MARGIN, outside the text column, so they must not move `y` — and everything a
+     * line needs beyond its glyphs (the highlight fill, the underline and strike rules, the per-piece
+     * face and colour) has to keep working there too. The server splits the same method for the same
+     * reason; see `report_pdf._draw_line`.
+     */
+    private fun drawLine(
+        line: Line,
+        x: Float,
+        width: Float,
+        align: Align,
+        defaultColor: String,
+        baseline: Float,
+    ) {
+        var cursor = when (align) {
+            Align.CENTER -> x + (width - line.width) / 2
+            Align.RIGHT -> x + width - line.width
+            else -> x
+        }
+        for (piece in line.pieces) {
+            // `rise` is 0 for ordinary text, so this is the same baseline it always was.
+            // The RULES below use it too: an underline under a subscript belongs under the
+            // subscript, not under the line it was lowered from.
+            val pieceBaseline = baseline + piece.rise
+            textPaint.typeface = piece.face
+            textPaint.textSize = piece.size
+            val advance = textPaint.measureText(piece.text)
+            if (piece.highlight) {
+                // BEFORE the glyphs, or the fill paints over the words. The box is the
+                // piece's own extent — the same unit the underline rule uses below, and the
+                // only one that stops a highlighted phrase tinting the whole line. The
+                // trailing space each token carries is deliberately inside it: Word's own
+                // highlight runs through the spaces of a highlighted phrase, and a gapped
+                // fill reads as several highlights rather than one. The same rectangle the
+                // server draws — `report_pdf._draw_lines`, to the same fractions.
+                fillPaint.color = argb(HIGHLIGHT_FILL)
+                canvas.drawRect(
+                    cursor,
+                    cy(pieceBaseline + piece.size * 0.90f),
+                    cursor + advance,
+                    cy(pieceBaseline - piece.size * 0.24f),
+                    fillPaint,
+                )
+            }
+            textPaint.color = argb(piece.color ?: defaultColor)
+            canvas.drawText(piece.text, cursor, cy(pieceBaseline), textPaint)
+            if ((piece.underline || piece.strike) && piece.text.isNotBlank()) {
+                // RULED PER PIECE, NOT PER LINE. A line where only one phrase is underlined
+                // must not get a rule under the whole of it, and the wrap has already split
+                // the line into pieces at exactly the run boundaries where the marks change —
+                // so the piece is the only unit with the right extent. Ruling per line was the
+                // first version and it underlined entire sentences around a single emphasised
+                // word.
+                //
+                // The `text.isNotBlank()` guard stops the trailing space that the wrap keeps
+                // attached to each token from extending the rule past the last word and into
+                // the gap before the next one, which reads as a rule joining two words that
+                // are not both underlined.
+                //
+                // The offsets are FRACTIONS OF THE POINT SIZE rather than a fixed gap, so they
+                // track the type: the same 0.13 / 0.26 / max(0.4, 0.05) the server's ReportLab
+                // renderer uses, which is what makes the underline sit in the same place in
+                // both PDFs of one report. Note these are computed in PDF space — y grows
+                // UPWARD — so `baseline - size * 0.13` is BELOW the baseline and
+                // `baseline + size * 0.26` cuts through the x-height. cy() does the flip, once,
+                // at the moment the coordinate is handed to the canvas; applying the signs the
+                // canvas way here would draw the underline through the ascenders.
+                strokePaint.color = argb(piece.color ?: defaultColor)
+                strokePaint.strokeWidth = max(0.4f, piece.size * 0.05f)
+                if (piece.underline) {
+                    val ruleY = cy(pieceBaseline - piece.size * 0.13f)
+                    canvas.drawLine(cursor, ruleY, cursor + advance, ruleY, strokePaint)
                 }
-                val lineBaseline = y - line.height * 0.78f
-                for (piece in line.pieces) {
-                    // `rise` is 0 for ordinary text, so this is the same baseline it always was.
-                    // The RULES below use it too: an underline under a subscript belongs under the
-                    // subscript, not under the line it was lowered from.
-                    val baseline = lineBaseline + piece.rise
-                    textPaint.typeface = piece.face
-                    textPaint.textSize = piece.size
-                    val advance = textPaint.measureText(piece.text)
-                    if (piece.highlight) {
-                        // BEFORE the glyphs, or the fill paints over the words. The box is the
-                        // piece's own extent — the same unit the underline rule uses below, and the
-                        // only one that stops a highlighted phrase tinting the whole line. The
-                        // trailing space each token carries is deliberately inside it: Word's own
-                        // highlight runs through the spaces of a highlighted phrase, and a gapped
-                        // fill reads as several highlights rather than one. The same rectangle the
-                        // server draws — `report_pdf._draw_lines`, to the same fractions.
-                        fillPaint.color = argb(HIGHLIGHT_FILL)
-                        canvas.drawRect(
-                            cursor,
-                            cy(baseline + piece.size * 0.90f),
-                            cursor + advance,
-                            cy(baseline - piece.size * 0.24f),
-                            fillPaint,
-                        )
-                    }
-                    textPaint.color = argb(piece.color ?: defaultColor)
-                    canvas.drawText(piece.text, cursor, cy(baseline), textPaint)
-                    if ((piece.underline || piece.strike) && piece.text.isNotBlank()) {
-                        // RULED PER PIECE, NOT PER LINE. A line where only one phrase is underlined
-                        // must not get a rule under the whole of it, and the wrap has already split
-                        // the line into pieces at exactly the run boundaries where the marks change —
-                        // so the piece is the only unit with the right extent. Ruling per line was the
-                        // first version and it underlined entire sentences around a single emphasised
-                        // word.
-                        //
-                        // The `text.isNotBlank()` guard stops the trailing space that the wrap keeps
-                        // attached to each token from extending the rule past the last word and into
-                        // the gap before the next one, which reads as a rule joining two words that
-                        // are not both underlined.
-                        //
-                        // The offsets are FRACTIONS OF THE POINT SIZE rather than a fixed gap, so they
-                        // track the type: the same 0.13 / 0.26 / max(0.4, 0.05) the server's ReportLab
-                        // renderer uses, which is what makes the underline sit in the same place in
-                        // both PDFs of one report. Note these are computed in PDF space — y grows
-                        // UPWARD — so `baseline - size * 0.13` is BELOW the baseline and
-                        // `baseline + size * 0.26` cuts through the x-height. cy() does the flip, once,
-                        // at the moment the coordinate is handed to the canvas; applying the signs the
-                        // canvas way here would draw the underline through the ascenders.
-                        strokePaint.color = argb(piece.color ?: defaultColor)
-                        strokePaint.strokeWidth = max(0.4f, piece.size * 0.05f)
-                        if (piece.underline) {
-                            val ruleY = cy(baseline - piece.size * 0.13f)
-                            canvas.drawLine(cursor, ruleY, cursor + advance, ruleY, strokePaint)
-                        }
-                        if (piece.strike) {
-                            val ruleY = cy(baseline + piece.size * 0.26f)
-                            canvas.drawLine(cursor, ruleY, cursor + advance, ruleY, strokePaint)
-                        }
-                    }
-                    cursor += advance
+                if (piece.strike) {
+                    val ruleY = cy(pieceBaseline + piece.size * 0.26f)
+                    canvas.drawLine(cursor, ruleY, cursor + advance, ruleY, strokePaint)
                 }
             }
-            y -= line.height
+            cursor += advance
         }
     }
 
@@ -614,15 +775,15 @@ class PdfWriter(
         return runCatching { BitmapFactory.decodeByteArray(data, 0, data.size, opts) }.getOrNull()
     }
 
-    /** Draw [ref] fitted into the box and return the height it consumed. */
-    private fun drawImage(
-        ref: ImageRef,
-        x: Float,
-        width: Float,
-        maxHeight: Float,
-        align: Align,
-    ): Float {
-        val size = intrinsicSize(ref) ?: return 0f
+    /**
+     * The box [drawImage] will fit [ref] into, or null if it cannot draw it.
+     *
+     * Split out so a caller can RESERVE the picture's height before committing to anything —
+     * [blockFigure] has to keep a chart's title on the same page as the chart, and it cannot do that
+     * by guessing. Cheap to call twice: [intrinsicSize] is cached by source.
+     */
+    private fun imageBox(ref: ImageRef, width: Float, maxHeight: Float): Pair<Float, Float>? {
+        val size = intrinsicSize(ref) ?: return null
         var iw = size.first
         var ih = size.second
         if (ref.rotationDeg == 90 || ref.rotationDeg == 270) {
@@ -638,6 +799,21 @@ class PdfWriter(
             h = maxHeight
             w = h * aspect
         }
+        return w to h
+    }
+
+    /** Draw [ref] fitted into the box and return the height it consumed. */
+    private fun drawImage(
+        ref: ImageRef,
+        x: Float,
+        width: Float,
+        maxHeight: Float,
+        align: Align,
+    ): Float {
+        val size = intrinsicSize(ref) ?: return 0f
+        val box = imageBox(ref, width, maxHeight) ?: return 0f
+        val w = box.first
+        val h = box.second
 
         ensure(h)
         if (drawing) {
@@ -779,38 +955,75 @@ class PdfWriter(
             wrap(runsOf(block.title, bold = true), textW, 16f), x, textW, Align.LEFT, t.accent
         )
         y -= 4 * MM
+        // ── A CONTENTS ENTRY IS WRAPPED LIKE EVERY OTHER PIECE OF TEXT IN THIS FILE ─────────────
+        //
+        // It used to be a bare `drawText`, so a section title ran straight off the sheet: measured on
+        // the server, the heading "Prototype development and iterative refinement of the traditional
+        // Sambalpuri ikat weave for contemporary furnishing applications in the Bargarh cluster"
+        // makes a 688.6 pt contents line against a 453.5 pt column — 164.2 pt past the edge of the
+        // paper, taking its own page number with it. Section titles are the designer's stage names,
+        // so this is ordinary content and not a pathological case. The page number and the dot leader
+        // ride on the LAST line, where the eye expects to find them.
         for (entry in tocEntries) {
             if (entry.level > block.depth) continue
             val indent = (entry.level - 1) * 6 * MM
             val size = if (entry.level == 1) 10.0f else 9.2f
             val label = if (entry.number.isNotEmpty()) "${entry.number}. ${entry.text}" else entry.text
             val pageLabel = headingPages[entry.bookmark]?.toString() ?: ""
-            ensure(size * 1.6f)
-            if (drawing) {
-                val face = if (entry.level == 1) boldFace else regularFace
+            val face = if (entry.level == 1) boldFace else regularFace
+            // ── THE GUTTER IS RESERVED IN BOTH PASSES, NUMBER OR NO NUMBER ──────────────────────
+            //
+            // Sizing the wrap column from `pageLabel` makes the measuring pass and the drawing pass
+            // see DIFFERENT geometry, which is the one thing neither renderer may do. Here the first
+            // measuring pass has an empty [headingPages] and every later one does not; on the
+            // `iterations >= 3` exit the map handed to the drawing pass is not the one the last
+            // measuring pass wrapped against either. The server has the same shape and it was
+            // measured there: entries wrapped into 453.5 pt while measuring and 431.4 pt while
+            // drawing, which for a 60-section report put the contents on 5 pages when measured and 6
+            // when drawn — all 60 printed numbers one page short, in a file whose bookmark outline is
+            // perfectly correct.
+            //
+            // So the room for the number comes from a CONSTANT: four of the widest digit, the widest
+            // label a 9,999-page report can print. `pageLabel` still governs whether a number and a
+            // leader are DRAWN — it no longer governs how wide the column is.
+            var digitW = 0f
+            for (digit in "0123456789") {
+                digitW = max(digitW, stringWidth(digit.toString(), face, size))
+            }
+            val gutter = 4 * digitW
+            // The number and its leader need room on the last line, so the label gets the column
+            // minus both. Floored, because a deep indent plus a wide number must still leave a
+            // column to wrap into rather than a negative one.
+            val avail = max(textW - indent - (gutter + 4 * MM), 30 * MM)
+            val color = if (entry.level == 1) t.ink else t.muted
+            // 1.6 is the entry leading this block has always used; keeping it as the wrap's leading
+            // factor is what makes a one-line entry occupy exactly what it used to.
+            val lines =
+                wrap(runsOf(label, bold = entry.level == 1), avail, size, leadingFactor = 1.6f)
+            drawLines(lines, x + indent, avail, Align.LEFT, color)
+            if (pageLabel.isNotEmpty() && drawing) {
+                val last = lines.last()
+                // [drawLines] has left the cursor under the last line; its baseline is the same 0.78
+                // of the leading above that, which is where the number must sit.
+                val baseline = y + last.height * 0.22f
                 textPaint.typeface = face
                 textPaint.textSize = size
-                textPaint.color = argb(if (entry.level == 1) t.ink else t.muted)
-                val baseline = y - size
-                canvas.drawText(label, x + indent, cy(baseline), textPaint)
-                if (pageLabel.isNotEmpty()) {
-                    val pageW2 = textPaint.measureText(pageLabel)
-                    canvas.drawText(pageLabel, x + textW - pageW2, cy(baseline), textPaint)
-                    // Dot leader between the title and the page number.
-                    val labelW = stringWidth(label, face, size)
-                    val leadFrom = x + indent + labelW + 2 * MM
-                    val leadTo = x + textW - pageW2 - 2 * MM
-                    if (leadTo > leadFrom) {
-                        textPaint.typeface = face
-                        textPaint.textSize = size
-                        textPaint.color = argb(t.rule)
-                        val dotW = textPaint.measureText(".")
-                        val count = max(0, ((leadTo - leadFrom) / max(dotW, 0.1f)).toInt())
-                        canvas.drawText(".".repeat(count), leadFrom, cy(baseline), textPaint)
-                    }
+                textPaint.color = argb(color)
+                val pageLabelW = stringWidth(pageLabel, face, size)
+                canvas.drawText(pageLabel, x + textW - pageLabelW, cy(baseline), textPaint)
+                // Dot leader between the title and the page number. It runs up to the NUMBER'S own
+                // width, not to the reserved gutter: the gutter is sized for the widest label the
+                // document could carry, and stopping the dots there would leave a visible gap in
+                // front of every number shorter than that.
+                val leadFrom = x + indent + last.width + 2 * MM
+                val leadTo = x + textW - pageLabelW - 2 * MM
+                if (leadTo > leadFrom) {
+                    textPaint.color = argb(t.rule)
+                    val dotW = textPaint.measureText(".")
+                    val count = max(0, ((leadTo - leadFrom) / max(dotW, 0.1f)).toInt())
+                    canvas.drawText(".".repeat(count), leadFrom, cy(baseline), textPaint)
                 }
             }
-            y -= size * 1.6f
         }
         newPage()
     }
@@ -823,10 +1036,24 @@ class PdfWriter(
         val label = if (block.number.isNotEmpty()) "${block.number}. " else ""
         val runs = runsOf(label + runsText(block.runs), bold = true)
         val lines = wrap(runs, textW, size)
-        val needed = lines.sumOf { it.height.toDouble() }.toFloat() + 6 * MM
-        // keepNext: a heading alone at the foot of a page is worse than a slightly short page.
+        // ── KEEPNEXT HAS TO RESERVE WHAT THE HEADING ACTUALLY COSTS, WHICH IS NOT ITS LINES ─────
+        //
+        // This reserved a flat 6 mm (17.0 pt) around the text. A level-1 heading spends 6.5 mm above
+        // it, 1.2 mm on the rule beneath it and 2.4 mm after that — 10.1 mm, 28.6 pt — and every one
+        // of those millimetres is taken AFTER the `ensure` that was supposed to account for them. So
+        // a heading could pass the fit test and then walk past the bottom margin on its own: measured
+        // on the server over 300 level-1 headings, 13 ended with less than one body line beneath them
+        // and the worst finished 5.7 pt BELOW the margin, while the comment above the reservation
+        // asserted that could not happen. Both siblings deliver keepNext properly — the .docx sets
+        // `<w:keepNext/>` and the web report sheet uses `break-after: avoid`.
+        //
+        // Bound once, spent below, so the reservation is true by construction. The trailing body line
+        // is the other half of keepNext: a heading with nothing under it is an orphan even if it fits.
+        val lead = (if (level > 1) 4.5f else 6.5f) * MM
+        val trail = (if (level == 1) 1.2f * MM else 0f) + 2.4f * MM
+        val needed = lead + lines.sumOf { it.height.toDouble() }.toFloat() + trail + baseSize * 1.32f
         ensure(needed)
-        y -= (if (level > 1) 4.5f else 6.5f) * MM
+        y -= lead
         if (!drawing) {
             // Only a MEASURING pass builds the index. Appending during the drawing pass would print
             // every entry twice, because the drawing pass walks the same block list again.
@@ -834,13 +1061,35 @@ class PdfWriter(
             pendingEntries.add(TocEntry(level, block.number, runsText(block.runs), block.bookmark))
         }
         drawLines(lines, margin, textW, Align.LEFT, color)
-        if (level == 1 && drawing) {
+        if (level == 1) {
+            // ── THE `drawing` FLAG MAY GUARD A DRAW CALL AND MUST NEVER GUARD A CHANGE TO `y` ───
+            //
+            // The rule under a level-1 heading COSTS 1.2 mm of vertical space, and the whole block —
+            // the space AND the stroke — used to sit inside `if (level == 1 && drawing)`. So the
+            // measuring pass believed a level-1 heading was 1.2 mm shorter than the drawing pass would
+            // make it, over a hundred and fifty of them in a real report: the drawn document ran long
+            // enough to break pages the measuring pass had not, and every contents entry past the
+            // first drift across a page boundary pointed at the wrong page.
+            //
+            // This is the THIRD time this exact class has shipped. [newPage] carries the first
+            // ("THE `drawing` FLAG MUST NOT APPEAR IN THIS CONDITION"), `report_pdf._block_heading`
+            // carries the second, on this same rule, on the server. Prose did not stop it, so
+            // `test_report_parity.py` now asserts the SHAPE of these six lines as well.
+            //
+            // It hides behind the font: 1.2 mm x 150 headings is under a page of raw drift, and
+            // whether that moves a section across a boundary depends on where the text wraps, which
+            // depends on the face. The server's contents test passed under Nirmala and failed under
+            // DejaVu on the identical commit.
             y -= 1.2f * MM
-            strokePaint.color = argb(t.rule)
-            strokePaint.strokeWidth = 0.7f
-            canvas.drawLine(margin, cy(y), margin + textW, cy(y), strokePaint)
+            if (drawing) {
+                strokePaint.color = argb(t.rule)
+                strokePaint.strokeWidth = 0.7f
+                canvas.drawLine(margin, cy(y), margin + textW, cy(y), strokePaint)
+            }
         }
         y -= 2.4f * MM
+        // `lead` and `trail` above reserved exactly what has now been spent: 6.5 + 1.2 + 2.4 mm at
+        // level 1, 4.5 + 2.4 mm below it. Change a gap here and change it there.
     }
 
     private fun blockParagraph(block: ParagraphBlock) {
@@ -902,19 +1151,38 @@ class PdfWriter(
                 labLines.sumOf { it.height.toDouble() }.toFloat(),
                 valLines.sumOf { it.height.toDouble() }.toFloat(),
             ) + 1.8f * MM
-            ensure(height)
-            val rowTop = y
-            if (drawing && i % 2 == 1) {
-                fillPaint.color = argb(t.zebraFill)
-                canvas.drawRect(margin, cy(rowTop), margin + textW, cy(rowTop - height), fillPaint)
+            // A value taller than the page is cut across pages instead of being drawn off the
+            // bottom of this one; see [cutRow], which is also what keeps the COVER's info grid
+            // unbroken (it runs inside [locked], and a cut there is refused).
+            var rest: List<List<Line>> = listOf(labLines, valLines)
+            var restH = height
+            var turned = false
+            while (true) {
+                val cut = cutRow(rest, restH, 1.8f * MM, force = turned)
+                if (cut == null) {
+                    newPage()
+                    turned = true
+                    continue
+                }
+                turned = false
+                val rowTop = y
+                if (drawing && i % 2 == 1) {
+                    fillPaint.color = argb(t.zebraFill)
+                    canvas.drawRect(
+                        margin, cy(rowTop), margin + textW, cy(rowTop - cut.headHeight), fillPaint
+                    )
+                }
+                locked {
+                    y = rowTop - 0.9f * MM
+                    drawLines(cut.head[0], margin + 1.5f * MM, labelW - 3 * MM, Align.LEFT, t.muted)
+                    y = rowTop - 0.9f * MM
+                    drawLines(cut.head[1], margin + labelW, valueW - 3 * MM, Align.LEFT, t.ink)
+                }
+                y = rowTop - cut.headHeight
+                val tail = cut.tail ?: break
+                rest = tail
+                restH = cut.tailHeight
             }
-            locked {
-                y = rowTop - 0.9f * MM
-                drawLines(labLines, margin + 1.5f * MM, labelW - 3 * MM, Align.LEFT, t.muted)
-                y = rowTop - 0.9f * MM
-                drawLines(valLines, margin + labelW, valueW - 3 * MM, Align.LEFT, t.ink)
-            }
-            y = rowTop - height
         }
         y -= 2.4f * MM
     }
@@ -942,13 +1210,20 @@ class PdfWriter(
             return laid to (height + 1.8f * MM)
         }
 
-        /** Draw one row at the cursor. The caller guarantees it fits; this never breaks a page. */
+        /**
+         * Draw one row at the cursor. The caller guarantees it fits; this never breaks a page.
+         *
+         * [bottomRule] is false for every fragment of a row [cutRow] split across a page boundary
+         * except the last: a rule under the half-row would read as the end of a record that is in
+         * fact continued overleaf.
+         */
         fun drawRow(
             laid: List<List<Line>>,
             height: Float,
             fill: String?,
             textColor: String,
             topRule: Boolean = false,
+            bottomRule: Boolean = true,
         ) {
             val rowTop = y
             if (drawing) {
@@ -956,11 +1231,13 @@ class PdfWriter(
                     fillPaint.color = argb(fill)
                     canvas.drawRect(margin, cy(rowTop), margin + textW, cy(rowTop - height), fillPaint)
                 }
-                strokePaint.color = argb(t.rule)
-                strokePaint.strokeWidth = 0.4f
-                canvas.drawLine(
-                    margin, cy(rowTop - height), margin + textW, cy(rowTop - height), strokePaint
-                )
+                if (bottomRule) {
+                    strokePaint.color = argb(t.rule)
+                    strokePaint.strokeWidth = 0.4f
+                    canvas.drawLine(
+                        margin, cy(rowTop - height), margin + textW, cy(rowTop - height), strokePaint
+                    )
+                }
                 if (topRule) {
                     strokePaint.color = argb(t.accent)
                     strokePaint.strokeWidth = 0.9f
@@ -989,38 +1266,95 @@ class PdfWriter(
         val hasHeader = block.columns.any { it.header.isNotEmpty() }
         val (headerLaid, headerH) = rowLines(block.columns.map { runsOf(it.header) }, headerSize, true)
 
+        /**
+         * Put one row on the page, breaking it across pages when it is taller than one.
+         *
+         * THE BREAK IS DECIDED BEFORE ANYTHING IS DRAWN, so a row is never split by accident and
+         * never drawn twice. An older version drew the row, noticed the page had turned, and then
+         * redrew both the header and the row — duplicating a line of a cost sheet, which is the one
+         * kind of error in this file that changes what the report says rather than how it looks.
+         *
+         * A row that does not fit on ANY page is cut by [cutRow] and continued on the next, with the
+         * header repeated above it exactly as Word repeats a `<w:tblHeader/>` row over a body row it
+         * has split. Before that, the lock inside `drawRow` suppressed every break and the rest of
+         * the cell was drawn at a negative y — off the paper.
+         *
+         * [onBreak] is what puts the header back at the top of the new page, and it is passed IN
+         * rather than called by name because the header is itself placed through this function: a
+         * local function cannot call one declared after it, and a header taller than a page that
+         * repeated itself above each of its own fragments would never terminate. The header therefore
+         * passes null.
+         */
+        fun placeRow(
+            laid: List<List<Line>>,
+            height: Float,
+            fill: String?,
+            textColor: String,
+            topRule: Boolean = false,
+            onBreak: (() -> Unit)? = null,
+        ) {
+            var rest = laid
+            var restH = height
+            var first = true
+            var turned = false
+            while (true) {
+                val cut = cutRow(rest, restH, 1.8f * MM, force = turned)
+                if (cut == null) {
+                    newPage()
+                    onBreak?.invoke()
+                    turned = true
+                    // Re-cut against the page the header has just been placed on, not against the
+                    // one that was measured before it.
+                    continue
+                }
+                turned = false
+                drawRow(
+                    cut.head, cut.headHeight, fill, textColor,
+                    topRule = topRule && first, bottomRule = cut.tail == null,
+                )
+                first = false
+                val tail = cut.tail ?: return
+                rest = tail
+                restH = cut.tailHeight
+            }
+        }
+
         fun placeHeader() {
-            if (hasHeader) drawRow(headerLaid, headerH, t.tableHeaderFill, t.tableHeaderText)
+            // NEVER with an [onBreak]: a header taller than a page would otherwise place itself above
+            // each of its own fragments, for ever.
+            if (hasHeader) {
+                placeRow(headerLaid, headerH, t.tableHeaderFill, t.tableHeaderText)
+            }
         }
 
         // Reserve the header plus the first body row together: a header stranded at the foot of a
         // page reads as an empty table.
-        val firstH = if (block.rows.isNotEmpty()) rowLines(block.rows[0], bodySize, false).second else 0f
+        val rawFirstH =
+            if (block.rows.isNotEmpty()) rowLines(block.rows[0], bodySize, false).second else 0f
+        // A FIRST ROW TALLER THAN A PAGE CANNOT BE RESERVED WHOLE, and asking for the impossible
+        // turned a page the row was going to start on anyway: the table's own first page came out
+        // completely blank. What this reservation is for is stopping a header being stranded alone
+        // at the foot, so an over-tall row asks for the header plus one line of itself and
+        // [placeRow] cuts the rest.
+        val firstH =
+            if (headerH + rawFirstH > top - 6 * MM - bottom) bodySize * 1.32f + 1.8f * MM
+            else rawFirstH
         if (!fits(headerH + firstH)) newPage()
         placeHeader()
 
         block.rows.forEachIndexed { i, row ->
             val (laid, height) = rowLines(row, bodySize, false)
-            // DECIDE THE BREAK BEFORE DRAWING, so a row is never split and never drawn twice. The
-            // previous version drew the row, noticed the page had turned, and then redrew both the
-            // header and the row — duplicating a line of a cost sheet, which is the one kind of
-            // error in this file that changes what the report says rather than how it looks.
-            if (!fits(height)) {
-                newPage()
-                placeHeader()
-            }
-            drawRow(laid, height, if (block.zebra && i % 2 == 1) t.zebraFill else null, t.ink)
+            placeRow(
+                laid, height, if (block.zebra && i % 2 == 1) t.zebraFill else null, t.ink,
+                onBreak = { placeHeader() },
+            )
         }
 
         val totalRow = block.totalRow
         if (totalRow != null) {
             val (laid, height) = rowLines(totalRow, bodySize, true)
             // The total must never be orphaned from the figures it totals.
-            if (!fits(height)) {
-                newPage()
-                placeHeader()
-            }
-            drawRow(laid, height, t.zebraFill, t.ink, topRule = true)
+            placeRow(laid, height, t.zebraFill, t.ink, topRule = true, onBreak = { placeHeader() })
         }
 
         y -= 2.2f * MM
@@ -1045,33 +1379,35 @@ class PdfWriter(
         val cellW = textW / columns
         val capSize = 7.6f
 
+        val maxImageH = (top - bottom) * 0.30f
         var start = 0
         while (start < block.images.size) {
             val chunk = block.images.subList(start, min(start + columns, block.images.size))
-            val heights = ArrayList<Float>()
+            // MEASURED ONCE PER CELL, and the caption is now wrapped in the same italic it is drawn
+            // in. The split below needs the picture's height and the caption's LINES apart from
+            // each other, which three separate re-measurements could not give it.
+            val cells = ArrayList<Triple<ImageRef, Float, List<Line>>>(chunk.size)
+            val heights = ArrayList<Float>(chunk.size)
             for ((ref, cap) in chunk) {
-                val size = intrinsicSize(ref)
-                if (size == null) {
+                val box = imageBox(ref, cellW - 4 * MM, maxImageH)
+                if (box == null) {
+                    cells.add(Triple(ref, 0f, emptyList()))
                     heights.add(0f)
                     continue
                 }
-                var iw = size.first
-                var ih = size.second
-                if (ref.rotationDeg == 90 || ref.rotationDeg == 270) {
-                    val tmp = iw
-                    iw = ih
-                    ih = tmp
-                }
-                val aspect = if (iw > 0 && ih > 0) iw.toFloat() / ih.toFloat() else ref.aspect
-                val h = min((cellW - 4 * MM) / aspect, (top - bottom) * 0.30f)
-                val capH = if (cap.isNotEmpty()) {
-                    wrap(runsOf(cap), cellW - 4 * MM, capSize)
-                        .sumOf { it.height.toDouble() }.toFloat()
-                } else 0f
-                heights.add(h + capH + 3 * MM)
+                val lines =
+                    if (cap.isNotEmpty()) wrap(runsOf(cap, italic = true), cellW - 4 * MM, capSize)
+                    else emptyList()
+                cells.add(Triple(ref, box.second, lines))
+                heights.add(box.second + lines.sumOf { it.height.toDouble() }.toFloat() + 3 * MM)
             }
             val rowH = heights.maxOrNull() ?: 0f
             if (rowH <= 0f) {
+                start += columns
+                continue
+            }
+            if (rowH > top - 6 * MM - bottom) {
+                placeTallGridRow(cells, cellW, maxImageH)
                 start += columns
                 continue
             }
@@ -1081,18 +1417,13 @@ class PdfWriter(
             // breaks the page and the remaining photos of the row land under the header of the next
             // one, detached from their captions.
             locked {
-                chunk.forEachIndexed { i, (ref, cap) ->
+                cells.forEachIndexed { i, (ref, _, lines) ->
                     val x = margin + i * cellW
                     y = rowTop
-                    val drawn = drawImage(
-                        ref, x + 2 * MM, cellW - 4 * MM, (top - bottom) * 0.30f, Align.CENTER
-                    )
-                    if (drawn > 0f && cap.isNotEmpty()) {
+                    val drawn = drawImage(ref, x + 2 * MM, cellW - 4 * MM, maxImageH, Align.CENTER)
+                    if (drawn > 0f && lines.isNotEmpty()) {
                         y -= 1.2f * MM
-                        drawLines(
-                            wrap(runsOf(cap, italic = true), cellW - 4 * MM, capSize),
-                            x + 2 * MM, cellW - 4 * MM, Align.CENTER, theme.muted,
-                        )
+                        drawLines(lines, x + 2 * MM, cellW - 4 * MM, Align.CENTER, theme.muted)
                     }
                 }
             }
@@ -1101,6 +1432,78 @@ class PdfWriter(
         }
         y -= 1.6f * MM
         caption(block.caption, margin, textW)
+    }
+
+    /**
+     * Draw a grid row whose captions run past the page, without losing a word of them.
+     *
+     * A photograph is capped at 0.30 of the text column, so the PICTURES always fit and it is a
+     * caption that can overrun — and every one of the registry's twenty-five caption fields is a
+     * TEXT field with `max_length == 0`, so nothing upstream bounds one. The locked region that
+     * keeps a row of photographs together then suppressed the break the row needed and the tail of
+     * the caption was drawn below the foot of the sheet: 442 of 1,084 pieces, measured on the
+     * server against the identical algorithm.
+     *
+     * Same answer as [cutRow] gives a table row, in the shape a grid needs: the pictures and as
+     * much of every caption as this page holds go here, and each caption continues IN ITS OWN
+     * COLUMN overleaf, so a reader still knows which photograph it belongs to.
+     */
+    private fun placeTallGridRow(
+        cells: List<Triple<ImageRef, Float, List<Line>>>,
+        cellW: Float,
+        maxImageH: Float,
+    ) {
+        val gap = 1.2f * MM
+        val remaining = cells.map { ArrayList(it.third) }
+        val imageH = cells.maxOfOrNull { it.second } ?: 0f
+        val firstLine = remaining.mapNotNull { it.firstOrNull()?.height }.maxOrNull() ?: 0f
+        // The pictures and at least one line of caption belong on the same page as each other.
+        ensure(imageH + gap + firstLine + 3 * MM)
+        var first = true
+        while (true) {
+            val rowTop = y
+            // Budgeted against the TALLEST picture in the row, so a cell whose own photograph is
+            // shorter merely has room to spare rather than a caption that outruns the fragment.
+            val room = rowTop - bottom - 3 * MM - (if (first) imageH + gap else 0f)
+            val taken = ArrayList<List<Line>>(remaining.size)
+            var used = 0f
+            for (lines in remaining) {
+                var consumed = 0f
+                var k = 0
+                while (k < lines.size && consumed + lines[k].height <= room) {
+                    consumed += lines[k].height
+                    k += 1
+                }
+                if (k == 0 && lines.isNotEmpty()) {
+                    // A page too short for one line of caption. Take it anyway; an endless loop is
+                    // not the better failure.
+                    k = 1
+                    consumed = lines[0].height
+                }
+                taken.add(lines.take(k))
+                repeat(k) { lines.removeAt(0) }
+                used = max(used, consumed)
+            }
+            val partH = (if (first) imageH + gap else 0f) + used + 3 * MM
+            locked {
+                cells.forEachIndexed { i, (ref, _, _) ->
+                    val x = margin + i * cellW
+                    y = rowTop
+                    if (first &&
+                        drawImage(ref, x + 2 * MM, cellW - 4 * MM, maxImageH, Align.CENTER) > 0f
+                    ) {
+                        y -= gap
+                    }
+                    if (taken[i].isNotEmpty()) {
+                        drawLines(taken[i], x + 2 * MM, cellW - 4 * MM, Align.CENTER, theme.muted)
+                    }
+                }
+            }
+            y = rowTop - partH
+            first = false
+            if (remaining.all { it.isEmpty() }) return
+            newPage()
+        }
     }
 
     // -- figures: the map and the infographics -------------------------------------------
@@ -1165,17 +1568,56 @@ class PdfWriter(
             if (!droppedImages.contains(fallbackSource)) droppedImages.add(fallbackSource)
             return
         }
-        if (title.isNotEmpty()) {
-            // A figure title is a label, not a heading: it must not enter the table of contents, and it
-            // must not be separated from its picture by a page break.
-            ensure(6 * MM)
-            drawLines(
-                wrap(runsOf(title, bold = true), textW, baseSize),
-                margin, textW, Align.LEFT, theme.accent,
-            )
-            y -= 1.2f * MM
+        // ── THE PAGE BREAK THIS CLAIMED TO PREVENT WAS NEVER PREVENTED ─────────────────────
+        //
+        // The comment said the title "must not be separated from its picture by a page break", and
+        // nothing stopped it: the 6 mm reserved for the title said nothing about the picture, which
+        // reserves its own space inside [drawImage] and breaks the page there. So the title stayed at
+        // the foot of one page and the chart it names moved to the next — measured on the server over
+        // 80 chart figures, 32 of them were separated from their picture. A figure title is a LABEL,
+        // it is not in the contents, and there is no other way to tell which picture it belongs to,
+        // so a reader finds a bare "Figure 12: designs by status" over somebody else's chart.
+        //
+        // Reserved together and then drawn with breaks suppressed. The picture is capped at 0.58 of
+        // the text column — but ONLY the picture is, and the title is not, so "title plus picture
+        // always fits a page" is not something this method may simply assert. A title long enough to
+        // eat the other 0.42 would be drawn inside a lock that suppresses every break, which is
+        // precisely the shape [cutRow] exists to undo. Today's figure titles are developer-authored
+        // constants in the report builder ("Prototypes by review decision"), so the case is
+        // unreachable as the templates stand; it becomes reachable the day one of them puts a
+        // designer's own text in a chart title.
+        //
+        // So the guarantee is CHECKED rather than claimed: when the pair genuinely fits no page, the
+        // title falls back to paginating line by line outside the lock — the figure title is
+        // separated from its picture, which is the defect this block was opened for, but a separated
+        // title is recoverable and words drawn at a negative y are not.
+        val maxH = (top - bottom) * 0.58f
+        val figureW = figureWidth(widthPct)
+        val box = imageBox(ref, figureW, maxH)
+        val titleLines =
+            if (title.isNotEmpty()) wrap(runsOf(title, bold = true), textW, baseSize) else emptyList()
+        val reserve = titleLines.sumOf { it.height.toDouble() }.toFloat() +
+            (if (titleLines.isNotEmpty()) 1.2f * MM else 0f)
+        val boxH = box?.second ?: 0f
+        // The text column of a continuation page: [newPage] drops the cursor 6 mm below the top for
+        // the running head, so this is the most any locked region may ever ask for.
+        val columnH = top - 6 * MM - bottom
+        val drawn = if (reserve + boxH > columnH) {
+            if (titleLines.isNotEmpty()) {
+                drawLines(titleLines, margin, textW, Align.LEFT, theme.accent)
+                y -= 1.2f * MM
+            }
+            drawImage(ref, margin, figureW, maxH, align)
+        } else {
+            ensure(reserve + boxH)
+            locked {
+                if (titleLines.isNotEmpty()) {
+                    drawLines(titleLines, margin, textW, Align.LEFT, theme.accent)
+                    y -= 1.2f * MM
+                }
+                drawImage(ref, margin, figureW, maxH, align)
+            }
         }
-        val drawn = drawImage(ref, margin, figureWidth(widthPct), (top - bottom) * 0.58f, align)
         if (drawn > 0f) {
             caption(caption, margin, textW)
             y -= 1.6f * MM
@@ -1245,22 +1687,51 @@ class PdfWriter(
         val bodyLines = wrap(block.runs, innerW, baseSize - 0.6f)
         val height = titleLines.sumOf { it.height.toDouble() }.toFloat() +
             bodyLines.sumOf { it.height.toDouble() }.toFloat() + 6 * MM
-        ensure(height)
-        val boxTop = y
-        if (drawing) {
-            fillPaint.color = argb(fill)
-            canvas.drawRect(margin, cy(boxTop), margin + textW, cy(boxTop - height), fillPaint)
-            fillPaint.color = argb(edge)
-            canvas.drawRect(margin, cy(boxTop), margin + 1.4f * MM, cy(boxTop - height), fillPaint)
-        }
-        locked {
-            y = boxTop - 3 * MM
-            if (titleLines.isNotEmpty()) {
-                drawLines(titleLines, margin + 5 * MM, innerW, Align.LEFT, edge)
+        // A callout longer than a page is CUT and continued overleaf rather than drawn past the
+        // bottom of its own box: the same defect [cutRow] was written for, in the third of this
+        // file's locked regions. Measured on the server before the fix, a page-and-a-bit callout
+        // put 72 pieces below y=0. Title and body are ONE column here because they are stacked,
+        // not side by side; `titlesLeft` is how the split remembers which of the lines it has
+        // handed out were the title's and so must keep the edge colour.
+        var rest: List<List<Line>> = listOf(titleLines + bodyLines)
+        var restH = height
+        var titlesLeft = titleLines.size
+        var turned = false
+        while (true) {
+            val cut = cutRow(rest, restH, 6 * MM, force = turned)
+            if (cut == null) {
+                newPage()
+                turned = true
+                continue
             }
-            drawLines(bodyLines, margin + 5 * MM, innerW, Align.LEFT, t.ink)
+            turned = false
+            val part = cut.head[0]
+            val boxTop = y
+            if (drawing) {
+                fillPaint.color = argb(fill)
+                canvas.drawRect(
+                    margin, cy(boxTop), margin + textW, cy(boxTop - cut.headHeight), fillPaint
+                )
+                fillPaint.color = argb(edge)
+                canvas.drawRect(
+                    margin, cy(boxTop), margin + 1.4f * MM, cy(boxTop - cut.headHeight), fillPaint
+                )
+            }
+            val headTitle = part.take(titlesLeft)
+            locked {
+                y = boxTop - 3 * MM
+                if (headTitle.isNotEmpty()) {
+                    drawLines(headTitle, margin + 5 * MM, innerW, Align.LEFT, edge)
+                }
+                drawLines(part.drop(headTitle.size), margin + 5 * MM, innerW, Align.LEFT, t.ink)
+            }
+            titlesLeft = max(0, titlesLeft - part.size)
+            y = boxTop - cut.headHeight
+            val tail = cut.tail ?: break
+            rest = tail
+            restH = cut.tailHeight
         }
-        y = boxTop - height - 3 * MM
+        y -= 3 * MM
     }
 
     private fun blockSignatures(block: SignatureBlock) {

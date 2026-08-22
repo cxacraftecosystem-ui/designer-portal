@@ -148,7 +148,22 @@ data class DwReferenceList(
  * cluster's second workshop against its first and finds thirty free-text rows.
  *
  * `_reference_payload` in `design_workshops.py` is the authority for these names, and the web reads
- * the same six (`payload.options`, `payload.scopedToWorkshop`, `payload.truncated`, …).
+ * the same ones (`payload.options`, `payload.scopedToWorkshop`, `payload.truncated`, …). NAMED
+ * RATHER THAN COUNTED, because the count is the thing that goes stale: this sentence said "the same
+ * six" until the payload grew two more keys, and a count is wrong the day the server adds one while
+ * a list of names merely becomes incomplete.
+ *
+ * `outOfScope` AND `outOfScopeOption` ARE THE TWO NEW KEYS, AND THIS IS THE CHANGE THAT DECLARES
+ * THEM. They answer a `recordId` lookup, and `DwReferenceSelectField`'s scan panel is the first
+ * caller in this app to send one — a card read into a reference picker. Declaring them earlier would
+ * have been a field with no reader, which is a promise the UI has not made; the rule holds forwards
+ * as well, so neither may be widened, merged into [options] or read for anything but the refusal
+ * `dwReferenceOutOfScopeMessage` writes.
+ *
+ * A DEPLOYMENT OLDER THAN THE SERVER HALF SIMPLY NEVER SETS THEM, which is why both are defaulted
+ * and why nothing here needs a version check: `outOfScope` stays false, `dwScanServerAnswer` falls
+ * through to its unresolved sentence, and the `limit = 1` guard described there keeps such a server
+ * from having a row read out of it.
  */
 @Serializable
 data class DwReferenceResponseDto(
@@ -177,6 +192,31 @@ data class DwReferenceResponseDto(
      * and it reads identically to "the list failed to load" unless the flag is carried.
      */
     val filtered: Boolean = false,
+    /**
+     * True when a `recordId` lookup found the record ONLY with the workshop clause lifted.
+     *
+     * The record is real, the caller may read it, and this WORKSHOP-scoped field still excludes it —
+     * a colleague's product card for a product documented at another cluster. It is the one flag here
+     * that is about a row this field would NOT offer, which is why the row itself arrives under its
+     * own key below rather than inside [options].
+     *
+     * FALSE IS THE ANSWER FOR AN ID THAT NAMES NOTHING **AND** FOR ONE THE CALLER MAY NOT SEE, and
+     * those two must stay indistinguishable — `reference_options` runs the probe as a `find_many`
+     * carrying the same read predicate the record list routes carry, precisely so this flag cannot
+     * become an existence oracle for somebody holding a stack of printed cards. Do not add a branch
+     * here that tells them apart; there is nothing on the wire to tell them apart WITH.
+     */
+    val outOfScope: Boolean = false,
+    /**
+     * The excluded row, when [outOfScope] is set. NEVER merged into [options].
+     *
+     * The server keeps it out of `options` so that a client which has never heard of the flag cannot
+     * render it as an ordinary choice — the first cut of the server feature put it in `options` with
+     * a flag beside it, and a designer would have seen exactly one option, tapped it, and pointed a
+     * stage row at a cross-cluster record with nothing on screen having said so. This client must
+     * keep that property: read this field only to NAME the record in a refusal, never to offer it.
+     */
+    val outOfScopeOption: DwReferenceOption? = null,
 )
 
 /**

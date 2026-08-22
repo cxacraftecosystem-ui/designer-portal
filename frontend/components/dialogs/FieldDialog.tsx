@@ -27,7 +27,10 @@
  *   nothing else: this header used to claim both switches while reading only one, so a designer with
  *   vestibular sensitivity who turned Reduce motion on in Settings still had every confirm, every
  *   unsaved-changes prompt and every delete dialog spring in with a scale and a 10px rise.
- * - **The page behind cannot scroll**, and nested dialogs unwind that lock in the right order.
+ * - **The page behind cannot scroll**, and nested dialogs unwind that lock in the right order. The
+ *   lock itself is `lib/scrollLock.ts`, shared with the navigation sheet and the full-screen
+ *   editor: it freezes <html> rather than <body> (iOS Safari ignores the latter) and pays the
+ *   vanished scrollbar's width back as padding, so the centred panel does not jump as it opens.
  */
 
 import { AnimatePresence, motion } from "framer-motion";
@@ -44,6 +47,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
+import { lockPageScroll, unlockPageScroll } from "@/lib/scrollLock";
 import { cn } from "@/lib/utils";
 
 export type DialogTone = "neutral" | "danger" | "warning";
@@ -107,25 +111,6 @@ function releaseFocusTracker() {
     document.removeEventListener("focusin", onDocumentFocusIn, true);
     lastFocusedOutsideDialog = null;
   }
-}
-
-/** Body scroll is locked while any dialog is open, and only unlocked by the last one to close. */
-let scrollLockCount = 0;
-let previousBodyOverflow = "";
-
-function lockScroll() {
-  if (typeof document === "undefined") return;
-  if (scrollLockCount === 0) {
-    previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-  }
-  scrollLockCount += 1;
-}
-
-function unlockScroll() {
-  if (typeof document === "undefined") return;
-  scrollLockCount = Math.max(0, scrollLockCount - 1);
-  if (scrollLockCount === 0) document.body.style.overflow = previousBodyOverflow;
 }
 
 const TONE_RING: Record<DialogTone, string> = {
@@ -260,12 +245,23 @@ export function FieldDialog({
     restoreFocusRef.current =
       active instanceof HTMLElement && active !== document.body ? active : lastFocusedOutsideDialog;
     dialogStack.push(instanceId);
-    lockScroll();
+    /*
+      The SHARED lock, not `document.body.style.overflow = "hidden"` this component used to set for
+      itself. Two things were wrong with owning it here. `overflow: hidden` on the body is precisely
+      what iOS Safari ignores — `globals.css` says so beside the rule that puts the lock on <html>
+      instead — so on an iPhone the page went on panning under every confirm and every delete
+      prompt, while the header above promised "the page behind cannot scroll". And nothing paid back
+      the scrollbar the lock removes, so on a desktop the dialog this component centres slid sideways
+      by half the scrollbar's width in the frame it opened. The refcount now spans all three surfaces
+      that freeze the page, so a globally-mounted dialog closing can no longer unfreeze the document
+      under an open navigation sheet or a full-screen editor.
+    */
+    lockPageScroll();
 
     return () => {
       const index = dialogStack.lastIndexOf(instanceId);
       if (index >= 0) dialogStack.splice(index, 1);
-      unlockScroll();
+      unlockPageScroll();
       // Restore on the next frame: React has already torn the panel out, and focusing while the
       // browser is still settling the removal is what makes focus land on <body> instead.
       const target = restoreFocusRef.current;
@@ -358,7 +354,19 @@ export function FieldDialog({
           key="field-dialog-overlay"
           data-field-dialog-overlay=""
           className="fixed inset-0 grid place-items-center overflow-y-auto bg-ink-900/45 p-4 backdrop-blur-[2px]"
-          style={{ zIndex }}
+          /*
+            THE GUTTER, REPAID — the standing obligation on anything `position: fixed` and
+            horizontally centred, and the reason the shared lock could not simply be dropped in.
+
+            The lock freezes <html> and hands the vanished scrollbar's width back as padding on
+            <body>, which is what keeps the page BEHIND from sliding sideways as this opens. A fixed
+            element cannot inherit that padding: this overlay spans the full viewport, scrollbar
+            space included, so without the same repayment its centred panel would sit half a
+            scrollbar to the right of the content it is centred over — visibly off on a desktop, and
+            worst on the confirm dialogs that are meant to look anchored to the row that opened
+            them. `.nav-island-frame` and the full-screen editor carry the identical line.
+          */
+          style={{ zIndex, paddingRight: "calc(1rem + var(--nav-scroll-gutter, 0px))" }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

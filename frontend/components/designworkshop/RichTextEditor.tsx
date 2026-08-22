@@ -177,6 +177,7 @@ import { AiVerbSelectionMenu } from "@/components/designworkshop/AiVerbSelection
 import { selectedPassage } from "@/lib/aiVerbs";
 import { apiFetch } from "@/lib/api";
 import { uploadMediaBatch } from "@/lib/media";
+import { lockPageScroll, unlockPageScroll } from "@/lib/scrollLock";
 import type { MediaFile } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -2453,18 +2454,18 @@ export function RichTextEditor({
 
   useEffect(() => {
     if (!fullscreen) return;
-    const root = document.documentElement;
-    // The same scroll-lock protocol the navigation sheet uses, reused rather than reinvented: the
-    // lock lives on <html> because iOS Safari ignores `overflow: hidden` on the body and keeps
-    // panning the page underneath, and the vanished scrollbar's width is paid back through
-    // `--nav-scroll-gutter` so nothing behind the overlay jumps sideways.
-    const gutter = window.innerWidth - root.clientWidth;
-    root.style.setProperty("--nav-scroll-gutter", `${gutter}px`);
-    root.classList.add("nav-scroll-locked");
-    return () => {
-      root.classList.remove("nav-scroll-locked");
-      root.style.removeProperty("--nav-scroll-gutter");
-    };
+    // The same scroll lock the navigation sheet and every dialog use, and now literally the same
+    // code: `lib/scrollLock.ts`. It lives on <html> because iOS Safari ignores `overflow: hidden`
+    // on the body and keeps panning the page underneath, and the vanished scrollbar's width is
+    // paid back through `--nav-scroll-gutter` so nothing behind the overlay jumps sideways.
+    //
+    // The refcount is what this effect gains by giving the class up. Toggling the class here meant
+    // any dialog that happened to close while a designer was writing full screen — an autosave
+    // confirm, the app-update prompt mounted in the protected layout — removed it, and the document
+    // behind the editor started scrolling again mid-sentence. The lock now comes off only when the
+    // LAST holder lets go.
+    lockPageScroll();
+    return unlockPageScroll;
   }, [fullscreen]);
 
   useEffect(() => {

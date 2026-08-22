@@ -66,6 +66,7 @@ import {
   type FieldErrors,
   type ServerHeldRows
 } from "@/components/designworkshop/EntityForm";
+import { StagePendingMediaProvider } from "@/components/designworkshop/FieldInput";
 import { LinkedWorkshopProvider } from "@/components/designworkshop/LinkedWorkshop";
 import { COSTING_STAGE, CostFindingsPanel } from "@/components/designworkshop/CostFindingsPanel";
 import { ANALYSIS_STAGE, MarketFindingsPanel } from "@/components/designworkshop/MarketFindingsPanel";
@@ -75,6 +76,7 @@ import {
   type StageRecordingPlace
 } from "@/components/designworkshop/StageRecordingPlace";
 import { PageHeader } from "@/components/PageHeader";
+import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { UploadTray } from "@/components/media/UploadTray";
 import { UploadsProvider } from "@/lib/uploads";
 import { ApiError } from "@/lib/api";
@@ -212,25 +214,41 @@ function sameSnapshot(a: StageSnapshot, b: StageSnapshot): boolean {
 }
 
 /**
- * The page-level upload dock, mounted once around the stage.
+ * The page-level upload dock and the page-level attached-file store, mounted once around the stage.
  *
- * Every media field on a stage now pre-uploads the moment a file is attached, and stage 13 has
- * eleven of them. Without a provider each field would report its own progress into a context that
- * is not there and the designer would have eleven separate percentages and no answer to "is it safe
- * to close this tab yet". `UploadTray` renders its own `aria-hidden` spacer, so the fixed dock does
- * not sit on top of the Save button at the bottom of the page.
+ * Every media field on a stage pre-uploads the moment a file is attached, and stage 13 has eleven of
+ * them. Without `UploadsProvider` each field would report its own progress into a context that is
+ * not there and the designer would have eleven separate percentages and no answer to "is it safe to
+ * close this tab yet". `UploadTray` renders its own `aria-hidden` spacer, so the fixed dock does not
+ * sit on top of the Save button at the bottom of the page.
+ *
+ * `StagePendingMediaProvider` IS HERE FOR A DATA-LOSS BUG AND ITS POSITION IS THE FIX. A collection
+ * row's panel is unmounted when the row is collapsed — it has to be; the flagship workshop has 244
+ * rows — and the list of files that have been ATTACHED BUT NOT YET LINKED used to live inside that
+ * panel. Collapsing the row destroyed the only reference to them, and two seconds later the staged-
+ * owner release in `lib/media` aborted the transfer and deleted the object that was already in
+ * storage: reopening the row said "Nothing attached yet" over a photograph that no longer existed
+ * anywhere. Held HERE, the list has the page's lifetime instead of the panel's. Read the header on
+ * `StagePendingMediaProvider` for the other half of the fix, which is the stable staging owner id —
+ * neither half works alone.
+ *
+ * OUTSIDE THE SUSPENSE BOUNDARY, for the same reason `UploadsProvider` is: a provider that suspends
+ * remounts, and a remount here would throw away exactly what it is holding.
  */
 export default function DesignWorkshopStagePage(props: {
   params: Promise<{ id: string; stageKey: string }>;
 }) {
   return (
     <UploadsProvider>
-      {/* Next 16: the body reads `useSearchParams` (the workshop search's `?find=`), which must sit
-          inside a Suspense boundary. `UploadsProvider` stays OUTSIDE it — a provider that suspends
-          would drop the staged-file context every field on the stage is uploading through. */}
-      <Suspense fallback={<div className="panel p-4 text-sm text-ink-700">Loading this stage…</div>}>
-        <DesignWorkshopStagePageBody {...props} />
-      </Suspense>
+      <StagePendingMediaProvider>
+        {/* Next 16: the body reads `useSearchParams` (the workshop search's `?find=`), which must sit
+            inside a Suspense boundary. Both providers stay OUTSIDE it — a provider that suspends
+            would drop the staged-file context every field on the stage is uploading through, and the
+            attached-file list with it. */}
+        <Suspense fallback={<div className="panel p-4 text-sm text-ink-700">Loading this stage…</div>}>
+          <DesignWorkshopStagePageBody {...props} />
+        </Suspense>
+      </StagePendingMediaProvider>
       <UploadTray />
     </UploadsProvider>
   );
@@ -1013,23 +1031,42 @@ function DesignWorkshopStagePageBody({
   }
 
   /**
-   * Navigate, after making sure the debounce has been banked.
+   * Navigate, after making sure the debounce has been banked AND after asking anything on the page
+   * that is not durable.
    *
-   * THIS IS WHAT REPLACED THE UNSAVED-CHANGES PROMPT - see decision 6 in the file header. The prompt
-   * existed to stop work being lost; the draft store means leaving loses nothing, so the honest
-   * behaviour is to flush and go. Awaiting the flush rather than firing it and hoping is the part
-   * that matters: `putDraftStage` is a real IndexedDB transaction and a route change that raced it
-   * would drop the last few seconds of typing on exactly the stage the designer had just finished.
+   * THE FLUSH IS WHAT REPLACED THE UNSAVED-CHANGES PROMPT - see decision 6 in the file header. The
+   * prompt existed to stop work being lost; the draft store means leaving loses nothing, so the
+   * honest behaviour is to flush and go. Awaiting the flush rather than firing it and hoping is the
+   * part that matters: `putDraftStage` is a real IndexedDB transaction and a route change that raced
+   * it would drop the last few seconds of typing on exactly the stage the designer had just
+   * finished.
+   *
+   * AND THE PROMPT IS BACK FOR ONE THING, WHICH IS NOT THE STAGE'S OWN FIELDS. Four entities now
+   * embed a repository record page, so this page can be hosting an `ArtisanForm`, `ToolForm`,
+   * `ProductForm` or `ProcessForm` whose name, identity digits, attached files and captured fix live
+   * in React state and uncontrolled DOM and are read only at that form's own submit. `flushLocal`
+   * cannot bank any of it — it banks the DRAFT, and none of that is in the draft. So these two
+   * buttons, which are the primary motion on this page, were an unguarded exit over work the page
+   * had no way to save: pressing "14. Prototype iteration" with a half-typed artisan on screen lost
+   * it in silence.
+   *
+   * `interceptLeave` is the same call the back arrow makes and returns true only when a form has
+   * TAKEN RESPONSIBILITY — it is dirty and has put its own dialog on screen. With no record form
+   * mounted, or with a clean one, nothing is registered that blocks and this behaves exactly as it
+   * did. Asked BEFORE the flush, because a flush the designer then cancels out of is work done for a
+   * navigation that did not happen.
    *
    * No second back control is added anywhere on this page: `e2e/back-control.spec.ts` asserts
    * exactly one arrow, because the opposite shipped four times.
    */
+  const interceptLeave = useLeaveInterceptor();
   const leave = useCallback(
     async (action: () => void) => {
+      if (interceptLeave()) return;
       await flushLocal();
       action();
     },
-    [flushLocal]
+    [flushLocal, interceptLeave]
   );
 
   /* ── Save ────────────────────────────────────────────────────────────── */

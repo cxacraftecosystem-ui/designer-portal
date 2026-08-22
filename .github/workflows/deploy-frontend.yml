@@ -27,7 +27,16 @@ name: Deploy frontend to Vercel
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   VERCEL_TOKEN       Vercel → Account Settings → Tokens → Create (scope: the team)
 #   VERCEL_ORG_ID      team_pcTf4Alb2DCIwq2IZcdu00dS
-#   VERCEL_PROJECT_ID  prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0
+#   VERCEL_PROJECT_ID  prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc   ← THIS portal's project, `design-repository`
+#
+# 2026-08-22: the line above used to read `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0`, which docs/CI.md §2
+# pairs with the Vercel project `field-repository` — a DIFFERENT product in the same Vercel team.
+# `frontend/.vercel/project.json`, written by `vercel link` in this checkout, says this repository's
+# project is `design-repository` / `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc`, and deploy-backend.yml pins
+# `BACKEND_CORS_ORIGINS` to `design-repository.vercel.app` (never `field-repository`), so the API
+# would reject the browser origin the old id publishes to. A project id is a deploy TARGET: the
+# wrong one does not fail, it publishes this portal's build over somebody else's live site. What
+# the repository's secret actually holds cannot be read from a checkout — see docs/CI.md §2.
 # The NEXT_PUBLIC_* build-time variables are NOT GitHub secrets: `vercel pull` fetches them
 # from the Vercel project, so the Environment Variables screen stays the single source of
 # truth for them (docs/DEPLOYMENT_VERCEL.md §2). They must be stored there as **Encrypted**,
@@ -173,8 +182,12 @@ jobs:
     if: ${{ needs.gate.outputs.should_deploy == 'true' }}
     runs-on: ubuntu-latest
     environment:
+      # Resolved from the project this run actually deployed, not written down here. A literal was
+      # what made this link point at `field-repository.vercel.app` — a site this workflow has never
+      # published — so the run summary handed every reader a link to another product's page and
+      # called it "production-web".
       name: production-web
-      url: https://field-repository.vercel.app
+      url: ${{ steps.alias.outputs.url }}
     env:
       # The CLI reads these two to resolve the project without a committed .vercel/ link
       # (frontend/.vercel is gitignored, so CI has no link to inherit).
@@ -223,6 +236,61 @@ jobs:
             echo "::error::Fix it in Vercel → Project → Settings → General → Root Directory."
             exit 1
           fi
+
+      - name: Resolve the production alias of the project we are publishing to
+        id: alias
+        # WHY THIS IS RESOLVED AND NOT WRITTEN DOWN. Three places in this file used to name
+        # `field-repository.vercel.app` as the site to check: the environment link above, the
+        # smoke check, and the live-bundle assertion. This pipeline has never deployed that
+        # hostname — it belongs to a different product in the same Vercel team — so both checks
+        # were grading a site somebody else publishes. That is worse than having no check: a
+        # `--prod` that failed to move OUR alias left the other product's healthy page answering
+        # 200 with the expected API host in its chunks, and the run went green over the exact
+        # failure the last step of this job exists to catch.
+        #
+        # `vercel pull` has just written `.vercel/project.json` for whatever project the token and
+        # VERCEL_PROJECT_ID resolve to, and `<projectName>.vercel.app` is the domain Vercel
+        # CONVENTIONALLY gives a project of that name. So the check follows the deploy target
+        # automatically: point this workflow at a different project and the assertions move with
+        # it, which is precisely what a literal could not do.
+        #
+        # BE CLEAR ABOUT WHAT THIS DOES NOT PROVE. It follows the project's NAME, which is not the
+        # same thing as the alias the platform has actually assigned. `.vercel.app` subdomains are
+        # globally unique across all of Vercel, so where a project's conventional domain was
+        # already taken the project gets a suffixed one and the plain `<name>.vercel.app` belongs
+        # to somebody else's account — and then the two checks below would poll a stranger's
+        # healthy page, exactly the false green this step was added to remove, arrived at by
+        # derivation instead of by a literal. It is right for `design-repository` today, which
+        # `deploy-backend.yml`'s CORS pin corroborates independently, and the guard below refuses
+        # the one wrong name we know by name. The assertion that would need no such argument is
+        # `vercel inspect "$url" --token=… | grep` for the alias in the deployment's own Aliases
+        # list, after the deploy — that measures the thing rather than assuming it. It is NOT done
+        # here because it cannot be exercised from a checkout with no Vercel credentials, and an
+        # untested hard gate on the production deploy path is a worse failure than the one it
+        # closes. Whoever next has the token in hand should promote it.
+        #
+        # IT MUST BE THE ALIAS, NEVER `vercel deploy`'s output URL. That URL addresses the
+        # deployment we just uploaded, so it serves the new build whether or not production was
+        # ever moved onto it — checking it would confirm the upload and assert nothing at all
+        # about what a visitor receives.
+        run: |
+          set -euo pipefail
+          name="$(node -p "require('./.vercel/project.json').projectName ?? ''")"
+          if [ -z "$name" ]; then
+            echo "::error::.vercel/project.json carries no projectName, so the production alias cannot be resolved."
+            echo "::error::Without it there is nothing to smoke-check but the deployment URL, which always serves the new build and therefore proves nothing. Re-run 'vercel pull' or re-link the project."
+            exit 1
+          fi
+          # The one name we know is wrong. If `vercel pull` resolved the field repository's
+          # project, every check below would grade that product's live site AND this job would be
+          # about to publish over it — so stop before the build, not after the upload.
+          if [ "$name" = "field-repository" ]; then
+            echo "::error::vercel pull resolved the project 'field-repository', which is a DIFFERENT product in the same Vercel team. This repository publishes to 'design-repository'."
+            echo "::error::VERCEL_PROJECT_ID is almost certainly prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0; it must be prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc. Nothing has been deployed. See docs/CI.md section 2."
+            exit 1
+          fi
+          echo "url=https://${name}.vercel.app" >> "$GITHUB_OUTPUT"
+          echo "Vercel project '${name}' — production alias https://${name}.vercel.app"
 
       - name: Assert the pulled environment carries the values the app cannot run without
         # 2026-07-26: these variables were marked Sensitive in the dashboard. Vercel never
@@ -341,7 +409,8 @@ jobs:
           set -euo pipefail
           # --prebuilt uploads .vercel/output instead of rebuilding on Vercel, so what was
           # verified in the step above is byte-for-byte what goes live. --prod moves the
-          # production alias (field-repository.vercel.app) onto this deployment.
+          # production alias resolved above onto this deployment — and whether it actually did
+          # is exactly what the two steps after this one are for.
           url="$(vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN")"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed $url" >> "$GITHUB_STEP_SUMMARY"
@@ -349,6 +418,7 @@ jobs:
       - name: Smoke-check the production alias
         env:
           DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+          SITE: ${{ steps.alias.outputs.url }}
         run: |
           set -euo pipefail
           # This proves the alias moved and the site is being served. It proves nothing
@@ -359,19 +429,20 @@ jobs:
           # CDN is handing out rather than trusting that it has any.
           # Alias propagation is not instant; poll rather than sleep-and-hope.
           for i in $(seq 1 15); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' https://field-repository.vercel.app/ || true)"
+            code="$(curl -s -o /dev/null -w '%{http_code}' "${SITE}/" || true)"
             if [ "$code" = "200" ]; then
               echo "production alias healthy after ${i} tries (HTTP $code)"
               exit 0
             fi
             sleep 4
           done
-          echo "::error::field-repository.vercel.app did not return 200 (last: ${code:-none}). Deployment: ${DEPLOY_URL}"
+          echo "::error::${SITE} did not return 200 (last: ${code:-none}). Deployment: ${DEPLOY_URL}"
           exit 1
 
       - name: Assert the bundle the CDN is serving is the one that was verified
         env:
           DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+          SITE: ${{ steps.alias.outputs.url }}
         # The two assertions before the deploy grade an artifact on the runner; this one
         # grades the artifact a visitor receives, which is the only one that has ever been
         # broken. Everything between the two — the upload, `--prod` picking which deployment
@@ -381,7 +452,7 @@ jobs:
         # that was run by hand to diagnose 2026-07-26, promoted out of the incident channel.
         run: |
           set -euo pipefail
-          site="https://field-repository.vercel.app"
+          site="$SITE"
           env_file=".vercel/.env.production.local"
 
           # Read, never echoed — same rule and same extraction as the pre-build assertions.

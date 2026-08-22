@@ -27,7 +27,7 @@ from app.core.security import hash_password
 from app.schemas.users import UserCreate, UserUpdate
 from app.services import access_roster
 from app.services.pagination import normalize_pagination, page_payload
-from app.services.records import clean_data, contains
+from app.services.records import clean_data, contains, with_id_tiebreak
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -136,7 +136,12 @@ async def user_directory(
     where: dict[str, Any] = {}
     if search:
         where["OR"] = [{"name": contains(search)}, {"email": contains(search)}]
-    users = await db.user.find_many(where=where, order={"name": "asc"}, take=500)
+    # ``id`` is the TIEBREAKER on a CAPPED read, and on this table it is load-bearing: display names
+    # are not unique (the picker note in tasks.py counts 204 accounts sharing one), so with ``name``
+    # alone which rows fall inside the 500 is Postgres's choice and can differ between two identical
+    # requests — "who is missing" changing on refresh, which no search term can be relied on to reach.
+    # ``/designers/directory`` already spells it this way for the same reason.
+    users = await db.user.find_many(where=where, order=with_id_tiebreak({"name": "asc"}), take=500)
     return [
         {"id": u.id, "name": u.name, "email": u.email, "role": str(getattr(u.role, "value", u.role))}
         for u in users
@@ -159,7 +164,12 @@ async def list_users(
     if search:
         where["OR"] = [{"name": contains(search)}, {"email": contains(search)}]
     total = await db.user.count(where=where)
-    users = await db.user.find_many(where=where, skip=skip, take=page_size, order={"createdAt": "desc"})
+    # Offset paging over ``createdAt`` alone repeats rows and skips others whenever two accounts
+    # share a creation instant, and nothing on this table stops that: ``createdAt`` is not unique and
+    # carries no index. See ``records.with_id_tiebreak`` for the whole argument.
+    users = await db.user.find_many(
+        where=where, skip=skip, take=page_size, order=with_id_tiebreak({"createdAt": "desc"})
+    )
     return page_payload([serialize_user(user) for user in users], total, page, page_size)
 
 

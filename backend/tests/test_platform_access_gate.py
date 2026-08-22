@@ -1,7 +1,7 @@
 """THE PLATFORM ALLOW-LIST: the gate, the two distinct refusals, and the migration that must not
 lock anybody out.
 
-Five things are pinned here, and four of them are ways somebody loses access to the product.
+Six things are pinned here, and four of them are ways somebody loses access to the product.
 
 **NO EXISTING ACCOUNT IS LOCKED OUT BY THE MIGRATION THAT INTRODUCES THE GATE.** An account of every
 one of the seven roles is created with NO allow-list row — the state of the database on the morning
@@ -31,6 +31,14 @@ goes, the first admin to fat-finger their own row takes the institution offline 
 **THE QUEUE STAYS WORKABLE.** One address is one row however many times it is tried; a rejected
 person does not re-queue themselves by trying again; and past the cap the request is refused with a
 message that says it was not recorded, rather than being dropped into a queue nobody reads.
+
+**THE GATE IS ON EVERY DOOR THAT TURNS A PASSWORD INTO A TOKEN, NOT JUST ON THE SIGN-IN PAGE.**
+``POST /api/datasets/token`` mints a thirty-day read credential over the whole repository from an
+admin's email and password, and it used to check the credential and the admin flag and nothing else.
+Suspension writes the roster status and never ``User.role``, so a suspended admin was refused at
+``/auth/login`` and could still mint there, renewably, for ever — a revoked person holding live data
+access. Section 8 pins both doors giving the same answer about the same account, and pins the
+break-glass opening at both.
 
 Postgres is required — every behaviour here is a row deciding an HTTP status — so the module skips
 itself when ``DATABASE_URL`` does not point at a local database, exactly as ``test_designer_roster``
@@ -118,6 +126,16 @@ ACCOUNTS: tuple[tuple[str, str], ...] = (
     # An empanelled designer whose designer roster row the fixture suspends. Their platform access
     # is fine; the refusal must still be the empanelment's own sentence, not the platform one.
     ("designerSuspended", "DESIGNER"),
+    # ADMINS the fixture then bars, for the dataset-token door (section 8). ADMIN and not
+    # RESEARCHER, because a non-admin never reaches the gate on that endpoint — the rank check
+    # refuses them first — so a barred researcher there would pass while proving nothing. The hole
+    # this closes was specifically an admin: suspension writes the roster status and never the
+    # ``User.role``, so ``is_admin`` still says yes about somebody who cannot sign in.
+    ("adminBarred", "ADMIN"),
+    ("adminRejected", "ADMIN"),
+    # A MASTER admin whose row says SUSPENDED. The break-glass at the second door, which has to open
+    # for exactly the same account the sign-in door opens for.
+    ("masterBarred", "MASTER_ADMIN"),
 )
 
 #: The accounts whose access row is moved out of ACTIVE after the grandfathering, and to what.
@@ -125,6 +143,9 @@ REFUSED: tuple[tuple[str, str], ...] = (
     ("pending", "PENDING"),
     ("rejected", "REJECTED"),
     ("barred", "SUSPENDED"),
+    ("adminBarred", "SUSPENDED"),
+    ("adminRejected", "REJECTED"),
+    ("masterBarred", "SUSPENDED"),
 )
 
 
@@ -886,3 +907,122 @@ async def test_correcting_an_address_does_not_lock_the_account_out(world, client
     moved = _rows(client, world, term=new)[new]
     assert moved["joinedAt"] == joined, "the joining date must follow the person"
     assert old not in _rows(client, world, term=old), "the row is moved, not duplicated"
+
+
+# --------------------------------------------------------------------------------------
+# 8. The other door: the dataset token, which also turns a password into a token
+# --------------------------------------------------------------------------------------
+#
+# ``POST /api/datasets/token`` is the second place in this API where an email and a password come
+# in and a bearer token goes out. It checked the credential and the admin flag and then minted,
+# with no reference to the allow-list at all — so revoking somebody's access closed the sign-in
+# page and left this endpoint open, and the credential it issues is good for thirty days over
+# every record in the repository and can be renewed indefinitely from the same password.
+#
+# The four cases below are the four answers that endpoint has to give: barred, rejected, admitted,
+# and the one account no allow-list row may ever bar.
+
+
+def _mint(client: Any, email: str, password: str = PASSWORD) -> Any:
+    """Ask for a dataset token. The same two credentials ``_login`` sends, to the other door."""
+    return client.post("/api/datasets/token", json={"email": email, "password": password})
+
+
+async def test_a_suspended_admin_cannot_mint_a_dataset_token(world, client):
+    """**THE SHIP-BLOCKER.** An admin an administrator has suspended is a revoked person, and a
+    revoked person must not be able to walk to a second endpoint and take a thirty-day read
+    credential over the entire repository out of it.
+
+    Their ``User.role`` is untouched by the suspension — that is the whole trap — so ``is_admin``
+    still says yes about them and the rank check this endpoint always had waves them through. Only
+    the allow-list knows.
+
+    The sign-in door is asserted in the same test, on the same account, because the claim is that
+    the two doors now agree: an answer that differs between them is the defect, not a detail.
+    """
+    email = world["address"]("adminBarred")
+
+    minted = _mint(client, email)
+    assert minted.status_code == 403, minted.text
+    assert minted.json()["detail"] == BARRED_DETAIL
+    assert "accessToken" not in minted.json(), "a refusal must not carry the credential"
+    # The same header the two sign-in screens branch on, so a client refused here draws the same
+    # chrome it would draw on the login page rather than falling back to unclassified.
+    assert minted.headers.get("X-Access-Status") == "SUSPENDED"
+
+    signed_in = _login(client, email)
+    assert signed_in.status_code == 403, signed_in.text
+    assert signed_in.json()["detail"] == minted.json()["detail"], (
+        "both doors must give a revoked admin the same answer; one open door revokes nothing"
+    )
+
+    # AND THE ENDPOINT STILL DOES NOT SAY WHETHER AN ACCOUNT EXISTS. The gate runs after the
+    # password, so a caller without it reads exactly what they read for an address that was never
+    # registered — the refusal above is reachable only by somebody holding the credential.
+    guessed = _mint(client, email, password="not-the-password")
+    assert guessed.status_code == 401, guessed.text
+    assert guessed.json()["detail"] == WRONG_CREDENTIAL_DETAIL
+    stranger = _mint(client, f"access-nobody-token-{world['stamp']}@example.org")
+    assert stranger.status_code == 401
+    assert stranger.json()["detail"] == WRONG_CREDENTIAL_DETAIL
+
+
+async def test_a_rejected_admin_cannot_mint_a_dataset_token(world, client):
+    """The other refusing state, and it must read as its own sentence rather than the suspension's.
+
+    REJECTED and SUSPENDED are different decisions with different remedies — one was never let in,
+    one was let in and then barred — and this endpoint borrows the sign-in page's wording precisely
+    so an operator reading a cron job's log gets the same explanation the person would.
+    """
+    email = world["address"]("adminRejected")
+
+    minted = _mint(client, email)
+    assert minted.status_code == 403, minted.text
+    assert minted.json()["detail"] == REJECTED_DETAIL
+    assert minted.json()["detail"] != BARRED_DETAIL
+    assert minted.headers.get("X-Access-Status") == "REJECTED"
+    assert "accessToken" not in minted.json()
+
+
+async def test_an_admitted_admin_still_gets_a_dataset_token(world, client):
+    """**THE CONTROL, AND IT IS NOT OPTIONAL.** A gate that refuses everybody passes all three of
+    the refusal tests above and breaks every nightly mirror in the estate. This is the case that
+    says the endpoint still does its job: an ACTIVE admin mints, and mints the narrow credential —
+    ``dataset:read`` and not a session token, which is the containment ``deps._user_from_bearer``
+    enforces everywhere else in the API.
+    """
+    minted = _mint(client, world["address"]("admin"))
+    assert minted.status_code == 200, minted.text
+    body = minted.json()
+    assert body["accessToken"]
+    assert body["scope"] == "dataset:read"
+    assert body["account"]["email"] == world["address"]("admin")
+    assert body["expiresInMinutes"] > 0
+
+
+async def test_a_master_admin_with_a_suspended_row_still_mints(world, client):
+    """**THE BREAK-GLASS, AT THE SECOND DOOR.** The reason the allow-list could be widened from
+    designers to everybody is that one account is exempt in the GATE rather than by a row in the
+    table the gate reads. That exemption has to hold wherever the gate is asked, or adding the gate
+    to a new endpoint quietly narrows it — and the account whose row an outgoing admin barred is
+    exactly the one that needs to be able to take a copy of the data.
+
+    The exemption is one predicate, ``deps.is_break_glass_master``, shared by every door that asks
+    rather than copied to each — the sign-in gate, the dataset mint, the use of a dataset token, and
+    the design-workshop viewer picker and write. Copied, they would drift, and whichever drifted
+    would either lock the break-glass out or open it to somebody else.
+    """
+    email = world["address"]("masterBarred")
+    assert _rows(client, world)[email]["status"] == "SUSPENDED", (
+        "the fixture must actually have barred this row, or this test proves nothing"
+    )
+
+    minted = _mint(client, email)
+    assert minted.status_code == 200, minted.text
+    assert minted.json()["accessToken"]
+    assert minted.json()["account"]["role"] == "MASTER_ADMIN"
+
+    # And the exemption must not work by quietly writing the row it is exempt from — the same rule
+    # the sign-in break-glass tests pin, for the same reason: an exemption that repairs the table
+    # is an exemption an admin cannot see and cannot undo.
+    assert _rows(client, world)[email]["status"] == "SUSPENDED"

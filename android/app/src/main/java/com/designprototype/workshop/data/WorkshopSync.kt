@@ -19,7 +19,11 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import retrofit2.HttpException
 import java.security.MessageDigest
+import java.time.Duration
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.UUID
 
 /**
@@ -42,7 +46,12 @@ import java.util.UUID
  *   1. CREATE the remote record if the draft is still local-only, and write `remoteId` back to disk
  *      BEFORE anything else moves. A create is the one step that is not safely repeatable: repeating
  *      it makes a SECOND workshop, and the pass that repeats it is by definition the pass that ran
- *      on a bad connection — which is once per attempt for as long as the signal stays bad.
+ *      on a bad connection — which is once per attempt for as long as the signal stays bad. Since
+ *      2026-08-22 the draft also REMEMBERS a create whose answer never came back
+ *      ([DraftSyncState.createSentAt]) and the pass asks the server what became of it before posting
+ *      on top of it — because this pass is NOT the only writer that POSTs, which this header and the
+ *      comment at the create arm both used to assert. `CreateWorkshopDialog` posts too, and a read
+ *      timeout there mints a local draft for a workshop that already exists.
  *   2. UPLOAD every media file the server has not yet acknowledged, recording each returned id
  *      against its [DraftMedia] the instant it arrives.
  *   3. PUT each stage whose wire payload differs from the one last acknowledged, recording the
@@ -66,6 +75,13 @@ import java.util.UUID
  * the row ([DraftRow.id], minted at creation and never rewritten) and lets the server match. A
  * second scheme here would be a second opinion about which rows are the same rows, and the one that
  * was wrong would duplicate a costing table on every reconnect.
+ *
+ * THE CREATE IS THE ONE EXCEPTION, AND IT IS AN EXCEPTION BECAUSE THE BACKEND MAKES IT ONE.
+ * `POST /design-workshops` carries no `_clientKey` and matches on nothing, so there is no server
+ * scheme here for this file to defer to. [DraftSyncState.createSentAt] and [dwResumedCreateFrom] are
+ * therefore a de-duplication scheme of this client's own — the only one in this file — and they are
+ * written the way the web wrote them, refusing to guess when the answer is ambiguous rather than
+ * picking one.
  *
  * ── RESUMABILITY IS WRITE-AS-YOU-GO, NOT A TRANSACTION ───────────────────────────────────────────
  *
@@ -232,6 +248,37 @@ data class DraftSyncState(
     val createFailedAt: String? = null,
     /** [StageSyncRecord.skewRun] for the create. The costlier half: it strands the whole fortnight. */
     val createSkewRun: String? = null,
+    /**
+     * When `POST /design-workshops` was last SENT for this workshop and its answer never came back.
+     * Null, or absent, means no create is unaccounted for.
+     *
+     * ── WHY A CREATE NEEDS A MEMORY OF ITS OWN ───────────────────────────────────────────────────
+     *
+     * The create is a check-then-act across a network round trip: `remoteIdOf(draft) == null` is
+     * read, the POST is awaited, the id is written back. Anything that kills the app between the
+     * second and the third leaves a workshop that EXISTS on the server and a draft on disk that
+     * still says it never has. Nothing in the exchange can tell those two apart afterwards, because
+     * [WorkshopRepositoryApi.createDesignWorkshop] carries no client key and the create route
+     * de-duplicates nothing — unlike every stage row, which travels with a `_clientKey` and is
+     * matched on it. Send the same draft twice and the ministry holds two records under one title,
+     * one of them empty for ever.
+     *
+     * AND THE DEATH IS NOT EXOTIC, WHICH IS THE HALF THIS FILE USED TO DENY. No process kill is
+     * required: `CreateWorkshopDialog` (`ui/designworkshop/WorkshopListScreen.kt`) POSTs too, and
+     * `classifyCreate` turns a READ TIMEOUT — the server committed the row and the reply never
+     * arrived — into `CreateOutcome.Local`, which mints a `dwlocal-` draft with no remote id. The
+     * next pass then finds `remoteIdOf == null` and posts the very workshop that is already there.
+     *
+     * The stamp is written by BOTH writers — this pass before its POST, and the dialog in the same
+     * disk write that mints the draft, which is the first instant a draft exists at all — and it is
+     * cleared only when the server's id is safely on disk, so it is set exactly while an answer is
+     * genuinely unaccounted for. [dwResumedCreateFrom] is what the next pass does with it.
+     *
+     * ADDITIVE AND DEFAULTED, so it owes no rung of `WORKSHOP_DRAFT_SCHEMA_VERSION` by that
+     * constant's own rule: a draft written by an earlier build decodes with null, which reads as
+     * "no create is outstanding" — exactly the behaviour that shipped for drafts already on disk.
+     */
+    val createSentAt: String? = null,
     val stages: Map<String, StageSyncRecord> = emptyMap(),
 )
 
@@ -534,15 +581,37 @@ fun dwDeviceSyncBanner(
 /** The whole device in one line, for a banner above the list. */
 data class SyncPassResult(
     val workshopsCreated: Int = 0,
+    /**
+     * Workshops this pass did NOT create because they were already on the server — a create whose
+     * answer was lost, resolved by [dwResumedCreateFrom] and written down.
+     *
+     * Counted apart from [workshopsCreated] because the news is different: nothing was filed, an id
+     * was recovered. Folded into the create count, a pass that only recovered an id reported a
+     * workshop created and then said "Sent 0 stage(s) and 0 file(s)" underneath it.
+     */
+    val workshopsResumed: Int = 0,
     val stagesSent: Int = 0,
     val mediaUploaded: Int = 0,
     val refused: Int = 0,
+    /**
+     * Workshops the pass did not even attempt, because a refusal already standing against them says
+     * a person has to act first — a create this account may not make, or one holding a permanent
+     * create failure that only "Try again" clears.
+     *
+     * NOT A KIND OF [refused]: nothing was sent and the server refused nothing, and the sentence a
+     * screen writes for it is a different sentence. It exists because a pass that stops for one of
+     * these reports every counter at zero, which read as "there was nothing to do" — the wrong half
+     * of a fortnight's news. It is deliberately absent from [didAnything] for the same reason: the
+     * pass really did nothing, and the screen has to SAY so rather than imply it.
+     */
+    val blockedByRefusal: Int = 0,
     /** True when the pass gave up because the network went away. Nothing was lost or marked failed. */
     val stoppedOffline: Boolean = false,
     /** True when there was no connection (or no session) to start with, so nothing was attempted. */
     val skipped: Boolean = false,
 ) {
-    val didAnything: Boolean get() = workshopsCreated > 0 || stagesSent > 0 || mediaUploaded > 0
+    val didAnything: Boolean get() =
+        workshopsCreated > 0 || workshopsResumed > 0 || stagesSent > 0 || mediaUploaded > 0
 }
 
 // --------------------------------------------------------------------------------------
@@ -642,6 +711,224 @@ internal fun blocksRetry(permanent: Boolean, skewRun: String?): Boolean {
 
 /** [blocksRetry] for a stage, including the "never refused at all" case. */
 private fun StageSyncRecord?.blocksRetry(): Boolean = blocksRetry(this?.permanent == true, this?.skewRun)
+
+// --------------------------------------------------------------------------------------
+// A create whose answer never arrived
+// --------------------------------------------------------------------------------------
+
+/**
+ * What the server's own list says about a create this device sent and never heard back about.
+ *
+ * Three answers and not two, and the third is the whole point — see [Ambiguous].
+ */
+internal sealed interface DwResumedCreate {
+    /** Exactly one workshop up there can be this draft's. Point the draft at it; do not POST. */
+    data class Found(val remoteId: String) : DwResumedCreate
+
+    /**
+     * MORE THAN ONE CANDIDATE, AND THIS IS NOT A COIN TOSS.
+     *
+     * Two workshops the same admin titled the same way is a real thing a person can do — twice from
+     * the same default title, most obviously — and choosing between them by `createdAt` would put a
+     * fortnight of stages into the wrong record under a 200. The caller turns this into a refusal a
+     * person can read and act on, which is the only honest move available to a device that cannot
+     * ask the server "is my create in there".
+     */
+    data object Ambiguous : DwResumedCreate
+
+    /** Nothing up there can be this draft's — the ordinary case, and it means "go ahead and send it". */
+    data object None : DwResumedCreate
+}
+
+/**
+ * Did the create this draft already sent actually land? Ask the server's answer, do not guess.
+ *
+ * PURE, AND THAT IS WHY THE DECISION IS HERE AND THE REQUEST IS NOT. The whole argument below can be
+ * pinned on the desktop JVM with no `Context`, no Retrofit and no Postgres row, which is how the
+ * original "this pass is the only thing that creates" claim survived review in the first place.
+ *
+ * ── THE TEST, AND WHY IT IS THE ONE IT IS ────────────────────────────────────────────────────────
+ *
+ * There is no client key on `POST /design-workshops` and the create route de-duplicates nothing, so
+ * this device cannot ASK "is my create in there". What it can do is describe the record it would
+ * have made: the exact title it sent, created by the account signed in here, and not already spoken
+ * for by another draft on this phone. A workshop matching all three is either the interrupted create
+ * or something indistinguishable from it, and adopting it is right in both cases — the alternative
+ * is a second empty record in a government index that nobody ever reconciles.
+ *
+ * A session with no id adopts NOTHING, stated rather than asserted, because a sync pass is the wrong
+ * place to throw and the title alone is too weak a claim on a government record.
+ *
+ * ── THE DATE: REJECTED OUTRIGHT ONCE, AND THAT WAS TOO STRONG ────────────────────────────────────
+ *
+ * The obvious date filter is "created since [createSentAt]", and it is the wrong one: it compares
+ * this handset's clock against the server's, and a phone that has been out of coverage for a
+ * fortnight is minutes out at best. A window minutes wide would silently reject the very record it
+ * was meant to find and the pass would file the duplicate anyway — a guard that only fails when it
+ * matters. So the first version of this function used no date at all.
+ *
+ * WHICH LEFT IT ADOPTING LAST MONTH'S WORKSHOP. Three filters that say nothing about time also match
+ * the identically titled workshop the same admin created in July, so an August draft whose create
+ * went unanswered could be pointed at the July record and a fortnight of stages pushed into it under
+ * a 200 — the same wrong-record outcome [Ambiguous] exists to refuse, arriving by the other door
+ * because one candidate is not two. [DW_RESUMED_CREATE_LOOKBACK] is the answer that survives both
+ * arguments: a floor a week below the stamp, which no plausible clock skew reaches and which no
+ * record from an earlier month clears.
+ *
+ * IT FAILS OPEN, EVERY WAY IT CAN. No stamp, a row the server sent with no `createdAt`, a timestamp
+ * no parser here accepts — all three leave the candidate to be judged on the other filters alone.
+ * Dropping a real candidate costs the duplicate this whole function exists to prevent, so every
+ * unknown is resolved towards keeping it.
+ *
+ * ALREADY-CLAIMED ROWS ARE EXCLUDED so that two drafts on one handset cannot both adopt one
+ * workshop. [claimedRemoteIds] is every id the other drafts on this device already point at — see
+ * [dwClaimedRemoteIds], which is where the ONE row that must not count as claimed is taken out.
+ *
+ * WHAT IT CANNOT SEE, SAID OUT LOUD: it matches on the title the draft holds NOW. Rename the draft
+ * between the interrupted create and the next pass and this answers [DwResumedCreate.None] and the
+ * duplicate is made. `frontend/lib/designWorkshopStore.ts::resolveInterruptedCreate` has the identical
+ * hole and the same mitigation — the stamp is cleared by the first pass that resolves, so the window
+ * is one sync interval wide, not a fortnight.
+ */
+internal fun dwResumedCreateFrom(
+    title: String,
+    sessionUserId: String?,
+    rows: List<DesignWorkshopDto>,
+    claimedRemoteIds: Set<String>,
+    createSentAt: String? = null,
+): DwResumedCreate {
+    if (sessionUserId.isNullOrBlank()) return DwResumedCreate.None
+    val floor = dwStampInstant(createSentAt)?.minus(DW_RESUMED_CREATE_LOOKBACK)
+    val candidates = rows.filter { row ->
+        row.id.isNotBlank() &&
+            row.title == title &&
+            row.id !in claimedRemoteIds &&
+            row.createdById == sessionUserId &&
+            // `!= true` and not `== false`: an unreadable or absent `createdAt` gives null here and
+            // must keep the candidate, which is the fail-open the KDoc above promises.
+            (floor == null || dwStampInstant(row.createdAt)?.isBefore(floor) != true)
+    }
+    if (candidates.size > 1) return DwResumedCreate.Ambiguous
+    val only = candidates.firstOrNull() ?: return DwResumedCreate.None
+    return DwResumedCreate.Found(only.id)
+}
+
+/**
+ * How far below [DraftSyncState.createSentAt] a workshop may have been created and still be this
+ * draft's — see [dwResumedCreateFrom].
+ *
+ * A WEEK, WHICH IS DELIBERATELY ENORMOUS. The quantity being tolerated is the disagreement between a
+ * field handset's clock and the server's, and the quantity being excluded is a workshop created in a
+ * previous campaign. Those are minutes and months, so anything between them works and the widest
+ * value in that gap is the safest: a phone whose date a person set by hand still resolves correctly,
+ * and July's record is still never mistaken for this week's create.
+ */
+internal val DW_RESUMED_CREATE_LOOKBACK: Duration = Duration.ofDays(7)
+
+/**
+ * An ISO-8601 stamp from either side of the wire, or null when it is absent or unreadable.
+ *
+ * Three parsers because two sources are being read with one function: this device writes
+ * `Instant.toString()` (always `Z`), and the API writes Python's `datetime.isoformat()`, which
+ * carries `+00:00` for the aware datetimes Prisma returns and NO offset at all if a naive one ever
+ * reaches [DesignWorkshopDto.createdAt]. The last case is read as UTC rather than dropped: the only
+ * caller compares against a floor a week wide, so being a few hours out cannot change its answer,
+ * while dropping the timestamp would.
+ */
+private fun dwStampInstant(value: String?): Instant? {
+    if (value.isNullOrBlank()) return null
+    return runCatching { OffsetDateTime.parse(value).toInstant() }.getOrNull()
+        ?: runCatching { Instant.parse(value) }.getOrNull()
+        ?: runCatching { LocalDateTime.parse(value).toInstant(ZoneOffset.UTC) }.getOrNull()
+}
+
+/** One draft on this device, as [dwClaimedRemoteIds] needs to see it. */
+internal data class DwDraftClaim(
+    /** [remoteIdOf] for that draft: the id it already points at, or null while it points at none. */
+    val remoteId: String?,
+    /** The draft's title, which is the only thing that ties it to an unaccounted-for create. */
+    val title: String,
+    /**
+     * True when that id comes from the draft's KEY and from nothing else — [WorkshopDraft.remoteId]
+     * is null and the directory is named after a server id.
+     *
+     * It is the signature of a draft `StageScreen.persistLocally` minted for a workshop that already
+     * existed up there, which [remoteIdOf]'s own KDoc describes ("its draft — first written by the
+     * stage screen's auto-save, which knows nothing about creates — has `remoteId` null for ever").
+     * A draft whose create LANDED carries the id in the field as well, and stays a claim.
+     *
+     * FALSE IS THE CONSERVATIVE ANSWER — it keeps the claim — and the caller is entitled to give it
+     * for a draft it has not opened. Establishing this costs a second read of a draft.json, and it
+     * can only change an answer for a draft whose title is awaiting a create on this device, so the
+     * one caller pays it there and nowhere else.
+     */
+    val idComesFromTheKeyAlone: Boolean,
+    /** No remote id and a [DraftSyncState.createSentAt]: a create of its own is unaccounted for. */
+    val awaitingCreate: Boolean,
+)
+
+/**
+ * Which server ids the drafts on this device have already spoken for — and the one kind of id that
+ * must NOT be counted as spoken for.
+ *
+ * ── THE HALF OF THE WEB'S SCHEME THAT WAS MISSING ────────────────────────────────────────────────
+ *
+ * `frontend/lib/designWorkshopStore.ts::resolveInterruptedCreate` has a companion,
+ * `titlesAwaitingACreate`, whose job its own KDoc states: stop a row that may BE the unaccounted-for
+ * create from being made to look claimed, because that "would make a row look claimed and send this
+ * function's answer from 'found it' to 'create another one'". The web spends it at the list adopt,
+ * which is where a browser mints a local row for a server workshop. This port shipped without it.
+ *
+ * ANDROID MINTS THAT ROW SOMEWHERE ELSE, AND IT IS THE ORDINARY USER MOVE. The create landed, the
+ * reply was lost, the draft is local-only with a stamp — and the designer, seeing the workshop in
+ * the online list because it really is up there, opens it and starts filling stage 1.
+ * `StageScreen.persistLocally` then writes a SECOND draft filed under the server's id, and
+ * [remoteIdOf] answers that id for any key that is not a `local-` one. Without this exclusion that
+ * id lands in the claimed set, [dwResumedCreateFrom] answers [DwResumedCreate.None], and the
+ * duplicate is filed anyway — the feature missing in exactly the case a person is most likely to
+ * reach.
+ *
+ * SO A DRAFT WHOSE ID COMES FROM ITS KEY ALONE, AND WHOSE TITLE IS AWAITING A CREATE ON THIS DEVICE,
+ * IS NOT A CLAIM. It is excluded, and the adopt may then point the local draft at the same workshop
+ * the stage screen is already writing into — which is the right answer, because they are one
+ * workshop.
+ *
+ * ── AND THE EXCLUSION IS NARROW ON PURPOSE, BECAUSE THE WIDE ONE ADOPTS THE WRONG RECORD ─────────
+ *
+ * Two other drafts can carry the same title, and neither may lose its claim:
+ *
+ *  * A DRAFT WHOSE OWN CREATE SUCCEEDED is filed under the server's id too — `CreateWorkshopDialog`
+ *    keys it that way when the POST answers — so an admin who made "Ikat, Bargarh" this morning and
+ *    then made a second one whose reply was lost would have the morning's record un-claimed by a
+ *    title-only rule, and the afternoon's fortnight pushed into it. It keeps its claim because it
+ *    carries the id in [WorkshopDraft.remoteId] as well as in its key, which is the one thing
+ *    `persistLocally`'s draft never does.
+ *  * A DRAFT THAT ALREADY ADOPTED ONE keeps its `local-` key and gains the field, so two local
+ *    drafts sharing a title cannot both adopt one workshop: the first keeps its claim over the
+ *    second, and the second creates. That is what the web does, arrived at from the other side.
+ */
+internal fun dwClaimedRemoteIds(drafts: List<DwDraftClaim>): Set<String> {
+    val awaiting = drafts.filter { it.remoteId == null && it.awaitingCreate }.map { it.title }.toSet()
+    return drafts
+        .filterNot { it.idComesFromTheKeyAlone && it.title in awaiting }
+        .mapNotNull { it.remoteId }
+        .toSet()
+}
+
+/**
+ * The refusal an [DwResumedCreate.Ambiguous] answer records. Permanent, and a sentence rather than a
+ * status, for the same reason [DW_WORKSHOP_CREATE_DECLINED_BY_APP] is: no amount of waiting for
+ * signal changes it, and the next move is something a PERSON does. It says first that nothing has
+ * been thrown away, because that is the sentence somebody holding a fortnight of fieldwork needs
+ * before any other.
+ */
+internal const val DW_WORKSHOP_CREATE_AMBIGUOUS =
+    "This workshop was sent once and this phone never saw the answer, and the server now holds more " +
+        "than one workshop with this title created by you — so this phone cannot tell which one is " +
+        "yours, and sending it again could file it twice. Nothing on this phone has been deleted: " +
+        "every stage, photograph and recording you captured is still here. Open the workshop list, " +
+        "check which of them is the one you started, and either rename this one or delete the copy " +
+        "you do not want, then use Try again."
 
 /**
  * What "Try again" leaves on ONE stage record — see the long note at the call site in `retryWorkshop`
@@ -1285,16 +1572,20 @@ object WorkshopSyncEngine {
     /** Running totals for one pass. A plain holder so the steps below can stay expressions. */
     private class Tally {
         var created = 0
+        var resumed = 0
         var stages = 0
         var media = 0
         var refused = 0
+        var blocked = 0
         var stoppedOffline = false
 
         fun toResult() = SyncPassResult(
             workshopsCreated = created,
+            workshopsResumed = resumed,
             stagesSent = stages,
             mediaUploaded = media,
             refused = refused,
+            blockedByRefusal = blocked,
             stoppedOffline = stoppedOffline,
         )
     }
@@ -1382,24 +1673,100 @@ object WorkshopSyncEngine {
               session may not create" also refuses the draft whose create ALREADY LANDED before the
               rule shipped — a real workshop the device merely never saw the answer for. That draft
               needs no create; the pass only has to write the id back. `remoteIdOf` is null for it
-              here, which is exactly why `alreadyOnServer` cannot be derived at this point and is
-              passed as the thing it is: whether a create is owed at all.
+              here, which is exactly why `alreadyOnServer` is a SEPARATE fact from "this draft has an
+              id" and has to be established by asking the server rather than by reading the draft.
 
               `known = cachedUser() != null` matches the tri-state everywhere else: an unknown
               session is allowed through and meets the server's gate, which is the one that counts.
 
-              AND ON THIS SURFACE THE LITERAL `false` IS ALWAYS RIGHT, which the paragraph above
-              does not say and a reader is entitled to wonder about. The case it describes — a create
-              that landed before the rule shipped, which needs no second create — is recovered on the
-              WEB, where `designWorkshopStore` carries `resolveInterruptedCreate` and passes
-              `alreadyOnServer: Boolean(resumed)`. Android has no counterpart: this pass is the only
-              thing that creates, and it learns the remote id from its own response, so a draft
-              reaching this line has never been created and `false` is a fact rather than a default.
-              If a recovery path is ever added here, this literal is the line it has to change.
+              THIS LINE USED TO PASS THE LITERAL `false`, JUSTIFIED BY A PARAGRAPH SAYING "this pass
+              is the only thing that creates, so a draft reaching this line has never been created".
+              THAT WAS FALSE AND IT IS THE REASON NOBODY LOOKED. `CreateWorkshopDialog`
+              (`ui/designworkshop/WorkshopListScreen.kt`) POSTs as well, and `classifyCreate` turns a
+              READ TIMEOUT — the server committed the row, the reply never arrived — into
+              [CreateOutcome.Local], which mints a `dwlocal-` draft with no remote id. No process
+              death is needed. The server de-duplicates nothing on this route, so the next pass filed
+              the same workshop a second time. Corrected 2026-08-22 by giving the draft a memory of
+              its own outstanding create ([DraftSyncState.createSentAt]) and asking the server what
+              became of it before posting on top of it.
+
+              SO `alreadyOnServer` IS NOW DERIVED, AND ITS SOURCE IS THE ANSWER ABOVE. That is what
+              the previous paragraph said would have to happen the day a recovery path was added.
             */
             val session = repository.cachedUser()
+            // Waiting on a person, not the network — UNLESS it is waiting on an update instead, in
+            // which case this run is the one that gets to find out whether the update has landed.
+            //
+            // MOVED ABOVE THE DECLINED CHECK IN THE SAME EDIT AS THE RESOLVER, AND ONLY BECAUSE OF
+            // IT. `resolveInterruptedCreate` costs a list request, and a draft already holding a
+            // permanent create failure is going nowhere until a person taps Try again; leaving this
+            // guard below it would have spent that request every forty-five seconds for the rest of
+            // the handset's life to re-learn an answer nobody can act on.
+            //
+            // ONE THING DOES MOVE, AND IT MOVES THE RIGHT WAY. A draft already holding a permanent
+            // create failure that is NOT [DW_WORKSHOP_CREATE_DECLINED_BY_APP] — the server's own 422
+            // sentence, the captive-portal one, [DW_WORKSHOP_CREATE_AMBIGUOUS] — used to have that
+            // sentence overwritten by the declined one the moment the signed-in account stopped
+            // being allowed to create, because the branch below rewrites whenever the recorded
+            // sentence differs from its own. It now keeps the reason the server actually gave, which
+            // is the one the person reading it can act on; "you may not create workshops" is a
+            // second, later fact about the account and not about this workshop. Every draft this
+            // guard now stops early is one the next line was going to stop anyway, so nothing is
+            // sent, retried or cleared that was not before.
+            //
+            // AND NO COUNT MOVED WITH IT, WHICH A REVIEW READ THE OTHER WAY. The reading was that
+            // the move dropped a `tally.refused++`; it did not, because neither this guard nor the
+            // declined branch below it has ever counted anything — before the move or after it. What
+            // is true, and was true long before this edit, is that a workshop stopped at either of
+            // them is stopped SILENTLY: the pass returns with every counter at zero, `didAnything`
+            // is false, and "Sync now" falls to its last arm and tells a designer holding a
+            // fortnight that "Everything on this device is already on the server". That is the exact
+            // sentence three comment blocks in `WorkshopListScreen` exist to stop being printed, so
+            // both places now count into [SyncPassResult.blockedByRefusal] — which is deliberately
+            // NOT `refused`: nothing was sent and the server refused nothing.
+            if (blocksRetry(draft.sync.createFailure != null, draft.sync.createSkewRun)) {
+                tally.blocked++
+                return true
+            }
+            /*
+              LOOK BEFORE SENDING IT AGAIN — see [DraftSyncState.createSentAt].
+
+              A stamp means a create went out over a live connection and this device never saw the
+              answer. Posting on top of that is how one tap becomes two government records.
+
+              WHAT THE LOOKUP COSTS, SAID HONESTLY. The first version of this comment said the stamp
+              was "close to never" and that the lookup was paid once. Neither was true: the dialog
+              stamped every failed create, including the offline one that IS the field path, and the
+              transient arm below leaves the stamp standing on purpose, so the lookup repeated every
+              forty-five seconds. It is now made only for a draft that really is waiting on an answer
+              — the dialog stamps nothing that never left the handset — and for that draft it is one
+              list request per pass until the answer is settled, which is the price of not filing the
+              workshop twice. A draft with no stamp still costs nothing at all.
+            */
+            val resumed = if (draft.sync.createSentAt == null) {
+                DwResumedCreate.None
+            } else {
+                resolveInterruptedCreate(context, repository, draft)
+            }
+            if (resumed is DwResumedCreate.Ambiguous) {
+                tally.refused++
+                // Written only when it CHANGES, for the reason the branches around it give.
+                if (draft.sync.createFailure != DW_WORKSHOP_CREATE_AMBIGUOUS) {
+                    noteSync(context, workshopId) {
+                        it.copy(
+                            createFailure = DW_WORKSHOP_CREATE_AMBIGUOUS,
+                            createFailedAt = Instant.now().toString(),
+                            // NOT a schema skew: an app update does not tell two identically titled
+                            // workshops apart. Only a person does, which is what the sentence asks for.
+                            createSkewRun = null,
+                        )
+                    }
+                }
+                // TRUE: the connection is fine and every other workshop on this device should go.
+                return true
+            }
             if (createMustBeDeclined(
-                    alreadyOnServer = false,
+                    alreadyOnServer = resumed is DwResumedCreate.Found,
                     sessionMayCreate = mayMintLocalWorkshop(
                         known = session != null,
                         role = session?.role,
@@ -1422,14 +1789,30 @@ object WorkshopSyncEngine {
                         )
                     }
                 }
+                // COUNTED, FOR THE REASON THE GUARD ABOVE IS. This workshop is going nowhere until
+                // an admin acts, and a pass that says so in no counter at all is a pass the list
+                // screen can only describe as "already on the server".
+                tally.blocked++
                 // TRUE, not false: the connection is fine and every other workshop on this device
                 // should still go. This one is waiting on an admin, not on a network.
                 return true
             }
-            // Waiting on a person, not the network — UNLESS it is waiting on an update instead, in
-            // which case this run is the one that gets to find out whether the update has landed.
-            if (blocksRetry(draft.sync.createFailure != null, draft.sync.createSkewRun)) return true
-            val created = try {
+            val resumedId = (resumed as? DwResumedCreate.Found)?.remoteId
+            /*
+              THE STAMP GOES DOWN BEFORE THE REQUEST GOES OUT, and the order is the whole point: a
+              stamp written after the POST would be written by a process that may no longer exist.
+              One extra write to this draft's JSON, once in the life of a workshop, buys every later
+              pass the ability to tell "never sent" from "sent, answer unknown" — see
+              [DraftSyncState.createSentAt].
+
+              Not written when the workshop has already been FOUND up there: nothing is about to be
+              sent, so there is nothing outstanding to record, and the write-back below clears it in
+              the same breath anyway.
+            */
+            if (resumedId == null) {
+                noteSync(context, workshopId) { it.copy(createSentAt = Instant.now().toString()) }
+            }
+            val created = if (resumedId != null) null else try {
                 repository.createDesignWorkshop(
                     // Only the title and the template. Every other column the workshop list shows —
                     // craft, cluster, state, district, dates — is PROMOTED server-side out of stage
@@ -1467,11 +1850,17 @@ object WorkshopSyncEngine {
                         },
                         createFailedAt = Instant.now().toString(),
                         createSkewRun = if (refusal.schemaSkew) APP_RUN else null,
+                        // [DraftSyncState.createSentAt] IS DELIBERATELY LEFT STANDING, and the
+                        // tempting reading is the wrong one. "The server answered, so nothing was
+                        // created, so clear the memory" holds for a 422 and not for the 502 a gateway
+                        // returns after the app has already committed the row — and this arm cannot
+                        // tell those apart. Left set, the next attempt spends one list request to
+                        // find out; cleared, it files the workshop twice.
                     )
                 }
                 return true
             }
-            val createdId = created.id.takeIf { it.isNotBlank() }
+            val createdId = resumedId ?: created?.id?.takeIf { it.isNotBlank() }
             if (createdId == null) {
                 // A 2xx that names nothing did not come from this API — a captive portal answering
                 // the POST with its own sign-in page is the field case, and this app already knows
@@ -1491,6 +1880,9 @@ object WorkshopSyncEngine {
                         // would let the next app run POST the workshop a second time behind the
                         // portal — the duplicate this branch exists to prevent.
                         createSkewRun = null,
+                        // And [DraftSyncState.createSentAt] stays set for the same reason, one step
+                        // stronger: behind a portal the create is MORE likely to have landed than
+                        // not. The stamp is what lets "Try again" ask the server which it was.
                     )
                 }
                 return true
@@ -1506,10 +1898,19 @@ object WorkshopSyncEngine {
                         createFailedAt = null,
                         createSkewRun = null,
                         lastError = null,
+                        // CLEARED IN THE SAME WRITE THAT RECORDS THE ID, never before and never
+                        // after: the stamp's whole meaning is "an answer is outstanding", and the id
+                        // landing on disk is exactly the moment that stops being true.
+                        createSentAt = null,
                     ),
                 )
             } ?: return true
-            tally.created++
+            // CREATED AND RESUMED ARE COUNTED APART, because they are different news and the screen
+            // says them differently. Nothing was created on a resumed pass — the workshop was
+            // already up there and this pass only wrote its id down — and counting it as a create
+            // made "Sync now" report `Sent 0 stage(s) and 0 file(s)` under a heading that claimed a
+            // workshop had just been filed. See [SyncPassResult.workshopsResumed].
+            if (resumedId != null) tally.resumed++ else tally.created++
             bump()
         }
         val remoteId = remoteIdOf(draft) ?: return true
@@ -1535,6 +1936,100 @@ object WorkshopSyncEngine {
             }
         }
         return true
+    }
+
+    /**
+     * Ask the server what became of the create this draft already sent — [dwResumedCreateFrom] with
+     * the two lists it needs fetched.
+     *
+     * A LOOKUP THAT ITSELF FAILS ANSWERS [DwResumedCreate.None] — send it. The two failure modes are
+     * not symmetric: refusing to create because a search request timed out would strand the workshop
+     * for as long as the connection stayed bad, which is the entire population this feature exists
+     * for, while the duplicate this misses is the one the pass would have made anyway. So the catch
+     * is deliberate and it is not a swallowed error.
+     *
+     * ── WHAT IT COSTS, AND HOW OFTEN — CORRECTED 2026-08-22, THE SAME DAY IT WAS WRITTEN ─────────
+     *
+     * This said the cost was "paid only when [DraftSyncState.createSentAt] is set — once, in the
+     * life of one workshop, on the fleet's unlucky handset — and never on the ordinary pass". Both
+     * halves were wrong on the code as it stood. `CreateWorkshopDialog` stamped EVERY failed create,
+     * and a create with no signal fails, so every workshop started in a courtyard carried a stamp
+     * from birth; and the transient arm of the create deliberately leaves the stamp standing, so the
+     * lookup repeated on every pass until the create landed, not once.
+     *
+     * THE FIRST HALF IS NOW TRUE AND THE SECOND STILL IS NOT. The dialog stamps only a create that
+     * went out over a validated connection, so a draft made offline carries none and this is never
+     * called for it. A draft that IS awaiting an answer, though, is asked again on every pass — once
+     * per pass, for as long as the answer stays outstanding — because that is precisely the state in
+     * which posting blind files a second ministry record. It is bounded by the create landing or by
+     * a person acting on a refusal, and it is one request, so it is not cached: a cache would have to
+     * be invalidated by the very event it is watching for.
+     *
+     * IT READS EVERY DRAFT ON THE DEVICE, and it now reads each of them ONCE. The obvious spelling —
+     * `list` then `load` per summary — is two full deserialisations of every draft.json on the
+     * device, because [WorkshopDraftStore.list] already parses each one to build its summary. Only a
+     * `local-`keyed draft needs the second read here: for every other draft the id [remoteIdOf]
+     * would answer is the directory name the summary already carries.
+     *
+     * ONE PAGE OF A HUNDRED, SEARCHED BY TITLE, matching the web. The search is the server's own
+     * `search` filter over the promoted columns; a hundred workshops with one title created by one
+     * account is not a state this reconciles, and if it ever happened the answer would be
+     * [DwResumedCreate.Ambiguous] anyway.
+     */
+    private suspend fun resolveInterruptedCreate(
+        context: Context,
+        repository: WorkshopRepository,
+        draft: WorkshopDraft,
+    ): DwResumedCreate {
+        // THE TITLE THE POST WOULD SEND, not `draft.title` — the two differ for a blank title, and
+        // the record on the server carries the default rather than the blank.
+        val title = draft.title.ifBlank { "Untitled design workshop" }
+        val summaries = WorkshopDraftStore.list(context)
+        // Only a `local-`keyed draft can be awaiting a create — a draft filed under a server id is,
+        // by definition, one the server already knows about — so these are the only ones that have
+        // to be opened to be understood.
+        val locals = summaries
+            .filter { isLocalOnlyWorkshop(it.workshopId) }
+            .mapNotNull { summary -> WorkshopDraftStore.load(context, summary.workshopId) }
+        val awaitingTitles = locals
+            .filter { it.remoteId.isNullOrBlank() && it.sync.createSentAt != null }
+            .map { it.title }
+            .toSet()
+        val claims = locals.map { other ->
+            DwDraftClaim(
+                remoteId = other.remoteId?.takeIf { it.isNotBlank() },
+                title = other.title,
+                idComesFromTheKeyAlone = false,
+                awaitingCreate = other.remoteId.isNullOrBlank() && other.sync.createSentAt != null,
+            )
+        } + summaries.filterNot { isLocalOnlyWorkshop(it.workshopId) }.map { summary ->
+            DwDraftClaim(
+                remoteId = summary.workshopId,
+                title = summary.title,
+                // THE ONE SECOND READ, AND ONLY WHERE IT CAN CHANGE AN ANSWER. The distinction this
+                // establishes — a draft the stage screen minted for a server workshop, versus one
+                // whose own create landed — is only ever consulted for a title this device is
+                // awaiting a create for. Everywhere else `false` is both cheaper and the safe way
+                // round: the claim stands. See [DwDraftClaim.idComesFromTheKeyAlone].
+                idComesFromTheKeyAlone = summary.title in awaitingTitles &&
+                    WorkshopDraftStore.load(context, summary.workshopId)?.remoteId.isNullOrBlank(),
+                awaitingCreate = false,
+            )
+        }
+        val page = try {
+            repository.designWorkshops(page = 1, pageSize = 100, search = title)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            return DwResumedCreate.None
+        }
+        return dwResumedCreateFrom(
+            title = title,
+            sessionUserId = repository.cachedUser()?.id,
+            rows = page.items,
+            claimedRemoteIds = dwClaimedRemoteIds(claims),
+            createSentAt = draft.sync.createSentAt,
+        )
     }
 
     // ── Media ────────────────────────────────────────────────────────────────────────────────────

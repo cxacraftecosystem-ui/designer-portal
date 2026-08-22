@@ -56,9 +56,13 @@ async def list_eligible_viewers(
     """The accounts that may be given access to a design workshop at all.
 
     Not the user directory narrowed by the client. The eligible set is a SET of roles and not a
-    rank threshold, and it further excludes designers the roster no longer admits — a rule the
-    client cannot see and would drift from within one release. The drift shows up as an admin
-    granting access that the next sign-in refuses, with nothing on screen saying why.
+    rank threshold, and it further excludes anyone who cannot sign in — designers whose EMPANELMENT
+    has lapsed, and accounts of any role that the platform ALLOW-LIST has rejected or suspended.
+    Two tables, and the second one used to be missing: eligibility was decided from the designer
+    roster alone, so a suspended designer was offered here, accepted with a 200 by the PUT, and
+    refused at every sign-in. All of it is a rule the client cannot see and would drift from within
+    one release. The drift shows up as an admin granting access that the next sign-in refuses, with
+    nothing on screen saying why.
 
     ``search`` matches name OR email, case-insensitively, and is applied by the SERVER inside the
     same query as the eligibility rule. It is not a convenience over a list the client already

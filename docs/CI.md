@@ -9,6 +9,45 @@ every secret it needs. Sister documents:
 
 ---
 
+> ## ⚠ READ THIS BEFORE YOU SET, COPY OR CHECK A DEPLOY SECRET — 2026-08-22
+>
+> **This portal and the field repository are two live deployments that share almost every name.**
+> Two different EC2 boxes each run systemd units called `fieldrepo` and `fieldrepo-queue`; both
+> repositories carry a byte-identical `deploy-backend.yml`; the two Vercel projects sit in the same
+> team. **Nothing in a unit name, a workflow file or a hostname distinguishes them.** The only
+> things that decide which machine a push touches are the `EC2_HOST`, `EC2_SSH_KEY` and
+> `VERCEL_PROJECT_ID` secrets in *this* repository.
+>
+> A wrong value here does not fail. It **authenticates and succeeds**: `rsync --delete` over another
+> product's live `backend/`, its `.env` overwritten, its CORS stripped, `prisma migrate deploy`
+> against its database, and a green tick. That box accepts SSH from anywhere, so no security group
+> fails it safe.
+>
+> **This portal's own infrastructure**, read out of
+> `infra/terraform/terraform.tfstate.d/designrepo/terraform.tfstate` (the `designrepo` Terraform
+> workspace) and `frontend/.vercel/project.json`:
+>
+> | | This portal (`designer-portal`) | The field repository — **never put these here** |
+> |---|---|---|
+> | API box (Elastic IP) | `13.206.216.18` | `15.207.145.174` |
+> | EC2 instance | `i-0e091ca8e6b417b52` | `i-06f177db5c4e3b0af` |
+> | SSH key pair / file | `designrepo-deploy` · `infra/terraform/designrepo-deploy.pem` | `fieldrepo-deploy` · `infra/terraform/fieldrepo-deploy.pem` |
+> | S3 media bucket | `designrepo-media-626159998512` | `fieldrepo-media-626159998512` |
+> | Vercel project | `design-repository` · `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` | `field-repository` · `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` |
+>
+> **Until 2026-08-22 the table in §2 below gave the field repository's host AND its key — wrong
+> together, which is the combination that authenticates.** The rows are corrected. If a deploy ran
+> from this repository before that date, see [§7](#7-2026-08-22--what-a-human-must-check-by-hand)
+> before assuming nothing landed on the wrong box.
+>
+> **`terraform output api_public_ip` answers for whichever workspace is selected**, and the
+> selection lives in `infra/terraform/.terraform/environment` — a machine-local, untracked file. On
+> a fresh clone there is no workspace and no state at all, so that command cannot answer this
+> question for you; run `terraform workspace show` first, and if it does not say `designrepo` the
+> number it prints is the other product's.
+
+---
+
 ## 1. The pipeline
 
 Three workflows chained into a deploy pipeline, **plus one that is deliberately not in the chain.**
@@ -37,7 +76,7 @@ before pressing merge. §5 carries the same warning at the point a reader is dec
 | 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | rsync → write `.env` → `prisma migrate deploy` → restart `fieldrepo` + `fieldrepo-queue` → poll `/health` |
 | 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | `vercel pull` → **assert the pulled env carries what the app needs** → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 17 → `compileDebugKotlin` → `testDebugUnitTest` → `lintDebug` (advisory) → `assembleDebug` → upload APK |
-| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Three independent jobs: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). Chained to nothing in either direction. |
+| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Three independent jobs: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). Chained to nothing in either direction. |
 
 There is also `.github/workflows/keep-supabase-active.yml` — an unrelated nightly cron that pings
 Postgres so Supabase does not pause the free-tier project.
@@ -108,8 +147,29 @@ and each fails the run loudly:
    `/login`, walks its JavaScript chunks, and confirms the API host appears in them.
 
 Assertion 3 is the one that catches a class the other two cannot: a correct build published behind a
-stale alias. Together they turn "the site is live but nobody can log in" from a support ticket days
+stale alias. **It only catches it against the alias this project actually publishes, and until
+2026-08-22 it did not**: both it and the smoke check above named `field-repository.vercel.app`, a
+site this pipeline has never deployed, so a `--prod` that failed to move *our* alias still found
+another product's healthy page and passed. Both now read the alias from the `projectName` that
+`vercel pull` writes into `.vercel/project.json`, so the check follows the deploy target instead of
+a literal. It deliberately does **not** check `vercel deploy`'s output URL: that URL addresses the
+deployment just uploaded and serves the new build whether or not production was ever moved onto it,
+which is the one thing this assertion exists to find out. Together they turn "the site is live but nobody can log in" from a support ticket days
 later into a red run in five minutes.
+
+**Know the limit of that derivation.** `https://<projectName>.vercel.app` is the domain Vercel
+*conventionally* gives a project of that name — it is not a guarantee that the alias is assigned to
+it. `.vercel.app` subdomains are globally unique across all of Vercel, so a project whose
+conventional domain was already taken gets a suffixed one while the plain name answers for a
+stranger's account; the checks would then grade a page nobody here publishes, which is the same
+false green as before by a different route. It is right for `design-repository` today —
+`deploy-backend.yml`'s `BACKEND_CORS_ORIGINS` pin corroborates that hostname from a second,
+independent place — and the step refuses outright if `vercel pull` ever resolves the project
+`field-repository`. The assertion that would need no such argument is `vercel inspect <deployment
+url>` after the deploy, checking the alias against the Aliases the platform reports for that
+deployment. It is not in the workflow because it cannot be exercised from a checkout with no Vercel
+credentials, and an untested hard gate on the production deploy path is a worse failure than the
+one it closes. Promote it the next time somebody has the token in hand.
 
 ---
 
@@ -119,20 +179,31 @@ later into a red run in five minutes.
 
 | Secret | Used by | Where to get the value |
 |---|---|---|
-| `EC2_HOST` | backend | Public/Elastic IP of the API box. `cd infra/terraform && terraform output api_public_ip`, or EC2 console → Instances → the `fieldrepo` instance → Public IPv4. Currently `15.207.145.174`. |
-| `EC2_SSH_KEY` | backend | The **entire** private key file for the instance's key pair, `-----BEGIN…` through `-----END…` inclusive, with the trailing newline: `infra/terraform/fieldrepo-deploy.pem`. Paste the file contents, not the path. `*.pem` is gitignored — never commit it. |
+| `EC2_HOST` | backend | Elastic IP of **this portal's** API box: `13.206.216.18` (instance `i-0e091ca8e6b417b52`, tagged `designrepo-api`). From the repository: `cd infra/terraform && terraform workspace show` — it must print `designrepo` — then `terraform output api_public_ip`. In the EC2 console pick the instance tagged **`designrepo-api`**, never `fieldrepo-api`: both exist in the same account and region. `15.207.145.174` is the field repository and must never appear here. |
+| `EC2_SSH_KEY` | backend | The **entire** private key file for that instance's key pair `designrepo-deploy`, `-----BEGIN…` through `-----END…` inclusive, with the trailing newline: `infra/terraform/designrepo-deploy.pem`. Paste the file contents, not the path. `*.pem` is gitignored — never commit it. The sibling `infra/terraform/fieldrepo-deploy.pem` opens the *other* product's box; pasting it together with the IP above is the pair that deploys successfully onto the wrong machine. |
 | `BACKEND_ENV` | backend | The full contents of the production `backend/.env`: `DATABASE_URL`, `JWT_SECRET`, `AWS_*`, `OPENAI_API_KEY`, `GEMINI_API_KEYS`, `ELEVENLABS_*`, `DEEPGRAM_*`, `BACKEND_CORS_ORIGINS`, … Every key and its meaning is in [ENVIRONMENT.md](ENVIRONMENT.md). Easiest source of truth: `ssh ubuntu@$EC2_HOST cat /home/ubuntu/app/backend/.env`. The workflow pipes it over the SSH tunnel; it is never on a command line. |
-| `VERCEL_TOKEN` | frontend | <https://vercel.com/account/tokens> → **Create Token**. Scope it to the **team that owns `field-repository`**, not "Personal Account", or the CLI 403s. Set an expiry you will actually remember — the deploy starts failing with `Error: Not authorized` the day it lapses. This is the only genuinely sensitive value of the three Vercel ones. |
-| `VERCEL_ORG_ID` | frontend | `team_pcTf4Alb2DCIwq2IZcdu00dS`. Also at Vercel → Team Settings → General → **Team ID**, or in the `.vercel/project.json` that a local `vercel link` writes inside `frontend/` (`orgId`). An identifier, not a credential. |
-| `VERCEL_PROJECT_ID` | frontend | `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0`. Also at Vercel → Project `field-repository` → Settings → General → **Project ID**, or the same `.vercel/project.json` (`projectId`). An identifier, not a credential. |
+| `VERCEL_TOKEN` | frontend | <https://vercel.com/account/tokens> → **Create Token**. Scope it to the **team that owns `design-repository`**, not "Personal Account", or the CLI 403s. Set an expiry you will actually remember — the deploy starts failing with `Error: Not authorized` the day it lapses. This is the only genuinely sensitive value of the three Vercel ones. |
+| `VERCEL_ORG_ID` | frontend | `team_pcTf4Alb2DCIwq2IZcdu00dS`. Also at Vercel → Team Settings → General → **Team ID**, or in the `.vercel/project.json` that a local `vercel link` writes inside `frontend/` (`orgId`). An identifier, not a credential. Both products live in this one team, so it is the one Vercel value that is the same either way — and therefore the one that cannot warn you. |
+| `VERCEL_PROJECT_ID` | frontend | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel → Project **`design-repository`** → Settings → General → **Project ID**, or the same `.vercel/project.json` (`projectId`), which is what `vercel link` wrote in this checkout. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the field repository's project, and publishing there succeeds — it replaces another product's live site with this one's build. `deploy-backend.yml` pins `BACKEND_CORS_ORIGINS` to `design-repository.vercel.app`, so the correct target is also the only one the API will answer. |
+| `SUPABASE_DATABASE_URL` *or* `DATABASE_URL` | keep-alive cron | The Supabase Postgres connection string (Supabase → Project → Connect). Pre-existing; unrelated to deploys. |
 
 > `.vercel/` is gitignored and is created by `vercel link`, so it is absent from a fresh clone —
 > which is why the two rows above name it as a directory `vercel link` produces rather than as a
-> repository path. `field-repository` is the Vercel **project's** name and is deliberately not
-> rebranded: a project's name and its production domain are console state, not repository state, and
-> "correcting" either here would describe a project that does not exist. `deploy-backend.yml` pins
-> the same host in `BACKEND_CORS_ORIGINS` for the same reason, with the full argument next to it.
-| `SUPABASE_DATABASE_URL` *or* `DATABASE_URL` | keep-alive cron | The Supabase Postgres connection string (Supabase → Project → Connect). Pre-existing; unrelated to deploys. |
+> repository path.
+>
+> ~~`field-repository` is the Vercel **project's** name and is deliberately not rebranded: a
+> project's name and its production domain are console state, not repository state, and "correcting"
+> either here would describe a project that does not exist. `deploy-backend.yml` pins the same host
+> in `BACKEND_CORS_ORIGINS` for the same reason, with the full argument next to it.~~
+> **STRUCK 2026-08-22 — the argument was sound and the premise was false.** This repository's
+> project is `design-repository` (`frontend/.vercel/project.json`), and `deploy-backend.yml` pins
+> `BACKEND_CORS_ORIGINS` to `https://designer-repository.vercel.app,https://design-repository.vercel.app,http://localhost:3000`
+> — it does **not** name `field-repository` anywhere. So the paragraph was defending a
+> not-rebranded name that was never this project's name in the first place, and it is what kept the
+> wrong project id in the table above and the wrong hostname in three checks in
+> `.github/workflows/deploy-frontend.yml`. The general rule it states still holds — console state is
+> not repository state — which is why that workflow now **resolves** the production alias from
+> `.vercel/project.json` at deploy time instead of writing any hostname down at all.
 
 `GITHUB_TOKEN` is **not** something you create — GitHub injects it per run. Stage 2 uses it only to
 download stage 1's change-detection artifact (`permissions: actions: read`).
@@ -211,7 +282,7 @@ same value in two places. Change one there and re-run this workflow (or push) to
 | Build the APK now | Actions → *Android build* → **Run workflow**, or open a PR touching `android/**`. |
 | Re-deploy after changing a Vercel env var | Re-run *Deploy frontend to Vercel*. `NEXT_PUBLIC_*` values are baked at build time; changing them in the dashboard does nothing until something rebuilds. |
 | Get the APK | The run's **Artifacts** section → `app-debug-<sha>`. Debug-signed: sideload-only, and Android will refuse to install it over a release-signed build. |
-| Run the Checks suite now | Actions → *Checks* → **Run workflow**. Or locally, which is faster — `PYTHONUTF8=1 python -m pytest -rf --durations=15` from `backend/` (see [QA_AUDIT.md §5](QA_AUDIT.md) — an empty environment does **not** give you the pure core, it gives 70 collection errors); `npx tsc --noEmit && npx eslint . --max-warnings=0 && npm run test:unit` from `frontend/`; `node docs/tools/check-docs.mjs` from the repo root **on a clean tree**, since `REPO_FACTS.md`'s line counts are read off disk. **`-q` is what this row used to prescribe and it is now the one flag that must not be used** — under `-q` pytest never writes `conftest.pytest_report_header`, so the `database:` sentence saying whether the database-backed modules ran or skipped is absent, and the job's own grep counts it and goes red. **The backend job has a SECOND step that is not in the list above on purpose:** *Prove the database gate on a runner that has only a dotenv* writes `backend/.env` and deletes it again, and it refuses to start if that file already exists. Do not paste it into a terminal on a machine that has real credentials there. |
+| Run the Checks suite now | Actions → *Checks* → **Run workflow**. Or locally, which is faster — `PYTHONUTF8=1 python -m pytest -rf --durations=15` from `backend/` (see [QA_AUDIT.md §5](QA_AUDIT.md) — an empty environment does **not** give you the pure core, it gives 70 collection errors) and `./.venv/Scripts/ruff.exe check .` also from `backend/`, because that job lints as well as tests — `check .`, not `check app`, which is narrower than the gate; `npx tsc --noEmit && npx eslint . --max-warnings=0 && npm run test:unit` from `frontend/`; `node docs/tools/check-docs.mjs` from the repo root **on a clean tree**, since `REPO_FACTS.md`'s line counts are read off disk. **`-q` is what this row used to prescribe and it is now the one flag that must not be used** — under `-q` pytest never writes `conftest.pytest_report_header`, so the `database:` sentence saying whether the database-backed modules ran or skipped is absent, and the job's own grep counts it and goes red. **The backend job has a SECOND step that is not in the list above on purpose:** *Prove the database gate on a runner that has only a dotenv* writes `backend/.env` and deletes it again, and it refuses to start if that file already exists. Do not paste it into a terminal on a machine that has real credentials there. |
 
 ---
 
@@ -356,6 +427,79 @@ bad `BACKEND_ENV` value and Supabase pooler connection exhaustion — both cover
 Note the path: **`/health`, not `/api/health`.** The health routes are declared on the app rather
 than on the API router, so they sit outside the `/api` prefix and `/api/health` 404s. Any monitor
 pointed at the `/api` form is measuring a 404, not the service.
+
+---
+
+## 7. 2026-08-22 — what a human must check by hand
+
+Three defects were repaired in the repository on this date. **None of the three can be closed from
+the repository**, because each of them, if it ever ran, moved a value into a console this checkout
+cannot read. Nothing below was done automatically and nothing below should be: revoking a live
+token and rewriting another team's secrets are decisions with an owner.
+
+### 7.1 `scripts/vercel-ci-setup.mjs` sealed this portal's Vercel token into a different repository
+
+`scripts/vercel-ci-setup.mjs` — exposed as `npm run vercel-ci-setup` — carried a hard-coded
+`const REPO = "cxacraftecosystem-ui/documentation-portal"`, while `git remote get-url origin` in
+this checkout is `cxacraftecosystem-ui/designer-portal`. Its step 3 writes `VERCEL_TOKEN`,
+`VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` into `POST /repos/{REPO}/actions/secrets/…`. So every run
+put a **live, team-scoped Vercel token** into the Actions secrets of a repository that is not this
+one — where any workflow in that repository can read it, and anyone who can push a branch there can
+add a workflow that does — and left this repository with no token, which is the state §2's
+"stage 2 skips instead of failing" paragraph describes.
+
+The script now derives the slug from `GITHUB_REPOSITORY` or the `origin` remote, exits non-zero if
+neither resolves, prints the repository and Vercel project it is about to touch, and refuses to run
+unattended without `--yes`.
+
+**If that script has ever been run, treat the token as exposed.** By hand, in this order:
+
+1. **Revoke it** — Vercel → Account Settings → Tokens → the token used → Delete. Do this first;
+   everything else can wait, this cannot.
+2. **Issue a replacement**, scoped to the team that owns `design-repository`, and set it as
+   `VERCEL_TOKEN` in **this** repository's Actions secrets. Confirm `VERCEL_PROJECT_ID` is
+   `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` while you are there (§2).
+3. **Audit the other repository.** `cxacraftecosystem-ui/documentation-portal` → Settings → Secrets
+   and variables → Actions. Delete any `VERCEL_TOKEN`, `VERCEL_ORG_ID` or `VERCEL_PROJECT_ID` that
+   this script wrote — but check with that repository's owner first: a secret of the same name may
+   legitimately be theirs, and deleting it breaks their pipeline.
+4. **Read that repository's Actions log** for runs after the first time this script was used. A
+   token in a secret is a token that may already have been used.
+5. **Check Vercel's audit log** for deployments and project changes made with the old token.
+
+> **The other product's name survives in one more place, deliberately.** The root
+> `package.json`'s `"name"` is still `documentation-portal-root`, and it is NOT a fourth
+> undiscovered instance of the bug above — it was found, weighed and left. The package is
+> `"private": true`, nothing declares workspaces, nothing resolves it by name, and it is not a
+> deploy target; the three fields that a human or a tool actually follows — `repository.url`,
+> `bugs.url`, `homepage` — were all corrected to `designer-portal` in the same pass. What keeps it
+> from being changed on sight is that `package-lock.json` records the same root name twice and
+> `keep-supabase-active.yml` runs `npm ci` from the repository root, so the rename is a two-file
+> change and half of it fails CI. Rename both together, in one commit, or not at all.
+
+### 7.2 The documented deploy secrets named the field repository's box and key
+
+§2's table gave `EC2_HOST = 15.207.145.174` together with `infra/terraform/fieldrepo-deploy.pem` —
+the other product's Elastic IP and the key that opens it. Wrong *together* is the dangerous
+combination, because the deploy then authenticates and completes: rsync `--delete` over
+`/home/ubuntu/app/backend/` on a live box, its `.env` replaced, its CORS stripped, and
+`prisma migrate deploy` against its database. The rows are corrected and the banner at the top of
+this document states the split.
+
+**By hand:** open this repository's `EC2_HOST` and `EC2_SSH_KEY` secrets and confirm they are
+`13.206.216.18` and `designrepo-deploy.pem`. If a backend deploy from this repository has ever gone
+green, check the field repository's box (`15.207.145.174`) before assuming it was untouched: look at
+`/home/ubuntu/app/backend/.env`, its `BACKEND_CORS_ORIGINS` line, and its Prisma migration history.
+
+### 7.3 The frontend deploy smoke-checked another product's site
+
+Three places in `.github/workflows/deploy-frontend.yml` named `field-repository.vercel.app` — the
+environment link and both post-deploy assertions — and its header documented
+`VERCEL_PROJECT_ID = prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0`, the field repository's project. The alias is
+now resolved at runtime from `.vercel/project.json`; the header names this portal's project id.
+
+**By hand:** confirm `VERCEL_PROJECT_ID` in this repository's secrets, and check the Vercel
+`field-repository` project's deployment list for builds that came from this pipeline.
 
 ---
 

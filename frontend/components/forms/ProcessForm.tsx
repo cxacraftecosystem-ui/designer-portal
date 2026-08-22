@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Lock, Plus } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -11,12 +11,14 @@ import { Field, Select, TextInput } from "@/components/FormControls";
 import { RichTextField } from "@/components/richtext/RichTextField";
 import { FieldProvenance } from "@/components/FieldProvenance";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
+import type { InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHost";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Dropdown } from "@/components/ui/Dropdown";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch, listResource } from "@/lib/api";
@@ -286,8 +288,10 @@ function MultiNoteInput({ label, value, onChange }: { label: string; value: stri
 
 export function ProcessForm({
   initial,
+  footerFields,
   onDone,
   onCancel,
+  onDiscardAndLeave,
   onCreated,
   onQueued
 }: {
@@ -321,9 +325,17 @@ export function ProcessForm({
    * supplied it replaces `onDone` on that branch, so the host can close AND say so in one act.
    */
   onQueued?: () => void;
-}) {
+} & InlineRecordSurfaceProps) {
   const { user } = useAuth();
   const isEdit = Boolean(initial);
+  /*
+    THERE IS NO "am I hosted?" FLAG HERE ANY MORE, and the absence is deliberate.
+    A short-lived `const hosted = Boolean(onCreated)` gated the heading this form used to draw. The
+    heading is gone on every host (see the block where it stood), so the flag had nothing left to
+    read it. If a fifth reason to know the host ever appears, it belongs on
+    `inlineRecordHost.ts` with the other host-wide members and not as a fifth local spelling —
+    that file's header is about exactly this.
+  */
   const canPickStatus = hasRank(user, "PROFESSOR");
   // The workshop this process was documented at: shared picker, shared most-recent defaulting, and
   // the late-submission gate (see components/forms/WorkshopSelect).
@@ -398,6 +410,26 @@ export function ProcessForm({
   const [productError, setProductError] = useState<string | null>(null);
   const [stepsError, setStepsError] = useState<string | null>(null);
   const [preMediaError, setPreMediaError] = useState<string | null>(null);
+  /**
+   * IDS FOR THE SIX REFUSALS ABOVE, AND FOR THE BANNER THAT SUMMARISES THEM.
+   *
+   * Every refusal this form makes was a red paragraph and nothing else — no `role`, no id, bound to
+   * no control — so a researcher using a screen reader was blocked from saving and told nothing at
+   * all about why. The ids below are what let the controls that CAN carry a description point at
+   * theirs; `role="alert"` carries the rest. Which refusal gets which is decided in `submit()`
+   * under ALERT OR DESCRIPTION, and is not uniform — read that before adding or removing a role.
+   *
+   * `useId` rather than literals because this form is also embedded inside a design-workshop stage
+   * (see `InlineRecordSurfaceProps`), and two mounted copies must not mint the same id. The literal
+   * `process-name` / `step-name-*` ids below are the focus ladder's and are older than this.
+   */
+  const formId = useId();
+  const errorId = `${formId}-error`;
+  const nameErrorId = `${formId}-name-error`;
+  const artisanErrorId = `${formId}-artisan-error`;
+  const productErrorId = `${formId}-product-error`;
+  const preMediaErrorId = `${formId}-pre-media-error`;
+  const stepsErrorId = `${formId}-steps-error`;
   const [saving, setSaving] = useState(false);
   /**
    * THE WRITE HAS LANDED — set the instant `saveOrQueue` returns, and never unset.
@@ -421,6 +453,26 @@ export function ProcessForm({
   const [uploadNote, setUploadNote] = useState<string | null>(null);
   const [addMenu, setAddMenu] = useState(false);
   const [guardOpen, setGuardOpen] = useState(false);
+  /**
+   * WHICH EXIT IS WAITING ON THAT PROMPT — this form's own Cancel button, or the back arrow in the
+   * page header. Both raise the same dialog, and until this flag existed both got the same answer.
+   *
+   * ── THE DEFECT ────────────────────────────────────────────────────────────────────────────
+   * "Discard" called `onCancel()`, and in the design-workshop stage embed `onCancel` REMOUNTS THIS
+   * FORM IN PLACE — that host is not a dialog and there is nowhere to go, so remounting is the only
+   * thing that could clear boxes living in React state. A designer therefore pressed Back, was
+   * asked, answered Discard, lost the name, the artisan, the product, every step and every attached
+   * file — AND STAYED ON THE PAGE, needing a second press of Back to do the thing they had asked
+   * for. In a dialog the identical wiring reads correctly, because the dialog visibly closes.
+   *
+   * ── WHY THE FLAG MARKS THE CANCEL BUTTON AND NOT THE ARROW ────────────────────────────────
+   * The arrow's route in is `useLeaveGuard`, registered once for the life of the mount with a bare
+   * callback — there is no per-press hook to set a flag from, and that registration is pinned by
+   * `e2e/discarded-work-unit.spec.ts` because it is the line this form spent a release missing.
+   * `requestCancel` is this component's own call site, so it is the one that can say who it is. It
+   * is cleared on every way out of the prompt, so "set" only ever describes the prompt on screen.
+   */
+  const [promptFromCancel, setPromptFromCancel] = useState(false);
 
   const statusChoices = initial?.status && !STATUS_OPTIONS.includes(String(initial.status)) ? [String(initial.status), ...STATUS_OPTIONS] : STATUS_OPTIONS;
 
@@ -565,6 +617,14 @@ export function ProcessForm({
   // including the partial-media-failure return that deliberately leaves this form on screen with the
   // record already written. That window is exactly where the header arrow used to reach a dialog
   // offering to save it again. See `hasUnsavedWork`.
+  //
+  // THERE IS DELIBERATELY NO "EMBEDDED, SO DO NOT PROMPT" FLAG, though one looks obviously right: a
+  // design-workshop stage that embeds this form has no unsaved-changes prompt of its own, because
+  // its draft is durable. That durability belongs to the STAGE's fields; this form writes to no
+  // store at all, so suppressing the question here would discard real work in silence. The full
+  // argument is in `inlineRecordHost.ts`'s header. The guard below, the Cancel button and the
+  // `beforeunload` effect all read this one value, because three opinions about when to prompt is
+  // how they come to disagree.
   const dirty = hasUnsavedWork({ saving, committed, signature, initialSignature });
 
   /*
@@ -607,7 +667,29 @@ export function ProcessForm({
   }
 
   function requestCancel() {
-    if (dirty) setGuardOpen(true);
+    // `promptFromCancel`: this is the form's own Cancel, so "Discard" must NOT complete a
+    // navigation nobody started — see the flag's declaration.
+    if (dirty) {
+      setPromptFromCancel(true);
+      setGuardOpen(true);
+    } else onCancel();
+  }
+
+  /**
+   * Finish the exit the HOST'S OWN back control began, after "Discard" has answered for the typing.
+   *
+   * `useLeaveGuard` does not delay a navigation, it REFUSES one: the interceptor returns true, the
+   * back control abandons what it was doing, and this form is handed the question instead. Nothing
+   * is left in flight to resume — only the host knows where the arrow was going, and only the host
+   * can start it again. `onDiscardAndLeave` is how it says so.
+   *
+   * Falls back to `onCancel` when no host supplies it, which is right for both other hosts: on
+   * /processes that callback really is the navigation, and in `InlineRecordDialog` closing the
+   * dialog is the whole of leaving it. Only a host that can be left without being closed — the
+   * stage embed — has anything to add. See `InlineRecordHostProps.onDiscardAndLeave`.
+   */
+  function leaveAfterDiscard() {
+    if (onDiscardAndLeave) onDiscardAndLeave();
     else onCancel();
   }
 
@@ -627,6 +709,37 @@ export function ProcessForm({
     setPreMediaError(null);
 
     let blocked = false;
+    /**
+     * ONLY TWO OF THE SIX REFUSALS CAN AIM FOCUS, AND THAT IS NOT AN OVERSIGHT TO SWEEP UP.
+     *
+     * The process name and a step name are plain inputs with real ids, so `getElementById` reaches
+     * them. The artisan and product pickers are `SearchableSelect` triggers: no `id` and no `ref` is
+     * plumbed through that chain, so there is no element for this line to find. Minting an id here
+     * that resolves to nothing would move focus nowhere while reading, in the source, like it moved
+     * somewhere — the same shape of defect as the refusal paragraphs that used to be bound to no
+     * control at all. Both of those refusals reach a screen reader through `role="alert"` and the
+     * picker's `describedBy` instead; giving them focus needs an id on the trigger first.
+     *
+     * The media and steps refusals have no control to focus by construction.
+     *
+     * ── ALERT OR DESCRIPTION: WHY THE SIX REFUSALS SPLIT FOUR/TWO ────────────────────────────
+     *
+     * Refusing an empty form mounts the summary banner and all six paragraphs in ONE commit. An
+     * assertive live region interrupts, so seven of them firing together is not seven
+     * announcements — it is a queue in which the earlier ones can be cut off by the later, and the
+     * banner, first in DOM order, is the likeliest casualty. So `role="alert"` is spent only where
+     * nothing else can carry the sentence:
+     *
+     *   - the summary banner, which is the only thing said for a refusal with no box of its own;
+     *   - the media and steps refusals, which have no control at all to describe;
+     *   - the artisan and product refusals, whose control EXISTS but which the ladder above cannot
+     *     reach — a description nobody focuses is a description nobody hears, and the banner's
+     *     "Please fill the required fields highlighted above." does not name which picker.
+     *
+     * The two that DO get focus — process name and step name — carry the id and `aria-describedby`
+     * and no role: arriving on the control reads the paragraph, and an alert as well would speak it
+     * twice while stepping on the four that only get one chance.
+     */
     let focusId: string | null = null;
     if (!name.trim()) {
       setNameError("This field cannot be empty");
@@ -840,11 +953,28 @@ export function ProcessForm({
           `The process was saved, but ${failures.length} media file(s) failed to upload: ${failures.join(", ")}. Re-open the process from the list to retry those files.`
         );
         setGuardOpen(false);
-        // DELIBERATELY NOT REPORTED, on either path. The record exists, but this form stays on
-        // screen so the designer can read which files were lost — and `onCreated` closes the dialog
-        // it is mounted in. Closing over the one message that says what did not save would be the
-        // failure this branch exists to report, hidden by the reporting of it. The record is in the
-        // repository either way; the picker's list will hold it the next time it is opened.
+        /*
+          ── THE RECORD IS REPORTED FIRST, THE UPLOAD FAILURE SECOND ────────────────────────────
+          THIS USED TO BE THE OPPOSITE DECISION, and the note that stood here is worth reading
+          before this one is changed back: it argued that `onCreated` closes the dialog, so
+          reporting the record would close over the one message saying which files were lost, and
+          that "the picker's list will hold it the next time it is opened".
+
+          What that weighed wrongly is which of the two losses a designer can recover from. A
+          missing attachment is NAMED, on screen, with the instruction to re-open the process and
+          retry it — and the record is in the list, exactly as the old note said. An unlinked stage
+          row is neither named nor visible: the picker sits empty over a process that exists, and
+          the stage 422s on submit hours later naming a required reference the designer remembers
+          creating. That is the state this whole inline-create lane was built to end, and it was
+          being produced by the branch that reports a partial success. The three sibling forms had
+          the same shape and all four now behave the same way.
+
+          THE ERROR IS SET BEFORE THE HANDOFF AND NOT INSTEAD OF IT — `setError` above runs either
+          way, so on this form's own page (where it is mounted directly by `/processes` and nothing
+          unmounts) the banner reads exactly as it always did. In the dialog the host closes over
+          it; that is the trade, and it is the same one the queued branch above already makes.
+        */
+        if (onCreated) onCreated(saved);
         return;
       }
       setGuardOpen(false);
@@ -882,14 +1012,44 @@ export function ProcessForm({
       }}
     >
       <div>
-        <h2 className="font-display text-lg font-bold text-ink-900">{isEdit ? "Edit process" : "Document process"}</h2>
+        {/*
+          THIS FORM DOES NOT TITLE THE SCREEN, ON ANY OF ITS THREE HOSTS, and there is no host it
+          still would.
+
+          It used to draw an `<h2>` here — the only one of the four record forms with a heading of
+          its own — written when /processes was the only place this component was mounted. All
+          three hosts title the surface themselves and always did: `/processes` renders a
+          `PageHeader` (an `<h1>`) reading "Document process" / "Edit process", the SAME TWO
+          STRINGS this heading painted directly beneath it; `InlineRecordDialog` gives `FieldDialog`
+          a `title` of "New process" / "Edit process"; and `StageRecordEmbed` draws the form inside
+          a stage entity panel whose `EntityForm` renders `entity.title` as its own `<h2>` —
+          "Process overview" for stage 5's `traditionalProcess`.
+
+          The stage was the loud case: two sibling `h2` elements for one thing, at the same level
+          and in the same class, and a screen reader's heading list is one of the two ways a
+          22-stage form is navigated at all, so a duplicate rung describes a structure the page does
+          not have. Suppressing it only when hosted left the page's own duplicate standing — a
+          quieter defect, because `h1` then `h2` is at least a real outline, but the second rung
+          still says nothing the first did not, in the same words.
+
+          THE PARAGRAPH STAYS. It says what a process record IS and that several people may document
+          the same product, which no host repeats and which is as true in a stage as on the page.
+          Only the heading was a claim about the screen.
+        */}
         <p className="mt-1 text-xs text-ink-500">
           Capture how a product is made, step by step. Each process is tied to a product; multiple people can document the same
           product&apos;s processes.
         </p>
       </div>
       {initial ? <FieldProvenance extraMetadata={initial.extraMetadata} /> : null}
-      {error ? <div className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{error}</div> : null}
+      {/* `role="alert"`: this banner is painted in response to a save the researcher just asked for
+          — a refusal, or a failure the server answered with — so it has to be spoken when it
+          appears rather than waiting to be stumbled across on the next pass through the form. */}
+      {error ? (
+        <div id={errorId} role="alert" className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">
+          {error}
+        </div>
+      ) : null}
       <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
 
       {/* Android parity (ProcessForm): the workshop opens the form, because it is the context
@@ -903,18 +1063,58 @@ export function ProcessForm({
           <TitleCasedInput
             id="process-name"
             value={name}
+            aria-invalid={!!nameError}
+            /* `TitleCasedInput` MERGES an incoming `aria-describedby` with its own "Will be saved
+               as …" hint rather than replacing it, so the refusal and the hint are both announced.
+               Passing it straight through to a plain `<input>` would have silenced the hint. */
+            aria-describedby={nameError ? nameErrorId : undefined}
             onChange={(event) => setName(event.target.value)}
           />
         </Field>
-        {nameError ? <p className="mt-1 text-xs text-error-600">{nameError}</p> : null}
+        {/* NO `role="alert"` HERE, AND THAT IS THE POINT — see ALERT OR DESCRIPTION on `submit()`.
+            `submit()` moves focus to `process-name`, and arriving on a control reads its
+            `aria-describedby`, which is this paragraph. An alert as well would say it twice and
+            would interrupt the five refusals that have no other way to be heard. */}
+        {nameError ? (
+          <p id={nameErrorId} className="mt-1 text-xs text-error-600">
+            {nameError}
+          </p>
+        ) : null}
       </div>
 
       <div>
         <Field label="Artisan" required>
-          <Select
+          {/*
+            `Dropdown` DIRECTLY, not `FormControls.Select`, and the reason is no longer the one that
+            used to be written here.
+
+            IT USED TO BE THAT `Select` DROPPED THE DESCRIPTION. It forwarded only value/onChange/
+            options/disabled/className/ariaLabel, so an `aria-describedby` handed to it fell into a
+            `...rest` spread that these two pickers — passing no `name` — did not even render: the
+            source read as though the refusal were bound while nothing announced it. That was a
+            defect in `Select` affecting every caller in the app and it has been fixed there;
+            `FormControls.Select` now translates `aria-describedby` into the dropdown's
+            `describedBy`, and this local workaround is no longer needed FOR THAT.
+
+            WHAT STILL KEEPS THESE TWO ON `Dropdown` is the shape of the data. `Select` builds its
+            list from `<option>` CHILDREN and reports a synthetic `<select>` change event; both
+            pickers here hold an OPTIONS ARRAY (a placeholder row spread in front of a mapped list)
+            and want the picked value, which is what `Dropdown` takes and gives. Converting them
+            would be a rewrite of two working controls to reach the same rendered element, so they
+            stay — but a THIRD picker on this form should reach for `Select` like everywhere else.
+
+            And only `describedBy`: see SearchableSelect's `describedBy` doc for why there is
+            deliberately no `aria-invalid` here — the trigger is a `<button>`, and `aria-invalid` is
+            not supported on the `button` role, so setting it would look like a mark and be ignored.
+          */}
+          <Dropdown
             value={artisanId}
-            onChange={(event) => {
-              const picked = event.target.value;
+            describedBy={artisanError ? artisanErrorId : undefined}
+            options={[
+              { value: "", label: "Select the artisan" },
+              ...artisanOptions.map((artisan) => ({ value: artisan.id, label: `${artisan.name} · ${artisan.place}` }))
+            ]}
+            onChange={(picked) => {
               if (picked !== artisanId) {
                 setArtisanId(picked);
                 setProductId("");
@@ -926,25 +1126,27 @@ export function ProcessForm({
                 }
               }
             }}
-          >
-            <option value="">Select the artisan</option>
-            {artisanOptions.map((artisan) => (
-              <option key={artisan.id} value={artisan.id}>
-                {artisan.name} · {artisan.place}
-              </option>
-            ))}
-          </Select>
+          />
         </Field>
         <CappedListNotice cuts={[artisanCut]} />
-        {artisanError ? <p className="mt-1 text-xs text-error-600">{artisanError}</p> : null}
+        {artisanError ? (
+          <p id={artisanErrorId} role="alert" className="mt-1 text-xs text-error-600">
+            {artisanError}
+          </p>
+        ) : null}
       </div>
 
       <div>
         <Field label="Product" required>
-          <Select
+          {/* `Dropdown` directly, and `describedBy` alone — see the artisan picker above for both. */}
+          <Dropdown
             value={productId}
-            onChange={(event) => {
-              const picked = event.target.value;
+            describedBy={productError ? productErrorId : undefined}
+            options={[
+              { value: "", label: productPlaceholder },
+              ...artisanProducts.map((product) => ({ value: product.id, label: product.productName }))
+            ]}
+            onChange={(picked) => {
               setProductId(picked);
               const product = artisanProducts.find((candidate) => candidate.id === picked);
               if (!product) return;
@@ -964,14 +1166,7 @@ export function ProcessForm({
               });
             }}
             disabled={!artisanId || productsLoading || artisanProducts.length === 0}
-          >
-            <option value="">{productPlaceholder}</option>
-            {artisanProducts.map((product) => (
-              <option key={product.id} value={product.id}>
-                {product.productName}
-              </option>
-            ))}
-          </Select>
+          />
         </Field>
         {productsLoading ? <p className="mt-1 text-xs text-ink-500">Loading this artisan&apos;s products…</p> : null}
         {!productsLoading && productLoadError ? <p className="mt-1 text-xs text-error-600">{productLoadError}</p> : null}
@@ -986,7 +1181,11 @@ export function ProcessForm({
           <p className="mt-1 text-xs text-ink-500">{artisanProducts.length} product(s) available for this artisan.</p>
         ) : null}
         {!productsLoading && !productLoadError && artisanId ? <CappedListNotice cuts={[productCut]} /> : null}
-        {productError ? <p className="mt-1 text-xs text-error-600">{productError}</p> : null}
+        {productError ? (
+          <p id={productErrorId} role="alert" className="mt-1 text-xs text-error-600">
+            {productError}
+          </p>
+        ) : null}
       </div>
 
       {/*
@@ -1031,14 +1230,65 @@ export function ProcessForm({
             onFilesChange={setPreFiles}
             title="Attach media"
             description="Photos, video, audio and files link to this record automatically. Audio is queued for transcription after upload."
+            /*
+              A STAGING OWNER THAT OUTLIVES THIS CARD, because this card is the one media control in
+              the four record forms that can go away while the files it attached stay.
+
+              It is mounted only while "Pre-processes available" is ticked, and `preFiles` lives one
+              level up in this form. So unticking unmounted the card, `useEagerStaging` released its
+              per-mount owner, and two seconds later `lib/media` aborted the transfer and DELETED
+              the object already in storage — while the box the researcher can re-tick still held
+              every one of those files. Re-ticking re-uploaded them from scratch on a connection
+              that is usually a village's, or, offline, did not.
+
+              A `useId` off THIS FORM and not a literal: stage TRADITIONAL_PROCESS_BASELINE can have
+              a second `ProcessForm` open over the same record in the picker's edit dialog, and one
+              owner name shared between them would let either one's release bin the other's files.
+
+              WHAT IT BUYS IS THE MISCLICK, AND THE BOUND IS TWO SECONDS — say it plainly, because
+              a reader of the paragraph above would otherwise take the hazard for closed. Unticking
+              still unmounts the card and `useEagerStaging`'s cleanup still calls
+              `releaseStagedOwner`; the stable name only helps because `stageFiles` cancels a
+              pending release for the SAME owner, and `lib/media` gives it `RELEASE_GRACE_MS` —
+              2_000 — before it aborts and deletes. Re-tick inside that window and the transfer
+              survives. Re-tick ten seconds later and the object is gone and the files upload from
+              scratch, exactly as before this line existed. THE FILES THEMSELVES ARE NEVER LOST
+              EITHER WAY, because `preFiles` is hoisted into the form; what the longer gap costs is
+              the upload, on a connection that is usually a village's. Closing that gap is a
+              different change and should be named as one — keep the card mounted and hidden while
+              unticked, or teach the store not to release an owner whose file list is non-empty.
+
+              THE PAIRING RULE IS SATISFIED HERE AND NOWHERE ELSE IN THIS FILE — see
+              `useEagerStaging`'s `ownerKey` note and `inlineRecordHost.ts`: a stable owner alone is
+              worse than nothing, because it keeps the object alive after the last browser reference
+              to it is gone. It is safe here precisely because the file list is hoisted above the
+              unmount. It is not safe on a card whose files die with it.
+            */
+            stagingOwnerId={`${formId}:pre-process`}
+            /* THE REFUSAL BELOW, BOUND — see `MediaCaptureField`'s own `aria-describedby` note. */
+            aria-describedby={preMediaError ? preMediaErrorId : undefined}
           />
-          {preMediaError ? <p className="text-xs text-error-600">{preMediaError}</p> : null}
+          {/* `role="alert"` AND a description on the card itself. The role is what announces the
+              refusal at the moment it appears; the binding is what says it again to a researcher
+              who tabs back to the card to act on it, which the live region alone could not. Both,
+              because they answer different moments — see `submit()`'s ALERT OR DESCRIPTION. */}
+          {preMediaError ? (
+            <p id={preMediaErrorId} role="alert" className="text-xs text-error-600">
+              {preMediaError}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
       <div className="border-t border-line-200 pt-4">
         <h3 className="font-display font-bold text-ink-900">Steps</h3>
-        {stepsError ? <p className="mt-1 text-xs text-error-600">{stepsError}</p> : null}
+        {/* "Add at least one step" refuses the SECTION, not a box — there is no control to mark
+            while the list is empty, so the live region is the whole of the announcement. */}
+        {stepsError ? (
+          <p id={stepsErrorId} role="alert" className="mt-1 text-xs text-error-600">
+            {stepsError}
+          </p>
+        ) : null}
 
         <div className="mt-3 grid gap-3">
           {steps.map((step, index) => (
@@ -1061,10 +1311,19 @@ export function ProcessForm({
                     className="field-input"
                     id={`step-name-${step.key}`}
                     value={step.name}
+                    aria-invalid={!!step.nameError}
+                    aria-describedby={step.nameError ? `step-name-${step.key}-error` : undefined}
                     onChange={(event) => updateStep(step.key, { name: event.target.value })}
                   />
                 </Field>
-                {step.nameError ? <p className="mt-1 text-xs text-error-600">{step.nameError}</p> : null}
+                {/* No `role="alert"`, for the reason the process name's paragraph gives: this is
+                    the focus ladder's second rung, so it is read on arrival as the input's
+                    description. */}
+                {step.nameError ? (
+                  <p id={`step-name-${step.key}-error`} className="mt-1 text-xs text-error-600">
+                    {step.nameError}
+                  </p>
+                ) : null}
               </div>
               <SavedMediaList
                 items={step.existingMedia}
@@ -1151,6 +1410,15 @@ export function ProcessForm({
         that each researcher documents it individually, so that different perspectives on the same process are preserved.
       </div>
 
+      {/*
+        THE HOST'S OWN QUESTIONS, AT THE BOTTOM OF THE SAME LIST OF FIELDS — see
+        `InlineRecordHostProps.footerFields`. Inside the `<form>` and above the buttons, so a
+        design-workshop stage embedding this page adds its extra fields to the end of one continuous
+        form rather than to a second panel below a form that has already ended. The separator is the
+        only styling, and with no host there is no element at all.
+      */}
+      {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
+
       <div className="flex items-center justify-end gap-2">
         {uploadNote ? <span className="mr-auto text-xs text-ink-500">{uploadNote}</span> : null}
         <button type="button" className="field-button-secondary" onClick={requestCancel}>
@@ -1169,12 +1437,45 @@ export function ProcessForm({
       <UnsavedChangesDialog
         open={guardOpen}
         saving={saving}
-        onKeepEditing={() => setGuardOpen(false)}
+        onKeepEditing={() => {
+          setGuardOpen(false);
+          setPromptFromCancel(false);
+        }}
         onDiscard={() => {
           setGuardOpen(false);
-          onCancel();
+          setPromptFromCancel(false);
+          /*
+            WHICH host act this is depends on which control asked. Cancel means "empty this form, I
+            am staying", and in the stage embed `onCancel` does exactly that. The back arrow means
+            "take me off this screen", and answering it with `onCancel` alone is the defect
+            `promptFromCancel` exists for: the work was discarded and the designer did not go
+            anywhere.
+          */
+          if (promptFromCancel) onCancel();
+          else leaveAfterDiscard();
         }}
-        onSave={() => void submit()}
+        /*
+          CLEARED HERE TOO, like the two answers above and like the three sibling forms, because
+          this answer DOES take the prompt off the screen. A note that used to stand here claimed
+          the opposite — that a refused `submit()` leaves the dialog standing — and this file
+          contradicts it: the validation refusal calls `setGuardOpen(false)` before returning, and
+          so do the late-workshop refusal, the queued branch, the partial-media branch, the success
+          branch and the catch. Every exit closes it.
+
+          A FLAG LEFT TRUE THEN OUTLIVES THE PROMPT IT DESCRIBES, which is the defect
+          `onDiscardAndLeave` was added to end, reintroduced one step later: press Cancel, press
+          Save, have the save refused for an empty name, fix the name, then press the HOST'S back
+          arrow — the guard reopens the prompt, "Discard" takes the Cancel branch, and the form is
+          emptied while the designer stays exactly where they were.
+
+          `if (committed) return;` is the one exit that does not close the prompt, and it cannot be
+          reached from here: `committed` makes `hasUnsavedWork` false, so a Cancel on a committed
+          form never opens the prompt to begin with.
+        */
+        onSave={() => {
+          setPromptFromCancel(false);
+          void submit();
+        }}
       />
     </form>
   );

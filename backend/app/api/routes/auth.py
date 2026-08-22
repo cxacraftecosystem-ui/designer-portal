@@ -12,7 +12,7 @@ from app.core.deps import (
     ROLE_RANK,
     get_current_user,
     invalidate_cached_user,
-    is_master_admin,
+    is_break_glass_master,
     role_rank,
     role_value,
 )
@@ -145,11 +145,28 @@ async def assert_access_admits(email: str, *, is_master: bool) -> Any | None:
     Google path, for the role a brand-new account is created at), or ``None`` for the master admin,
     who is never gated at all.
 
-    APPLIED ON BOTH PATHS — password and Google. On the password path from :func:`login`, after the
-    credential; on the Google path from :func:`login_with_google`, BEFORE anything is written,
-    because on that path admission is what decides whether an account comes into existence at all.
-    Two call sites rather than one because the two paths genuinely need it at different moments; the
-    test module signs in through both and both are asserted, which is what keeps the pair honest.
+    APPLIED ON BOTH SIGN-IN PATHS — password and Google. On the password path from :func:`login`,
+    after the credential; on the Google path from :func:`login_with_google`, BEFORE anything is
+    written, because on that path admission is what decides whether an account comes into existence
+    at all. Two call sites rather than one because the two paths genuinely need it at different
+    moments; the test module signs in through both and both are asserted, which is what keeps the
+    pair honest.
+
+    AND ON THE ONE DOOR THAT IS NOT A SIGN-IN: ``POST /api/datasets/token`` in
+    ``routes/datasets.py``, which exchanges the same email and password for a thirty-day machine
+    credential. Suspension writes the roster status and never the ``User.role``, so an admin refused
+    here at ``/auth/login`` was for a while still able to mint a fresh read token there, renewably,
+    for ever — a revoked person holding live data access, through the one endpoint that hands over
+    the whole repository. THE RULE THIS ESTABLISHES IS THE ONE TO KEEP: every place that turns a
+    proved credential into a token calls this function. A new one that does not is a new way back
+    in for somebody an administrator has already shown the door.
+
+    THE PRECONDITION EVERY CALLER OWES IT: the identity must ALREADY be proved — a bcrypt check that
+    passed, or a verified Google audience. It is what keeps the pending refusal (and the row
+    :func:`access_roster.record_refused_attempt` writes behind it) reachable only by somebody who
+    holds the account, so this cannot become a form for enumerating addresses or for filling an
+    administrator's queue with them. See that function's docstring, which names the same bound from
+    the other end.
 
     **WHY THE GATE IS NOW EVERYONE, AND WHAT REPLACES THE ARGUMENT THAT USED TO MAKE IT NARROW.**
     ``assert_roster_admits`` below gated only ``role == "DESIGNER"``, under a comment arguing that
@@ -413,11 +430,7 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
         # addresses are waiting on an admin, and cannot write rows into the admin's queue. The
         # master admin is exempt by role AND by configured address, so a break-glass account whose
         # row was never written still gets in.
-        access = await assert_access_admits(
-            user.email,
-            is_master=is_master_admin(user)
-            or (user.email or "").lower() == get_settings().master_admin_email.lower(),
-        )
+        access = await assert_access_admits(user.email, is_master=is_break_glass_master(user))
 
     # THE SECOND GATE, and still narrow: this one asks whether a DESIGNER is still empanelled, and
     # answers with the empanelment's own sentence. After the platform gate and after the Google

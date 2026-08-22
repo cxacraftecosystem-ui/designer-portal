@@ -28,6 +28,13 @@ serial round trips those counts are de-duplicated by scope signature and run con
 small semaphore, and a page larger than :data:`DERIVED_TASK_LIMIT` skips derivation entirely
 (``derivedCount: null``) rather than hammering the connection pool — which this deployment has
 already had to be rescued from once, see ``app.core.db``.
+
+``POST /tasks/batch`` declines derivation outright, and for a sharper reason than page size: the
+de-duplication key includes the assignee, so a batch handed to fifty people de-duplicates to
+nothing and the create would pay fifty COUNTs per record type to report how much of the scope those
+people had already covered BEFORE the task existed. That number is not an answer to anything the
+create was asked, and neither client reads it — both toast the count and refetch the batch list,
+which derives properly.
 """
 import asyncio
 import logging
@@ -89,6 +96,23 @@ DERIVED_CONCURRENCY = 8
 
 # How many task rows the batch/progress rollups scan. Both group in Python (Prisma has no "group by
 # batch, with per-member detail" in one call), so the window has to be explicitly bounded.
+#
+# EVERY read that takes this window orders ``createdAt`` DESC with ``id`` DESC behind it, and so does
+# the paged task list. ``createdAt`` alone is not a total order here: a batch writes all its rows in
+# one statement and they share a timestamp to the millisecond, so the planner is free to return tied
+# rows in a different order every time it is asked. WHAT THE TIEBREAKER BUYS is a total order, and
+# only that: the 2000-row window is the SAME 2000 rows from one request to the next, ``list_tasks``'s
+# offset pages can no longer repeat or drop a row that tied with another on the page before, and the
+# stable ``sorted(grouped, ...)`` below is fed a deterministic input. The tiebreaker is spelled at
+# each call site rather than left to the shared paginator, so these reads are right either way that
+# helper goes.
+#
+# WHAT IT DOES NOT BUY, and must not be read as buying: the cut at 2000 can still land INSIDE a
+# batch. A rollup that has lost two members of five still reports "3 of 5 done" for a batch that is
+# finished — the tiebreaker only makes it tell that lie repeatably instead of intermittently.
+# ``task_progress`` at least owns up to hitting the window (it returns
+# ``"truncated": len(rows) >= ROLLUP_SCAN_LIMIT``); ``list_task_batches`` has no such flag, so its
+# partial rollups are still silent. Closing that is an open job, not something done here.
 ROLLUP_SCAN_LIMIT = 2000
 
 # The assignment dialog's three picker ceilings. NAMED rather than left as literals in the query,
@@ -121,10 +145,17 @@ def assert_status_value(value: str) -> None:
         )
 
 
-async def assert_assignable(assigner: Any, assignee_id: str) -> Any:
-    """The assignee must exist and rank strictly below the assigner — except the master admin,
-    who may assign work to anyone but themselves."""
-    assignee = await db.user.find_unique(where={"id": assignee_id})
+def assignable_or_refuse(assigner: Any, assignee: Any | None) -> Any:
+    """The three assignability outcomes, decided against an ALREADY-LOADED user row.
+
+    Split out of :func:`assert_assignable` rather than copied into the batch path, because this
+    file already carries a long note above :func:`has_task_authority` about what one rule written
+    twice over one table costs: the two copies drift and the looser one becomes the real rule.
+
+    THE ORDER OF THE THREE CHECKS IS CONTRACT, not taste. A row that is not there is a 404 before
+    anything else is asked about it, and self-assignment is refused before the tier comparison —
+    which would otherwise 403 an admin for failing to out-rank themselves, naming the wrong problem.
+    """
     if not assignee:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignee not found")
     if assignee.id == get_value(assigner, "id"):
@@ -138,6 +169,25 @@ async def assert_assignable(assigner: Any, assignee_id: str) -> Any:
             detail="You can only assign tasks to users below your own tier",
         )
     return assignee
+
+
+async def assert_assignable(assigner: Any, assignee_id: str) -> Any:
+    """The assignee must exist and rank strictly below the assigner — except the master admin,
+    who may assign work to anyone but themselves."""
+    return assignable_or_refuse(assigner, await db.user.find_unique(where={"id": assignee_id}))
+
+
+async def assert_all_assignable(assigner: Any, assignee_ids: list[str]) -> None:
+    """:func:`assert_assignable` for a whole cohort, in ONE query instead of one per person.
+
+    Refusals are raised walking ``assignee_ids`` IN THE CALLER'S ORDER, so a body carrying two
+    different problems fails with exactly the message the per-assignee loop used to give: whichever
+    id comes first in the list decides, and the batch is still all-or-nothing.
+    """
+    rows = await db.user.find_many(where={"id": {"in": assignee_ids}})
+    by_id = {row.id: row for row in rows}
+    for assignee_id in assignee_ids:
+        assignable_or_refuse(assigner, by_id.get(assignee_id))
 
 
 # ── AUTHORITY OVER WORK SOMEBODY ELSE HANDED OUT ────────────────────────────────────────────────
@@ -652,8 +702,23 @@ def serialize_task(
     return payload
 
 
-async def serialize_tasks(tasks: list[Any], with_derived: bool = True) -> list[dict[str, Any]]:
-    artisan_map, section_map = await load_scope_lookups(tasks)
+async def serialize_tasks(
+    tasks: list[Any],
+    with_derived: bool = True,
+    lookups: tuple[dict[str, Any], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """*lookups* is the ``(artisans, sections)`` pair :func:`load_scope_lookups` would go and fetch.
+    A caller that has just resolved a scope already holds exactly those rows, so handing them over
+    saves the two round trips it would take to read them again.
+
+    ONE CALLER PASSES IT — :func:`create_task_batch` — and the docstring says so rather than
+    describing a convention this file does not keep. That route is the only one whose cost had to
+    come out flat in the number of assignees. :func:`create_task` always holds a resolved ``scope``
+    and :func:`update_task` holds one whenever the patch touched a scope field, so both could hand
+    it over too; each writes ONE row, so the saving there is two queries on one request rather than
+    two hundred, and it is not worth a second hand-over to keep honest against the row it describes.
+    Every read path leaves this unset and the fetch happens."""
+    artisan_map, section_map = lookups if lookups is not None else await load_scope_lookups(tasks)
     derived = await derive_progress(tasks) if with_derived else {}
     return [serialize_task(task, artisan_map, section_map, derived) for task in tasks]
 
@@ -760,6 +825,9 @@ async def create_task_batch(
     Writes one row per assignee, all sharing a generated ``batchId``, so the group stays a single
     manageable unit afterwards. Everything is validated BEFORE the first row is written, so a bad
     assignee or a typo'd artisan id can never leave half a batch behind.
+
+    The cost is FLAT in the number of assignees — one bulk assignability read, one bulk insert, one
+    indexed re-read — because it has to be; see the comment on the write below.
     """
     assignee_ids = dedupe(payload.assigneeIds)
     if not assignee_ids:
@@ -777,8 +845,7 @@ async def create_task_batch(
         require_work=True,
     )
     # Validate every assignee up front (existence + the rank rule) so the batch is all-or-nothing.
-    for assignee_id in assignee_ids:
-        await assert_assignable(current_user, assignee_id)
+    await assert_all_assignable(current_user, assignee_ids)
 
     title = (payload.title or "").strip() or scope_title(scope)
     batch_id = f"batch_{uuid4().hex}"
@@ -795,11 +862,58 @@ async def create_task_batch(
         "createdById": current_user.id,
     }
 
-    created = [
-        await db.assignedtask.create(data={**base, "assigneeId": assignee_id}, include=INCLUDE)
-        for assignee_id in assignee_ids
-    ]
-    tasks = await serialize_tasks(created)
+    # ── ONE WRITE AND ONE READ, WHATEVER N IS ───────────────────────────────────────────────────
+    # This was a comprehension of ``db.assignedtask.create`` calls awaited one after another, on top
+    # of one ``find_unique`` per assignee in the validation above: TWO sequential cross-region round
+    # trips per person, for a cohort ``TaskBatchCreate`` sizes at up to ``MAX_ASSIGNEES`` (100). The
+    # database is in another region and this repository measures a round trip at 756 ms, so those
+    # two hops alone reach CloudFront's thirty-second origin timeout at about twenty assignees —
+    # THE assignment endpoint could not finish the assignment it exists to make, and because each
+    # create committed on its own, an admin who retried after the 504 had no way to know how much of
+    # the batch had already landed. The sibling multi-select in
+    # ``workshops.request_workshop_access`` was moved off exactly this shape for exactly this
+    # reason, and says so in its own comment.
+    #
+    # ``create_many`` cannot hand back the rows it wrote, so they are read once by ``batchId`` — a
+    # uuid minted three lines up, over an indexed column (``AssignedTask_batchId_idx``) — and put
+    # back into the order the caller listed the assignees in. That re-ordering is not cosmetic: the
+    # response is a list of people, and an admin who ticked five names reads it against the order
+    # they ticked them, not against whatever order the planner returned.
+    await db.assignedtask.create_many(
+        data=[{**base, "assigneeId": assignee_id} for assignee_id in assignee_ids]
+    )
+    rows = await db.assignedtask.find_many(where={"batchId": batch_id}, include=INCLUDE)
+    by_assignee = {row.assigneeId: row for row in rows}
+    created = [by_assignee[aid] for aid in assignee_ids if aid in by_assignee]
+    if len(created) != len(assignee_ids):
+        # A short read-back must not be a bare ``KeyError`` -> 500. The rows have ALREADY COMMITTED
+        # by the time we are here, so an unexplained 500 puts the admin back in exactly the state
+        # the bulk write was meant to end — an error over a batch that may have fully landed, and
+        # no way to tell without looking. Name the batch in the message so the next step is to open
+        # ``GET /tasks/batches`` rather than to retry and hand the same work out twice.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"Batch {batch_id} was written but read back {len(created)} of "
+                f"{len(assignee_ids)} rows. Check GET /tasks/batches before retrying — the "
+                "assignment may already have landed."
+            ),
+        )
+
+    # NO DERIVED COUNTS ON A CREATE — the third thing in here that scaled with the cohort, and the
+    # module docstring says why it is also the least defensible one. The keys stay present and stay
+    # typed the same; ``derivedCount`` is null exactly as it already is for any page over
+    # DERIVED_TASK_LIMIT. Artisans and sections are handed over from ``resolve_scope``, which has
+    # just loaded precisely this batch's ids, so re-reading them would be two round trips for rows
+    # already in hand.
+    tasks = await serialize_tasks(
+        created,
+        with_derived=False,
+        lookups=(
+            {artisan.id: artisan for artisan in scope.artisans},
+            {section.id: section for section in scope.sections},
+        ),
+    )
     return {
         "batchId": batch_id,
         "title": title,
@@ -864,7 +978,10 @@ async def list_tasks(
         skip=skip,
         take=page_size,
         include=INCLUDE,
-        order=[{"dueAt": "asc"}, {"createdAt": "desc"}],
+        # ``id`` last: this read is the one that actually skips, and ``dueAt`` is nullable while
+        # ``createdAt`` is shared across a batch, so without a unique final key page 2 can repeat or
+        # drop rows that sorted equal on page 1.
+        order=[{"dueAt": "asc"}, {"createdAt": "desc"}, {"id": "desc"}],
     )
     items = await serialize_tasks(tasks, with_derived=withDerived)
     return page_payload(items, total, page, page_size)
@@ -910,7 +1027,9 @@ async def list_task_batches(
         if statusFilter:
             member_where["status"] = statusFilter
         matches = await db.assignedtask.find_many(
-            where=member_where, take=ROLLUP_SCAN_LIMIT, order={"createdAt": "desc"}
+            where=member_where,
+            take=ROLLUP_SCAN_LIMIT,
+            order=[{"createdAt": "desc"}, {"id": "desc"}],
         )
         batch_ids = sorted({task.batchId for task in matches if task.batchId})
         loose_ids = sorted({task.id for task in matches if not task.batchId})
@@ -919,7 +1038,10 @@ async def list_task_batches(
         where = {"OR": [{"batchId": {"in": batch_ids}}, {"id": {"in": loose_ids}}]}
 
     rows = await db.assignedtask.find_many(
-        where=where, include=INCLUDE, take=ROLLUP_SCAN_LIMIT, order={"createdAt": "desc"}
+        where=where,
+        include=INCLUDE,
+        take=ROLLUP_SCAN_LIMIT,
+        order=[{"createdAt": "desc"}, {"id": "desc"}],
     )
     grouped: dict[str, list[Any]] = {}
     for task in rows:
@@ -968,7 +1090,10 @@ async def task_progress(
         where["status"] = {"in": sorted(LIVE_STATUSES)}
 
     rows = await db.assignedtask.find_many(
-        where=where, include=INCLUDE, take=ROLLUP_SCAN_LIMIT, order={"createdAt": "desc"}
+        where=where,
+        include=INCLUDE,
+        take=ROLLUP_SCAN_LIMIT,
+        order=[{"createdAt": "desc"}, {"id": "desc"}],
     )
     serialized = {item["id"]: item for item in await serialize_tasks(rows)}
 

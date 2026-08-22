@@ -314,6 +314,104 @@ jobs:
           echo 'DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/nothing_is_listening' > backend/.env
           python -m pytest backend/tests/test_conftest_database_gate.py -rf
 
+      - name: Lint the backend with ruff
+        # ─── WHAT WAS WRONG UNTIL THIS STEP EXISTED ──────────────────────────────────────
+        # `backend/pyproject.toml` has carried a full `[tool.ruff.lint]` rule set — every family
+        # selected by name, every exclusion argued out in a comment beside it — and
+        # `ruff` has been in the `[dev]` extra, installed into every venv and onto this runner by
+        # the step above. NOTHING HAS EVER RUN IT. The web half of this workflow gates on both a
+        # typechecker and a linter; the server half gated on tests alone, so the entire lint
+        # configuration was a document rather than a check.
+        #
+        # ─── WHY IT IS THE LAST STEP, AND WHY IT RUNS ANYWAY ─────────────────────────────
+        # `!cancelled()` rather than the default, and the ordering is the reason. ruff takes about
+        # a second and the suite above takes minutes, so putting the fast check first is the
+        # obvious arrangement — and it is the wrong one here: a step that fails stops the job, so
+        # a single unsorted import would abort before pytest ran and the pull request would learn
+        # nothing about whether the tests pass. Last-plus-`!cancelled()` is the arrangement where
+        # NEITHER failure can hide the other: a red suite still gets a lint verdict, a lint
+        # finding still leaves the suite's own verdict in the log above it, and both are reported.
+        # `!cancelled()` and not `always()` so that a cancelled run (the `concurrency` block at the
+        # top of this file cancels superseded commits) does not spend a runner on it.
+        #
+        # ─── IT MUST BE ABLE TO FAIL, AND THAT IS NOT DECORATION ─────────────────────────
+        # No `continue-on-error`, no `--exit-zero`, and the gating invocation is the one whose
+        # status is carried to `exit`. There IS a `|| true` below and it is deliberately on the
+        # OTHER invocation — `--statistics` is the human-readable tally printed after the verdict
+        # has already been decided, and it must not be able to change it in either direction.
+        #
+        # The alternative was live in this repository to read: `.github/workflows/android-build.yml`
+        # carries `continue-on-error: true` on its Android Lint step, for the honest reason written
+        # beside it — the tree has a pre-existing manifest error, so a hard gate "would fail 100% of
+        # runs from day one and train everyone to ignore red". That reasoning applied here too: this
+        # tree had 51 ruff findings when this step was written (measured 2026-08-22, ruff 0.16.1).
+        # The difference is what was done about it: a `continue-on-error` cannot shrink and nothing
+        # tells you when it could be removed, whereas the dated per-file baseline in
+        # backend/pyproject.toml names every finding that is left, one file at a time, so each is a
+        # one-line deletion when it is fixed and a new one cannot slip in beside it.
+        #
+        # ─── THE FILE COUNT IS A GATE, NOT A LOG LINE ────────────────────────────────────
+        # `ruff check .` reports success just as cheerfully over nothing as over the whole tree,
+        # so an `exclude` entry, a renamed directory or a `paths` mistake could turn this step
+        # permanently green while checking zero files, and nothing in a green log would say so.
+        # The floor below is what stops that. It is a FLOOR, not a target, and the difference
+        # matters: `ruff check . --show-files` from backend/ listed 289 paths when this step landed
+        # and 290 a few hours later on the same working tree, because concurrent work keeps adding
+        # files (the paths are app, tests, scripts, tools and pyproject.toml itself; `.venv` is
+        # excluded by ruff's own defaults and does not exist on a runner anyway). A gate on the
+        # exact count would go red every time somebody adds a module. 200 is far enough below that
+        # number that ordinary growth and ordinary deletion never touch it, and far enough above
+        # zero that losing a whole directory does.
+        #
+        # ─── WHAT THIS STEP DOES NOT LINT, SO A GREEN TICK IS NOT MISREAD ────────────────
+        # backend/ and nothing else. Seven tracked Python files live outside it — four in
+        # `scripts/`, two in `android/tools/`, one in `frontend/tools/` — and none of them is
+        # checked here. They are not clean, which is why widening the invocation was not just a
+        # longer command: MEASURED 2026-08-22 from the repository root,
+        # `ruff check scripts android/tools frontend/tools --config backend/pyproject.toml` reports
+        # 6 findings (1 RUF100, 3 UP020, 1 B904, 1 RUF021), so adding them would ship a gate that is
+        # red on day one — the exact outcome the baseline in backend/pyproject.toml exists to avoid,
+        # and those three trees are nobody's baseline to write from here. So the scope is stated
+        # instead of quietly assumed: green here means backend/ is clean, NOT that the repository's
+        # Python is.
+        #
+        # ─── IF THIS GOES RED ────────────────────────────────────────────────────────────
+        # Run `ruff check .` from backend/, or read the findings this step printed in the log above.
+        # Most of the rule set is safely auto-fixable — `ruff check --fix .` — but read the diff
+        # before committing it: RUF100's fix deletes the ENTIRE comment it lives on, prose and
+        # all, which is measured and written up beside `external` in backend/pyproject.toml.
+        # DO NOT make this green by adding to `ignore` in that file. There is a dated, per-file
+        # baseline in `[tool.ruff.lint.per-file-ignores]` for findings that are real and unfixed;
+        # it is meant to shrink, and its header says what belongs in it.
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          files=$(ruff check . --show-files | wc -l)
+          echo "$(ruff --version) over ${files} files under backend/"
+          if [ "${files:-0}" -lt 200 ]; then
+            echo "::error::ruff found only ${files} files to check under backend/, which is far below the 289 measured when this step landed. Something — an exclude, a rename, a bad working directory — has emptied the run, and a green tick here would be meaningless. See the comment on this step."
+            exit 1
+          fi
+          status=0
+          # `--output-format=github` so each finding is emitted as a GitHub workflow-command
+          # annotation rather than a bare log line. WHETHER GITHUB THEN PINS IT TO THE DIFF IS NOT
+          # CLAIMED HERE, because it was not measured on a runner: locally (ruff 0.16.1, 2026-08-22)
+          # the emitter writes an ABSOLUTE path into the `file=` field (a `D:\...\backend\...` on
+          # this machine), and GitHub documents that field as relative to the repository root.
+          # Running the gate from the repository root as `ruff check backend` does NOT fix that:
+          # measured, `file=` is absolute from there too and only the message text changes. So there
+          # is no cheap rearrangement to buy the annotation with, the findings are in the log either
+          # way, and the exit status below is what actually gates. It prints NOTHING on success,
+          # which is why the file count above is echoed unconditionally: this step always says what
+          # it did.
+          if ! ruff check . --output-format=github; then
+            status=1
+          fi
+          # Non-gating by design — see the comment above. A per-rule tally is what makes a red log
+          # readable at a glance; it prints nothing when there is nothing to say.
+          ruff check . --statistics || true
+          exit "$status"
+
   # ═══════════════════════════════════════════════════════════════════════════════════════
   # 2 · The web checks
   # ═══════════════════════════════════════════════════════════════════════════════════════

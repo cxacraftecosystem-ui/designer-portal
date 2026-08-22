@@ -975,13 +975,36 @@ interface WorkshopRepositoryApi {
     // picker: the picker fetches the WHOLE list for a (model, scope, filter) triple so it can be cached
     // and searched with no signal at all (see [DwReferenceStore]). A per-keystroke server search would
     // be faster in an office and useless in a courtyard, which is the wrong trade for this app.
+    //
+    // `recordId` IS THE SCANNED HALF, AND IT IS THE ONLY WAY A PRINTED CODE CAN BECOME AN OPTION.
+    // Every other clause the route composes searches PROSE — `spec.search_fields` is a `contains`
+    // over names, local names and places, and `id` is in none of them — so a designer scanning a
+    // colleague's product card got back the empty list that is byte-identical to "no such record".
+    // Sent ONLY by the picker's scan panel and never by the list fetch above: it is additive on the
+    // server (absent, the endpoint answers exactly as it always did) and a list fetch that quietly
+    // carried one would cache a one-row answer over the whole register.
+    //
+    // IT DOES NOT REPLACE THE SCOPE OR THE CASCADE, on either side of the wire. `reference_options`
+    // appends an `id` clause and nothing else, deliberately, because a by-id lookup that dropped the
+    // artisan filter would offer one artisan's work under another's name. So this parameter travels
+    // WITH `scope` and `filterBy`, not instead of them.
+    //
+    // `limit` IS DECLARED FOR THE BY-ID CALL AND IS THE GUARD AGAINST AN OLD SERVER. An id clause
+    // matches at most one row, so a by-id answer can never honestly be truncated — and a deployment
+    // that has never heard of `recordId` does not refuse the unknown query parameter, it IGNORES it
+    // and returns the ordinary list. Asked with `limit=1` that arrives as a visible `truncated: true`
+    // instead of as a one-row list a caller might read a record out of, which is exactly how the
+    // browser asks (`limit: 1` in `StageReferenceField.resolveScan`). The list fetch sends nothing
+    // and keeps the route's own default.
     @GET("design-workshops/{id}/references")
     suspend fun designWorkshopReferences(
         @Path("id") id: String,
         @Query("model") model: String,
         @Query("scope") scope: String? = null,
         @Query("filterBy") filterBy: String? = null,
-        @Query("search") search: String? = null
+        @Query("search") search: String? = null,
+        @Query("recordId") recordId: String? = null,
+        @Query("limit") limit: Int? = null
     ): DwReferenceResponseDto
 
     // Read the number off a photographed identity card.

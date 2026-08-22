@@ -22,6 +22,18 @@ import java.io.IOException
  * The distinction is `WorkshopRepository.isTransient`, and it is injected here rather than reached
  * for so the decision can be asserted with no HTTP stack — and so there is only ever one definition
  * of "offline" in this app.
+ *
+ * ── AND ONE OF THE TRANSIENT CODES BELOW IS A CREATE THAT MAY ALREADY HAVE LANDED ────────────────
+ *
+ * 408 — and any read timeout, which arrives here as an `IOException` — means the request went out
+ * and the answer did not come back. `CreateOutcome.Local` is still the right classification (the
+ * work must not be thrown away), but the local draft it mints carries `remoteId = null` for a
+ * workshop the server may have committed, and `POST /design-workshops` de-duplicates nothing. That
+ * is closed on the writer's side rather than here: the dialog stamps `DraftSyncState.createSentAt`
+ * in the same write — but ONLY for a create sent over a validated connection, because a create with
+ * no signal at all cannot have landed and stamping it would arm the resolver on the ordinary field
+ * path — and `WorkshopSync` asks the server what became of it before posting again. See
+ * `DwInterruptedCreateTest`, which pins that decision.
  */
 class CreateWorkshopOutcomeTest {
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
+import type { UseExistingArtisan } from "@/components/forms/inlineRecordHost";
 import { apiFetch, buildQuery } from "@/lib/api";
 import type { AadhaarLookupResult, ArtisanIdentityMatch } from "@/lib/types";
 
@@ -163,6 +164,7 @@ export function AadhaarField({
   excludeArtisanId,
   required = false,
   offerCardCapture = false,
+  onUseExisting,
   onValueChange
 }: {
   name?: string;
@@ -187,6 +189,24 @@ export function AadhaarField({
    * is sitting with the artisan and the card, which is the artisan form and nowhere else so far.
    */
   offerCardCapture?: boolean;
+  /**
+   * Take the artisan this number already belongs to, instead of navigating to their edit page.
+   *
+   * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────
+   * The warning below has always ended in a `<Link>` to `/artisans/{id}/edit`, which is right on
+   * `/artisans/new` and is a trapdoor everywhere else. The form is mounted in `InlineRecordDialog`
+   * over a half-filled 22-stage record, and inside that dialog a duplicate is the ORDINARY outcome
+   * — the designer pressed "Create a new artisan" precisely because the picker's search did not
+   * show the person in front of them. Following the one link the warning offers therefore threw
+   * them onto another route with the stage gone: acting on the finding cost more than ignoring it,
+   * which is how a warning gets typed past.
+   *
+   * Supplied, the link becomes a control that hands the artisan back — see {@link
+   * UseExistingArtisan} for why only the id and the name may cross, and never the masked identity
+   * number beside them. Absent, the link stays exactly as it was, because on the artisan's own page
+   * leaving for the other record is the right answer.
+   */
+  onUseExisting?: UseExistingArtisan;
   onValueChange?: (digits: string) => void;
 }) {
   const baseId = useId();
@@ -373,12 +393,26 @@ export function AadhaarField({
         >
           <p className="font-medium">This Aadhaar number is already on an artisan record.</p>
           <p className="mt-0.5">{describeMatch(match)}</p>
-          <Link className="mt-1 inline-block font-medium underline" href={`/artisans/${match.id}/edit`}>
-            Open that artisan instead
-          </Link>
+          {/* A BUTTON WHEN THERE IS A HOST TO HAND THE ARTISAN TO, a link when there is not — see
+              `onUseExisting`. Not a `<Link>` with its navigation intercepted: the host case is not
+              a navigation at all, and an anchor that goes nowhere is one middle-click away from
+              opening the edit page in a second tab anyway. */}
+          {onUseExisting ? (
+            <button
+              type="button"
+              className="mt-1 inline-block font-medium underline"
+              onClick={() => onUseExisting(match)}
+            >
+              Use that artisan instead
+            </button>
+          ) : (
+            <Link className="mt-1 inline-block font-medium underline" href={`/artisans/${match.id}/edit`}>
+              Open that artisan instead
+            </Link>
+          )}
           <p className="mt-1 text-xs">
-            You can still save — a genuine duplicate will be refused by the server, so open the
-            existing record if this is the same person.
+            You can still save — a genuine duplicate will be refused by the server, so{" "}
+            {onUseExisting ? "use" : "open"} the existing record if this is the same person.
           </p>
         </div>
       ) : null}

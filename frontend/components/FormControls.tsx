@@ -158,6 +158,23 @@ type SelectProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "
  * dropdown. A visually hidden input mirrors the value so uncontrolled forms still submit via
  * FormData, and mirrors `required` so native form validation works. Any remaining props are spread
  * onto that underlying input instead of being dropped.
+ *
+ * ── `aria-describedby` IS PULLED OUT OF THAT SPREAD, BECAUSE THE SPREAD IS A BLACK HOLE FOR IT ──
+ * The mirror input is `aria-hidden="true"` and `tabIndex={-1}` — it exists to be submitted, not to
+ * be read — and it is rendered AT ALL only when a `name` is set. So an `aria-describedby` handed to
+ * this component landed either on an element no screen reader visits or, for the pickers that carry
+ * no `name`, on no element whatsoever. Both readings are the same defect: the call site says the
+ * refusal is bound to the control and nothing announces it. Every `Select` in the app was affected;
+ * `ProcessForm` worked around it by calling `Dropdown` itself, and its comment named this line.
+ *
+ * ONE SPELLING, AND IT IS THE DOM ONE. `Dropdown` calls the attribute `describedBy`, and accepting
+ * that name here as well would give one idea two spellings on a component whose whole claim is
+ * "same API as the browser <select>" — where the attribute is `aria-describedby`. It is translated
+ * on the way down instead.
+ *
+ * NO `aria-invalid` COMPANION, deliberately: see `SearchableSelect`'s `describedBy` doc. The
+ * trigger is a `<button>`, `aria-invalid` is not supported on the `button` role, and setting it
+ * would read in the source as a mark while being ignored by every screen reader.
  */
 export function Select({
   name,
@@ -169,6 +186,7 @@ export function Select({
   className,
   children,
   "aria-label": ariaLabel,
+  "aria-describedby": ariaDescribedBy,
   ...rest
 }: SelectProps) {
   const options = useMemo(() => optionsFromChildren(children), [children]);
@@ -194,6 +212,7 @@ export function Select({
         disabled={disabled}
         className={className}
         ariaLabel={typeof ariaLabel === "string" ? ariaLabel : undefined}
+        describedBy={typeof ariaDescribedBy === "string" ? ariaDescribedBy : undefined}
       />
       {name ? (
         // Not type="hidden": hidden inputs are exempt from constraint validation, so a required

@@ -51,6 +51,18 @@ android {
         // AWS hostname — fails (no IPv4 route, and no AAAA to use). HTTPS also clears the web app's
         // mixed-content block. Emulator/local devs override this with
         // apiBaseUrl=http://10.0.2.2:8000/api/ in local.properties.
+        //
+        // WHICH DISTRIBUTION THIS IS, IS AN OPEN QUESTION — READ IT BEFORE YOU CHANGE THE LITERAL.
+        // `docs/ENVIRONMENT.md` names a DIFFERENT distribution (d3ekigkotd1xa2, origin id
+        // `designrepo-ec2-origin`) as this portal's, while every corroborating file pairs the host
+        // below with the Elastic IP 15.207.145.174 — the field repository's box. It was left
+        // UNCHANGED on 2026-08-22 on purpose: the same literal is also the committed web production
+        // value, so handset and browser agree today, and flipping one of them alone breaks a working
+        // client. The full statement of the question, both answers and the one command that settles
+        // it are in `docs/ENVIRONMENT.md` under "UNRESOLVED — WHICH CLOUDFRONT DISTRIBUTION IS THIS
+        // PORTAL'S?". `docs/tools/check-docs.mjs` (`checkAndroidApiHost`) ties this literal to that
+        // document in both directions, so this line and the docs move together or the docs run
+        // goes red.
         val apiBaseUrl = localProperties.getProperty(
             "apiBaseUrl",
             "https://d2b34i3e92al6i.cloudfront.net/api/"

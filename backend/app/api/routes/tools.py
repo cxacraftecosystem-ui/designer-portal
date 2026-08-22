@@ -52,6 +52,43 @@ RELATIONS = (
 )
 INCLUDE = include_of(RELATIONS)
 
+# TOOLDOCUMENTATION'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null``
+# through for on this model, so emptying a box on the tool form actually empties the column instead
+# of answering 200 and keeping the old value.
+#
+# PER-MODEL AND NOT GLOBAL, for the reason ``clean_data``'s ``clearable`` docstring gives: the global
+# set cannot know which table a payload is bound for. Derived from ``model ToolDocumentation`` in
+# prisma/schema.prisma, intersected with what ``ToolUpdate`` actually accepts. It OVERLAPS the
+# product list without being it — a tool has ``height``/``width``/``thickness``/``weight``/``radius``
+# and no ``heightInches``, and it has no ``size`` or ``costOfMaking`` — so the two must not be shared.
+#
+# Only valid because ``update_tool`` dumps with ``exclude_unset=True``; see the note at that call.
+#
+# DELIBERATELY ABSENT: ``craftName``/``place``/``artisanName``/``toolkitName`` (NOT NULL), the enums
+# ``maker``/``traditionType`` and ``status``/``recordedAt``/``recordedTimezone`` (NOT NULL with
+# defaults), ``artisanId``/``craftId``/``workshopId``/``locationId`` (already global), and the
+# measurement trio ``measurementImageId``/``measurementAnalysis``/``measurementAnalysisStatus``,
+# which ``services/media_queue`` owns and ``records.PROVENANCE_SKIP_FIELDS`` already classes as
+# system-managed. ``extraMetadata`` is left out because naming it would be inert:
+# ``merge_field_provenance`` rebuilds and reassigns that column further down this route.
+_CLEARABLE_COLUMNS = (
+    "localName",
+    "englishName",
+    "processUsedIn",
+    "material",
+    "yearsInUse",
+    "height",
+    "width",
+    "lengthInches",
+    "breadthInches",
+    "thickness",
+    "weight",
+    "radius",
+    "replacementCost",
+    "suggestionsForToolImprovement",
+    "remarks",
+)
+
 # WHY EVERY ENCODE BELOW NAMES THE CALLER. ``public_encode(obj)`` with no viewer is not "the default";
 # it is the CHEAPEST SAFE answer — mask every identity number and withhold every media URL — and it is
 # the answer a route reaches by not thinking about the question. This module used to take it on all
@@ -192,7 +229,12 @@ async def update_tool(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     tool = await require_record(db.tooldocumentation, tool_id)
-    data = decimal_to_string(clean_data(payload.model_dump(exclude_unset=True)))
+    # ``exclude_unset=True`` IS THE PRECONDITION OF ``clearable``, not a stylistic choice: it is what
+    # makes a present key mean "the caller sent this". Drop it and every optional the client left
+    # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
+    data = decimal_to_string(
+        clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
+    )
     data = await attach_location(data)
     # Re-check workshop assignment + window if this edit moves the tool into/between workshops, so the
     # create-time guard can't be bypassed by PATCHing the workshop in afterwards.

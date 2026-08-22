@@ -87,9 +87,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </a>
       <DynamicIslandNav />
       {/* Decorative only — see PageSelvedge. It is `fixed z-0`, so `main` below carries an explicit
-          `relative z-10`: a positioned element paints above ordinary flow content regardless of
-          source order, and without that the strips would sit ON the page rather than behind it at
-          every width between `md` and the point the content column stops filling the viewport. */}
+          `relative`: two positioned elements at the same stacking level paint in tree order, and the
+          selvedge comes first, so `main` covers it at every width between `md` and the point the
+          content column stops filling the viewport. Without the `relative` the strips would sit ON
+          the page rather than behind it.
+
+          `main` carries NO z-index, and that omission is the whole reason two full-screen surfaces
+          are reachable at all. `z-10` here made `main` a STACKING CONTEXT, and everything drawn
+          inside it — the media lightbox and the rich-text editor's full-screen mode, both fixed and
+          both at a higher rung than the island — was then capped at that context's level 10 and
+          painted UNDERNEATH the nav island, which lives outside it and still takes pointer events.
+          A click on the pill navigated away from a surface that had just declared itself
+          `aria-modal`, and the unsaved-changes interception does not cover the island's links. An
+          `auto` z-index on a positioned element creates no stacking context, so removing the class
+          keeps the painting order above and lets those surfaces reach their declared rung.
+
+          The cost of that, and it is paid in DynamicIslandNav rather than here: the cap worked in
+          both directions. Fixed chrome a PAGE mounts — `UploadTray`, `z-40` — was also held under
+          level 10, and so under the nav sheet's scrim, which was `z-40` too. Uncapped, the two meet
+          in the root stacking context and tree order decides; the nav renders first, so the dock
+          would have painted over an open `aria-modal` sheet. The sheet's overlay is `z-[90]` now
+          for exactly that reason. Anything else mounted inside `main` is at or below `z-20` or is
+          one of the two `z-[100]` surfaces above. */}
       <PageSelvedge />
       <motion.main
         id="main-content"
@@ -98,7 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         initial={reduce ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={reduce ? { duration: 0 } : { duration: 0.22, ease: "easeOut" }}
-        className="relative z-10 mx-auto max-w-7xl px-4 pb-12 pt-24"
+        className="relative mx-auto max-w-7xl px-4 pb-12 pt-24"
       >
         {blocked && guard ? (
           <RouteLocked title={guard.title} message={guard.message} role={roleLabel(user.role)} />

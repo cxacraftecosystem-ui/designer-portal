@@ -21,8 +21,11 @@ import { butiSelvedgeUrl } from "@/components/hero/buti";
  * paint kilometres of motif. `pointer-events-none` means a click near the edge still reaches
  * whatever is under it, and a strip can never intercept a drag on a form control.
  *
- * **It is behind everything.** `z-index: 0` against the shell's own stacking, and the shell's
- * content sits above it. The nav island is `z-[60]`, dialogs higher still; nothing here can cover a
+ * **It is behind everything.** `z-index: 0`, and `main` — which follows it in the shell's markup —
+ * is `relative` with NO z-index, so the two sit at the same stacking level and tree order puts the
+ * page on top. (`main` must stay z-auto: a z-index there makes it a stacking context and traps the
+ * full-screen surfaces drawn inside it beneath the island. See the note in `AppShell`.) The island
+ * itself is `z-50` and the skip link `z-[60]`, dialogs higher still; nothing here can cover a
  * control. The opacity is deliberately at the bottom of what is visible — this should register as
  * texture at the edge of vision and never compete with the page.
  *

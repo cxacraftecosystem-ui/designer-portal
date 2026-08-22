@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     access,
+    ai_keys,
     analytics,
     app_release,
     artisans,
@@ -28,7 +29,6 @@ from app.api.routes import (
     reference,
     review,
     search,
-    ai_keys,
     secrets,
     settings,
     tasks,

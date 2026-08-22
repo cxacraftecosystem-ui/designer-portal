@@ -55,6 +55,63 @@ RELATIONS = (
 )
 INCLUDE = include_of(RELATIONS)
 
+# ARTISAN'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null`` through for
+# on this model, and the reason a researcher can retract a phone number at all.
+#
+# WHY THIS IS A PER-MODEL LIST AND NOT MORE ENTRIES IN ``records.CLEARABLE_KEYS``: that set is global
+# and ``clean_data`` does not know which table a payload is bound for. ``email`` is nullable here and
+# NOT NULL on User, DesignerRoster and AccessRoster, so a global entry would trade one silent no-op
+# for a constraint violation on three other tables. See the ``clearable`` section of
+# ``clean_data``'s docstring for the whole argument, including why this may only be passed from a
+# route that dumps with ``exclude_unset=True`` — ``update_artisan`` below does, and must keep doing.
+#
+# WHAT IS DELIBERATELY ABSENT, so a later reader does not "complete" the list:
+#   * ``name`` and ``place`` — NOT NULL on Artisan.
+#   * ``pehchanCardAvailable``, ``status``, ``recordedAt``, ``recordedTimezone`` — NOT NULL.
+#   * ``craftId``/``workshopId``/``locationId`` and both identity numbers — already global.
+#   * ``craftName`` — not a column at all; ``resolve_craft_id`` turns it into ``craftId``.
+#   * ``extraMetadata`` — nullable, but naming it here would change nothing: ``merge_field_provenance``
+#     OWNS that column on this route and reassigns it a few lines below the clean, so the null never
+#     survives to Prisma either way. Left out rather than listed-and-inert.
+#
+# ``dos``/``donts`` ARE here even though ``ArtisanCreate`` demands them, and that asymmetry is the
+# existing one, not a new one: the columns are nullable precisely because rows recorded before the
+# fields existed hold NULL, and ``ArtisanUpdate`` deliberately carries no ``min_length`` on either —
+# so an editor can already empty the box today by sending ``""``. NULL is the honest spelling of the
+# same edit rather than a state the model did not already have.
+#
+# ── WHAT A RETRACTION DOES **NOT** ERASE, AND IT IS TWO PLACES, NOT ONE ──────────────────────────
+# Clearing the column is not the same as forgetting the value, and anybody reading this list as a
+# right-to-erasure mechanism should know exactly how far it reaches. Both residues below are
+# PRE-EXISTING for ``aadhaarNumber`` and ``pehchanCardNumber``, which were globally clearable long
+# before this list existed; naming the contact and free-text columns here widens them to those too.
+# Closing either is an OWNER DECISION, because both are audit surfaces and quietly redacting an
+# audit surface is its own kind of wrong:
+#
+#   1. ``services/access.record_revision`` writes the OLD value into an immutable
+#      ``RecordRevision.changes`` blob. It does not skip empty new values, and its
+#      ``REVISION_SKIP_FIELDS`` holds only extraMetadata / location / locationId / updatedAt /
+#      createdAt / createdById / recordedAt / recordedTimezone — so the phone number the subject
+#      asked to have removed is copied INTO the ledger by the request that removes it.
+#   2. ``merge_field_provenance`` skips a cleared field entirely (its loop reads
+#      ``if field in PROVENANCE_SKIP_FIELDS or is_empty_value(value): continue``, and
+#      ``deps.is_empty_value(None)`` is True), so ``extraMetadata.fieldProvenance.phone`` keeps its
+#      old ``{by, byName, at}`` stamp on a column that is now NULL. Not the number, but the web
+#      client's "Field contributions" panel builds its rows from whatever keys that object holds,
+#      so it still lists a ``phone`` row naming who entered the retracted number and when.
+_CLEARABLE_COLUMNS = (
+    "localName",
+    "gender",
+    "phone",
+    "email",
+    "address",
+    "notes",
+    "dateOfBirth",
+    "experienceYears",
+    "dos",
+    "donts",
+)
+
 # Unique columns that identify a real-world person, and the human phrasing for each. A collision on
 # one of these is the deduplication working as designed, so it has to read as "you already have this
 # artisan" rather than as a database error.
@@ -330,7 +387,10 @@ async def update_artisan(
     # artisan is leaving, and after the update that value is gone. See the sync call at the end of
     # this route for the unlink this pairs with.
     previous_workshop_id = artisan.workshopId
-    data = clean_data(payload.model_dump(exclude_unset=True))
+    # ``exclude_unset=True`` IS THE PRECONDITION OF ``clearable``, not a stylistic choice: it is what
+    # makes a present key mean "the caller sent this". Drop it and every optional the client left
+    # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
+    data = clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     # A caller shown a masked number who saves without touching it means "leave it alone" — for the
     # Pehchan card as much as for the Aadhaar, since both are masked on the way out to them.
     data = drop_masked_identity_numbers(data)

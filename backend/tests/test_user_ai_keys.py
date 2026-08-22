@@ -368,7 +368,7 @@ def test_every_providers_default_model_is_in_its_own_list_and_can_do_the_text_ve
     for provider, spec in ai_providers.PROVIDERS.items():
         model = spec.model(spec.default_model)
         assert model is not None, f"{provider} defaults to a model it does not offer"
-        assert ai_providers.TEXT_TASKS <= model.tasks, f"{provider}'s default cannot do the text verbs"
+        assert model.tasks >= ai_providers.TEXT_TASKS, f"{provider}'s default cannot do the text verbs"
 
 
 def test_the_shape_check_catches_the_wrong_providers_key_and_admits_the_right_one():

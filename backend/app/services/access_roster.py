@@ -29,8 +29,11 @@ own bound and must keep supplying it:
 1. **A row is only ever created for a PROVEN identity.** The caller must have passed a bcrypt check
    against an existing account, or presented a Google ID token that verified against a configured
    audience. An anonymous caller cannot enqueue an address they do not control. This is enforced by
-   the CALL SITE — :func:`record_refused_attempt` is called from exactly one place in ``auth.py``,
-   after the credential — so if you add a second call site, that is the property you are deleting.
+   the CALL SITES of the gate, not by this module: :func:`record_refused_attempt` is reached only
+   through ``auth.assert_access_admits``, and every endpoint that calls THAT does so after its
+   credential check — the two login branches, and ``POST /api/datasets/token``, which mints the
+   machine credential. Add a caller that reaches the gate before proving the identity and that is
+   the property you have deleted; the number of callers was never what protected it.
 2. **One address is one row.** ``email`` is unique and a repeat attempt is an UPDATE bumping
    :attr:`attemptCount`. Somebody hammering the form produces a rising number, not a queue.
 3. **Nothing an attacker controls is stored beyond the address.** No display name from the Google
@@ -84,6 +87,10 @@ SUSPENDED = "SUSPENDED"
 #: because nothing was persisted: there is no row in this condition, which is exactly why the person
 #: has to be told something different from "you are in the queue".
 NOT_RECORDED = "NOT_RECORDED"
+
+#: The states this table BARS an address in: an administrator looked at it and said no. PENDING is
+#: emphatically not among them — see :func:`barred_emails`.
+BARRED = (REJECTED, SUSPENDED)
 
 
 def status_of(row: Any) -> str:
@@ -149,6 +156,81 @@ async def designer_empanelment_admits(email: Any) -> bool:
         return False
     row = await db.designerroster.find_first(where={"email": address, "isActive": True})
     return row is not None
+
+
+#: How many barred addresses :func:`barred_emails` will read.
+#:
+#: A BACKSTOP AGAINST AN UNBOUNDED READ, not a page size, and its own number rather than a borrowed
+#: one for the reason ``design_workshop_viewers.ACTIVE_ROSTER_READ_LIMIT`` is its own number: these
+#: are two different quantities that would only look tidy sharing a constant. The roster read's cap
+#: bounds a set that admits; this one bounds a set that REFUSES, and the two fail in opposite
+#: directions — the first hides eligible people, this one exposes barred ones. A cut list of
+#: admitted addresses is a colleague an admin cannot find; a cut list of barred addresses is a
+#: revoked colleague quietly offered back. That is why hitting this is logged at ERROR in words that
+#: say so, and why the write path refuses the same accounts independently instead of trusting this.
+#:
+#: REJECTED and SUSPENDED rows are never deleted (a rejection that can be re-requested around is not
+#: a rejection), so this set only ever grows, and the ceiling has to sit far above any plausible
+#: programme rather than at a number somebody expects to reach.
+BARRED_EMAIL_READ_LIMIT = 50_000
+
+
+async def barred_emails() -> list[str]:
+    """Every lower-cased address the allow-list currently REFUSES — REJECTED or SUSPENDED.
+
+    **A CUT LIST, AND THE DIRECTION IS THE WHOLE POINT.** Callers use this to EXCLUDE people, never
+    to require them. There is no relation between ``AccessRoster`` and ``User`` — they meet on the
+    email column and nothing enforces the join — and the sign-in path SELF-HEALS an address that has
+    no row or a PENDING one, admitting it on the strength of an active designer empanelment (see
+    :func:`designer_empanelment_admits`). A caller that instead required an ACTIVE row would drop
+    exactly those designers: people who can sign in perfectly well, absent from a picker with
+    nothing on screen to say why. Excluding the barred cannot make that mistake, because a REJECTED
+    or SUSPENDED row is the one state no sign-in heals.
+
+    PENDING IS NOT BARRED, for the same reason stated the other way round: nobody has decided about
+    a pending address yet, and an empanelled designer sitting on one is admitted the moment they
+    sign in. Refusing them here would refuse somebody the product is about to let in.
+
+    Emails only. This is folded into another table's ``WHERE`` and the caller has no business
+    receiving the attempt counts, the admin's private notes or who decided what.
+    """
+    rows = await db.accessroster.find_many(
+        where={"status": {"in": list(BARRED)}}, take=BARRED_EMAIL_READ_LIMIT + 1
+    )
+    if len(rows) > BARRED_EMAIL_READ_LIMIT:
+        rows = rows[:BARRED_EMAIL_READ_LIMIT]
+        # ERROR, and worded for what it actually costs: past this cut the answer stops being a
+        # complete list of who is barred, so a caller filtering on it will OFFER somebody an
+        # administrator has already refused. Whoever reads this at 3am needs to know that the
+        # failure is an over-permissive screen and not a short one.
+        logger.error(
+            "the allow-list holds more than %s barred addresses, so only part of that set was "
+            "read; any screen filtering on it may now OFFER an address an administrator has "
+            "rejected or suspended, and only the write path will refuse them",
+            BARRED_EMAIL_READ_LIMIT,
+        )
+    return sorted({normalise_email(row.email) for row in rows if normalise_email(row.email)})
+
+
+async def barred_among(emails: list[str]) -> set[str]:
+    """Which of exactly these addresses the allow-list refuses. For the WRITE path.
+
+    The narrow counterpart to :func:`barred_emails`, and narrow on purpose: a write already knows
+    which addresses it is about, so reading the whole barred set to check three of them is the
+    "filter after the take" mistake in another shape — and, unlike the list, this answer has no cap
+    to be cut by, which is what a refusal has to be able to promise. ONE query for the batch, the
+    same shape as ``design_workshop_viewers._designers_the_roster_still_admits``.
+
+    Same rule as the list: REJECTED or SUSPENDED only, never PENDING. Lower-cased on both sides,
+    because ``AccessRoster.email`` is stored lower-cased and ``User.email`` is not.
+    """
+    wanted = sorted({normalise_email(e) for e in emails if normalise_email(e)})
+    if not wanted:
+        return set()
+    rows = await db.accessroster.find_many(
+        where={"AND": [{"email": {"in": wanted}}, {"status": {"in": list(BARRED)}}]}
+    )
+    return {normalise_email(row.email) for row in rows}
 
 
 async def pending_count() -> int:
@@ -249,10 +331,19 @@ async def record_refused_attempt(email: Any, row: Any | None) -> str:
 
     Returns one of :data:`PENDING`, :data:`REJECTED`, :data:`SUSPENDED` or :data:`NOT_RECORDED`.
 
-    **CALLED FROM EXACTLY ONE PLACE**, ``auth.assert_access_admits``, after the credential has been
-    proved. Every bound described in this module's docstring depends on that; a second call site
-    that reached here before verifying a password would turn the login endpoint into a form for
-    writing arbitrary addresses into an admin's queue.
+    **CALLED FROM EXACTLY ONE FUNCTION**, ``auth.assert_access_admits`` — and that function is now
+    reached from more than one endpoint, which is the sentence this docstring used to get wrong. It
+    said "exactly one place" while the gate was only on the login path; ``POST /api/datasets/token``
+    now goes through the same gate, because minting a thirty-day machine credential is the other way
+    a password becomes a token and a suspended admin was walking out of it with one.
+
+    SO THE BOUND IS NOT "ONE CALLER", IT IS "EVERY CALLER HAS ALREADY PROVED THE IDENTITY": a bcrypt
+    check that passed, or a Google ID token that verified against a configured audience. Every bound
+    described in this module's docstring depends on THAT and not on the number of call sites — a new
+    caller reaching here before verifying a credential would turn its endpoint into a form for
+    writing arbitrary addresses into an admin's queue, however many callers there are. Route the new
+    caller through ``assert_access_admits`` after its credential check, never at this function
+    directly.
     """
     address = normalise_email(email)
     now = datetime.now(UTC)

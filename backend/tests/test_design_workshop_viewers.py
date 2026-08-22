@@ -40,6 +40,17 @@ when an eligible account becomes unreachable and must not depend on how many row
 happens to hold — which is exactly what the old spelling of the eligible-set test did, silently,
 until the table outgrew it.
 
+**AND THE SIXTH: THE PICKER OFFERED PEOPLE WHO CANNOT SIGN IN AT ALL.** Eligibility was decided from
+the DESIGNER roster alone, and that is only one of the two tables that can bar somebody. The
+platform allow-list (``AccessRoster``) gates every role — an ADMIN it has suspended is invisible to
+every check that existed before — so a barred account was offered here, accepted with a 200 by the
+PUT, and refused at every sign-in. No data reached them, so the cost was an admin screen stating
+something false and a refusal that should have existed. The tests pin the fix AND its direction: the
+allow-list is read as a CUT LIST (exclude the barred), never as a guest list (require the admitted),
+because the sign-in path self-heals a missing or PENDING row for an empanelled designer and
+requiring admission would hide the very people the product is about to let in. The master admin is
+exempt, here as at the gate.
+
 Postgres is required — the behaviour under test is a row in ``DesignWorkshopViewer`` deciding an
 HTTP status — so the module skips itself when ``DATABASE_URL`` does not point at a local database,
 exactly as ``test_designer_roster`` does.
@@ -138,6 +149,67 @@ ROSTER: tuple[tuple[str, bool], ...] = (
     ("shouty", True),
 )
 
+#: slug -> (role, AccessRoster status). **THE SECOND TABLE THAT DECIDES WHO CAN SIGN IN**, and the
+#: one the picker did not consult: ``AccessRoster`` gates every role, where ``DesignerRoster`` above
+#: gates designers only. Eligibility was read off the designer roster alone, so a suspended designer
+#: was offered here, accepted with a 200 by the PUT, and refused at every sign-in.
+#:
+#: MORE ENTRIES THAN THERE ARE STATES, because the DIRECTION of the fix and the SHAPE of the
+#: exemption are the two things most likely to be got wrong later, and each needs an account of its
+#: own. The allow-list is read as a CUT LIST — exclude the barred — and not as a guest list —
+#: require the admitted. ``accessPending`` is the account that tells those two apart: it is an
+#: empanelled designer with a PENDING row, which the sign-in path SELF-HEALS into an admission, so
+#: an implementation that required an ACTIVE row would hide a colleague the product is about to let
+#: in. It must be offered. ``accessMaster`` and ``accessConfiguredMaster`` are the two ARMS of
+#: ``deps.is_break_glass_master``, one each, because a role test passes the first and silently drops
+#: the second. ``accessUnempanelled`` is refused by both tables at once.
+#:
+#: THEIR ADDRESSES END ``@barred.example.org``, NOT the ``@example.org`` that ``_run_term`` matches,
+#: and that is deliberate: the exact-set assertion over this run's ``ACCOUNTS`` answers a different
+#: question and must not have its arithmetic quietly changed by accounts added for this one.
+#:
+#: FOUR COLUMNS, NOT THREE: the last one says whether the account also gets a ``DesignerRoster``
+#: empanelment. It is True for everybody but ``accessUnempanelled``, which is what keeps the
+#: invariant stated at the loop that reads this table.
+ACCESS_STATES: tuple[tuple[str, str, str, bool], ...] = (
+    # An ACTIVELY EMPANELLED designer — eligible by every rule the picker already knew — whom the
+    # allow-list has suspended. The empanelment is what makes this account prove something: without
+    # it the older designer-roster refusal would catch them and the new clause could be deleted with
+    # the suite still green.
+    ("accessSuspended", "DESIGNER", "SUSPENDED", True),
+    # An ADMIN, and the reason the exclusion cannot live in the designer-roster fold. That fold
+    # deliberately never gates an admin, so this account is invisible to every check that existed
+    # before and can be caught only by the allow-list.
+    ("accessRejected", "ADMIN", "REJECTED", True),
+    # THE BREAK-GLASS BY ROLE. The one account an allow-list row must never be able to remove from a
+    # screen — the same exemption ``deps.is_break_glass_master`` carries at the sign-in gate.
+    ("accessMaster", "MASTER_ADMIN", "SUSPENDED", True),
+    # THE BREAK-GLASS BY CONFIGURED ADDRESS, which is the OTHER arm of that predicate and the arm a
+    # role test silently drops. ``is_break_glass_master`` is ``MASTER_ADMIN`` OR "the address equals
+    # the configured ``MASTER_ADMIN_EMAIL``", and the second clause is there for the deployment
+    # where the row carrying the role was never seeded or has been demoted — exactly when a
+    # break-glass is needed. This account is an ordinary ADMIN with a SUSPENDED row: barred until a
+    # test points ``MASTER_ADMIN_EMAIL`` at it, exempt the moment it does. Its role is deliberately
+    # NOT MASTER_ADMIN, because then the role arm alone would carry it and the test would prove
+    # nothing.
+    ("accessConfiguredMaster", "ADMIN", "SUSPENDED", True),
+    # NOT BARRED. Nobody has decided about this address yet; see the note above.
+    ("accessPending", "DESIGNER", "PENDING", True),
+    # THE DOUBLY REFUSED, and the ONE account here that is not empanelled — the exception the note
+    # above admits to. A DESIGNER who is off the ACTIVE designer roster AND suspended on the
+    # allow-list is refused for two independent reasons in two different screens, and an admin who
+    # is told about only the first restores an empanelment, saves again, and only then hears about
+    # the second. Chaining the two refusals with ``elif`` produces exactly that wasted round trip,
+    # and no other account in this table can catch it.
+    ("accessUnempanelled", "DESIGNER", "SUSPENDED", False),
+)
+
+#: The two of them the allow-list refuses with nothing else wrong. Named once so a test cannot drift
+#: from the table above by listing the states it happens to remember. ``accessUnempanelled`` is
+#: deliberately NOT here: it is refused twice, and the test this parametrises asserts that the
+#: allow-list sentence arrives ALONE, without the empanelment one beside it.
+ACCESS_BARRED_SLUGS = ("accessSuspended", "accessRejected")
+
 
 @pytest.fixture(scope="module")
 def anyio_backend():
@@ -171,6 +243,10 @@ async def world():
 
     def address(slug: str) -> str:
         return f"dwviewer-{slug}-{stamp}@example.org".lower()
+
+    def barred_address(slug: str) -> str:
+        """An ``ACCESS_BARRED`` account's address, on its OWN domain — see that tuple's note."""
+        return f"dwviewer-{slug}-{stamp}@barred.example.org".lower()
 
     def stored_address(slug: str) -> str:
         """``User.email`` as the row actually holds it, which is not always what the roster holds.
@@ -243,6 +319,35 @@ async def world():
                 "revokedAt": None if is_active else datetime.now(UTC),
                 "addedById": people["admin"].id,
             })
+        # The allow-list accounts, and their rows in the OTHER roster. See ``ACCESS_STATES``.
+        for slug, role, state, empanelled in ACCESS_STATES:
+            people[slug] = await db.user.create(data={
+                # NO ``stamp`` IN THIS NAME, and that is load-bearing rather than tidy. The comment
+                # beside ``name_token`` above states the fixture's rule — ``stamp`` lives only in
+                # addresses, ``name_token`` only in one display name — and it is the whole reason
+                # ``test_the_search_matches_a_name_as_well_as_an_email`` can claim each arm of the
+                # search was proven on its own. A stamped name here would answer a bare-``stamp``
+                # search from the NAME column while that test still said it had proven the email
+                # one. These accounts are reached by address (``_barred_term``), so they need no
+                # per-run token in a name at all.
+                "name": f"Allowlist {slug.removeprefix('access')}",
+                "email": barred_address(slug),
+                "role": role,
+                "passwordHash": hash_password(PASSWORD),
+            })
+            await db.accessroster.create(data={"email": barred_address(slug), "status": state})
+            # EVERY DESIGNER HERE IS ACTIVELY EMPANELLED EXCEPT ``accessUnempanelled``, so the older
+            # designer-roster refusal can never be what the others are caught by. Without that,
+            # deleting the allow-list clause entirely would leave the suite green. The exception
+            # exists to prove the opposite property — that the two refusals STACK.
+            if role == "DESIGNER" and empanelled:
+                await db.designerroster.create(data={
+                    "email": barred_address(slug),
+                    "fullName": f"Roster row for {slug}",
+                    "institution": "Directorate of Handicrafts",
+                    "isActive": True,
+                    "addedById": people["admin"].id,
+                })
     finally:
         await db.disconnect()
 
@@ -251,6 +356,7 @@ async def world():
             "client": client,
             "people": people,
             "address": address,
+            "barred_address": barred_address,
             "stored_address": stored_address,
             "stamp": stamp,
             "name_token": name_token,
@@ -1048,6 +1154,245 @@ def test_a_designer_whose_address_is_stored_shouting_is_offered_and_may_be_grant
     granted = _grant(world, workshop_id, ["shouty"])
     assert granted.status_code == 200, granted.text
     assert [row["userId"] for row in granted.json()["viewers"]] == [shouty.id]
+
+
+def _barred_term(world: dict[str, Any]) -> str:
+    """A search term matching this run's ``ACCESS_STATES`` accounts by email and nothing else."""
+    return f"-{world['stamp']}@barred.example.org"
+
+
+@pytest.mark.parametrize("slug", ACCESS_BARRED_SLUGS)
+def test_an_account_the_allow_list_bars_is_neither_offered_nor_granted(world, client, slug):
+    """**THE PICKER OFFERED PEOPLE WHO CANNOT SIGN IN.**
+
+    Eligibility was decided from the designer roster alone. ``AccessRoster`` — the platform
+    allow-list, which gates EVERY role — was never consulted, so a suspended designer appeared in
+    this list, was accepted with a 200 by the PUT, and was refused at every sign-in. No data ever
+    reached them, which is why this was low severity; what it cost was an admin screen stating
+    something false, and a refusal that should have existed and did not.
+
+    ``accessRejected`` is the case nothing else could have caught: it is an ADMIN, and the
+    designer-roster fold deliberately never looks at an admin. Both accounts here are ACTIVELY
+    EMPANELLED, so neither can be refused by the older rule by accident.
+    """
+    person = world["people"][slug]
+
+    offered = _eligible(world, search=_barred_term(world))
+    assert offered.status_code == 200, offered.text
+    assert person.id not in {row["id"] for row in offered.json()["users"]}
+    # And not reachable by asking for them by name either — the exclusion is in the WHERE, so no
+    # search term can walk around it.
+    by_address = _eligible(world, search=person.email)
+    assert by_address.json()["users"] == []
+
+    # THE WRITE IS THE RULE, and it refuses with its own sentence. The picker is a suggestion; a
+    # client that never called it, or an admin holding a stale list, must still be refused.
+    workshop_id = _make_workshop(world, f"Ikat, allow-list {slug}")
+    refused = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [person.id]},
+        headers=_headers(world, "admin"),
+    )
+    assert refused.status_code == 422, refused.text
+    detail = str(refused.json()["detail"])
+    assert person.email in detail
+
+    # IT NAMES THE RIGHT SCREEN. Restoring an empanelment and restoring platform access are two
+    # different actions in two different places, and an admin sent to the wrong one will look at a
+    # perfectly active roster row, conclude the message is wrong, and try the same save again.
+    assert "access" in detail.lower()
+    assert "designer roster" not in detail.lower(), (
+        "the allow-list refusal must not send an admin to the empanelment screen"
+    )
+
+
+def test_an_empanelled_designer_awaiting_approval_is_still_offered(world, client):
+    """**THE DIRECTION OF THE FIX, AND THE REASON IT IS NOT ``email IN (the admitted)``.**
+
+    There is no relation between ``AccessRoster`` and ``DesignerRoster``; they meet on an email
+    column. And the sign-in path SELF-HEALS an address with no allow-list row or a PENDING one when
+    an active empanelment carries it — ``auth.assert_access_admits`` writes the admission on the way
+    through. So requiring an ACTIVE row here would hide exactly the designers the product is about
+    to let in, which is this module's oldest bug (an eligible colleague missing from the picker with
+    nothing on screen to say why) reintroduced by the fix for a different one.
+
+    Excluding only REJECTED and SUSPENDED cannot make that mistake: those are the two states no
+    sign-in heals.
+    """
+    person = world["people"]["accessPending"]
+    offered = _eligible(world, search=_barred_term(world))
+    assert offered.status_code == 200, offered.text
+    assert person.id in {row["id"] for row in offered.json()["users"]}
+
+    workshop_id = _make_workshop(world, "Ikat, awaiting approval")
+    granted = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [person.id]},
+        headers=_headers(world, "admin"),
+    )
+    assert granted.status_code == 200, granted.text
+    assert [row["userId"] for row in granted.json()["viewers"]] == [person.id]
+
+
+def test_the_master_admin_is_exempt_from_the_allow_list_here_too(world, client):
+    """**THE BREAK-GLASS, AND IT HAS TO HOLD WHEREVER THE ALLOW-LIST IS READ.**
+
+    The reason the sign-in gate could be widened from designers to everybody is that one account is
+    exempt in the GATE rather than by a row in the table the gate reads. A screen that filtered on
+    the same table WITHOUT the exemption would quietly narrow it — the master admin barred by an
+    outgoing administrator's last UPDATE would vanish from the one picker that can put them back on
+    a workshop. Ordinary ADMINs are NOT exempt: a suspended admin genuinely cannot sign in, which is
+    what ``accessRejected`` above asserts.
+    """
+    person = world["people"]["accessMaster"]
+    offered = _eligible(world, search=_barred_term(world))
+    assert offered.status_code == 200, offered.text
+    assert person.id in {row["id"] for row in offered.json()["users"]}
+
+    workshop_id = _make_workshop(world, "Ikat, break-glass master")
+    granted = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [person.id]},
+        headers=_headers(world, "admin"),
+    )
+    assert granted.status_code == 200, granted.text
+    assert [row["userId"] for row in granted.json()["viewers"]] == [person.id]
+
+
+def test_the_break_glass_is_the_configured_address_too_and_not_only_the_role(world, client):
+    """**BOTH ARMS OF ``deps.is_break_glass_master``, WHICH THIS SCREEN USED TO SPELL AS ONE.**
+
+    That predicate is ``MASTER_ADMIN`` OR "the address equals the configured ``MASTER_ADMIN_EMAIL``",
+    and its own docstring says why the second arm is not redundant: it is the answer on a fresh
+    deployment where the row carrying the role has not been seeded, or where somebody has demoted
+    it. Both the picker's ``WHERE`` and the viewer write said ``role == "MASTER_ADMIN"`` instead
+    while three comments and this module's own fixture note claimed they were calling the shared
+    predicate. In exactly the state the second arm exists for, the account signed in, minted a
+    thirty-day dataset token — and was dropped from the picker that puts it back on a workshop and
+    refused by the PUT with a sentence saying it is barred from signing in, which for that account
+    is false.
+
+    The account here is an ordinary ADMIN with a SUSPENDED row, so the role arm cannot carry it and
+    only the configured address can. Asserted BEFORE the setting is pointed at it as well, because a
+    test that only shows the exempt half proves the exemption exists, not that it is this that grants
+    it.
+    """
+    from app.core.config import get_settings
+
+    person = world["people"]["accessConfiguredMaster"]
+
+    # The control: with the setting pointed elsewhere this is an ordinary barred admin.
+    barred_offer = _eligible(world, search=_barred_term(world))
+    assert barred_offer.status_code == 200, barred_offer.text
+    assert person.id not in {row["id"] for row in barred_offer.json()["users"]}
+
+    settings = get_settings()
+    previous = settings.master_admin_email
+    settings.master_admin_email = person.email.upper()  # and case must not matter
+    try:
+        offered = _eligible(world, search=_barred_term(world))
+        assert offered.status_code == 200, offered.text
+        assert person.id in {row["id"] for row in offered.json()["users"]}, (
+            "the picker's WHERE must spell BOTH arms of the break-glass, not just the role"
+        )
+
+        workshop_id = _make_workshop(world, "Ikat, configured break-glass")
+        granted = client.put(
+            f"/api/design-workshops/{workshop_id}/viewers",
+            json={"userIds": [person.id]},
+            headers=_headers(world, "admin"),
+        )
+        assert granted.status_code == 200, granted.text
+        assert [row["userId"] for row in granted.json()["viewers"]] == [person.id]
+    finally:
+        settings.master_admin_email = previous
+
+
+def test_a_designer_refused_by_both_tables_is_told_about_both_screens(world, client):
+    """**ONE SAVE, BOTH REMEDIES.** The two refusals must not be chained.
+
+    ``accessUnempanelled`` is off the ACTIVE designer roster AND suspended on the platform
+    allow-list — two independent decisions, taken by different people in different screens, each
+    with its own remedy. Chained as ``elif``, the admin is told only about the roster: they restore
+    an empanelment that may not even have been the problem, save again, and only then learn there
+    is a second thing to fix. That is precisely the wasted round trip the allow-list refusal was
+    given its own sentence to prevent, so it must not be reintroduced by the shape of the branch.
+
+    Every other ``ACCESS_STATES`` designer is actively empanelled, which is what keeps the other
+    tests honest — and is exactly why none of them can catch this.
+    """
+    person = world["people"]["accessUnempanelled"]
+
+    offered = _eligible(world, search=_barred_term(world))
+    assert offered.status_code == 200, offered.text
+    assert person.id not in {row["id"] for row in offered.json()["users"]}
+
+    workshop_id = _make_workshop(world, "Ikat, refused twice")
+    refused = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [person.id]},
+        headers=_headers(world, "admin"),
+    )
+    assert refused.status_code == 422, refused.text
+    detail = str(refused.json()["detail"])
+    assert "designer roster" in detail.lower(), detail
+    assert "access screen" in detail.lower(), (
+        "a doubly-refused account must be told about the allow-list in the SAME response, or the "
+        "admin restores the empanelment and comes straight back"
+    )
+
+
+def test_a_role_that_can_never_hold_a_viewer_row_gets_one_sentence_and_not_two(world, client):
+    """The asymmetry beside the ``continue``, pinned so it reads as a choice and not an oversight.
+
+    The two allow-list/roster refusals stack because both name something an administrator can
+    restore. The wrong-ROLE refusal does not stack with them: there is no screen to visit, the
+    remedy is to pick somebody else, and a second errand attached to it would be noise. The
+    researcher is not on the allow-list at all here, so what this pins is the shape — one refusal,
+    naming the role.
+    """
+    person = world["people"]["researcher"]
+    workshop_id = _make_workshop(world, "Ikat, wrong role")
+    refused = client.put(
+        f"/api/design-workshops/{workshop_id}/viewers",
+        json={"userIds": [person.id]},
+        headers=_headers(world, "admin"),
+    )
+    assert refused.status_code == 422, refused.text
+    detail = str(refused.json()["detail"])
+    assert "is a RESEARCHER" in detail, detail
+    assert "designer roster" not in detail.lower(), detail
+    assert "access screen" not in detail.lower(), detail
+
+
+def test_the_barred_read_is_a_cut_list_with_a_cap_of_its_own():
+    """The constants and the state list, because the behaviour tests cannot see either.
+
+    PENDING must never join ``BARRED``. It is one word away from being added by somebody tidying up
+    "the states that are not ACTIVE", and that edit would silently hide every empanelled designer
+    waiting on an approval — the failure ``test_an_empanelled_designer_awaiting_approval_is_still_
+    offered`` describes, arriving without a single line of logic changing.
+
+    And the cap is its OWN number for ``ACTIVE_ROSTER_READ_LIMIT``'s reason turned around: that read
+    bounds a set that ADMITS, so cutting it hides eligible people; this one bounds a set that
+    REFUSES, so cutting it exposes barred ones. Two quantities that fail in opposite directions must
+    not share a constant, however tidy that would look.
+    """
+    from app.services import access_roster, design_workshop_viewers as service
+
+    assert set(access_roster.BARRED) == {access_roster.REJECTED, access_roster.SUSPENDED}
+    assert access_roster.PENDING not in access_roster.BARRED, (
+        "a PENDING row is nobody's decision yet, and the sign-in path heals it"
+    )
+    assert access_roster.ACTIVE not in access_roster.BARRED
+
+    assert access_roster.BARRED_EMAIL_READ_LIMIT != service.ELIGIBLE_VIEWER_LIMIT, (
+        "the barred read cap and the picker's page size are different quantities"
+    )
+    assert access_roster.BARRED_EMAIL_READ_LIMIT >= 10 * service.ELIGIBLE_VIEWER_LIMIT, (
+        "a barred read cap within reach of the picker's page size is a working limit, not a "
+        "backstop — and cutting THIS read offers somebody an administrator has already refused"
+    )
 
 
 def test_eligible_viewers_is_not_swallowed_by_the_workshop_id_route(world, client):

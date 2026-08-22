@@ -8,7 +8,7 @@ from app.core.deps import get_current_user
 from app.services.concurrency import gather_reads
 from app.services.pagination import normalize_pagination
 from app.services.record_filters import RECORD_TYPES, build_record_wheres, resolve_types
-from app.services.records import media_url_owners, public_encode
+from app.services.records import media_url_owners, public_encode, with_id_tiebreak
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -18,8 +18,15 @@ router = APIRouter(prefix="/search", tags=["search"])
 # tuple, and two copies of this list is exactly how one screen quietly grows a sixth bucket.
 SEARCH_TYPES: tuple[str, ...] = RECORD_TYPES
 
-# Every bucket is ordered by createdAt desc, like every record list in this API.
-_ORDER = {"createdAt": "desc"}
+# Every bucket is ordered by createdAt desc, like every record list in this API — with the ``id``
+# tiebreak that makes that order TOTAL.
+#
+# All five buckets are OFFSET-paged from one shared page/pageSize, and ``createdAt`` is unique in
+# none of the five tables. Without a tiebreaker Postgres is free to break a tie differently on the
+# query for page 1 and the query for page 2, so a record can be handed over twice while another is
+# never handed over at all — and a search result is precisely where nobody would notice, because
+# "it did not come back" reads as "it is not in the repository". See ``records.with_id_tiebreak``.
+_ORDER = with_id_tiebreak({"createdAt": "desc"})
 
 
 def _resolve_types(raw: list[str] | None) -> set[str]:

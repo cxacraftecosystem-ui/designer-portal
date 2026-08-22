@@ -33,7 +33,17 @@
  * prints the mismatch with nothing on the page admitting it happened.
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from "react";
 import type { DwFieldStamp } from "@/lib/designWorkshops";
 import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
 import { Paperclip, X } from "lucide-react";
@@ -111,6 +121,179 @@ import type { MediaFile, MediaType } from "@/lib/types";
  * unable to find it again, which reads to the designer as a file that vanished.
  */
 export const DW_MEDIA_RECORD_TYPE = "designWorkshop";
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Attached-but-not-yet-linked files, held ABOVE the field that attached them
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Where in the stage a file was attached: the triple that identifies ONE media control.
+ *
+ * The same triple `FieldInputProps.place` already carries, plus the field key — `place` names the
+ * row and this names the box on it. It is spelled out as its own type because it is now a KEY in a
+ * store that outlives the control, and a key assembled ad hoc at two call sites is a key that
+ * eventually disagrees with itself.
+ *
+ * `rowKey` is the row's `_clientKey`, not its array index and not its `_entryId`: the index moves
+ * when a row is reordered and the entry id does not exist until the server has seen the row, and
+ * either would file a photograph against a different participant. Null for a singleton, which has
+ * exactly one instance of every field.
+ */
+export type StageMediaPlace = { entityKey: string; rowKey: string | null; fieldKey: string };
+
+function pendingKeyOf(place: StageMediaPlace): string {
+  // NUL-joined rather than colon-joined: a registry key cannot contain one, so no two distinct
+  // triples can collide by a separator turning up inside a part.
+  return [place.entityKey, place.rowKey ?? "", place.fieldKey].join("\u0000");
+}
+
+type PendingMediaStore = {
+  /**
+   * The whole map, as STATE rather than behind a getter.
+   *
+   * A getter over a ref would not re-render anything: the context value would be referentially
+   * stable, so no consumer would be notified, and the provider re-rendering does not re-render
+   * `children` either — that is the same element object from the page above, and React bails out of
+   * a subtree whose element has not changed. Handing the map itself over means the context value
+   * changes identity on every write, which is precisely the signal the media controls need. It is
+   * also the rule this file already argues for one component down, on `originals`: "a ref read
+   * during render is a value React did not schedule the render for".
+   */
+  held: Record<string, File[]>;
+  /**
+   * AN UPDATER AND NOT A LIST, and the difference is a photograph.
+   *
+   * The map-level `setHeld` below is already an updater, which makes two DIFFERENT controls settling
+   * in one tick safe. It does nothing at all for two writes to the SAME control if the `File[]`
+   * handed in was computed from a render closure: a signature committed by the capture card and the
+   * drain effect's filter, issued against the same committed render, would each build a whole list
+   * from the same stale slice and the second would win entire. That is the same data loss this whole
+   * store exists to end, so the shape has to make the safe call the only call.
+   */
+  write: (key: string, update: PendingUpdate) => void;
+};
+
+/** A new list, or how to make one from the current one. Only the second is safe — see `write`. */
+type PendingUpdate = File[] | ((current: File[]) => File[]);
+
+const StagePendingMediaContext = createContext<PendingMediaStore | null>(null);
+
+/** One frozen empty array, so "nothing attached" is a stable reference rather than a new render. */
+const EMPTY_PENDING: File[] = [];
+
+/**
+ * THE ATTACHED FILES OF EVERY MEDIA CONTROL ON THE STAGE, KEPT WHERE THE CONTROLS ARE NOT.
+ *
+ * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────────
+ * A collection row's panel is UNMOUNTED the moment the row is collapsed — deliberately, and the
+ * 244-row flagship workshop is why: `CollectionTable` renders a list, not forty open forms.
+ * `MediaField`'s `pending` list was `useState` inside that panel, and it is the ONLY reference
+ * anywhere to a file that has been attached but not yet linked. So collapsing the row destroyed it,
+ * and destroyed it twice over: about two seconds later the staged-owner release in `lib/media`
+ * aborted the transfer AND DELETED THE OBJECT ALREADY IN OBJECT STORAGE. Reopening the row said
+ * "Nothing attached yet", with no error anywhere, over a photograph that no longer existed in
+ * either place. The same unmount also destroyed a file being HELD for its own Retry after a failed
+ * transfer — the one case the capture card deliberately keeps on screen rather than draining.
+ *
+ * ── WHY NOT SIMPLY KEEP THE PANEL MOUNTED ─────────────────────────────────────────────────────
+ * Because that is the thing the unmount exists to avoid, and buying a data-loss fix with a 244-row
+ * form's responsiveness pays for it in the defect that made the unmount necessary. The file list is
+ * small and plain and has no reason to live inside the control; the control is the expensive part.
+ *
+ * ── WHY A CONTEXT AND NOT TWO MORE PROPS ON FOUR SIGNATURES ───────────────────────────────────
+ * The route from the stage page to a media control is page → `EntityForm`/`CollectionTable` →
+ * `FieldGrid` → `FieldInput` → `MediaField`. Threading a store and its setter through all five
+ * would put two parameters on four signatures for a value only the last one reads, which is the
+ * argument `LinkedWorkshopProvider` is written under one file away. What the defect turns on is the
+ * LIFETIME, and a provider mounted by the stage page has the stage page's lifetime.
+ *
+ * ── IT IS HALF OF A PAIR AND MUST NOT SHIP ALONE ──────────────────────────────────────────────
+ * Keeping the `File[]` alive keeps the BROWSER's reference. It does not keep the eagerly-uploaded
+ * OBJECT alive: `useEagerStaging` releases its owner on unmount and `lib/media` deletes anything
+ * unclaimed two seconds later. So every media control also passes a `stagingOwnerId` derived from
+ * this same triple, which makes a remount CANCEL the release instead of racing it. Shipping only
+ * the stable owner id would be worse than shipping neither: the object would survive with nothing
+ * left in the browser able to link it, so it would leak rather than be cleaned up.
+ *
+ * ── WITHOUT A PROVIDER NOTHING CHANGES ────────────────────────────────────────────────────────
+ * `usePendingMedia` falls back to local state, which is exactly what this replaced, so a surface
+ * that mounts a `FieldInput` outside a stage page needs no change.
+ */
+export function StagePendingMediaProvider({ children }: { children: React.ReactNode }) {
+  const [held, setHeld] = useState<Record<string, File[]>>({});
+
+  /**
+   * THE WRITE IS AN UPDATER AND NOT A READ-THEN-WRITE, which is what makes two controls settling in
+   * the same tick safe.
+   *
+   * Reading the map out of the render closure and writing a new one back would build the second
+   * write on a snapshot that predates the first, so the first would be silently discarded — the same
+   * hazard `patchRowMany` exists for one component up, and the same one that loses a photograph
+   * here. The updater is pure and idempotent (React re-invokes it in development, and again whenever
+   * a render is discarded under concurrent rendering), so returning `current` unchanged is the
+   * whole of the no-op path: React bails out on an identical reference and nothing re-renders.
+   */
+  const write = useCallback((key: string, update: PendingUpdate) => {
+    setHeld((current) => {
+      const existing = current[key] ?? EMPTY_PENDING;
+      // RESOLVED INSIDE THE UPDATER, against the slice React is actually about to replace, which is
+      // the whole point of the shape: a caller's `(files) => [...files, one]` is applied to the
+      // list as it stands at commit time and never to the one its render closed over.
+      const files = typeof update === "function" ? update(existing) : update;
+      if (existing.length === files.length && existing.every((file, index) => file === files[index])) return current;
+      // An empty list is DELETED rather than stored, so a stage whose designer has attached and
+      // drained a photograph on two hundred rows does not carry two hundred empty arrays for the
+      // rest of the page's life.
+      if (files.length) return { ...current, [key]: files };
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  const store = useMemo<PendingMediaStore>(() => ({ held, write }), [held, write]);
+
+  return <StagePendingMediaContext.Provider value={store}>{children}</StagePendingMediaContext.Provider>;
+}
+
+/**
+ * The attached-but-unlinked files for one media control, and the setter for them.
+ *
+ * Returns the hoisted store's slice when there is a provider and plain local state when there is
+ * not. BOTH hooks run unconditionally on every render — the provider's presence is fixed for the
+ * life of a mount, so the unused half is inert rather than conditional.
+ */
+function usePendingMedia(place: StageMediaPlace): [File[], (update: PendingUpdate) => void] {
+  const store = useContext(StagePendingMediaContext);
+  const key = pendingKeyOf(place);
+  const [local, setLocal] = useState<File[]>(EMPTY_PENDING);
+  const hoisted = store?.held[key] ?? EMPTY_PENDING;
+  const write = useCallback(
+    (update: PendingUpdate) => {
+      // The local fallback supports the updater form for free — it IS a state setter — so both
+      // shapes behave identically with and without a provider, which is what lets the call sites
+      // below be written once and be right in both.
+      if (store) store.write(key, update);
+      else setLocal(update);
+    },
+    // `setLocal` is listed because the React Compiler's own inference lists it: a state setter is
+    // stable, so it costs nothing, and a manual list the compiler cannot reconcile makes it skip
+    // optimising this component altogether.
+    [store, key, setLocal]
+  );
+  return [store ? hoisted : local, write];
+}
+
+/**
+ * The eager-upload owner name for one media control — see {@link StagePendingMediaProvider}.
+ *
+ * Derived from the SAME triple as the pending key and never from a mount id, which is the whole
+ * point: two mounts of the same box are ONE owner, so collapsing and reopening a row cancels the
+ * release of its objects instead of letting it expire.
+ */
+function stagingOwnerFor(place: StageMediaPlace): string {
+  return `dw-field:${pendingKeyOf(place)}`;
+}
 
 /**
  * Provenance for everything a stage uploads: where the device was and when.
@@ -190,6 +373,20 @@ export type FieldInputProps = {
    * {@link FieldProvenance} — it is decorative, never part of `aria-describedby`.
    */
   stamp?: DwFieldStamp | null;
+  /**
+   * A REPOSITORY RECORD THAT ALREADY HAS AN EDIT SURFACE OPEN ON THIS PAGE — read by the REF branch
+   * and by nothing else.
+   *
+   * Null everywhere but inside a mirror point, where `StageRecordEmbed` has the record's own page
+   * mounted in edit mode below the picker. `StageReferenceSelect.recordFormMountedOver` carries the
+   * whole argument; the short version is that the pencil beside the picker opens a SECOND editor on
+   * the same record, and the older of the two wins on Save.
+   *
+   * Threaded as a prop rather than read from a context so that it travels the same way every other
+   * fact about where a field is drawn travels, and so that nothing outside a mirror point acquires
+   * a behaviour it cannot see in its own call.
+   */
+  recordFormMountedOver?: string | null;
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -313,7 +510,8 @@ export function FieldInput({
   error,
   place,
   capture,
-  stamp
+  stamp,
+  recordFormMountedOver
 }: FieldInputProps) {
   const controlId = useId();
   const labelId = `${controlId}-label`;
@@ -885,6 +1083,8 @@ export function FieldInput({
           onPatch={onPatch}
           disabled={disabled}
           labelId={labelId}
+          // "This record already has its own page open below you" — see the prop's own note there.
+          recordFormMountedOver={recordFormMountedOver}
         />
       );
     }
@@ -1119,10 +1319,15 @@ export function FieldInput({
  * remount key and re-seeds the box. Keying on the value itself would remount on every keystroke and
  * take the caret with it.
  *
- * `mirror={false}`: the stage page is not a `<form>` and reads nothing from FormData, so the zero-size
- * mirror would contribute a stray `name="phone"` and a `pattern` to whatever a later change wrapped
- * the page in. Native constraint validation is deliberately absent from the whole of this file — see
- * the DATE branch on why `required` is never passed either.
+ * `mirror={false}`, AND IT MATTERS MORE NOW THAN WHEN IT WAS WRITTEN. The reason used to be that
+ * "the stage page is not a `<form>`", so the zero-size mirror would contribute a stray `name="phone"`
+ * and a `pattern` to whatever a later change wrapped the page in. That change has now happened: a
+ * mirror-point entity embeds the repository record's own page inline (`StageRecordEmbed`) and
+ * renders the stage's own fields INSIDE that `<form>`, which reads its payload with
+ * `new FormData(event.currentTarget)`. A named mirror in there would post a stage answer as an
+ * artisan column. Nothing in this file may carry a `name`, and the same rule is why native
+ * constraint validation is absent throughout — see the DATE branch on why `required` is never
+ * passed either. A stage field must never be able to refuse a record form's submit.
  */
 function StagePhoneField({
   value,
@@ -1438,8 +1643,26 @@ function MediaField({
   const [staged, setStaged] = useState<Record<string, { name: string; url: string | null; sizeBytes: number }>>({});
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  /** What the capture card is holding right now: attached, transferring, or failed. */
-  const [pending, setPending] = useState<File[]>([]);
+  /**
+   * Where this control sits, as the one key both halves of the survival fix are derived from.
+   *
+   * `place` is optional on `FieldInputProps` — a surface outside a stage may render a field with no
+   * place at all — so the entity key stands in for a missing one. That is not a fallback that has to
+   * be right, only one that has to be STABLE: with no provider above, `usePendingMedia` uses local
+   * state and the key is never read.
+   */
+  const mediaPlace = useMemo<StageMediaPlace>(
+    () => ({ entityKey: place?.entityKey ?? "", rowKey: place?.rowKey ?? null, fieldKey: field.key }),
+    [place?.entityKey, place?.rowKey, field.key]
+  );
+  /**
+   * What the capture card is holding right now: attached, transferring, or failed.
+   *
+   * HELD ABOVE THIS COMPONENT WHEREVER THERE IS A `StagePendingMediaProvider` — read its header for
+   * what collapsing a collection row used to cost. Local state is the fallback and the old
+   * behaviour, so nothing outside a stage page changes.
+   */
+  const [pending, setPending] = usePendingMedia(mediaPlace);
   /** Files already handed to a link or a local stage, so the drain below cannot hand one over twice. */
   const claimedRef = useRef(new Set<File>());
   /**
@@ -1582,7 +1805,7 @@ function MediaField({
           await stageOffline(chosen);
           return;
         }
-        const { uploaded, failed } = await uploadMediaBatch({
+        const { uploaded, failed, uploadedByIndex } = await uploadMediaBatch({
           files: chosen,
           linkedRecordType: DW_MEDIA_RECORD_TYPE,
           linkedRecordId: workshopId,
@@ -1603,9 +1826,29 @@ function MediaField({
           });
           setOriginals((current) => {
             const next = { ...current };
-            uploaded.forEach((media, index) => {
+            /*
+              BY POSITION, WHICH IS WHAT `uploaded` COULD NOT GIVE.
+
+              This used to walk `uploaded` and index `chosen` with the same counter. `uploaded` is
+              the by-index array with its NULLS FILTERED OUT (`lib/media.ts` — the sentence claiming
+              it "keeps the caller's order" was true of the order and false of the positions), so the
+              two arrays only line up in a batch where nothing failed. Attach three photographs, let
+              the first be refused, and the second file was recorded under the third file's media id
+              and the third under nothing at all.
+
+              WHY THAT MATTERED MORE THAN A WRONG THUMBNAIL. `originals` has exactly one reader:
+              `IdentityCardReader`, which OCRs the ORIGINAL bytes rather than fetching the uploaded
+              copy back through a presigned URL, and prints the file's name beside the digits it
+              read so a designer can check that the number belongs to the card in the photograph.
+              Misfiled, it reads one card and names another — which silently defeats the one
+              cross-check that header relies on, on identity data.
+
+              NEVER MATCHED BACK BY FILENAME. Two shots off one handset are both `IMG_0001.jpg`, so a
+              name match would misfile them again and look like it had worked.
+            */
+            uploadedByIndex.forEach((media, index) => {
               const source = chosen[index];
-              if (source) next[media.id] = source;
+              if (media && source) next[media.id] = source;
             });
             return next;
           });
@@ -1683,9 +1926,20 @@ function MediaField({
     // so by the time the capture card reacts to the shorter list there is nothing left for its own
     // `discardStagedFile` to delete.
     const settling = settle(finished);
+    // AN UPDATER AND NOT `pending.filter(...)`. `finished` is decided from the value this effect
+    // was fired with, which is correct — those are the files whose transfers this run claimed — but
+    // the LIST it is subtracted from must be whatever the control holds at commit time. Read out of
+    // this closure instead, a signature attached in the same tick is dropped: the two writes each
+    // rebuild the whole list from the same stale slice and the later one wins entire. See
+    // `PendingMediaStore.write`, which is why the setter takes this shape at all.
     setPending((current) => current.filter((file) => !finished.includes(file)));
     void settling;
-  }, [pending, staging, settle]);
+    // `setPending` is `usePendingMedia`'s memoised writer rather than a raw state setter now, so it
+    // is a real dependency — and it changes identity on every write to ANY key, not only when this
+    // control's place changes: it depends on `store`, and the store object is memoised on the whole
+    // `held` map. Harmless, because the effect's own work is idempotent (`claimedRef` is what stops
+    // a file being settled twice) and re-running it against an unchanged `pending` finds nothing.
+  }, [pending, staging, settle, setPending]);
 
   /**
    * Drop one attachment.
@@ -1791,6 +2045,15 @@ function MediaField({
       <MediaCaptureField
         files={pending}
         onFilesChange={setPending}
+        /*
+          THE OTHER HALF OF THE ROW-COLLAPSE FIX, and it is useless without the hoisted list above.
+          The eager-upload store deletes an owner's unclaimed objects two seconds after that owner
+          goes away, and the default owner is a per-mount `useId()` — so collapsing a row expired the
+          grace period and deleted a photograph that was already in object storage. Naming the owner
+          after the CONTROL rather than the mount makes reopening the row cancel that release.
+          See `StagePendingMediaProvider` and `useEagerStaging`'s own `ownerKey` note.
+        */
+        stagingOwnerId={stagingOwnerFor(mediaPlace)}
         title={multiple ? `Add to ${field.label.toLowerCase()}` : field.label}
         description={
           multiple

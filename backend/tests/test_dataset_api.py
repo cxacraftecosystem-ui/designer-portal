@@ -1,6 +1,6 @@
 """The bulk dataset API: its credential, its scoping, and its paging.
 
-Three properties are worth more than the rest and most of this file is about them.
+Four properties are worth more than the rest and most of this file is about them.
 
 **The scoped token must be genuinely narrower than the admin who minted it.** ``POST
 /api/datasets/token`` hands a machine a credential that outlives any browser session, so "read-only"
@@ -18,7 +18,25 @@ here asserts the actual queries it issues — OFFSET is both quadratic at depth 
 concurrent writes, and an archival snapshot that silently duplicates or drops rows is a wrong answer
 that looks like a right one.
 
-NOTHING HERE TOUCHES A DATABASE. ``db`` is replaced with stubs and the routes are driven over HTTP
+**A REVOKED ADMIN MUST NOT BE ABLE TO MINT.** ``POST /api/datasets/token`` is the second door in
+this API where a password becomes a token, and it used to check the credential and the admin flag
+and nothing else. Suspension writes the ``AccessRoster`` status and never ``User.role``, so an
+account an administrator had already refused at ``/auth/login`` could still take a fresh thirty-day
+read credential over the whole repository here, renewably, for ever. The route now runs the same
+sign-in gate, and the tests below drive it against an in-memory allow-list — suspended, rejected,
+no row at all, an admitted control, and the master-admin break-glass that must survive a barred row.
+
+**NOR MUST THEY BE ABLE TO KEEP USING ONE THEY ALREADY HOLD**, which the gate above does not touch:
+there is no token store, and a dataset token lives thirty days. An administrator pressing Suspend on
+a departing colleague is entitled to believe bulk access is cut, so ``deps.require_dataset_admin``
+re-reads the allow-list on every request to this router. The tests for it sit with the credential
+tests below, and they pin the DIRECTION as well as the refusal: the roster is read there as a CUT
+list, so REJECTED and SUSPENDED stop a live token while PENDING and a missing row do not — the
+opposite of the mint gate, which fails closed because it has a person to enqueue and this door
+does not.
+
+NOTHING HERE TOUCHES A DATABASE. ``db`` is replaced with stubs — including ``AccessRoster``, see
+``_AllowRows`` for why the TABLE is stubbed and never the gate — and the routes are driven over HTTP
 with real HS256 tokens, so the credential tests exercise genuine signing and decoding.
 """
 
@@ -34,6 +52,7 @@ from fastapi import Depends, FastAPI
 from app.api.routes import datasets
 from app.core import deps
 from app.core.security import create_access_token
+from app.services import access_roster
 
 # =================================================================================================
 # Harness
@@ -91,6 +110,63 @@ class _Rows:
         return next((r for r in self.rows if getattr(r, field, None) == value), None)
 
 
+class _AllowRows:
+    """``AccessRoster`` in memory: ``lower-cased email -> status``, and nothing else.
+
+    THE MINT ROUTE RUNS THE REAL SIGN-IN GATE, ``auth.assert_access_admits``, so these four calls
+    are the ones it makes. Stubbing the table rather than the gate is deliberate: replacing the gate
+    with a no-op would leave every test below green while deleting the very check that stops a
+    SUSPENDED admin — an admin an administrator has already revoked — minting a fresh thirty-day
+    read credential over the whole repository. The point of a stub here is to make that check
+    runnable without Postgres, not to route around it.
+
+    NO ROW MEANS REFUSED, exactly as the real table does. A stub that admitted an unknown address
+    would fail open, which is the one direction an allow-list must never fail in — and it would
+    quietly excuse any future route that forgot to admit its account.
+    """
+
+    def __init__(self, statuses: dict[str, str]) -> None:
+        self.statuses = statuses
+        #: email -> refused attempts recorded. The real column an admin reads as "still trying".
+        self.attempts: dict[str, int] = {}
+
+    def _row(self, email: str) -> Any:
+        status = self.statuses.get(email)
+        return SimpleNamespace(id=email, email=email, status=status) if status else None
+
+    async def find_unique(self, where: dict, **_: Any) -> Any:
+        return self._row(where["email"])
+
+    async def count(self, where: Any = None, **_: Any) -> int:
+        return sum(1 for status in self.statuses.values() if status == "PENDING")
+
+    async def update(self, where: dict, data: Any = None, **_: Any) -> Any:
+        self.attempts[where["id"]] = self.attempts.get(where["id"], 0) + 1
+        return self._row(where["id"])
+
+    async def upsert(self, where: dict, data: Any = None, **_: Any) -> Any:
+        email = where["email"]
+        self.statuses.setdefault(email, "PENDING")
+        self.attempts[email] = self.attempts.get(email, 0) + 1
+        return self._row(email)
+
+
+class _NoEmpanelments:
+    """``DesignerRoster``, empty. The gate consults it only after the allow-list has declined, and
+    nothing in this module is a designer, so the honest stub is one that never admits anybody."""
+
+    async def find_first(self, where: Any = None, **_: Any) -> Any:
+        return None
+
+
+class _AccessDb:
+    """The two delegates ``services/access_roster`` reaches for, and no others."""
+
+    def __init__(self, statuses: dict[str, str]) -> None:
+        self.accessroster = _AllowRows(statuses)
+        self.designerroster = _NoEmpanelments()
+
+
 def _app() -> FastAPI:
     """The dataset router, plus one ordinary route to prove what a scoped token may NOT reach."""
     application = FastAPI()
@@ -111,7 +187,16 @@ def api(monkeypatch: pytest.MonkeyPatch):
         def __init__(self) -> None:
             self.users: dict[str, Any] = {"admin": _row("admin", "ADMIN")}
             self.tables: dict[str, _Rows] = {}
+            #: The platform allow-list this run starts with: empty, so a test that mints has to say
+            #: out loud that the account is admitted. See ``_AllowRows``.
+            self.allowlist: dict[str, str] = {}
+            self.access = _AccessDb(self.allowlist)
             self.app = _app()
+
+        def admit(self, email: str, status: str = "ACTIVE") -> str:
+            """Put an address on the allow-list in whatever state the test is about."""
+            self.allowlist[email.lower()] = status
+            return email
 
         def user(self, user_id: str, role: str = "ADMIN", **extra: Any) -> str:
             self.users[user_id] = _row(user_id, role, **extra)
@@ -160,6 +245,9 @@ def api(monkeypatch: pytest.MonkeyPatch):
             raise AssertionError(f"unexpected database read: db.{name}")
 
     monkeypatch.setattr(datasets, "db", _Tables())
+    # `services/access_roster` holds its own reference to `db`, so the mint route's gate reads
+    # through this one rather than through `datasets.db` above.
+    monkeypatch.setattr(access_roster, "db", stack.access)
     deps.clear_user_cache()
     yield stack
     deps.clear_user_cache()
@@ -231,6 +319,90 @@ def test_a_missing_token_is_401_not_403(api) -> None:
     assert api.get("/api/datasets").status_code == 401
 
 
+def test_a_suspended_admin_cannot_use_a_token_it_already_minted(api) -> None:
+    """**REVOCATION THAT STOPS AT THE ISSUING DOOR REVOKES NOTHING.**
+
+    ``mint_dataset_token`` refuses a suspended admin a NEW credential. That left the one they were
+    handed yesterday working for the rest of its thirty days, with no store anywhere to tear it up,
+    while the administrator who pressed Suspend had every reason to believe bulk data access was
+    cut — the whole repository, readable by somebody the institution has shown the door, for a
+    month. ``require_dataset_admin`` therefore re-reads the allow-list on every request.
+
+    Nothing about the token changes here: it is the same signed, unexpired, correctly scoped
+    credential that works in ``test_a_dataset_token_opens_the_dataset_api``. Only the row moved.
+    """
+    for name in datasets.DATASETS:
+        api.table(datasets.DATASETS[name].delegate, [])
+    token = api.token("admin", scope=deps.DATASET_READ_SCOPE)
+    assert api.get("/api/datasets", token=token).status_code == 200
+
+    api.admit("admin@example.test", "SUSPENDED")
+
+    response = api.get("/api/datasets", token=token)
+    assert response.status_code == 403, response.text
+    assert "platform access" in response.json()["detail"].lower()
+    # A PURE READ. The full sign-in gate WRITES — it bumps an attempt count and can 503 when the
+    # approval queue is full — and a cron job polling this API every minute must not be able to
+    # inflate an administrator's queue, nor start failing because strangers filled it.
+    assert api.access.accessroster.attempts == {}
+
+
+def test_the_same_check_refuses_an_ordinary_session_token_on_this_router(api) -> None:
+    """The credential's SHAPE is not what is being revoked; the account is.
+
+    Both credentials reach this router through one dependency, so a suspended admin must not be
+    able to walk around the refusal by curling it with their browser session instead.
+    """
+    for name in datasets.DATASETS:
+        api.table(datasets.DATASETS[name].delegate, [])
+    api.admit("admin@example.test", "REJECTED")
+
+    assert api.get("/api/datasets", token=api.token("admin")).status_code == 403
+
+
+def test_a_live_token_survives_a_pending_row_and_a_missing_one(api) -> None:
+    """**A CUT LIST, NOT A GUEST LIST**, and the direction is the thing most likely to be got wrong.
+
+    Requiring an ACTIVE row here would be the stronger-looking check and the wrong one: the sign-in
+    path SELF-HEALS a missing or PENDING row for an empanelled account, and there is nobody at this
+    door to enqueue or to heal — a machine caller, no password, no person reading the refusal. So
+    failing closed would strand a working credential on a state the sign-in page would have
+    admitted. Only the two states an administrator actually chose stop a token.
+
+    The missing-row half is the important one: it is what every other test in this file relies on
+    without saying so, and a future "tighten it up" edit would break them all at once.
+    """
+    for name in datasets.DATASETS:
+        api.table(datasets.DATASETS[name].delegate, [])
+    token = api.token("admin", scope=deps.DATASET_READ_SCOPE)
+
+    assert api.allowlist == {}, "the harness starts with no row for this account"
+    assert api.get("/api/datasets", token=token).status_code == 200
+
+    api.admit("admin@example.test", "PENDING")
+    assert api.get("/api/datasets", token=token).status_code == 200
+
+
+def test_the_break_glass_master_keeps_a_token_a_barred_row_would_refuse(api) -> None:
+    """The break-glass has to open at every door or it is not one.
+
+    An outgoing administrator's last UPDATE must not be able to take the master admin's copy of the
+    data with them. Same predicate, ``deps.is_break_glass_master``, as the mint route and the
+    sign-in gate.
+    """
+    for name in datasets.DATASETS:
+        api.table(datasets.DATASETS[name].delegate, [])
+    api.user("owner", "MASTER_ADMIN")
+    api.admit("owner@example.test", "SUSPENDED")
+
+    response = api.get(
+        "/api/datasets", token=api.token("owner", scope=deps.DATASET_READ_SCOPE)
+    )
+    assert response.status_code == 200, response.text
+    # And the exemption did not work by repairing the row it is exempt from.
+    assert api.allowlist["owner@example.test"] == "SUSPENDED"
+
+
 # =================================================================================================
 # Minting a token from admin credentials
 # =================================================================================================
@@ -253,11 +425,17 @@ def _account(user_id: str, role: str, password: str) -> SimpleNamespace:
 
 
 def test_admin_credentials_mint_a_scoped_token_that_works(api) -> None:
-    """The end-to-end claim of this API: email + password in, a working read-only credential out."""
+    """The end-to-end claim of this API: email + password in, a working read-only credential out.
+
+    ``admit`` is now part of the claim rather than fixture noise: minting goes through the platform
+    allow-list, so "an admin with the right password" is no longer the whole precondition — the
+    account has to be one the product still lets in. The refusing half is two tests below.
+    """
     api.table("user", [_account("boss", "ADMIN", "correct-horse-battery")])
     for name in datasets.DATASETS:
         api.table(datasets.DATASETS[name].delegate, [])
     api.users["boss"] = _row("boss", "ADMIN")
+    api.admit("boss@example.com")
 
     minted = api.request(
         "POST",
@@ -275,7 +453,13 @@ def test_admin_credentials_mint_a_scoped_token_that_works(api) -> None:
 
 
 def test_a_non_admin_is_refused_at_issue_time_not_at_first_use(api) -> None:
-    """The operator wiring up a cron job finds out while they are still looking at the terminal."""
+    """The operator wiring up a cron job finds out while they are still looking at the terminal.
+
+    THIS ACCOUNT IS ON NO ALLOW-LIST ROW AT ALL and is still answered "admin access required",
+    which pins the ORDER of the two refusals: rank first, gate second. That ordering is why a
+    researcher pointing a script at this endpoint cannot stir the administrator's approval queue —
+    the gate is the arm that writes, and a non-admin never reaches it.
+    """
     api.table("user", [_account("prof", "PROFESSOR", "correct-horse-battery")])
 
     response = api.request(
@@ -286,6 +470,100 @@ def test_a_non_admin_is_refused_at_issue_time_not_at_first_use(api) -> None:
 
     assert response.status_code == 403
     assert "Admin access required" in response.json()["detail"]
+    assert api.access.accessroster.attempts == {}, (
+        "a non-admin must not reach the arm of the gate that writes to the approval queue"
+    )
+
+
+def test_a_suspended_admin_cannot_mint_a_token(api) -> None:
+    """**THE SHIP-BLOCKER THIS ENDPOINT SHIPPED WITH.**
+
+    Suspending somebody writes the ``AccessRoster`` status and never ``User.role``, so ``is_admin``
+    still says yes about an account an administrator has revoked. This route checked the password
+    and the admin flag and then minted, with no reference to the allow-list — so a suspended admin
+    was refused at ``/auth/login`` and could still take a fresh thirty-day read credential over the
+    entire repository from here, renewing it from the same password for ever.
+
+    The refusal borrows the sign-in page's own sentence and its ``X-Access-Status`` header, because
+    an operator reading a cron job's log deserves the explanation the person would have got.
+    """
+    api.table("user", [_account("boss", "ADMIN", "correct-horse-battery")])
+    api.admit("boss@example.com", "SUSPENDED")
+
+    response = api.request(
+        "POST", "/api/datasets/token",
+        json={"email": "boss@example.com", "password": "correct-horse-battery"},
+    )
+
+    assert response.status_code == 403, response.text
+    assert "suspended" in response.json()["detail"].lower()
+    assert "accessToken" not in response.json()
+    assert response.headers.get("X-Access-Status") == "SUSPENDED"
+    # The attempt is written down, as it is on the sign-in path: a revoked credential still being
+    # presented every night is the one useful thing about a repeat attempt.
+    assert api.access.accessroster.attempts == {"boss@example.com": 1}
+
+
+def test_a_rejected_admin_cannot_mint_a_token(api) -> None:
+    """The other refusing state, and it must read as its own sentence. REJECTED and SUSPENDED are
+    different decisions with different remedies — never let in, versus let in and then barred."""
+    api.table("user", [_account("boss", "ADMIN", "correct-horse-battery")])
+    api.admit("boss@example.com", "REJECTED")
+
+    response = api.request(
+        "POST", "/api/datasets/token",
+        json={"email": "boss@example.com", "password": "correct-horse-battery"},
+    )
+
+    assert response.status_code == 403, response.text
+    assert "not approved" in response.json()["detail"].lower()
+    assert response.headers.get("X-Access-Status") == "REJECTED"
+
+
+def test_a_master_admin_with_a_suspended_row_can_still_mint(api) -> None:
+    """**THE BREAK-GLASS, AT THE SECOND DOOR.**
+
+    The reason the allow-list could be widened from designers to everybody is that one account is
+    exempt in the GATE rather than by a row in the table the gate reads. Adding the gate to a new
+    endpoint must not quietly narrow that exemption — the master admin whose row an outgoing
+    administrator barred is exactly the account that needs to be able to take a copy of the data.
+
+    One predicate, ``deps.is_break_glass_master``, shared by every door that asks rather than copied
+    to each — here, the sign-in gate, and ``require_dataset_admin`` where the token is USED.
+    """
+    api.table("user", [_account("owner", "MASTER_ADMIN", "correct-horse-battery")])
+    api.users["owner"] = _row("owner", "MASTER_ADMIN")
+    api.admit("owner@example.com", "SUSPENDED")
+
+    response = api.request(
+        "POST", "/api/datasets/token",
+        json={"email": "owner@example.com", "password": "correct-horse-battery"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accessToken"]
+    # And the exemption did not work by repairing the row it is exempt from — an exemption that
+    # edits the table is one no administrator can see or undo.
+    assert api.allowlist["owner@example.com"] == "SUSPENDED"
+
+
+def test_an_admin_with_no_allow_list_row_is_refused_rather_than_admitted(api) -> None:
+    """THE GATE FAILS CLOSED, HERE TOO. A missing row is a refusal and not an admission, which is
+    what makes the exhaustive grandfathering in the allow-list migration load-bearing: an account
+    created by some path that forgot to admit it lands in the queue where an admin can see it,
+    rather than quietly holding a machine credential nobody approved."""
+    api.table("user", [_account("boss", "ADMIN", "correct-horse-battery")])
+
+    response = api.request(
+        "POST", "/api/datasets/token",
+        json={"email": "boss@example.com", "password": "correct-horse-battery"},
+    )
+
+    assert response.status_code == 403, response.text
+    assert "awaiting administrator approval" in response.json()["detail"]
+    assert api.allowlist["boss@example.com"] == "PENDING", (
+        "the refusal must leave a row an administrator can act on"
+    )
 
 
 def test_a_wrong_password_and_an_unknown_account_are_indistinguishable(api) -> None:

@@ -1707,6 +1707,7 @@ async def list_references(
     scope: str = Query(REF_SCOPE_ALL, max_length=16),
     filterBy: str | None = Query(None, max_length=64),
     search: str | None = Query(None, max_length=120),
+    recordId: str | None = Query(None, max_length=64),
     limit: int = Query(REFERENCE_LIMIT_DEFAULT, ge=1, le=REFERENCE_LIMIT_MAX),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -1725,13 +1726,26 @@ async def list_references(
     entry id, because stage 6 and stage 13 hold different kinds of id in the same-named field
     and no client should have to know that.
 
+    ``recordId`` is the SCANNED half of the same feature, and it is additive: absent, this endpoint
+    answers exactly as it always did. Present, it appends an ``id`` clause, which is the only way a
+    printed code can become an option at all — every other clause searches prose columns and ``id``
+    is in none of them, so a scan of a colleague's record card used to come back as an empty list.
+    The response's new ``outOfScope`` flag is the answer to the case a WORKSHOP-scoped field makes
+    unavoidable: the record is real, it is readable, and this field's scope excludes it. Saying so
+    is not widening the scope — that row arrives under its own ``outOfScopeOption`` key with
+    ``options`` left EMPTY, so a client that renders ``options`` and has never heard of the flag
+    cannot offer it as an ordinary choice.
+
     Readable by anyone who can read the workshop. The options are records they can already list
     through ``/records``; refusing them here would only mean the designer opens a second tab and
-    copies the name across by hand, which is the behaviour being replaced.
+    copies the name across by hand, which is the behaviour being replaced. ``current_user`` now
+    travels into the service for the by-id path, which composes the same read predicate the record
+    list routes compose so that a row the caller could not list cannot be confirmed to exist here.
     """
     record = await load_workshop_or_404(workshop_id, current_user)
     return await reference_options(
-        record, model, scope=scope.upper(), filter_by=filterBy, search=search, limit=limit
+        record, model, scope=scope.upper(), filter_by=filterBy, search=search, limit=limit,
+        record_id=recordId, viewer=current_user,
     )
 
 
@@ -3095,16 +3109,24 @@ async def workshop_cost_integrity(
     its lines, and silently replacing a considered figure with a computed one would be a worse bug
     than the one being fixed.
 
-    The calculation is PURE so that it can run in the browser and on the handset — but as of
-    2026-08-08 it does not, and that matters more than the intent. The market analysis beside it has
-    a proven-equal TypeScript port and a stage-9 panel; this has neither, and a Kotlin
-    `DwCostIntegrity` exists that nothing calls. **So no designer sees a cost-integrity finding on
-    any surface today**: this endpoint is the whole of the feature, and nothing consumes it.
+    The calculation is PURE so that it can run in the browser and on the handset, and TRUE AS OF
+    2026-08-22 IT RUNS ON BOTH, unflagged. Android: `DwFindingsPanel.CostFindingsCard` calls
+    `DwCostIntegrity.analyse`, through the `DwStageFindings` mount `StageScreen` puts on every stage
+    form. Web: `frontend/components/designworkshop/CostFindingsPanel.tsx` is mounted at
+    `COSTING_STAGE` and computes over `frontend/lib/costIntegrity.ts`, which
+    `frontend/e2e/cost-integrity-port-unit.spec.ts` holds equal to `app/services/cost_integrity.py`
+    case for case. Check the claim rather than trusting it:
 
-    That sentence is here rather than in a tracker because the previous version of this docstring
-    asserted the ports existed, and a claim like that is how a gap stops being visible: a reader
-    checking whether the handset warns about a self-contradicting cost sheet would have read "yes"
-    and stopped. Delete this paragraph when the ports and a panel land, not before.
+        grep -rn "DwCostIntegrity.analyse" android/app/src/main
+        grep -rn "CostFindingsPanel" frontend/app frontend/components
+
+    The date and the two greps replace what used to stand here: a paragraph asserting no designer
+    saw a cost-integrity finding on any surface, ending "delete this paragraph when the ports and a
+    panel land, not before". Both ports landed and nobody deleted it, so for a fortnight the
+    sentence was not merely stale but ARMED — an instruction only a reader who already knew the
+    answer could act on, sitting under a claim that would stop them looking. `docs/COMPUTED_FINDINGS
+    .md` §7 names that shape as the pattern to avoid, and this is the replacement it asks for: a
+    dated statement with the command that re-checks it.
 
     It is READ-ONLY and serves the two cases a client could not serve even once ported: a report
     render, which must not depend on whichever device is looking, and a device that has not synced

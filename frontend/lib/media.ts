@@ -1,4 +1,4 @@
-import { API_BASE, ApiError, apiFetch, getToken, listResource } from "@/lib/api";
+import { API_BASE, ApiError, apiFetch, getToken, listResource, type ApiFetchOptions } from "@/lib/api";
 import type { MediaFile, MediaType } from "@/lib/types";
 
 /**
@@ -449,12 +449,22 @@ function isRetriableApiFailure(error: unknown): boolean {
  * `apiFetch` with the retry policy Android's OkHttp interceptor applies — but only ever used for
  * calls that are SAFE to repeat: presigning, multipart setup/abort, and `/media/complete` (which the
  * API de-duplicates on `objectKey`). Record-creating calls stay single-shot.
+ *
+ * `options` is `apiFetch`'s own third argument, carried through unchanged so a caller that must not
+ * navigate on a 401 can say so — see {@link ObjectUploadOptions.redirectOn401}. It is deliberately
+ * placed BEFORE `attempts`, which no call site has ever passed, so the flag is the argument in the
+ * position a reader looks at.
  */
-async function apiRetry<T>(path: string, init: RequestInit, attempts = SAFE_RETRY_ATTEMPTS): Promise<T> {
+async function apiRetry<T>(
+  path: string,
+  init: RequestInit,
+  options: ApiFetchOptions = {},
+  attempts = SAFE_RETRY_ATTEMPTS
+): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await apiFetch<T>(path, init);
+      return await apiFetch<T>(path, init, options);
     } catch (error) {
       lastError = error;
       if (attempt >= attempts || !isRetriableApiFailure(error)) throw error;
@@ -635,6 +645,21 @@ type ObjectUploadOptions = {
   /** Called with every key we presign, so a half-written object can be cleaned up later. */
   onObjectKey?: (objectKey: string) => void;
   signal?: AbortSignal;
+  /**
+   * Let a 401 met on the way send the browser to /login. Defaults to true, which is right for a
+   * capture screen somebody is looking at: their session is over and a sign-in form is what they
+   * need next.
+   *
+   * PASS FALSE FROM ANYTHING RUNNING IN THE BACKGROUND. `lib/offline.ts` replays its outbox on an
+   * `online` event and on mount, with nobody having asked for anything — and a replay that resumes
+   * an entry whose record ALREADY EXISTS sends its very first request from the media leg. Its
+   * create leg has always opted out (`redirectOn401: false`); until this option existed the media
+   * leg could not, so a seven-day token expiring in exactly that window hard-navigated a researcher
+   * off whatever they were editing and took the unsaved screen with it. The token is still cleared
+   * by `apiFetch` either way — that is not this flag — and `AppShell` does the soft redirect for a
+   * protected route once `AuthProvider` notices.
+   */
+  redirectOn401?: boolean;
 };
 
 /**
@@ -671,22 +696,26 @@ async function uploadObject(options: ObjectUploadOptions): Promise<StagedObject>
 }
 
 async function uploadWhole(options: ObjectUploadOptions, mediaType: MediaType, mimeType: string): Promise<UploadTarget> {
-  const { file, linkedRecordType, linkedRecordId, onProgress, onObjectKey, signal } = options;
+  const { file, linkedRecordType, linkedRecordId, onProgress, onObjectKey, signal, redirectOn401 } = options;
   let lastError: unknown;
   let previousKey: string | null = null;
   for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt += 1) {
     // A fresh presign per attempt keeps the 15-minute signature window from expiring under retries.
-    const presign = await apiRetry<PresignResponse>("/media/presign", {
-      method: "POST",
-      body: JSON.stringify({
-        filename: file.name,
-        mimeType,
-        mediaType,
-        sizeBytes: file.size,
-        linkedRecordType,
-        linkedRecordId
-      })
-    });
+    const presign = await apiRetry<PresignResponse>(
+      "/media/presign",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          filename: file.name,
+          mimeType,
+          mediaType,
+          sizeBytes: file.size,
+          linkedRecordType,
+          linkedRecordId
+        })
+      },
+      { redirectOn401 }
+    );
     // The previous attempt's key is now abandoned: stop keeping it alive so the sweeper reclaims it.
     if (previousKey) liveObjectKeys.delete(previousKey);
     previousKey = presign.objectKey;
@@ -710,18 +739,22 @@ async function uploadWhole(options: ObjectUploadOptions, mediaType: MediaType, m
  * part instead of restarting a 400 MB video.
  */
 async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType, mimeType: string): Promise<UploadTarget> {
-  const { file, linkedRecordType, linkedRecordId, onProgress, onObjectKey, signal } = options;
-  const create = await apiRetry<MultipartCreateResponse>("/media/multipart/create", {
-    method: "POST",
-    body: JSON.stringify({
-      filename: file.name,
-      mimeType,
-      mediaType,
-      sizeBytes: file.size,
-      linkedRecordType,
-      linkedRecordId
-    })
-  });
+  const { file, linkedRecordType, linkedRecordId, onProgress, onObjectKey, signal, redirectOn401 } = options;
+  const create = await apiRetry<MultipartCreateResponse>(
+    "/media/multipart/create",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        filename: file.name,
+        mimeType,
+        mediaType,
+        sizeBytes: file.size,
+        linkedRecordType,
+        linkedRecordId
+      })
+    },
+    { redirectOn401 }
+  );
   onObjectKey?.(create.objectKey);
 
   const partNumbers = Array.from({ length: create.partCount }, (_, index) => index + 1);
@@ -730,10 +763,14 @@ async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType,
   const report = () => onProgress?.(loaded.reduce((sum, value) => sum + value, 0), file.size);
 
   const presignParts = (numbers: number[]) =>
-    apiRetry<MultipartPartsResponse>("/media/multipart/presign-parts", {
-      method: "POST",
-      body: JSON.stringify({ objectKey: create.objectKey, uploadId: create.uploadId, partNumbers: numbers })
-    });
+    apiRetry<MultipartPartsResponse>(
+      "/media/multipart/presign-parts",
+      {
+        method: "POST",
+        body: JSON.stringify({ objectKey: create.objectKey, uploadId: create.uploadId, partNumbers: numbers })
+      },
+      { redirectOn401 }
+    );
 
   const urls = (await presignParts(partNumbers)).urls;
 
@@ -786,22 +823,30 @@ async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType,
       if (!etag) throw new EtagUnavailableError();
       etags[partNumber - 1] = etag;
     });
-    const done = await apiRetry<MultipartCompleteResponse>("/media/multipart/complete", {
-      method: "POST",
-      body: JSON.stringify({
-        objectKey: create.objectKey,
-        uploadId: create.uploadId,
-        parts: etags.map((etag, index) => ({ partNumber: index + 1, etag }))
-      })
-    });
+    const done = await apiRetry<MultipartCompleteResponse>(
+      "/media/multipart/complete",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          objectKey: create.objectKey,
+          uploadId: create.uploadId,
+          parts: etags.map((etag, index) => ({ partNumber: index + 1, etag }))
+        })
+      },
+      { redirectOn401 }
+    );
     return { objectKey: done.objectKey, bucket: done.bucket, publicUrl: done.publicUrl ?? null };
   } catch (error) {
     // Never leave half-written parts behind: they are billable, invisible, and never expire on their
     // own unless the bucket has a lifecycle rule for them.
-    await apiFetch("/media/multipart/abort", {
-      method: "POST",
-      body: JSON.stringify({ objectKey: create.objectKey, uploadId: create.uploadId })
-    }).catch(() => undefined);
+    await apiFetch(
+      "/media/multipart/abort",
+      {
+        method: "POST",
+        body: JSON.stringify({ objectKey: create.objectKey, uploadId: create.uploadId })
+      },
+      { redirectOn401 }
+    ).catch(() => undefined);
     forgetStagedObject(create.objectKey);
     if (error instanceof EtagUnavailableError) {
       multipartAvailable = false;
@@ -889,15 +934,42 @@ function startHeartbeat() {
   }, STAGED_HEARTBEAT_MS);
 }
 
+/**
+ * Bin one staged object.
+ *
+ * `redirectOn401: false` FOR THE SAME REASON THE OUTBOX DRAIN PASSES IT, and this one needs no
+ * outbox at all: {@link scheduleStagedObjectSweep} calls this from a five-minute `setInterval`, so a
+ * researcher with a form open and a token that has just expired was hard-navigated to /login BY A
+ * TIMER — losing the screen to an orphan cleanup nobody asked for. The other callers (the ✕ on a
+ * staged file, a released owner, a failed eager attempt) are bookkeeping behind a local action, and
+ * none of them is the thing the person is waiting on either. The token is still cleared by
+ * `apiFetch`, so a genuinely dead session is still noticed — by `AuthProvider`, which is where a
+ * decision about the session belongs.
+ */
 async function deleteStagedObject(objectKey: string) {
   liveObjectKeys.delete(objectKey);
   try {
-    await apiFetch<void>(`/media/object?objectKey=${encodeURIComponent(objectKey)}`, { method: "DELETE" });
+    await apiFetch<void>(
+      `/media/object?objectKey=${encodeURIComponent(objectKey)}`,
+      { method: "DELETE" },
+      { redirectOn401: false }
+    );
     forgetStagedObject(objectKey);
   } catch (error) {
     // 403 / 404 / 409 are all terminal answers ("not yours" / "gone" / "now attached to a record"),
     // so stop tracking it. A transport failure keeps the journal entry for the next sweep.
-    if (error instanceof ApiError) forgetStagedObject(objectKey);
+    //
+    // A 401 IS AN `ApiError` AND IS EMPHATICALLY NOT ONE OF THEM, and that only became load-bearing
+    // when this call stopped navigating. Before, the first 401 replaced the document and the tab
+    // took the journal with it — at most one key lost. Now the sweep keeps going, and since
+    // `apiFetch` clears the stored token on that same 401, every following DELETE is unauthenticated
+    // and 401s too: forgetting here would empty the journal a batch at a time and strand every
+    // staged object in the bucket with nothing left to reclaim it by — the one outcome this journal
+    // exists to prevent. The object is still there and still ours; only the credential died. A 5xx
+    // says the same thing about the server rather than the object, so it keeps the entry as well.
+    if (error instanceof ApiError && error.status !== 401 && error.status < 500) {
+      forgetStagedObject(objectKey);
+    }
   }
 }
 
@@ -922,6 +994,10 @@ function beaconDeleteStagedObject(objectKey: string) {
  * was closed, the browser crashed, or the record was simply abandoned. Safe by construction — a key
  * still being used by THIS tab is in `liveObjectKeys`, and one used by another tab is still being
  * heart-beaten, so only genuinely stale keys are touched.
+ *
+ * Returns how many keys were actually ATTEMPTED, which is not always how many were stale: the loop
+ * stops the moment the credential dies, and a key it never reached is still in the journal for the
+ * next pass. Nothing branches on the number today — it is a signal for the console and for tests.
  */
 export async function sweepStagedObjects(): Promise<number> {
   if (typeof window === "undefined" || !getToken()) return 0;
@@ -930,10 +1006,18 @@ export async function sweepStagedObjects(): Promise<number> {
   const stale = Object.keys(journal)
     .filter((key) => !liveObjectKeys.has(key) && now - (journal[key] ?? 0) > STAGED_STALE_MS)
     .slice(0, STAGED_SWEEP_BATCH);
+  let attempted = 0;
   for (const key of stale) {
     await deleteStagedObject(key);
+    attempted += 1;
+    // The token check above is a snapshot, and `apiFetch` clears the stored token the moment one of
+    // these DELETEs comes back 401. Carrying on would fire the rest of the batch with no
+    // Authorization header at all — nineteen guaranteed failures, and nineteen more chances for a
+    // future edit to decide they were terminal. Stop; the journal is durable and the next sweep,
+    // under a live session, still has every key.
+    if (!getToken()) break;
   }
-  return stale.length;
+  return attempted;
 }
 
 /** Run the orphan sweep shortly after the first media surface mounts, then periodically. */
@@ -1261,29 +1345,38 @@ function resolveProcessing(file: File, transcribeAudio: boolean, requested?: str
   return Array.from(queued);
 }
 
-async function completeUpload(file: File, staged: StagedObject, params: CompleteParams): Promise<MediaFile> {
+async function completeUpload(
+  file: File,
+  staged: StagedObject,
+  params: CompleteParams,
+  redirectOn401?: boolean
+): Promise<MediaFile> {
   // Safe to retry: the API de-duplicates on objectKey and returns the row the first call created.
-  return apiRetry<MediaFile>("/media/complete", {
-    method: "POST",
-    body: JSON.stringify({
-      originalFilename: file.name,
-      mediaType: staged.mediaType,
-      mimeType: staged.mimeType,
-      sizeBytes: staged.sizeBytes,
-      objectKey: staged.objectKey,
-      bucket: staged.bucket,
-      url: staged.publicUrl,
-      checksum: staged.checksum,
-      caption: params.caption,
-      linkedRecordType: params.linkedRecordType,
-      linkedRecordId: params.linkedRecordId,
-      location: params.location,
-      extraMetadata: params.extraMetadata,
-      recordedAt: params.recordedAt,
-      recordedTimezone: params.recordedTimezone,
-      processingRequests: params.processingRequests
-    })
-  });
+  return apiRetry<MediaFile>(
+    "/media/complete",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        originalFilename: file.name,
+        mediaType: staged.mediaType,
+        mimeType: staged.mimeType,
+        sizeBytes: staged.sizeBytes,
+        objectKey: staged.objectKey,
+        bucket: staged.bucket,
+        url: staged.publicUrl,
+        checksum: staged.checksum,
+        caption: params.caption,
+        linkedRecordType: params.linkedRecordType,
+        linkedRecordId: params.linkedRecordId,
+        location: params.location,
+        extraMetadata: params.extraMetadata,
+        recordedAt: params.recordedAt,
+        recordedTimezone: params.recordedTimezone,
+        processingRequests: params.processingRequests
+      })
+    },
+    { redirectOn401 }
+  );
 }
 
 /**
@@ -1295,12 +1388,15 @@ async function linkOrUpload({
   file,
   record,
   params,
-  onProgress
+  onProgress,
+  redirectOn401
 }: {
   file: File;
   record: StageRecord | null;
   params: CompleteParams;
   onProgress?: (loaded: number, total: number) => void;
+  /** See {@link ObjectUploadOptions.redirectOn401} — false for a background pass. */
+  redirectOn401?: boolean;
 }): Promise<MediaFile> {
   let staged: StagedObject | null = null;
   if (record) {
@@ -1321,10 +1417,11 @@ async function linkOrUpload({
       linkedRecordType: params.linkedRecordType,
       linkedRecordId: params.linkedRecordId,
       onProgress,
-      onObjectKey: rememberStagedObject
+      onObjectKey: rememberStagedObject,
+      redirectOn401
     });
   }
-  const media = await completeUpload(file, staged, params);
+  const media = await completeUpload(file, staged, params, redirectOn401);
   // Linked: it is a real MediaFile now, not an orphan candidate.
   forgetStagedObject(staged.objectKey);
   return media;
@@ -1394,6 +1491,28 @@ export type BatchFailure = {
 export type BatchResult = {
   uploaded: MediaFile[];
   failed: BatchFailure[];
+  /**
+   * The same results, but at the POSITION of the file that produced each one — `null` where that
+   * file did not land.
+   *
+   * ── THE DEFECT THIS EXISTS FOR, AND WHY `uploaded` COULD NOT ANSWER IT ────────────────────────
+   * `uploaded` is COMPACTED: the by-index array is built at `files.length` and then filtered of its
+   * nulls on the way out. Its ORDER is the caller's; its POSITIONS are not, and the two were
+   * described by one sentence above for long enough that a caller zipped them together.
+   * `FieldInput`'s media field did exactly that — `uploaded.forEach((media, index) => originals[
+   * media.id] = chosen[index])` — so in any batch where an earlier file failed and a later one
+   * succeeded, every surviving file was recorded against the wrong `File`. The reader that consumes
+   * that map is `IdentityCardReader`, which OCRs the original bytes and prints the file's name
+   * beside the digits it read: the mismatch shows a designer one photograph's name over another
+   * photograph's identity number, which defeats the one cross-check its own header relies on.
+   *
+   * ── ADDITIVE, NOT A REPLACEMENT ───────────────────────────────────────────────────────────────
+   * Every existing caller reads `uploaded` and `failed` and is unaffected. A caller that needs to
+   * know WHICH file produced a result reads this instead of counting, and can never fall back to
+   * matching on `file.name` — two photographs off one handset are routinely both `IMG_0001.jpg`,
+   * and a name match would misfile them with no failure anywhere to notice it by.
+   */
+  uploadedByIndex: Array<MediaFile | null>;
 };
 
 /**
@@ -1421,8 +1540,22 @@ export class MediaBatchError extends Error {
 /**
  * Upload many files resiliently: files that were eagerly pre-uploaded only need linking (so saving is
  * near-instant), the rest transfer now — up to {@link UPLOAD_CONCURRENCY} at a time. Each file
- * retries independently, a failure of one does not abort the rest, results keep the caller's order,
- * and per-byte progress + ETA is reported across the whole batch.
+ * retries independently, a failure of one does not abort the rest, and per-byte progress + ETA is
+ * reported across the whole batch.
+ *
+ * `uploaded` KEEPS THE CALLER'S ORDER AND NOT THE CALLER'S POSITIONS, and the difference is a bug
+ * this sentence used to hide: it is the by-index array with its nulls removed, so `uploaded[2]` is
+ * the third file that LANDED, not the third file that was passed in. A caller that needs to know
+ * which `File` produced which result reads {@link BatchResult.uploadedByIndex}, which is that array
+ * before the compaction. See the note there for what the zip cost.
+ *
+ * `redirectOn401` IS HOW A BACKGROUND PASS STOPS BEING A NAVIGATION. Every request this makes went
+ * out with `apiFetch`'s default, which sends the browser to /login on an expired token — right for a
+ * researcher watching a save, and wrong for the outbox drain in `lib/offline.ts`, which runs on an
+ * `online` event with nobody having asked. A resumed entry whose record already exists sends its
+ * FIRST request from here, so a seven-day token dying in that window threw the researcher off
+ * whatever they were editing. See {@link ObjectUploadOptions.redirectOn401}, which carries it the
+ * rest of the way.
  */
 export async function uploadMediaBatch({
   files,
@@ -1435,7 +1568,8 @@ export async function uploadMediaBatch({
   recordedTimezone,
   transcribeAudio = true,
   processingRequests,
-  onProgress
+  onProgress,
+  redirectOn401
 }: {
   files: File[];
   // Nullable so the Miscellaneous Media page (where the linked entry is optional) can share this
@@ -1450,6 +1584,11 @@ export async function uploadMediaBatch({
   transcribeAudio?: boolean;
   processingRequests?: string[];
   onProgress?: (progress: BatchProgress) => void;
+  /**
+   * Defaults to true, exactly as `apiFetch` does. Pass FALSE from anything that is not a screen
+   * somebody is looking at — see the note above.
+   */
+  redirectOn401?: boolean;
 }): Promise<BatchResult> {
   // Claimed synchronously, before the first await, so nothing can reclaim these objects mid-save.
   const records = takeStagedFor(files);
@@ -1487,6 +1626,7 @@ export async function uploadMediaBatch({
       uploadedByIndex[index] = await linkOrUpload({
         file,
         record: records[index],
+        redirectOn401,
         onProgress: (sent) => {
           loaded[index] = sent;
           report();
@@ -1533,7 +1673,13 @@ export async function uploadMediaBatch({
       failed
     );
   }
-  return { uploaded: uploadedByIndex.filter((item): item is MediaFile => item !== null), failed };
+  return {
+    uploaded: uploadedByIndex.filter((item): item is MediaFile => item !== null),
+    failed,
+    // The uncompacted array, handed over as it is. Callers that only need "what landed" go on
+    // reading `uploaded`; callers that need "what THIS file became" read the positions.
+    uploadedByIndex
+  };
 }
 
 export async function transcribeMediaFile(file: File, mediaType = inferMediaType(file)) {

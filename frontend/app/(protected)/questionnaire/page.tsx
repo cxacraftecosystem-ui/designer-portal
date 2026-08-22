@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowDown, ArrowUp, ClipboardList, GripVertical, Lock, Mic, Pencil, Plus, Save, Square, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ClipboardList, GripVertical, Lock, Mic, Pencil, Plus, QrCode, Save, Square, Trash2 } from "lucide-react";
 
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -19,6 +19,7 @@ import { UploadTray } from "@/components/media/UploadTray";
 import { RecordingStrip } from "@/components/media/Waveform";
 import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
 import { EMPTY_FUNNEL, FunnelFilters, type FunnelValue } from "@/components/FunnelFilters";
@@ -34,10 +35,12 @@ import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, textVal
 import { handleFormEnter } from "@/lib/formNav";
 import {
   audioExtensionForMimeType,
+  MediaBatchError,
   pickAudioRecorderMimeType,
   SPEECH_AUDIO_CONSTRAINTS,
   uploadMediaBatch,
-  type BatchProgress
+  type BatchProgress,
+  type BatchResult
 } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { canManageQuestionnaire, hasRank, isAdmin } from "@/lib/permissions";
@@ -58,6 +61,21 @@ const sectionClipKey = (sectionId: string) => `${SECTION_CLIP_PREFIX}${sectionId
 const isSectionClipKey = (key: string) => key.startsWith(SECTION_CLIP_PREFIX);
 /** Tray section id for a clip key — ":" is stripped so the id stays a plain slug. */
 const clipTraySectionId = (key: string) => `question-audio-${key.replace(SECTION_CLIP_PREFIX, "section-")}`;
+
+/**
+ * Why a batch was refused, in one clause — WITHOUT the advice `MediaBatchError`'s own message ends
+ * with.
+ *
+ * That message reads "…Check your internet connection and try again — the record was saved, so
+ * re-open it and re-attach the media", which is true of every other record type and false of an
+ * interview: the row actions here are its code and delete, there is no edit screen to re-open, and
+ * the clips exist only in this form's memory. Only the underlying per-file reason is taken, and the
+ * banner says what to do on this screen instead.
+ */
+function batchCause(err: unknown): string {
+  if (err instanceof MediaBatchError) return err.failures[0]?.error ?? err.message;
+  return err instanceof Error ? err.message : String(err);
+}
 
 export default function QuestionnairePage() {
   return (
@@ -103,6 +121,25 @@ function QuestionnairePageBody() {
   const [searchQuery, setSearchQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Audio that did not reach the repository after the interview itself was saved — kept apart from
+   * `error` ON PURPOSE.
+   *
+   * `error` belongs to the list underneath: `loadInterviews` writes it on failure and clears it on
+   * success, and every save ends by refreshing that list. Putting this warning there meant it was
+   * wiped one round trip later, leaving a form quietly repopulated with the only copy of a
+   * recording and nothing on screen to say the clips had not been sent. Nothing but `submit` writes
+   * this one, and it is cleared when the next save begins.
+   */
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  /**
+   * Which interview has its code open, or null.
+   *
+   * ONE AT A TIME, and by id rather than a flag per row: a page of twenty codes is twenty QR symbols
+   * drawn at once for a screen where at most one is being scanned or printed, and the row a designer
+   * opened is the row they are working on.
+   */
+  const [codeFor, setCodeFor] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -467,6 +504,8 @@ function QuestionnairePageBody() {
     if (!(await workshop.confirmSubmission())) return;
     setSaving(true);
     setError(null);
+    // This press IS the retry the previous warning asked for, so the warning goes before it runs.
+    setUploadError(null);
     const artisanIds = selectedArtisanIds;
     const responses = Object.entries(answers)
       .filter(([, answerText]) => answerText.trim())
@@ -540,42 +579,178 @@ function QuestionnairePageBody() {
         return;
       }
       const saved = outcome.saved;
+      /*
+        ── ONLY WHAT LANDED LEAVES THE FORM; EVERYTHING ELSE STAYS ON IT ─────────────────────
+        Almost every file on this screen is a RECORDER-PRODUCED `File`: bytes that exist nowhere
+        else, made once, in front of an artisan who has since gone home. This handler used to read
+        only the `uploaded` half of each batch result and then clear `mediaFiles` and
+        `questionAudioFiles` regardless — so any batch that half landed took the other half with it,
+        with nothing on screen to say a clip had ever been there. Every other media surface in this
+        repository already reads `failed` and returns before its reset (see the crafts page,
+        ArtisanForm, ToolForm); this was the one that did not.
+
+        WHICH file failed is read off `uploadedByIndex`, never off `failed[].name`: `uploaded` is
+        compacted and the names are not unique — two takes of one question are both
+        `question-audio-...webm` — so a name match would put back the wrong take. See BatchResult in
+        lib/media.ts, where that same zip is documented as a shipped bug.
+
+        AND THE FORM IS PRUNED, NOT REPLACED. The pass records the `File` objects that DID land and
+        the guard below removes exactly those from state with a functional updater. Two reasons, and
+        the first is a data-loss one: nothing disables the record buttons while a save is in flight
+        (`disabled={saving}` is on the submit button alone, and `ClipRecorder`'s `onStart` stays
+        live), so a clip recorded during a slow upload appends itself through `startRecording`'s own
+        functional update — and writing back a list captured before the awaits would delete it. The
+        second is the mirror of it: `uploadMediaBatch` claims the staged objects for the whole batch
+        synchronously (`takeStagedFor`), so keeping a file that already landed would re-upload and
+        re-link it.
+      */
+      let attempted = 0;
+      // Clips filed under a question or section the editor on this page has since removed:
+      // `clipBatch` cannot caption them, so they cannot be uploaded at all. Counted so the banner
+      // can name them — the prune below leaves them sitting on the form, and a banner that claims
+      // to account for everything still on the form must not pass over them in silence.
+      let orphanedClips = 0;
+      // Filenames alone cannot tell "you are offline" from "the server refused this file type", and
+      // that sentence only exists inside the error `uploadMediaBatch` raises (MediaBatchError) or in
+      // `failed[].error`. Carried to the banner rather than swallowed by a bare catch.
+      let firstCause: string | null = null;
+      const failedNames: string[] = [];
+      const landedInterviewAudio = new Set<File>();
+      const landedQuestionAudio = new Map<string, Set<File>>();
       if (mediaFiles.length) {
-        const { uploaded } = await uploadMediaBatch({
-          files: mediaFiles,
-          linkedRecordType: "questionnaire",
-          linkedRecordId: saved.id,
-          caption: `Interview audio for ${saved.title}`,
-          location,
-          recordedAt,
-          recordedTimezone,
-          transcribeAudio: true,
-          onProgress: setInterviewProgress
-        });
+        attempted += mediaFiles.length;
+        // ONLY the upload sits inside the try. A throw out of the tray bookkeeping underneath it is
+        // not an upload failure, and treating it as one would put landed files back for a second,
+        // duplicating upload.
+        let result: BatchResult | undefined;
+        try {
+          result = await uploadMediaBatch({
+            files: mediaFiles,
+            linkedRecordType: "questionnaire",
+            linkedRecordId: saved.id,
+            caption: `Interview audio for ${saved.title}`,
+            location,
+            recordedAt,
+            recordedTimezone,
+            transcribeAudio: true,
+            onProgress: setInterviewProgress
+          });
+        } catch (err) {
+          // `uploadMediaBatch` only throws when NOTHING in the batch landed, so nothing is marked as
+          // having landed here. Caught rather than left to the handler's catch because the
+          // per-question clips below are separate recordings on a separate request each: one refused
+          // batch is no reason to stop trying to save the other thirty, and the old code stopped.
+          firstCause ??= batchCause(err);
+        }
         setInterviewProgress(null);
-        // Uploaded clips surface twice: as chips under this section and in the page-level tray.
-        addCompleted(INTERVIEW_SECTION, INTERVIEW_SECTION_LABEL, uploaded);
+        if (result) {
+          // Uploaded clips surface twice: as chips under this section and in the page-level tray.
+          addCompleted(INTERVIEW_SECTION, INTERVIEW_SECTION_LABEL, result.uploaded);
+          const { uploadedByIndex, failed } = result;
+          mediaFiles.forEach((file, index) => {
+            if (uploadedByIndex[index] !== null) landedInterviewAudio.add(file);
+            else failedNames.push(file.name);
+          });
+          if (failed.length) firstCause ??= failed[0].error;
+        } else {
+          failedNames.push(...mediaFiles.map((file) => file.name));
+        }
       }
       for (const [key, files] of Object.entries(questionAudioFiles)) {
         const batch = clipBatch(key);
-        if (!batch || files.length === 0) continue;
-        const { uploaded } = await uploadMediaBatch({
-          files,
-          linkedRecordType: "questionnaire",
-          linkedRecordId: saved.id,
-          caption: batch.caption,
-          location,
-          recordedAt,
-          recordedTimezone,
-          transcribeAudio: true,
-          extraMetadata: batch.extraMetadata,
-          onProgress: (progress) => setQuestionProgress((current) => ({ ...current, [key]: progress }))
-        });
-        addCompleted(clipTraySectionId(key), batch.trayLabel, uploaded);
+        if (!batch) {
+          orphanedClips += files.length;
+          continue;
+        }
+        if (files.length === 0) continue;
+        attempted += files.length;
+        let result: BatchResult | undefined;
+        try {
+          result = await uploadMediaBatch({
+            files,
+            linkedRecordType: "questionnaire",
+            linkedRecordId: saved.id,
+            caption: batch.caption,
+            location,
+            recordedAt,
+            recordedTimezone,
+            transcribeAudio: true,
+            extraMetadata: batch.extraMetadata,
+            onProgress: (progress) => setQuestionProgress((current) => ({ ...current, [key]: progress }))
+          });
+        } catch (err) {
+          // This question's whole batch was refused. Nothing of it landed, so carry on down the
+          // sections: the questions after it have their own recordings and have not been offered yet.
+          firstCause ??= batchCause(err);
+        }
+        if (result) {
+          addCompleted(clipTraySectionId(key), batch.trayLabel, result.uploaded);
+          const { uploadedByIndex, failed } = result;
+          const landed = new Set<File>();
+          files.forEach((file, index) => {
+            if (uploadedByIndex[index] !== null) landed.add(file);
+            else failedNames.push(file.name);
+          });
+          if (landed.size) landedQuestionAudio.set(key, landed);
+          if (failed.length) firstCause ??= failed[0].error;
+        } else {
+          failedNames.push(...files.map((file) => file.name));
+        }
       }
       // Cleared only once every question has been pushed, so the tray's page-level total counts the
       // whole run rather than shrinking back to whichever question is uploading right now.
       setQuestionProgress({});
+      // Orphaned clips alone do not hold the form back: they can never be uploaded while their
+      // question is gone, so blocking on them would make the form unclearable. They are reported
+      // only when something else already keeps the researcher here.
+      if (failedNames.length) {
+        // THE MESSAGE AND THE KEPT FILES COME FIRST, THE REFRESH LAST AND UNAWAITED, AND THE MESSAGE
+        // IS NOT `error`. Setting `error` here and then refreshing lost the warning outright: on the
+        // `page !== 1` branch `setPage(1)` re-runs the list effect, and `loadInterviews` ends by
+        // clearing `error` on success and writing its own sentence on failure — so one round trip later the
+        // researcher had a form silently repopulated with the only copy of the audio and nothing on
+        // screen saying so. `uploadError` is a separate banner the list loader never touches.
+        setMediaFiles((current) => current.filter((file) => !landedInterviewAudio.has(file)));
+        setQuestionAudioFiles((current) => {
+          const next: Record<string, File[]> = {};
+          for (const [key, files] of Object.entries(current)) {
+            const landed = landedQuestionAudio.get(key);
+            const remaining = landed ? files.filter((file) => !landed.has(file)) : files;
+            if (remaining.length) next[key] = remaining;
+          }
+          return next;
+        });
+        // PRESSING SAVE AGAIN IS A REAL RETRY, AND SAYING OTHERWISE WOULD BE THE WORSE MISTAKE. The
+        // first draft of this banner said only that the clips were the only copy and that leaving
+        // would lose them — framing a recoverable state as hopeless. `create_interview`
+        // (backend/app/api/routes/questionnaire.py) keys on `artisan_set_key(payload.artisanIds)`
+        // and folds a second submission for the same artisan set into the interview that already
+        // exists, and the amber panel higher up this page tells the researcher exactly that. The
+        // form still holds the same artisans, so a second press re-sends only what is left on it and
+        // it lands on the same entry. (Same-text answers are skipped server-side by
+        // `upsert_responses`.)
+        setUploadError(
+          `${failedNames.length} of ${attempted} audio file(s) failed to upload: ${failedNames.join(", ")}.` +
+            (firstCause ? ` Reason given: ${firstCause}` : "") +
+            " The interview was saved and those clips are still on this form — they are the only copy." +
+            " Press Save again to send just them: it adds them to the same interview rather than" +
+            " creating a second one. Leaving this page is what would lose them." +
+            (orphanedClips
+              ? ` A further ${orphanedClips} clip(s) belong to a question that is no longer in this form; ` +
+                "they cannot be sent until it is put back."
+              : "")
+        );
+        setSaving(false);
+        // The interview IS in the repository, so refresh the table — a researcher who cannot see the
+        // sitting in the list below has every reason to press Save again and record it twice. (The
+        // media page returns on a partial failure the same way, and reloads its table first for the
+        // same reason.) Not awaited: this guard fires on a dead connection, and awaiting a fetch
+        // that is going to time out would hold the button on "Saving..." and the warning off screen
+        // for the whole timeout.
+        if (page !== 1) setPage(1);
+        else void loadInterviews();
+        return;
+      }
       // Bank the sitting: the interview does not become part of the carried context (nothing else
       // links to one) but the artisan it was taken with is exactly where the researcher still is.
       const interviewed = artisans.find((artisan) => artisan.id === selectedArtisanId);
@@ -640,6 +815,13 @@ function QuestionnairePageBody() {
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
       />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
+      {/* Its own banner, not `error`: the list loader owns that one and clears it on every refresh.
+          `role="alert"` because this one appears after a press that looked like it succeeded. */}
+      {uploadError ? (
+        <div role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {uploadError}
+        </div>
+      ) : null}
 
       {/* 1) Completion matrix — top of the page, collapsed by default. */}
       <CompletionMatrixPanel canOverride={adminMode && isAdmin(user)} />
@@ -935,48 +1117,77 @@ function QuestionnairePageBody() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((interview) => (
-                  <tr key={interview.id}>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-ink-900">{interview.title}</div>
-                      <div className="text-xs text-ink-500">{interview.place ?? "-"}</div>
-                    </td>
-                    <td className="px-4 py-3 text-ink-700">
-                      {interview.artisans?.map((link) => link.artisan.name).join(", ") || "-"}
-                    </td>
-                    <td className="px-4 py-3 text-ink-700">
-                      <details>
-                        <summary className="cursor-pointer font-semibold text-field-700">{interview.responses?.length ?? 0} answers</summary>
-                        <div className="mt-2 grid max-w-lg gap-2">
-                          {interview.responses?.map((response) => (
-                            <div key={response.id} className="rounded-md bg-field-100 p-2 text-xs">
-                              <div className="font-semibold text-ink">{response.question?.prompt}</div>
-                              <div className="mt-1 whitespace-pre-wrap text-ink-muted">{response.answerText}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    </td>
-                    <td className="px-4 py-3 text-ink-700">{interview.createdBy?.email ?? "-"}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={interview.status} />
-                    </td>
-                    {/* interviewDate is server-derived; recordedAt is what it is derived FROM, so it
-                        is the right fallback for a row saved before the derivation existed. */}
-                    <td className="px-4 py-3 text-ink-700">
-                      {formatDate(interview.interviewDate ?? interview.recordedAt ?? interview.createdAt)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {adminMode ? (
+                  <Fragment key={interview.id}>
+                    <tr>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-ink-900">{interview.title}</div>
+                        <div className="text-xs text-ink-500">{interview.place ?? "-"}</div>
+                      </td>
+                      <td className="px-4 py-3 text-ink-700">
+                        {interview.artisans?.map((link) => link.artisan.name).join(", ") || "-"}
+                      </td>
+                      <td className="px-4 py-3 text-ink-700">
+                        <details>
+                          <summary className="cursor-pointer font-semibold text-field-700">{interview.responses?.length ?? 0} answers</summary>
+                          <div className="mt-2 grid max-w-lg gap-2">
+                            {interview.responses?.map((response) => (
+                              <div key={response.id} className="rounded-md bg-field-100 p-2 text-xs">
+                                <div className="font-semibold text-ink">{response.question?.prompt}</div>
+                                <div className="mt-1 whitespace-pre-wrap text-ink-muted">{response.answerText}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      </td>
+                      <td className="px-4 py-3 text-ink-700">{interview.createdBy?.email ?? "-"}</td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={interview.status} />
+                      </td>
+                      {/* interviewDate is server-derived; recordedAt is what it is derived FROM, so it
+                          is the right fallback for a row saved before the derivation existed. */}
+                      <td className="px-4 py-3 text-ink-700">
+                        {formatDate(interview.interviewDate ?? interview.recordedAt ?? interview.createdAt)}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {/* The code is NOT gated on the admin view, and Delete still is. They are two
+                            different kinds of action: deleting an interview destroys a sitting nobody
+                            can retake, while showing its code reveals an opaque reference to a row
+                            this person is already reading. Gating the code would mean a researcher
+                            could see the interview and not the tag that opens it — which is the whole
+                            point of the tag. The "Admin view only" line this cell used to fall back to
+                            is gone because the cell is no longer ever empty. */}
                         <RowActions>
-                          <button className={rowAction("danger")} onClick={() => remove(interview.id)}>
-                            Delete
+                          <button
+                            className={rowAction("neutral", codeFor === interview.id ? "bg-surface-50" : undefined)}
+                            onClick={() => setCodeFor(codeFor === interview.id ? null : interview.id)}
+                            aria-expanded={codeFor === interview.id}
+                          >
+                            <QrCode className="h-3.5 w-3.5" aria-hidden />
+                            {codeFor === interview.id ? "Hide code" : "Code"}
                           </button>
+                          {adminMode ? (
+                            <button className={rowAction("danger")} onClick={() => remove(interview.id)}>
+                              Delete
+                            </button>
+                          ) : null}
                         </RowActions>
-                      ) : (
-                        <span className="text-xs text-ink-500">Admin view only</span>
-                      )}
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
+                    {codeFor === interview.id ? (
+                      /* An expanded row and not a route, because an interview has no per-record page
+                         on the web — `lib/workshopCodeLookup.ts` says so in as many words and lands a
+                         scanned Q code on this list. This is the closest thing a designer opens for
+                         ONE interview, so it is where the code for one interview belongs; putting it
+                         anywhere else would mean a scan and a print disagreed about where an
+                         interview lives. Android shows the same card on its interview edit screen
+                         (`RecordCodeSection(..., QUESTIONNAIRE, ...)` in MainActivity). */
+                      <tr className="bg-surface-50">
+                        <td className="px-4 py-3" colSpan={7}>
+                          <RecordCodeCard recordType="questionnaire" id={interview.id} title={interview.title} />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

@@ -45,7 +45,20 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "ruff>=0.4.0",
+    # BOUNDED, and the lower bound is not the point — the UPPER one is. `.github/workflows/
+    # checks.yml` now FAILS THE BUILD on a ruff finding, so this line decides which linter's
+    # opinion can turn main red. `select` below pins the rule FAMILIES; it does not pin their
+    # contents, and ruff adds new checks to existing families in ordinary minor releases — so
+    # under `>=0.4.0` a release nobody in this repository asked for could redden a pull request
+    # that changed no Python at all, which is the same complaint the `[tool.ruff.lint]` header
+    # below makes about the gate moving on its own. The floor is 0.16.1 because that is the
+    # version the baseline in `[tool.ruff.lint.per-file-ignores]` was measured with, and a lower
+    # one would report a different set.
+    #
+    # TO BUMP: raise both bounds, run `ruff check .` from backend/, and fold whatever the new
+    # release finds into the baseline (or fix it) IN THAT COMMIT. That is a deliberate, reviewable
+    # change with the findings in its diff, rather than a surprise on somebody else's branch.
+    "ruff>=0.16.1,<0.17",
     "pytest>=8.2.0",
     # LOAD-BEARING, AND IT WAS MISSING. `asyncio_mode = "auto"` below is what lets the 118
     # `async def test_` functions in tests/ run at all, and that setting is inert without this
@@ -221,13 +234,150 @@ ignore = [
     "E501",
 ]
 
+# ─── noqa CODES THAT NAME A RULE THIS PROJECT DELIBERATELY DOES NOT SELECT ──────────────
+# RUF100 flags a `# noqa: X` as dead when X is not enabled, and it is right: those directives
+# suppress nothing. It is listed in `select` above for exactly that reason and it stays there. The
+# one hit it finds outside this list is a real dead suppression worth catching, and it is NOT
+# excused here — it is recorded in the dated per-file baseline below, on
+# app/api/routes/design_workshops.py, so clearing it is a one-line deletion from that entry once
+# somebody rewrites the comment at :516 by hand. Be clear-eyed about what that entry costs while
+# it stands: it hides EVERY RUF100 in that route module — 4,078 lines, measured — future dead
+# suppressions included. `external` costs nothing of the kind: it only ever excuses the two codes
+# named on it, anywhere they appear.
+#
+# These two are different, and the difference is what the fix does to the file. MEASURED
+# 2026-08-22 on a scratch copy: `ruff check --select RUF100 --fix` does not strip the `noqa:`
+# token and leave the comment, it DELETES THE WHOLE COMMENT. At app/services/user_ai_keys.py the
+# three directives carry one sentence spread across three trailing comments — "one probe per
+# provider, deliberately shared with the Settings hub" — and the fix removed every word of it;
+# at tests/test_questionnaire_write_path_access.py it removed "mirrors the real signature".
+# SLF001 and ANN001 are both in the "deliberately NOT selected" list above, so nothing about
+# those four sites is going to change; the choice is between keeping a directive that documents
+# which rule the author had in mind and losing a paragraph of house prose to a lint autofix.
+#
+# `external` is ruff's own knob for "a code some other tool owns, leave it alone". Stretching it
+# to cover ruff codes this project chose not to enable is a small stretch, and it is stated here
+# rather than hidden: if either family is ever added to `select`, DELETE THE MATCHING ENTRY —
+# otherwise the directives would silently be doing nothing again with nothing left to say so.
+external = ["SLF001", "ANN001"]
+
 [tool.ruff.lint.isort]
 # This tree already writes an aliased member inside the block it belongs to:
 #     from app.services.record_fields import (MEDIA_COLOR, cell as _cell, info_panel, ...)
 # isort's default (combine-as-imports = false) pulls every aliased member out into a statement of
 # its own, which turns that one block into EIGHT `from app.services.record_fields import (...)`
 # statements in app/api/routes/data_browser.py alone. Same imports, unreadable diff.
+#
+# IT ALSO RUNS THE OTHER WAY, WHICH IS WHAT SURPRISES PEOPLE READING AN I001 AUTOFIX: two
+# separate aliased imports of the SAME module get MERGED into one statement. Measured
+# 2026-08-22 on a scratch copy of tests/test_entry_provenance.py,
+# `ruff check --select I001 --fix` turned
+#     from app.services import design_workshops as dw
+#     from app.services import entry_provenance as ep
+# into `from app.services import design_workshops as dw, entry_provenance as ep`. That is
+# semantics-preserving and it is this setting working as asked, but "I001 only reorders" is
+# not a safe assumption when clearing the I001 entries in the baseline below: read the diff.
 combine-as-imports = true
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# THE BASELINE — WRITTEN 2026-08-22, AND MEANT TO SHRINK TO NOTHING
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# Every entry below is a finding that is REAL and is NOT FIXED. None of them is a rule this
+# project disagrees with — those are argued out in `ignore` above and are permanent. These are
+# thirty-seven live findings in thirteen files, listed one file at a time so that removing one is a
+# one-line diff and adding one has to be justified in review.
+#
+# WHY A BASELINE AT ALL, rather than fixing them or turning the rules off. The gate in
+# `.github/workflows/checks.yml` had to be able to fail the build on the day it landed, and a gate
+# that is red the moment it ships is a gate somebody disables within the week. The two dishonest
+# ways out were both refused: dropping the rules from `select` would have thrown away the checks
+# everywhere else in the tree to excuse thirteen files, and `--exit-zero` (or the
+# `continue-on-error: true` that .github/workflows/android-build.yml puts on its own lint step, for
+# the same reason and with the same honesty) would have shipped a gate that cannot go red and so
+# cannot be turned green either. So the findings are named instead.
+#
+# HOW TO USE IT. Fix the finding, delete the entry, in one commit. Do not extend an entry to cover
+# a NEW finding of the same rule in the same file — that is how a baseline becomes a permanent
+# `ignore` with a date on it. A per-file entry does hide later hits of that rule in that file,
+# which is the honest cost of the mechanism and the reason each list is as short as it is.
+#
+# TWO REASONS APPEAR BELOW, AND THEY ARE NOT THE SAME REASON.
+#   (a) IN FLIGHT. Measured with `git status --porcelain` at the moment this landed, the file was
+#       modified in the working tree by a concurrent wave. Reordering an import block underneath
+#       an agent that has the file open loses one of the two edits, and app/services/design_workshops.py
+#       was left alone on instruction for exactly that reason. NONE OF THESE IS SOMEBODY ELSE'S NEW
+#       MISTAKE: every finding marked (a) was re-measured against the COMMITTED copy of its file —
+#       `git show HEAD:<path>` written out to a scratch file and linted there — and is present in
+#       that copy too, so the in-flight edits did not introduce any of them. These entries should
+#       die as soon as somebody runs the autofix on a quiet tree; `ruff check --select I001
+#       --fix .` from backend/ is the whole job for the I001s.
+#
+#       AND THE DIRTY TREE ADDS NOTHING BEYOND WHAT IS LISTED. RE-MEASURED 2026-08-22 after review,
+#       on a clean export of HEAD (`git archive HEAD backend`, linted with this same pyproject but
+#       `lint.per-file-ignores={}` and `lint.external=[]`): HEAD carries the same 51 findings, and
+#       HEAD's app/services/design_workshops.py carries exactly ONE of them — the I001 at line 32
+#       that the entry below already names. So no entry here is pre-exempting somebody's in-flight
+#       mistake, and none of them disappears when the working tree is committed.
+#   (b) NOT MECHANICAL. The rule is right and the fix is a decision about behaviour, in a file this
+#       group does not own. Named individually below rather than waved at.
+[tool.ruff.lint.per-file-ignores]
+
+# (a) in flight, and (b) for RUF100: the directive is `# noqa: BLE001 - the storage message is not
+# for the caller`, on an `except Exception` that BLE001 does not flag at all — MEASURED with
+# `ruff check app/api/routes/design_workshops.py --select BLE --ignore-noqa`, which reports nothing
+# in the whole file, because the handler re-raises as a 502 rather than swallowing. So the
+# suppression really is dead and RUF100 is right. But its autofix deletes the sentence along with
+# the directive (measured; see the `external` note above), so this one wants a hand that keeps the
+# words, from whoever owns the file.
+"app/api/routes/design_workshops.py" = ["I001", "RUF100"]
+
+# (a) in flight; both blocks are unsorted at HEAD as well.
+"app/services/design_workshops.py" = ["I001"]
+"app/services/questionnaire_forms.py" = ["I001"]
+
+# (a) in flight, and (b): FURB162 is right that `fromisoformat(s.replace("Z", "+00:00"))` is
+# redundant on 3.11+, which is the floor `requires-python` sets. Deleting the replace is still a
+# parsing change on a date-of-birth string that arrives from the wire, and it belongs to whoever is
+# in that function.
+"app/services/records.py" = ["FURB162"]
+
+# (b) SIM113 wants `enumerate()` for the `printed` counter in the annexure loop. That loop `break`s
+# on truncation and flushes per section label, so the counter and the iteration index are not the
+# same number by accident — swapping them is a rewrite of the truncation logic, not a lint fix.
+"app/services/report_questionnaires.py" = ["SIM113"]
+
+# (b) DTZ001: naive `datetime(...)` literals standing in for Prisma columns in fixtures. Giving them
+# a tzinfo changes what the fixture asserts about a stored stamp, in the suite that guards carry
+# fidelity. C408: `dict(...)` row builders. Both are the test author's to change, not this group's.
+"tests/test_entry_provenance.py" = ["C408", "DTZ001"]
+
+# (a) in flight AND (b), all four families, in the carry-fidelity suite specifically. PLW2901 is the
+# `for line in ...: line = line.strip()` idiom, which reads fine and rewrites to a second name.
+"tests/test_reference_carry.py" = ["I001", "C408", "DTZ001", "PLW2901"]
+
+# (b) RUF005 prefers `[*a, b]` over `a + [b]`. Equivalent, and its fix is marked unsafe; a test
+# assembling an expected list is where the clearer of the two spellings is a judgement call.
+"tests/test_entry_provenance_readers.py" = ["RUF005"]
+"tests/test_process_step_authorization.py" = ["RUF005"]
+
+# (b) RUF015 prefers `next(...)` over `[... for ...][0]`. Same value, different failure when the
+# comprehension is empty — IndexError today, StopIteration after. In a test, that message matters.
+"tests/test_record_media_urls.py" = ["RUF015"]
+
+# (b) PLW0108 fires twice on `ids=lambda v: str(v)` in a `@pytest.mark.parametrize`. `ids=str`
+# would satisfy the rule and is not obviously the same thing to read at a parametrize call, and
+# these ids name the rows of the hydration table in the test report. PLW2901 is
+# `row = dict(row, _entryId=...)` rebinding the loop variable — deliberate, and a second name
+# for it would have to be threaded through the rest of the loop body.
+"tests/test_report_carry_forward.py" = ["PLW0108", "PLW2901"]
+
+# (b) RUF007 prefers `itertools.pairwise` over `zip(xs, xs[1:])`. A readability call in an
+# assertion about successive pairs.
+"tests/test_report_questionnaire_annexure.py" = ["RUF007"]
+
+# (b) FURB162 as for app/services/records.py, on two lines that parse a stamp back out of an API
+# response.
+"tests/test_workshop_access_rerequest.py" = ["FURB162"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

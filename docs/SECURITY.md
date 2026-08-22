@@ -390,8 +390,50 @@ across two workshops. Handling, in `backend/app/services/artisan_identity.py`:
 | `mask_aadhaar` | renders `XXXX XXXX 9012` for **every shared surface**: the Data Browser, the `.xlsx` report, CSV exports |
 | `is_masked_aadhaar` | recognises a mask posted back unchanged from an edit form, so saving without touching the field is a no-op rather than a validation error |
 
-Anything shorter than a full number is masked **entirely** rather than partially revealed, so a
-malformed legacy value cannot leak more than a well-formed one.
+**The exact threshold, because this paragraph used to overstate it (corrected 2026-08-22).** It read
+"anything shorter than a full number is masked **entirely**". The real rule is **shorter than
+FOUR**: all three ports — `mask_aadhaar`, `frontend/lib/identityCardText.ts`'s `maskIdentityNumber`
+and Kotlin's `ArtisanIdentity.mask` — branch on `< 4`, so a value of four to eleven digits reveals
+its last four exactly as a full one does. A six-digit malformed legacy value discloses four of its
+six digits. Whether any such value exists is a database question, not a code one.
+
+`ArtisanIdentity.mask`'s KDoc gets the *threshold* right — "anything shorter than four digits" —
+and then repeats the same false justification beside it, "a malformed value can never leak more than
+a well-formed one"; `mask_aadhaar`'s docstring and `maskIdentityNumber`'s restate the overstatement
+whole. So the divergence is between the *comments* and the code rather than between the three
+implementations, which agree on the `< 4` branch — they do **not** agree on what they count before
+applying it, which is the Pehchan note further down. Do not re-broaden the sentence here without
+changing the three functions in the same commit: they are a deliberate three-way port, and fixing
+one of them alone is how a port stops being one.
+
+**Only two of the three ports are reachable in the product, and the third is kept on purpose
+(recorded 2026-08-22).** `mask_aadhaar` runs inside every encoded response, and
+`ArtisanIdentity.mask` renders the handset's Aadhaar detail row through the file-private
+`maskAadhaar` wrapper in `MainActivity.kt`. The web's `maskIdentityNumber` has **no production
+caller**: `frontend/e2e/identity-card-web-unit.spec.ts` is the only file that imports it, because the
+browser is never handed a number that still needs masking — the server masks before the value is on
+the wire, and the edit form's concern is the opposite direction, `isMaskedIdentityNumber` in
+`components/forms/AadhaarField.tsx`, recognising a mask posted back.
+
+**It was not deleted, and the reason is worth the paragraph.** An audit brief described the dead
+helper as encoding a *weaker* rule than the live redaction. Run against both real functions, it does
+not. On an all-digit Aadhaar the two are identical. On anything else they diverge, because
+`normalize_aadhaar` removes only whitespace and dashes while `NON_DIGITS` reduces the value to
+digits — and the divergence does not run one way:
+
+| Input | `mask_aadhaar` (live) | `maskIdentityNumber` (dead) |
+|---|---|---|
+| `123456789012` | `XXXX XXXX 9012` | `XXXX XXXX 9012` |
+| `PMVK12` | `XXXX XXXX VK12` | `XXXX XXXX XXXX` |
+| `12A345` | `XXXX XXXX A345` | `XXXX XXXX 2345` |
+
+Each reveals four characters; on a mixed value they are not the *same* four, and the dead one can
+surface a digit the live one masked while masking a letter the live one showed. Neither dominates,
+and no input made the dead helper reveal more than four. **A helper with no caller leaks nothing, so
+the disposition is: keep it, and pin the disagreement here.** The real hazard is the future edit
+that gives it a caller — specifically one that hands it a Pehchan card number, which is uppercase
+alphanumeric, and would then get a mask the server would never have produced. Anyone wiring it up
+owes that reading first.
 
 **Masking is applied at the encoder, not at the call sites.** It used to be per-call-site, and a
 surface that forgot to call it leaked the full number — which is exactly what happened. Masking at
@@ -401,7 +443,31 @@ Callers that legitimately need the full value read the raw column. Nothing write
 
 `pehchanCardNumber` (the PM Vishwakarma artisan ID) is an ordinary government reference number,
 normalised to uppercase alphanumerics, `@unique`, required exactly when the artisan says they hold
-one. It is not masked.
+one. ~~It is not masked.~~
+
+**CORRECTED 2026-08-22 — it IS masked, and has been for some time.** This sentence was wrong in the
+safe direction, which is the direction that gets re-derived rather than reported: a reader who
+believes the number crosses in the clear either widens something to "restore" a leak that is not
+there, or plans an audit that has already been done. The Pehchan number goes through the same
+encoder rule as Aadhaar, on the same three surfaces:
+
+| Where | What runs |
+|---|---|
+| The record encoder | `mask_identity_number` in `backend/app/services/records.py`, which reuses `mask_aadhaar` verbatim — the rule is "keep the last four", and the card it is applied to does not change it |
+| The record field registry | `backend/app/services/record_fields.py` declares the Pehchan field as `mask_aadhaar(a.pehchanCardNumber)`, beside the Aadhaar field, so every surface built from the registry is masked by construction |
+| The design-workshop stage hydration | `backend/app/services/design_workshops.py` fills the mirrored participant field with `mask_identity_number(r.pehchanCardNumber)`, which is why an unmasked PM Vishwakarma ID never reaches a grantee's view of a workshop stage |
+
+**One consequence of reusing the Aadhaar masker is worth knowing before anybody "improves" it:**
+`mask_aadhaar` normalises through `normalize_aadhaar`, whose `_SEPARATORS` pattern removes
+whitespace and dashes and **nothing else** — it does not reduce the value to digits. A Pehchan
+number is uppercase alphanumeric, so its letters survive normalisation, count towards the
+four-character floor, and can appear in the revealed tail: `XXXX XXXX` plus the last four
+*characters* of the card, letters included. That is the same "keep the last four" rule the table
+above states, applied to a string that is not all digits — not a second rule, and not a leak. It is
+recorded here because a reader who assumes digits-only will read the code as broken and is likely
+to "fix" it in the direction that reveals more. The two client ports normalise differently
+(`NON_DIGITS` on the web, `normalizeAadhaar` on the handset); neither masks a Pehchan number,
+because the Pehchan mask happens on the server before the value is ever sent.
 
 ### 4A.2 Everything else about a person
 

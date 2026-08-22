@@ -20,9 +20,29 @@
  *
  * So the dialog is large, and it should be. What it saves is not typing — it is the designer's
  * place in the stage.
+ *
+ * ── THERE ARE NOW TWO HOSTS, AND THE MOUNT IS SHARED RATHER THAN COPIED ───────────────────────
+ * A design-workshop stage also EMBEDS these forms in the page itself, for the four entities that
+ * MIRROR a repository record — the record page copied over as it is, with the stage's own questions
+ * added to the bottom of the same list of fields (`StageRecordEmbed`, which enumerates the four it
+ * ships and the four mappings it refuses, each with its reason). That host is not a dialog: it has no overlay, no close, and it
+ * renders the form inline underneath a picker that still works exactly as it does everywhere else.
+ *
+ * What the two hosts share is everything ABOUT MOUNTING THE RIGHT FORM: which of the four
+ * components answers a `refModel`, fetching the record for the edit case and not mounting until it
+ * is in hand, refusing to seed a parent over an existing record, and saying so out loud when the
+ * fetch fails. That is {@link InlineRecordForm}, and it lives here rather than in the new host
+ * because this is where every one of those rules was learnt. What differs is only the CHROME around
+ * it — a `FieldDialog` here, a panel section there — and the fact that the dialog closes itself on
+ * a save while the embed stays exactly where it is.
+ *
+ * A SECOND COPY OF THAT MOUNT IS THE FAILURE MODE THIS FILE ALREADY HAS A HEADER ABOUT: the four
+ * host callbacks were invented four times, once per form, with three of the four missing at least
+ * one, which is why `forms/inlineRecordHost.ts` exists. Two copies of the host would repeat it one
+ * level up.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { FieldDialog } from "@/components/dialogs";
 import { apiFetch } from "@/lib/api";
@@ -93,7 +113,207 @@ const INLINE_MODEL_PATH: Record<InlineCreatableModel, string> = {
   Process: "processes"
 };
 
-type CreatedRecord = Artisan | ProductDocumentation | ToolDocumentation | ProcessRecord;
+/**
+ * Any of the four records these forms save.
+ *
+ * EXPORTED because the embed host has to name the thing `onCreated` hands it, and a host that
+ * declared its own union would be a second list of which models are inline-creatable — the exact
+ * drift {@link INLINE_CREATABLE} is a single `as const` to prevent.
+ */
+export type InlineCreatedRecord = Artisan | ProductDocumentation | ToolDocumentation | ProcessRecord;
+
+/** The name this file has always used for it, kept so the diff below stays readable. */
+type CreatedRecord = InlineCreatedRecord;
+
+
+/**
+ * THE RECORD FORM ITSELF, WITH NO CHROME AROUND IT — the part both hosts need and neither may copy.
+ *
+ * Mounts whichever of `ArtisanForm`, `ProductForm`, `ToolForm` and `ProcessForm` answers `model`,
+ * with the host callbacks that stop it navigating. Everything here was learnt by this file the
+ * expensive way and is enumerated so the second host inherits it rather than rediscovering it:
+ *
+ *  * **The record is fetched for an edit, and the form is not mounted until it is in hand.**
+ *    Mounting first and letting `initial` arrive later leaves a designer typing into boxes that are
+ *    about to be overwritten by the fetch.
+ *  * **A failed fetch is NAMED.** An edit surface that opens empty reads as the record having been
+ *    lost, and the designer's next move is to create a duplicate of it.
+ *  * **The seed is CREATE-ONLY**, enforced on this line and not at the call sites — see
+ *    `seedForForm` below for the whole argument and for why the forms cannot be the guard.
+ *  * **`ProcessForm` takes `onDone` as well**, because it is embedded on its own page too. Both it
+ *    and `onCancel` get the host's cancel: they are the paths where there is no record to report.
+ *
+ * WHAT IT DELIBERATELY DOES NOT DO: close, dismiss, navigate, or decide anything about layout. A
+ * dialog closes itself on a save; the stage embed stays exactly where it is, because the row it
+ * belongs to is still being filled in. Folding a close in here would make the embed's `onCreated`
+ * the one callback that had to undo it.
+ */
+export function InlineRecordForm({
+  model,
+  recordId,
+  seed,
+  footerFields,
+  onCreated,
+  onCancel,
+  onQueued,
+  onUseExisting
+}: {
+  model: InlineCreatableModel;
+  /** Edit this record instead of creating one. See {@link InlineRecordDialog.recordId}. */
+  recordId?: string;
+  /** What the surface that opened this form already knows — see {@link InlineHostSeed}. */
+  seed?: InlineHostSeed;
+  /**
+   * The host's own fields, rendered as the LAST thing inside the `<form>`, above its buttons.
+   *
+   * Passed straight through to whichever form is mounted. This component has no opinion about what
+   * is in it and never reads it — see `InlineRecordHostProps.footerFields`, which is where the slot
+   * and its one rule (nothing here is submitted with the record unless the host gives it a `name`)
+   * are written down.
+   */
+  footerFields?: ReactNode;
+  /** The saved record — on an update as much as on a create. See {@link InlineRecordDialog.onCreated}. */
+  onCreated: (record: CreatedRecord) => void;
+  /** Back out without saving. Required: without it the forms fall back to `router.back()`. */
+  onCancel: () => void;
+  /** The save went into the offline outbox: no record, no id, nothing to link. */
+  onQueued?: () => void;
+  /** The artisan the duplicate check found — {@link UseExistingArtisan}. `Artisan` only. */
+  onUseExisting?: UseExistingArtisan;
+}) {
+  const noun = INLINE_MODEL_NOUN[model];
+  const editing = Boolean(recordId);
+
+  /**
+   * THE SEED IS CREATE-ONLY, AND THIS IS WHERE THAT IS ENFORCED.
+   *
+   * The rule is stated on {@link InlineRecordDialog}'s `seed` prop — seeding a parent over an
+   * existing record would rewrite a link nobody touched — and it was enforced NOWHERE IN THIS FILE:
+   * all three forms were handed `seed` unconditionally, and the only gate in the tree was one call
+   * site's `seed={inlineDialog.mode === "create" ? seed : undefined}` in `StageReferenceSelect`.
+   * The multipicker beside it passes a bare `seed={seed}` and is harmless only because it never
+   * passes a `recordId`; the day it grows one — or any other host opens a form on a record — the
+   * rule would be gone with no line of code having changed. The stage embed is exactly that other
+   * host, and it mounts in EDIT mode over any row that is already linked, so the line now carries
+   * real traffic rather than standing by for it.
+   *
+   * THE FORMS CANNOT BE THE GUARD, which is why it has to be this line. They resolve the seed with
+   * `??`, not with an is-edit test: `initial?.artisanId ?? seed?.artisanId` and
+   * `initialWorkshopId: initial?.workshopId ?? seed?.workshopId`. On a record whose artisan or
+   * workshop column is NULL — exactly the row this lane exists to let a designer fix without
+   * abandoning the stage — `??` falls straight through to the seed, the form submits a parent the
+   * designer never chose, and `useWorkshopSelection` marks it `touched` so the carry banner does
+   * not mention it either.
+   */
+  const seedForForm = editing ? undefined : seed;
+
+  /** The full record, for the edit case. Null while it is being read. */
+  const [initial, setInitial] = useState<CreatedRecord | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!recordId) {
+      setInitial(null);
+      setLoadError(null);
+      return;
+    }
+    let cancelled = false;
+    setInitial(null);
+    setLoadError(null);
+    apiFetch<CreatedRecord>(`/${INLINE_MODEL_PATH[model]}/${recordId}`)
+      .then((record) => {
+        if (!cancelled) setInitial(record);
+      })
+      .catch((err) => {
+        // Named rather than silent: an edit surface that opens empty reads as the record having
+        // been lost, and the designer's next move is to create a duplicate.
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : `Unable to open this ${noun}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [recordId, model, noun]);
+
+  return (
+    <>
+      {/*
+        Each form is mounted with the host callbacks that stop it navigating — `onCreated` for a
+        save, `onCancel` for the button designers actually press to back out, `onQueued` for a save
+        that went to the outbox, and (on the artisan) `onUseExisting` for the duplicate prompt. All
+        four used to end in `router.back()` or `router.push()`, and neither host is a route: every
+        one of them popped the real history entry and abandoned the stage the designer was standing
+        in. See `forms/inlineRecordHost`.
+      */}
+      {loadError ? (
+        <p className="rounded-md border border-error-500/30 bg-error-50 px-3 py-2 text-sm text-error-700">{loadError}</p>
+      ) : null}
+
+      {editing && !initial && !loadError ? (
+        <p className="px-1 py-6 text-sm text-ink-500">Opening this {noun}…</p>
+      ) : null}
+
+      {/*
+        The form is only mounted once the record is IN HAND for an edit. Mounting it earlier and
+        letting `initial` arrive later would leave the designer typing into boxes that are about to
+        be overwritten by the fetch.
+      */}
+      {(!editing || initial) && !loadError ? (
+        <>
+          {model === "Artisan" ? (
+            <ArtisanForm
+              initial={(initial as Artisan) ?? undefined}
+              seed={seedForForm}
+              footerFields={footerFields}
+              onCreated={onCreated}
+              onCancel={onCancel}
+              onQueued={onQueued}
+              onUseExisting={onUseExisting}
+            />
+          ) : null}
+          {model === "ProductDocumentation" ? (
+            <ProductForm
+              initial={(initial as ProductDocumentation) ?? undefined}
+              seed={seedForForm}
+              footerFields={footerFields}
+              onCreated={onCreated}
+              onCancel={onCancel}
+              onQueued={onQueued}
+            />
+          ) : null}
+          {model === "ToolDocumentation" ? (
+            <ToolForm
+              initial={(initial as ToolDocumentation) ?? undefined}
+              seed={seedForForm}
+              footerFields={footerFields}
+              onCreated={onCreated}
+              onCancel={onCancel}
+              onQueued={onQueued}
+            />
+          ) : null}
+          {model === "Process" ? (
+            /*
+              `onCreated` LIKE ITS THREE SIBLINGS, which it did not used to have.
+              `ProcessForm` takes `onDone`/`onCancel` as well because it is embedded on its own page
+              too, and both are still handed the host's cancel for the paths where there is no record
+              to report — the designer cancelling, and an offline save queued with no server id yet.
+              What is new is that a process saved ONLINE now comes back and gets selected and
+              hydrated, the way an artisan, a product and a tool always did. Before that, the button
+              offering to "create this as a new process" made one and left the picker empty.
+            */
+            <ProcessForm
+              initial={(initial as ProcessRecord) ?? undefined}
+              footerFields={footerFields}
+              onDone={onCancel}
+              onCancel={onCancel}
+              onCreated={onCreated}
+              onQueued={onQueued}
+            />
+          ) : null}
+        </>
+      ) : null}
+    </>
+  );
+}
 
 export function InlineRecordDialog({
   open,
@@ -130,8 +350,9 @@ export function InlineRecordDialog({
    *
    * The same argument as creating: a designer who spots that the artisan's village is wrong while
    * filling stage 13 should not have to abandon the stage to fix one field. The record is fetched
-   * here rather than passed in because the picker holds an OPTION — an id, a label and a sublabel
-   * — and a form seeded from that would blank every field the option does not carry.
+   * by {@link InlineRecordForm} rather than passed in because the picker holds an OPTION — an id, a
+   * label and a sublabel — and a form seeded from that would blank every field the option does not
+   * carry.
    */
   recordId?: string;
   onClose: () => void;
@@ -163,57 +384,26 @@ export function InlineRecordDialog({
   const noun = INLINE_MODEL_NOUN[model];
   const editing = Boolean(recordId);
 
-  /**
-   * THE SEED IS CREATE-ONLY, AND THIS IS WHERE THAT IS ENFORCED.
-   *
-   * The rule is stated on {@link InlineRecordDialog}'s `seed` prop above — seeding a parent over an
-   * existing record would rewrite a link nobody touched — and it was enforced NOWHERE IN THIS FILE:
-   * all three forms were handed `seed` unconditionally, and the only gate in the tree was one call
-   * site's `seed={inlineDialog.mode === "create" ? seed : undefined}` in `StageReferenceSelect`.
-   * The multipicker beside it passes a bare `seed={seed}` and is harmless only because it never
-   * passes a `recordId`; the day it grows one — or any other host opens this dialog on a record —
-   * the rule would be gone with no line of code having changed.
-   *
-   * THE FORMS CANNOT BE THE GUARD, which is why it has to be this line. They resolve the seed with
-   * `??`, not with an is-edit test: `initial?.artisanId ?? seed?.artisanId` and
-   * `initialWorkshopId: initial?.workshopId ?? seed?.workshopId`. On a record whose artisan or
-   * workshop column is NULL — exactly the row this lane exists to let a designer fix without
-   * abandoning the stage — `??` falls straight through to the seed, the form submits a parent the
-   * designer never chose, and `useWorkshopSelection` marks it `touched` so the carry banner does
-   * not mention it either.
-   *
-   * So the ternary at the single picker and the bare prop at the multipicker are now belt and
-   * braces over this, rather than the whole of it.
-   */
-  const seedForForm = editing ? undefined : seed;
+  /*
+    NO "TELL THE HOST" HOOK HERE, AND ITS ABSENCE IS THE FIX RATHER THAN AN OVERSIGHT.
 
-  /** The full record, for the edit case. Null while it is being read. */
-  const [initial, setInitial] = useState<CreatedRecord | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+    This dialog used to report a save into an `InlineRecordSaved` context so that
+    `StageRecordEmbed` — which mounts the SAME record's page in edit mode below the picker that
+    opens this — could remount over the record as it now stood. That was a recovery from a second
+    editor existing at all, and it could throw away typing nobody had saved. The picker drawn
+    directly above that page no longer offers its pencil while the page is mounted
+    (`StageReferenceSelect.recordFormMountedOver`), so on that picker there is nothing left to
+    report.
 
-  useEffect(() => {
-    if (!open || !recordId) {
-      setInitial(null);
-      setLoadError(null);
-      return;
-    }
-    let cancelled = false;
-    setInitial(null);
-    setLoadError(null);
-    apiFetch<CreatedRecord>(`/${INLINE_MODEL_PATH[model]}/${recordId}`)
-      .then((record) => {
-        if (!cancelled) setInitial(record);
-      })
-      .catch((err) => {
-        // Named rather than silent: an edit dialog that opens empty reads as the record having
-        // been lost, and the designer's next move is to create a duplicate.
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : `Unable to open this ${noun}`);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, recordId, model, noun]);
-
+    ONE CASE IS STILL OPEN, AND A HOOK HERE WOULD NOT CLOSE IT — said so that the paragraph above
+    is not read as "no second editor anywhere". Stage TRADITIONAL_PROCESS_BASELINE's `processStep`
+    rows carry their own picker at the same Process the stage-5 singleton has a form open over;
+    they are refused an embed of their own (`StageRecordEmbed`'s `NOT_EMBEDDED`, entry
+    `processStep.processRef`, which sets out the whole hazard), so nothing hands them an id to
+    compare and the pencil is still drawn. A report from here would arrive at a component in a
+    different entity's subtree; the stage page is the only place that holds both, so that is where
+    the fix goes when it is made.
+  */
   const finish = useCallback(
     (record: CreatedRecord) => {
       onCreated(record);
@@ -272,76 +462,24 @@ export function InlineRecordDialog({
       surfaceClassName="max-w-4xl"
     >
       {/*
-        Each form is mounted with NO `initial`, so it is in create mode, and with the four host
-        callbacks that stop it navigating — `onCreated` for a save, `onCancel` for the button
-        designers actually press to back out, `onQueued` for a save that went to the outbox, and (on
-        the artisan) `onUseExisting` for the duplicate prompt. All four used to end in `router.back()`
-        or `router.push()`, and this dialog is not a route: every one of them popped the real history
-        entry and abandoned the stage the designer was standing in. See `forms/inlineRecordHost`.
-      */}
-      {loadError ? (
-        <p className="rounded-md border border-error-500/30 bg-error-50 px-3 py-2 text-sm text-error-700">{loadError}</p>
-      ) : null}
+        NO `open` GUARD HERE, AND THAT IS THE PRE-EXISTING BEHAVIOUR RATHER THAN AN OVERSIGHT.
+        `FieldDialog` renders its children inside an `AnimatePresence` that unmounts them once the
+        close transition has run, so this form's state is destroyed on close and rebuilt — including
+        a fresh fetch — the next time the dialog opens. Adding `open &&` here would blank the panel
+        during the 140 ms fade instead, which is a visible flicker bought for nothing.
 
-      {editing && !initial && !loadError ? (
-        <p className="px-1 py-6 text-sm text-ink-500">Opening this {noun}…</p>
-      ) : null}
-
-      {/*
-        The form is only mounted once the record is IN HAND for an edit. Mounting it earlier and
-        letting `initial` arrive later would leave the designer typing into boxes that are about to
-        be overwritten by the fetch.
+        NO `footerFields` EITHER: a dialog has no questions of its own to add. That slot exists for
+        the stage embed, which really does ask a few things the repository record does not hold.
       */}
-      {(!editing || initial) && !loadError ? (
-        <>
-      {model === "Artisan" ? (
-        <ArtisanForm
-          initial={(initial as Artisan) ?? undefined}
-          seed={seedForForm}
-          onCreated={finish}
-          onCancel={onClose}
-          onQueued={reportQueued}
-          onUseExisting={onUseExisting ? adoptExisting : undefined}
-        />
-      ) : null}
-      {model === "ProductDocumentation" ? (
-        <ProductForm
-          initial={(initial as ProductDocumentation) ?? undefined}
-          seed={seedForForm}
-          onCreated={finish}
-          onCancel={onClose}
-          onQueued={reportQueued}
-        />
-      ) : null}
-      {model === "ToolDocumentation" ? (
-        <ToolForm
-          initial={(initial as ToolDocumentation) ?? undefined}
-          seed={seedForForm}
-          onCreated={finish}
-          onCancel={onClose}
-          onQueued={reportQueued}
-        />
-      ) : null}
-      {model === "Process" ? (
-        /*
-          `onCreated` LIKE ITS THREE SIBLINGS, which it did not used to have.
-          `ProcessForm` takes `onDone`/`onCancel` as well because it is embedded on its own page too,
-          and both are still handed `onClose` for the paths where there is no record to report — the
-          designer cancelling, and an offline save that is queued with no server id yet. What is new
-          is that a process saved ONLINE now comes back here and gets selected and hydrated, the way
-          an artisan, a product and a tool always did. Before this, the button offering to "create
-          this as a new process" made one and left the picker empty.
-        */
-        <ProcessForm
-          initial={(initial as ProcessRecord) ?? undefined}
-          onDone={onClose}
-          onCancel={onClose}
-          onCreated={finish}
-          onQueued={reportQueued}
-        />
-      ) : null}
-        </>
-      ) : null}
+      <InlineRecordForm
+        model={model}
+        recordId={recordId}
+        seed={seed}
+        onCreated={finish}
+        onCancel={onClose}
+        onQueued={reportQueued}
+        onUseExisting={onUseExisting ? adoptExisting : undefined}
+      />
     </FieldDialog>
   );
 }

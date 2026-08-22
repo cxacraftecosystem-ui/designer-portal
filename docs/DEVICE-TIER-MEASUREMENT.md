@@ -379,20 +379,41 @@ The reservation is real and it is exactly 128 MiB. On this handset it is small b
 on a phone at the end of a workshop day with 200 MB left it is most of what a naive `freeBytes` would
 have promised. `blockSize = 4096`, `blockCount = 28,321,280`, `availableBlocks = 10,070,225`.
 
-## What `dwRecommendTiers` actually answers on this handset
+## What `dwRecommendTiers` answered on this handset — the 2026-08-12 probe, before the AAR landed
 
 Every combination was run: two runtime statuses × three connections. **The answer is the same in all
-six**, which is itself the finding — the fleet's phone reaches today's refusals by the documented
+six**, which is itself the finding — the fleet's phone reaches that day's refusals by the documented
 route rather than by accident.
 
-| | |
+**CORRECTED 2026-08-22: THIS TABLE IS A DATED READING AND IT WAS BEING READ AS THE PRESENT TENSE.**
+It was taken on the morning of 2026-08-12; the sherpa-onnx AAR was vendored that evening, and the
+two tier rows have not merely gone stale, they have **swapped**. Today, on the same handset:
+
+- **`tier1`** is no longer `None(NO_RUNTIME_IN_THIS_BUILD)`. `DW_TIER1_RUNTIME_PRESENT` is `true`, so
+  `dwTier1Offer` takes its installed branch and answers from `DW_TIER1_CATALOGUE` — one measured
+  row — which on a phone with the room for it is a real `Available`, and otherwise whatever
+  `dwPlanFits` says (`NOT_ENOUGH_FREE_RAM_NOW`, `DEVICE_TOO_SMALL`, and the rest).
+- **`tier2`** is no longer `None(NO_MEASURED_MODEL)`: it is `None(NO_RUNTIME_IN_THIS_BUILD)`.
+  `dwTier2Offer` checks `catalogue.isEmpty()` FIRST and `DW_TIER2_CATALOGUE` now delegates to
+  `DW_TIER2_PLANS`, two weighed rows, so the next line — `DW_TIER2_RUNTIME_PRESENT`, still `false` —
+  is the one that answers. The pinning table at the foot of this document already said this from
+  2026-08-13; this section did not.
+- `dwAsrMayLoad(production)`, `dwAsrOffer` and `dwTierDownloadMayBeOffered` describe the **opt-in
+  download** path, which is unreachable in a build that bundles the engine (*THE FINDING THAT
+  INVALIDATES A DESIGN*). They were true readings on the day and they are not a statement about what
+  Tier 1 answers now.
+
+The rows are left as they were read rather than rewritten, because a measurement is not editable
+after the fact — what was needed was the date and this note.
+
+| as read on 2026-08-12 | |
 |---|---|
 | `dwConnection(context)` live | `UNMETERED` |
 | `dwAsrArtifactFor(abis)` | `null` (`DW_ASR_ARTIFACTS` is empty) → production status `NOT_INSTALLED` |
 | `dwAsrMayLoad(production)` | `false` |
 | `deviceClass` | `MID_6_TO_8GB` |
-| **`tier1`** | **`None(NO_RUNTIME_IN_THIS_BUILD)`** |
-| **`tier2`** | **`None(NO_MEASURED_MODEL)`** |
+| **`tier1`** | **`None(NO_RUNTIME_IN_THIS_BUILD)`** — see the correction above; not today's answer |
+| **`tier2`** | **`None(NO_MEASURED_MODEL)`** — see the correction above; today `None(NO_RUNTIME_IN_THIS_BUILD)` |
 | `tier3Available` | `false` at `NONE`, `true` at `METERED` and `UNMETERED` |
 | `dwTierDownloadMayBeOffered` | **`false` for both tiers on all three connections** |
 | `dwAsrOffer` | `NOTHING_PUBLISHED_TO_INSTALL`, `dwAsrMayInstall = false`, on all three |
@@ -1037,8 +1058,8 @@ and inventing a URL to fill the row is precisely what that file's constructors e
 | | |
 |---|---|
 | **added** | the vendored AAR + `flatDir`; R8 keep rules for the binding; `data/DwAsrModel.kt` with the two real pinned digests; `DwAsrEngineProbeTest`; `DwAsrRuntimeUi.dwAsrSha256OfFile` widened `private`→`internal` so the probe hashes with the app's own code rather than a copy |
-| **NOT changed: `DW_TIER1_CATALOGUE` is still empty** | so `DwAsrOffer.NO_MODEL_TO_FEED_IT` and `DwTierRefusal.NO_MEASURED_MODEL` still answer on every handset. **A 53% Odia WER and a peak RSS the app's own `dwPlanFits` refuses are not a row.** Writing one would have made every card in Settings start describing a capability this handset does not have |
-| **NOT changed: `DW_TIER1_RUNTIME_PRESENT` is still `false`** | and **this is now a defect rather than a fact.** That constant means "baked into the APK" and, as of this lane, the engine *is*. It was left alone because flipping it changes `dwTier1Offer`'s answer on every handset and rewrites sentences a designer reads, and doing that in the same pass as a model that is not good enough to offer would have put the screens and the world further apart, not closer. **Whoever picks this up must flip it and fix the tests in one pass** |
+| **NOT changed BY THIS LANE: `DW_TIER1_CATALOGUE` was left empty** — ~~and is still empty~~ **it holds one row today** | this lane declined to write one, and the reason stands as written: **a 53% Odia WER and a peak RSS the app's own `dwPlanFits` refuses are not a row**, and writing one would have made every card in Settings describe a capability this handset does not have. **CORRECTED 2026-08-22: the cell used to end there, in the present tense, and had stopped being true.** The catalogue was later given one measured row for a *different* artifact (`sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12`), not for the model weighed here — so `NO_MEASURED_MODEL` is no longer what every handset gets. Read the constant, not this cell |
+| **NOT changed BY THIS LANE: `DW_TIER1_RUNTIME_PRESENT` was left `false`** — ~~and this is now a defect rather than a fact~~ **CLOSED the same evening; it is `true`** | the row was right that leaving it was a defect: that constant means "baked into the APK" and, as of this lane, the engine *is*. It was deferred because flipping it changes `dwTier1Offer`'s answer on every handset and rewrites sentences a designer reads, and doing that in the same pass as a model not good enough to offer would have put the screens and the world further apart. **CORRECTED 2026-08-22.** The demand this row made — *"whoever picks this up must flip it and fix the tests in one pass"* — **was met on 2026-08-12, by the evening lane that reviewed the engine**: the constant is `true`, and `DwDeviceTierTest` and `DwAsrRuntimeTest` moved with it. Only this cell was left standing, which is how the document came to demand a change that had already happened |
 | **NOT changed: the dictation ladder's rung 1** | nothing in the shipped app reaches the engine. The only caller is the instrumented probe |
 
 ## What is still unmeasured after all this, in that word
@@ -1156,7 +1177,7 @@ have had to choose between them.
 |---|---|---|---|---|
 | low-RAM flag set, or < 3 GB | smallest ASR model only — **unmeasured** | **none**, and said so plainly | — | when online |
 | 4 GB | **unmeasured** | **unmeasured** — expect none, or a ≤1 GB-class model | **unmeasured** | when online |
-| 6–8 GB — **← the one M32 that has been measured lands here** | **MEASURED 2026-08-12 and the answer is "not yet"**: the engine runs and transcribes Odia and Hindi, at 15.2%/7.3% CER and **53.3%/24.2% WER** on n = 3 studio utterances each, **1.24 GB peak RSS** and a real-time factor of **1.08–2.97 across twelve utterances** — always slower than the audio plays, and with a spread that is not a stable property of the phone. See *THE ENGINE RUNS* and the timings correction under it. `DW_TIER1_CATALOGUE` is deliberately **still empty**: that WER is below any bar, and that peak RSS is one the app's own `dwPlanFits` refuses on this handset | **unmeasured** | **unmeasured** | when online |
+| 6–8 GB — **← the one M32 that has been measured lands here** | **MEASURED 2026-08-12 and the answer is "not yet"**: the engine runs and transcribes Odia and Hindi, at 15.2%/7.3% CER and **53.3%/24.2% WER** on n = 3 studio utterances each, **1.24 GB peak RSS** and a real-time factor of **1.08–2.97 across twelve utterances** — always slower than the audio plays, and with a spread that is not a stable property of the phone. See *THE ENGINE RUNS* and the timings correction under it. `DW_TIER1_CATALOGUE` was deliberately **left empty** on that reading — that WER is below any bar, and that peak RSS is one the app's own `dwPlanFits` refuses on this handset. **It is no longer empty: it holds one row**, a different artifact (`sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12`), added after the measurements recorded under *THE ENGINE RUNS*. Read the constant, not this cell, for what is in it | **unmeasured** | **unmeasured** | when online |
 | 12 GB+ | **unmeasured** | **unmeasured** | **unmeasured** | when online |
 
 **THE SECOND ROW USED TO READ "4 GB (the M32 fleet)" AND THAT PARENTHESIS WAS WRONG.** The fleet's own
@@ -1170,30 +1191,50 @@ a survey, and naming a row after a fleet nobody has counted is how this went wro
 `DwDeviceClass.SMALL_4GB`'s KDoc carried the same claim and has been corrected in the same pass.
 
 **This table says what a class of handset might one day be offered. It does not describe what the
-app does today, and the Tier 1 column in particular must not be read that way** — there is no ASR
-runtime in this APK at all, so every device, including the ones in the first row, is refused Tier 1
-for the absence of an engine rather than for anything about the handset. `dwTier1Offer` checks the
-engine before it checks the catalogue for exactly that reason: "no model has been measured" would
-tell a designer that a model turning up is all that stands in the way, and it is not.
+app does today, and the Tier 1 column in particular must not be read that way.** `dwTier1Offer`
+checks the engine before it checks the catalogue, because "no model has been measured" would tell a
+designer that a model turning up is all that stands in the way, and on a handset with no engine it
+is not.
 
-**AMENDED 2026-08-12: THE TIER 1 COLUMN NOW HAS A SECOND AXIS, BECAUSE THE ENGINE BECAME SOMETHING A
-DESIGNER INSTALLS.** It is still absent from the APK and it is now never going in — the measurement
-below priced it at 3.03× the packaged app on a delivery chain whose update prompt has no "Later"
-button — so `android/app/src/main/java/com/designprototype/workshop/data/DwAsrRuntime.kt` makes it an **opt-in download**, offered once on the
-dashboard at first run and standing permanently in Settings, per the decision recorded in
-`docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md` §0. **Every row above therefore now depends on the handset as
-well as on its class**, and a row can only ever be filled for a phone that has chosen to install it.
+**CORRECTED 2026-08-22 — THE THREE PARAGRAPHS THAT STOOD HERE SAID THE ENGINE IS NOT IN THE APK, AND
+IT IS.** They read *"there is no ASR runtime in this APK at all, so every device … is refused Tier 1
+for the absence of an engine"*; *"It is still absent from the APK and it is now never going in"*; and
+*"the sentence 'every device is refused Tier 1 for the absence of an engine' remains **true
+today**"*. All three were written before the AAR was vendored on 2026-08-12 and none of them moved
+when it was. `DwDeviceTier.kt` carried the identical split in seven places — its header, the
+`dwTier1Offer` summary, the `DW_TIER1_RUNTIME_PRESENT` summary, both `…Choices` fields, the
+`dwTierDownloadMayBeOffered` gate, and the `NOTHING_PUBLISHED_TO_INSTALL` arm of the `when` inside
+`dwTier1Offer` — and is corrected in the same pass, which is what that header's
+*"the two must move together"* asks for. **This document carried it in eight**: this block, the 6–8 GB
+cell in the table above, two rows of *What was and was NOT changed*, the Tier 1 third-sentence
+paragraph further down, two rows of the pinning table at the end, and the `dwRecommendTiers` probe
+table (*What `dwRecommendTiers` answered on this handset*), whose two tier rows had swapped rather
+than merely gone stale. Four were corrected on 2026-08-22, three more later the same day by the pass that went looking
+for the ones the first had missed, and the last two by the review of THAT pass — which is the
+argument for counting them and writing the count down, rather than fixing the one you tripped over.
 
-The sentence *"every device is refused Tier 1 for the absence of an engine"* remains **true today and
-is no longer a constant**: it is reached because `DW_ASR_ARTIFACTS` is empty — nothing is published to
-install and no digest is pinned — rather than because the code cannot say anything else. **Eight
-answers are now expressible** where there used to be one, and each sends a designer somewhere
-different. This is the whole of `dwTier1Offer`'s not-installed branch, read off the `when` rather than
-summarised:
+**WHAT IS ACTUALLY IN THE PACKAGE.** `lib/arm64-v8a/libsherpa-onnx-jni.so`, **23,646,824 bytes**,
+read off the *installed* `base.apk` on the fleet's SM-M325F, plus 16,152,132 at `lib/armeabi-v7a/`.
+`DW_TIER1_RUNTIME_PRESENT` is `true` and **must stay true**: *THE FINDING THAT INVALIDATES A DESIGN*
+below shows `System.loadLibrary` resolves only through `nativeLibraryDirectories`, `filesDir` is not
+in that list, and an engine downloaded into it cannot be loaded at all. The opt-in download half of
+`DwAsrRuntime.kt` is therefore unreachable rather than wrong, and the thing a designer downloads is
+the **model**, which is data and has no such constraint.
 
-| the handset's situation | `DwTierRefusal` | new in this lane? | today |
+**SO THE TIER 1 COLUMN NOW DEPENDS ON THE HANDSET'S ROOM, NOT ON WHETHER IT HAS AN ENGINE.**
+`DW_TIER1_CATALOGUE` holds one measured row, so `dwTier1Offer` takes its installed branch on every
+production device and answers from `dwBestPlan` — an available offer on a phone with the room for it,
+and a fit refusal on one without.
+
+**THE EIGHT REFUSALS BELOW HAVE NOT GONE AWAY; THEY MOVED BEHIND A PARAMETER.** They are the whole of
+`dwTier1Offer`'s not-installed branch, which a build **without** the vendored AAR takes and which
+`DwDeviceTierTest` reaches by passing `runtimeInApk = false`. The "today" column below is about that
+build and has been relabelled to say so; in the shipping build no production handset reaches any of
+these rows.
+
+| the handset's situation | `DwTierRefusal` | new in this lane? | in a build with no engine in the package |
 |---|---|---|---|
-| nothing published to install | `NO_RUNTIME_IN_THIS_BUILD` | no | **← every handset in the fleet** |
+| nothing published to install | `NO_RUNTIME_IN_THIS_BUILD` | no | **← every handset** |
 | an artifact exists and this phone could take it, is fetching it, or has no connection to fetch it with | `RUNTIME_NOT_INSTALLED` | **yes** | unreachable |
 | the app could not read its own files | `RUNTIME_UNMEASURED` | **yes** | unreachable |
 | the engine cannot be installed because no speech model has been weighed — **or** it is installed and none has | `NO_MEASURED_MODEL` (Tier 1's own sentence) | no | unreachable |
@@ -1375,13 +1416,20 @@ gets depends on its row, and the ordering was argued over in `dwTier2Offer`:
   first row of the table above. Telling it to wait for a measurement would be a false promise, which
   is worse than a plain no.
 
-Tier 1 gets a third sentence again — `NO_RUNTIME_IN_THIS_BUILD`, on every device including the
-low-RAM ones — and it is deliberately *not* the general one. **It is still the true sentence as of
-2026-08-12, and `docs/ASR-RUNTIME-MEASUREMENT.md` is why**: step 4 of the plan's sequence went and
-weighed the sherpa-onnx runtime, found it is published to neither `google()` nor `mavenCentral()`, and
-measured what it would cost on the packaged APK anyway — +39,811,828 bytes for the cheapest shape of
-it, with no model. Nothing shipped, so nothing here needed changing. This app has no speech engine of its
-own, but the Settings card sits directly beneath "Offline dictation languages", which offers
+Tier 1 gets a third sentence again — `NO_RUNTIME_IN_THIS_BUILD`, and it is deliberately *not* the
+general one. **CORRECTED 2026-08-22: this paragraph said that sentence lands "on every device
+including the low-RAM ones", that "it is still the true sentence as of 2026-08-12", and that "this
+app has no speech engine of its own". None of the three is true of the shipping build** — the AAR was
+vendored on the evening of 2026-08-12, `DW_TIER1_RUNTIME_PRESENT` is `true`, and no production
+handset reaches `NO_RUNTIME_IN_THIS_BUILD` at all. What follows is preserved because the *reasoning*
+about the sentence's wording is still the reasoning, and it is why the sentence reads the way it does
+in the build that does not bundle an engine.
+
+`docs/ASR-RUNTIME-MEASUREMENT.md` is why the wording is what it is: step 4 of the plan's sequence went
+and weighed the sherpa-onnx runtime, found it is published to neither `google()` nor `mavenCentral()`,
+and measured what it would cost on the packaged APK anyway — +39,811,828 bytes for the cheapest shape
+of it, with no model. At the moment that was written nothing had shipped and this app had no speech
+engine of its own. The Settings card sits directly beneath "Offline dictation languages", which offers
 Android's own on-device packs; a sentence reading "there is no engine in this build that could run a
 model on this phone" two centimetres below a card promising offline dictation would read as one of
 the two lying, and the reasonable response to that is to stop trusting the control that works. So the
@@ -1458,12 +1506,12 @@ writing down once somebody has seen the command return something.
 | That no Tier 2 model is recommended | **The reason changed on 2026-08-13 and the assertion did not.** `DW_TIER2_CATALOGUE` is no longer empty — it delegates to `DW_TIER2_PLANS`, two rows — so the guarantee now rests on `DW_TIER2_RUNTIME_PRESENT` being `false`: `dwTier2Offer` returns `NO_RUNTIME_IN_THIS_BUILD` on every handset, `dwTierDownloadMayBeOffered` is still asserted false on every fixture in `DwDeviceTierTest`, and `dwTier2InstallMayBeOffered` is asserted false for every row × every connection in `DwTier2ModelsTest`. Whoever flips that constant must give Tier 2 a fetch path in the same pass, or those tests go red. |
 | That the Tier 2 rows carry Google's figure as Google's | `DwTier2ModelsTest` asserts every row's `measuredOn` contains both "S26 Ultra" and "published", that `languages` is `null`, and that the row sentence names Google and says nothing was measured on this phone. `DEVICE-TIER-MEASUREMENT.md` and `TIER2-LANGUAGE-MODEL-MEASUREMENT.md` must agree about which numbers are ours; only the second one holds the artifact table. |
 | What Tier 1 answers | **Read `dwTier1Offer`.** It was a one-line constant return until 2026-08-12 and is not any more: since the engine became an opt-in install, "not in this build" and "not on this handset" are different facts and the function distinguishes them. Any summary of it in this file is a claim about code — check it before trusting it. See `docs/ASR-RUNTIME-DOWNLOAD-CONTRACT.md`. |
-| That `DW_TIER1_RUNTIME_PRESENT` is `false` | `grep -n` it in `DwDeviceTier.kt`. It means **nothing is bundled**, and only that. It does not mean no engine can be present on a phone. |
+| That `DW_TIER1_RUNTIME_PRESENT` is `true` | `grep -n` it in `DwDeviceTier.kt`. **CORRECTED 2026-08-22: this row said `false`.** It means **the engine is bundled**, which it is — 23,646,824 bytes at `lib/arm64-v8a/libsherpa-onnx-jni.so`, read off the installed `base.apk`. It must stay `true`: `System.loadLibrary` cannot reach `filesDir` (*THE FINDING THAT INVALIDATES A DESIGN*), so there is nowhere else for the engine to be, and the last time this constant said `false` over a bundled engine the Appearance screen told designers the app had no speech engine at all. |
 | Every **unmeasured** cell in the recommendation table | Nothing mechanical, and nothing should. A number can only arrive from a handset **with an artifact to load on it**, and the two questions at the foot of this document name which measurement. The 2026-08-12 probe filled the left-hand column and could fill none of these, because there is nothing published to weigh — see *What could not be measured, and why*. |
 | The thermal and charging readings, and the probe's cost | The probe command above. All three were **`NONE` / charging / 0.8–12.1 ms per call after a 9.1–12.9 ms first call** on the fleet's handset at rest on 2026-08-12, over six runs. **The steady-state upper bound was published as 2.6 ms off two runs, widened to 3.0 ms by the third, and broken to 12.1 ms by the fifth — and the expensive calls were not the first ones.** Treat any range here as a floor on the spread rather than a property of the handset. A reading taken on a hot phone or under load would be a different measurement and belongs beside that one, not instead of it. |
 | That the test fixtures are shaped rather than measured | Their names — `fourGigClassPhone`, `goEditionPhone`, `phoneThatWouldNotAnswer`. **None is named after a real handset, deliberately**: `DwLanguagePackTest` learned that the hard way when a fixture named after the fleet's own M32 asserted capabilities the M32 does not have. |
 | The engine transcript, the peak RSS and the real-time factor (*THE ENGINE RUNS*) | **`./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.designprototype.workshop.DwAsrEngineProbeTest`**, then `adb logcat -d -s DWASRPROBE:I`. Needs the handset **and** the model side-loaded to `/data/local/tmp/dwasr` — the test's own KDoc has the `adb push` lines. Like the tier probe it asserts almost nothing and prints everything, so **a green tick is not evidence; read the logcat**. The one thing it *does* assert is the digest gate: it refuses to construct a recogniser if any pinned file on disk does not hash to the digest in `DW_ASR_MODELS`. |
 | That the two model digests still describe the published artifact | `DwAsrModelTest` spells both out again by hand, independently of `DW_ASR_MODELS`, so an edit to one and not the other goes red. **If it fails, do not copy the new value across to make it pass** — re-download the artifact and hash it. The container's own digest is in `DwAsrModel.kt`'s KDoc, which is the fastest way to find out that upstream is serving different bytes at that URL today. |
 | That pinning a model did **not** turn anything loose on the fleet | `DwAsrModelTest.pinningAModelDidNotMakeAnythingInstallable` — `DW_ASR_ARTIFACTS` empty, `dwAsrOffer` = `NOTHING_PUBLISHED_TO_INSTALL` and `dwAsrMayInstall` false on every connection. `DW_ASR_MODELS` and `DW_TIER1_CATALOGUE` are **different lists** and confusing them is the mistake this row exists to catch. |
-| That `DW_TIER1_RUNTIME_PRESENT` still says `false` while the engine IS in the APK | **Nothing, and that is the point: it is a KNOWN-FALSE claim as of 2026-08-12, recorded rather than fixed.** See *What was and was not changed*. `grep -n "sherpa" android/app/build.gradle.kts` shows the engine on the compile classpath; the constant says it is not bundled. Whoever flips it must fix `DwDeviceTierTest` and `DwAsrRuntimeTest` in the same pass, because every Tier 1 sentence changes with it. |
+| ~~That `DW_TIER1_RUNTIME_PRESENT` still says `false` while the engine IS in the APK~~ **CLOSED 2026-08-12; this row was left standing until 2026-08-22** | The constant was flipped to `true` the same evening it was recorded here, and `DwDeviceTierTest` and `DwAsrRuntimeTest` were moved with it — which is exactly what this row demanded of whoever flipped it. Leaving the row up afterwards is how a repository ends up with a document asserting the opposite of the code it describes, twice on one page. `grep -n "sherpa" android/app/build.gradle.kts` still shows the engine on the compile classpath; the constant now agrees with it. |
 | The rules the recommender obeys (recommend never auto-download; show the real size; say a refusal once, in words; re-probe rather than cache; a failed load is data) | `DwDeviceTier.kt`'s sentence constants and `DwDeviceTierTest`. These are the rows most likely to be quietly relaxed by a later lane in a hurry, because each of them costs a screen something. |

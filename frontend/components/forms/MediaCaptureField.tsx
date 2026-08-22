@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Camera, FolderOpen, Mic, Square, Video } from "lucide-react";
 
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
@@ -85,7 +85,9 @@ export function MediaCaptureField({
   description = "Photos, video, audio and files link to this record automatically. Audio is queued for transcription after upload.",
   allowDocuments = true,
   allowedTypes,
-  attachedImages
+  attachedImages,
+  stagingOwnerId,
+  "aria-describedby": ariaDescribedBy
 }: {
   files: File[];
   onFilesChange: (files: File[]) => void;
@@ -93,6 +95,17 @@ export function MediaCaptureField({
   description?: string;
   allowDocuments?: boolean;
   allowedTypes?: MediaType[];
+  /**
+   * A stable name for the SURFACE these files belong to, when that surface outlives this card.
+   *
+   * Forwarded verbatim to {@link useEagerStaging}, whose header carries the whole argument. In one
+   * sentence: the eager-upload store deletes an owner's unclaimed objects two seconds after that
+   * owner goes away, and a design-workshop collection row unmounts its whole panel when it is
+   * collapsed — so with the default per-mount owner, collapsing a row DELETED the photograph that
+   * was already in object storage. Callers whose `files` array lives above this component pass a
+   * key naming that place; everyone else omits it and behaves exactly as before.
+   */
+  stagingOwnerId?: string;
   /**
    * Photographs already attached to this record, for duplicate detection.
    *
@@ -102,7 +115,47 @@ export function MediaCaptureField({
    * render would re-run the measurement on every keystroke in a sibling field.
    */
   attachedImages?: AttachedImage[];
+  /**
+   * The refusal — or the hint — that belongs to this card, bound rather than merely painted.
+   *
+   * ── THE DEFECT THIS EXISTS FOR ──────────────────────────────────────────────────────────────
+   * `ProcessForm` refuses a save when "Pre-processes available" is ticked with nothing attached.
+   * It painted a red paragraph WITH AN ID beside this card and there was nothing to bind the id to,
+   * because this component accepted no description of any kind. Its own comment said so. A
+   * `role="alert"` was the whole of what a screen reader ever received: heard once, when the
+   * paragraph appeared, and unreachable afterwards — so a researcher who tabbed back to the card to
+   * fix it arrived at a control that said nothing about why they were there.
+   *
+   * ── WHY IT LANDS ON A `group` AND NOT ON A CONTROL ──────────────────────────────────────────
+   * There is no single control to hang it on. This card is a heading, a paragraph, four capture
+   * triggers and a tile grid; the refusal is about the CARD ("attach the pre-process media"), not
+   * about any one button in it. So the section is given `role="group"`, named by its own heading
+   * and described by its own paragraph plus whatever the caller passes — which is what a group is
+   * for, and which means the sentence is announced on entering the card rather than only once as it
+   * appears. The card's own description is included so that adding a refusal does not silence it.
+   *
+   * ── WHAT WAS NOT MEASURED, SAID PLAINLY ─────────────────────────────────────────────────────
+   * `role="group"` and the two attributes are UNCONDITIONAL, so all twelve call sites changed, not
+   * only the one that needed a description — and `ProcessForm` draws one of these cards per step.
+   * The trade was reasoned, not heard: naming the group is what makes it describable at all, and
+   * `role="group"` rather than a named `<section>` is deliberate, because a named `<section>` is a
+   * landmark `region` and twelve landmarks for twelve capture cards would be the louder mistake.
+   * What has NOT been put in front of a screen reader is the repeated boilerplate description on a
+   * form with several steps; no browser pass was possible here (the suite points at a running dev
+   * server and API, and neither is up on this machine). IF IT PROVES LOUD, the narrow fix is to
+   * bind only the caller's id — `aria-describedby={ariaDescribedBy}` — and leave this card's own
+   * paragraph as plain content it already is, which keeps the refusal bound and costs nothing else.
+   * Do not answer it by dropping the group: that puts the refusal back on the floor.
+   */
+  "aria-describedby"?: string;
 }) {
+  /*
+    `useId` and not a literal: a process form draws one of these cards per step plus the
+    pre-process one, so a fixed id would name every card on the screen at once.
+  */
+  const cardId = useId();
+  const headingId = `${cardId}-title`;
+  const descriptionId = `${cardId}-description`;
   const [recording, setRecording] = useState(false);
   // The live stream is state, not just a ref, because <Waveform> needs to re-render on it.
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -121,7 +174,7 @@ export function MediaCaptureField({
   }, [files]);
 
   // Eager pre-upload: every attached file starts streaming to object storage right away.
-  const staging = useEagerStaging(files, title);
+  const staging = useEagerStaging(files, title, stagingOwnerId);
 
   /**
    * On-device quality findings per attached photograph, and the ones the designer has waved away.
@@ -304,10 +357,25 @@ export function MediaCaptureField({
   }, [files]);
 
   return (
-    <section className="grid gap-3 rounded-lg border border-line-200 bg-card p-4 shadow-sm">
+    /*
+      A NAMED, DESCRIBED `group` — see the `aria-describedby` prop for the whole argument. A bare
+      `<section>` with no accessible name is a generic container, so `aria-describedby` on it would
+      have been dropped by the accessibility tree; naming it with its own heading is what turns it
+      into something a description can belong to.
+    */
+    <section
+      role="group"
+      aria-labelledby={headingId}
+      aria-describedby={ariaDescribedBy ? `${descriptionId} ${ariaDescribedBy}` : descriptionId}
+      className="grid gap-3 rounded-lg border border-line-200 bg-card p-4 shadow-sm"
+    >
       <div>
-        <h3 className="font-display font-bold text-lg text-ink-900">{title}</h3>
-        <p className="mt-1 text-sm text-ink-500">{description}</p>
+        <h3 id={headingId} className="font-display font-bold text-lg text-ink-900">
+          {title}
+        </h3>
+        <p id={descriptionId} className="mt-1 text-sm text-ink-500">
+          {description}
+        </p>
       </div>
       <div
         className={`grid gap-3 rounded-lg border-2 border-dashed p-3 transition ${

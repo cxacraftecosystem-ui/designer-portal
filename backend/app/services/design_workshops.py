@@ -37,6 +37,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException, status
+# The driver's own name for "a unique index refused this INSERT". Imported for the singleton race
+# below rather than matched on a message: `save_stage` recovers from exactly this and re-raises
+# everything else, and a string match would either miss a driver upgrade's rewording or swallow an
+# unrelated failure as if the designer's work had been stored.
+from prisma.errors import UniqueViolationError
 
 from app.core.db import db
 from app.core.deps import is_admin
@@ -60,7 +65,17 @@ from app.services.report_questionnaires import attach_questionnaires, questionna
 # The ONE masking rule this application has, imported rather than reimplemented. See the note on
 # `pehchanCardNumber` in the Artisan reference model for why a card number crossing into a stage
 # entry has to go through it, and `record_fields.py:270-283` for the defect that settled it.
-from app.services.records import derive_age, mask_identity_number
+#
+# `viewable_where` rides in on the same import for a different reason: `reference_options` composes
+# it so the picker's by-id lookup asks "may this account read this row" with the SAME predicate the
+# record list routes ask it with. It is empty today; the point is that it cannot drift.
+#
+# `contains` rides in for a third: the REF picker's search box was the fifth and last place in this
+# repository that composed `{"contains": …, "mode": "insensitive"}` by hand, so neither the C0-byte
+# strip nor the LIKE escape ran for it — a designer who typed `_` into the picker got every row of
+# the model back, and a pasted NUL was a 500. `test_record_filters.test_no_route_still_hand_rolls_a
+# _contains_filter` is the sweep that now holds all six of them to the funnel.
+from app.services.records import contains, derive_age, mask_identity_number, viewable_where
 # THE MEASUREMENT-METHOD VOCABULARY, IMPORTED AND NOT RESTATED. `METHOD_CLAUSES` is the two phrases
 # the record sheet, every .xlsx sheet and both CSV exports already print for a machine-produced
 # dimension; `field_method` is the one reader of the stamp `records.merge_field_provenance` writes.
@@ -1841,12 +1856,27 @@ def _dw_entity(model: str) -> EntitySpec | None:
 
 async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_ALL,
                             filter_by: str | None = None, search: str | None = None,
-                            limit: int = REFERENCE_LIMIT_DEFAULT) -> dict[str, Any]:
+                            limit: int = REFERENCE_LIMIT_DEFAULT,
+                            record_id: str | None = None,
+                            viewer: Any = None) -> dict[str, Any]:
     """The options one REF picker shows, for the workshop ``record``.
 
     ``scope`` is the field's own :data:`REF_SCOPES` value, sent back by the client so the server
     and the form cannot disagree about how wide the net is. ``filter_by`` is the value of the
     field named by ``ref_filter_by`` — the chosen artisan, for a product picker.
+
+    ── ``record_id``: THE PICKER'S ONLY WAY TO ANSWER A SCANNED CODE ─────────────────────────────
+
+    Every other clause here searches by NAME (``spec.search_fields`` is a ``contains`` over prose
+    columns and ``id`` is in none of them), so a record identified by its printed code could not be
+    turned into an option at all: the designer scanning a colleague's product card got the same
+    empty list as somebody searching for a record that was never made. ``record_id`` appends an
+    ``id`` clause and nothing else — it does not replace the scope, the cascade or the search term,
+    because a by-id lookup that quietly dropped the artisan filter would offer one artisan's work
+    under another's name, which is the defect ``filter_by``'s own refusal above exists to prevent.
+
+    ``viewer`` is the account asking, and it is what keeps the by-id path from becoming an
+    existence oracle. See the read predicate below.
     """
     if scope not in REF_SCOPES:
         raise HTTPException(
@@ -1854,6 +1884,7 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
             detail=f"scope must be one of {', '.join(sorted(REF_SCOPES))}",
         )
     take = max(1, min(int(limit or REFERENCE_LIMIT_DEFAULT), REFERENCE_LIMIT_MAX))
+    wanted_id = (record_id or "").strip()
 
     entity = _dw_entity(model)
     if entity is not None:
@@ -1862,7 +1893,7 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{model} cannot be filtered by another record",
             )
-        return await _in_record_options(record, entity, search, take)
+        return await _in_record_options(record, entity, search, take, record_id=wanted_id)
 
     spec = REFERENCE_MODELS.get(model)
     if spec is None:
@@ -1875,14 +1906,28 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
         )
 
     clauses: list[dict[str, Any]] = []
+    # THE READ PREDICATE, AND-COMPOSED THE WAY EVERY LIST ROUTE COMPOSES IT.
+    #
+    # `viewable_where` is empty today — every signed-in account may read every row, which is the
+    # pooling philosophy its own docstring argues for — so this adds nothing to the query and the
+    # picker behaves exactly as it did. It is here for the day that changes, and it is here
+    # BECAUSE of `record_id`: the by-id probe further down has to ask "may this caller read this
+    # row" with the SAME predicate `/artisans`, `/products` and `/tools` ask it with, or the two
+    # surfaces would disagree about what exists and the narrower one would be the one lying.
+    readable = await viewable_where(viewer)
+    if readable:
+        clauses.append(readable)
+
     # SCOPE FALLS BACK RATHER THAN EMPTYING THE PICKER. A design workshop need not be linked to
     # a Workshop record — the link is optional and is frequently made days after the capture
     # starts — and a WORKSHOP-scoped picker on an unlinked workshop would be permanently empty
     # with nothing on screen to explain why. The response says which of the two happened, so the
     # form can label the list "all documented artisans" instead of pretending it narrowed one.
     scoped = False
+    workshop_clause: dict[str, Any] | None = None
     if scope == REF_SCOPE_WORKSHOP and spec.workshop_where and record.workshopId:
-        clauses.append(spec.workshop_where(str(record.workshopId)))
+        workshop_clause = spec.workshop_where(str(record.workshopId))
+        clauses.append(workshop_clause)
         scoped = True
 
     filtered = False
@@ -1907,23 +1952,30 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
 
     term = (search or "").strip()
     if term:
-        clauses.append({
-            "OR": [{f: {"contains": term, "mode": "insensitive"}} for f in spec.search_fields]
-        })
+        # THROUGH `records.contains`, NOT A DICT WRITTEN OUT HERE. The two treatments it applies are
+        # exactly the two this picker was missing: a pasted control byte is stripped rather than
+        # reaching a `text` column as a 500, and `_` and `%` are ESCAPED rather than honoured as
+        # wildcards. Typing an underscore here used to widen the list to the whole model — the
+        # opposite of what a designer narrowing a picker is asking for, and it did it silently.
+        clauses.append({"OR": [{f: contains(term)} for f in spec.search_fields]})
+
+    if wanted_id:
+        clauses.append({"id": wanted_id})
 
     # ── AND NOTHING ELSE: NO STATUS CLAUSE, AND THAT IS A DECISION RATHER THAN AN OMISSION ────
     #
-    # The three clauses above are the whole `where`. A REJECTED or NEEDS_REVISION record is still
-    # offered, and it is offered because the pooling philosophy `records.viewable_where` is written
-    # under applies here too — every signed-in account may read every row — and because a rejected
-    # tool's measurements are still the measurements that were recorded. The designer is choosing a
-    # row deliberately, in the room, and the verdict is now VISIBLE while they choose it: see
-    # `_review_flag`, which appends it to the sublabel on every model that has a `status` column.
+    # The clauses built above — the read predicate, the workshop scope, the artisan cascade, the
+    # search term and the scanned id — are the whole `where`. A REJECTED or NEEDS_REVISION record is
+    # still offered, and it is offered because the pooling philosophy `records.viewable_where` is
+    # written under applies here too — every signed-in account may read every row — and because a
+    # rejected tool's measurements are still the measurements that were recorded. The designer is
+    # choosing a row deliberately, in the room, and the verdict is now VISIBLE while they choose it:
+    # see `_review_flag`, which appends it to the sublabel on every model that has a `status` column.
     #
     # IF THAT IS EVER REVERSED, THE EXCLUSION MUST BE REPORTED AND NOT SILENT. `_reference_payload`
-    # already tells the client about `scoped`, `filtered` and `truncated` precisely so that a
-    # shortened list never reads as an empty repository, and a status filter belongs in the same
-    # payload. A picker that quietly drops rows is how a designer concludes the record was never
+    # already tells the client about `scoped`, `filtered`, `truncated` and `outOfScope` precisely so
+    # that a shortened list never reads as an empty repository, and a status filter belongs in the
+    # same payload. A picker that quietly drops rows is how a designer concludes the record was never
     # made and types the whole thing in by hand.
     where: dict[str, Any] = {"AND": clauses} if clauses else {}
     # take + 1, not a second COUNT: every search here is a case-insensitive `contains`, which
@@ -1935,30 +1987,106 @@ async def reference_options(record: Any, model: str, *, scope: str = REF_SCOPE_A
     truncated = len(rows) > take
     rows = rows[:take]
 
-    photos = await _reference_photos(spec, [r.id for r in rows])
-    options = [
-        {
-            "id": row.id,
-            "label": spec.label(row),
-            "sublabel": spec.sublabel(row),
-            # `_reference_data` and NOT `spec.data`: see its docstring for the formatted-prose
-            # column that otherwise reaches this payload as raw JSON and lands in a table cell.
-            "data": {k: v for k, v in _reference_data(spec, row, photos.get(row.id)).items()
-                     if v not in (None, "")},
-        }
-        for row in rows
-    ]
-    return _reference_payload(model, scope, scoped, filtered, options, truncated=truncated)
+    # ── "NOT IN THIS WORKSHOP" AND "NO SUCH RECORD" ARE DIFFERENT ANSWERS AND USED TO READ ALIKE ─
+    #
+    # Five REF fields are WORKSHOP-scoped against an external model — `traditionalProcess.processRef`,
+    # `processStep.processRef`, `existingProduct.artisanRef`, `existingProduct.productRef` and
+    # `prototype.productRef` — and the workshop clause above is ANDed unconditionally. So a designer
+    # who scans a product card another designer printed, for a product documented at a different
+    # cluster, got an empty list: byte for byte the answer for a code that names nothing at all. The
+    # two demand opposite next actions (ask the colleague to link the cluster, versus re-scan) and
+    # the picker could not tell them apart, so it could not say either.
+    #
+    # THE SCOPE IS NOT WIDENED, AND THE PAYLOAD IS SHAPED SO THAT IT CANNOT BE WIDENED BY ACCIDENT.
+    # The probe re-runs the SAME clauses with only the workshop clause removed, and the row it finds
+    # comes back under its OWN key — `outOfScopeOption` — and NEVER inside `options`.
+    #
+    # THAT SPLIT IS THE WHOLE SAFETY OF THIS FEATURE, and it was learnt the expensive way: the first
+    # cut of this code put the row in `options` and set a flag beside it. Every client in the tree
+    # renders `payload.options` and nothing else — `StageReferenceField.tsx` maps it straight to the
+    # list, and its "Nothing is documented under this design workshop's linked workshop yet" notice
+    # is gated on `!payload.options.length`, so one probe row both APPEARED as an ordinary choice and
+    # SILENCED the only sentence that would have questioned it. A designer scanning a colleague's
+    # card for a product documented at another cluster would have seen exactly one option, tapped it,
+    # and pointed the stage row at a cross-cluster record with nothing on screen having said so.
+    # Out of band, the default is silence: a client that has not been taught the new key shows the
+    # empty list and the notice it already had, which is the honest answer until a UI wave decides
+    # what to offer. `scopedToWorkshop`, `filtered` and `truncated` exist for this family of reasons
+    # — a list that is short for a knowable reason must say the reason — and this is one more of them.
+    #
+    # AND IT IS NOT AN EXISTENCE ORACLE. The probe is a `find_many` over a `where`, never a
+    # `find_unique` on the primary key, and the clauses it keeps still include the `viewable_where`
+    # predicate composed at the top. A row that predicate excludes produces no rows here, so
+    # `outOfScope` stays False and the payload is identical to the one for an id that names nothing —
+    # which is `records.require_record`'s 404-never-403 rule expressed as a query instead of a status
+    # code (`frontend/lib/workshopCodeLookup.ts` explains what a distinguishable refusal buys an
+    # attacker holding a stack of printed cards). Widening the probe to skip that predicate, or
+    # answering it from a primary-key read, undoes the whole boundary.
+    out_of_scope_row = None
+    if wanted_id and not rows and workshop_clause is not None:
+        # `truncated` is already False on this branch — the probe only runs when `rows` is empty —
+        # so there is nothing to reset here.
+        found = await getattr(db, spec.delegate).find_many(
+            where={"AND": [c for c in clauses if c is not workshop_clause]},
+            order=spec.order, take=1, include=spec.include or None,
+        )
+        out_of_scope_row = found[0] if found else None
+
+    photos = await _reference_photos(
+        spec,
+        [r.id for r in rows] + ([out_of_scope_row.id] if out_of_scope_row is not None else []),
+    )
+    return _reference_payload(
+        model, scope, scoped, filtered,
+        [_reference_option(spec, row, photos) for row in rows],
+        truncated=truncated,
+        out_of_scope_option=(None if out_of_scope_row is None
+                             else _reference_option(spec, out_of_scope_row, photos)),
+    )
+
+
+def _reference_option(spec: Any, row: Any, photos: dict[str, Any]) -> dict[str, Any]:
+    """One row of a reference table as the picker's client reads it."""
+    return {
+        "id": row.id,
+        "label": spec.label(row),
+        "sublabel": spec.sublabel(row),
+        # `_reference_data` and NOT `spec.data`: see its docstring for the formatted-prose
+        # column that otherwise reaches this payload as raw JSON and lands in a table cell.
+        "data": {k: v for k, v in _reference_data(spec, row, photos.get(row.id)).items()
+                 if v not in (None, "")},
+    }
 
 
 def _reference_payload(model: str, scope: str, scoped: bool, filtered: bool,
-                       options: list[dict[str, Any]], *, truncated: bool) -> dict[str, Any]:
+                       options: list[dict[str, Any]], *, truncated: bool,
+                       out_of_scope_option: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The picker's whole answer. Every flag on it exists so a short list can say WHY it is short.
+
+    ``scopedToWorkshop``, ``filtered`` and ``truncated`` all describe the LIST in ``options`` —
+    how it was narrowed, and each of them is routinely true with a full list. ``outOfScope`` is a
+    different kind of statement and is the only one of the four that describes a row the field's
+    own scope would NOT offer: a by-id lookup — a scanned card — found the record with the workshop
+    clause lifted, so it is real and readable and this WORKSHOP-scoped field still excludes it.
+
+    THAT ROW IS NOT IN ``options``. It is delivered beside them as ``outOfScopeOption``, because a
+    client that renders ``options`` and knows nothing of the flag must not be able to show it as an
+    ordinary choice — see the probe in :func:`reference_options` for the screen that produced.
+    ``options`` is EMPTY whenever ``outOfScope`` is true, so an empty-list notice still fires.
+
+    False is the ordinary answer, including for every by-id lookup that resolved inside the scope
+    and for every id that resolved to nothing — see the same probe for why those last two must
+    stay indistinguishable.
+    """
     return {
         "model": model,
         "scope": scope,
         "scopedToWorkshop": scoped,
         "filtered": filtered,
         "truncated": truncated,
+        # Derived here and nowhere else, so the flag and the row it describes cannot drift apart.
+        "outOfScope": out_of_scope_option is not None,
+        "outOfScopeOption": out_of_scope_option,
         "options": options,
     }
 
@@ -2163,16 +2291,33 @@ async def _reference_photos(spec: ReferenceModel, ids: list[str]) -> dict[str, R
 
 
 async def _in_record_options(record: Any, entity: EntitySpec, search: str | None,
-                             take: int) -> dict[str, Any]:
+                             take: int, *, record_id: str = "") -> dict[str, Any]:
     """Options for a ref that points INSIDE this workshop — a sketch, a prototype, a roster row.
 
     Always scoped to the workshop whatever the field's declared scope says, because there is no
     other reading of a ``DwSketch`` reference: the sketches of a different workshop are not
     candidates for this one's prototypes, and offering them would produce a report whose
     prototype table cites drawings that appear nowhere in it.
+
+    ``record_id`` narrows to one row and is honoured rather than ignored, because a parameter the
+    server accepts and drops is how a caller comes to believe a list was narrowed when it was not.
+    It NEVER reports ``outOfScope``: the sentence above is the reason — a row belonging to another
+    workshop is not a candidate this field is refusing on a technicality, it is not a candidate at
+    all, so there is nothing for the form to offer to do about it.
+
+    IT MATCHES EITHER IDENTIFIER, BECAUSE THE CODE GRAMMAR ISSUES BOTH. ``workshopCodeIdForRow``
+    in ``frontend/lib/workshopCodes.ts`` prints the row's ``_clientKey`` when the row has not
+    reached the server yet — a prototype tag has to be printable the afternoon the prototype is
+    made, and a workshop can go a fortnight without signal — and ``workshopCodeMatchesRow`` beside
+    it matches on either. An ``id``-only lookup would therefore answer half the tags ever printed
+    with the empty list that is byte-identical to "no such record", which is the exact ambiguity
+    ``record_id`` exists to remove. The ``OR`` is ANDed with the workshop, entity and
+    not-deleted clauses, and ``(designWorkshopId, entityKey, clientKey)`` is unique, so it can
+    match at most the one row either spelling names.
     """
     rows = await db.dwstageentry.find_many(
-        where={"designWorkshopId": record.id, "entityKey": entity.key, "deletedAt": None},
+        where={"designWorkshopId": record.id, "entityKey": entity.key, "deletedAt": None}
+        | ({"OR": [{"id": record_id}, {"clientKey": record_id}]} if record_id else {}),
         order={"ordinal": "asc"},
     )
     label_key = entity.label_field or next(
@@ -2214,6 +2359,11 @@ class PendingEntry:
     row_id: str | None
     ordinal: int
     client_key: str | None
+    #: THE RESERVED KEY TO WRITE ONTO AN EXISTING ROW THAT DOES NOT CARRY IT YET, or ``None`` to
+    #: leave the row's key alone. ``client_key`` above is what a CREATE stores; this is the only
+    #: way an already-stored row ever gains one, because the UPDATE branch otherwise writes four
+    #: columns and none of them is this. See :func:`_reserved_key_upgrade`.
+    adopt_client_key: str | None = None
     #: What the row's ``fieldProvenance`` held before this save; empty for a new row.
     previous_provenance: dict[str, Any] = dataclass_field(default_factory=dict)
     #: WHICH KEYS HYDRATION ACTUALLY WROTE ON THIS SAVE, and where each came from. Filled by
@@ -2476,6 +2626,16 @@ async def seed_designer_prefill(
                     "entityKey": entity.key,
                     "ordinal": 0,
                     "data": _json(clean),
+                    # THE RESERVED KEY, BECAUSE THIS IS THE OTHER WRITER OF SINGLETON ROWS AND THE
+                    # ONE THAT RUNS FIRST. `save_stage` is where the key is documented, but this
+                    # create is what puts `workshopSetup` — the singleton carrying the promoted
+                    # columns — into essentially every new workshop, and a row seeded without the
+                    # key is a row `@@unique([designWorkshopId, entityKey, clientKey])` cannot see
+                    # for the workshop's whole life: Postgres treats NULLs as distinct, and no
+                    # later save rewrites a key it did not have to. The invariant the schema
+                    # states is "one row per (workshop, entity)", and an invariant with one
+                    # unkeyed writer is not an invariant.
+                    "clientKey": singleton_client_key(spec.key),
                     # STAMPED TO THE CREATOR AS A DESIGNER VALUE, not as a reference one, and that
                     # is a real distinction rather than a default. These fields come from the
                     # designer's OWN `DesignerProfile` and from the create form they just filled
@@ -2523,6 +2683,93 @@ async def seed_designer_prefill(
 # --------------------------------------------------------------------------------------
 # Saving a stage
 # --------------------------------------------------------------------------------------
+
+#: THE RESERVED CLIENT KEY THAT MAKES THE DATABASE ENFORCE "ONE ROW PER (WORKSHOP, ENTITY)".
+#:
+#: A singleton entity — `designBrief`, `outcomes`, `reportSettings`, eleven more — and the reserved
+#: `_custom` container are each supposed to have exactly ONE row per workshop, and until this
+#: constant existed nothing but Python enforced it. The `@@unique([designWorkshopId, entityKey,
+#: clientKey])` index could not: Postgres treats NULLs as DISTINCT under a unique index, so any
+#: number of rows with a null `clientKey` coexist happily, and the web sets no client key at all.
+#:
+#: SO THE UNIQUENESS WAS A READ-THEN-WRITE, AND THE TWO ARE SECONDS APART. `save_stage` reads the
+#: stage's rows, finds no singleton, and inserts one; on a link where a round trip measures 756ms
+#: that window is wide enough for a second designer on the same workshop — which
+#: `DesignWorkshopViewer` exists to allow — to do exactly the same. Two rows, and after that the
+#: damage is not a duplicate but a NONDETERMINISM: `entry_rows` returns them in no guaranteed order,
+#: and completeness, `assemble_workshop_data` and the stage payload each take last-write-wins over
+#: that order. So which of the two answers is scored, printed in the .docx and shown on the form can
+#: differ BETWEEN TWO READS of the same unchanged data, and half the fieldwork lives in a row nothing
+#: ever updates.
+#:
+#: WRITING A NON-NULL SENTINEL IS WHAT HANDS THE PROBLEM TO THE INDEX ALREADY DECLARED. A partial
+#: index on `clientKey IS NOT NULL` would have been the textbook answer and is the wrong one here:
+#: `test_stage_sync.test_many_rows_without_a_client_key_coexist` requires that many null-keyed rows
+#: coexist (that is how the browser creates collection rows), and the duplicate-key recovery path in
+#: the entity loop below deliberately writes a null key to save a designer's work after a collision.
+#: Both would break. A reserved VALUE costs nothing and breaks neither.
+#:
+#: COLLECTIONS ARE UNTOUCHED. Only singletons and `_custom` get it; a collection row keeps whatever
+#: its client sent, or NULL.
+#:
+#: IT NEVER LEAVES THE SERVER, which is a stronger guarantee than "the clients tolerate it" and is
+#: checkable in one grep: `_stages_payload` in `api/routes/design_workshops.py` injects `_clientKey`
+#: only on the COLLECTION arm of its dispatch (`if row.clientKey: data["_clientKey"] = row.clientKey`).
+#: The singleton arm and the `_custom` arm both assign `row.data` straight through, and the column is
+#: not in `data`. `grep -rn clientKey --include=*.py app/` finds that injection to be the only emitter
+#: in the backend. So no build of either client can see this value, echo it back, store it in an
+#: outbox or key an offline row on it — counted 2026-08-22, and the day a singleton starts carrying
+#: `_clientKey` on the wire is the day that has to be re-argued rather than assumed.
+SINGLETON_CLIENT_KEY = "__dw_singleton__"
+
+
+def singleton_client_key(stage_key: str) -> str:
+    """:data:`SINGLETON_CLIENT_KEY` for one stage — and THE STAGE KEY IS NOT DECORATION.
+
+    The unique index is ``(designWorkshopId, entityKey, clientKey)`` and does NOT carry ``stageKey``.
+    For a registry singleton that costs nothing, because ``EntitySpec.key`` is unique across the
+    whole registry by rule and therefore names its stage implicitly. **The reserved ``_custom``
+    container is the exception that makes this function necessary**: every stage of a workshop that
+    has a custom section stores its answers under the same literal ``_custom`` entity key, so a bare
+    constant would have made stage 3's container and stage 9's container collide inside one
+    workshop — the index refusing the second stage's custom answers outright, which is a far worse
+    failure than the duplicate this whole change exists to prevent.
+
+    Suffixing with the stage key gives every reserved row a value unique within its (workshop,
+    entity) pair while still being the SAME value on every save of that row, which is the entire
+    property the index needs. It also stops this depending on the registry's entity-key uniqueness
+    rule holding for ever.
+    """
+    return f"{SINGLETON_CLIENT_KEY}:{stage_key}"
+
+
+def _reserved_key_upgrade(row, entity_key: str, singleton_key: str, existing) -> str | None:
+    """The reserved key an EXISTING singleton or ``_custom`` row should adopt, or ``None``.
+
+    THE INDEX CANNOT SEE A ROW THAT PREDATES THE KEY. Postgres treats NULLs as distinct under a
+    unique index, so `@@unique([designWorkshopId, entityKey, clientKey])` enforces nothing at all on
+    the rows written before the reserved key existed — and the update branch below writes data,
+    ordinal, deletedAt and fieldProvenance, so without this the key never arrives. The backfill
+    migration is a one-off and only ever runs against the rows present on the day it is applied; a
+    workshop restored from an older dump, or a row a future writer creates unkeyed, would otherwise
+    sit outside the guarantee for ever. Adopting on the next ordinary save is what makes the
+    invariant hold going forward instead of holding as of one migration.
+
+    IT REFUSES TO ADOPT WHEN ANOTHER ROW OF THE SAME ENTITY ALREADY HOLDS THE KEY, and that clause
+    is load-bearing rather than defensive. The unique index does NOT carry ``deletedAt``, so a
+    SOFT-DELETED row still occupies its key; a workshop holding a soft-deleted keyed row beside a
+    live unkeyed one would have the UPDATE refused by the index — and a refused UPDATE is not what
+    `_absorb_key_collisions` recovers, which only turns refused INSERTs into updates. The row keeps
+    its null key in that case and the singleton matcher, which prefers the keyed row and then falls
+    back to the entity, still finds exactly one row to write.
+
+    ``existing`` is every row of the stage, live and soft-deleted, exactly as the matcher reads it.
+    """
+    if row is None or row.clientKey == singleton_key:
+        return None
+    if any(r.entityKey == entity_key and r.clientKey == singleton_key for r in existing):
+        return None
+    return singleton_key
 
 
 def refused_answer_count(errors: Mapping[str, Any]) -> int:
@@ -2625,6 +2872,9 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         db.designworkshop.find_unique(where={"id": workshop_id}),
     )
     custom_specs = definition.fields_for(spec.key)
+    # The reserved client key this stage's singleton rows and its `_custom` container are written
+    # under, so the unique index enforces one of each. See `singleton_client_key`.
+    singleton_key = singleton_client_key(spec.key)
     workshop_status = str(getattr(header_row, "status", "DRAFT") or "DRAFT")
     live = [row for row in existing if row.deletedAt is None]
     by_id = {row.id: row for row in live}
@@ -2676,6 +2926,9 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     # blank into the column, and the workshop list showed no craft for a record whose stage 1
     # plainly named one.
     pending: list[PendingEntry] = []
+    # The singleton entries this payload has already claimed, so a second entry for the same
+    # singleton folds into the first rather than becoming a second row. See the fold below.
+    pending_singletons: dict[str, PendingEntry] = {}
 
     # THE RESERVED CONTAINER, HANDLED BEFORE THE ENTITY LOOP AND NOT INSIDE IT.
     #
@@ -2694,7 +2947,13 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
     custom_entry = next(
         (e for e in payload.entries if e.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None
     )
+    # The sentinel-keyed row first, for the reason the singleton fallback below gives: on a workshop
+    # that already holds two `_custom` rows, "the first live one" alternates between them and each
+    # save writes half the answers into a row the next read may not choose.
     custom_row = next(
+        (r for r in live if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY
+         and r.clientKey == singleton_key), None
+    ) or next(
         (r for r in live if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None
     ) or next(
         (r for r in existing if r.entityKey == custom_sections.CUSTOM_ENTITY_KEY), None
@@ -2823,12 +3082,31 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         if row is None and entity.cardinality is Cardinality.SINGLETON:
             # A stage's singleton is unique by entity, so a live one is preferred and a
             # soft-deleted one is resurrected rather than duplicated.
-            row = next((r for r in live if r.entityKey == entity.key), None) or \
-                next((r for r in existing if r.entityKey == entity.key), None)
+            #
+            # THE SENTINEL-KEYED ROW IS PREFERRED AHEAD OF BOTH, and that is what makes this choice
+            # DETERMINISTIC on a workshop that already carries a duplicate from before the index
+            # could enforce one. `live` arrives in whatever order the read returned, so "the first
+            # live row" is the same coin toss that let two rows drift apart in the first place — the
+            # save would update one of them on Tuesday and the other on Wednesday. The row holding
+            # `SINGLETON_CLIENT_KEY` is the one the backfill migration picked, and picking it every
+            # time is what makes an existing pair CONVERGE instead of alternating.
+            row = (
+                next((r for r in live
+                      if r.entityKey == entity.key and r.clientKey == singleton_key), None)
+                or next((r for r in live if r.entityKey == entity.key), None)
+                or next((r for r in existing if r.entityKey == entity.key), None)
+            )
 
         ordinal = entry.ordinal if entry.ordinal is not None else index
         if entity.cardinality is Cardinality.SINGLETON:
             ordinal = 0
+            # THE RESERVED KEY, WRITTEN HERE AND NOT EARLIER, so the matching above still honours
+            # whatever key the client sent — a phone that created this row offline under its own
+            # UUID must still be able to find it. From this line on the row is addressed by
+            # (workshop, entity), which is what the singleton IS, and the unique index enforces it.
+            # A client-sent key on a singleton is therefore not stored; nothing needs it, because
+            # the fallback above matches the singleton by entity whatever key it carries.
+            client_key = singleton_key
 
         previous: dict[str, Any] = {}
         previous_provenance: dict[str, Any] = {}
@@ -2873,12 +3151,44 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             # never overrides it. An empty string the designer actually typed is a value and stays.
             clean = {**previous, **clean}
 
-        pending.append(PendingEntry(
+        held = pending_singletons.get(entity.key)
+        if held is not None:
+            # TWO ENTRIES FOR ONE SINGLETON IN ONE PAYLOAD, FOLDED INTO ONE ROW RATHER THAN
+            # WRITTEN AS TWO.
+            #
+            # `_clientKey` and `_entryId` have both been guarded against a duplicate-in-payload
+            # since the collisions they caused; a singleton needs no key to be addressed, so it had
+            # no guard at all and the second entry simply became a second row — one INSERT the
+            # unique index could not refuse, because both carried a null key. That is the same
+            # duplicate this constant exists to end, arriving from inside a single request instead
+            # of from two.
+            #
+            # FOLDED, NOT DROPPED: the later entry's keys win and the earlier entry's keys survive
+            # where the later one is silent, which is the same "`clean` wins every key it holds"
+            # rule the merge branch above applies. Losing a designer's answers to a client that
+            # serialised one form twice would be a worse outcome than the duplicate row. The
+            # collision is still REPORTED, because a client sending two entries for one singleton
+            # is a bug somebody should be able to find.
+            held.data.update(clean)
+            dropped.append(f"{entity.key} (second singleton entry in payload, folded into the first)")
+            continue
+
+        item = PendingEntry(
             entity=entity, data=clean, previous=previous,
             row_id=row.id if row is not None else None,
             ordinal=ordinal, client_key=client_key,
             previous_provenance=previous_provenance,
-        ))
+            # ONLY A SINGLETON. A collection row's key belongs to the client that made it and is
+            # how that client finds its own row again after an offline sync; overwriting it would
+            # strand the phone's copy and duplicate the row on the next replay.
+            adopt_client_key=(
+                _reserved_key_upgrade(row, entity.key, singleton_key, existing)
+                if entity.cardinality is Cardinality.SINGLETON else None
+            ),
+        )
+        pending.append(item)
+        if entity.cardinality is Cardinality.SINGLETON:
+            pending_singletons[entity.key] = item
         if client_key:
             claimed_client_keys.add((entity.key, client_key))
 
@@ -2916,6 +3226,10 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     "ordinal": item.ordinal,
                     "deletedAt": None,
                     "fieldProvenance": _json(field_provenance),
+                    # Present only when this row is a singleton that predates the reserved key;
+                    # `_reserved_key_upgrade` returns None in every other case and the column is
+                    # then not written at all.
+                    **({"clientKey": item.adopt_client_key} if item.adopt_client_key else {}),
                 },
             ))
         else:
@@ -2961,6 +3275,13 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
             user=user,
         )
         if custom_row is not None:
+            # THE CONTAINER ADOPTS THE RESERVED KEY ON THE SAME RULE A SINGLETON DOES, because it is
+            # one and because every `_custom` row written before the key existed is a row the index
+            # cannot see. A second `_custom` row is a second copy of every answer the designer wrote
+            # to their own questions, with nothing in the read path to say which one it is showing.
+            custom_key_upgrade = _reserved_key_upgrade(
+                custom_row, custom_sections.CUSTOM_ENTITY_KEY, singleton_key, existing
+            )
             updates.append((
                 custom_row.id,
                 {
@@ -2968,6 +3289,7 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                     "ordinal": 0,
                     "deletedAt": None,
                     "fieldProvenance": _json(custom_provenance),
+                    **({"clientKey": custom_key_upgrade} if custom_key_upgrade else {}),
                 },
             ))
         else:
@@ -2978,7 +3300,13 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                 "ordinal": 0,
                 "data": _json(custom_to_store),
                 "fieldProvenance": _json(custom_provenance),
-                "clientKey": None,
+                # THE SAME RESERVED KEY A SINGLETON GETS, because this row is one: there is exactly
+                # one `_custom` row per (workshop, stage) and `entityKey` is the reserved literal,
+                # so `@@unique([designWorkshopId, entityKey, clientKey])` covers it once the key is
+                # not null. It matters MORE here than on a registry singleton, because a second
+                # `_custom` row is a second copy of every answer the designer wrote to their own
+                # questions and nothing in the read path would say which one it was showing.
+                "clientKey": singleton_key,
                 "createdById": user.id,
             })
 
@@ -3047,30 +3375,71 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
                 continue
             removed.append(row.id)
 
-    async with db.tx() as tx:
-        # One transaction, because a 22-stage submit is a many-statement write and a failure
-        # halfway through would otherwise leave a stage that is neither the old data nor the
-        # new. Nothing else in this repository uses db.tx() yet; this is the first place that
-        # genuinely needs it.
-        for row_id, data in updates:
-            await tx.dwstageentry.update(where={"id": row_id}, data=data)
-        for data in creates:
-            await tx.dwstageentry.create(data=data)
-        if removed:
-            await tx.dwstageentry.update_many(
-                where={"id": {"in": removed}}, data={"deletedAt": datetime.now(UTC)}
-            )
-        header: dict[str, Any] = {"schemaVersion": registry_version()}
-        header.update(_coerce_promoted(promoted, touched_entities))
-        # DRAFT is the ONLY status a stage save advances, and it advances it exactly once. The
-        # record now has content, and a list that still calls it a draft after two weeks of
-        # capture is misleading — but forcing IN_PROGRESS unconditionally silently demoted a
-        # workshop the designer had marked COMPLETE, or SUBMITTED, or ARCHIVED, every time
-        # anybody touched a stage. Correcting a typo in a submitted report should not un-submit
-        # it. The later statuses are the designer's to set, through PATCH, and only theirs.
-        if workshop_status == "DRAFT":
-            header["status"] = "IN_PROGRESS"
-        await tx.designworkshop.update(where={"id": workshop_id}, data=header)
+    async def write_everything() -> None:
+        async with db.tx() as tx:
+            # One transaction, because a 22-stage submit is a many-statement write and a failure
+            # halfway through would otherwise leave a stage that is neither the old data nor the
+            # new. This was the FIRST place in the repository that needed one; it has not been the
+            # only one since, and the sentence claiming it was outlived both of the writes that
+            # copied it — `custom_sections.apply_definition_plan` (a supersede is a create and a
+            # back-pointer, and a failure between them strands a retired field pointing at nothing)
+            # and `api/routes/data_access._upsert_grant` (a delete-then-insert that briefly showed a
+            # colleague an export missing the records whose scope rows were not back yet). Both cite
+            # this call site as their precedent, so a reader arriving from either would have been
+            # told the precedent does not exist.
+            #
+            # A FUNCTION RATHER THAN A BARE `async with`, so the whole of it can be RE-RUN. See the
+            # caller: a unique violation aborts a Postgres transaction outright, so recovering from
+            # one inside the block is not possible without savepoints the driver does not expose.
+            # `creates` and `updates` are read from the enclosing scope at call time, which is what
+            # lets the recovery rewrite them between the two attempts.
+            for row_id, data in updates:
+                await tx.dwstageentry.update(where={"id": row_id}, data=data)
+            for data in creates:
+                await tx.dwstageentry.create(data=data)
+            if removed:
+                await tx.dwstageentry.update_many(
+                    where={"id": {"in": removed}}, data={"deletedAt": datetime.now(UTC)}
+                )
+            header: dict[str, Any] = {"schemaVersion": registry_version()}
+            header.update(_coerce_promoted(promoted, touched_entities))
+            # DRAFT is the ONLY status a stage save advances, and it advances it exactly once. The
+            # record now has content, and a list that still calls it a draft after two weeks of
+            # capture is misleading — but forcing IN_PROGRESS unconditionally silently demoted a
+            # workshop the designer had marked COMPLETE, or SUBMITTED, or ARCHIVED, every time
+            # anybody touched a stage. Correcting a typo in a submitted report should not un-submit
+            # it. The later statuses are the designer's to set, through PATCH, and only theirs.
+            if workshop_status == "DRAFT":
+                header["status"] = "IN_PROGRESS"
+            await tx.designworkshop.update(where={"id": workshop_id}, data=header)
+
+    try:
+        await write_everything()
+    except UniqueViolationError:
+        # THE RACE THE SENTINEL TURNS FROM SILENT CORRUPTION INTO A RETRY.
+        #
+        # Two designers share a workshop — `DesignWorkshopViewer` exists so they can — and both save
+        # the same stage. Each read the rows, each found no singleton, and each planned an INSERT.
+        # Before `SINGLETON_CLIENT_KEY` both inserts succeeded (null keys are distinct under the
+        # index) and the workshop was left with two rows whose answers no read path chose between
+        # deterministically. Now the second INSERT is REFUSED, which is the outcome to want — but a
+        # refusal a designer sees as a 500 is not an improvement over the duplicate, because their
+        # answers are still not stored.
+        #
+        # So the loser re-reads and applies its work as an UPDATE to the row the winner just made.
+        # RE-RUNNING THE WHOLE TRANSACTION, not resuming the aborted one: a constraint violation
+        # puts a Postgres transaction into the aborted state where every further statement fails
+        # with 25P02, and the driver gives no savepoint to roll back to. The re-run is safe because
+        # every statement in it is idempotent by construction — the updates address rows by id, the
+        # sweep writes one timestamp, and the header write is a plain assignment.
+        #
+        # ONCE. A second violation is not this race — it means something is generating colliding
+        # keys — and swallowing it in a loop would turn a bug into a hang on the request a designer
+        # is waiting on. It is raised, and the route answers 500 as it did before.
+        creates, updates = await _absorb_key_collisions(
+            workshop_id, spec.key, creates, updates
+        )
+        await write_everything()
 
     rows = await entry_rows(workshop_id, stage_key=spec.key)
     completeness = workshop_completeness(rows, definition=definition).get(spec.key)
@@ -3123,6 +3492,26 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         # for why fields is the right reading. `errors` is unchanged and stays the authority on WHICH
         # box is marked; this is only the total, which nothing else in the response carried.
         "refusedAnswers": refused_answer_count(errors),
+        # IT ALSO CARRIES PAYLOAD-SHAPE COMPLAINTS, AND THAT IS A KNOWN IMPURITY RATHER THAN AN
+        # OVERSIGHT. Three entries in this list are not registry drift at all: a duplicate
+        # `_clientKey`, a duplicate `_entryId`, and a second entry for one singleton folded into the
+        # first. All three mean "this client serialised the same thing twice", which is a client bug
+        # and not a version skew — so a browser that double-submits one form shows the "newer field
+        # registry than the server" banner, which is the wrong sentence.
+        #
+        # LEFT SHARING THE CHANNEL, DELIBERATELY. The alternative is a fourth response key, and a
+        # response key is only worth its cost when a client renders it: `droppedCustomKeys` earns
+        # that because custom drift happens on EVERY save of a workshop with a custom section and
+        # has a different remedy (reload, not report). These three happen only when a client is
+        # malfunctioning, at which point "something about this save was refused, tell somebody" is
+        # very nearly the right message and being seen at all matters more than being phrased
+        # exactly. Silently dropping them instead would leave a designer's second copy vanishing
+        # with a 200 beside it and nothing anywhere to find it by.
+        #
+        # WHAT WOULD CHANGE THE ANSWER: if any of the three ever became routine — a shipped client
+        # that duplicates on ordinary use — the banner would start crying wolf on healthy saves and
+        # these would need their own key, for exactly the reason the note below gives for custom
+        # keys. Until then the channel is diluted by three bug reports, not by normal traffic.
         "droppedKeys": sorted(set(dropped)),
         # CUSTOM DRIFT GETS ITS OWN FIELD AND ITS OWN SENTENCE, AND NEVER `droppedKeys`.
         #
@@ -3154,6 +3543,84 @@ async def save_stage(workshop_id: str, spec: StageSpec, payload: Any, user: Any)
         # is a different fact from "I hold nothing" and is why it is not omitted.
         "customSchemaVersion": definition.version,
     }
+
+
+async def _absorb_key_collisions(
+    workshop_id: str,
+    stage_key: str,
+    creates: list[dict[str, Any]],
+    updates: list[tuple[str, dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], list[tuple[str, dict[str, Any]]]]:
+    """Turn every INSERT whose reserved key another request has just taken into an UPDATE of it.
+
+    It also withdraws an UPDATE's *adoption* of the reserved key when the re-read shows that key now
+    belongs to another row — the same collision arriving from the other direction. See the note on
+    that loop below.
+
+    Called only after a :class:`UniqueViolationError` has aborted the write, and it re-reads rather
+    than reasoning from what was planned: the whole premise is that the stage's rows changed under
+    this request between its read and its write, so the pre-collision picture is exactly the thing
+    that cannot be trusted.
+
+    ``createdById`` IS DELIBERATELY NOT CARRIED ACROSS. The row exists because the other designer's
+    save made it, and that is who created it; rewriting the column would credit this request with a
+    row it lost the race for, on a table whose per-field provenance is what the report attributes
+    answers by. What this request contributes is its VALUES, and `fieldProvenance` — computed before
+    the first attempt, from this designer's edits — travels with them.
+
+    A create whose key is still free stays a create. That is the ordinary case for every collection
+    row in the payload, which carries either its own client key or none, and which this must not
+    disturb: the collision was one row's, and re-running the transaction re-runs all of them.
+    """
+    rows = await db.dwstageentry.find_many(
+        where={"designWorkshopId": workshop_id, "stageKey": stage_key}
+    )
+    # Soft-deleted rows included, for the reason the matcher in `save_stage` includes them: a
+    # deleted row still OCCUPIES its client key under the index, so the row that refused the insert
+    # may well be one nothing is currently showing. `deletedAt: None` below resurrects it, which is
+    # what the client asserting the row exists means.
+    taken = {(row.entityKey, row.clientKey): row.id for row in rows if row.clientKey}
+
+    # AN UPDATE CAN BE THE THING THAT WAS REFUSED, TOO, and it is refused for the mirror-image
+    # reason. `_reserved_key_upgrade` decides from the pre-write read whether an unkeyed singleton
+    # may adopt the reserved key, and a competing save can take that key in the window between the
+    # two. Retrying the identical UPDATE would then be refused identically and the designer would
+    # get a 500 — losing the save, which is the outcome this whole function exists to avoid — so
+    # the adoption is DROPPED when the re-read shows the key now belongs to a different row. Only
+    # the adoption: `data`, `ordinal`, `deletedAt` and `fieldProvenance` are the designer's work and
+    # go in untouched. The row keeps its null key and the singleton matcher, which prefers the keyed
+    # row and then falls back to the entity, still finds one row to write; the pair converges on the
+    # winner from the next save on, which is the same convergence the matcher gives every other
+    # pre-existing duplicate.
+    rows_by_id = {row.id: row for row in rows}
+    absorbed: list[tuple[str, dict[str, Any]]] = []
+    for row_id, planned in updates:
+        adopted = planned.get("clientKey")
+        row = rows_by_id.get(row_id)
+        holder = taken.get((row.entityKey, adopted)) if adopted and row else None
+        fields = (
+            {key: value for key, value in planned.items() if key != "clientKey"}
+            if holder is not None and holder != row_id
+            else planned
+        )
+        absorbed.append((row_id, fields))
+
+    still_creates: list[dict[str, Any]] = []
+    for data in creates:
+        row_id = taken.get((data["entityKey"], data.get("clientKey")))
+        if row_id is None:
+            still_creates.append(data)
+            continue
+        absorbed.append((
+            row_id,
+            {
+                "data": data["data"],
+                "ordinal": data["ordinal"],
+                "deletedAt": None,
+                "fieldProvenance": data["fieldProvenance"],
+            },
+        ))
+    return still_creates, absorbed
 
 
 def _json(data: dict[str, Any]) -> Any:
@@ -4452,9 +4919,15 @@ async def attach_district_anchors(data: WorkshopData) -> int:
     why it survived.
 
     ``geography.DistrictAnchors`` already solves this for ``/map``: it seeds from the atlas and
-    then learns each district's position from every pinned ``Location`` the repository holds, and
-    ``address.DISTRICTS_BY_STATE`` names all 795 districts so any of them can be matched. All that
-    was missing was handing the result to the report.
+    then learns each district's position from every pinned ``Location`` A RECORD STILL POINTS AT,
+    and ``address.DISTRICTS_BY_STATE`` names all 795 districts so any of them can be matched. All
+    that was missing was handing the result to the report.
+
+    That qualification is load-bearing rather than pedantic, and it is the read below's second
+    predicate: the table also holds the rows every earlier save of the same record left behind
+    (``records.attach_location`` inserts, never updates), and letting those vote means a corrected
+    pin keeps pulling its district toward the position it was corrected away from — in a figure
+    printed into a document a ministry officer reads. See ``geography.REFERENCED_BY_A_RECORD``.
 
     Flattened to a plain dict here rather than passed as the object, because ``report_builder`` is
     ALSO the on-device builder: it may not query and may not import something that can. Returns
@@ -4472,12 +4945,28 @@ async def attach_district_anchors(data: WorkshopData) -> int:
     The caller is expected to skip this load entirely when the template draws no map — four of the
     six do not. See ``_report_inputs``.
     """
-    from app.services.geography import MAX_ANCHOR_ROWS, DistrictAnchors, district_key
+    from app.services.geography import (
+        MAX_ANCHOR_ROWS,
+        REFERENCED_BY_A_RECORD,
+        DistrictAnchors,
+        district_key,
+    )
 
     anchors = DistrictAnchors()
     anchors.seed_from_atlas()
     rows = await db.location.find_many(
-        where={"subjectLatitude": {"not": None}, "district": {"not": None}},
+        # REFERENCED ROWS ONLY, the same predicate `/map` learns from — see
+        # `geography.REFERENCED_BY_A_RECORD`. `attach_location` inserts a fresh row on every save,
+        # update included, and nothing deletes the old one; without this the abandoned rows keep
+        # voting, so a district anchor printed in a .docx sits between where the researcher put the
+        # pin and where they had first put it by mistake. The two readers must ask the identical
+        # question or one district lands in two places in two products of the same data.
+        where={
+            "AND": [
+                {"subjectLatitude": {"not": None}, "district": {"not": None}},
+                REFERENCED_BY_A_RECORD,
+            ]
+        },
         # A STABLE ORDER, because the read is capped: without one, two reports generated a minute
         # apart could learn from two different slices and place the same district differently.
         order={"id": "asc"},

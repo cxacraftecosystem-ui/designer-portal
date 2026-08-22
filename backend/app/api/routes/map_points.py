@@ -64,6 +64,7 @@ from app.services.concurrency import gather_reads
 from app.services.geography import (
     MAX_ANCHOR_ROWS,
     PRECISION_SUBJECT_PIN,
+    REFERENCED_BY_A_RECORD,
     SOURCE_PLACE_TEXT,
     SOURCE_SUBJECT_PIN,
     AdminLevel,
@@ -840,10 +841,21 @@ async def map_points(
     # the selected rows would move as filters changed, and a pin that shifts when you tick a date
     # range is a map disagreeing with itself — a reader would read the movement as the craft having
     # moved. So it is the same anchors for every request, learned from every pin in the repository.
+    #
+    # IT IS FILTERED BY ONE THING, AND THAT IS NOT A CALLER'S FILTER: the row has to still be
+    # REFERENCED by a record. `records.attach_location` inserts on the update path as well as the
+    # create path and nothing ever deletes a Location, so the table accumulates a row per save per
+    # attachment; without `REFERENCED_BY_A_RECORD` a pin a researcher corrected went on pulling its
+    # district's mean toward the place they had just rejected, and every re-save deepened it.
     location_rows, anchor_rows = await gather_reads(
         db.location.find_many(where={"id": {"in": wanted_location_ids}}) if wanted_location_ids else _none(),
         db.location.find_many(
-            where={"subjectLatitude": {"not": None}, "subjectLongitude": {"not": None}},
+            where={
+                "AND": [
+                    {"subjectLatitude": {"not": None}, "subjectLongitude": {"not": None}},
+                    REFERENCED_BY_A_RECORD,
+                ]
+            },
             take=_MAX_ANCHOR_ROWS,
             # ORDERED, and the order is the whole point of it being here. A LIMIT with no ORDER BY
             # returns whatever the scan reaches first, and this predicate has no index to serve it (the

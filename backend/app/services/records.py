@@ -333,7 +333,7 @@ def jsonify_metadata(data: dict[str, Any], *fields: str) -> dict[str, Any]:
             data[key] = Json(data[key])
     return data
 
-# Nullable relation columns a client may deliberately CLEAR.
+# Keys a client may deliberately CLEAR on EVERY model that has them.
 #
 # Update payloads are dumped with ``exclude_unset=True``, so a key is present only when the caller
 # actually sent it: ``{"workshopId": None}`` means "unlink this record", which is different from
@@ -341,8 +341,19 @@ def jsonify_metadata(data: dict[str, Any], *fields: str) -> dict[str, Any]:
 # unlinking a silent no-op — the save returned 200, the form showed "Unlinked", and the old link
 # survived in the database. These keys therefore survive the clean with their explicit ``None``.
 #
-# Only relation FKs belong here. Scalar fields keep the old behaviour, because blanking those is
-# governed by the field-clearing guard in ``deps.assert_can_contribute_fields`` instead.
+# THIS SET IS GLOBAL, WHICH IS WHY IT IS SHORT AND WHY IT MUST STAY SHORT. ``clean_data`` is the one
+# chokepoint every create and update funnels through and it does not know which model the payload is
+# bound for, so a name added here is clearable on all of them. Two things break if that is forgotten:
+# ``email`` is NOT NULL on User, DesignerRoster and AccessRoster and nullable on exactly one model,
+# so a global entry would turn a typo into a constraint violation on three tables; and CREATE paths
+# dump every unset optional as ``None``, so a global entry would send an explicit NULL for every
+# field the caller simply did not fill in.
+#
+# PER-MODEL NULLABLE SCALARS GO THROUGH THE ``clearable`` ARGUMENT INSTEAD — see :func:`clean_data`.
+# That is what makes retracting a phone number, an email, an address or a note possible at all; the
+# claim that used to stand here, that blanking a scalar is "governed by the field-clearing guard in
+# ``deps.assert_can_contribute_fields``", described a governance that could not fire, because the
+# ``None`` was already gone by the time the guard ran.
 CLEARABLE_KEYS = frozenset(
     {
         "workshopId",
@@ -418,9 +429,14 @@ TITLE_CASE_FIELDS = frozenset(
 )
 
 
-def clean_data(data: dict[str, Any], *, title_case: bool = True) -> dict[str, Any]:
-    """Drop keys whose value is ``None``, keeping the deliberate nulls in :data:`CLEARABLE_KEYS`, and
-    title-case the name-like fields in :data:`TITLE_CASE_FIELDS`.
+def clean_data(
+    data: dict[str, Any],
+    *,
+    title_case: bool = True,
+    clearable: Sequence[str] | frozenset[str] = (),
+) -> dict[str, Any]:
+    """Drop keys whose value is ``None``, keeping the deliberate nulls in :data:`CLEARABLE_KEYS` plus
+    ``clearable``, and title-case the name-like fields in :data:`TITLE_CASE_FIELDS`.
 
     Casing happens HERE, at the very top of every write path, so the normalised value is what every
     later step sees: the craft lookup that matches on an exact name, the ``RecordRevision`` diff, the
@@ -428,10 +444,27 @@ def clean_data(data: dict[str, Any], *, title_case: bool = True) -> dict[str, An
 
     Pass ``title_case=False`` from a route whose payload happens to reuse one of those column names
     for prose rather than a name — a generated task title, say — where sentence casing is correct.
+
+    ── ``clearable``: THE MODEL'S OWN NULLABLE SCALARS, AND WHY IT IS PER CALL ──────────────────────
+    A FIELD THAT CANNOT BE CLEARED IS A 200 THAT DOES NOTHING, which is the worst answer an API can
+    give: the form shows the box empty, the save reports success, and the old value is still in the
+    database. The case with no workaround at all is retracting personal information a subject has
+    asked to have removed — a phone number, an email address, a home address, a note about them —
+    because there is no "" to send instead when the column is a nullable ``String?`` and the client
+    means NULL.
+
+    It is an argument rather than more names in :data:`CLEARABLE_KEYS` because that set is global and
+    this one is not: ``email`` is nullable on one model and NOT NULL on three, so a global entry would
+    trade one silent no-op for a constraint violation elsewhere. And because CREATE paths dump every
+    unset optional as ``None``, a global entry would also start writing explicit NULLs for boxes the
+    researcher merely left blank. An UPDATE route dumping with ``exclude_unset=True`` has neither
+    problem: a key is present only because the caller sent it, and the caller sent this model.
+
+    So the rule for a caller is: pass the nullable scalar columns of the model THIS payload updates,
+    and pass them only from a route that dumps with ``exclude_unset=True``.
     """
-    cleaned = {
-        key: value for key, value in data.items() if value is not None or key in CLEARABLE_KEYS
-    }
+    allowed = CLEARABLE_KEYS | frozenset(clearable) if clearable else CLEARABLE_KEYS
+    cleaned = {key: value for key, value in data.items() if value is not None or key in allowed}
     return title_case_fields(cleaned, TITLE_CASE_FIELDS) if title_case else cleaned
 
 
@@ -517,8 +550,19 @@ _LIKE_METACHARACTERS = ("\\", "%", "_")
 def contains(value: str) -> dict[str, Any]:
     """A case-insensitive `contains` filter: control bytes stripped, LIKE metacharacters escaped.
 
-    Every text search in the app funnels through here (67 call sites), which is why both of the
-    treatments below live here rather than in each route.
+    Every text search in the app funnels through here — 89 call sites across ``app/api/routes`` and
+    ``app/services``, counted 2026-08-22 — which is why both of the treatments below live here rather
+    than in each route.
+
+    THAT SENTENCE WAS AN ASPIRATION FOR A WHILE, AND IS NOW ENFORCED. Five search boxes composed
+    ``{"contains": term, "mode": "insensitive"}`` by hand and got neither treatment: the access
+    roster, the designer roster, the designer directory, the questionnaire-forms list, and the
+    design-workshop REF picker (``services/design_workshops.reference_options``, searching
+    ``spec.search_fields``) — a picker, not a list endpoint; ``api/routes/design_workshops.py``
+    never had the defect. Counting the funnel's call sites could never have found them, because a
+    route that bypasses the funnel does not appear in the count — which is why the repair is not five
+    substitutions but ``test_record_filters.test_no_route_still_hand_rolls_a_contains_filter``, a
+    sweep that fails on the sixth one somebody writes.
 
     ── THE BYTES POSTGRES CANNOT STORE ─────────────────────────────────────────────────────────────
     A single NUL byte pasted into any search box — /search, artisans, crafts, tools, products, media,
@@ -1013,6 +1057,40 @@ async def hydrate_relations(rows: Sequence[Any], relations: Sequence[Relation]) 
                 setattr(row, rel.field, by_id.get(getattr(row, rel.key, None)))
 
 
+def with_id_tiebreak(order: Any) -> list[dict[str, Any]]:
+    """The caller's ordering, made TOTAL by appending ``id`` — the one column that is unique.
+
+    **OFFSET PAGING OVER A NON-TOTAL ORDER MISSES ROWS AND REPEATS OTHERS, AND BOTH ARE SILENT.**
+    ``LIMIT/OFFSET`` re-runs the whole sort for every page, and Postgres is free to break a tie
+    differently each time; a row that changes side of the cut between the request for page 1 and the
+    request for page 2 is either handed over twice or never handed over at all. The list looks
+    complete either way — it has the right number of rows and no gap in it — so the only way anybody
+    finds out is by hunting for a record that is definitely there and not finding it.
+
+    THE TIES HERE ARE NOT HYPOTHETICAL. ``createdAt`` is what almost every list in this API sorts by,
+    it has no unique index, and the access-roster migration inserted every grandfathered row with one
+    ``CURRENT_TIMESTAMP`` — four hundred people sharing a single sort key. ``name`` is worse: the
+    picker note in ``tasks.py`` counts 204 accounts called "Sync Test". And even without duplicate
+    keys, an attempt-count bump or any other update churns heap order between two page requests.
+
+    Two modules already fix this by hand and say why — ``feedback.list_feedback`` ("``id`` is the
+    TIEBREAKER and it is load-bearing now that this read is paged") and
+    ``design_workshops`` DISTINCT ON ("the ``createdAt, id`` tiebreak keeps the answer STABLE"). This
+    is the same fix applied at the chokepoint, so a list route added next season inherits it.
+
+    The direction follows the LAST clause of the caller's order, so a newest-first list stays
+    newest-first within a tie group and an A-Z list stays A-Z. A caller that already names ``id`` is
+    returned unchanged — appending a second ``id`` clause is at best noise and at worst an error from
+    the query builder.
+    """
+    clauses = [dict(clause) for clause in (order if isinstance(order, list) else [order])]
+    if any("id" in clause for clause in clauses):
+        return clauses
+    last = clauses[-1] if clauses else {}
+    direction = next(iter(last.values()), "asc") if last else "asc"
+    return [*clauses, {"id": direction if direction in ("asc", "desc") else "asc"}]
+
+
 async def count_and_page(
     delegate: Any,
     *,
@@ -1027,10 +1105,14 @@ async def count_and_page(
     The count and the page do not depend on each other, so they go together; the relations depend
     only on which rows came back, so they go together after. Callers unpack the pair exactly as they
     would have read it in sequence.
+
+    The ordering is made total on the way through — see :func:`with_id_tiebreak`. Doing it here and
+    not in each route is the point: every list that pages through this helper is stable by
+    construction, including the ones nobody has written yet.
     """
     total, items = await gather_reads(
         delegate.count(where=where),
-        delegate.find_many(where=where, skip=skip, take=take, order=order),
+        delegate.find_many(where=where, skip=skip, take=take, order=with_id_tiebreak(order)),
     )
     await hydrate_relations(items, relations)
     return total, items
@@ -1062,6 +1144,12 @@ PROVENANCE_SKIP_FIELDS = {
     MARKER_BODY_KEY,
 }
 
+#: The ``extraMetadata`` keys :func:`merge_field_provenance` must NOT carry forward off the stored
+#: row. Everything else on that column survives an edit; see the banner in that function for why
+#: these two are the exceptions — one has a single writer that runs first, the other is this
+#: function's own output.
+_EXTRA_NOT_CARRIED = frozenset({"workshopSubmission", "fieldProvenance"})
+
 
 def merge_field_provenance(new_data: dict[str, Any], user: Any, previous: Any | None = None) -> None:
     """Record which user populated/changed each field, stored under extraMetadata.fieldProvenance.
@@ -1080,11 +1168,49 @@ def merge_field_provenance(new_data: dict[str, Any], user: Any, previous: Any | 
     rather than replacing it, because the true sentence is *a vision model estimated this, and
     R. Menon accepted it into the record at that moment*, and stripping the name would delete the most
     useful fact on the row. ``services/measurement_provenance`` holds the whole argument.
+
+    ── THE REST OF ``extraMetadata`` SURVIVES THE EDIT, AND FOR A LONG TIME IT DID NOT ──────────────
+    This function OWNS the ``extraMetadata`` value that reaches Prisma: it rebuilds the column and
+    assigns it. It used to rebuild it from the REQUEST BODY alone, lifting nothing but
+    ``fieldProvenance`` off the stored row — so a PATCH of one phone number wrote back an
+    ``extraMetadata`` containing that provenance blob and nothing else, and every other key the row
+    was carrying was gone. Those keys are not decoration: ``design_workshops.REFERENCE_MODELS``'s
+    Artisan ``data`` lambda reads the legacy ``specialisation`` / ``experienceYears`` / ``age``
+    spellings off ``extraMetadata`` as the fallback that fills the report's participant table, and
+    its own comment says that read "must not be deleted" because it is the only remaining record for
+    the artisans the column migration deliberately refused to guess at ("30+", "about 30"). Editing
+    a phone number deleted it.
+
+    And silently is exact: ``extraMetadata`` is the FIRST entry in ``access.REVISION_SKIP_FIELDS``,
+    so no ``RecordRevision`` recorded the loss, there was nothing to undo it from, and the response
+    looked like a normal save.
+
+    The seed below is the fix. Two keys are deliberately NOT carried across from the stored row:
+
+    * ``workshopSubmission`` — SERVER-OWNED, and ``workshop_access.stamp_workshop_submission`` is its
+      single writer. It runs immediately before this function and has already decided the
+      authoritative value (a fresh check, the stamp carried off the record, or deliberately nothing
+      at all when a record is unlinked). Seeding it here as well would resurrect the stamp the single
+      writer had just chosen to drop, which is how a late submission stops needing admin approval.
+    * ``fieldProvenance`` — read separately, from the stored row, into ``provenance`` below. It is
+      dropped from BOTH sides, the stored seed and the incoming body, because a client that sends its
+      own ``fieldProvenance`` is asserting who filled in each field; that is this function's answer
+      to give, not the caller's.
     """
     from app.core.deps import get_value, is_empty_value, values_match
 
+    previous_extra = get_value(previous, "extraMetadata") if previous is not None else None
+    if not isinstance(previous_extra, dict):
+        previous_extra = {}
     incoming_extra = new_data.get("extraMetadata")
-    base_extra: dict[str, Any] = dict(incoming_extra) if isinstance(incoming_extra, dict) else {}
+    incoming_extra = incoming_extra if isinstance(incoming_extra, dict) else {}
+
+    base_extra: dict[str, Any] = {
+        key: value for key, value in previous_extra.items() if key not in _EXTRA_NOT_CARRIED
+    }
+    base_extra.update(
+        {key: value for key, value in incoming_extra.items() if key != "fieldProvenance"}
+    )
 
     # POPPED, NOT READ. ``measurementMethods`` is not a column on either documentation table, and
     # ``clean_data`` only drops keys whose value is None — so a marker that is actually sent survives
@@ -1102,10 +1228,8 @@ def merge_field_provenance(new_data: dict[str, Any], user: Any, previous: Any | 
     stamps = method_stamps(new_data.pop(MARKER_BODY_KEY, None), fields=new_data.keys())
 
     provenance: dict[str, Any] = {}
-    if previous is not None:
-        previous_extra = get_value(previous, "extraMetadata")
-        if isinstance(previous_extra, dict) and isinstance(previous_extra.get("fieldProvenance"), dict):
-            provenance = dict(previous_extra["fieldProvenance"])
+    if isinstance(previous_extra.get("fieldProvenance"), dict):
+        provenance = dict(previous_extra["fieldProvenance"])
 
     stamp = {
         "by": get_value(user, "id"),

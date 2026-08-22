@@ -235,6 +235,221 @@ def test_the_running_head_clearance_is_applied_in_both_passes(pdf_kt):
     assert "if (drawing) y = top - 6" not in pdf_kt.replace(" ", "")
 
 
+def _cursor_moves_inside_a_drawing_guard(source: str, *, kotlin: bool) -> list[tuple[int, str]]:
+    """Every line that changes the cursor from INSIDE a block guarded by the drawing flag.
+
+    THE RULE, stated in both renderers and broken three times: the drawing flag may guard a DRAW
+    CALL and must never guard a change to ``y``. A guarded cursor move makes the measuring pass
+    and the drawing pass disagree about how tall the document is, and the only symptom is a
+    contents page whose numbers are one or two too low — which nothing on screen contradicts.
+
+    Read as text, brace by brace, for the same reason the rest of this file reads Kotlin as text:
+    the failure is somebody moving one line inside an ``if``, and it happens in the place this
+    finds it. The Python side is read with :func:`inspect.getsource`, so it is the code that
+    actually loaded rather than a file on disk that may not be the one imported.
+    """
+    import re
+
+    def code(line: str) -> str:
+        marker = "//" if kotlin else "#"
+        cut = line.find(marker)
+        return line[:cut] if cut >= 0 else line
+
+    cursor = re.compile(r"(?<![A-Za-z0-9_.])y\s*(=[^=]|[-+]=)") if kotlin else \
+        re.compile(r"(?<![A-Za-z0-9_.])self\.y\s*(=[^=]|[-+]=)")
+    guard = re.compile(r"\bif\s*\(([^)]*\bdrawing\b[^)]*)\)") if kotlin else \
+        re.compile(r"\bif\s+([^:]*\b_drawing\b[^:]*):")
+
+    lines = source.splitlines()
+    found: list[tuple[int, str]] = []
+    for i, raw in enumerate(lines):
+        stripped = code(raw)
+        match = guard.search(stripped)
+        if not match or match.group(1).strip().startswith(("!", "not ")):
+            continue
+        if kotlin:
+            rest = stripped[match.end():]
+            if "{" not in rest:
+                # A brace-less guard — `if (drawing) startPage()` — governs its own line only.
+                # Scanning forward for a closing brace it never opens runs away over the whole
+                # file and reports every cursor move in it, which is how the first version of
+                # this test failed on four honest lines.
+                if cursor.search(rest):
+                    found.append((i + 1, raw.strip()))
+                continue
+            depth = 0
+            started = False
+            for j in range(i, len(lines)):
+                segment = code(lines[j])[match.end():] if j == i else code(lines[j])
+                for character in segment:
+                    if character == "{":
+                        depth += 1
+                        started = True
+                    elif character == "}":
+                        depth -= 1
+                if (j > i or started) and cursor.search(code(lines[j])):
+                    found.append((j + 1, lines[j].strip()))
+                if started and depth == 0:
+                    break
+        else:
+            indent = len(stripped) - len(stripped.lstrip())
+            for j in range(i + 1, len(lines)):
+                body = lines[j]
+                if body.strip() and (len(body) - len(body.lstrip())) <= indent:
+                    break
+                if cursor.search(code(body)):
+                    found.append((j + 1, body.strip()))
+    return found
+
+
+def test_the_kotlin_measuring_pass_moves_the_cursor_outside_every_drawing_guard(pdf_kt):
+    """THE LEVEL-1 HEADING RULE, AND THE THIRD TIME THIS CLASS OF BUG HAS SHIPPED.
+
+    ``PdfWriter.blockHeading`` moved ``y`` inside ``if (level == 1 && drawing)``, so the measuring
+    pass under-measured every level-1 heading by the 1.2 mm the rule costs. A report with a
+    hundred and fifty of them drew long enough to break pages the measuring pass had not, and the
+    handset's contents page then printed numbers for a layout that was never drawn.
+
+    ``_new_page`` already carried this lesson in as many words and the server's ``_block_heading``
+    carried it a second time, on this same rule. Prose did not stop it, so the SHAPE is asserted
+    here — and asserted on the whole file, not on the one site, because the next instance will be
+    somewhere else.
+    """
+    offenders = _cursor_moves_inside_a_drawing_guard(_kotlin("PdfWriter.kt"), kotlin=True)
+    assert not offenders, (
+        "PdfWriter.kt moves the layout cursor inside a `drawing` guard at "
+        + "; ".join(f"line {n}: {text}" for n, text in offenders)
+        + " — the drawing flag may guard a DRAW CALL and must never guard a change to y"
+    )
+
+
+def test_the_python_measuring_pass_moves_the_cursor_outside_every_drawing_guard():
+    """The same assertion on the server, read off the module that actually imported.
+
+    The server is where this shipped the first two times (the running-head clearance in
+    ``_new_page`` and the level-1 rule in ``_block_heading``), and a one-sided pin would let the
+    Python drift back while the Kotlin stayed honest.
+    """
+    import inspect
+
+    from app.services import report_pdf as module
+
+    offenders = _cursor_moves_inside_a_drawing_guard(inspect.getsource(module), kotlin=False)
+    assert not offenders, (
+        "report_pdf.py moves the layout cursor inside a `self._drawing` guard at "
+        + "; ".join(f"line {n}: {text}" for n, text in offenders)
+        + " — the drawing flag may guard a DRAW CALL and must never guard a change to self.y"
+    )
+
+
+def test_both_pdf_renderers_split_a_row_taller_than_the_page(pdf_kt):
+    """A cell longer than the text column was drawn at a negative y — off the paper — because the
+    lock that keeps a row unbroken suppresses every page break, including the one an over-tall row
+    needs. Both renderers cut the row and continue it overleaf, which is what the .docx gets for
+    free from Word on a ``<w:tr>`` with no ``<w:cantSplit/>``. A renderer that lost the cut would
+    silently eat paragraphs again."""
+    from app.services import report_pdf
+
+    assert hasattr(report_pdf.PdfRenderer, "_cut_row"), \
+        "report_pdf.PdfRenderer no longer cuts an over-tall row"
+    assert "fun cutRow(" in pdf_kt, "PdfWriter.kt no longer cuts an over-tall row"
+    # And neither may cut inside a region the caller has already reserved — that is the cover.
+    assert "lockedDepth > 0" in pdf_kt, \
+        "PdfWriter.cutRow must refuse to cut inside a locked region, as the cover depends on"
+
+
+def test_both_pdf_renderers_reserve_a_heading_s_own_spacing(pdf_kt):
+    """keepNext reserved a flat 6 mm for a heading that spends 10.1 mm on its own spacing, so a
+    heading could pass its fit test and then walk past the bottom margin. Both renderers now bind
+    the lead and the trail once and reserve them plus one following line; a renderer that went
+    back to a flat figure would orphan headings again, and the two would paginate differently."""
+    import inspect
+
+    from app.services import report_pdf
+
+    heading = inspect.getsource(report_pdf.PdfRenderer._block_heading)
+    for token in ("lead", "trail"):
+        assert f"{token} +" in heading or f"+ {token}" in heading, \
+            f"report_pdf._block_heading no longer reserves its bound `{token}` spacing"
+    assert "self.y -= lead" in heading, "the reserved lead must be the lead that is spent"
+    assert "val lead = " in pdf_kt and "val trail = " in pdf_kt, \
+        "PdfWriter.blockHeading no longer binds its own spacing"
+    assert "y -= lead" in pdf_kt, "the reserved lead must be the lead that is spent"
+
+
+def test_both_pdf_renderers_keep_a_figure_title_with_its_picture(pdf_kt):
+    """Both files carried a comment saying a figure title "must not be separated from its picture
+    by a page break" and neither opened the locked region that would have prevented it: 32 of 80
+    chart titles landed on the page before their chart. A figure title is not in the contents, so
+    a stranded one sits over somebody else's picture with nothing to say it does not belong."""
+    import inspect
+
+    from app.services import report_pdf
+
+    figure = inspect.getsource(report_pdf.PdfRenderer._block_figure)
+    assert "_image_box" in figure, \
+        "report_pdf._block_figure no longer measures the picture before reserving space for it"
+    assert "with self._locked():" in figure, \
+        "report_pdf._block_figure no longer draws the title and the picture as one unit"
+    assert "imageBox(" in pdf_kt, \
+        "PdfWriter.blockFigure no longer measures the picture before reserving space for it"
+
+
+def test_both_pdf_renderers_wrap_every_string_they_draw(pdf_kt):
+    """The contents entry and the running furniture were the three text paths that never wrapped,
+    and all three ran off the sheet: a real section title 164.2 pt past the trim edge, the running
+    head 265 pt off the left edge of the paper. Both renderers now put all three through the same
+    word wrap, so the two files of one report break their lines in the same places."""
+    import inspect
+
+    from app.services import report_pdf
+
+    toc_py = inspect.getsource(report_pdf.PdfRenderer._block_toc)
+    assert "self._wrap(runs_of(label" in toc_py, \
+        "report_pdf._block_toc draws a contents entry it has not wrapped"
+    furniture_py = inspect.getsource(report_pdf.PdfRenderer._draw_furniture)
+    for field in ("header_text", "footer_text"):
+        assert f"self._wrap(runs_of(meta.{field})" in furniture_py, \
+            f"report_pdf._draw_furniture draws an unwrapped {field}"
+    # The dot leader and the page number are the two strings that legitimately stay bare: the
+    # leader is generated to fit the gap it is drawn in, and the number is three characters
+    # right-aligned on a line the wrap has already sized around it.
+    toc = pdf_kt[pdf_kt.index("private fun blockToc"):]
+    toc = toc[:toc.index("private fun blockHeading")]
+    assert "wrap(runsOf(label" in toc, "PdfWriter.blockToc draws a contents entry it has not wrapped"
+    furniture = pdf_kt[pdf_kt.index("private fun drawFurniture"):]
+    furniture = furniture[:furniture.index("\n    // -- drawing helpers")]
+    assert "wrap(runsOf(meta.headerText)" in furniture, "PdfWriter draws an unwrapped running head"
+    assert "wrap(runsOf(meta.footerText)" in furniture, "PdfWriter draws an unwrapped running foot"
+
+
+def test_neither_pdf_renderer_sizes_the_contents_column_from_the_page_number(pdf_kt):
+    """The contents entry's wrap column must not depend on WHICH PASS is running.
+
+    Both renderers lay the contents block out before the headings that fill their page-number
+    index, so the number is absent while measuring and present while drawing. Sizing the wrap
+    column from it made the two passes see different geometry — measured on the server, 453.5 pt
+    while measuring against 431.4 pt while drawing, which for a 60-section report put the
+    contents on five pages when measured and six when drawn and printed a number one page short
+    beside all sixty entries. The room for the number is reserved from a constant instead, and
+    the label still governs only whether a number and a leader are DRAWN.
+    """
+    import inspect
+
+    from app.services import report_pdf
+
+    def avail_statement(source: str, keyword: str) -> str:
+        return next(row for row in source.splitlines() if row.strip().startswith(keyword))
+
+    toc_py = inspect.getsource(report_pdf.PdfRenderer._block_toc)
+    py_avail = avail_statement(toc_py, "avail = ")
+    assert "page_label" not in py_avail and "page_w" not in py_avail,         f"report_pdf._block_toc sizes the contents column from the page number: {py_avail.strip()}"
+    toc_kt = pdf_kt[pdf_kt.index("private fun blockToc"):]
+    toc_kt = toc_kt[:toc_kt.index("private fun blockHeading")]
+    kt_avail = avail_statement(toc_kt, "val avail = ")
+    assert "pageLabel" not in kt_avail,         f"PdfWriter.blockToc sizes the contents column from the page number: {kt_avail.strip()}"
+
+
 # --------------------------------------------------------------------------------------
 # The theme
 # --------------------------------------------------------------------------------------

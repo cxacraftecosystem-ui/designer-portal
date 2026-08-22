@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.ConnectivityObserver
 import com.designprototype.workshop.data.DW_LOCAL_ID_PREFIX
 import com.designprototype.workshop.data.DW_WORKSHOP_CREATE_REFUSAL
 import com.designprototype.workshop.data.DesignWorkshopCreateBody
@@ -115,6 +116,26 @@ private data class WorkshopRow(
     val status: WorkshopSyncStatus? = null,
 ) {
     val localOnly: Boolean get() = remoteId == null
+}
+
+/**
+ * What a pass says about the workshops it would not even attempt — see
+ * [SyncPassResult.blockedByRefusal].
+ *
+ * A CLAUSE RATHER THAN A SENTENCE OF ITS OWN, and it leads with a space, exactly like
+ * `refusedAnswersLine` and `deletionsLine` beside it: the same fact has to be appendable to a pass
+ * that did plenty and to a pass that did nothing at all, and there is one copy of the wording.
+ *
+ * It says a sync CANNOT move them, in those words. "Could not be sent" reads as a connection and
+ * sends a designer walking up a hill for signal; what is actually waiting is an admin, or the Try
+ * again button after a person has done something about a refusal.
+ */
+private fun blockedLine(blocked: Int): String = if (blocked <= 0) "" else {
+    " $blocked workshop${if (blocked == 1) "" else "s"} " +
+        "${if (blocked == 1) "was" else "were"} not sent and a sync cannot move " +
+        "${if (blocked == 1) "it" else "them"} — ${if (blocked == 1) "it is" else "they are"} " +
+        "waiting on a person, not on the connection. Nothing has been deleted: open the workshop " +
+        "below to see what is needed."
 }
 
 @Composable
@@ -474,6 +495,21 @@ fun WorkshopListScreen(
                                 // blunter reason: the stage was never sent at all, because its
                                 // signature already matched.
                                 append(deletionsLine)
+                                // A workshop the pass would not even attempt is invisible in every
+                                // number above it, and a pass that moved nineteen stages of one
+                                // workshop while a second one sits behind a refusal must not report
+                                // only the nineteen. Same argument as `result.refused` two clauses
+                                // up, for the case where nothing was sent AT ALL.
+                                append(blockedLine(result.blockedByRefusal))
+                                // Nothing was filed, an id was recovered — and the counts above say
+                                // "0 stage(s)" for a pass whose whole achievement was that.
+                                if (result.workshopsResumed > 0) {
+                                    append(
+                                        " ${result.workshopsResumed} workshop(s) turned out to be on " +
+                                            "the server already and have been linked to this phone " +
+                                            "rather than sent a second time."
+                                    )
+                                }
                             }
                         )
                         // ABOVE BOTH the offline line and the "already on the server" line, and each
@@ -496,6 +532,25 @@ fun WorkshopListScreen(
                                     append(" The connection then dropped, so nothing after that was ")
                                     append("tried — none of it has been lost.")
                                 }
+                                append(blockedLine(result.blockedByRefusal))
+                            }
+                        )
+                        // ABOVE THE OFFLINE LINE FOR THE REASON THE ARM ABOVE IS, AND IT IS THE ARM
+                        // THAT WAS MISSING. A workshop this pass would not attempt — an account that
+                        // may not create one, or a create failure only "Try again" clears — leaves
+                        // every counter at zero, so this fell all the way to "Everything on this
+                        // device is already on the server" over a fortnight with no server record at
+                        // all. That is the same untrue sentence the two blocks above this button
+                        // were written to stop, reaching the designer by a third door.
+                        result.blockedByRefusal > 0 -> onMessage(
+                            buildString {
+                                append(blockedLine(result.blockedByRefusal).trimStart())
+                                if (result.stoppedOffline) {
+                                    append(" The connection then dropped, so nothing after that was ")
+                                    append("tried — none of it has been lost.")
+                                }
+                                append(refusedAnswersLine)
+                                append(deletionsLine)
                             }
                         )
                         result.stoppedOffline -> onMessage(
@@ -582,9 +637,28 @@ fun WorkshopListScreen(
                                         "server. Nothing has been deleted — open the details on the row " +
                                         "to see why."
                                 )
+                                // "Try again" CLEARS a create failure before the pass runs (see
+                                // `retryWorkshop`), so what reaches this arm is the refusal the pass
+                                // then recorded again from scratch: this account may not create a
+                                // workshop. Without it the button answered "“…” is already fully on
+                                // the server" over a draft that has never been anywhere near it.
+                                result.blockedByRefusal > 0 -> onError(
+                                    "“${row.title}” was not sent, and a sync cannot move it — it is " +
+                                        "waiting on a person, not on the connection. Nothing has " +
+                                        "been deleted: open the details on the row to see what is " +
+                                        "needed."
+                                )
                                 result.didAnything -> onMessage(
                                     "“${row.title}”: sent ${result.stagesSent} stage(s) and " +
-                                        "${result.mediaUploaded} file(s)."
+                                        "${result.mediaUploaded} file(s)." +
+                                        // The id was recovered rather than a workshop filed; the two
+                                        // counts above are both 0 on the pass that does only that.
+                                        if (result.workshopsResumed > 0) {
+                                            " It turned out to be on the server already and has been " +
+                                                "linked to this phone rather than sent a second time."
+                                        } else {
+                                            ""
+                                        }
                                 )
                                 result.stoppedOffline -> onMessage(
                                     "The connection dropped. Nothing has been lost — it will pick up " +
@@ -635,6 +709,23 @@ fun WorkshopListScreen(
             candidates = rows.filter { !it.localOnly },
             offline = offline,
             onDismiss = { adopting = null },
+            /*
+              THE ADOPT PATH WAS CHECKED FOR THE INTERRUPTED-CREATE HAZARD ON 2026-08-22 AND IS SAFE,
+              which is worth writing down because the answer is not obvious.
+
+              `adoptedIntoWorkshop` (data/DwWorkshopCreation.kt) does not clear
+              `DraftSyncState.createSentAt`, so a draft adopted while a create of its own was still
+              unaccounted for keeps the stamp. It cannot be acted on: the stamp is read at exactly one
+              place, inside `WorkshopSync`'s `if (remoteIdOf(draft) == null)` arm, and adoption sets
+              `remoteId`. The stale value is inert data, not a live create.
+
+              WHAT ADOPTION CANNOT DO IS RECONCILE THE ORPHAN. If the interrupted create DID land and
+              the designer moves the draft into a different workshop, the workshop their own tap made
+              stays on the server, empty, and nothing in this app will ever join the two. That is why
+              the sync pass resolves before it posts rather than leaving this dialog to sort it out,
+              and why the resolver refuses to guess when two candidates match: this control is the
+              place a wrong guess becomes unpickable.
+            */
             onAdopt = { target ->
                 adopting = null
                 busy = true
@@ -842,6 +933,20 @@ private fun CompletenessRing(percent: Int) {
  *
  * So [mayMintLocalWorkshop] is asked FIRST, from the cached role, before the request and before a
  * byte is written. Nothing about the network is consulted, because the answer does not depend on it.
+ *
+ * ── THIS DIALOG IS A SECOND WRITER OF `POST /design-workshops`, AND THAT MATTERS ────────────────
+ *
+ * `WorkshopSync` spent a paragraph asserting it was the only thing in this app that creates a
+ * workshop. It is not: this dialog posts too, and a READ TIMEOUT here is classified transient, so a
+ * workshop the server committed becomes a local draft with no remote id and the next sync pass files
+ * it again. The draft therefore carries `DraftSyncState.createSentAt`, stamped in the disk write
+ * below, and the pass resolves it against the server before posting. `DwInterruptedCreateTest` pins
+ * the decision.
+ *
+ * THE STAMP IS FOR A LOST ANSWER, NOT FOR A CREATE THAT NEVER LEFT. It is written only when the
+ * handset had a validated connection at the moment of the POST, so the ordinary offline create —
+ * which is the whole point of the paragraph above — carries none and the resolver is never armed for
+ * it. The stamp's own comment has the fortnight that costs.
  */
 @Composable
 private fun CreateWorkshopDialog(
@@ -922,6 +1027,12 @@ private fun CreateWorkshopDialog(
                             craftName = craft.trim().takeIf { it.isNotEmpty() },
                             clusterName = cluster.trim().takeIf { it.isNotEmpty() },
                         )
+                        // READ BEFORE THE POST, NOT AFTER IT. Afterwards this answers the question
+                        // "is there signal now", which for a request that failed BECAUSE the signal
+                        // went mid-flight is false — and that request is exactly the one whose
+                        // answer may have been lost and which therefore has to be stamped. See the
+                        // stamp below for what the answer is used for.
+                        val couldHaveReachedServer = ConnectivityObserver.isOnline(appContext)
                         val remote = runCatching { repository.createDesignWorkshop(body) }
                         val outcome = classifyCreate(remote.exceptionOrNull()) { repository.isTransient(it) }
                         if (outcome is CreateOutcome.Refused) {
@@ -943,6 +1054,62 @@ private fun CreateWorkshopDialog(
                                     templateId = body.templateId,
                                     remoteId = remote.getOrNull()?.id,
                                     ownerUserId = repository.cachedUser()?.id,
+                                    /*
+                                      THIS DIALOG IS THE SECOND WRITER OF `POST /design-workshops`,
+                                      AND `WorkshopSync` SPENT A PARAGRAPH SAYING IT WAS THE ONLY ONE.
+
+                                      A READ TIMEOUT is a transient failure, so `classifyCreate`
+                                      answers [CreateOutcome.Local] and the line above writes
+                                      `remoteId = null` — for a workshop the server may have committed
+                                      before the reply was lost. The sync pass then finds no remote id
+                                      and posts it again, and the create route de-duplicates nothing:
+                                      one tap, two records in a government index, one of them empty
+                                      for ever. See [DraftSyncState.createSentAt], which the pass now
+                                      reads before it posts.
+
+                                      STAMPED HERE RATHER THAN BEFORE THE POST BECAUSE THERE IS
+                                      NOTHING TO STAMP BEFORE IT. No draft exists yet, and the draft's
+                                      own key is the SERVER's id when the create lands — a pre-write
+                                      would have to be made under a local id and then moved. This is
+                                      the first instant a draft exists at all, which is also the first
+                                      instant anything else could send a second create, and that is
+                                      the property the stamp has to beat.
+
+                                      ── AND IT IS NOT STAMPED ON A CREATE THAT NEVER LEFT THIS PHONE ──
+
+                                      This first read `if (remote.isFailure)`, argued as deliberate
+                                      over-recording: `isTransient` covers a request that never
+                                      reached the network, and stamping one was said to cost only a
+                                      list request on the next pass.
+
+                                      THAT IS THE FIELD PATH, NOT AN EDGE OF IT. A create with no
+                                      signal is an `IOException`, `classifyCreate` answers
+                                      [CreateOutcome.Local] by design, and the local draft it mints is
+                                      the whole offline feature — so EVERY workshop started in a
+                                      courtyard would have carried a stamp from birth. The stamp is
+                                      what arms `dwResumedCreateFrom`, whose single-candidate arm
+                                      ADOPTS: an admin who already had a workshop of this exact title
+                                      on the server would have had this draft pointed at it silently,
+                                      and a fortnight of stages pushed into the wrong ministry record
+                                      under a 200. Arming that on the ordinary path to catch the rare
+                                      one is the wrong way round.
+
+                                      SO THE TEST IS "COULD THIS REQUEST HAVE REACHED THE SERVER" —
+                                      the connectivity the rest of the app already gates on, read at
+                                      the moment of the POST rather than after it, so a network that
+                                      dropped mid-flight still counts as reachable and is stamped. It
+                                      still over-records within that: a validated connection that
+                                      failed to connect at all is stamped, and that costs one list
+                                      request which finds nothing. What it no longer does is arm the
+                                      resolver for a phone that was plainly offline.
+                                    */
+                                    sync = draft.sync.copy(
+                                        createSentAt = if (remote.isFailure && couldHaveReachedServer) {
+                                            Instant.now().toString()
+                                        } else {
+                                            null
+                                        },
+                                    ),
                                 )
                             }
                         }.onFailure { error ->

@@ -37,13 +37,29 @@ from the sibling table's "nothing is ever deleted". A grant here carries no deci
 never refused anybody and was never asked for, so a tombstone would record only that an admin
 changed their mind about a colleague.
 
-**ELIGIBILITY IS A SET, NOT A RANK, AND A SUSPENDED DESIGNER IS THE TRAP.** ``DESIGN_WORKSHOP_ROLES``
-is Designer/Admin/Master Admin — a PROFESSOR cannot run a workshop despite outranking a designer —
-and on top of that a DESIGNER whose ``DesignerRoster`` row is missing or suspended cannot sign in at
-all (see ``services/designers.roster_allows``). Offering such an account in the picker would let an
-admin grant access that the next sign-in refuses: the admin's screen would say the designer is in,
-the designer would see a refusal, and nothing anywhere would connect the two. So they are excluded
-from the offer AND refused by the write, because a picker is a suggestion and the write is the rule.
+**ELIGIBILITY IS A SET, NOT A RANK, AND SOMEBODY WHO CANNOT SIGN IN IS THE TRAP.**
+``DESIGN_WORKSHOP_ROLES`` is Designer/Admin/Master Admin — a PROFESSOR cannot run a workshop despite
+outranking a designer — and on top of that TWO SEPARATE TABLES can stop an otherwise eligible
+account signing in, so both are consulted here:
+
+* ``DesignerRoster`` — the empanelment. A DESIGNER whose row is missing or inactive cannot sign in
+  (``services/designers.roster_allows``). Gates designers only; admins are deliberately outside it.
+* ``AccessRoster`` — the platform allow-list, ``services/access_roster``. Gates EVERY role, so a
+  suspended ADMIN is caught by this one and by nothing else. Only the master admin is exempt, the
+  same break-glass the sign-in gate carries (``deps.is_break_glass_master``) — BOTH of its arms,
+  the role AND the configured ``MASTER_ADMIN_EMAIL``. The write path calls that predicate; the read
+  path cannot (a ``WHERE`` calls no function) and spells the same two arms out beside its clause.
+
+Offering such an account in the picker lets an admin grant access that the next sign-in refuses: the
+admin's screen says the person is in, the person sees a refusal, and nothing anywhere connects the
+two. So they are excluded from the offer AND refused by the write, because a picker is a suggestion
+and the write is the rule — and the two refusals name two different screens, because restoring an
+empanelment and restoring platform access are two different actions in two different places.
+
+THE ALLOW-LIST IS READ AS A CUT LIST, NEVER AS A GUEST LIST. It excludes the REJECTED and the
+SUSPENDED; it does not require an ACTIVE row. The two tables have no relation between them and the
+sign-in path self-heals a missing or PENDING row for an empanelled designer, so requiring admission
+would hide the very designers the product is about to let in. See ``access_roster.barred_emails``.
 """
 
 import logging
@@ -52,8 +68,11 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from app.core.config import get_settings
 from app.core.db import db
-from app.core.deps import DESIGN_WORKSHOP_ROLES
+from app.core.deps import DESIGN_WORKSHOP_ROLES, is_break_glass_master
+from app.services import access_roster
+from app.services.concurrency import gather_reads
 from app.services.designers import normalise_email
 from app.services.records import contains
 
@@ -184,14 +203,20 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
     Four fields and no more. The caller is choosing a reader and has no business receiving the
     capability flags or the auth provider that ``serialize_user`` would hand it.
 
-    THE ROSTER IS READ FIRST AND FOLDED INTO THE WHERE, rather than fetching users and filtering
+    BOTH ROSTERS ARE READ FIRST AND FOLDED INTO THE WHERE, rather than fetching users and filtering
     them afterwards, and the difference is not a micro-optimisation. Filtering after the ``take``
     applies the limit to the WRONG set: the query returns the first N accounts of the eligible
     ROLES, the suspended designers among them are then dropped, and the answer is some arbitrary
     number below N with eligible people beyond the cut never considered at all. An admin would see
     a picker missing colleagues who are perfectly eligible, with the number of them varying by how
-    many suspended designers happened to sort early. Folding the roster in means the cap applies to
+    many suspended designers happened to sort early. Folding the rosters in means the cap applies to
     accounts that are already eligible, so it can only ever truncate a genuinely long tail.
+
+    THE TWO ROSTERS ARE FOLDED IN THE TWO OPPOSITE DIRECTIONS, and mixing them up is the mistake
+    this function is being corrected for a second time. The DESIGNER roster is a guest list: a
+    designer is offered only if it admits them. The platform ALLOW-LIST is a cut list: an account of
+    any role is offered UNLESS it bars them. See the clause below and
+    ``access_roster.barred_emails`` for why requiring admission there would hide eligible people.
 
     **``search`` IS FOLDED INTO THE SAME WHERE, FOR THE SAME REASON, AND THE ARGUMENT ABOVE APPLIES
     TO IT WITH THE FORCE OF A PROOF.** Searching after the ``take`` would search the first 2000
@@ -221,7 +246,11 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
     trick, for the same reason, as the reference picker in ``services/design_workshops``, whose
     ``truncated`` this deliberately matches in name so both clients already know the word.
     """
-    admitted, roster_truncated = await active_roster_emails()
+    # Two independent reads, gathered: the database is in another region and a sequential pair
+    # costs a second round trip on a screen an admin opens to pick one colleague.
+    (admitted, roster_truncated), barred = await gather_reads(
+        active_roster_emails(), access_roster.barred_emails()
+    )
 
     clauses: list[dict[str, Any]] = [
         {
@@ -240,6 +269,50 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
             ]
         }
     ]
+    if barred:
+        # THE ALLOW-LIST, AND IT EXCLUDES RATHER THAN REQUIRES. ``AccessRoster`` decides who may
+        # sign in at all, and it gates every role — including the admins the designer-roster clause
+        # above deliberately does not gate, because that roster answers a different question.
+        #
+        # WHY NOT ``email IN (the admitted)``, which is the obvious way round and is wrong: there is
+        # no relation between these two tables, they meet on an email column, and the sign-in path
+        # SELF-HEALS an address with no row or a PENDING one when an active empanelment carries it
+        # (``auth.assert_access_admits``). Requiring an ACTIVE row would therefore hide exactly the
+        # designers the product is about to admit — a colleague missing from the picker with nothing
+        # on screen to say why, which is the failure this whole function has already been fixed for
+        # twice. Excluding only REJECTED and SUSPENDED cannot make that mistake: those are the two
+        # states no sign-in heals.
+        #
+        # THE MASTER ADMIN IS EXEMPT, the same break-glass ``deps.is_break_glass_master`` carries at
+        # the gate: the one account an allow-list row must never be able to remove from a screen.
+        # Ordinary ADMINs are NOT exempt — a suspended admin genuinely cannot sign in.
+        #
+        # BOTH OF THAT PREDICATE'S ARMS, and the second one is why this is not simply
+        # ``{"role": "MASTER_ADMIN"}``. A ``WHERE`` cannot call a Python function, so the exemption
+        # has to be SPELLED here — and spelling only the role half quietly narrowed it. The
+        # configured ``MASTER_ADMIN_EMAIL`` arm exists for the deployment where the row carrying
+        # the role has not been seeded yet, or where somebody has demoted it, which is precisely
+        # when a break-glass is needed. In that state the account signs in and mints a dataset
+        # token, and the one thing it could not do was appear in the picker that puts it back on a
+        # workshop. Kept in step with ``deps.is_break_glass_master`` BY HAND, because these two
+        # arms are the whole of that function: change one and change both.
+        #
+        # Only when the setting is actually set. An empty ``MASTER_ADMIN_EMAIL`` compared against a
+        # ``User.email`` that some row holds empty would exempt an account nobody chose — the one
+        # direction the predicate itself refuses to fail in, so this spelling must not fail in it
+        # either.
+        #
+        # ``mode: "insensitive"`` for the reason spelled beside the clause above: ``barred`` is
+        # lower-cased and ``User.email`` is not, so a case-sensitive NOT-IN would quietly fail to
+        # exclude an account stored shouting — the one direction this clause must never fail in.
+        # The configured address is compared the same way, and for the same reason.
+        configured = (get_settings().master_admin_email or "").strip().lower()
+        exemptions: list[dict[str, Any]] = [{"role": "MASTER_ADMIN"}]
+        if configured:
+            exemptions.append({"email": {"equals": configured, "mode": "insensitive"}})
+        clauses.append(
+            {"OR": [*exemptions, {"email": {"not_in": barred, "mode": "insensitive"}}]}
+        )
     term = (search or "").strip()
     if term:
         clauses.append({"OR": [{"name": contains(term)}, {"email": contains(term)}]})
@@ -275,8 +348,17 @@ async def eligible_viewers(search: str | None = None) -> dict[str, Any]:
         )
     return {
         "users": [{"id": u.id, "name": u.name, "email": u.email, "role": _role(u)} for u in users],
-        # OR-ed, not overwritten: a cut roster means eligible DESIGNERs are missing from this answer
-        # even when the list itself is short, which is precisely what this flag tells the client.
+        # OR-ed, not overwritten: a cut designer roster means eligible DESIGNERs are missing from
+        # this answer even when the list itself is short, which is precisely what this flag tells
+        # the client.
+        #
+        # A CUT BARRED-EMAIL READ IS DELIBERATELY NOT FOLDED IN HERE, and the omission is reasoned
+        # rather than forgotten. This flag means "people are MISSING from this list, narrow your
+        # search"; a truncated barred set means the opposite — somebody is present who should not
+        # be — and saying "narrow your search" to that is advice that does nothing. It is logged at
+        # ERROR in those words instead (see ``access_roster.barred_emails``), and the write path
+        # refuses the same accounts from an uncapped read, so the consequence is a picker that
+        # offers a name the PUT then declines, not access anybody actually gets.
         "truncated": truncated or roster_truncated,
     }
 
@@ -329,15 +411,24 @@ async def active_roster_emails() -> tuple[list[str], bool]:
 
 
 async def _designers_the_roster_still_admits(users: list[Any]) -> set[str]:
-    """The lower-cased emails of the DESIGNERs among ``users`` who can actually sign in.
+    """The lower-cased emails of the DESIGNERs among ``users`` whose EMPANELMENT is still active.
+
+    IT SAID "WHO CAN ACTUALLY SIGN IN", AND THAT WAS AN OVERCLAIM WORTH CORRECTING. The designer
+    roster is one of two tables that can stop somebody signing in; the platform allow-list
+    (``services/access_roster``) is the other, gates every role rather than designers only, and this
+    function has never looked at it. A caller trusting the old sentence would believe one read had
+    answered a question two reads answer — which is precisely how a suspended designer came to be
+    offered in the picker and accepted by the write. The allow-list is asked separately, by
+    ``access_roster.barred_among``, beside this call.
 
     ONE query for the whole batch rather than one per designer. Used by the WRITE path, where the
     set of ids is small and already known, so asking about exactly those emails is cheaper than
     reading the whole roster.
 
-    Admins are not looked up at all, deliberately — the roster gates designers only, and an admin
+    Admins are not looked up at all, deliberately — this roster gates designers only, and an admin
     who was empanelled years ago and later suspended must not lose the ability to administer
-    anything (see the same rule in ``tests/test_designer_roster``).
+    anything (see the same rule in ``tests/test_designer_roster``). Note that this is NOT an
+    exemption from the allow-list: a barred admin is refused by the branch that reads it.
     """
     emails = [normalise_email(u.email) for u in users if _role(u) == "DESIGNER"]
     if not emails:
@@ -461,7 +552,13 @@ async def _assert_every_id_may_be_granted(user_ids: set[str]) -> None:
             ),
         )
 
-    allowed = await _designers_the_roster_still_admits(users)
+    allowed, barred = await gather_reads(
+        _designers_the_roster_still_admits(users),
+        # EXACTLY THESE ADDRESSES, not the capped list the picker filters on. A refusal has to be
+        # able to promise it is complete, and ``barred_emails`` cannot — it has a ceiling. Asking
+        # about the handful of accounts actually named here has none.
+        access_roster.barred_among([u.email for u in users]),
+    )
     refusals: list[str] = []
     for uid in sorted(user_ids):
         user = by_id[uid]
@@ -471,11 +568,47 @@ async def _assert_every_id_may_be_granted(user_ids: set[str]) -> None:
                 f"{user.name} ({user.email}) is a {role} and cannot run a design & prototype "
                 f"workshop, so a viewer row would give them access their account refuses."
             )
-        elif role == "DESIGNER" and normalise_email(user.email) not in allowed:
+            # AND NOTHING FURTHER ABOUT THIS ACCOUNT, unlike the two branches below, which stack.
+            # Those name a state an administrator can RESTORE, so an admin deserves the whole list
+            # before they walk to another screen. This one names what the account IS; appending
+            # "and they are also suspended" to a professor who can never hold a viewer row is a
+            # second errand attached to the one refusal whose only remedy is picking somebody else.
+            continue
+        if role == "DESIGNER" and normalise_email(user.email) not in allowed:
             refusals.append(
                 f"{user.name} ({user.email}) is not on the ACTIVE designer roster, so they cannot "
                 f"sign in at all. Restore their roster entry first; a viewer row on its own would "
                 f"leave this screen saying they have access while they are shown a refusal."
+            )
+        if not is_break_glass_master(user) and normalise_email(user.email) in barred:
+            # THE THIRD REFUSAL, AND IT NAMES A DIFFERENT SCREEN ON PURPOSE. The branch above is
+            # about an empanelment that ended, and its remedy is the designer roster; this one is
+            # about the platform allow-list barring the account itself, and its remedy is the
+            # access screen. An admin sent to restore an empanelment that was never revoked will
+            # look at an active row, conclude the message is wrong, and try again — the same
+            # wasted round trip ``auth.ACCESS_SUSPENDED_DETAIL`` exists to save a person on the
+            # sign-in page. Two decisions, two remedies, two sentences.
+            #
+            # AN INDEPENDENT ``if`` AND NOT AN ``elif``, which is the whole reason those sentences
+            # were written separately in the first place. Chained, a designer who is BOTH off the
+            # roster AND barred here is told only about the roster: the admin restores an
+            # empanelment, saves again, and only then learns about the allow-list — the second
+            # trip this branch exists to save them, spent anyway. The refusals are joined with a
+            # space and the message already reads correctly with several entries in it.
+            #
+            # Reached by an ADMIN as well as a DESIGNER, which the empanelment branch never is:
+            # the allow-list gates every role. The master admin is exempt here exactly as they are
+            # at the gate, through ``deps.is_break_glass_master`` ITSELF rather than a role test
+            # standing in for it. That predicate's second arm — the configured
+            # ``MASTER_ADMIN_EMAIL`` — is what keeps a break-glass account working when the row
+            # carrying the role was never seeded or has been demoted, and a bare
+            # ``role != "MASTER_ADMIN"`` here would refuse exactly that account with a sentence
+            # saying it is barred from signing in, which for that account is not true: it signs in.
+            refusals.append(
+                f"{user.name} ({user.email}) is barred from signing in to this application: the "
+                f"platform access allow-list has them rejected or suspended. Restore them on the "
+                f"access screen first; a viewer row on its own would leave this screen saying they "
+                f"have access while they are shown a refusal."
             )
     if refusals:
         raise HTTPException(

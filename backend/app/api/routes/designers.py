@@ -52,6 +52,7 @@ from app.services.designers import (
     update_profile,
 )
 from app.services.pagination import normalize_pagination, page_payload
+from app.services.records import contains, with_id_tiebreak
 
 router = APIRouter(prefix="/designers", tags=["designers"])
 
@@ -114,16 +115,25 @@ async def list_roster(
         where["isActive"] = True
     if search:
         token = search.strip()
+        # ``records.contains``, not a hand-rolled filter: control bytes stripped (a pasted NUL was a
+        # bare 500 from this box) and LIKE metacharacters escaped, so pasting a full address to find
+        # one designer narrows the list instead of widening it on ``_``.
         where["OR"] = [
-            {"email": {"contains": token, "mode": "insensitive"}},
-            {"fullName": {"contains": token, "mode": "insensitive"}},
-            {"institution": {"contains": token, "mode": "insensitive"}},
+            {"email": contains(token)},
+            {"fullName": contains(token)},
+            {"institution": contains(token)},
         ]
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
     total, rows = await asyncio.gather(
         db.designerroster.count(where=where),
         db.designerroster.find_many(
-            where=where, skip=skip, take=clean_size, order={"createdAt": "desc"}
+            where=where,
+            skip=skip,
+            take=clean_size,
+            # ``createdAt`` is not unique and this read is paged, so the ``id`` tiebreak is what
+            # stops a row appearing on two pages while another appears on none. The directory read
+            # below already does this; this one bypasses ``count_and_page`` too and now says so.
+            order=with_id_tiebreak({"createdAt": "desc"}),
         ),
     )
     return page_payload([roster_payload(r) for r in rows], total, clean_page, clean_size)
@@ -298,9 +308,14 @@ async def designer_directory(
         # written to ``where["OR"]`` let the later one win, and if that is the search then the
         # eligibility clause is gone and the directory offers suspended designers to the one
         # caller that asked not to see them.
+        #
+        # ``records.contains`` rather than the raw filter this used to compose. This picker searches
+        # the same two User columns as the viewer picker, whose measured numbers are in the
+        # ``contains`` docstring (``search=_designer`` returned 635 accounts holding no underscore
+        # at all), and it was left behind when that sweep ran.
         clauses.append({"OR": [
-            {"name": {"contains": token, "mode": "insensitive"}},
-            {"email": {"contains": token, "mode": "insensitive"}},
+            {"name": contains(token)},
+            {"email": contains(token)},
         ]})
     users = await db.user.find_many(
         where={"AND": clauses},

@@ -29,10 +29,23 @@
  * - `filtered: true` with an EMPTY list is a real and ordinary answer — the artisan was typed in by
  *   hand on day two and has no documented products. Saying "no results" there invites the designer
  *   to clear the artisan and pick somebody else's product.
+ *
+ * A THIRD WAY TO CHOOSE, BESIDE TYPING AND CREATING: THE CARD ITSELF. Every record this repository
+ * issues carries a printed code, and a designer holding a colleague's artisan card could look it up
+ * on `/search` and then had to READ THE NAME OFF IT AND TYPE IT INTO THE BOX BELOW — which is the
+ * mis-typed-identifier failure the whole code feature exists to remove, reintroduced at the last
+ * step. So this control mounts `WorkshopCodeScanner`, resolves the scanned id through the SAME
+ * references endpoint the list comes from (its `recordId` parameter is the by-id half), and then
+ * hands the answer to {@link StageReferenceSelect}'s own `choose` — the identical code path a
+ * manual pick takes, so the hydration, the cascade clearing and the row patch cannot differ by how
+ * the record was chosen. A scan is never a second way to write a row. See
+ * {@link scanTypeRefusal} and {@link scanLookupOutcome} for the three refusals, each of which is a
+ * sentence rather than a silent no-op, and {@link scanCommitDecision} for the fourth answer — the
+ * one where the lookup succeeded and the row moved underneath it while it was in flight.
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Loader2, Pencil, Plus, Search, X } from "lucide-react";
+import { Check, ChevronDown, Loader2, Pencil, Plus, ScanLine, Search, X } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
 import {
@@ -42,8 +55,10 @@ import {
   type InlineCreatableModel
 } from "@/components/designworkshop/InlineRecordDialog";
 import { useLinkedWorkshopId } from "@/components/designworkshop/LinkedWorkshop";
+import { WorkshopCodeScanner, type ScanResolution } from "@/components/designworkshop/WorkshopCodeScanner";
 import type { InlineHostSeed } from "@/components/forms/inlineRecordHost";
 import {
+  geoValue,
   hydrateFromReference,
   inputValue,
   isMultiField,
@@ -58,7 +73,9 @@ import {
   type DwReferencePayload,
   type DwValue
 } from "@/lib/designWorkshops";
+import { isUnreachable } from "@/lib/offline";
 import { canManageCrafts } from "@/lib/permissions";
+import { workshopRecordTypeLabel, type WorkshopCodeRef, type WorkshopRecordType } from "@/lib/workshopCodes";
 
 /**
  * How long after the last keystroke the search goes out.
@@ -430,6 +447,347 @@ const CRAFT_REGISTER_BLOCKED =
   "the craft's name in the Craft box above and the stage still saves.";
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * Scanning a card or tag straight into this box
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * WHICH `refModel` EACH KIND OF PRINTED CODE NAMES, and why the table is deliberately short.
+ *
+ * A scan hands over a {@link WorkshopCodeRef} — a record TYPE and an id — while a picker is declared
+ * with a `refModel`. This is the whole of the translation between the two.
+ *
+ * `workshop`, `questionnaire` and `media` are ABSENT BECAUSE NO REF FIELD POINTS AT THEM. The
+ * registry declares ten `ref_model=` values (`Artisan`, `Craft`, `Process`, `ProductDocumentation`,
+ * `ToolDocumentation` and the five `Dw…` entities) and none of them is a Workshop, an interview or a
+ * media file — so a code of one of those types can only ever be the wrong type for the box it was
+ * scanned at, and absence is the correct answer rather than an omission. The day a registry field
+ * does point at one, this table is what has to gain the row.
+ *
+ * THE FIVE `Dw…` ENTITIES ARE NOT ALL HERE EITHER, read the other way: `DwPrototype` is the only row
+ * inside a design workshop that this repository prints a tag for — `WORKSHOP_RECORD_TYPES` in
+ * `lib/workshopCodes.ts` is the whole list of code-bearing types, and `prototype` is the one of them
+ * that names no repository record at all: `lookUpWorkshopCode` refuses a prototype reference outright
+ * ("A prototype belongs to one design workshop and is looked up inside it"), which is why a tag for
+ * one can only ever be answered inside the workshop that printed it — here. A sketch, a cost sheet, a
+ * final product and a roster entry carry no code at all, so nothing can be scanned into their
+ * pickers and {@link pickerTakesScans} does not offer a reader on one.
+ */
+export const SCANNED_TYPE_REF_MODEL: Partial<Record<WorkshopRecordType, string>> = {
+  artisan: "Artisan",
+  craft: "Craft",
+  product: "ProductDocumentation",
+  process: "Process",
+  tool: "ToolDocumentation",
+  prototype: "DwPrototype"
+};
+
+/**
+ * The reverse table, INVERTED rather than written out a second time — the same rule and the same
+ * reason as `TYPE_FROM_LETTER` in `lib/workshopCodes.ts`. Two hand-kept halves is how a picker comes
+ * to accept a code that names a different kind of record, which is the one failure a scanned
+ * identifier is supposed to have removed.
+ */
+const REF_MODEL_TYPE: Record<string, WorkshopRecordType> = Object.fromEntries(
+  Object.entries(SCANNED_TYPE_REF_MODEL).map(([type, model]) => [model, type as WorkshopRecordType])
+);
+
+/** "a" or "an" for a noun about to be dropped into the middle of a refusal. */
+function article(noun: string): string {
+  return /^[aeiou]/i.test(noun) ? "an" : "a";
+}
+
+/**
+ * Can a printed code ever name a record this box takes?
+ *
+ * The gate on offering a card reader at all. A `DwSketch` picker would otherwise carry a control
+ * that refuses every code in the world, which reads as a broken scanner rather than as a box no card
+ * belongs in.
+ */
+export function pickerTakesScans(field: DwField): boolean {
+  return Boolean(field.refModel && REF_MODEL_TYPE[field.refModel]);
+}
+
+/**
+ * WHAT THIS BOX HOLDS, in the word a refusal can put in a sentence.
+ *
+ * The record-type label wherever the model is one a code can name — the SAME word
+ * `workshopRecordTypeLabel` gives the two existing scanners, so a designer who has read "Product" on
+ * `/search` meets "product" here — and the field's own label otherwise, because a `DwSketch` has no
+ * name in the code grammar at all and the box's label is the only true thing left to call it.
+ */
+function pickerNoun(field: DwField): string {
+  const known = field.refModel ? REF_MODEL_TYPE[field.refModel] : undefined;
+  return known ? workshopRecordTypeLabel(known).toLowerCase() : field.label.toLowerCase();
+}
+
+/**
+ * REFUSAL (a): THE CODE NAMES THE WRONG KIND OF RECORD. Null when it names the right one.
+ *
+ * ASKED BEFORE THE NETWORK, because there is nothing to ask. An artisan's id looked up in the
+ * product table is not a near miss, and the empty answer would come back as "no product matches that
+ * code" — true, useless, and read by the person holding the card as a damaged tag. They would
+ * photograph it again.
+ *
+ * THE SENTENCE NAMES BOTH TYPES, which is the whole of its value: the designer is holding one card
+ * and looking at one box, and only the pair says which of the two is the mistake. A picker that said
+ * "wrong kind of code" would leave them to work out which kind this one wanted.
+ *
+ * The no-model branch is not reachable from this file's own control — {@link pickerTakesScans} gates
+ * it — and it is kept because this function is exported and a host that skips that gate deserves the
+ * honest answer rather than a crash or a silence.
+ */
+export function scanTypeRefusal(field: DwField, ref: WorkshopCodeRef): string | null {
+  const wanted = field.refModel ? REF_MODEL_TYPE[field.refModel] : undefined;
+  if (wanted === ref.recordType) return null;
+  const scanned = workshopRecordTypeLabel(ref.recordType).toLowerCase();
+  if (!wanted) {
+    return (
+      `That code names ${article(scanned)} ${scanned}. “${field.label}” holds a row recorded in this design ` +
+      `workshop, and rows of that kind carry no printed code — choose one from the list instead.`
+    );
+  }
+  const noun = pickerNoun(field);
+  return (
+    `That code names ${article(scanned)} ${scanned}, and “${field.label}” takes ${article(noun)} ${noun}. ` +
+    `Scan the ${noun}’s own card or tag, or search for it in the list.`
+  );
+}
+
+/** What a by-id lookup came to: the row to choose, or the one sentence explaining why there is none. */
+export type ScanLookup = { ok: true; option: DwReferenceOption } | { ok: false; message: string };
+
+/**
+ * REFUSAL (b): the record is real, and this WORKSHOP-scoped box still excludes it.
+ *
+ * THE NORMAL CASE FOR A SCANNED CARD, not an edge one: five REF fields are WORKSHOP-scoped against a
+ * repository model, and the card in the designer's hand was printed by whoever documented the record
+ * — at their cluster, under their workshop. The server answers that with `outOfScope` and hands the
+ * row over under its own key precisely so a client can say so; see `DwReferencePayload`.
+ *
+ * IT IS SAID, AND THE SCOPE IS NOT WIDENED. Offering the row would point a stage at a record this
+ * picker's own list can never show, and the report's table would then cite work from another cluster
+ * with nothing on screen having admitted it. So the row is NAMED (that is what tells the designer
+ * the right card was scanned) and left unchosen, and the sentence carries the remedy the empty-list
+ * notice already carries — link the record to this workshop, and it appears here by itself.
+ */
+function outOfScopeRefusal(option: DwReferenceOption): string {
+  return (
+    `That code names “${option.label}”, which is documented under a different workshop — and this box offers only ` +
+    `records linked to this design workshop’s workshop. Nothing on this row has been changed. Link that record to ` +
+    `this workshop and scan again, or choose one of the records that already belong to it.`
+  );
+}
+
+/**
+ * REFUSAL (c): ONE SENTENCE FOR "NO SUCH RECORD" AND FOR "NOT YOURS", AND IT MUST STAY ONE.
+ *
+ * `lib/workshopCodeLookup.ts`'s header carries the argument in full and it applies here unchanged:
+ * the API answers 404 rather than 403 for a record the caller may not read, and the references
+ * endpoint's by-id path composes the same read predicate for the same reason, so an absent record
+ * and an unreadable one arrive as the identical empty answer. Do not add a branch that tells them
+ * apart — a scanner that did would let somebody enumerate the repository one photographed card at a
+ * time.
+ *
+ * NOT `unresolvedWorkshopCodeMessage`, and the difference is only the remedy: that sentence sends
+ * the reader to a screen ("open the workshop that made it", "search for the artisan by name"),
+ * which is right for a scanner that opens records and wrong for a box that fills a row in. The RULE
+ * is what is carried over, not the words.
+ *
+ * THE CASCADE IS NAMED WHERE THERE IS ONE, and that gives nothing away: the filter is sent on every
+ * request this picker makes, so the possibility is true of every code scanned at a cascaded box and
+ * the sentence is the same for all of them. It has to be said, because the server's out-of-scope
+ * probe keeps the artisan clause — a product that belongs to somebody else's artisan lands here and
+ * not in refusal (b) — and "it may not be in the repository" would be a lie told about a record the
+ * designer can see two rows up.
+ */
+function unresolvedRefusal(field: DwField, cascadeLabel: string): string {
+  const noun = pickerNoun(field);
+  const reasons = [
+    "it may not be in the repository",
+    "it may belong to work this account cannot open",
+    ...(cascadeLabel ? [`it may not belong to the ${cascadeLabel.toLowerCase()} chosen on this row`] : [])
+  ];
+  return (
+    `No ${noun} this box can offer matches that code — ${reasons.join(", or ")}. Nothing on this row has been ` +
+    `changed; search for it by name in the list instead.`
+  );
+}
+
+/**
+ * What the server's answer to a by-id lookup means, as a row to choose or a sentence to read.
+ *
+ * LIFTED OUT OF THE COMPONENT SO IT CAN BE EXECUTED BY A TEST, for the reason
+ * {@link scopeNoticeLines} gives above: there is no React renderer in this repository's
+ * devDependencies, so a rule left inside a component body can only ever be asserted as a SUBSTRING
+ * of this file — which pins the spelling of a refusal and not the condition that decides which of
+ * the three a designer is shown. `e2e/qr-surfaces-unit.spec.ts` calls this with real payloads.
+ */
+export function scanLookupOutcome({
+  field,
+  ref,
+  payload,
+  cascadeLabel
+}: {
+  field: DwField;
+  ref: WorkshopCodeRef;
+  payload: DwReferencePayload;
+  /** The label of the field this one cascades from, or "" when it cascades from nothing. */
+  cascadeLabel: string;
+}): ScanLookup {
+  // THE ID ITSELF IS THE PROOF, wherever it is present: an option carrying the scanned id IS the
+  // record on the card, and it reached `options` only by passing this field's scope and cascade.
+  const exact = payload.options.find((option) => option.id === ref.id);
+  if (exact) return { ok: true, option: exact };
+  /*
+    A PROTOTYPE TAG LEGITIMATELY CARRIES AN ID THE OPTION DOES NOT, WHICH IS THE ONE CASE WITHOUT
+    THAT PROOF. `workshopCodeIdForRow` prints the row's `_clientKey` while the row has never reached
+    the server — a tag has to be printable the afternoon the prototype is made, and a workshop can go
+    a fortnight without signal — and `_in_record_options` matches EITHER spelling while answering
+    with the row's server id. So the one option a narrowed answer holds IS the row that was scanned.
+
+    `truncated` IS WHAT SAYS THE ANSWER WAS NARROWED, and it is why the request asks for a page of
+    one. An id clause matches at most one row, so a by-id answer can never honestly be truncated — an
+    API deployed before the by-id half does not refuse an unknown query parameter, it IGNORES it and
+    returns the ordinary list, and with `limit: 1` that shows up here as `truncated: true` the moment
+    the workshop holds a second prototype. Taking a row out of THAT list would tag the stage with
+    whatever sorts first: a wrong record chosen confidently, which is the failure a scanned
+    identifier exists to end. (An old server plus a workshop holding exactly one prototype is the
+    residual gap, and it closes itself the moment the API is the one that answers `recordId`.)
+  */
+  if (ref.recordType === "prototype" && !payload.truncated && payload.options.length === 1) {
+    return { ok: true, option: payload.options[0] };
+  }
+  // Both halves required. The server derives the flag FROM the row, so they cannot disagree; a flag
+  // with no row would be a client this build does not know how to render, and the sentence below is
+  // the honest answer for that too.
+  if (payload.outOfScope === true && payload.outOfScopeOption) {
+    return { ok: false, message: outOfScopeRefusal(payload.outOfScopeOption) };
+  }
+  return { ok: false, message: unresolvedRefusal(field, cascadeLabel) };
+}
+
+/**
+ * NO SIGNAL. A by-id resolve is the one thing on this control that cannot be answered locally.
+ *
+ * The stage page renders from IndexedDB before the network is asked, and this picker has always been
+ * the exception — `useReferenceOptions` fetches its list every time it opens, offline or not — so a
+ * scan is no more network-bound than typing into the same box. What matters is that the failure is
+ * SAID and that nothing is written: the row is only ever patched by `choose`, which runs on a
+ * resolved option and on nothing else, so a lookup that never landed leaves the row exactly as it
+ * was rather than half-pointed at a record nobody confirmed.
+ *
+ * `isUnreachable` and not `isTransient`: a 500 means the server was reached and then failed, and
+ * telling a designer their signal is at fault sends them out of the building while the real bug
+ * wears an offline message. Same split, same reason, as `lib/workshopCodeLookup.ts`.
+ */
+const SCAN_OFFLINE_NOTICE =
+  "There is no connection, so the repository could not be asked which record that code names. The code itself " +
+  "checked out, so the card is fine and nothing on this row has been changed — scan it again when there is signal, " +
+  "or search for the record by name in the list.";
+
+/** The server answered, and not with an answer. Says what did NOT happen, which is the useful half. */
+const SCAN_LOOKUP_FAILED_NOTICE =
+  "That code could not be looked up just now. Nothing on this row has been changed — try the scan again, or search " +
+  "for the record by name in the list.";
+
+/**
+ * ONE CARD READER OPEN AT A TIME, ACROSS EVERY PICKER ON THE STAGE — a correctness rule and not
+ * tidiness.
+ *
+ * `WorkshopCodeScanner` binds a PASTE listener to the WINDOW, which is the WhatsApp-screenshot route
+ * and the one that makes this bite: two readers mounted at once both decode one pasted picture, and
+ * the record lands in TWO rows — a scan writing a row nobody aimed it at, which is precisely what
+ * this lane must not add. Two of them also mean two live `getUserMedia` streams in a courtyard, and
+ * a second copy of the manual-entry box, whose `id="workshop-code-manual"` is fixed, would steal the
+ * first one's `<label>`.
+ *
+ * A WINDOW EVENT RATHER THAN A CONTEXT, because these pickers are siblings scattered through
+ * `EntityForm`'s grid with no common owner short of the stage page itself — and a provider mounted
+ * for this would be a provider every future host has to remember to mount.
+ */
+const SCANNER_OPENED = "dw-stage-scanner-opened";
+
+/**
+ * The one line under a picker, and the tone it is drawn in.
+ *
+ * THE TONE IS PART OF THE MESSAGE AND NOT A DECISION FOR THE CALL SITE, because the line now has an
+ * author that reports something that went RIGHT — {@link scanCommitDecision} says the row has been
+ * filled in from a card. Drawn in the amber the other two authors use, that confirmation reads as a
+ * warning about a scan that worked, and a designer told in amber that their row is filled goes
+ * looking for what went wrong. Both tones are SENTENCES; neither carries its meaning in the colour,
+ * which is the rule the three scan refusals follow too.
+ */
+type PickerNotice = { tone: "warn" | "done"; text: string };
+
+/** What a by-id lookup stashed for the commit, and the cascade value it was resolved under. */
+export type ScanHeld = { id: string; filter: string; option: DwReferenceOption };
+
+/**
+ * WHETHER A LOOKED-UP RECORD MAY STILL BE WRITTEN ONTO THE ROW — the whole of the commit's judgement,
+ * lifted out of the component so a test can execute it.
+ *
+ * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────────
+ * This check used to live inside `commitScan` and compare the cascade value the lookup was resolved
+ * under against `filterValue` READ FROM THE SAME RENDER'S CLOSURE — so it compared a variable with
+ * the variable it had been copied from, and the branch could not be taken. It was not merely
+ * decorative. `WorkshopCodeScanner`'s camera loop re-arms itself (`readFrame` schedules the next
+ * `readFrame`), so on the camera route — the route used in the room — the `resolve`/`onResolved`
+ * pair is FROZEN at the render in which "Scan" was pressed, for the whole camera session. Change the
+ * artisan on the row from one person to another while the camera is open, hold up the first
+ * artisan's product card, and the frozen pair looked the record up under the OLD artisan, found it,
+ * passed a guard that could never fire, and wrote it onto a row that now names somebody else: the
+ * report attributing one artisan's work to another that this file's comments twice say must not
+ * happen. `awaitingCascade` does not cover it — that fires when the parent is CLEARED, not changed.
+ *
+ * ── WHAT MAKES THE GUARD REAL ─────────────────────────────────────────────────────────────────
+ * Both ends now read the cascade through {@link StageReferenceSelect}'s live ref rather than through
+ * a closure: `resolveScan` stamps the value the REQUEST went out under, and the commit is handed the
+ * value as it is AT COMMIT TIME. They differ only when the row genuinely moved during the round
+ * trip, which is the case this refuses — and because the request reads the live value too, scanning
+ * again after such a refusal asks the question the row is asking now rather than repeating the stale
+ * one for ever.
+ *
+ * ── WHY IT ALSO OWNS THE SENTENCE THAT SAYS THE ROW WAS FILLED ────────────────────────────────
+ * The lookup's own announcement is rendered by the scanner BEFORE this runs, so it can only honestly
+ * report what was FOUND. Every path below that declines to write would otherwise leave "chosen for
+ * this row" standing as the only thing said while nothing was written. The commit is the only thing
+ * that knows, so the commit is what says it.
+ *
+ * A `null` notice means "say nothing further": the scanner has already announced the refusal in its
+ * own status block, and a second copy of it under the field is the control arguing with itself.
+ */
+export function scanCommitDecision({
+  held,
+  ref,
+  resolution,
+  filterValue,
+  field
+}: {
+  held: ScanHeld | null;
+  ref: WorkshopCodeRef;
+  resolution: ScanResolution;
+  /** The cascade value AS IT IS NOW. Never the one the lookup closed over — that is the bug above. */
+  filterValue: string;
+  field: DwField;
+}): { commit: DwReferenceOption | null; notice: string | null } {
+  // A refusal, or an answer to a different code than the one this commit is for — a second scan
+  // overtaking the first. Nothing was stashed to write, and the scanner has already said why.
+  if (!resolution.ok || !held || held.id !== ref.id) return { commit: null, notice: null };
+  if (held.filter !== filterValue) {
+    return {
+      commit: null,
+      notice:
+        "The record this list depends on changed while that code was being looked up, so nothing was chosen. " +
+        "Nothing on this row has been changed — scan the card again to choose from the new list."
+    };
+  }
+  return {
+    commit: held.option,
+    notice: `“${held.option.label}” is now chosen for “${field.label}” on this row.`
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Single select
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -442,7 +800,8 @@ export function StageReferenceSelect({
   onChange,
   onPatch,
   disabled,
-  labelId
+  labelId,
+  recordFormMountedOver = null
 }: {
   workshopId: string;
   entity: DwEntity;
@@ -455,6 +814,39 @@ export function StageReferenceSelect({
   onPatch: (values: Record<string, DwValue>) => void;
   disabled?: boolean;
   labelId: string;
+  /**
+   * A REPOSITORY RECORD THAT ALREADY HAS AN EDIT SURFACE OPEN ON THIS PAGE, or null — which is every
+   * picker whose host does not pass one, i.e. everything outside a mirror point's own embed.
+   *
+   * ── THE DEFECT THIS CLOSES ────────────────────────────────────────────────────────────────────
+   * `StageRecordEmbed` mounts the record's own page inside the stage row, in EDIT mode over the
+   * linked record, with `initial` read once at mount and never re-read. This control is drawn
+   * directly above it and offered "Edit this {noun}" on the SAME record — every mirror point is
+   * inline-creatable, so the pencil was always there. Correct the village in the dialog, save, and
+   * the page below still holds the pre-edit snapshot; its next Save PATCHes the shared repository
+   * record back to what it said before the correction. One value with two owners, on a record other
+   * workshops read, and the OLDER one wins.
+   *
+   * ── WHY AN ID AND NOT A BOOLEAN ───────────────────────────────────────────────────────────────
+   * A mirror point can host TWO pickers. Stage 6 draws the artisan cascade picker above the product
+   * picker, inside the same embed, and the record page below is the PRODUCT's — so the artisan's
+   * pencil is still the only way to fix that artisan without leaving the stage, and must stay. The
+   * host passes the record its form is mounted over and each picker compares it against its own
+   * choice, so the suppression lands on exactly the one control that has a second editor under it.
+   *
+   * The record page is not a lesser edit surface than the dialog: it is the same four forms, and the
+   * embed's own explainer says in words that changing it changes the record. Nothing is lost by
+   * taking the pencil away there, which is why this prevents rather than recovers.
+   *
+   * ── AND WHAT IT DOES NOT REACH ─────────────────────────────────────────────────────────
+   * `MirroredEntityBody` is the only host that passes this, so the defect is closed on the pickers
+   * of an embed and NOWHERE ELSE. A REF field elsewhere on the same stage can name the same record
+   * and still draw its pencil over it: on TRADITIONAL_PROCESS_BASELINE the `processStep` rows point
+   * at the same Process the stage-5 singleton has a form open over — see `StageRecordEmbed`'s
+   * `NOT_EMBEDDED` entry for `processStep.processRef`. That needs the stage page, which is the only
+   * place that knows both entities, and is not what this prop is.
+   */
+  recordFormMountedOver?: string | null;
 }) {
   const baseId = useId();
   const listboxId = `${baseId}-listbox`;
@@ -472,15 +864,19 @@ export function StageReferenceSelect({
   const { user } = useAuth();
   const craftManager = canManageCrafts(user);
   /**
-   * The one line of amber under this control, and it has two authors.
+   * The one line under this control, and it has three authors.
    *
    * The cascade writes it when it clears a choice that no longer belongs to the record above.
    * {@link adoptCreated} writes it when a record was created and the server could not be got to
-   * describe it. Named `notice` rather than `cascadeNotice` since the second author arrived: a
-   * message about an inline create is not a cascade message, and two amber boxes stacked under one
-   * field is a form arguing with itself.
+   * describe it. {@link commitScan} writes it when a scanned card has filled the row in, and when
+   * the answer to one arrived too late to be written. Named `notice` rather than `cascadeNotice`
+   * since the second author arrived: a message about an inline create is not a cascade message, and
+   * two boxes stacked under one field is a form arguing with itself.
+   *
+   * The third author is the first that can report a success, which is why the state carries a tone —
+   * see {@link PickerNotice}.
    */
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<PickerNotice | null>(null);
   /**
    * A record made from inside this picker, held only until the server can describe it.
    *
@@ -497,6 +893,19 @@ export function StageReferenceSelect({
    * a dialog ends up open in both modes at once.
    */
   const [inlineDialog, setInlineDialog] = useState<{ mode: "create" } | { mode: "edit"; id: string } | null>(null);
+  /** Is the card reader open under this control? At most one on the stage — see {@link SCANNER_OPENED}. */
+  const [scanOpen, setScanOpen] = useState(false);
+  /**
+   * What the last scan resolved to, held between `resolve` and `onResolved`.
+   *
+   * `WorkshopCodeScanner`'s `onResolved` is handed the reference and the RESOLUTION — a label and a
+   * sentence, which is all a panel that only reports needs — and not the row behind them. This is
+   * where the row waits, with the id it was resolved for and the cascade value it was resolved
+   * under, so the commit below can check that it is still answering the question it was asked. A ref
+   * and not state: nothing renders from it, and a re-render between the two calls would be a second
+   * chance to write the row.
+   */
+  const scanHit = useRef<ScanHeld | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -600,11 +1009,12 @@ export function StageReferenceSelect({
     lastFilter.current = filterValue;
     if (!selectedId) return;
     onChange(null);
-    setNotice(
-      had
+    setNotice({
+      tone: "warn",
+      text: had
         ? "The record this list depends on changed, so the previous choice was cleared — pick one from the new list."
         : "Choose the record above first; this list narrows to it."
-    );
+    });
     // `selectedId` and `onChange` are deliberately outside the dependency list: this effect must run
     // when the FILTER moves and at no other time. Including the value would re-run it on the clear
     // it just performed.
@@ -636,6 +1046,34 @@ export function StageReferenceSelect({
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  /*
+    THE OTHER PICKERS' CARD READERS ARE CLOSED WHEN THIS ONE OPENS — see {@link SCANNER_OPENED} for
+    the pasted screenshot that lands in two rows, which is the reason this exists rather than an
+    argument about clutter.
+
+    The announcement goes out BEFORE this instance starts listening, so it never closes itself; every
+    other open reader hears a detail that is not its own and stands down. Closing unmounts the
+    scanner, which is what releases its camera, its window paste listener and its copy of the
+    manual-entry box's id.
+  */
+  const scannerId = `${baseId}-scanner`;
+  useEffect(() => {
+    if (!scanOpen) return;
+    // Clearing the parent row's answer takes the reader away with the list it was narrowed to (the
+    // render below drops it), so the toggle is put back to "Scan…" rather than left reading "Close
+    // the card reader" over nothing.
+    if (awaitingCascade) {
+      setScanOpen(false);
+      return;
+    }
+    window.dispatchEvent(new CustomEvent(SCANNER_OPENED, { detail: scannerId }));
+    const onAnother = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== scannerId) setScanOpen(false);
+    };
+    window.addEventListener(SCANNER_OPENED, onAnother);
+    return () => window.removeEventListener(SCANNER_OPENED, onAnother);
+  }, [awaitingCascade, scanOpen, scannerId]);
+
   // Derived every render, never trusted from state: the stored index goes stale the instant the
   // filter changes, and Enter would then commit a row that is not on screen.
   const safeHighlight = highlight >= 0 && highlight < options.length ? highlight : 0;
@@ -657,6 +1095,39 @@ export function StageReferenceSelect({
     },
     [entity, field, row, selectedId, onPatch, supersede]
   );
+
+  /**
+   * `choose` AND THE CASCADE VALUE AS THEY ARE RIGHT NOW, for a caller that was built some seconds
+   * ago and cannot be rebuilt.
+   *
+   * ── WHY A REF AND NOT THE CLOSURE ─────────────────────────────────────────────────────────────
+   * Everything else on this control is called from a handler React re-binds on every render, so the
+   * closure IS the current one. The card reader is the exception and it is not a small one:
+   * `WorkshopCodeScanner`'s camera loop re-arms itself frame by frame, so the `resolve` and
+   * `onResolved` it calls are the pair captured at the render in which "Scan" was pressed — for the
+   * whole session, however long the designer holds the camera open and whatever they type in the
+   * meantime.
+   *
+   * `choose` closes over `row`, `selectedId` and `onPatch`, and on a collection row `onPatch` is
+   * `(values) => patchRowMany(index, values)`, which rebuilds the WHOLE rows array from the `rows`
+   * it captured at that render — `EntityForm` says so twice in its own comments, and the word it
+   * uses is "silently discards". So a frozen `choose` does not merely write a stale row: it replaces
+   * the collection with a snapshot taken before the scan, throwing away every edit made to every row
+   * since the camera was opened, with nothing on screen admitting it. A stale `selectedId` breaks
+   * the other half — `hydrateFromReference` would be told the row still points where it pointed
+   * before, so a re-point would leave the previous record's values standing under the new record's
+   * name, which is precisely what the clear-on-re-point rule exists to stop.
+   *
+   * Updated on every render that changes any of them, and read only when a scan resolves. The
+   * cascade value rides along because it is the other thing the scan must judge itself against (see
+   * {@link scanCommitDecision}); the descriptor rides along so that the two scan callbacks need no
+   * dependencies at all, which is what makes them provably free of the closure this ref exists to
+   * escape.
+   */
+  const liveScan = useRef({ choose, field, filterValue });
+  useEffect(() => {
+    liveScan.current = { choose, field, filterValue };
+  }, [choose, field, filterValue]);
 
   /**
    * A record created from inside this picker: linked at once, hydrated when the server can say what
@@ -718,9 +1189,10 @@ export function StageReferenceSelect({
         // Said rather than silently skipped. The record HAS changed — the designer just changed it
         // — so leaving the row alone without a word is the state that reads as "the edit did not
         // save", and the next move is to edit it again.
-        setNotice(
-          "Your changes were saved to the record, but this list cannot describe it just now, so the boxes on this row still show what it said before. Re-open the list and pick it again to refresh them."
-        );
+        setNotice({
+          tone: "warn",
+          text: "Your changes were saved to the record, but this list cannot describe it just now, so the boxes on this row still show what it said before. Re-open the list and pick it again to refresh them."
+        });
         return;
       }
       const mapping = referenceHydrationFor(entity, field);
@@ -732,6 +1204,38 @@ export function StageReferenceSelect({
         // rules. It holds the photographs the designer took in the room and there is no second copy
         // of those anywhere; an edit to the record's own catalogue shot must not reach them.
         if (isMultiField(target)) continue;
+        /*
+          A GEO TARGET IS THE ONE PLACE AN OBJECT IS THE CORRECT SHAPE, and the scalar path below
+          does not merely fail to write it — it ERASES it. `inputValue` returns "" for any object,
+          so `current` is falsy and `mayWrite` is true on every pass; `stringifyRefValue` returns
+          null for any object, so `next` is null; and `null === ""` is false, so the box was SET TO
+          NULL. Three mappings carry a GEO source (`participant.subjectLocation`,
+          `tool.recordSubjectLocation`, `existingProduct.recordSubjectLocation`), and the value is
+          the SUBJECT PIN — the village's own coordinate, the only location invariant 5 lets cross,
+          and the one thing on the row the desk's fix must never replace. So every save from the
+          "Edit this {noun}" dialog silently emptied it, and the designer's next act on a blank map
+          card is to drop their own pin, which is the desk.
+
+          `hydrateFromReference` grew this arm first and `StageRecordEmbed`'s `adoptEdited` second;
+          this is the same arm on the third surface, and the two that host the same record had to
+          stop disagreeing about it. The ABSENT case writes nothing rather than null — "the record
+          has no pin" must not delete a pin the designer dropped on the village themselves.
+        */
+        if (target.type === "GEO") {
+          const nextPoint = geoValue(after.data?.[sourceKey] as DwValue);
+          if (!nextPoint) continue;
+          const heldPoint = geoValue(row[targetKey]);
+          const wasPoint = before ? geoValue(before.data?.[sourceKey] as DwValue) : null;
+          const sameAsHydrated =
+            heldPoint !== null &&
+            wasPoint !== null &&
+            heldPoint.lat === wasPoint.lat &&
+            heldPoint.lon === wasPoint.lon;
+          if (heldPoint && !sameAsHydrated) continue;
+          if (heldPoint && heldPoint.lat === nextPoint.lat && heldPoint.lon === nextPoint.lon) continue;
+          patch[targetKey] = nextPoint;
+          continue;
+        }
         const current = inputValue(row[targetKey]).trim();
         const was = before ? stringifyRefValue(before.data?.[sourceKey]) : null;
         // Blank fills, as always. Otherwise only a box still holding exactly what this picker last
@@ -749,9 +1253,10 @@ export function StageReferenceSelect({
         // The snapshot never arrived, so only blanks could be filled and a corrected value the row
         // already held has been left standing. Better to say so than to overwrite a designer's own
         // words on a guess.
-        setNotice(
-          "Your changes were saved. Boxes on this row that were already filled in have been left as they are — check them against the record if you changed something they show."
-        );
+        setNotice({
+          tone: "warn",
+          text: "Your changes were saved. Boxes on this row that were already filled in have been left as they are — check them against the record if you changed something they show."
+        });
       }
     },
     [entity, field, filterValue, onPatch, row, workshopId]
@@ -779,11 +1284,12 @@ export function StageReferenceSelect({
       setPending(null);
 
       if (!described) {
-        setNotice(
-          previous
+        setNotice({
+          tone: "warn",
+          text: previous
             ? "The record was saved and linked, but this list cannot describe it just now — so the boxes the previous record had filled in have been CLEARED rather than left standing under the new record's name. Fill them in by hand, or reopen the list and search for it."
             : "The record was saved and linked, but this list cannot describe it just now, so the boxes it would have filled in are still blank. Fill them in by hand, or reopen the list and search for it — a required box left blank is refused when the stage is submitted."
-        );
+        });
       }
 
       /*
@@ -815,6 +1321,99 @@ export function StageReferenceSelect({
   const cascadeLabel = field.refFilterBy
     ? (entity.fields.find((candidate) => candidate.key === field.refFilterBy)?.label ?? field.refFilterBy)
     : "";
+
+  /**
+   * WHAT A SCANNED CODE POINTS AT, asked of the same endpoint the list comes from.
+   *
+   * THE SCOPE, THE CASCADE AND THE FIELD'S OWN MODEL ARE ALL SENT, exactly as the list sends them,
+   * and that is the point of resolving through this endpoint rather than through
+   * `lib/workshopCodeLookup.ts`: that module answers "what record is this" for a scanner that OPENS
+   * things, with no idea which box the reader is standing at. A row filled from it would be filled
+   * from a record this picker's own list can never show — another cluster's artisan, or a product
+   * belonging to somebody other than the artisan named two boxes up. The narrowing has to be the
+   * same narrowing, or the scan is a hole in it.
+   *
+   * IT ONLY LOOKS UP, AND IT ONLY REPORTS WHAT IT FOUND. Nothing is written here; {@link commitScan}
+   * does that, and only for an answer that resolved. So every refusal below — and every failure of
+   * the request itself — leaves the row exactly as it was. The returned `detail` therefore says what
+   * the code NAMES and never that it was chosen: the scanner renders this answer in its status block
+   * BEFORE the commit runs, so a claim about the row made here would still be standing, unretracted,
+   * on every path where the commit then declines to write.
+   *
+   * THE CASCADE IS READ LIVE, through {@link liveScan}, and not from this callback's closure. On the
+   * camera route this function is frozen at the render "Scan" was pressed — see the ref's own note —
+   * so a closure read would send the artisan the row named a minute ago and narrow the lookup to the
+   * wrong person. It is read once here and STAMPED onto the stash, so the commit can tell "the row
+   * has not moved" from "the row moved while this was in flight".
+   */
+  const resolveScan = useCallback(
+    async (ref: WorkshopCodeRef): Promise<ScanResolution> => {
+      scanHit.current = null;
+      const wrongType = scanTypeRefusal(field, ref);
+      if (wrongType) return { ok: false, message: wrongType };
+      const askedUnder = liveScan.current.filterValue;
+      if (field.refFilterBy && !askedUnder) {
+        // Belt and braces, and now real braces: the reader is unmounted in this state, but the
+        // camera loop can be mid-frame when the artisan is cleared, and this callback would not have
+        // heard about it. An unanswered cascade sends no `filterBy` and the server would then
+        // resolve the id against the whole table — one artisan's product, landed on another's row.
+        return {
+          ok: false,
+          message: `Answer “${cascadeLabel}” on this row first — a scan into this box is narrowed to it exactly as the list is.`
+        };
+      }
+      let payload: DwReferencePayload;
+      try {
+        payload = await listStageReferences(workshopId, {
+          model: field.refModel as string,
+          scope: field.refScope,
+          filterBy: field.refFilterBy ? askedUnder || null : null,
+          recordId: ref.id,
+          // ONE ROW, because an id clause can match at most one — and because that turns a server
+          // which has never heard of `recordId` into a visible `truncated: true` rather than a list
+          // this function might read a record out of. See {@link scanLookupOutcome}.
+          limit: 1
+        });
+      } catch (error) {
+        return { ok: false, message: isUnreachable(error) ? SCAN_OFFLINE_NOTICE : SCAN_LOOKUP_FAILED_NOTICE };
+      }
+      const outcome = scanLookupOutcome({ field, ref, payload, cascadeLabel: field.refFilterBy ? cascadeLabel : "" });
+      if (!outcome.ok) return { ok: false, message: outcome.message };
+      scanHit.current = { id: ref.id, filter: askedUnder, option: outcome.option };
+      return { ok: true, label: outcome.option.label, detail: outcome.option.sublabel || undefined };
+    },
+    [cascadeLabel, field, workshopId]
+  );
+
+  /**
+   * A SCANNED RECORD IS CHOSEN THROUGH `choose`, THE WAY A CLICKED ONE IS.
+   *
+   * Not a shortcut and not an optimisation: `choose` supersedes a create still waiting to be
+   * described, runs `hydrateFromReference` against the row (which is what CLEARS the previous
+   * record's values on a re-point instead of leaving them under the new record's name), and writes
+   * the id and the hydrated fields in ONE patch. A scan that assembled its own patch would be a
+   * second set of answers to all three questions, and the day they drifted the difference would be a
+   * report attributing one artisan's work to another with nothing on screen having said so.
+   *
+   * THROUGH THE LIVE `choose`, WHICH IS THE OTHER HALF OF THAT SENTENCE. Both it and the cascade
+   * value are taken from {@link liveScan} at the moment of the commit, never from this callback's
+   * closure: on the camera route the closure is frozen at the render "Scan" was pressed, and a
+   * frozen `choose` writes through a frozen `onPatch` — which on a collection row rebuilds the whole
+   * array from a stale snapshot and discards every edit made since. The judgement itself is
+   * {@link scanCommitDecision}, lifted out so a test can drive it with a filter that moved between
+   * the lookup and the commit; this callback is the wiring and nothing else.
+   *
+   * The order matters: `choose` clears the notice as its last act (a manual pick leaves no line
+   * behind), so the sentence saying the row was filled is set AFTER it and not before.
+   */
+  const commitScan = useCallback((ref: WorkshopCodeRef, resolution: ScanResolution) => {
+    const held = scanHit.current;
+    scanHit.current = null;
+    const { choose: chooseNow, field: fieldNow, filterValue: filterNow } = liveScan.current;
+    const decision = scanCommitDecision({ held, ref, resolution, filterValue: filterNow, field: fieldNow });
+    if (decision.commit) chooseNow(decision.commit);
+    if (decision.notice) setNotice({ tone: decision.commit ? "done" : "warn", text: decision.notice });
+  }, []);
 
   const emptyLine = useMemo(() => {
     if (awaitingCascade) {
@@ -1004,6 +1603,83 @@ export function StageReferenceSelect({
         ) : null}
       </div>
 
+      {/*
+        THE CARD ITSELF, AS A WAY OF ANSWERING THIS BOX.
+
+        A REAL BUTTON WITH A REAL NAME, and the name carries the field's own label because a stage
+        holds many of these and "Scan a card or tag" said eleven times is eleven controls a screen
+        reader cannot tell apart. It is a plain toggle: tab reaches it, Enter opens the reader, and
+        everything inside the reader — camera, upload, and the typed code for a cracked lens or a
+        glare across a laminated card — is `WorkshopCodeScanner`'s own, keyboard route included. No
+        second manual-entry box is built here; it already has one.
+
+        THE LABEL ALONE IS NOT ENOUGH, AND THE CASE IT FAILS IN IS IN THE REGISTRY TODAY. Two
+        entities on ONE stage can declare the same field label: stage 4 puts "Documented process" on
+        both `traditionalProcess` (Process overview) and `processStep` (Process steps), and stage 6's
+        prototype stage puts "Prototype" on both `prototypeStageLog` (Stage logs) and `materialUsage`
+        (Material usage) — four scannable boxes, two pairs of identical names, all four reachable in
+        one tab order. So the accessible name carries the ENTITY as well, and the visible text stays
+        as it is: `aria-label` is a superset of what is drawn, which is what WCAG 2.5.3 asks of a
+        control whose spoken name is longer than its printed one.
+
+        ROWS DO NOT MULTIPLY IT, which is the reason the row is not in the name. A collection expands
+        exactly ONE row at a time — `EntityForm` holds a single `openKey` and toggles it — so the
+        thirty roster rows are thirty buttons only in the sense that a list is thirty links: one of
+        them exists at a time. Two entities are the case that actually collides, and that is the case
+        this names.
+
+        OFFERED ONLY WHERE A CARD COULD ANSWER IT ({@link pickerTakesScans}) and only while the
+        cascade above has been answered. A cascaded picker with no parent chosen sends no `filterBy`,
+        and the server would then resolve the scanned id against the whole table — so the control
+        stands down and the sentence beside it says which box to answer first, rather than the reader
+        quietly widening a list the designer believes is narrowed.
+      */}
+      {!disabled && pickerTakesScans(field) ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-xs font-medium text-ink-500 underline"
+            aria-expanded={scanOpen}
+            aria-controls={scanOpen && !awaitingCascade ? scannerId : undefined}
+            aria-label={`${
+              scanOpen ? `Close the card reader for “${field.label}”` : `Scan a card or tag into “${field.label}”`
+            }, in ${entity.title}`}
+            disabled={awaitingCascade}
+            onClick={() => setScanOpen((current) => !current)}
+          >
+            <ScanLine className="h-3 w-3" aria-hidden />
+            {scanOpen ? `Close the card reader for “${field.label}”` : `Scan a card or tag into “${field.label}”`}
+          </button>
+          {awaitingCascade ? (
+            <span className="text-xs text-ink-500">
+              Answer “{cascadeLabel}” on this row first — a scan into this box is narrowed to it too.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {scanOpen && !disabled && !awaitingCascade && pickerTakesScans(field) ? (
+        <div id={scannerId}>
+          {/*
+            `resolve` LOOKS UP AND `onResolved` COMMITS, which is the split that keeps a refusal from
+            writing anything: the second is handed the resolution and writes nothing on every `ok:
+            false`. The scanner announces the LOOKUP in its own `role="status"` block, as a SENTENCE —
+            no colour and no icon carries any of the three refusals.
+
+            IT CANNOT ANNOUNCE THE COMMIT, and that is why {@link commitScan} says that half itself.
+            The status block is written BEFORE `onResolved` is called, so anything the lookup claimed
+            about the row would still be standing on every path where the commit then declines to
+            write — "chosen for this row" as the only thing said while nothing was chosen. The lookup
+            reports what the code NAMES; the line under this control reports what the row DID.
+          */}
+          <WorkshopCodeScanner
+            resolve={resolveScan}
+            onResolved={commitScan}
+            description={`A card or tag printed by this app for ${article(pickerNoun(field))} ${pickerNoun(field)}. The record it names is chosen for “${field.label}” on this row and fills the row in, exactly as picking it from the list would.`}
+          />
+        </div>
+      ) : null}
+
       {selectedId ? (
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -1033,8 +1709,12 @@ export function StageReferenceSelect({
             stage 13 is the common case, and the only remedy was to leave the stage. The dialog
             re-reads the record rather than seeding from this picker's option, which carries only a
             label and a sublabel — a form seeded from that would blank every field it does not hold.
+
+            NOT WHEN THE RECORD ALREADY HAS A FORM OPEN OVER IT — see {@link recordFormMountedOver},
+            which is the whole argument. Two editors on one repository record, and the one that was
+            opened first posts its pre-edit snapshot over the correction made in the other.
           */}
-          {isInlineCreatable(field.refModel) && !disabled ? (
+          {isInlineCreatable(field.refModel) && !disabled && recordFormMountedOver !== selectedId ? (
             <button
               type="button"
               className="inline-flex items-center gap-1 rounded-md border border-line-200 px-2 py-1 text-xs font-medium text-ink-700 transition hover:border-purple-300 hover:bg-purple-50"
@@ -1080,10 +1760,18 @@ export function StageReferenceSelect({
         </p>
       ) : null}
 
+      {/* Two tones, one line, and the words carry the meaning in both — see {@link PickerNotice}. The
+          confirmation is drawn in the same plain voice as the "filling in…" line above rather than in
+          the amber the warnings use, because a designer told in amber that their row is filled in
+          goes looking for the problem. */}
       {notice ? (
-        <p className="rounded-md border border-amber-500/30 bg-amber-100 px-2 py-1 text-xs leading-5 text-amber-800">
-          {notice}
-        </p>
+        notice.tone === "done" ? (
+          <p className="text-xs leading-5 text-ink-500">{notice.text}</p>
+        ) : (
+          <p className="rounded-md border border-amber-500/30 bg-amber-100 px-2 py-1 text-xs leading-5 text-amber-800">
+            {notice.text}
+          </p>
+        )
       ) : null}
 
       {inlineDialog && isInlineCreatable(field.refModel) ? (
@@ -1145,7 +1833,7 @@ export function StageReferenceSelect({
           */
           onQueued={() => {
             supersede();
-            setNotice(QUEUED_OFFLINE_NOTICE);
+            setNotice({ tone: "warn", text: QUEUED_OFFLINE_NOTICE });
           }}
           /*
             THE DUPLICATE PROMPT'S "OPEN THE EXISTING RECORD", ANSWERED HERE INSTEAD OF BY LEAVING.

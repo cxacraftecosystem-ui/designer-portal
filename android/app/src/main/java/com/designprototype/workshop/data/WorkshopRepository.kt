@@ -690,10 +690,21 @@ class WorkshopRepository(
         // here: that would kill the cascade `productRef` depends on, which is WORKSHOP-scoped AND
         // filtered and works offline precisely because of this merge. Read the block comment there
         // before changing either half.
+        //
+        // `filteredBy` IS LEFT BLANK ON THE FALLBACK, AND IT IS NOT COSMETIC. The field means "the
+        // parent these options were narrowed to BY THE SERVER", and this branch cannot claim it: the
+        // merge above joins every file for the model and owner, filters included, and the only
+        // narrowing applied afterwards is `narrowedTo` — which KEEPS an option carrying no
+        // `filterValue`, and the server has never populated that column (`_reference_option` emits
+        // id, label, sublabel and data and nothing else). So on this branch every option survives and
+        // the list is exactly as wide as it was. It used to be stamped with `filterValue` anyway,
+        // which read as a narrowing that had happened; `dwScanLocalStep` now asks this question
+        // before it answers a scanned card from the cache without a request, and an over-claimed
+        // stamp there is one artisan's product linked under another artisan's row.
         val cached = DwReferenceStore.load(context, key)
             ?: DwReferenceStore.anyForModel(context, model, scope, owner)
                 ?.let { whole ->
-                    whole.copy(filteredBy = filterValue, items = whole.narrowedTo(filterValue))
+                    whole.copy(filteredBy = "", items = whole.narrowedTo(filterValue))
                 }
         cached?.let { onList(it, false) }
 
@@ -740,6 +751,59 @@ class WorkshopRepository(
         )
         onList(stored, fetched.truncated)
     }
+
+    /**
+     * The one option a SCANNED code names, asked for by id.
+     *
+     * ── IT THROWS, AND IT CACHES NOTHING. BOTH ARE DELIBERATE ─────────────────────────────────
+     *
+     * [designWorkshopReferences] above never throws, because a picker that dies on a timed-out GET
+     * is a picker that stops working in the courtyard it exists for. This one is the opposite case
+     * and takes the opposite rule, the same way [designWorkshopIdentityOcr] does: a by-id lookup has
+     * NO offline answer to degrade to. `id` is in none of the server's search columns, so no cached
+     * list can be interrogated for a record it does not already hold, and a silent null here would
+     * reach the designer as "no such record" for a record that is merely out of reach. The caller
+     * turns the throw into a sentence that says there is no signal and that nothing was changed.
+     *
+     * NOTHING IS WRITTEN TO [DwReferenceStore], and that is the trap this signature exists to avoid.
+     * The answer to a by-id request is at most ONE option, and it arrives under the same (model,
+     * scope, filter) triple the whole register is cached under. Storing it would replace a fifty-name
+     * artisan list with a one-name one on the device that is least able to refetch it — offline, in
+     * the field, which is exactly where a scan is used. So this returns the payload and touches no
+     * file. The list fetch is left to refresh the cache on its own terms.
+     *
+     * [recordId] IS SENT ALONGSIDE [scope] AND [filterValue], never instead of them — see the wire
+     * comment on `WorkshopRepositoryApi.designWorkshopReferences`. The server needs the scope to
+     * answer `outOfScope` at all, because that flag means "found only with the WORKSHOP clause
+     * lifted", and a request that omitted the scope would have no clause to lift.
+     *
+     * IT THROWS `HttpException` FOR A SERVER THAT ANSWERED AND ANYTHING ELSE FOR ONE THAT DID NOT,
+     * which is Retrofit's split and the one the caller spends: "there is no signal" and "the lookup
+     * failed" send a designer out of the building or not, and getting that backwards puts an offline
+     * message on a 500. `RecordCodeLookup.lookUpRecordCode` makes the same distinction for the same
+     * reason.
+     */
+    suspend fun designWorkshopReferenceById(
+        workshopId: String,
+        model: String,
+        scope: String,
+        filterValue: String,
+        recordId: String,
+    ): DwReferenceResponseDto = api.designWorkshopReferences(
+        id = workshopId,
+        model = model,
+        // Blank must reach the wire as an OMITTED parameter and not as `scope=`, which
+        // `reference_options` answers with a 422. Same rule, same reason, as the list fetch above.
+        scope = scope.takeIf { it.isNotBlank() },
+        filterBy = filterValue.takeIf { it.isNotBlank() },
+        search = null,
+        recordId = recordId,
+        // ONE ROW. An id clause matches at most one, and asking for one turns a server that has
+        // never heard of `recordId` into a visible `truncated: true` rather than an ordinary list
+        // the caller might mistake for an answer — see the wire comment on the API, and
+        // `dwScanServerAnswer`, which is the reader that depends on it.
+        limit = 1,
+    )
 
     /**
      * Read the number off a photographed identity card.

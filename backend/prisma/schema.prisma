@@ -362,6 +362,9 @@ model AppRelease {
   publishedAt   DateTime @default(now())
 
   @@index([versionCode])
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
+  /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([publishedById])
 }
 
 model Craft {
@@ -393,6 +396,9 @@ model Craft {
   // `name` needs no index of its own: @unique already builds one, and that is what the alphabetical
   // craft picker orders by.
   @@index([workshopId])
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
+  /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([createdById])
 }
 
 /// TWO ANSWERS TO TWO DIFFERENT QUESTIONS, and reading one as the other is what this model was
@@ -477,12 +483,28 @@ model Location {
   media     MediaFile[]
   questionnaireInterviews QuestionnaireInterview[]
 
-  // Nothing reads this table by any column. `attach_location` writes a row, and every reader
-  // afterwards arrives by primary key through the `location` relation — so an index here is paid for
-  // on every record create and never collected on. (latitude, longitude) and placeName went for that
-  // reason, and because neither could have served its own query anyway: a bounding box or a radius
-  // wants GiST, not a btree on two independent floats, and a place name typed into a search box
-  // reaches Postgres as ILIKE '%…%'.
+  // THIS TABLE IS READ BY COLUMN AT FOUR PLACES, and the comment that used to stand here said it
+  // was read by none. It said so because it was written when that was true — every reader arrived
+  // by primary key through the `location` relation — and then the map and the design-workshop
+  // report were built on top of it and nobody came back. Counted 2026-08-22:
+  //
+  //   api/routes/map_points.py   the district-anchor read: subjectLatitude + subjectLongitude
+  //                              NOT NULL, referenced-only, ORDER BY id, LIMIT 5000
+  //   api/routes/map_points.py   `group_by(["state", "district"])` over the whole table, to learn
+  //                              which raw spellings resolve into one pin
+  //   api/routes/map_points.py   `_capture_narrowing`: a coordinate WINDOW on either
+  //                              (latitude, longitude) or (subjectLatitude, subjectLongitude)
+  //   services/design_workshops.py  `attach_district_anchors`: the same anchor read, plus district
+  //                              NOT NULL, for the report's map
+  //
+  // NONE OF THE FOUR GETS AN INDEX, AND THAT IS STILL THE RIGHT ANSWER — which is why the correction
+  // here is to the FACT and not to the index list. Three of them are IS NOT NULL over a large
+  // fraction of the table, which a btree cannot beat a scan at; the fourth is a bounding box, which
+  // wants GiST rather than a btree on two independent floats. (latitude, longitude) and placeName
+  // were dropped for those reasons and should stay dropped: a place name typed into a search box
+  // reaches Postgres as ILIKE '%…%'. All four are capped reads whose callers are documented as
+  // degrading rather than failing when the cap bites. What must NOT happen again is the next reader
+  // concluding from a stale sentence that this table has no query shape at all.
   //
   /// "Every record in Gujarat" is the query this column exists to make possible; without the index
   /// it is a sequential scan of every location ever captured. Kept although no route issues it yet:
@@ -949,6 +971,9 @@ model QuestionnaireSectionStatus {
 
   @@unique([artisanId, sectionId])
   @@index([sectionId])
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
+  /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([setById])
 }
 
 model QuestionnaireQuestion {
@@ -1410,6 +1435,11 @@ model WorkshopAssignment {
   @@unique([workshopId, userId])
   @@index([userId])
   @@index([status])
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
+  /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([assignedById])
+  @@index([requestedById])
+  @@index([decidedById])
 }
 
 /// A runtime-editable API key or service credential.
@@ -1441,6 +1471,9 @@ model ManagedSecret {
   updatedBy   User?    @relation("ManagedSecretUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
+  /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([updatedById])
 }
 
 /// ONE DESIGNER'S OWN KEY for one provider, encrypted with the same Fernet as ManagedSecret.
@@ -1548,6 +1581,10 @@ model DataAccessGrant {
   @@unique([ownerId, granteeId])
   @@index([granteeId])
   @@index([status])
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
+  /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([requestedById])
+  @@index([decidedById])
 }
 
 /// One record in the subset covered by a non-allData DataAccessGrant.
@@ -1779,6 +1816,9 @@ model DesignWorkshop {
   /// without this that is a sequential scan of the workshop table inside a request an admin is
   /// waiting on. The same reasoning as `DwAiLayer`'s three account indexes.
   @@index([dictationConsentById])
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
+  /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([deletedById])
 }
 
 /// Who, besides the person who pressed "create", may open one design & prototype workshop.
@@ -1837,6 +1877,9 @@ model DesignWorkshopViewer {
   /// clause. Not covered by the primary key above — userId is its SECOND column — so without this
   /// the workshop list would sequentially scan the grant table for every non-admin request.
   @@index([userId])
+  /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
+  /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([grantedById])
 }
 
 /// One record of one entity of one stage. A SINGLETON entity has exactly one row per workshop;
@@ -1889,6 +1932,30 @@ model DwStageEntry {
   /// Set by the client that created the row, and stable across a sync. It is what lets the
   /// phone match a row it created offline to the row the server now has, without which every
   /// reconnect would duplicate the whole collection.
+  ///
+  /// A SINGLETON ROW AND THE `_custom` CONTAINER DO NOT GET THE CLIENT'S KEY — they get a RESERVED
+  /// one, `'__dw_singleton__:' || stageKey`, written by the server. Those rows are supposed to be
+  /// unique by (workshop, entity), and the unique index below could not enforce that while their
+  /// key was null: Postgres treats NULLs as distinct under a unique index, so uniqueness was a
+  /// read-then-write in `save_stage` with seconds between the two halves on a field link. Two
+  /// designers on one workshop — which `DesignWorkshopViewer` exists to allow — could each find no
+  /// singleton and each insert one, after which which of the two answers gets scored, printed and
+  /// shown could differ between two reads of unchanged data. A non-null value hands that to the
+  /// index. See `design_workshops.singleton_client_key` for why the stage key is in the value
+  /// (`_custom` uses one entity key on every stage) and `20260822094000_dw_singleton_client_key`
+  /// for the backfill.
+  ///
+  /// THERE ARE TWO WRITERS OF SINGLETON ROWS AND BOTH SET IT. `save_stage` is the obvious one;
+  /// `seed_designer_prefill` is the one that matters more, because it runs on `POST
+  /// /design-workshops` and is what puts `workshopSetup` — the singleton carrying the promoted
+  /// columns — into essentially every new workshop. A third writer added without the key would
+  /// reopen this hole silently, since the index simply stops applying to the rows it misses. An
+  /// EXISTING row that carries no key adopts one on its next ordinary save
+  /// (`design_workshops._reserved_key_upgrade`), so the guarantee holds going forward rather than
+  /// holding only for the rows the one-off backfill happened to see.
+  ///
+  /// A COLLECTION ROW IS UNTOUCHED and may still be null — the browser sets no key at all, and
+  /// `test_stage_sync.test_many_rows_without_a_client_key_coexist` pins that.
   clientKey String?
 
   createdAt   DateTime  @default(now())
@@ -1915,10 +1982,38 @@ model DwStageEntry {
   /// cost grows with the archive instead of with the result, on the one endpoint built to grow.
   /// See the migration for the full before/after.
   @@index([entityKey])
-  /// A client key identifies one row within one workshop. Partial on clientKey being non-null
-  /// is not expressible here, so the application skips the match when clientKey is null.
+  /// A client key identifies one row within one workshop. Partial on clientKey being non-null is
+  /// not expressible here, so the application skips the MATCH when clientKey is null — and, for the
+  /// rows that must be unique whether or not a client supplied a key, writes the reserved value
+  /// described on `clientKey` above rather than a null. A partial unique index is deliberately NOT
+  /// the answer: it would break the browser's null-keyed collection rows and `save_stage`'s
+  /// duplicate-key recovery, both of which need many nulls to coexist here.
   @@unique([designWorkshopId, entityKey, clientKey])
   @@index([deletedAt])
+  /// The creator, indexed for the WRITE it is on the wrong end of rather than for any read this
+  /// table serves. `DwAiLayer`, `DwAiLayerDecision` and `DwWorkshopConsentDecision` each state that
+  /// rule beside their own account pointers and follow it; `DwCustomSection`, whose migration copied
+  /// this model's shape, gave its copy the index. This model — the largest in the family — was the
+  /// exception, and the exception was never argued anywhere.
+  ///
+  /// THE DECISION, WRITTEN DOWN HERE SO THE NEXT READER DOES NOT RE-DERIVE IT. `createdById` is
+  /// `onDelete: SetNull`, so deleting a user makes Postgres look for every stage entry naming them;
+  /// unindexed, that is a sequential scan of this table. **This is not a performance emergency and
+  /// is not claimed to be one.** At the 6,952 rows measured for `@@index([entityKey])` above the
+  /// scan is single-digit milliseconds, and deleting an account is a rare administrative action
+  /// nobody is timing. What made the exception worth closing is the INCONSISTENCY: the schema
+  /// states this rule in three places and applies it in four, and the one model it skipped is the
+  /// one whose own reasoning bites hardest — a reader comparing the models could only conclude
+  /// there was an unwritten exemption and go hunting for what it was.
+  ///
+  /// WHAT IT COSTS, honestly: one btree insert per stage-entry insert, on a table that already
+  /// carries five indexes and is written on every stage save. That is the whole price, and it buys
+  /// consistency rather than speed.
+  ///
+  /// Eleven sibling columns elsewhere in this schema were in the identical state — a User pointer
+  /// with an onDelete action and no index — and were given the same treatment in the same change.
+  /// See `20260822093000_index_the_account_pointers`, which names all twelve.
+  @@index([createdById])
 }
 
 /// A block of questions a DESIGNER added to ONE design workshop, with no deployment.

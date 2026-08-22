@@ -38,6 +38,22 @@ AUTHENTICATION IS ADMIN, and by either of two credentials — see ``deps.require
   the containment is enforced in ``deps._user_from_bearer``, not here, so it cannot be lost by a
   route that forgets about it.
 
+MINTING GOES THROUGH THE SAME PLATFORM ALLOW-LIST GATE AS A SIGN-IN — ``auth.assert_access_admits``.
+It is the second door that turns a password into a token, and for a while it was the only one with
+no gate on it: suspension writes the roster status and not the ``User`` role, so an admin an
+administrator had already refused at ``/auth/login`` could still take a fresh thirty-day read token
+over the whole repository here, and renew it indefinitely. Revocation that stops at one door is not
+revocation. See ``mint_dataset_token`` for the ordering and for the master-admin break-glass.
+
+AND USING A TOKEN IS THE OTHER DOOR, which for a while the sentence above quietly claimed and did
+not hold. A gate on ISSUE alone revokes nothing for the life of a credential already handed out,
+and this one lives thirty days by default: the admin suspended this morning kept whole-repository
+read access until their existing token expired, while the administrator who suspended them had
+every reason to believe bulk access was cut. So ``deps.require_dataset_admin`` re-reads the
+allow-list per request as well — REJECTED and SUSPENDED are refused at USE, within no cache at all.
+Its docstring carries the reasoning, including why it reads the roster as a cut list where the mint
+gate fails closed, and what deliberately remains un-revoked (an ordinary session token).
+
 WHAT IT DELIBERATELY DOES NOT DO. It does not apply ``owned_or_granted_where``. That filter answers
 "which rows may this PERSON take out", and every caller here is already an admin, for whom it
 resolves to the empty filter anyway — spelling it out would suggest a narrowing that is not
@@ -62,12 +78,19 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
+# The platform allow-list gate itself, not a second copy of it. It lives in the sign-in module
+# because the five refusal sentences and the X-Access-Status header are that module's contract with
+# the two sign-in screens, and a machine caller refused here deserves the same words a person gets
+# — "your access has been suspended" is as true of a cron job's credential as of a browser's. See
+# `mint_dataset_token`. (No import cycle: `routes/auth` reaches for services and core, never here.)
+from app.api.routes.auth import assert_access_admits
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.deps import (
     DATASET_READ_SCOPE,
     get_value,
     is_admin,
+    is_break_glass_master,
     is_master_admin,
     require_dataset_admin,
 )
@@ -485,6 +508,42 @@ async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
     handed a token that 403s on first use — the operator wiring up a cron job finds out while they
     are looking at the terminal.
 
+    **THE PLATFORM ALLOW-LIST IS CONSULTED HERE TOO, AND IT WAS NOT.** Suspending somebody writes
+    the ``AccessRoster`` status and never ``User.role``, so a suspended ADMIN is still an admin as
+    far as ``is_admin`` can tell: they were refused at ``/auth/login`` and could walk to this
+    endpoint and mint a fresh thirty-day read token over the entire repository, renewing it for
+    ever. Revoking somebody's access has to revoke it everywhere a credential is exchanged for a
+    token, or it revokes nothing.
+
+    ORDER: credential, then admin rank, then the gate. The gate is last of the three because it is
+    the only one that WRITES — ``access_roster.record_refused_attempt`` bumps an attempt count, and
+    the empanelment clause can admit an address outright — and this is a machine endpoint, not a
+    sign-in. A researcher pointing a script at it should not thereby stir the administrator's
+    approval queue; they get the same "admin access required" they always got. An admin does reach
+    the gate, and a suspended one reads the suspension's own sentence with the same
+    ``X-Access-Status`` header the sign-in screens branch on.
+
+    THAT WRITE GIVES THIS ENDPOINT A FAILURE MODE DRIVEN BY OTHER PEOPLE'S TRAFFIC, and an operator
+    has to be told: an admin whose allow-list row is missing or PENDING reaches
+    ``record_refused_attempt``, which answers ``NOT_RECORDED`` when the pending queue is already at
+    ``access_roster.pending_cap()``, and the gate turns that into **503**. So a nightly mint can
+    begin failing 503 because unrelated strangers filled the approval queue, not because anything
+    about the cron job's own account changed. It is the honest answer — the request genuinely could
+    not be written down for an administrator to see — but it is not one a machine caller's author
+    would predict, so it is named here. ``docs/DATASET_API.md``'s error table does not yet list it
+    (nor the 403 this gate can now answer to a correct ADMIN credential) — adding those two rows is
+    an outstanding documentation fix, not a behaviour this docstring is describing loosely.
+
+    THIS GATE STOPS NEW MINTS AND CANNOT RECALL AN OLD TOKEN. There is no token store; a credential
+    already issued is refused instead by ``deps.require_dataset_admin``, which re-reads the
+    allow-list on every request to this router. Both doors are needed and neither substitutes for
+    the other: this one keeps a barred admin from getting a fresh thirty days, that one stops the
+    thirty days they were already holding.
+
+    The MASTER ADMIN is exempt, through the one shared predicate ``deps.is_break_glass_master``
+    rather than a second copy of it: the break-glass has to open the same door at both ends, and
+    two copies would be two chances for one of them to drift shut.
+
     The response deliberately reports ``expiresInMinutes`` and the account it names, because the two
     questions asked about a stored machine credential are always "when does this stop working" and
     "whose is it".
@@ -510,6 +569,10 @@ async def mint_dataset_token(payload: LoginRequest) -> dict[str, Any]:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required to issue a dataset token.",
         )
+    # AFTER the credential, so this cannot tell an unauthenticated caller whether an address exists;
+    # before the mint, so a barred account leaves with a refusal instead of a token. See the
+    # docstring for why it sits after the rank check rather than before it.
+    await assert_access_admits(user.email, is_master=is_break_glass_master(user))
 
     minutes = get_settings().dataset_token_expires_minutes
     token = create_access_token(

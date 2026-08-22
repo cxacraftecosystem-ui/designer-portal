@@ -30,12 +30,13 @@ as its siblings in that file do.
 import pytest
 
 import app.services.stage_definitions  # noqa: F401  - installs the registry
+from app.services.custom_sections import CustomFieldSpec, CustomSectionSpec
 from app.services.report_builder import WorkshopData, build_report
 from app.services.report_custom_sections import (
+    _TIER_RANK,
     ALL_TIERS,
     CustomReportField,
     CustomSectionItem,
-    _TIER_RANK,
     append_custom_section,
     attach_custom_sections,
     custom_scoring,
@@ -43,7 +44,6 @@ from app.services.report_custom_sections import (
 )
 from app.services.report_model import DocumentBuilder, ReportMeta
 from app.services.report_templates import apply_report_settings, template as get_template
-from app.services.custom_sections import CustomFieldSpec, CustomSectionSpec
 from app.services.stage_schema import FieldType, Tier
 
 #: Printed by COMPACT_SUMMARY (``Presentation.KEY_VALUE``) as well as by DETAILED_TECHNICAL, which is
@@ -110,8 +110,8 @@ def test_the_local_tier_ladder_is_the_registrys_own():
     arose, so the copy is pinned rather than trusted: member for member, rank for rank. A fourth
     tier, or a renumbering, fails here before it can reach a document.
     """
-    assert _TIER_RANK == {t.value: t.rank for t in Tier}
-    assert ALL_TIERS == max(t.rank for t in Tier)
+    assert {t.value: t.rank for t in Tier} == _TIER_RANK
+    assert max(t.rank for t in Tier) == ALL_TIERS
 
 
 def test_an_unrecognised_tier_token_prints_rather_than_vanishing():

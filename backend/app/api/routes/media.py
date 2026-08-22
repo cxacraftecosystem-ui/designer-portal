@@ -60,6 +60,7 @@ from app.services.records import (
     public_encode,
     require_record,
     viewable_where,
+    with_id_tiebreak,
 )
 from app.services.s3 import (
     abort_multipart_upload,
@@ -663,7 +664,11 @@ async def list_media(
         include=INCLUDE,
         skip=skip,
         take=page_size,
-        order={"createdAt": "desc"},
+        # A single upload session writes many rows in the same instant — a phone syncing a
+        # fortnight's captures, the record forms' awaited upload loops — so ``createdAt`` ties are
+        # the normal case here, not the edge one, and offset paging over them loses and repeats
+        # files. ``records.with_id_tiebreak`` makes the order total.
+        order=with_id_tiebreak({"createdAt": "desc"}),
     )
     return page_payload(await _public(items, current_user), total, page, page_size)
 
@@ -1079,7 +1084,9 @@ async def list_media_processing_jobs(
         include={"mediaFile": True, "requestedBy": True, "product": True, "tool": True},
         skip=skip,
         take=page_size,
-        order={"createdAt": "desc"},
+        # Jobs are enqueued in batches (one ``/complete`` can raise several), so they share creation
+        # instants and a paged read of them needs the ``id`` tiebreak to stay total.
+        order=with_id_tiebreak({"createdAt": "desc"}),
     )
     return page_payload(public_encode(jobs), total, page, page_size)
 

@@ -1,16 +1,25 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -19,18 +28,33 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.DwDecodeResult
 import com.designprototype.workshop.data.DwFieldType
 import com.designprototype.workshop.data.DwReferenceList
 import com.designprototype.workshop.data.DwReferenceOption
+import com.designprototype.workshop.data.DwReferenceResponseDto
 import com.designprototype.workshop.data.DwValues
+import com.designprototype.workshop.data.DwWorkshopCodeRef
+import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.decodeWorkshopCode
 import com.designprototype.workshop.data.dwRefId
+import com.designprototype.workshop.data.isLocalOnlyWorkshop
+import com.designprototype.workshop.ui.DwQrScanControl
 import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectCreateAction
@@ -38,8 +62,10 @@ import com.designprototype.workshop.ui.SelectOption
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import retrofit2.HttpException
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -80,6 +106,47 @@ import java.time.format.DateTimeFormatter
  * the artisan register a previous workshop downloaded. The card says when the copy was last
  * refreshed, because a designer looking at a nine-name list needs to know whether that is the roster
  * or merely what this phone last saw.
+ *
+ * ── SCANNING A CARD INTO THE PICKER ─────────────────────────────────────────────────────────
+ *
+ * Every repository record this app can link carries a printed code — `ui/RecordCodeCard.kt` draws one
+ * on the record's own screen and `WorkshopCodesScreen` prints sheets of them — and the case the
+ * feature exists FOR is a designer in a courtyard holding a card somebody else printed. Searching a
+ * dropdown for a name you cannot spell, on a phone, standing up, is the moment the join key is
+ * abandoned and the name is typed into the free-text box instead: the loss this whole file is about.
+ *
+ * A SCAN IS A PICK AND NOTHING MORE. [DwReferenceScanPanel] turns a code into an id and hands it to
+ * the SAME `choose` the dropdown's own `onSelect` calls, so [hydratedValues], [hydrationPatch] and the
+ * `lastHydration` mis-pick repair behave identically however the record was chosen. Nothing about
+ * hydration is reimplemented on the scanned path, and nothing may be: two routes onto one row is how
+ * one of them comes to fill it differently from the other.
+ *
+ * THE DROPDOWN IS NEVER HIDDEN OR REPLACED, and neither is the typed code inside the panel.
+ * `docs/DECISION-qr-scanning-on-android.md` names the typed code as the guaranteed path — it needs no
+ * permission, no lens and no library, and it is the only route that works on a card whose QR is
+ * smudged while the characters printed under it are not — and picking by name needs no camera either.
+ *
+ * WHICH FIELDS OFFER IT is decided by [dwScannableRecordType] and by nothing else. A field whose
+ * `refModel` has no letter in the code grammar has no card that could be scanned into it, so it shows
+ * no scan control at all rather than one that can only refuse.
+ *
+ * THE THREE REFUSALS, each of which is a different next action: the wrong KIND of card
+ * ([dwWrongRecordTypeMessage]); a real record this field's workshop scope excludes
+ * ([dwReferenceOutOfScopeMessage]); and a code that resolves to nothing this box can offer
+ * ([dwUnresolvedScanMessage], which must never distinguish a record that is absent from one that is
+ * forbidden). They are `scanTypeRefusal`, `outOfScopeRefusal` and `unresolvedRefusal` in
+ * `frontend/components/designworkshop/StageReferenceField.tsx`, meaning for meaning.
+ *
+ * BEING OFFLINE IS NOT ONE OF THE THREE and is deliberately kept apart from the third —
+ * [DW_SCAN_OFFLINE_MESSAGE], [DW_SCAN_LOOKUP_FAILED_MESSAGE] and [DW_SCAN_UNSENT_WORKSHOP_MESSAGE],
+ * none of which changes anything at all on the row. [dwScanCascadeMovedMessage] is a fourth of the
+ * same kind: the answer arrived, and about a row that has since moved under it.
+ *
+ * THE CASCADE IS ASKED TWICE, WHICH IS THE ONE RULE HERE THAT IS ABOUT TIME RATHER THAN MEANING.
+ * A cached record is linked without a request only where the narrowing can be PROVEN on the device
+ * ([dwScanLocalStep]), and an answer that came back from the server is dropped if the parent moved
+ * while it was in the air ([dwScanCascadeMovedMessage]). Both exist for one outcome: a product read
+ * under artisan A must never land on a row that now names artisan B.
  */
 
 /**
@@ -410,6 +477,33 @@ internal fun DwReferenceSelectField(
      * row is filled in when the refreshed list arrives carrying the server's own answer.
      */
     var pendingHydration by remember(field.key) { mutableStateOf("") }
+    /**
+     * The record a SCAN resolved, kept beside the fetched list for the same reason as
+     * [locallyCreated] and stored apart from it because it has a different origin.
+     *
+     * A colleague's card names a record this device's list need not contain — it was documented at
+     * another cluster, or simply after this phone last refreshed — and without a row for it the
+     * trigger falls back to "Linked record a3f10c2b", which reads as a link to something the app
+     * cannot name and invites the designer to clear it and pick again. The option the server sent
+     * back for the scan carries the real label, hint and `data`, so it is kept.
+     *
+     * NEVER WRITTEN INTO [list], which the refresh replaces wholesale, and never written to
+     * [com.designprototype.workshop.data.DwReferenceStore] either: a by-id answer is one row filed
+     * under the key the whole register lives at, and caching it would replace a fifty-name artisan
+     * list with a one-name one — see `WorkshopRepository.designWorkshopReferenceById`.
+     *
+     * ONE AT A TIME, because only the last scan can be the one on screen.
+     *
+     * IT CARRIES THE PARENT IT WAS RESOLVED UNDER, and that is the whole of [DwScannedAside]. The
+     * record was proved in scope FOR THAT PARENT — the by-id request sent the cascade with the id,
+     * which is the only reason the answer could be trusted — so once the row's artisan changes it is
+     * a row about somebody else's work sitting in a narrowed list, indistinguishable from an option
+     * the server offered, one tap from being chosen. The server's own `filter_by` path raises rather
+     * than widening for exactly this reason. It is still NOT cleared when the designer merely unlinks:
+     * the record is a real option under that parent and taking its name off the dropdown would help
+     * nobody, and changing back to that parent brings it back with it.
+     */
+    var scannedOption by remember(field.key) { mutableStateOf<DwScannedAside?>(null) }
 
     // Keyed on the parent's value as well as the model: changing the artisan must re-ask for that
     // artisan's products rather than leaving the previous artisan's list on screen under a new name.
@@ -453,12 +547,17 @@ internal fun DwReferenceSelectField(
         if (patch.isNotEmpty()) onHydrate(patch)
     }
 
-    val options = remember(list, parentId, selectedId, locallyCreated) {
+    val options = remember(list, parentId, selectedId, locallyCreated, scannedOption) {
         val narrowed = list?.narrowedTo(parentId).orEmpty()
         // The server's copy WINS over ours the moment it exists: it carries the real hint and the
-        // real label, and two rows for one record is a picker showing an artisan twice.
+        // real label, and two rows for one record is a picker showing an artisan twice. The same
+        // rule settles a scanned record that the list has since caught up with, and `distinctBy`
+        // settles the case where the scan resolved a record this picker had also just created.
         val known = narrowed.map { it.id }.toSet()
-        buildReferenceOptions(locallyCreated.filterNot { it.id in known } + narrowed, selectedId)
+        // The scanned stand-in only stands in on the row it was resolved for — see [DwScannedAside].
+        val scanned = scannedOption?.takeIf { it.underParent == parentId }?.option
+        val aside = (listOfNotNull(scanned) + locallyCreated).distinctBy { it.id }
+        buildReferenceOptions(aside.filterNot { it.id in known } + narrowed, selectedId)
     }
 
     /** The word for this model, or null when it is not one a picker may create — see [INLINE_CREATABLE]. */
@@ -523,6 +622,61 @@ internal fun DwReferenceSelectField(
         }
     }
 
+    /**
+     * TAKE UP A RECORD — the one path onto this field, whoever asked for it.
+     *
+     * The dropdown's `onSelect` calls this, and so does the scan panel. That is the requirement and
+     * not a tidy-up: hydration, the `lastHydration` mis-pick repair and the deferred-hydration wait
+     * are three interlocking rules, and a second copy of them for the scanned path would be a second
+     * set of answers about what a chosen record may overwrite.
+     *
+     * [known] is the record's own option when the caller already holds it — a scan resolves one by
+     * id, and it will not be in [list] if the server found it outside what this device has fetched.
+     * Passing it hydrates the row NOW instead of parking the id in [pendingHydration] and waiting for
+     * a list refresh that, on the handset this feature is for, may be a village and a week away.
+     *
+     * Declared inside the composable and rebuilt every composition rather than remembered, so it
+     * reads THIS composition's [rowValues] and [lastHydration]. A stale pair would decide it may
+     * overwrite a value the designer has since typed by hand.
+     */
+    fun choose(chosen: String, known: DwReferenceOption? = null) {
+        if (chosen.isBlank()) {
+            onChange(null)
+            // Unlinking supersedes a create still waiting to be described. Left armed, the refresh
+            // landing a moment later would fill the row in from a record the designer has just
+            // deliberately unlinked.
+            pendingHydration = ""
+            return
+        }
+        onChange(JsonPrimitive(chosen))
+        val option = known ?: list?.items?.firstOrNull { it.id == chosen }
+        if (option == null) {
+            /*
+             * A record this device holds an id for but no DESCRIPTION of — one created here seconds
+             * ago, or one another handset made and this cache has never seen.
+             *
+             * Hydration is deferred rather than run, and running it would be actively destructive:
+             * with an empty `data` map [hydrationPatch]'s incoming set is empty, so its second loop
+             * CLEARS every key the previous pick wrote and puts nothing in their place. The designer
+             * would watch the name and village they could see vanish. Waiting leaves the row exactly
+             * as it is until the server can say what belongs on it.
+             */
+            pendingHydration = chosen
+            return
+        }
+        // A pick supersedes a create still waiting to be filled in. Without this, hydration from the
+        // record made a moment ago would land on the row AFTER the designer changed their mind and
+        // chose somebody else — one artisan's village under another's name.
+        pendingHydration = ""
+        val incoming = hydratedValues(option, field.refHydration, writableFields)
+        val patch = hydrationPatch(incoming, lastHydration, rowValues, writableFields)
+        lastHydration = incoming
+        if (patch.isNotEmpty()) onHydrate(patch)
+    }
+
+    /** The kind of card this field can be filled from, or null when none is printed for its model. */
+    val scannable = remember(field.refModel) { dwScannableRecordType(field.refModel) }
+
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (field.help.isNotBlank()) {
             Text(field.help, color = MaterialTheme.field.muted, fontSize = 12.sp)
@@ -558,42 +712,40 @@ internal fun DwReferenceSelectField(
             } else {
                 null
             },
-            onSelect = { chosen ->
-                if (chosen.isBlank()) {
-                    onChange(null)
-                    // Unlinking supersedes a create still waiting to be described. Left armed, the
-                    // refresh landing a moment later would fill the row in from a record the designer
-                    // has just deliberately unlinked.
-                    pendingHydration = ""
-                    return@SearchableSelectField
-                }
-                onChange(JsonPrimitive(chosen))
-                val option = list?.items?.firstOrNull { it.id == chosen }
-                if (option == null) {
-                    /*
-                     * A record this device holds an id for but no DESCRIPTION of — one created here
-                     * seconds ago, or one another handset made and this cache has never seen.
-                     *
-                     * Hydration is deferred rather than run, and running it would be actively
-                     * destructive: with an empty `data` map [hydrationPatch]'s incoming set is empty,
-                     * so its second loop CLEARS every key the previous pick wrote and puts nothing in
-                     * their place. The designer would watch the name and village they could see
-                     * vanish. Waiting leaves the row exactly as it is until the server can say what
-                     * belongs on it.
-                     */
-                    pendingHydration = chosen
-                    return@SearchableSelectField
-                }
-                // A pick supersedes a create still waiting to be filled in. Without this, hydration
-                // from the record made a moment ago would land on the row AFTER the designer changed
-                // their mind and chose somebody else — one artisan's village under another's name.
-                pendingHydration = ""
-                val incoming = hydratedValues(option, field.refHydration, writableFields)
-                val patch = hydrationPatch(incoming, lastHydration, rowValues, writableFields)
-                lastHydration = incoming
-                if (patch.isNotEmpty()) onHydrate(patch)
-            }
+            onSelect = { chosen -> choose(chosen) }
         )
+
+        /*
+         * THE SAME PICK, FROM A CARD IN THE DESIGNER'S HAND.
+         *
+         * Under the dropdown rather than over it, because the dropdown is the route that always
+         * works and this one is the shortcut when it applies — the same order `RecordCodeLookupPanel`
+         * argues for from the opposite side, where the scanner leads because the panel exists for
+         * codes and nothing else.
+         *
+         * Withheld while a cascade is unanswered, exactly as "Create a new product" is: a scan that
+         * ran before the artisan was chosen would be judged against an unfiltered list, which is the
+         * wrong-join-key failure this file's own header calls materially worse than a missing one.
+         * Withheld on a disabled field for the ordinary reason, and withheld entirely when the model
+         * has no printed card — see [dwScannableRecordType].
+         */
+        if (scannable != null && bridge != null && enabled && !needsParent) {
+            DwReferenceScanPanel(
+                field = field,
+                bridge = bridge,
+                wanted = scannable,
+                list = list,
+                parentId = parentId,
+                // Named only where there IS a cascade, so the refusal that mentions it is never shown
+                // on a field that does not have one — see [dwUnresolvedScanMessage].
+                cascadeLabel = if (field.refFilterBy.isNotBlank()) parentField?.label.orEmpty() else "",
+                enabled = enabled,
+                onPick = { option ->
+                    scannedOption = DwScannedAside(option, parentId)
+                    choose(option.id, option)
+                },
+            )
+        }
 
         /*
          * FIX THE RECORD FROM HERE TOO, without giving up the stage.
@@ -663,6 +815,27 @@ internal fun DwReferenceSelectField(
  * Nothing is hydrated from a multi-select, and that is not an omission. Hydration writes one record's
  * values into the row; nine artisans have nine names, and there is no field on the row for them to
  * go into. The ids are the answer.
+ *
+ * ── AND THERE IS NO CARD READER ON IT, WHICH IS A SCOPE BOUNDARY AND NOT A JUDGEMENT ─────────
+ *
+ * A roster is the likeliest place in the app to be holding a card — it is the control a designer
+ * opens to tick everyone in the room — so the absence is worth stating rather than leaving to be
+ * discovered. Two facts stopped it landing in the same change as the single picker's:
+ *
+ *  · THE SHIPPED REGISTRY DECLARES NO SUCH FIELD. Every `refModel` in
+ *    `app/src/main/assets/design-workshop-schema.json` is on a `REF`, so this composable is
+ *    unreachable from the registry this APK carries; a reader added here could not be exercised by
+ *    anything, on any surface, and an untested reader on the roster is worse than none.
+ *  · THE BROWSER HAS NO ROSTER READER EITHER. `StageReferenceField.tsx` mounts `WorkshopCodeScanner`
+ *    inside `StageReferenceSelect` and nowhere else — its own `StageReferenceMultiPicker` carries
+ *    none — and a control that exists on one client and not the other is the parity failure
+ *    [INLINE_CREATABLE] is written to prevent.
+ *
+ * If a MULTI_ENUM ever does carry a `refModel`, the pieces are already shared and none of them is
+ * single-select-specific: [dwScannableRecordType] gates it, [dwScanLocalStep] and
+ * [dwScanServerAnswer] decide it, and the pick becomes one more id in the array — the same commit
+ * `createAction` below already makes. Do it in the same change that adds the field, and add the
+ * browser's half with it.
  */
 @Composable
 internal fun DwReferenceMultiSelectField(
@@ -842,6 +1015,680 @@ private fun ReferenceProvenance(
             color = MaterialTheme.colorScheme.error,
             fontSize = 11.sp
         )
+    }
+}
+
+// --------------------------------------------------------------------------------------
+// Scanning a card into the picker
+// --------------------------------------------------------------------------------------
+
+/**
+ * The kind of card that can be scanned into a field linking [refModel], or null when none can.
+ *
+ * THE MAP IS THE INTERSECTION OF TWO TABLES THIS FILE DOES NOT OWN, and it is written out entry by
+ * entry rather than derived, because neither table is derivable from the other:
+ *
+ *  · `REFERENCE_MODELS` in `backend/app/services/design_workshops.py` — Artisan,
+ *    ProductDocumentation, ToolDocumentation, Process, Craft — is every repository model a REF field
+ *    may name. A `refModel` outside it is a `Dw…` entity of this very workshop, answered by
+ *    `_in_record_options` from the workshop's own rows.
+ *  · [DwWorkshopRecordType] is every kind of record the code grammar has a letter for, which is what
+ *    decides whether a card exists to be scanned in the first place.
+ *
+ * SO THE ABSENCES ARE THE INTERESTING HALF. `DwSketch`, `DwParticipant`, `DwCostSheet` and
+ * `DwFinalProduct` have no letter, so nothing anywhere prints a card for them and a scan control on
+ * those pickers could only ever refuse; `DwPrototype` DOES have one — a prototype tag is the thing
+ * `WorkshopCodesScreen` prints thirty of on the morning a workshop starts — and it resolves through
+ * the same endpoint, which matches a stage row on its `_clientKey` as well as its id precisely so
+ * that a tag printed before the row ever reached the server still reads back.
+ *
+ * `Workshop` IS DELIBERATELY ABSENT even though the grammar has a `W`, and so are `questionnaire`
+ * and `media`. There is no `Workshop`, `QuestionnaireInterview` or `MediaFile` entry in
+ * `REFERENCE_MODELS`, so no REF field can declare one, so a branch for any of them here would be a
+ * claim about a picker that cannot exist. Add one in the same change that adds the reference model,
+ * never before.
+ *
+ * ⚠ KEEP THIS IN EXACT STEP WITH `SCANNED_TYPE_REF_MODEL` in
+ * `frontend/components/designworkshop/StageReferenceField.tsx`. A model whose picker takes a card in
+ * the browser and refuses one on the handset is a designer who can finish a stage at a desk and not
+ * in the courtyard the card is for — the same parity rule, for the same reason, as [INLINE_CREATABLE]
+ * one screen up.
+ */
+internal fun dwScannableRecordType(refModel: String): DwWorkshopRecordType? = when (refModel) {
+    "Artisan" -> DwWorkshopRecordType.ARTISAN
+    "Craft" -> DwWorkshopRecordType.CRAFT
+    "ProductDocumentation" -> DwWorkshopRecordType.PRODUCT
+    "ToolDocumentation" -> DwWorkshopRecordType.TOOL
+    "Process" -> DwWorkshopRecordType.PROCESS
+    "DwPrototype" -> DwWorkshopRecordType.PROTOTYPE
+    else -> null
+}
+
+/**
+ * A scanned record held for the dropdown to name, TOGETHER WITH THE PARENT IT WAS RESOLVED UNDER.
+ *
+ * The pair and not the option alone, because in-scope is not a property of the record: a product
+ * card resolves against this row's artisan, and the same card is out of scope the moment that artisan
+ * is corrected. Storing the parent lets the stand-in be dropped from the list by the one comparison
+ * the server would have made — see the field's own KDoc in [DwReferenceSelectField].
+ */
+@Immutable
+private data class DwScannedAside(val option: DwReferenceOption, val underParent: String)
+
+/** What the picker does about a code once there is nothing left to find out. */
+internal sealed interface DwScanAnswer {
+    /**
+     * Choose this record, through the picker's ordinary selection path and no other.
+     *
+     * The whole option travels and not just its id, so hydration runs from the record's own `data`
+     * immediately instead of going through `pendingHydration` and waiting for a list refresh that,
+     * for an out-of-cache record, may be a village and a week away.
+     */
+    data class Pick(val option: DwReferenceOption) : DwScanAnswer
+
+    /** Say this, and change nothing whatever on the row. */
+    data class Refused(val message: String) : DwScanAnswer
+}
+
+/** How far the DEVICE ALONE could get with a code. */
+internal sealed interface DwScanStep {
+    data class Settled(val answer: DwScanAnswer) : DwScanStep
+
+    /** The device holds no record for this id; only the repository can say what it names. */
+    data class AskServer(val ref: DwWorkshopCodeRef) : DwScanStep
+}
+
+/** "a" or "an" for a noun about to be dropped into the middle of a refusal. */
+private fun article(noun: String): String =
+    if (noun.firstOrNull()?.lowercaseChar() in listOf('a', 'e', 'i', 'o', 'u')) "an" else "a"
+
+/**
+ * WHAT THIS BOX HOLDS, in the word a refusal can put in a sentence.
+ *
+ * The record-type label wherever the model is one a code can name — the SAME word
+ * [com.designprototype.workshop.data.workshopRecordTypeLabel] gives the two scanners that open
+ * records, so a designer who has read "Product" on Search meets "product" here — and the field's own
+ * label otherwise, because a `DwSketch` has no name in the code grammar at all and the box's label is
+ * the only true thing left to call it. `pickerNoun` in `StageReferenceField.tsx` is the same rule.
+ *
+ * `lowercase()` and never `toLowerCase()`, whose DEFAULT locale maps `I` to a dotless ı on a handset
+ * set to Turkish and would describe an "Interview" to a designer with a character the web never
+ * writes. `unresolvedWorkshopCodeMessage` carries the same note for the same reason.
+ */
+internal fun dwPickerNoun(field: FieldDto): String =
+    dwScannableRecordType(field.refModel)?.label?.lowercase() ?: field.label.lowercase()
+
+/**
+ * REFUSAL (a): THE CODE NAMES THE WRONG KIND OF RECORD. Null when it names the right one.
+ *
+ * ASKED BEFORE THE NETWORK, because there is nothing to ask — and it is therefore the one refusal a
+ * phone with no signal can always give. An artisan's id looked up in the product table is not a near
+ * miss; the empty answer would come back as "no product matches that code", which is true, useless,
+ * and read by the person holding the card as a damaged tag. They would photograph it again.
+ *
+ * THE SENTENCE NAMES BOTH TYPES AND THE BOX, which is the whole of its value: the designer is holding
+ * one card and looking at one field, and only the pair says which of the two is the mistake.
+ *
+ * The no-model branch is not reachable from this file's own control — [dwScannableRecordType] gates
+ * it — and it is kept because the honest answer for a `Dw…` row is a different sentence, not a
+ * crash: those rows carry no printed code at all, so there is no card to go and find.
+ * `scanTypeRefusal` in `StageReferenceField.tsx` is the same function, branch for branch.
+ */
+internal fun dwWrongRecordTypeMessage(field: FieldDto, ref: DwWorkshopCodeRef): String? {
+    val wanted = dwScannableRecordType(field.refModel)
+    if (wanted == ref.recordType) return null
+    val scanned = ref.recordType.label.lowercase()
+    if (wanted == null) {
+        return "That code names ${article(scanned)} $scanned. “${field.label}” holds a row recorded in " +
+            "this design workshop, and rows of that kind carry no printed code — choose one from the " +
+            "list instead."
+    }
+    val noun = dwPickerNoun(field)
+    return "That code names ${article(scanned)} $scanned, and “${field.label}” takes " +
+        "${article(noun)} $noun. Read the $noun’s own card or tag, or search for it in the list."
+}
+
+/**
+ * REFUSAL (b): the record is real, and this WORKSHOP-scoped box still excludes it.
+ *
+ * THE NORMAL CASE FOR A SCANNED CARD, not an edge one: the WORKSHOP-scoped REF fields are scoped
+ * against a repository model, and the card in the designer's hand was printed by whoever documented
+ * the record — at their cluster, under their workshop. The server answers that with `outOfScope` and
+ * hands the row over under its own key precisely so a client can say so.
+ *
+ * IT IS SAID, AND THE SCOPE IS NOT WIDENED. Offering the row would point a stage at a record this
+ * picker's own list can never show, and the report's table would then cite work from another cluster
+ * with nothing on screen having admitted it. So the row is NAMED — that is what tells the designer
+ * the right card was read — and left unchosen, and the sentence carries the remedy.
+ *
+ * NAMING IT GIVES NOTHING AWAY. The server's probe carries the same read predicate the record list
+ * routes carry, so a row this designer may not read produces no row at all and this sentence is
+ * never reached for it; the flag is false for a forbidden record and for one that does not exist
+ * alike. The words are `outOfScopeRefusal`'s in `StageReferenceField.tsx`, deliberately: two
+ * surfaces reporting one server flag in two voices is how a designer comes to believe they are two
+ * different situations.
+ */
+internal fun dwReferenceOutOfScopeMessage(option: DwReferenceOption): String =
+    "That code names “${option.label}”, which is documented under a different workshop — and this " +
+        "box offers only records linked to this design workshop’s workshop. Nothing on this row has " +
+        "been changed. Link that record to this workshop and read the code again, or choose one of " +
+        "the records that already belong to it."
+
+/**
+ * REFUSAL (c): ONE SENTENCE FOR "NO SUCH RECORD" AND FOR "NOT YOURS", AND IT MUST STAY ONE.
+ *
+ * The API answers 404 rather than 403 for a record the caller may not read, and the references
+ * endpoint's by-id path composes the same read predicate for the same reason, so an absent record
+ * and an unreadable one arrive as the identical empty answer. Do not add a branch that tells them
+ * apart — a scanner that did would let somebody enumerate the repository one photographed card at a
+ * time.
+ *
+ * NOT `unresolvedWorkshopCodeMessage`, AND THE DIFFERENCE IS ONLY THE REMEDY. That sentence sends
+ * the reader to a SCREEN — "open the workshop that made it", "search for the artisan by name
+ * instead" — which is right for the two scanners that open records and wrong for a box that fills a
+ * row in. The RULE is what is carried over, not the words, exactly as `unresolvedRefusal` in
+ * `StageReferenceField.tsx` sets out.
+ *
+ * THE CASCADE IS NAMED WHERE THERE IS ONE, and that gives nothing away: the filter is sent on every
+ * request this picker makes, so the possibility is true of every code read at a cascaded box and the
+ * sentence is the same for all of them. It has to be said, because the server's out-of-scope probe
+ * KEEPS the artisan clause — a product that belongs to somebody else's artisan lands here and not in
+ * refusal (b) — and "it may not be in the repository" would be a lie told about a record the designer
+ * can see two rows up. This client cannot narrow it further: telling the two apart needs
+ * `_artisan_id_behind`, the server-side rule [DwInlineSeed] records as the one the clients are
+ * deliberately spared.
+ */
+internal fun dwUnresolvedScanMessage(field: FieldDto, cascadeLabel: String): String {
+    val noun = dwPickerNoun(field)
+    val reasons = listOfNotNull(
+        "it may not be in the repository",
+        "it may belong to work this account cannot open",
+        cascadeLabel.takeIf { it.isNotBlank() }?.let { "it may not belong to the ${it.lowercase()} chosen on this row" },
+    )
+    return "No $noun this box can offer matches that code — ${reasons.joinToString(", or ")}. Nothing on " +
+        "this row has been changed; search for it by name in the list instead."
+}
+
+/**
+ * NO SIGNAL. A by-id resolve is the one thing on this control that cannot be answered locally.
+ *
+ * NOT ONE OF THE THREE REFUSALS, and it must not be mistaken for the third: "no record matches" and
+ * "the repository could not be asked" send a designer to opposite places, and the second is the
+ * NORMAL state of this app. So it says which it is, it says the card is fine — the check digit has
+ * already agreed with the identifier by the time this is reached — and above all it says the row was
+ * not touched, because the one thing a designer must never have to wonder after a failed read is
+ * whether something was quietly linked anyway.
+ */
+internal const val DW_SCAN_OFFLINE_MESSAGE =
+    "There is no connection, so the repository could not be asked which record that code names. The " +
+        "code itself checked out, so the card is fine and nothing on this row has been changed — read " +
+        "it again when there is signal, or search for the record by name in the list."
+
+/**
+ * The server answered, and not with an answer. Says what did NOT happen, which is the useful half.
+ *
+ * SPLIT FROM [DW_SCAN_OFFLINE_MESSAGE] ON RETROFIT'S OWN LINE: an `HttpException` means the server
+ * was reached and then failed, and telling a designer their signal is at fault sends them out of the
+ * building while the real bug wears an offline message. Same split, same reason, as
+ * `RecordCodeLookup.lookUpRecordCode` and as the browser's `isUnreachable`.
+ */
+internal const val DW_SCAN_LOOKUP_FAILED_MESSAGE =
+    "That code could not be looked up just now. Nothing on this row has been changed — try reading it " +
+        "again, or search for the record by name in the list."
+
+/**
+ * The same situation, for a workshop the server has never heard of and so cannot be asked about.
+ *
+ * THE ONE ANSWER WITH NO COUNTERPART IN THE BROWSER, because the browser has no local-only workshop:
+ * a design workshop created offline on this handset has no id the references endpoint would
+ * recognise, so there is no request to fail and no signal that would help. Reporting it as "no
+ * connection" would send a designer looking for a tower for a condition a tower cannot fix.
+ */
+internal const val DW_SCAN_UNSENT_WORKSHOP_MESSAGE =
+    "That code checked out, but this workshop has not been sent to the server yet, so a code can only " +
+        "be matched against the records already on this device — and this is not one of them. Nothing " +
+        "on this row has been changed. Send the workshop when there is signal, then read it again."
+
+/**
+ * THE ROW MOVED WHILE THE LOOKUP WAS IN THE AIR, so the answer that came back is about a question
+ * this row no longer asks.
+ *
+ * NOT TIDINESS, AND THE FIELD PATH IS WHY. The by-id resolve is the one thing on this control that
+ * takes a round trip, and on the towers this app is built for that trip is seconds rather than
+ * milliseconds. A designer who reads a product tag on a row naming artisan A and corrects the artisan
+ * to B during those seconds would otherwise have A's product linked to B's row — and HYDRATED onto
+ * it, so B's row would then carry A's product's measurements. That is one artisan's work under
+ * another's name, which is the failure this file's header and the server's own `filter_by` clause
+ * both exist to prevent, and on this client nothing else would catch it: unlike the browser,
+ * [DwReferenceSelectField] has no effect that clears a child when its parent changes.
+ *
+ * IT COVERS EVERY ANSWER AND NOT ONLY THE PICK, which is where it differs in REACH — not in rule —
+ * from `commitScan` in `StageReferenceField.tsx`, whose refusals are rendered by a separate scanner
+ * dialog. Here one live region carries all of them, and a refusal computed against the artisan who
+ * was on the row a moment ago would name the wrong record for the wrong reason. The two surfaces
+ * agree on the thing that matters: a stale answer is dropped and SAID, never written.
+ */
+internal fun dwScanCascadeMovedMessage(cascadeLabel: String): String {
+    val moved = cascadeLabel.takeIf { it.isNotBlank() }
+        ?.let { "The ${it.lowercase()} on this row" }
+        ?: "The record this list narrows to"
+    return "$moved changed while that code was being looked up, so the answer that came back was " +
+        "about the record chosen before it. Nothing on this row has been changed — read the code " +
+        "again now that the row is settled."
+}
+
+/**
+ * Everything a code can be judged on WITHOUT the network.
+ *
+ * The order is the whole of it. Decode first, because a payment QR photographed by mistake and a
+ * mistyped character are refused by [decodeWorkshopCode] and by nothing here — a second opinion on
+ * the grammar is how a scanned code and a typed one come to be judged differently. Then the record
+ * TYPE, which needs nothing but the letter. Then this device's own cached list, which is the answer
+ * in the courtyard: a card for a record the phone already holds is linked with no request at all,
+ * hydrated from the same `data` the dropdown would have used.
+ *
+ * THE CACHE STEP IS THIS CLIENT'S OWN AND THE BROWSER HAS NO EQUIVALENT, which is the one place the
+ * two surfaces differ in MECHANISM rather than in meaning. `StageReferenceField.tsx` fetches its list
+ * every time the picker opens and resolves every scan against the server; this app's list is a
+ * document on disk with no expiry, deliberately, because a designer in a courtyard with no signal
+ * still has to be able to pick.
+ *
+ * ── AND IT IS TAKEN ONLY WHERE THE CACHE IS ACTUALLY AUTHORITATIVE ─────────────────────────────
+ *
+ * THE PREMISE THIS USED TO REST ON WAS FALSE FOR CASCADED FIELDS and is worth writing down, because
+ * it reads as obviously true. It said: the cached list is the answer the server gave for this field's
+ * own model, scope AND CASCADE, so a record in it is a record this field may offer. The first two
+ * hold — [com.designprototype.workshop.data.DwReferenceStore.anyForModel] fences its merge to one
+ * model and one owner. The cascade does not, twice over:
+ *
+ *  · `_reference_option` in `design_workshops.py` emits `id`, `label`, `sublabel` and `data` and
+ *    NOTHING ELSE, so [DwReferenceOption.filterValue] is blank on every option that ever came off the
+ *    wire — and [DwReferenceList.narrowedTo] KEEPS an option with no filter value (its own comment
+ *    says why: dropping them would empty every cascading dropdown in the app). Narrowing here is
+ *    therefore inert against real payloads, however honest it looks.
+ *  · That fallback merge deliberately joins the model's files ACROSS FILTERS, which is what makes
+ *    `productRef` work offline at all. So a WORKSHOP-scoped cascaded list legitimately holds artisan
+ *    B's products while this row names artisan A.
+ *
+ * Together those two put artisan B's product card one silent tap from artisan A's row, with no
+ * request made and therefore no `filterBy` for the server to refuse it on. So the cache answers a
+ * cascaded box only where the narrowing is PROVEN — [DwReferenceList.filteredBy] naming this very
+ * parent, which the repository sets only for a list the server itself answered under that filter, or
+ * the option carrying the parent on its own back — and otherwise the code goes to the server, and to
+ * [DW_SCAN_OFFLINE_MESSAGE] when there is no signal to reach it with. An uncascaded box is unaffected
+ * and still answers from the cache, which is the courtyard case this step exists for.
+ *
+ * REFUSING TO GUESS IS THE CHEAP SIDE OF THIS TRADE. The worst outcome of going to the server is a
+ * sentence saying the row was left alone; the worst outcome of guessing is a report that attributes
+ * one artisan's work to another, which nothing downstream can detect.
+ */
+internal fun dwScanLocalStep(
+    scanned: String,
+    field: FieldDto,
+    list: DwReferenceList?,
+    parentId: String,
+): DwScanStep {
+    val ref = when (val decoded = decodeWorkshopCode(scanned)) {
+        is DwDecodeResult.Refused -> return DwScanStep.Settled(DwScanAnswer.Refused(decoded.message))
+        is DwDecodeResult.Ok -> decoded.ref
+    }
+    dwWrongRecordTypeMessage(field, ref)?.let {
+        return DwScanStep.Settled(DwScanAnswer.Refused(it))
+    }
+    val cached = list?.narrowedTo(parentId)?.firstOrNull { it.id == ref.id }
+    if (cached != null && dwCascadeIsProven(field, list, cached, parentId)) {
+        return DwScanStep.Settled(DwScanAnswer.Pick(cached))
+    }
+    return DwScanStep.AskServer(ref)
+}
+
+/**
+ * May a cached row be linked into THIS row without asking the server whether it belongs under it?
+ *
+ * Only where the answer is knowable on the device. A box with no `refFilterBy` has no cascade to
+ * belong to and the fence above already settles model, scope and owner. A cascaded box needs one of
+ * the two positive proofs, and the absence of a contradiction is not one of them: see
+ * [dwScanLocalStep]'s own note on why the ordinary cached list is silent on the question rather than
+ * agreeable about it.
+ */
+private fun dwCascadeIsProven(
+    field: FieldDto,
+    list: DwReferenceList,
+    option: DwReferenceOption,
+    parentId: String,
+): Boolean {
+    if (field.refFilterBy.isBlank()) return true
+    // Unreachable from the panel, which is unmounted while the cascade is unanswered — and the safe
+    // answer for a caller that is not the panel, since an unanswered cascade narrows nothing at all.
+    if (parentId.isBlank()) return false
+    // The option says so itself — nothing on the wire populates this today, and it is honoured so
+    // that the day a server does, the device stops having to ask.
+    if (option.filterValue == parentId) return true
+    // Or the LIST says the server answered it under this very parent. The repository stamps this
+    // only on an answer fetched under that filter; its merged-cache fallback deliberately leaves it
+    // blank, because that branch merges across filters.
+    return list.filteredBy == parentId
+}
+
+/**
+ * What the server's answer to a by-id lookup means, as a row to choose or a sentence to read.
+ *
+ * THE ID ITSELF IS THE PROOF, wherever it is present: an option carrying the scanned id IS the record
+ * on the card, and it reached `options` only by passing this field's scope and its cascade.
+ *
+ * A PROTOTYPE TAG LEGITIMATELY CARRIES AN ID THE OPTION DOES NOT, WHICH IS THE ONE CASE WITHOUT THAT
+ * PROOF. `workshopCodeIdForRow` prints the row's client key while the row has never reached the server —
+ * a tag has to be printable the afternoon the prototype is made, and a workshop can go a fortnight
+ * without signal — and `_in_record_options` matches EITHER spelling while answering with the row's
+ * server id. So the one option a narrowed answer holds IS the row that was read.
+ *
+ * `truncated` IS WHAT SAYS THE ANSWER WAS NARROWED, and it is why the request asks for a page of one.
+ * An id clause matches at most one row, so a by-id answer can never honestly be truncated — an API
+ * deployed before the by-id half does not refuse an unknown query parameter, it IGNORES it and
+ * returns the ordinary list, and with `limit = 1` that shows up here as `truncated = true` the moment
+ * the workshop holds a second prototype. Taking a row out of THAT list would tag the stage with
+ * whatever sorts first: a wrong record chosen confidently, which is the failure a scanned identifier
+ * exists to end. An old server plus a workshop holding exactly one prototype is the residual gap, and
+ * it closes itself the moment the API is the one that answers `recordId`. Branch for branch, and for
+ * the same reasons, this is `scanLookupOutcome` in `StageReferenceField.tsx`.
+ */
+internal fun dwScanServerAnswer(
+    field: FieldDto,
+    ref: DwWorkshopCodeRef,
+    payload: DwReferenceResponseDto,
+    cascadeLabel: String,
+): DwScanAnswer {
+    payload.options.firstOrNull { it.id == ref.id }?.let { return DwScanAnswer.Pick(it) }
+    if (ref.recordType == DwWorkshopRecordType.PROTOTYPE && !payload.truncated && payload.options.size == 1) {
+        return DwScanAnswer.Pick(payload.options.first())
+    }
+    // BOTH HALVES REQUIRED. The server derives the flag FROM the row, so they cannot disagree; a flag
+    // with no row would be a client this build does not know how to render, and the sentence below is
+    // the honest answer for that too.
+    val excluded = payload.outOfScopeOption
+    if (payload.outOfScope && excluded != null) {
+        return DwScanAnswer.Refused(dwReferenceOutOfScopeMessage(excluded))
+    }
+    return DwScanAnswer.Refused(dwUnresolvedScanMessage(field, cascadeLabel))
+}
+
+/** What to say when a scan worked, for the designer who needs to see WHICH record it chose. */
+private fun dwScanConfirmation(option: DwReferenceOption, wanted: DwWorkshopRecordType): String {
+    val name = option.label.trim().takeIf { it.isNotEmpty() }
+        ?: return "That code was read, and this row now links the ${wanted.label.lowercase()} it names."
+    return "Linked from the code you read: “$name”."
+}
+
+/**
+ * The scan control, the typed code, and the one sentence either of them produces.
+ *
+ * ── IT IS FOLDED AWAY UNTIL IT IS ASKED FOR, AND THAT IS A LAYOUT DECISION WITH A REASON ───────
+ *
+ * [DwQrScanControl] is two buttons and a paragraph, and the typed box below it is a field, a button
+ * and two more lines. A stage row can carry four REF fields; unfolded under every one of them, that
+ * is a form in which the pickers are the small print. A single labelled button is discoverable — it
+ * says "Scan a card or tag" in words, on screen, next to the picker it fills — while costing one line
+ * on the rows where nobody is holding a card.
+ *
+ * ── WHAT IT NEVER DOES ────────────────────────────────────────────────────────────
+ *
+ * It never writes the field itself. [onPick] is the picker's own `choose`, and every refusal path
+ * returns without calling it, so a refused, unreadable or unanswerable code leaves the row exactly as
+ * it was — including the link that is already on it, which a designer scanning a second card is
+ * entitled to keep until a better one is found.
+ *
+ * It never asks the server twice for one press, and it never asks at all when the answer is already
+ * on the device. [dwScanLocalStep] settles the code first.
+ *
+ * ── THE CONNECTIVITY CHECK IS BEFORE THE REQUEST AND NOT AFTER IT ─────────────────────────
+ *
+ * Both the check and the catch are here, and neither is redundant. `WorkshopRepositoryApi`'s own note
+ * says why the check comes first: "a request that hangs for a two-minute timeout in a village is
+ * indistinguishable, to the designer holding the phone, from an app that has crashed". The catch is
+ * for everything the check cannot see — a tower that answers and then does not, a captive portal, a
+ * 500 — and it does NOT flatten them: an [HttpException] means the server answered, which is a
+ * different sentence and a different next action from no signal at all.
+ */
+@Composable
+private fun DwReferenceScanPanel(
+    field: FieldDto,
+    bridge: DwReferenceBridge,
+    wanted: DwWorkshopRecordType,
+    list: DwReferenceList?,
+    parentId: String,
+    /** The label of the field this one cascades from, or blank when it cascades from nothing. */
+    cascadeLabel: String,
+    enabled: Boolean,
+    onPick: (DwReferenceOption) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // Read through `rememberUpdatedState` because the resolve below outlives the press that started
+    // it: a stale `onPick` would hand a record to a closure holding an earlier composition's row, and
+    // the hydration bookkeeping inside `choose` decides from that row what it may overwrite.
+    val pick = rememberUpdatedState(onPick)
+    val currentList = rememberUpdatedState(list)
+    val currentParent = rememberUpdatedState(parentId)
+
+    var expanded by remember(field.key) { mutableStateOf(false) }
+    var busy by remember(field.key) { mutableStateOf(false) }
+    var typed by remember(field.key) { mutableStateOf("") }
+    var refusal by remember(field.key) { mutableStateOf<String?>(null) }
+    var confirmed by remember(field.key) { mutableStateOf<String?>(null) }
+
+    fun settle(answer: DwScanAnswer) {
+        when (answer) {
+            is DwScanAnswer.Pick -> {
+                confirmed = dwScanConfirmation(answer.option, wanted)
+                pick.value(answer.option)
+            }
+
+            is DwScanAnswer.Refused -> refusal = answer.message
+        }
+    }
+
+    fun resolve(input: String) {
+        if (input.isBlank() || busy) return
+        // Cleared BEFORE the work and not after it. The seconds a lookup takes are exactly when the
+        // previous code's confirmation would otherwise still be sitting under this one's spinner,
+        // reading as though it described the card now in the designer's hand.
+        refusal = null
+        confirmed = null
+        when (val step = dwScanLocalStep(input, field, currentList.value, currentParent.value)) {
+            is DwScanStep.Settled -> settle(step.answer)
+            is DwScanStep.AskServer -> {
+                val target = bridge.workshopId?.takeUnless { it.isBlank() || isLocalOnlyWorkshop(it) }
+                if (target == null) {
+                    refusal = DW_SCAN_UNSENT_WORKSHOP_MESSAGE
+                    return
+                }
+                if (!bridge.repository.isOnline(context)) {
+                    refusal = DW_SCAN_OFFLINE_MESSAGE
+                    return
+                }
+                busy = true
+                // READ ONCE, and spent on both the request and the check that lands with it. Reading
+                // `currentParent` a second time would let the request and the guard below disagree
+                // about which parent this answer was ever about.
+                val askedUnder = currentParent.value
+                scope.launch {
+                    val answer = try {
+                        val payload = bridge.repository.designWorkshopReferenceById(
+                            workshopId = target,
+                            model = field.refModel,
+                            // The scope and the cascade travel WITH the id, never instead of it — the
+                            // server needs the scope to have a workshop clause to lift, which is the
+                            // only way `outOfScope` can ever be true, and it keeps the cascade so that
+                            // a by-id answer cannot offer one artisan's work under another's name.
+                            scope = field.refScope,
+                            filterValue = askedUnder,
+                            recordId = step.ref.id,
+                        )
+                        dwScanServerAnswer(field, step.ref, payload, cascadeLabel)
+                    } catch (e: HttpException) {
+                        // The server was REACHED and then failed. Blaming the signal would send a
+                        // designer out of the building while the real bug wears an offline message.
+                        DwScanAnswer.Refused(DW_SCAN_LOOKUP_FAILED_MESSAGE)
+                    } catch (e: Exception) {
+                        // Never reached at all: a timeout, a dropped tower, a captive portal. The
+                        // connectivity check above catches most of these before the wait; this is
+                        // everything it cannot see.
+                        DwScanAnswer.Refused(DW_SCAN_OFFLINE_MESSAGE)
+                    }
+                    busy = false
+                    /*
+                     * WHATEVER THE ANSWER SAYS, IT IS SHOWN — even if the designer folded the panel
+                     * away while it was in the air.
+                     *
+                     * The whole refusal vocabulary in this file rests on one promise: after reading a
+                     * card the designer always learns what did or did not happen to the row. A
+                     * collapse used to break it in the worst direction available — `settle` set a
+                     * confirmation nothing was rendering and linked the record anyway, so the row
+                     * acquired a link with nothing on screen naming it. Re-opening a panel somebody
+                     * folded away is the small rudeness; a silent write is not.
+                     */
+                    expanded = true
+                    /*
+                     * THE CASCADE MAY HAVE MOVED UNDER THE REQUEST — see [dwScanCascadeMovedMessage].
+                     *
+                     * Checked HERE and not inside `settle`, which the cache path also uses and which
+                     * cannot go stale: nothing suspends between reading the parent and answering from
+                     * the device, so a guard there would be a claim about a race that path does not
+                     * have.
+                     */
+                    if (askedUnder != currentParent.value) {
+                        confirmed = null
+                        refusal = dwScanCascadeMovedMessage(cascadeLabel)
+                        return@launch
+                    }
+                    settle(answer)
+                }
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        TextButton(
+            onClick = {
+                expanded = !expanded
+                // Folding it away clears what it said. A refusal about a card read a minute ago,
+                // reappearing when the panel is opened for a different one, is a sentence about
+                // nothing the designer is currently holding.
+                if (!expanded) {
+                    refusal = null
+                    confirmed = null
+                }
+            },
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+            modifier = Modifier.heightIn(min = 40.dp),
+        ) {
+            Icon(
+                Icons.Filled.QrCodeScanner,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.size(6.dp))
+            Text(
+                if (expanded) "Hide the code reader" else "Scan a card or tag",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 12.sp,
+            )
+        }
+
+        if (expanded) {
+            Text(
+                "Read the code on the ${wanted.label.lowercase()}'s own card or tag to link that " +
+                    "record here. Nothing about the record is inside the code: it holds a reference " +
+                    "and a check digit, and nothing else.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+            DwQrScanControl(
+                enabled = enabled && !busy,
+                onText = { text ->
+                    // Put IN THE BOX as well as resolved, so a designer who read the wrong card can
+                    // see what was read and correct a character, rather than meeting a refusal about
+                    // a string the app never showed them.
+                    typed = text
+                    resolve(text)
+                },
+                onRefusal = { message ->
+                    confirmed = null
+                    refusal = message
+                },
+            )
+            OutlinedTextField(
+                value = typed,
+                onValueChange = {
+                    typed = it
+                    refusal = null
+                    confirmed = null
+                },
+                label = { Text("Record code") },
+                // The letter this field's own kind of record is printed with, so the shape on screen
+                // is the shape on the card in the designer's hand rather than a generic example.
+                placeholder = { Text("DPW1 :${wanted.letter}: …") },
+                singleLine = true,
+                enabled = enabled && !busy,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { resolve(typed) },
+                    enabled = enabled && typed.isNotBlank() && !busy,
+                    // The 48dp floor this app applies wherever a control was thought about — see
+                    // ISLAND_TOUCH_TARGET in ui/AppNavigation.kt.
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text("Link this code")
+                }
+                if (busy) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            }
+            Text(
+                "Spaces and capitals do not matter. The four characters at the end are a check — if " +
+                    "they do not match, the app says so rather than linking the wrong record.",
+                color = MaterialTheme.field.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+
+            // Polite live regions rather than a snackbar, for the reason `RecordCodeLookupPanel`
+            // gives: a snackbar leaves after a few seconds and both outcomes here are things the
+            // designer has to act on or check.
+            refusal?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.field.onWarningContainer,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { liveRegion = LiveRegionMode.Polite }
+                        .background(MaterialTheme.field.warningContainer, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
+            confirmed?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.field.onSuccessContainer,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 17.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { liveRegion = LiveRegionMode.Polite }
+                        .background(MaterialTheme.field.successContainer, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
+        }
     }
 }
 

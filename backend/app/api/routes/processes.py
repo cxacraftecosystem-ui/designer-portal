@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.db import db
 from app.core.deps import (
@@ -51,6 +51,32 @@ RELATIONS = (
     Relation("steps", "processstep", "processId", many=True),
     Relation("workshop", "workshop", "workshopId"),
 )
+
+# PROCESS'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null`` through for
+# on this model, so emptying the notes box on the process form actually empties the column instead of
+# answering 200 and keeping the old text.
+#
+# It holds exactly one name, and it is a module constant anyway rather than a tuple written inline at
+# the call: that is what lets a test read the list off the route instead of retyping it, which is the
+# difference between pinning what this route declares and pinning what the test itself believes.
+# The three sibling record routes each expose the same constant for the same reason.
+#
+# PER-MODEL AND NOT GLOBAL, for the reason ``clean_data``'s ``clearable`` docstring gives. Only valid
+# because ``update_process`` dumps with ``exclude_unset=True``; see the note at that call.
+#
+# DELIBERATELY ABSENT: ``name``, ``productId``, ``preProcessAvailable``, ``status``, ``recordedAt``
+# and ``recordedTimezone`` are NOT NULL; ``workshopId`` is already global; ``extraMetadata`` would be
+# inert because ``merge_field_provenance`` reassigns (or pops) that key further down this route, so a
+# null could never reach Prisma through it; and ``steps`` is a relation with its own guard and its own
+# audit row, excluded from the dump entirely.
+#
+# ``productId`` IS THE ONE NAME LEAVING IT OUT DOES NOT ACTUALLY KEEP OUT, and that is worth knowing
+# before you read the route. It sits in the GLOBAL ``records.CLEARABLE_KEYS`` — correctly, because it
+# is a nullable back-reference on the models that merely POINT AT a product — so ``clean_data`` keeps
+# an explicit null for it here too, and no per-model tuple can subtract from the global set. On
+# ``Process`` the column is NOT NULL, so ``update_process`` refuses that null outright; see the
+# branch beside ``require_record``.
+_CLEARABLE_COLUMNS = ("notes",)
 
 
 def _encode_light(process: Any, viewer: Any) -> dict[str, Any]:
@@ -329,8 +355,33 @@ async def update_process(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     process = await require_record(db.process, process_id)
-    data = clean_data(payload.model_dump(exclude_unset=True, exclude={"steps"}))
+    # ``notes`` is the ONLY nullable scalar ``Process`` has that a client may set; the list and the
+    # reasoning for what is left out of it are at ``_CLEARABLE_COLUMNS`` above.
+    #
+    # ``exclude_unset=True`` IS THE PRECONDITION OF ``clearable``, not a stylistic choice: it is what
+    # makes a present key mean "the caller sent this". Drop it and every optional the client left
+    # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
+    data = clean_data(
+        payload.model_dump(exclude_unset=True, exclude={"steps"}), clearable=_CLEARABLE_COLUMNS
+    )
     if "productId" in data:
+        # AN EXPLICIT ``null`` IS REFUSED HERE RATHER THAN FORWARDED. ``Process.productId`` is NOT
+        # NULL — a process is documentation OF a product and cannot be orphaned — but the name is in
+        # the global ``records.CLEARABLE_KEYS``, which a per-model ``clearable`` tuple can add to and
+        # never subtract from, so the null survives the clean on this route as well. Until this
+        # branch existed it fell straight into ``require_record(db.productdocumentation, None)`` — a
+        # lookup for a product with no id, whose best case is a 404 blaming a product for not
+        # existing when the real fault is that the caller asked to clear a column the model forbids
+        # clearing, and whose worst case is a NOT NULL violation on the update below. 422 says what
+        # actually happened.
+        if data["productId"] is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "A process must belong to a product. Send another product's id to move it, or "
+                    "delete the process."
+                ),
+            )
         await require_record(db.productdocumentation, data["productId"])
     # Moving a record into (or between) workshops is a workshop submission too, so the create-time
     # guard can't be bypassed by PATCHing the workshop in afterwards.

@@ -33,6 +33,22 @@ import type { DwEntity, DwField, DwReferencePayload } from "@/lib/designWorkshop
  *  4. **The duplicate prompt navigated.** "Open the existing record" did `router.push` to that
  *     artisan's edit page, so acting on the very thing the prompt exists to surface cost the stage.
  *
+ * A THIRD HOST HAS SINCE APPEARED — `StageRecordEmbed` draws these same four forms INSIDE a stage,
+ * where they are neither a route nor a modal — and it turned two of the assumptions above into
+ * defects of their own, both pinned below:
+ *
+ *  1b. **"Discard" discarded and did not leave.** The form's own Cancel and the page header's back
+ *      arrow raise the same prompt and took the same answer, which is correct in a dialog (it
+ *      closes) and wrong in an embed (`onCancel` REMOUNTS the form in place). The designer pressed
+ *      Back, said Discard, lost everything they had typed and stayed exactly where they were.
+ *      HALF-LANDED: the four forms take `onDiscardAndLeave` and route the back arrow through it,
+ *      and no host supplies one yet, so the behaviour in the embed is unchanged. The gap is a
+ *      `test.fixme` below rather than a sentence here, for the reason bullet 1b itself demonstrates.
+ *  1c. **A form titled a screen its host had already titled.** `ProcessForm` was the only one of the
+ *      four with its own `<h2>`, written when /processes was its only host. Every host titles the
+ *      surface itself — the page with the SAME two strings — so stage 5 painted two sibling `h2`s
+ *      for one thing and /processes painted an `h1` and an `h2` reading alike. The heading is gone.
+ *
  * TWO MORE share this file because they are the same class of thing — a repository record failing to
  * reach a stage:
  *
@@ -223,12 +239,31 @@ test("the seed is create-only, and the DIALOG is what enforces it", () => {
     banner would not mention it either.
   */
   const dialog = read(DIALOG);
-  expect(dialog, "one gate, computed once from the edit flag it already has").toContain(
+
+  /*
+    ASSERTED AGAINST THE SLICE THAT MOUNTS THE FORMS, not the whole file. The mount moved into
+    `InlineRecordForm` so a second host — the design-workshop stage embed — could share it instead of
+    copying it, and the dialog now hands its own `seed` down to that component on one line. That line
+    is fine: the gate is applied one level lower, immediately above the forms. What must never appear
+    is an UNGATED `seed` on a form, and narrowing the search to the mount is what keeps this test
+    able to tell those two apart instead of banning the string outright.
+  */
+  const mount = dialog.slice(
+    dialog.indexOf("export function InlineRecordForm"),
+    dialog.indexOf("export function InlineRecordDialog")
+  );
+  expect(mount.length, "InlineRecordForm should be declared above InlineRecordDialog").toBeGreaterThan(500);
+
+  expect(mount, "one gate, computed once from the edit flag it already has").toContain(
     "const seedForForm = editing ? undefined : seed;"
   );
-  // All three forms take the GATED value. `seed` reaching a form directly is the defect.
-  expect(dialog.match(/seed=\{seedForForm\}/g)?.length, "Artisan, Product and Tool").toBe(3);
-  expect(dialog).not.toMatch(/^\s+seed=\{seed\}$/m);
+  // All three forms that take a seed take the GATED value. `seed` reaching a form directly is the defect.
+  expect(mount.match(/seed=\{seedForForm\}/g)?.length, "Artisan, Product and Tool").toBe(3);
+  expect(mount).not.toMatch(/^\s+seed=\{seed\}$/m);
+  // And every form is mounted inside that slice, so there is nowhere else a seed could be handed over.
+  for (const form of ["<ArtisanForm", "<ProductForm", "<ToolForm", "<ProcessForm"]) {
+    expect(mount, `${form} must be mounted by the shared host`).toContain(form);
+  }
 
   // And the two call sites are now belt and braces over that rather than the whole of it.
   const picker = read(PICKER);
@@ -330,26 +365,239 @@ for (const [name, path] of [
     const source = read(path);
     // The exit is one function, so the button and the discard prompt cannot drift apart.
     expect(source).toContain("function leave() {\n    if (onCancel) onCancel();\n    else router.back();\n  }");
-    expect(source).toContain("function handleBack() {\n    if (dirty) setBackPromptOpen(true);\n    else leave();\n  }");
-    expect(source).toContain('onClick={handleBack}');
+    expect(source).toContain("onClick={handleBack}");
   });
 
-  test(`${name}'s "Discard" goes through the same exit as Cancel`, () => {
+  test(`${name} tells its own Cancel apart from the page's back arrow before "Discard" answers`, () => {
+    /*
+      ── THE DEFECT (wave 3, finding 27) ─────────────────────────────────────────────────────
+      Both exits raised the same `UnsavedChangesDialog` and both took the same answer: "Discard"
+      ran `resetDirty()` and then `leave()`, which is `onCancel`. In `InlineRecordDialog` that is
+      correct — the dialog closes, and the two exits really are one act. In `StageRecordEmbed`
+      `onCancel` REMOUNTS THE FORM IN PLACE, because that host is not a route and there is nowhere
+      to go. So the designer pressed Back, was asked, answered Discard, LOST EVERYTHING THEY HAD
+      TYPED and did not go back; a second press was then needed for the thing they had asked for.
+
+      The flag marks the CANCEL BUTTON rather than the arrow because the arrow's route in is
+      `useLeaveGuard`, registered once per mount with a bare callback and no per-press hook.
+    */
+    const source = read(path);
+    expect(source).toContain("    if (dirty) {\n      setPromptFromCancel(true);\n      setBackPromptOpen(true);\n    } else leave();");
+    // The guard leaves it alone, which is what makes "set" mean "the Cancel button opened this one".
+    expect(source).toContain("useLeaveGuard(dirty, () => setBackPromptOpen(true));");
+    // And it is cleared on every answer that TAKES THE PROMPT OFF THE SCREEN — all three here,
+    // because this form's Save closes the prompt before submitting. A flag left set outlives the
+    // prompt it describes and hands the NEXT back-arrow discard to the wrong exit.
+    expect(source.match(/setPromptFromCancel\(false\);/g)?.length, "keep editing, discard, save").toBe(3);
+  });
+
+  test(`${name}'s "Discard" completes the exit that asked, and neither one navigates`, () => {
     const source = read(path);
     /*
-      The dirty prompt is KEPT in the dialog host — closing the dialog still throws the typing away,
-      so the question is as load-bearing there as on a page. What changed is only what "Discard"
-      does once it has been answered. A `router.back()` left anywhere in this file is the defect.
+      The dirty prompt is KEPT in every host — closing the dialog, or remounting the form, still
+      throws the typing away, so the question is as load-bearing there as on a page. What changed is
+      only what "Discard" does once it has been answered, and that now depends on WHICH control
+      asked. A `router.back()` left anywhere but the one fallback inside `leave` is the defect.
     */
     const discard = source.slice(source.indexOf("onDiscard={() => {"), source.indexOf("onSave={() => {"));
-    expect(discard).toContain("leave();");
+    expect(discard, "the form's own Cancel: empty the form, stay put").toContain("if (promptFromCancel) leave();");
+    expect(discard, "the host's back arrow: finish what it started").toContain("else leaveAfterDiscard();");
     // `leave` is the only place a CALL to `router.back()` may still stand, and only as the fallback
     // for the page host. A second one anywhere in the file is the defect this test is about. The
     // semicolon is what keeps this off the prose above, which names the function it replaced.
     expect(discard).not.toContain("router.back();");
     expect(source.match(/router\.back\(\);/g)?.length).toBe(1);
   });
+
+  test(`${name} falls back to the ordinary exit when no host supplies the new one`, () => {
+    /*
+      `onDiscardAndLeave` is OPTIONAL, and the fallback is what keeps the other two hosts and the
+      form's own route behaving exactly as they did: on /products/new `leave()` IS the navigation
+      the arrow wanted, and in a dialog closing it is the whole of leaving. Without this line an
+      absent callback would turn the back arrow's Discard into a silent no-op.
+    */
+    const source = read(path);
+    expect(source).toContain(
+      "function leaveAfterDiscard() {\n    if (onDiscardAndLeave) onDiscardAndLeave();\n    else leave();\n  }"
+    );
+  });
 }
+
+test("the second exit is ONE contract member, declared once and consumed by all four forms", () => {
+  /*
+    THE REASON `forms/inlineRecordHost.ts` EXISTS, applied to the fifth host-wide callback.
+    `onCancel`, `onQueued` and `onCreated` were each invented four times, one form at a time, with
+    three of the four missing at least one — that file's header opens on exactly that. So this one
+    is declared there and reaches the forms through `InlineRecordSurfaceProps`, which is a `Pick`
+    off the real contract rather than a second type agreeing with a copy of it.
+  */
+  const contract = read("components/forms/inlineRecordHost.ts");
+  expect(contract).toContain("onDiscardAndLeave?: () => void;");
+  expect(contract).toContain(
+    'export type InlineRecordSurfaceProps = Pick<InlineRecordHostProps<unknown>, "footerFields" | "onDiscardAndLeave">;'
+  );
+
+  // ProcessForm reaches it the same way and spells its own exit differently, because it has no
+  // `leave()` — its `onCancel` is required rather than optional.
+  const process = read(PROCESS_FORM);
+  expect(process).toContain(
+    "function leaveAfterDiscard() {\n    if (onDiscardAndLeave) onDiscardAndLeave();\n    else onCancel();\n  }"
+  );
+  expect(process).toContain("if (promptFromCancel) onCancel();");
+  expect(process).toContain("else leaveAfterDiscard();");
+  /*
+    AND THE GUARD REGISTRATION IS UNTOUCHED, which is not incidental: `discarded-work-unit.spec.ts`
+    pins this exact line because it is the one this form spent a release missing, and it is also
+    why the flag is set on the CANCEL side. Changing it to carry the exit kind would have traded
+    one pinned defect for another.
+  */
+  expect(process).toContain("useLeaveGuard(dirty, () => setGuardOpen(true));");
+  /*
+    ALL THREE ANSWERS CLEAR THE FLAG, INCLUDING SAVE, and this count is the assertion that keeps a
+    stale flag from bringing the defect back. An earlier version of this line pinned two and said
+    ProcessForm's Save "leaves the prompt open (a refused submit keeps it standing)". The form
+    contradicts that: `submit()`'s validation refusal calls `setGuardOpen(false)` before it
+    returns, and so does every other exit — the late-workshop refusal, the queued branch, the
+    partial-media branch, the success branch and the catch. With the flag left set, Cancel → Save →
+    refused → fix the field → the HOST'S back arrow sends "Discard" down the Cancel branch, which
+    empties the form and stays put. That is the defect `onDiscardAndLeave` exists to end.
+  */
+  expect(process.match(/setPromptFromCancel\(false\);/g)?.length, "keep editing, discard and save").toBe(3);
+
+  // All four take the member off the shared surface type rather than declaring a fifth spelling.
+  for (const path of [ARTISAN_FORM, PRODUCT_FORM, TOOL_FORM, PROCESS_FORM]) {
+    const source = read(path);
+    expect(source, `${path} must destructure the shared callback`).toContain("\n  onDiscardAndLeave,\n");
+    expect(source, `${path} must not re-declare it`).not.toContain("onDiscardAndLeave?: () => void;");
+    expect(source, `${path} must intersect the shared surface type`).toContain("} & InlineRecordSurfaceProps)");
+  }
+});
+
+/*
+  MARKED `fixme` BECAUSE THE HALF THAT IS MISSING IS IN SOMEBODY ELSE'S FILES, and prose in a header
+  has already been shown not to be enough — `stage-record-embed-unit.spec.ts`'s own comment says the
+  three-of-four threading failure "happened again, to the new host", and that is the failure this
+  member was declared centrally to prevent.
+
+  THE FORM SIDE IS DONE AND ASSERTED ABOVE: all four take `onDiscardAndLeave` off
+  `InlineRecordSurfaceProps` and route the back arrow's "Discard" through `leaveAfterDiscard()`.
+  NOBODY SUPPLIES IT. `grep -rn onDiscardAndLeave frontend/` hits the four forms, the contract and
+  this file, and nothing in `StageRecordEmbed.tsx` or `InlineRecordDialog.tsx` — so on the host the
+  defect was reported on, the user-visible behaviour is unchanged today: Back → "Discard" still
+  empties the form and leaves the designer standing on the same page, needing a second Back.
+
+  The two lines that close it, named so this does not have to be re-derived:
+    1. `StageRecordEmbed.tsx` — a callback beside `onCancel={handleCancel}` on `InlineRecordForm`
+       that completes the stage page's back navigation (the thing `useLeaveGuard` REFUSED; it is
+       abandoned rather than delayed, so only the host can start it again). `handleCancel` is the
+       wrong answer there, and being the wrong answer is the whole finding.
+    2. `InlineRecordDialog.tsx` — one `onDiscardAndLeave={...}` per form in the per-form enumeration
+       around the other four callbacks, IF the dialog ever gains a back control that leaves it open.
+       Absent is correct for it today (closing the dialog is the whole of leaving it), so this
+       assertion is deliberately written against the EMBED only.
+
+  `test.fixme` and not a comment: a skip is on the report every run, and it becomes the assertion by
+  deleting one word the moment those files are free.
+*/
+test.fixme("the stage embed finishes the exit its back arrow started", () => {
+  const embed = read("components/designworkshop/StageRecordEmbed.tsx");
+  expect(embed, "StageRecordEmbed must pass onDiscardAndLeave= to InlineRecordForm").toContain(
+    "onDiscardAndLeave="
+  );
+  // And not by handing it the same callback as Cancel, which is the defect restated.
+  expect(embed).not.toContain("onDiscardAndLeave={handleCancel}");
+});
+
+test("no record form titles a screen its host has already titled", () => {
+  /*
+    `ProcessForm` was the only one of the four that drew a heading of its own, written when
+    /processes was the only host. ALL THREE HOSTS TITLE THE SURFACE THEMSELVES, and the page — the
+    host the heading was written for — does it with the SAME TWO STRINGS: `PageHeader` renders an
+    `<h1>` of "Document process" / "Edit process" directly above a form that painted "Document
+    process" / "Edit process". `InlineRecordDialog` passes `FieldDialog` a title, and
+    `StageRecordEmbed` mounts the form inside a stage entity panel whose `EntityForm` renders the
+    entity's own `<h2>` above it.
+
+    IT WAS FIRST SUPPRESSED ONLY WHEN HOSTED, on `Boolean(onCreated)`, which closed the loud case
+    (stage 5's two sibling `h2`s — the heading list is one of the two ways a 22-stage form is
+    navigated by a screen reader, and a duplicate rung describes a structure the page does not
+    have) and left the page's own duplicate title standing. `h1` then `h2` is at least a real
+    outline, so it was quieter, not absent. The heading is now gone everywhere and the flag with
+    it, which is why this asserts across all four forms rather than three.
+  */
+  for (const path of [ARTISAN_FORM, PRODUCT_FORM, TOOL_FORM, PROCESS_FORM]) {
+    expect(read(path), `${path} has grown a heading its host already draws`).not.toContain("<h2 ");
+  }
+  const source = read(PROCESS_FORM);
+  // No flag left over, either: it read the heading and nothing else.
+  expect(source).not.toContain("const hosted = Boolean(onCreated);");
+  // The PARAGRAPH under it stays on every host: it says what a process record is, which no host
+  // repeats. Only the heading was a claim about the screen.
+  expect(source).toContain("Capture how a product is made, step by step.");
+});
+
+test("the one capture card that outlives its own mount names a staging owner that does too", () => {
+  /*
+    `useEagerStaging`'s owner is per-mount by default, and on unmount `lib/media` aborts the
+    transfer and DELETES the object already in storage two seconds later. That is right wherever the
+    card's lifetime is the files' lifetime, and wrong for `ProcessForm`'s pre-process card: it is
+    mounted only while "Pre-processes available" is ticked, while `preFiles` lives one level up in
+    the form. Unticking therefore binned photographs the re-tickable box still held.
+
+    WHAT IT BUYS IS BOUNDED AT TWO SECONDS, and this test would otherwise read as though the hazard
+    were closed. Unticking still unmounts the card and still releases the owner; the stable name
+    helps only because `stageFiles` cancels a pending release for the same owner, and `lib/media`'s
+    `RELEASE_GRACE_MS` is 2_000. Re-tick inside that window and the transfer survives; re-tick ten
+    seconds later and the object is already deleted and the files upload again from scratch. The
+    FILES are never lost either way — `preFiles` is hoisted into the form — so what the longer gap
+    costs is the upload, not the work. Closing it is a separate change (keep the card mounted and
+    hidden while unticked, or do not release an owner whose file list is non-empty).
+
+    IT IS HALF OF A PAIR AND THE OTHER HALF IS WHY THE REST OF THE FILE HAS NO OWNER KEY. A stable
+    owner keeps the OBJECT alive; the hoisted file list keeps the BROWSER's reference. Shipping the
+    first without the second is worse than shipping neither — the object survives with nothing able
+    to link it — and in the other capture cards the `File[]` is destroyed by the very remount that
+    would release the owner. `useEagerStaging`, `StagePendingMediaProvider` and `inlineRecordHost`
+    all say so in the same words; this test is the third place that would go red if a later sweep
+    "completed" the pattern across the four forms.
+  */
+  const source = read(PROCESS_FORM);
+  expect(source).toContain("stagingOwnerId={`${formId}:pre-process`}");
+  // Exactly one, and it is that card. The step cards and the other three forms' cards keep the
+  // per-mount default, which is correct for them.
+  expect(source.match(/stagingOwnerId=/g)?.length, "the pre-process card and nothing else").toBe(1);
+  for (const path of [ARTISAN_FORM, PRODUCT_FORM, TOOL_FORM]) {
+    expect(read(path), `${path} must not pin a staging owner without hoisting its file list`).not.toContain(
+      "stagingOwnerId="
+    );
+  }
+});
+
+test("the contract no longer describes a handoff none of the four forms implements", () => {
+  /*
+    `InlineRecordHostProps.onCreated`'s prose said the four forms "set the banner, stay mounted, and
+    call this from a button beside it, once the message has been read". No form has ever had that
+    button: all four set the partial-upload banner and call the callback inline, and each argues for
+    it beside the line. The argument is right — a record that exists over a row nobody linked is the
+    silent loss, and a create-mode form left standing is a duplicate waiting to be pressed — so the
+    CONTRACT was corrected rather than the code. A contract that lies is worse than one that is
+    silent, and this is the assertion that keeps the fiction from coming back.
+  */
+  const contract = read("components/forms/inlineRecordHost.ts");
+  expect(contract).toContain("THIS PARAGRAPH USED TO DESCRIBE A HANDOFF NOBODY IMPLEMENTED");
+  expect(contract).not.toContain("call this from a button beside it, once the message has been read");
+  // And the way forward, so it is a position rather than a shrug.
+  expect(contract).toContain("report the failures ALONGSIDE the record");
+
+  // The forms really do call it inline, which is the half the prose now describes.
+  for (const [path, callback] of [
+    [ARTISAN_FORM, "if (onCreated) onCreated(saved);"],
+    [PRODUCT_FORM, "if (onCreated) onCreated(saved);"],
+    [TOOL_FORM, "if (onCreated) onCreated(saved);"]
+  ] as const) {
+    expect(read(path), `${path} reports the record from the partial-failure branch`).toContain(callback);
+  }
+});
 
 /* ────────────────────────────────────────────────────────────────────────────
  * 3. The offline create
@@ -429,15 +677,52 @@ test("nothing from the conflict payload reaches the row", () => {
  * The dialog wires all four, for all four models
  * ──────────────────────────────────────────────────────────────────────────── */
 
-test("InlineRecordDialog gives every form a way out that is not a navigation", () => {
+test("every form gets a way out that is not a navigation, for all four models", () => {
+  /*
+    THE MOUNT MOVED AND THE RULE DID NOT. The four forms used to be mounted directly by
+    `InlineRecordDialog`; they are now mounted by `InlineRecordForm` in the same file, because a
+    SECOND host — the design-workshop stage embed — needs the identical mount and a copy of it is
+    how three of these four callbacks came to be missing from at least one form in the first place
+    (see this file's header and `forms/inlineRecordHost.ts`).
+
+    So the counts are asserted where the forms actually are. All four take the HOST's cancel and the
+    HOST's queued callback: without `onCancel` the forms fall back to `router.back()`, which in a
+    dialog pops the real history entry and in the stage embed abandons the stage being filled in.
+  */
   const source = read(DIALOG);
-  // Three `onCancel={onClose}` for the forms that gained one, plus ProcessForm's, which always had it.
-  expect(source.match(/onCancel=\{onClose\}/g)?.length).toBe(4);
-  expect(source.match(/onQueued=\{reportQueued\}/g)?.length).toBe(4);
-  // The GATED seed, three times — see "the seed is create-only" above for why the gate is here and
-  // not at the call sites.
+  // Four forms, four cancels. `ProcessForm` needs `onDone` as well because it is embedded on its own
+  // page too, and both must be the host's — they are the paths with no record to report.
+  expect(source.match(/onCancel=\{onCancel\}/g)?.length, "one per form").toBe(4);
+  expect(source.match(/onDone=\{onCancel\}/g)?.length, "ProcessForm's second way out").toBe(1);
+  expect(source.match(/onQueued=\{onQueued\}/g)?.length, "one per form").toBe(4);
+  expect(source.match(/onCreated=\{onCreated\}/g)?.length, "one per form").toBe(4);
+  // The GATED seed, three times — see "the seed is create-only" above for why the gate is one line
+  // in this file and not a ternary at each call site.
   expect(source.match(/seed=\{seedForForm\}/g)?.length).toBe(3);
+  expect(source).toContain("onUseExisting={onUseExisting}");
+  // Every form gets the host's extra-fields slot, so the stage embed can put the workshop's own
+  // questions at the bottom of any of the four. A form missing it silently drops them.
+  expect(source.match(/footerFields=\{footerFields\}/g)?.length, "one per form").toBe(4);
+});
+
+test("the DIALOG still turns the host callbacks into ones that close it", () => {
+  /*
+    The two hosts differ in exactly one way and this is it: a dialog is done with the form once it
+    has saved, and the stage embed is not — the row it belongs to is still being filled in. So the
+    closing behaviour lives here, wrapped around the shared mount, rather than inside it.
+  */
+  const source = read(DIALOG);
+  expect(source).toContain("onCreated={finish}");
+  expect(source).toContain("onCancel={onClose}");
+  expect(source).toContain("onQueued={reportQueued}");
   expect(source).toContain("onUseExisting={onUseExisting ? adoptExisting : undefined}");
+  // `finish` and `reportQueued` are the two that close; `adoptExisting` is the third.
+  for (const closing of ["onCreated(record);\n      onClose();", "onQueued?.();\n    onClose();"]) {
+    expect(source, "a host callback that no longer closes the dialog").toContain(closing);
+  }
+  // NO `footerFields` FROM THE DIALOG: it has no questions of its own to add. That slot exists for
+  // the stage embed, which really does ask a few things the repository record does not hold.
+  expect(source).not.toContain("footerFields={<");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -516,16 +801,26 @@ test("the unsaved-changes guard holds a stack, and a form only ever disarms itse
     on unmount, so opening the dialog once and closing it left the page underneath with NO
     interceptor for the rest of its life: its back arrow silently stopped warning about unsaved work.
 
-    Nothing in the tree hits it today — the design-workshop stage page keeps its draft in IndexedDB
-    and registers no guard, so no screen that currently hosts a reference picker also holds one —
-    which is why it was worth closing while it was cheap and while the reason was still legible.
+    THE STAGE PAGE NOW HITS IT, which it did not when this test was written. Four of its entities
+    embed a repository record page, so the page hosts one or two of those four forms directly —
+    stage TRADITIONAL_PROCESS_BASELINE is the two, because `traditionalProcess` is a mirror-point
+    singleton and `tool` a mirror-point collection.
   */
   const guard = read("components/UnsavedChangesGuard.tsx");
   expect(guard).toContain("register: (interceptor: LeaveInterceptor) => () => void;");
   expect(guard).toContain("const interceptors = useRef<LeaveInterceptor[]>([]);");
-  // The TOPMOST answers: the innermost form is the one being typed in, and its dialog is the one on
-  // top of the stack of dialogs.
-  expect(guard).toContain("const top = interceptors.current[interceptors.current.length - 1];");
+  /*
+    ASKED INNERMOST FIRST, UNTIL ONE BLOCKS — and it used to be "the topmost answers, full stop".
+    That was right while the stack could only be a page under a dialog. It is wrong for two SIBLING
+    forms on one page, which the stage embed made possible: a dirty `ProcessForm` plus a freshly
+    opened, clean `ToolForm` row meant the back arrow asked the tool form, was told there was
+    nothing to save, and navigated with the half-typed process gone and no prompt. The walk STOPS at
+    the first blocker, because returning true means that form has already put its dialog on screen
+    and asking the rest would stack a second over it.
+  */
+  expect(guard).toContain("for (let index = stack.length - 1; index >= 0; index -= 1) {");
+  expect(guard).toContain("if (stack[index]()) return true;");
+  expect(guard).not.toContain("const top = interceptors.current[interceptors.current.length - 1];");
   // Removal BY IDENTITY, not by popping: a teardown order React is free to choose must not be able
   // to disarm the wrong form.
   expect(guard).toContain("interceptors.current.filter((entry) => entry !== next)");

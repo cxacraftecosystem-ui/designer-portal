@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -11,7 +11,7 @@ import { CarryContextBanner, carryScope, useCarryContext } from "@/components/fo
 import type { CarryNode } from "@/lib/carryContext";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
-import { seedHasArtisan, type InlineHostSeed } from "@/components/forms/inlineRecordHost";
+import { seedHasArtisan, type InlineHostSeed, type InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHost";
 import { craftChangeClearsArtisan, useCraftAndArtisanOptions, useRecordOffPage } from "@/components/forms/recordPickers";
 import { TitleCasedInput } from "@/components/forms/TitleCasedInput";
 import { useWorkshopSelection, WorkshopSelect } from "@/components/forms/WorkshopSelect";
@@ -83,8 +83,10 @@ function StatusField({
 export function ToolForm({
   initial,
   seed,
+  footerFields,
   onCreated,
   onCancel,
+  onDiscardAndLeave,
   onQueued
 }: {
   initial?: ToolDocumentation;
@@ -107,13 +109,19 @@ export function ToolForm({
    * what the record requires, and the two would drift.
    */
   onCreated?: (record: ToolDocumentation) => void;
-}) {
+} & InlineRecordSurfaceProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
   const canSetStatus = hasRank(user, "PROFESSOR");
   const formRef = useRef<HTMLFormElement>(null);
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
+  /**
+   * `useId` rather than a literal: this form is also embedded inside a design-workshop
+   * stage, so two mounted copies must not mint the same id.
+   */
+  const formId = useId();
+  const errorId = `${formId}-error`;
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);
@@ -178,8 +186,38 @@ export function ToolForm({
    */
   const offPageCraft = useRecordOffPage<Craft>("/crafts", craftId, crafts);
   const craftOptions = useMemo(() => (offPageCraft ? mergeById(crafts, [offPageCraft]) : crafts), [crafts, offPageCraft]);
-  const { dirty, markDirty, resetDirty } = useUnsavedChanges();
+  const { dirty: typedSinceMount, markDirty, resetDirty } = useUnsavedChanges();
   const [backPromptOpen, setBackPromptOpen] = useState(false);
+  /**
+   * WHICH EXIT IS WAITING ON THAT PROMPT — this form's own Cancel button, or the back arrow in the
+   * page header. Both raise the same dialog, and until this flag existed both got the same answer.
+   *
+   * ── THE DEFECT ────────────────────────────────────────────────────────────────────────────
+   * "Discard" ran `resetDirty()` and then `leave()`, and `leave()` is `onCancel` — which in the
+   * design-workshop stage embed REMOUNTS THIS FORM IN PLACE, because that host is not a dialog and
+   * has nowhere to go. So a designer pressed Back, was asked, answered Discard, lost everything
+   * they had typed AND STAYED ON THE PAGE, with a second press of Back still needed to do the thing
+   * they had asked for. In a dialog the same wiring reads correctly, because the dialog visibly
+   * closes; that is why this went unnoticed until the form had a third host.
+   *
+   * ── WHY THE FLAG MARKS THE CANCEL BUTTON AND NOT THE ARROW ────────────────────────────────
+   * The arrow's route into the prompt is `useLeaveGuard`, which is handed a bare `onBlocked`
+   * callback and is registered once for the life of the mount — there is no per-press hook to set a
+   * flag from. The Cancel button is a call site of this component's own, so it is the one that can
+   * say who it is. It is cleared on every way OUT of the prompt, so "set" only ever describes the
+   * prompt currently on screen.
+   */
+  const [promptFromCancel, setPromptFromCancel] = useState(false);
+  /**
+   * Whether there is unsaved work this form must ask about — the same rule, spelled the same way,
+   * as `ArtisanForm` and `ProductForm`.
+   *
+   * THERE IS DELIBERATELY NO "EMBEDDED, SO DO NOT PROMPT" FLAG; `inlineRecordHost.ts`'s header
+   * argues it out. The design-workshop stage page has no unsaved-changes prompt because its draft
+   * is durable, but that durability belongs to the stage's fields and not to this form's, which are
+   * read only at submit — so suppressing the question here would discard real work in silence.
+   */
+  const dirty = typedSinceMount;
   // Hands the prompt to the round back control in the page header, which is now the only back
   // control on the page.
   useLeaveGuard(dirty, () => setBackPromptOpen(true));
@@ -313,9 +351,32 @@ export function ToolForm({
     else router.back();
   }
 
-  function handleBack() {
-    if (dirty) setBackPromptOpen(true);
+  /**
+   * Finish the exit the HOST'S OWN back control began, after "Discard" has answered for the typing.
+   *
+   * `useLeaveGuard` does not delay a navigation, it REFUSES one: the interceptor returns true, the
+   * back control abandons what it was doing, and this form is handed the question instead. So
+   * nothing is left in flight to resume — only the host knows where the arrow was going, and only
+   * the host can start it again. `onDiscardAndLeave` is how it says so.
+   *
+   * Falls back to the ordinary exit when no host supplies it, which is right for both other hosts:
+   * on this form's own route `leave()` is `router.back()`, which IS the navigation the arrow
+   * wanted, and in `InlineRecordDialog` closing the dialog is the whole of leaving it. Only a host
+   * that can be left without being closed — the stage embed — has anything to add. See
+   * `InlineRecordHostProps.onDiscardAndLeave`.
+   */
+  function leaveAfterDiscard() {
+    if (onDiscardAndLeave) onDiscardAndLeave();
     else leave();
+  }
+
+  function handleBack() {
+    // `promptFromCancel`: this is the form's own Cancel, so "Discard" must NOT complete a
+    // navigation nobody started — see the flag's declaration.
+    if (dirty) {
+      setPromptFromCancel(true);
+      setBackPromptOpen(true);
+    } else leave();
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -503,6 +564,14 @@ export function ToolForm({
             "The tool record was saved; re-open it to retry those files."
         );
         setSaving(false);
+        /*
+          ── THE RECORD IS REPORTED FIRST, THE UPLOAD FAILURE SECOND ──────────────────────────
+          The same rule as the field-media branch below, and it has to be on BOTH of this form's
+          early returns or the defect simply moves: a tool whose stage-step captures failed is
+          still a tool in the repository, and a host that is not told leaves its stage row unlinked
+          over a record that exists. See the longer note on the branch below.
+        */
+        if (onCreated) onCreated(saved);
         return;
       }
       if (mediaFiles.length) {
@@ -521,6 +590,22 @@ export function ToolForm({
         if (failed.length) {
           setError(`${failed.length} of ${mediaFiles.length} file(s) failed to upload: ${failed.map((f) => f.name).join(", ")}. The record was saved; re-open it to retry those files.`);
           setSaving(false);
+          /*
+            ── THE RECORD IS REPORTED FIRST, THE UPLOAD FAILURE SECOND ────────────────────────
+            This branch used to `return` here, and the sentence it has just written says why that
+            was wrong: the tool IS in the repository — only the photographs are missing. The host
+            was never told, so the stage row that opened this form stayed unlinked over a record
+            that exists, and an unlinked REF is not something a designer can see and repair later:
+            the stage 422s on submit, hours afterwards, naming a required reference to a tool they
+            remember creating. The obvious next move is to create it a second time.
+
+            A missing photograph is recoverable by re-opening the record, which is exactly what the
+            message above says to do. A link nobody made is not. The error is set BEFORE the handoff
+            and not instead of it: on this form's own page nothing unmounts and the banner reads as
+            it always did; in the dialog the host closes over it, which is the same trade the queued
+            branch above already makes.
+          */
+          if (onCreated) onCreated(saved);
           return;
         }
       }
@@ -544,7 +629,19 @@ export function ToolForm({
   return (
     <>
       <form ref={formRef} onSubmit={submit} onInput={markDirty} onKeyDown={handleFormEnter} className="panel grid gap-4 p-4">
-        {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
+        {/* `role="alert"`: this banner is the ONLY place a save refusal reaches the
+            researcher on this form. The browser's own constraint validation covers the
+            `min={0}` boxes below and names the offending one — but nothing else does: an
+            outbox replaying a queued body, Android, or a stored-negative row edited on a
+            client that PATCHes a delta all reach `ge=0` on the server, and its refusal
+            ("Input should be greater than or equal to 0") lands here and nowhere else.
+            Without a role it is painted and never spoken. The id is for symmetry with
+            ProcessForm, which carries the same banner. */}
+        {error ? (
+          <div id={errorId} role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
         <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {/* Android parity (ToolForm): the workshop opens the form, because it is the context
@@ -645,29 +742,41 @@ export function ToolForm({
           <Field label="Material">
             <TextInput name="material" defaultValue={initial?.material ?? ""} />
           </Field>
+          {/* ── `min={0}` ON EVERY NUMBER ON THIS FORM, AND THE SAME BOUND ON THE SCHEMA ──────
+              `yearsInUse` has carried this pair since it was added — `min={0}` here and `ge=0` on
+              both `ToolCreate` and `ToolUpdate` — and it was the ONLY number on this form that did.
+              Every measurement beside it, and the replacement cost below, took a negative from the
+              box and stored it, while the workshop registry declares the fields they are carried
+              into (`tool.lengthCm`, `tool.breadthCm`, `tool.cost`) as `min_value=0`. So the record
+              accepted a quantity the workshop would later refuse on a row filled in FROM it.
+
+              The bound has to be BOTH halves or it is neither: this one refuses the value in the
+              box, by name, before a request is made (no `noValidate` on the form, so the browser's
+              constraint validation runs and focuses the offending input); `ge=0` in
+              `backend/app/schemas/records.py` refuses it for every client that is not this one. */}
           <Field label="Years in use">
             <TextInput name="yearsInUse" type="number" min={0} defaultValue={initial?.yearsInUse ?? ""} />
           </Field>
           <Field label="Height">
-            <TextInput name="height" type="number" step="0.01" value={height} onChange={(event) => setHeight(event.target.value)} />
+            <TextInput name="height" type="number" min={0} step="0.01" value={height} onChange={(event) => setHeight(event.target.value)} />
           </Field>
           <Field label="Width">
-            <TextInput name="width" type="number" step="0.01" defaultValue={initial?.width ?? ""} />
+            <TextInput name="width" type="number" min={0} step="0.01" defaultValue={initial?.width ?? ""} />
           </Field>
           <Field label="Length (inches)">
-            <TextInput name="lengthInches" type="number" step="0.01" value={length} onChange={(event) => setLength(event.target.value)} />
+            <TextInput name="lengthInches" type="number" min={0} step="0.01" value={length} onChange={(event) => setLength(event.target.value)} />
           </Field>
           <Field label="Breadth (inches)">
-            <TextInput name="breadthInches" type="number" step="0.01" value={breadth} onChange={(event) => setBreadth(event.target.value)} />
+            <TextInput name="breadthInches" type="number" min={0} step="0.01" value={breadth} onChange={(event) => setBreadth(event.target.value)} />
           </Field>
           <Field label="Thickness">
-            <TextInput name="thickness" type="number" step="0.01" defaultValue={initial?.thickness ?? ""} />
+            <TextInput name="thickness" type="number" min={0} step="0.01" defaultValue={initial?.thickness ?? ""} />
           </Field>
           <Field label="Weight">
-            <TextInput name="weight" type="number" step="0.01" defaultValue={initial?.weight ?? ""} />
+            <TextInput name="weight" type="number" min={0} step="0.01" defaultValue={initial?.weight ?? ""} />
           </Field>
           <Field label="Radius">
-            <TextInput name="radius" type="number" step="0.01" defaultValue={initial?.radius ?? ""} />
+            <TextInput name="radius" type="number" min={0} step="0.01" defaultValue={initial?.radius ?? ""} />
           </Field>
         </div>
         <GridMeasurement
@@ -701,8 +810,9 @@ export function ToolForm({
               ))}
             </Select>
           </Field>
+          {/* Money, and the same pairing rule as the measurements above. */}
           <Field label="Replacement cost">
-            <TextInput name="replacementCost" type="number" step="0.01" defaultValue={initial?.replacementCost ?? ""} />
+            <TextInput name="replacementCost" type="number" min={0} step="0.01" defaultValue={initial?.replacementCost ?? ""} />
           </Field>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
@@ -754,6 +864,14 @@ export function ToolForm({
         />
         <LocationFields initial={initialLocation} onDirty={markDirty} />
         {uploadProgress ? <UploadProgress progress={uploadProgress} /> : null}
+        {/*
+          THE HOST'S OWN QUESTIONS, AT THE BOTTOM OF THE SAME LIST OF FIELDS — see
+          `InlineRecordHostProps.footerFields`. Inside the `<form>` and above the buttons, so a
+          design-workshop stage embedding this page adds its extra fields to the end of one
+          continuous form rather than to a second panel below a form that has already ended. The
+          separator is the only styling, and with no host there is no element at all.
+        */}
+        {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
         <div className="flex justify-end gap-2">
           <button type="button" className="field-button-secondary" onClick={handleBack}>
             Cancel
@@ -766,17 +884,31 @@ export function ToolForm({
       <UnsavedChangesDialog
         open={backPromptOpen}
         saving={saving}
-        onKeepEditing={() => setBackPromptOpen(false)}
+        onKeepEditing={() => {
+          setBackPromptOpen(false);
+          setPromptFromCancel(false);
+        }}
         onDiscard={() => {
           setBackPromptOpen(false);
+          setPromptFromCancel(false);
           resetDirty();
-          // `leave`, not `router.back()`: the prompt is as load-bearing in a dialog as on a page —
-          // closing the dialog still throws the typing away — but what "discard" DOES afterwards
-          // belongs to the host. See `leave`.
-          leave();
+          /*
+            NEITHER BRANCH IS `router.back()`: the prompt is as load-bearing in a dialog as on a
+            page — closing the dialog still throws the typing away — but what "discard" DOES
+            afterwards belongs to the host.
+
+            WHICH host act, though, depends on which control asked. Cancel means "empty this form,
+            I am staying", and in the stage embed that is exactly what `leave()` does. The back
+            arrow means "take me off this screen", and answering it with `leave()` alone is the
+            defect `promptFromCancel` exists for: the work was discarded and the designer did not
+            go anywhere.
+          */
+          if (promptFromCancel) leave();
+          else leaveAfterDiscard();
         }}
         onSave={() => {
           setBackPromptOpen(false);
+          setPromptFromCancel(false);
           formRef.current?.requestSubmit();
         }}
       />

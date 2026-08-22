@@ -418,8 +418,12 @@ DATABASE_URL=postgresql://ci:ci@ci.invalid:5432/no_such_database JWT_SECRET=… 
 docker compose --profile api up -d postgres
 DATABASE_URL=postgresql://…@127.0.0.1:55442/… PYTHONUTF8=1 python -m pytest -q
 
-# Backend lint.
-cd backend && ./.venv/Scripts/ruff.exe check app
+# Backend lint. `.`, not `app` — that is what the `Lint the backend with ruff` step in
+# checks.yml gates on, and the difference is most of it: measured 2026-08-22, 31 of the 37
+# findings named in the dated baseline in backend/pyproject.toml live under `backend/tests/`,
+# which `check app` never visits. That baseline is what keeps `check .` green; if it goes red,
+# read the baseline's own header before touching `ignore`.
+cd backend && ./.venv/Scripts/ruff.exe check .
 
 # Web typecheck and lint. CI runs eslint with --max-warnings=0; run it that way or you will not see
 # what the `web` job sees.

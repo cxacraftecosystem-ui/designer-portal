@@ -11,10 +11,18 @@ Run the local stack first:
 
     docker compose up -d postgres minio
     cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
+
+ONE SECTION AT THE FOOT OF THIS FILE NEEDS NO DATABASE, and its own header says why: the by-id
+lookup added for scanned record cards is a decision about WHICH CLAUSE IS DROPPED, not a query
+whose results have to be real, and one of its assertions is the security boundary between
+"withheld" and "absent". An assertion like that is worth more running everywhere than running
+only where Postgres is up. It is driven through a fake Prisma client, the pattern
+``test_reference_carry.py`` established for exactly this reason.
 """
 
 import os
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,16 +30,23 @@ import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
 
+# The service itself, for the database-free section at the foot of this file: those tests call
+# `reference_options` directly with `dw.db` swapped out, rather than going through the HTTP client.
+from app.services import design_workshops as dw
+
 _URL = os.environ.get("DATABASE_URL", "")
 _LOCAL = any(host in _URL for host in ("localhost", "127.0.0.1"))
 
-pytestmark = [
-    pytest.mark.skipif(
-        not _LOCAL,
-        reason="needs a LOCAL database; refuses to run against a remote DATABASE_URL",
-    ),
-    pytest.mark.anyio,
-]
+# THE GATE MOVED OFF ``pytestmark`` AND INTO THE ``world`` FIXTURE, and the move is the whole
+# reason the section at the foot of this file can exist. A module-level skipif is applied to every
+# test in the module without asking any of them whether they need a database, so the by-id tests —
+# which fake the Prisma client out entirely — would have skipped on precisely the machines where
+# nobody can run the database-backed ones either. Every test that needs Postgres takes ``client``,
+# which takes ``world``; skipping there is the same gate expressed as a dependency, so it cannot
+# accidentally cover a test that does not have one. ``_LOCAL`` is left in place because the fixture
+# reads it and because ``conftest`` publishes the resolved DSN before this module is imported —
+# see ``resolve_database_url`` for why that ordering is not an accident.
+pytestmark = [pytest.mark.anyio]
 
 STAGE_3 = "WORKSHOP_PLAN_PARTICIPANTS_OPENING"
 STAGE_5 = "TRADITIONAL_PROCESS_BASELINE"
@@ -50,7 +65,12 @@ async def world():
     Two of the artisans reach the workshop by DIFFERENT routes — one through the explicit
     column, one through the WorkshopArtisan join — because the picker has to find both. An
     artisan that reaches it by neither is what proves the scope is doing anything at all.
+
+    THE DATABASE GATE LIVES HERE — see the note above ``pytestmark``. Everything that needs
+    Postgres reaches this fixture through ``client``; nothing that does not, does.
     """
+    if not _LOCAL:
+        pytest.skip("needs a LOCAL database; refuses to run against a remote DATABASE_URL")
     tag = uuid.uuid4().hex[:8]
     await db.connect()
     try:
@@ -704,3 +724,289 @@ async def test_a_stage_one_save_without_a_title_does_not_500(client, linked, wor
     after = client.get(f"/api/design-workshops/{linked}").json()
     assert after["title"] == before, "the workshop keeps the title it has"
     assert after["clusterName"] == "Barpali"
+
+
+# --------------------------------------------------------------------------------------
+# The by-id lookup — and these need NO DATABASE
+# --------------------------------------------------------------------------------------
+#
+# Everything above this line goes through the live stack because it is testing a `WHERE` and a
+# join. What follows is testing a DECISION — which clause is dropped for the out-of-scope probe,
+# and which one is never dropped — and that decision is legible with the delegate faked out. Same
+# reasoning as `test_reference_carry.py`, whose module docstring spells it out: driving the REAL
+# `reference_options` through a fake Prisma client is what lets the whole case sit in one readable
+# literal, and it means the security assertion below still runs on a machine with no Postgres,
+# which is where it is most likely to be read and least likely to be run otherwise.
+#
+# THE FAKE REFUSES CLAUSES IT DOES NOT UNDERSTAND, and that is the load-bearing part of it. A fake
+# that ignored the workshop clause would make `test_a_scanned_record_from_another_cluster_...` pass
+# while the server did nothing at all, and a fake that ignored the read predicate would make the
+# security test pass while the boundary was open.
+
+
+class _Row:
+    """One database row. Any column not named reads as ``None``.
+
+    The same trick `design_workshops._ProbeRow` uses and for the same reason: the data lambdas are
+    total in their keys and read a couple of dozen columns each, so listing every one of them here
+    would make the test about the lambda rather than about the query.
+    """
+
+    def __init__(self, **fields):
+        self.__dict__.update(fields)
+
+    def __getattr__(self, _name):
+        return None
+
+
+def _matches(row, clause) -> bool:
+    """Does ``row`` satisfy this Prisma ``where``? Raises on any operator it has not been taught.
+
+    The raise is the point. Silently answering True for a clause it does not understand is exactly
+    how a fake certifies a filter that was never applied.
+    """
+    for key, value in clause.items():
+        if key == "AND":
+            if not all(_matches(row, c) for c in value):
+                return False
+        elif key == "OR":
+            if not any(_matches(row, c) for c in value):
+                return False
+        elif key == "workshops":
+            # The join-table arm of `_artisan_workshop_where`.
+            some = value["some"]
+            links = getattr(row, "workshops", None) or []
+            if not any(all(getattr(link, k, None) == v for k, v in some.items())
+                       for link in links):
+                return False
+        elif isinstance(value, dict):
+            if set(value) - {"contains", "mode"}:
+                raise AssertionError(f"the fake delegate cannot evaluate {key}={value!r}")
+            if str(value["contains"]).casefold() not in str(getattr(row, key, "") or "").casefold():
+                return False
+        elif getattr(row, key, None) != value:
+            return False
+    return True
+
+
+class _Delegate:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def find_many(self, where=None, order=None, take=None, include=None):
+        hits = [r for r in self._rows if _matches(r, where or {})]
+        return hits[:take] if take else hits
+
+    async def find_unique(self, where=None):
+        return next((r for r in self._rows if r.id == (where or {}).get("id")), None)
+
+
+class _FakeDb:
+    """Enough Prisma client for :func:`reference_options`: delegates, and a photo query that
+    answers nothing.
+
+    ``order`` is accepted and not applied — no test here turns on row order, and every one of them
+    asserts on a list of one or zero rows or on ids that the insertion order already fixes.
+    """
+
+    def __init__(self, rows_by_delegate):
+        self._rows = rows_by_delegate
+
+    def __getattr__(self, name):
+        return _Delegate(self._rows.get(name, []))
+
+    async def query_raw(self, _sql, _ids, *_binds):
+        return []
+
+
+#: The design workshop asking. Linked to a cluster, because an UNLINKED one applies no workshop
+#: clause at all and there would be nothing for the out-of-scope probe to be about.
+_ASKING = SimpleNamespace(id="dw_1", workshopId="wsp_here")
+
+
+def _product(**overrides):
+    fields = {
+        "id": "prd_here", "productName": "Sambalpuri saree", "workshopId": "wsp_here",
+        "artisanId": "art_1", "craftName": "Ikat weaving", "artisanName": "Latha Devi",
+        "createdById": "usr_1", "media": [], "location": None,
+    }
+    fields.update(overrides)
+    return _Row(**fields)
+
+
+async def _options(monkeypatch, *, rows, **kwargs):
+    monkeypatch.setattr(dw, "db", _FakeDb({"productdocumentation": rows}))
+    return await dw.reference_options(
+        _ASKING, "ProductDocumentation", scope="WORKSHOP", viewer=SimpleNamespace(id="usr_2"),
+        **kwargs,
+    )
+
+
+async def test_a_scanned_record_in_this_cluster_becomes_an_option(monkeypatch):
+    """An id can now be turned into a picker option, which is the whole of the endpoint change.
+
+    ``search_fields`` for this model is ``productName, localName, artisanName, craftName`` and
+    ``id`` is in none of them, so before ``record_id`` existed there was no query on this endpoint
+    that a scanned code could be the input to.
+    """
+    payload = await _options(monkeypatch, rows=[_product()], record_id="prd_here")
+    assert [o["id"] for o in payload["options"]] == ["prd_here"]
+    assert payload["outOfScope"] is False
+    assert payload["outOfScopeOption"] is None
+    assert set(payload) == {"model", "scope", "scopedToWorkshop", "filtered", "truncated",
+                            "outOfScope", "outOfScopeOption", "options"}
+
+
+async def test_without_the_parameter_the_answer_is_the_one_it_always_gave(monkeypatch):
+    """The additive guarantee. Absent ``record_id``, the workshop's whole catalogue, as before."""
+    rows = [_product(), _product(id="prd_two", productName="Gamcha")]
+    payload = await _options(monkeypatch, rows=rows)
+    assert sorted(o["id"] for o in payload["options"]) == ["prd_here", "prd_two"]
+    assert payload["outOfScope"] is False
+
+
+async def test_a_scanned_record_from_another_cluster_is_reported_and_not_hidden(monkeypatch):
+    """Documented somewhere else, and no such record, used to be the same empty list.
+
+    ``existingProduct.productRef`` is WORKSHOP-scoped, so designer A's product simply is not in
+    designer B's picker — and the two demand opposite next actions from the person holding the
+    printed card (link the cluster, versus scan again). The flag is what lets the form say which.
+    """
+    payload = await _options(
+        monkeypatch, rows=[_product(workshopId="wsp_elsewhere")], record_id="prd_here"
+    )
+    assert payload["outOfScope"] is True
+    assert payload["outOfScopeOption"]["id"] == "prd_here"
+    assert payload["scopedToWorkshop"] is True, "the scope was applied, not abandoned"
+
+
+async def test_the_out_of_scope_row_is_not_in_the_ordinary_option_list(monkeypatch):
+    """THE DEFAULT IS SILENCE, and this is the assertion that keeps it that way.
+
+    Every picker in the tree renders `payload.options` and nothing else, and
+    ``StageReferenceField``'s "Nothing is documented under this design workshop's linked workshop
+    yet" notice is gated on that list being EMPTY. So a cross-cluster row placed in ``options``
+    would both appear as an ordinary choice and silence the only sentence that would have
+    questioned it: the designer taps it and the stage row points at another cluster's record with
+    nothing on screen having said so. The row belongs beside the list, never in it.
+    """
+    payload = await _options(
+        monkeypatch, rows=[_product(workshopId="wsp_elsewhere")], record_id="prd_here"
+    )
+    assert payload["options"] == [], "an out-of-scope row must not be renderable as a plain option"
+    assert payload["outOfScopeOption"]["label"], "and it must still be carried, or nothing can offer it"
+
+
+async def test_an_id_that_names_nothing_is_not_out_of_scope(monkeypatch):
+    """The flag means "found, and excluded". It must not come to mean "not found"."""
+    payload = await _options(monkeypatch, rows=[_product()], record_id="prd_nowhere")
+    assert payload["options"] == []
+    assert payload["outOfScope"] is False
+    assert payload["outOfScopeOption"] is None
+
+
+async def test_a_record_the_caller_may_not_read_answers_exactly_as_a_missing_one(monkeypatch):
+    """THE SECURITY BOUNDARY, and it is the reason the probe is a filtered query.
+
+    ``records.require_record`` raises 404 and never 403 so that a refusal cannot confirm that an
+    identifier names something — ``frontend/lib/workshopCodeLookup.ts`` explains what the other
+    behaviour is worth to somebody holding a stack of printed cards. The by-id probe here is the
+    same question asked as a ``where``: it keeps the ``viewable_where`` predicate composed at the
+    top of ``reference_options`` and drops only the workshop clause, so a row that predicate
+    excludes produces no rows and ``outOfScope`` stays False.
+
+    ``viewable_where`` returns ``{}`` today — every signed-in account may read every row — so the
+    predicate is faked here to a narrowing one. That is the point of the test rather than a
+    weakness of it: it pins the SHAPE of the answer for the day the read policy stops being empty,
+    which is the day the by-id path would otherwise start telling "withheld" from "absent".
+    """
+    async def _only_mine(_viewer):
+        return {"createdById": "usr_2"}
+
+    monkeypatch.setattr(dw, "viewable_where", _only_mine)
+    # Somebody else's product, sitting in another cluster: both reasons to withhold it at once.
+    withheld = await _options(
+        monkeypatch,
+        rows=[_product(createdById="usr_1", workshopId="wsp_elsewhere")],
+        record_id="prd_here",
+    )
+    absent = await _options(monkeypatch, rows=[], record_id="prd_here")
+    assert withheld == absent, "a withheld record must be indistinguishable from a missing one"
+    assert withheld["outOfScope"] is False
+    assert withheld["options"] == []
+    assert withheld["outOfScopeOption"] is None, "the out-of-band key must not leak it either"
+
+
+async def test_the_probe_drops_the_workshop_clause_and_nothing_else(monkeypatch):
+    """The cascade survives the by-id path, which is what stops it mis-attributing a product.
+
+    A product of ANOTHER artisan, scanned while the row's artisan picker is set, must not come
+    back as "out of this workshop" — it IS in the workshop, and offering it under this artisan's
+    name is the defect ``filter_by``'s own refusal exists to prevent. So the probe keeps the
+    artisan clause and the answer is silence.
+    """
+    monkeypatch.setattr(dw, "db", _FakeDb({"productdocumentation": [_product(artisanId="art_9")]}))
+    payload = await dw.reference_options(
+        _ASKING, "ProductDocumentation", scope="WORKSHOP", filter_by="art_1",
+        record_id="prd_here", viewer=SimpleNamespace(id="usr_2"),
+    )
+    assert payload["filtered"] is True
+    assert payload["options"] == []
+    assert payload["outOfScope"] is False
+
+
+# ── THE IN-RECORD PICKER'S BY-ID PATH, AND THE HALF OF THE CODE GRAMMAR IT USED TO MISS ────────
+#
+# A `Dw…` ref points at a row of THIS workshop, and those rows answer to two identifiers, not one.
+# `workshopCodeIdForRow` in `frontend/lib/workshopCodes.ts` prints `_entryId` when the row has
+# reached the server and `_clientKey` when it has not — a prototype tag has to be printable the
+# afternoon the prototype is made, and a workshop can go a fortnight without signal — and
+# `workshopCodeMatchesRow` beside it matches on either. Narrowing on `id` alone therefore answered
+# every tag printed before a sync with the empty list that is byte-identical to "no such record",
+# which is the exact ambiguity `record_id` exists to remove.
+
+
+def _entry(**overrides):
+    fields = {"id": "ent_synced", "clientKey": "ck_made_offline", "designWorkshopId": "dw_1",
+              "entityKey": "prototype", "ordinal": 0,
+              "data": {"prototypeCode": "P-01", "name": "Shoulder bag"}}
+    fields.update(overrides)
+    return _Row(**fields)
+
+
+async def _in_record(monkeypatch, *, rows, record_id=""):
+    monkeypatch.setattr(dw, "db", _FakeDb({"dwstageentry": rows}))
+    entity = dw._dw_entity("DwPrototype")
+    assert entity is not None, "the registry no longer declares DwPrototype; this test is stale"
+    return await dw._in_record_options(_ASKING, entity, None, 25, record_id=record_id)
+
+
+async def test_a_tag_printed_before_the_row_synced_still_resolves(monkeypatch):
+    """The client key is what a tag printed in a village without signal actually carries."""
+    payload = await _in_record(monkeypatch, rows=[_entry()], record_id="ck_made_offline")
+    assert [o["id"] for o in payload["options"]] == ["ent_synced"], (
+        "a tag carrying the row's client key must find the row, or the scan is indistinguishable "
+        "from a code that names nothing"
+    )
+
+
+async def test_a_tag_printed_after_the_row_synced_still_resolves(monkeypatch):
+    """The other spelling, unchanged: the server id is what a tag printed on a connection holds."""
+    payload = await _in_record(monkeypatch, rows=[_entry()], record_id="ent_synced")
+    assert [o["id"] for o in payload["options"]] == ["ent_synced"]
+
+
+async def test_the_second_identifier_does_not_widen_past_this_workshop(monkeypatch):
+    """Two spellings of ONE row, not a second way in. The workshop clause still governs.
+
+    `_in_record_options` is scoped to this design workshop whatever the field's declared scope
+    says, and matching a second column must not become an exception to that: another workshop's
+    prototype is not a candidate here even when its client key is the code that was scanned.
+    """
+    other = _entry(id="ent_other", clientKey="ck_elsewhere", designWorkshopId="dw_2")
+    payload = await _in_record(monkeypatch, rows=[other], record_id="ck_elsewhere")
+    assert payload["options"] == []
+    assert payload["outOfScope"] is False, (
+        "an in-record ref reports no out-of-scope row: another workshop's entry is not a "
+        "candidate this field is refusing, it is not a candidate at all"
+    )

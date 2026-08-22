@@ -85,6 +85,53 @@ cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
    entirely correct while doing it, because every name in it matches. That is not recoverable by a
    revert.
 
+   **UNRESOLVED — WHICH CLOUDFRONT DISTRIBUTION IS THIS PORTAL'S? Recorded 2026-08-22; needs a
+   console, not a checkout.** The CloudFront row above says `d3ekigkotd1xa2.cloudfront.net`. Every
+   other statement of an API host in this repository — the `NEXT_PUBLIC_API_URL` production column
+   in this document's own web section, the `apiBaseUrl` row in its Android section,
+   `android/app/build.gradle.kts`'s compiled-in default, `android/app/src/main/res/xml/network_security_config.xml`,
+   `.env.example`, `../README.md`, `DEPLOYMENT_VERCEL.md`, `CDN.md`, `ARCHITECTURE.md`,
+   `../backend/DEPLOY_AWS.md` — says `d2b34i3e92al6i.cloudfront.net`, which `../README.md` pairs
+   with the Elastic IP `15.207.145.174`. That IP is the **field repository's** box: this portal's is
+   `13.206.216.18`, per the row above and per the `designrepo` Terraform workspace state.
+
+   **Nothing in the repository settles it, and that is a fact about the repository rather than a gap
+   in the reading.** `infra/terraform/main.tf` creates S3, IAM, EC2, a security group and an Elastic
+   IP, and **no CloudFront distribution at all** — [CDN.md](CDN.md) says the distribution is
+   maintained "AWS console, by hand". So the only repository evidence for either pairing is prose,
+   and the prose disagrees with itself. The other rows of the table above are independently
+   corroborated (`infra/terraform/terraform.tfstate.d/designrepo/terraform.tfstate` for the IP,
+   bucket and key pair; `frontend/.vercel/project.json` for the Vercel project), which is why the
+   CloudFront row is the suspicious one rather than the trusted one — but corroboration of its
+   neighbours is not evidence for it.
+
+   **One more measurement, taken 2026-08-22, and it cuts against the row rather than for it:**
+   `d3ekigkotd1xa2` appears in **exactly one place in the whole repository — the row above.** A
+   recursive search of every tracked `.md`, `.tf`, `.kts`, `.xml` and `.example` returns that line and
+   this block and nothing else, while `d2b34i3e92al6i` is written into at least seven files including
+   two the clients actually compile against. A single unsupported witness is not proof the row is
+   wrong — the row could be the one place somebody recorded a console fact correctly, which is
+   precisely what an infrastructure table is FOR — but it does mean nobody should read the row's
+   presence in a table as independent confirmation. It is one sentence, by one author, once.
+
+   **Do not "fix" one side of this.** The handset default and the committed web production value are
+   the same literal, so the two clients agree with each other today and a working client is what a
+   half-change breaks. Two answers, and the whole of each:
+
+   * **If `d3ekigkotd1xa2` is this portal's** — the clients are pointed at the field repository's
+     API and the fix is one pass over every file listed above, plus the `NEXT_PUBLIC_API_URL`
+     variable in the Vercel dashboard (which no commit can change), plus a re-issued APK, because
+     the old default is compiled into every build already on a phone.
+   * **If `d2b34i3e92al6i` is this portal's** — the clients are right and the CloudFront row above is
+     wrong; correct the row and say what `d3ekigkotd1xa2` actually is.
+
+   **The one command that answers it**, from a machine with the AWS credentials:
+   `aws cloudfront list-distributions --query "DistributionList.Items[].{d:DomainName,o:Origins.Items[0].DomainName,id:Origins.Items[0].Id}" --output table`.
+   Whichever distribution's origin resolves to `13.206.216.18` is this portal's. Write the answer
+   into the row above, then delete this block — `docs/tools/check-docs.mjs`'s `checkAndroidApiHost`
+   fails the docs run if this question outlives its answer, and fails it the other way if the two
+   hosts drift apart again with nothing recorded.
+
 5. **In Vercel, every `NEXT_PUBLIC_*` variable must be type `Encrypted`, never `Sensitive`.**
    Sensitive is write-only: Vercel will not return that value to anyone afterwards, including to the
    `vercel pull` our CI runs before it builds. Because the build happens on a GitHub runner rather
@@ -338,12 +385,12 @@ Set at **Settings → Secrets and variables → Actions**. Never in a file.
 
 | Secret | Used by | Required | Secret | Notes |
 |---|---|---|---|---|
-| `EC2_HOST` | `deploy-backend.yml` | Yes | No | Elastic IP of the API box. |
-| `EC2_SSH_KEY` | `deploy-backend.yml` | Yes | **Yes** | Private `.pem` contents for the EC2 key pair. |
+| `EC2_HOST` | `deploy-backend.yml` | Yes | No | Elastic IP of **this portal's** API box: `13.206.216.18` (instance `i-0e091ca8e6b417b52`, tagged `designrepo-api`). `15.207.145.174` is the field repository's box and must never appear here. |
+| `EC2_SSH_KEY` | `deploy-backend.yml` | Yes | **Yes** | Private `.pem` contents for **this portal's** key pair `designrepo-deploy` — the file is `infra/terraform/designrepo-deploy.pem`. The sibling `fieldrepo-deploy.pem` opens the *other* product's box, and pasting it together with the *other* IP is the pair that deploys successfully onto the wrong machine. See the banner at the top of [CI.md](CI.md) before you set either of these two. |
 | `BACKEND_ENV` | `deploy-backend.yml` | Yes | **Yes** | The **entire** `backend/.env` file. Piped to the box over SSH — never echoed to logs. This is where you edit `BACKEND_CORS_ORIGINS` for production. |
-| `VERCEL_TOKEN` | `deploy-frontend.yml` | Yes | **Yes** | Vercel → Account Settings → Tokens. Must be scoped to the **team** owning `design-workshop`, not a personal account, or the CLI 403s. The only genuinely sensitive one of the three. Absent, stage 2 skips with instructions rather than failing. |
-| `VERCEL_ORG_ID` | same | Yes | No | `team_pcTf4Alb2DCIwq2IZcdu00dS`. An identifier, not a credential. |
-| `VERCEL_PROJECT_ID` | same | Yes | No | `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0`. An identifier, not a credential. |
+| `VERCEL_TOKEN` | `deploy-frontend.yml` | Yes | **Yes** | Vercel → Account Settings → Tokens. Must be scoped to the **team** owning `design-repository`, not a personal account, or the CLI 403s. The only genuinely sensitive one of the three. Absent, stage 2 skips with instructions rather than failing. |
+| `VERCEL_ORG_ID` | same | Yes | No | `team_pcTf4Alb2DCIwq2IZcdu00dS`. An identifier, not a credential. Both products live in this one team, so it is the one Vercel value that is the same either way — and therefore the one that cannot warn you. |
+| `VERCEL_PROJECT_ID` | same | Yes | No | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel project **`design-repository`**, which is what `vercel link` wrote into this checkout's `frontend/.vercel/project.json`. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the *field repository's* project, and publishing there does not fail — it succeeds, replacing another product's live site with this one's build. Never put that value in this repository. |
 | `SUPABASE_KEEPALIVE_URL` / `SUPABASE_DATABASE_URL` | `keep-supabase-active.yml` → `scripts/keep-supabase-active.mjs` | One of them (falls back to `DATABASE_URL`) | **Yes** | The script rewrites a Supabase pooler URL from `:5432` to `:6543`, because a session-mode keep-alive is rejected with `EMAXCONNSESSION` while the live backend holds those 15 slots. |
 | `SUPABASE_KEEPALIVE_NO_REWRITE` | same | No | No | `"true"` disables that `:5432 → :6543` rewrite. Only for a non-Supabase database. |
 | `SUPABASE_DB_SSL` | same | No | No | `"false"` disables TLS for the keep-alive connection; any other value keeps SSL on. |
@@ -444,6 +491,7 @@ grep -oP 'alias="\K[A-Z_0-9]+' backend/app/core/config.py | sort
 | Defaults | The `Field(default=…)` in `config.py`. **One default is a lie by design** and is called out in a blockquote: `ELEVENLABS_STT_MODEL`. If another such case appears, it needs the same treatment — a table cell cannot express "the config default is not what runs". |
 | `SCALE_*` and the AI-feature keys | Owned elsewhere: `backend/app/scale/README.md` and [AI_FEATURES.md](AI_FEATURES.md). This file lists the names only, so it stays a complete index without becoming a second source of truth. |
 | GitHub Actions secrets | `.github/workflows/*.yml`. `grep -ho 'secrets\.[A-Z_]*' .github/workflows/*.yml \| sort -u` is the equivalent set difference. |
+| `VERCEL_PROJECT_ID` / `VERCEL_ORG_ID` | `checkVercelIds` in `docs/tools/check-docs.mjs`, which ties this table's two rows to [CI.md](CI.md) §2 and to `.github/workflows/deploy-frontend.yml`'s header, and confirms them against `frontend/.vercel/project.json` when a checkout has one. Added 2026-08-22 because this table survived the wave that corrected the other three, still handing the reader the *field repository's* project id and calling it harmless. |
 | Vercel variables | The Vercel dashboard — **UNVERIFIED from this repository**. `vercel env ls production` is the check, and rule 3 (Encrypted, never Sensitive) is the thing it exists to catch. |
 
 **Review triggers:** `backend/app/core/config.py`, `backend/.env.example`, any new `process.env.`

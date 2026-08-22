@@ -377,7 +377,7 @@ export type DwStageData = {
    * WHO LAST SET EACH FIELD of the three buckets above — `_stages_payload`'s fourth sibling key.
    *
    * A stage entry holds two kinds of value that are indistinguishable once stored: what a designer
-   * typed, and what the reference picker COPIED off a shared record. `hydrate_entries` copies 81
+   * typed, and what the reference picker COPIED off a shared record. `hydrate_entries` copies 107
    * field-pairs — an artisan's name, village, phone, do's and don'ts — the moment the artisan is
    * chosen, so a participant row on screen mixes one researcher's fieldwork with two designers'
    * corrections and says nothing about which is which. This is the answer.
@@ -1094,6 +1094,25 @@ export type DwReferenceOption = {
  *
  * `truncated` is the same obligation in the other direction: a list that quietly stops at the
  * server's limit is indistinguishable from a cluster with only fifty artisans.
+ *
+ * `outOfScope` is a different kind of statement from those two. Both of them describe the LIST —
+ * how `options` was narrowed — and both are routinely true with a full list. `outOfScope` is the
+ * only flag here that describes a row the field's own scope would NOT offer: a `recordId` lookup —
+ * a scanned card — found the record with the workshop clause lifted, so it is real and readable and
+ * this WORKSHOP-scoped field still excludes it. Five fields can produce it
+ * (`traditionalProcess.processRef`, `processStep.processRef`, `existingProduct.artisanRef`,
+ * `existingProduct.productRef`, `prototype.productRef`). Without it, scanning designer A's product
+ * into designer B's stage returned an empty list — the same bytes as a code that names nothing —
+ * and the two need opposite next actions from the person holding the card.
+ *
+ * THE ROW ITSELF IS NOT IN `options`, AND THAT IS THE SAFETY OF THE WHOLE FEATURE. It arrives as
+ * `outOfScopeOption`, with `options` left EMPTY, because every picker in this tree renders
+ * `payload.options` and nothing else. Putting it in the list would have made a cross-cluster record
+ * look like an ordinary choice AND suppressed `StageReferenceField`'s "Nothing is documented under
+ * this design workshop's linked workshop yet" line, which is gated on an empty `options`. So the
+ * default for a client that has not been taught this key is silence plus the notice it already had.
+ * Rendering `outOfScopeOption` is a deliberate act, and whatever renders it must SAY what it is —
+ * the server did not widen the scope, and neither may the picker without telling the designer.
  */
 export type DwReferencePayload = {
   model: string;
@@ -1101,6 +1120,13 @@ export type DwReferencePayload = {
   scopedToWorkshop: boolean;
   filtered: boolean;
   truncated: boolean;
+  /** See the note above. Older servers omit it, so read it as `payload.outOfScope === true`. */
+  outOfScope?: boolean;
+  /**
+   * The out-of-scope record, when there is one — see the note above. Absent, `null` or `undefined`
+   * on every other answer, including from an older server. Never rendered as part of `options`.
+   */
+  outOfScopeOption?: DwReferenceOption | null;
   options: DwReferenceOption[];
 };
 
@@ -1111,6 +1137,21 @@ export type DwReferenceQuery = {
   /** The value of the field named by `refFilterBy`, on THIS row. See {@link DwField.refFilterBy}. */
   filterBy?: string | null;
   search?: string | null;
+  /**
+   * One record's id — the by-id half of the picker, for a code that was SCANNED rather than typed.
+   *
+   * ADDITIVE, and it does not replace the other three: the server appends an `id` clause to the
+   * same query, so `scope`, `filterBy` and `search` all still apply. It is spelled as a query
+   * parameter rather than a `/references/{id}` route because the answer must carry the same
+   * `scopedToWorkshop` / `filtered` / `truncated` / `outOfScope` flags as the list it belongs to —
+   * a second endpoint would grow its own opinion of them.
+   *
+   * A lookup that resolves to nothing and a lookup for a record this account may not read are the
+   * SAME answer on purpose (`options: []`, `outOfScope: false`). Do not add a branch that tells
+   * them apart; `lib/workshopCodeLookup.ts` documents what confirming a record's existence from a
+   * printed code is worth to somebody holding a stack of cards.
+   */
+  recordId?: string | null;
   limit?: number;
 };
 
@@ -1121,6 +1162,7 @@ export function listStageReferences(workshopId: string, query: DwReferenceQuery)
       scope: query.scope ?? undefined,
       filterBy: query.filterBy ?? undefined,
       search: query.search ?? undefined,
+      recordId: query.recordId ?? undefined,
       limit: query.limit
     })}`
   );
@@ -1178,10 +1220,17 @@ export function listStageReferences(workshopId: string, query: DwReferenceQuery)
   MISSING entry here costs one retyped box that the server fills at save; a WRONG one writes a value
   nobody can see is wrong. Hence equality.
 
-  WIDENED 2026-08-16 with the carry-fidelity work: 32 field-pairs became 81 across these eight
+  WIDENED 2026-08-16 with the carry-fidelity work: 32 field-pairs became 107 across these eight
   mappings, and `traditionalProcess.processRef` is new. **When the server table moves, this moves in
   the same change** — the parity test failed exactly once during that work, for exactly this reason,
   which is the test doing its job rather than an argument for deleting it.
+
+  (The three prose copies of that number said 81 until 2026-08-22, which was the count at some
+  earlier point in the same lane; the two tables had already grown past it and equality is asserted,
+  so nothing was broken by it — but a stale number in a comment is what a reader trusts instead of
+  counting. Measured with
+  `python -c "import app.services.stage_definitions; from app.services.stage_schema import
+  REFERENCE_HYDRATION; print(sum(len(m) for m in REFERENCE_HYDRATION.values()))"` → 107.)
 */
 const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
   // The craft record in full. Two of the five things the crafts page collects used to cross; the
@@ -1382,6 +1431,26 @@ export function isMultiField(field: DwField): boolean {
  */
 export function referenceHydrationFor(entity: DwEntity, refField: DwField): Record<string, string> {
   return DW_REFERENCE_HYDRATION[`${entity.key}.${refField.key}`] ?? {};
+}
+
+/**
+ * Every `"entityKey.refFieldKey"` the table above hydrates, as a list.
+ *
+ * EXPORTED FOR ONE READER AND IT IS A TEST. `components/designworkshop/StageRecordEmbed.tsx` holds
+ * an explicit, argued table of which mirror points get the embedded record page and which do not —
+ * NO COUNT HERE ON PURPOSE, because the last one went stale the first time the pin ran and found two
+ * refusals nobody had enumerated. That table is only worth having if a mapping added here cannot
+ * quietly go unmentioned by it. The pin (`e2e/stage-record-embed-unit.spec.ts`) walks this list and
+ * fails on any key the embed table neither ships nor refuses in writing, and names every refusal by
+ * hand, so the real numbers are enforced there rather than repeated here.
+ *
+ * A LIST AND NOT THE TABLE ITSELF, on purpose: the mapping is read through
+ * {@link referenceHydrationFor}, which exists so that nobody outside this file has to know the key
+ * shape or can build one wrong. Handing out the whole record would put a second reader on the
+ * literal and make the next widening two edits instead of one.
+ */
+export function referenceHydrationPoints(): string[] {
+  return Object.keys(DW_REFERENCE_HYDRATION);
 }
 
 /**

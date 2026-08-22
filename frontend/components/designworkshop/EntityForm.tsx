@@ -9,6 +9,24 @@
  * prototype, every survey respondent — and render as {@link CollectionTable}: a list of rows with
  * add, edit, reorder and delete, each row titled by the entity's `labelField`.
  *
+ * FOUR ENTITIES MIRROR A REPOSITORY RECORD, AND THOSE DRAW THEIR FIELDS IN THREE GROUPS INSTEAD OF
+ * TWO. Where a stage asks for the same facts a record page already collects, the record page itself
+ * is embedded — the picker, then the real `ArtisanForm`/`ToolForm`/`ProductForm`/`ProcessForm` with
+ * the stage's own questions inside it, then the boxes the linked record fills in, collapsed. That
+ * is {@link MirroredEntityBody}, and the argument for all of it is in
+ * `components/designworkshop/StageRecordEmbed.tsx`, which also enumerates the four it ships and the
+ * hydration mappings it refuses, each with its reason.
+ *
+ * ONE CONSEQUENCE REACHES THIS FILE'S OWN CONTROLS: a collection row's panel can now hold a whole
+ * record form whose values are NOT durable, so COLLAPSING A ROW BECAME AN EXIT. See {@link toggleRow}.
+ *
+ * WHAT DOES NOT CHANGE THERE IS THE ONE THING THAT MATTERS HERE: every registry field is still drawn
+ * by {@link FieldGrid} and wrapped in {@link FieldCell}. The embed decides WHICH GROUP a field is
+ * drawn in and nothing else — it is handed the grids as nodes and cannot render a field itself. Four
+ * things live in `FieldCell` and nowhere else (the search anchor, the per-field refusal, the
+ * provenance stamp, and the stranded-refusal banner's assumption that a rendered entity's fields are
+ * all drawn), and a field relocated out of it loses all four silently.
+ *
  * WHY ADVANCED IS COLLAPSED BY DEFAULT AND BASIC NEVER IS. The three tiers exist so that a workshop
  * held in a village without mains power can still produce a complete report: BASIC is the minimum,
  * and the backend's `validate_registry` refuses to build a registry in which any other tier is
@@ -31,7 +49,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, Plus, Trash2 } from "lucide-react";
 
 import { FieldInput, type StageCaptureContext } from "@/components/designworkshop/FieldInput";
+import {
+  MirroredFieldsDisclosure,
+  StageRecordEmbed,
+  embeddedRecordId,
+  mirrorPointFor,
+  mirrorRefField,
+  splitMirroredFields
+} from "@/components/designworkshop/StageRecordEmbed";
 import { StageReferenceMultiPicker } from "@/components/designworkshop/StageReferenceField";
+import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { FLASH_MS } from "@/components/hooks/useRevealRow";
 import { findMissingViews } from "@/lib/imageQuality";
@@ -165,7 +192,8 @@ function FieldGrid({
   anchorRowKey,
   capture,
   focus,
-  provenance
+  provenance,
+  recordFormMountedOver = null
 }: {
   entity: DwEntity;
   fields: DwField[];
@@ -217,6 +245,16 @@ function FieldGrid({
    * Optional, so a caller that does not pass it renders exactly as before.
    */
   provenance?: Record<string, DwFieldStamp>;
+  /**
+   * A REPOSITORY RECORD THAT ALREADY HAS AN EDIT SURFACE OPEN ON THIS PAGE.
+   *
+   * Passed by {@link MirroredEntityBody} and by nobody else, and read by the REF branch of
+   * `FieldInput` and by nothing else: it suppresses the picker's "Edit this …" pencil over the very
+   * record whose own page is mounted below it. Every other grid on every other stage passes null
+   * and draws exactly what it always drew. See `StageReferenceSelect.recordFormMountedOver` for the
+   * defect — two editors on one repository record, and the one opened first wins on Save.
+   */
+  recordFormMountedOver?: string | null;
 }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -268,6 +306,7 @@ function FieldGrid({
               place={{ stageKey, entityKey: entity.key, rowKey }}
               capture={capture}
               stamp={provenance?.[field.key] ?? null}
+              recordFormMountedOver={recordFormMountedOver}
               caption={
                 captionField
                   ? {
@@ -326,20 +365,66 @@ function focusIsIn(focus: StageFocus | undefined, entity: DwEntity, fields: DwFi
 }
 
 /**
+ * How many of these fields the server came back refusing.
+ *
+ * Counted against the field list rather than against the error map's size, because the map is keyed
+ * for the WHOLE record: a refusal on a BASIC field is drawn by the primary grid and must not be
+ * counted by a disclosure that is not hiding it.
+ *
+ * EXPORTED SO IT CAN BE EXECUTED BY A TEST. This repository has no React renderer in its
+ * devDependencies, so a rule left inside a component body can only ever be READ by a spec — and the
+ * rule this one carries is the difference between a refusal a designer can find and one they are
+ * only told about. See `e2e/stage-record-embed-unit.spec.ts`.
+ */
+export function refusedIn(fields: DwField[], errors: FieldErrors): number {
+  if (!errors) return 0;
+  return fields.filter((field) => Boolean(errors[field.key])).length;
+}
+
+/**
  * The "More detail" disclosure.
  *
  * `aria-controls` is set ONLY while the panel is mounted. The panel is unmounted on collapse (there
  * is no height animation to keep it alive for), and pointing `aria-controls` at an element id that
  * does not exist is worse for a screen reader than not pointing at anything.
+ *
+ * ── A REFUSAL BEHIND A COLLAPSED DISCLOSURE USED TO BE ANNOUNCED AND DRAWN NOWHERE ────────────
+ * The panel is unmounted while collapsed, so the `FieldInput` that would draw a server message on an
+ * ADVANCED field does not exist. The page said "The fields that need attention are marked below" and
+ * nothing was marked — and because nothing could be corrected, the same refusal came back on every
+ * subsequent save, for ever. The stranded-refusal banner cannot cover it either: `strandedRefusals`
+ * receives no field list and no tiers, so it treats every key of a rendered singleton as drawn.
+ *
+ * So the count is answered TWICE, in the two ways a designer might meet it: a red "N to fix" pill on
+ * this button, in the same words the collection row header already uses, and an effect that opens
+ * the disclosure the moment the count goes from none to some. Both are needed. The pill alone leaves
+ * a designer hunting; the auto-open alone says nothing once they have closed it again.
+ *
+ * WHY AN EFFECT AND NOT A `defaultOpen`. `defaultOpen` is read exactly once, through `useState`'s
+ * initial value, and a refusal ARRIVES — it is the response to a save the designer just pressed, on
+ * a component that has been mounted since before they pressed it. It would never be read again.
+ *
+ * THE TRANSITION AND NOT THE VALUE: the effect fires on none → some and not on every render where
+ * some exist, so a designer who closes the disclosure to look at something else is not fought by a
+ * panel that springs open again. A second save that is refused again re-opens it, because the count
+ * goes to zero in between only if it is fixed — and if it is not, the response resets it from zero
+ * only when the previous save came back clean. Either way the rule is "say it once per refusal".
  */
 function AdvancedDisclosure({
   id,
   count,
+  refused = 0,
   defaultOpen = false,
   children
 }: {
   id: string;
   count: number;
+  /**
+   * How many fields BEHIND this control the last save refused. Drives the pill and the auto-open.
+   *
+   * Zero, and this renders exactly as it always did.
+   */
+  refused?: number;
   /**
    * Open on first render. Only ever true when a search result points at a field inside — an
    * ADVANCED field is behind this control precisely so a designer is not shown forty optional boxes
@@ -349,6 +434,21 @@ function AdvancedDisclosure({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  /**
+   * Open on the none → some edge, and never on the level.
+   *
+   * The ref rather than the previous render's prop because this must survive the re-render the
+   * `setOpen` itself causes: keyed on the value, the effect would re-open the panel every time
+   * anything else on the stage re-rendered while a refusal stood, which is a form fighting the
+   * person reading it.
+   */
+  const refusedBefore = useRef(refused);
+  useEffect(() => {
+    const had = refusedBefore.current;
+    refusedBefore.current = refused;
+    if (refused > 0 && had === 0) setOpen(true);
+  }, [refused]);
+
   if (!count) return null;
   return (
     <div className="mt-4 border-t border-line-200 pt-4">
@@ -363,6 +463,14 @@ function AdvancedDisclosure({
         More detail
         {/* The count is what lets a designer decide whether to open it without opening it. */}
         <span className="rounded-full bg-field-200 px-2 py-0.5 text-xs font-medium text-ink-700">{count}</span>
+        {/* THE SAME WORDS THE ROW HEADER USES ("3 to fix"), so the two places a refusal can be
+            summarised do not teach a designer two vocabularies for one thing. Colour never carries
+            it alone: the number and the word are the message. */}
+        {refused ? (
+          <span className="rounded-full bg-error-100 px-2 py-0.5 text-xs font-medium text-error-600">
+            {refused} to fix
+          </span>
+        ) : null}
       </button>
       {open ? (
         <div id={id} className="mt-4">
@@ -371,6 +479,230 @@ function AdvancedDisclosure({
       ) : null}
     </div>
   );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * MIRROR POINTS — the record page, embedded
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The three-group body an entity gets when it MIRRORS a repository record.
+ *
+ * Used by both shapes: a singleton draws it once, a collection draws it inside each open row. It
+ * exists so the two cannot drift — the whole failure mode this replaces is "the record and the
+ * stage each hold their own copy of one fact and they disagree the first time either is corrected",
+ * and two copies of the composition would be the same mistake one level up.
+ *
+ * WHAT THIS FUNCTION DECIDES: which of three groups each registry field is drawn in. It does not
+ * decide field order (the registry does, and `splitMirroredFields` preserves it), it does not draw
+ * a field (every one goes through {@link FieldGrid}), and it does not touch the save (the record
+ * form saves a real record and `StageRecordEmbed` links it).
+ *
+ * THE MIRRORED GROUP IS NOT TIER-SPLIT, and that is deliberate. The tiers answer "what is the
+ * minimum a designer must fill in on a handset in a courtyard", which is not a question about boxes
+ * NOBODY TYPES INTO — they are filled in from the record. Two nested disclosures to express a
+ * distinction that does not apply would be a control a designer has to open twice to see one thing.
+ * Declaration order is kept across both tiers, so the group reads as the record does.
+ */
+function MirroredEntityBody({
+  entity,
+  refField,
+  data,
+  onChange,
+  onPatch,
+  workshopId,
+  errors,
+  disabled,
+  stageKey,
+  rowKey,
+  anchorRowKey,
+  capture,
+  focus,
+  provenance,
+  idPrefix
+}: {
+  entity: DwEntity;
+  /** The mirror point's REF field, already resolved by {@link mirrorFor}. */
+  refField: DwField;
+  data: DwEntryData;
+  onChange: (key: string, value: DwValue) => void;
+  onPatch: (values: Record<string, DwValue>) => void;
+  workshopId: string;
+  errors: FieldErrors;
+  disabled?: boolean;
+  stageKey?: string;
+  rowKey?: string | null;
+  anchorRowKey?: string | null;
+  capture?: StageCaptureContext;
+  focus?: StageFocus;
+  provenance?: Record<string, DwFieldStamp>;
+  /** Unique per rendered instance, so two rows' disclosures do not share an element id. */
+  idPrefix: string;
+}) {
+  const groups = useMemo(() => {
+    // Split into the three DISPLAY groups first and by TIER second, in that order. The other way
+    // round would tier-split the pickers as well, and a cascade picker is not optional detail
+    // wherever the registry happens to have tiered it — see `splitMirroredFields`.
+    const { pickers, mirrored, workshopOnly } = splitMirroredFields(entity, refField, formFields(entity));
+    const workshop = splitByTier(workshopOnly);
+    return {
+      pickers,
+      workshopPrimary: workshop.primary,
+      workshopAdvanced: workshop.advanced,
+      // Declaration order across both tiers — see the note above on why the mirrored group is not
+      // tier-split at all.
+      mirrored
+    };
+  }, [entity, refField]);
+
+  /**
+   * `recordFormMountedOver` defaults to null and is passed by the PICKER group alone — see the
+   * `picker` prop below. The other two groups hold no REF field by construction
+   * (`splitMirroredFields` collects every one of them into `pickers`), so handing it to all three
+   * would be a prop that could not be read, on the two grids where the reason for it does not
+   * apply.
+   */
+  const grid = (fields: DwField[], recordFormMountedOver: string | null = null) => (
+    <FieldGrid
+      entity={entity}
+      fields={fields}
+      data={data}
+      onChange={onChange}
+      onPatch={onPatch}
+      workshopId={workshopId}
+      errors={errors}
+      disabled={disabled}
+      stageKey={stageKey}
+      rowKey={rowKey}
+      anchorRowKey={anchorRowKey}
+      capture={capture}
+      focus={focus}
+      provenance={provenance}
+      recordFormMountedOver={recordFormMountedOver}
+    />
+  );
+
+  /**
+   * IS THE SEARCH RESULT POINTING AT *THIS* ROW?
+   *
+   * `focusIsIn` answers only "does this entity have a field by that name", which is the whole
+   * question for a singleton and half of it for a collection. The non-mirror branch below has
+   * always ANDed the row identity in; this branch did not, so on the 244-row roster a `?find=`
+   * result pointing at row 17's village default-opened the mirrored and advanced disclosures of
+   * whichever participant row the designer happened to open. Compared the way every other reader
+   * compares it — against `anchorRowKey`, which is the value `CollectionTable`'s `keyOf` opened the
+   * row by and therefore the value `focus.rowKey` holds. Both sides are null on a singleton, so
+   * this is a no-op there.
+   */
+  const focusHere = (focus?.rowKey ?? null) === (anchorRowKey ?? rowKey ?? null);
+
+  /**
+   * IS A REQUIRED MIRRORED BOX STILL EMPTY?
+   *
+   * The mirrored group is not "optional detail" the way an advanced group is: it holds
+   * `participant.name`, `tool.name` and `existingProduct.name`/`price` on today's registry, all
+   * BASIC and all required. Collapsed with one of those blank, the stage's own "still needed" count
+   * points at a box drawn nowhere — and because the panel is `display: none`, a readiness jump to it
+   * scrolls to a hidden node and lands silently on nothing. So the disclosure opens itself while
+   * there is something in it that must be answered, which is also the honest reading of its label:
+   * a box the linked record has not filled in is not "filled in from the linked record".
+   */
+  const mirroredNeeded = groups.mirrored.some((field) => field.required && !isFilled(data[field.key]));
+
+  return (
+    <StageRecordEmbed
+      entity={entity}
+      refField={refField}
+      row={data}
+      workshopId={workshopId}
+      onPatch={onPatch}
+      /*
+        A COLLECTION ROW DOES NOT MOUNT THE RECORD FORM UNTIL IT IS ASKED FOR — see
+        `StageRecordEmbed`'s `mountOnRequest` for the whole reason, which is that a create-mode mount
+        starts a high-accuracy `watchPosition` and the reverse-geocode chain behind it, and a roster
+        has 244 rows a designer opens to READ. Decided by `rowKey`/`anchorRowKey` rather than by an
+        entity name: a singleton passes neither, and stage 5's `traditionalProcess` — the one
+        singleton mirror point — mounts `ProcessForm`, which has no location card at all.
+      */
+      mountOnRequest={(anchorRowKey ?? rowKey ?? null) !== null}
+      /*
+        PART 1 — THE PICKERS, drawn by the ordinary grid from the ordinary registry fields, so
+        scan-to-pick, the cascade notice, the scope notice and the create/edit buttons all behave
+        exactly as they do on every other stage. Their own `FieldCell`s are what make them navigable
+        from a workshop search result.
+
+        PLURAL, AND IN DECLARATION ORDER: stage 6's product picker cascades from an artisan picker
+        that has to be answerable first, and a REF field anywhere in this entity has to be above the
+        record form rather than inside it — a dialog it opens would bubble its submit into that form
+        through the React tree even though it is portalled out of the DOM. `splitMirroredFields`
+        carries both arguments.
+      */
+      /*
+        AND THE ONE THING THE PICKERS ARE TOLD ABOUT THE FORM BELOW THEM: which record it is open
+        over. `StageReferenceSelect` draws "Edit this {noun}" beside a chosen record, which opens
+        `InlineRecordDialog` on the SAME record the embedded page is already mounted over — two
+        editors on one repository record, `initial` read once at mount, and the older of the two
+        posting its pre-edit snapshot over the correction made in the other. The picker suppresses
+        its pencil where the id matches its own choice; on stage 6 the artisan cascade picker's id
+        does not match the product below it, so that pencil stays, which is the reason this is an id
+        rather than a flag. `embeddedRecordId` is the embed's own function, so the two surfaces
+        cannot come to different answers about which record is open.
+      */
+      picker={grid(groups.pickers, embeddedRecordId(refField, data) || null)}
+      /*
+        PART 2's FOOTER — THE WORKSHOP'S OWN QUESTIONS, rendered INSIDE the record form's `<form>`,
+        as the last fields above its buttons. `MissingViewsHint` comes with them because the named
+        view slots it is about (`viewFront`/`viewBack`/`viewDetail` on stage 6) are workshop-only
+        fields, and the hint is only worth anything while the product is still on the table.
+      */
+      workshopFields={
+        <>
+          {grid(groups.workshopPrimary)}
+          <MissingViewsHint entity={entity} data={data} />
+          <AdvancedDisclosure
+            id={`${idPrefix}-advanced`}
+            count={groups.workshopAdvanced.length}
+            refused={refusedIn(groups.workshopAdvanced, errors)}
+            defaultOpen={focusHere && focusIsIn(focus, entity, groups.workshopAdvanced)}
+          >
+            {grid(groups.workshopAdvanced)}
+          </AdvancedDisclosure>
+        </>
+      }
+      /*
+        PART 3 — THE MIRRORED BOXES, collapsed but STILL IN THE TREE. `MirroredFieldsDisclosure`
+        hides rather than unmounts, which is the one way it differs from `AdvancedDisclosure` above
+        it: unmounting would take the `data-dw-field` anchors, the per-field refusals and the
+        provenance stamps with it, and these are the boxes a designer most often has to CORRECT —
+        hydration only fills blanks, so a wrong village arriving from the record is theirs to fix.
+      */
+      mirroredFields={
+        <MirroredFieldsDisclosure
+          id={`${idPrefix}-mirrored`}
+          count={groups.mirrored.length}
+          refused={refusedIn(groups.mirrored, errors)}
+          defaultOpen={mirroredNeeded || (focusHere && focusIsIn(focus, entity, groups.mirrored))}
+        >
+          {grid(groups.mirrored)}
+        </MirroredFieldsDisclosure>
+      }
+    />
+  );
+}
+
+/**
+ * The REF field this entity's embedded record page hangs off — or null, meaning "render the ordinary
+ * generated grid".
+ *
+ * BOTH HALVES HAVE TO RESOLVE, and null is a supported answer rather than an error case: a build can
+ * be holding a registry OLDER or NEWER than itself, and if the field the table names is gone, has
+ * been re-typed, or points at a model the inline host cannot mount, the honest fallback is the form
+ * this stage had before the feature existed. `design-workshop-schema-skew.spec.ts` is a whole spec
+ * about that situation being survivable rather than fatal.
+ */
+function mirrorFor(entity: DwEntity): DwField | null {
+  const point = mirrorPointFor(entity);
+  return point ? mirrorRefField(entity, point) : null;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -406,6 +738,11 @@ export function EntityForm({
   provenance?: Record<string, DwFieldStamp>;
 }) {
   const { primary, advanced } = useMemo(() => splitByTier(formFields(entity)), [entity]);
+  /**
+   * Does this singleton mirror a repository record? Stage 5's `traditionalProcess` is the one that
+   * does today. Null for every other singleton, which then renders exactly as it always has.
+   */
+  const mirror = useMemo(() => mirrorFor(entity), [entity]);
 
   return (
     <section className="panel p-4">
@@ -413,29 +750,10 @@ export function EntityForm({
         <h2 className="font-display text-lg font-bold text-ink-900">{entity.title}</h2>
         {entity.description ? <p className="mt-1 text-sm leading-6 text-ink-muted">{entity.description}</p> : null}
       </header>
-      <FieldGrid
-        entity={entity}
-        fields={primary}
-        data={data}
-        onChange={onChange}
-        onPatch={onPatch}
-        workshopId={workshopId}
-        errors={errors}
-        disabled={disabled}
-        stageKey={stageKey}
-        capture={capture}
-        focus={focus}
-        provenance={provenance}
-      />
-      <MissingViewsHint entity={entity} data={data} />
-      <AdvancedDisclosure
-        id={`advanced-${entity.key}`}
-        count={advanced.length}
-        defaultOpen={focusIsIn(focus, entity, advanced)}
-      >
-        <FieldGrid
+      {mirror ? (
+        <MirroredEntityBody
           entity={entity}
-          fields={advanced}
+          refField={mirror}
           data={data}
           onChange={onChange}
           onPatch={onPatch}
@@ -445,8 +763,56 @@ export function EntityForm({
           stageKey={stageKey}
           capture={capture}
           focus={focus}
+          provenance={provenance}
+          idPrefix={`entity-${entity.key}`}
         />
-      </AdvancedDisclosure>
+      ) : (
+        <>
+          <FieldGrid
+            entity={entity}
+            fields={primary}
+            data={data}
+            onChange={onChange}
+            onPatch={onPatch}
+            workshopId={workshopId}
+            errors={errors}
+            disabled={disabled}
+            stageKey={stageKey}
+            capture={capture}
+            focus={focus}
+            provenance={provenance}
+          />
+          <MissingViewsHint entity={entity} data={data} />
+          <AdvancedDisclosure
+            id={`advanced-${entity.key}`}
+            count={advanced.length}
+            refused={refusedIn(advanced, errors)}
+            defaultOpen={focusIsIn(focus, entity, advanced)}
+          >
+            <FieldGrid
+              entity={entity}
+              fields={advanced}
+              data={data}
+              onChange={onChange}
+              onPatch={onPatch}
+              workshopId={workshopId}
+              errors={errors}
+              disabled={disabled}
+              stageKey={stageKey}
+              capture={capture}
+              focus={focus}
+              /*
+                PASSED HERE TOO, WHICH IT WAS NOT. The collection path below hands `provenance` to both of
+                its grids and this one handed it only to the primary, so a singleton's ADVANCED field was
+                the one field in the registry that could never answer "did I write this, or did a
+                colleague?" — on precisely the fields where that is least obvious, because they are the
+                ones nobody looks at until a report disagrees with somebody's memory.
+              */
+              provenance={provenance}
+            />
+          </AdvancedDisclosure>
+        </>
+      )}
     </section>
   );
 }
@@ -615,6 +981,15 @@ export function CollectionTable({
 }) {
   const { primary, advanced } = useMemo(() => splitByTier(formFields(entity)), [entity]);
   /**
+   * Does a row of this collection mirror a repository record?
+   *
+   * Resolved once for the table rather than per row: it is a property of the ENTITY, and computing
+   * it inside the row map would re-derive it for all 244 rows of the flagship workshop on every
+   * keystroke. Null for every collection that is not a mirror point, which then renders exactly as
+   * it always has.
+   */
+  const mirror = useMemo(() => mirrorFor(entity), [entity]);
+  /**
    * Which row is open for editing, identified by its client key rather than its array index.
    *
    * BY KEY AND NOT BY INDEX, deliberately: reordering rewrites every index, so an index-based
@@ -632,6 +1007,35 @@ export function CollectionTable({
   );
 
   const keyOf = (row: DwRow, index: number) => row._clientKey ?? row._entryId ?? `index-${index}`;
+
+  /**
+   * OPEN ONE ROW AND CLOSE WHICHEVER WAS OPEN — after asking anything mounted inside it.
+   *
+   * ── WHY A COLLAPSE IS NOW AN EXIT ─────────────────────────────────────────────────────────────
+   * The panel is UNMOUNTED on collapse, deliberately, and that was harmless while everything it held
+   * was durable: the stage's own answers are written straight through to IndexedDB. It is not
+   * harmless now. Two of the four mirror points are collections, so a row's panel can hold a whole
+   * `ArtisanForm`/`ToolForm`/`ProductForm` whose name, identity digits, attached FILES and captured
+   * fix live in React state and uncontrolled DOM and are read only at submit. Collapsing over that
+   * destroyed all of it with no prompt — and worse than "with no prompt" for a file, because
+   * `useEagerStaging` then releases its owner and the object already in storage is deleted about two
+   * seconds later.
+   *
+   * `interceptLeave` is the mechanism the back arrow already uses and the four forms already
+   * register with, so the question is asked by the form that knows the answer and phrased in its own
+   * words. It returns true only when a form has TAKEN RESPONSIBILITY (it is dirty and has put its
+   * own dialog on screen), so a row holding nothing unsaved — and every row of every entity that is
+   * not a mirror point — collapses exactly as before.
+   *
+   * OPENING ANOTHER ROW IS THE SAME EVENT, because `openKey` is one slot: the row that was open is
+   * unmounted either way, so both paths go through here rather than only the visible "collapse".
+   */
+  const interceptLeave = useLeaveInterceptor();
+  function toggleRow(rowKey: string) {
+    const closing = openKey !== null && openKey !== rowKey ? openKey : openKey === rowKey ? rowKey : null;
+    if (closing !== null && interceptLeave()) return;
+    setOpenKey(openKey === rowKey ? null : rowKey);
+  }
 
   function patchRow(index: number, key: string, value: DwValue) {
     onRowsChange(rows.map((row, position) => (position === index ? { ...row, [key]: value } : row)));
@@ -774,7 +1178,7 @@ export function CollectionTable({
                     className="min-w-0 flex-1 truncate text-left text-sm font-medium text-ink-900"
                     aria-expanded={open}
                     aria-controls={open ? panelId : undefined}
-                    onClick={() => setOpenKey(open ? null : rowKey)}
+                    onClick={() => toggleRow(rowKey)}
                   >
                     {rowTitle(entity, row, index)}
                   </button>
@@ -826,51 +1230,76 @@ export function CollectionTable({
                 </div>
                 {open ? (
                   <div id={panelId} className="border-t border-line-200 p-3">
-                    <FieldGrid
-                      entity={entity}
-                      fields={primary}
-                      data={row}
-                      onChange={(key, value) => patchRow(index, key, value)}
-                      onPatch={(values) => patchRowMany(index, values)}
-                      capture={capture}
-                      workshopId={workshopId}
-                      errors={rowErrors}
-                      disabled={disabled}
-                      stageKey={stageKey}
-                      rowKey={row._clientKey ?? null}
-                      anchorRowKey={rowKey}
-                      focus={focus}
-                      // BY ENTRY ID, never by index. `DwStageProvenance` is keyed that way on
-                      // purpose — the server, the report builder and the handset each sort these
-                      // rows differently, so a positional lookup would show one participant's edits
-                      // under another participant's name in the table that proves who attended.
-                      // A row the server has never seen has no entry id and no stamps yet, which is
-                      // correct: nobody has set anything on it but the person typing.
-                      provenance={row._entryId ? provenance?.[String(row._entryId)] : undefined}
-                    />
-                    <MissingViewsHint entity={entity} data={row} />
-                    <AdvancedDisclosure
-                      id={`${panelId}-advanced`}
-                      count={advanced.length}
-                      defaultOpen={focus?.rowKey === rowKey && focusIsIn(focus, entity, advanced)}
-                    >
-                      <FieldGrid
+                    {mirror ? (
+                      <MirroredEntityBody
                         entity={entity}
-                        fields={advanced}
+                        refField={mirror}
                         data={row}
                         onChange={(key, value) => patchRow(index, key, value)}
                         onPatch={(values) => patchRowMany(index, values)}
-                        capture={capture}
                         workshopId={workshopId}
-                        provenance={row._entryId ? provenance?.[String(row._entryId)] : undefined}
                         errors={rowErrors}
                         disabled={disabled}
                         stageKey={stageKey}
                         rowKey={row._clientKey ?? null}
                         anchorRowKey={rowKey}
+                        capture={capture}
                         focus={focus}
+                        // BY ENTRY ID, never by index — the same rule as the grids below. See the
+                        // note there for what a positional lookup shows a designer.
+                        provenance={row._entryId ? provenance?.[String(row._entryId)] : undefined}
+                        idPrefix={panelId}
                       />
-                    </AdvancedDisclosure>
+                    ) : (
+                      <>
+                        <FieldGrid
+                          entity={entity}
+                          fields={primary}
+                          data={row}
+                          onChange={(key, value) => patchRow(index, key, value)}
+                          onPatch={(values) => patchRowMany(index, values)}
+                          capture={capture}
+                          workshopId={workshopId}
+                          errors={rowErrors}
+                          disabled={disabled}
+                          stageKey={stageKey}
+                          rowKey={row._clientKey ?? null}
+                          anchorRowKey={rowKey}
+                          focus={focus}
+                          // BY ENTRY ID, never by index. `DwStageProvenance` is keyed that way on
+                          // purpose — the server, the report builder and the handset each sort these
+                          // rows differently, so a positional lookup would show one participant's edits
+                          // under another participant's name in the table that proves who attended.
+                          // A row the server has never seen has no entry id and no stamps yet, which is
+                          // correct: nobody has set anything on it but the person typing.
+                          provenance={row._entryId ? provenance?.[String(row._entryId)] : undefined}
+                        />
+                        <MissingViewsHint entity={entity} data={row} />
+                        <AdvancedDisclosure
+                          id={`${panelId}-advanced`}
+                          count={advanced.length}
+                          refused={refusedIn(advanced, rowErrors)}
+                          defaultOpen={focus?.rowKey === rowKey && focusIsIn(focus, entity, advanced)}
+                        >
+                          <FieldGrid
+                            entity={entity}
+                            fields={advanced}
+                            data={row}
+                            onChange={(key, value) => patchRow(index, key, value)}
+                            onPatch={(values) => patchRowMany(index, values)}
+                            capture={capture}
+                            workshopId={workshopId}
+                            provenance={row._entryId ? provenance?.[String(row._entryId)] : undefined}
+                            errors={rowErrors}
+                            disabled={disabled}
+                            stageKey={stageKey}
+                            rowKey={row._clientKey ?? null}
+                            anchorRowKey={rowKey}
+                            focus={focus}
+                          />
+                        </AdvancedDisclosure>
+                      </>
+                    )}
                   </div>
                 ) : null}
               </li>

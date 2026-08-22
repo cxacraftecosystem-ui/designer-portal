@@ -58,10 +58,6 @@ from app.services.report_custom_sections import (
     custom_section_of,
     sections_hidden_by_tier,
 )
-from app.services.report_questionnaires import (
-    append_questionnaire_annexure,
-    questionnaires_of,
-)
 from app.services.report_model import (
     Align,
     ChartBlock,
@@ -88,6 +84,10 @@ from app.services.report_model import (
     TocBlock,
     clean_text,
     runs_of,
+)
+from app.services.report_questionnaires import (
+    append_questionnaire_annexure,
+    questionnaires_of,
 )
 from app.services.report_templates import (
     Presentation,

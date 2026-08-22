@@ -57,6 +57,7 @@ import {
   isAdmin,
   roleLabel
 } from "@/lib/permissions";
+import { lockPageScroll, unlockPageScroll } from "@/lib/scrollLock";
 import { cn } from "@/lib/utils";
 import type { User } from "@/lib/types";
 
@@ -327,25 +328,19 @@ export function DynamicIslandNav() {
   /**
    * The open sheet freezes the page behind it.
    *
-   * Two regressions this deliberately avoids. The scroll POSITION survives — a reader who opened the
-   * menu halfway down a long record comes back to the same paragraph, not to the top. And nothing
-   * moves sideways: locking the document takes the desktop scrollbar with it, so its width is
-   * measured first and handed back as padding by the rules keyed on `--nav-scroll-gutter`.
+   * Through `lib/scrollLock.ts` rather than by writing the class on <html> here, which is what this
+   * effect used to do. The protocol is unchanged — the lock lives on the root element because iOS
+   * Safari ignores `overflow: hidden` on the body, the scroll POSITION survives so a reader who
+   * opened the menu halfway down a long record comes back to the same paragraph, and the width of
+   * the scrollbar the lock removes is handed back through `--nav-scroll-gutter` so nothing centred
+   * moves sideways. What changes is that the class is now REFCOUNTED across all three surfaces that
+   * freeze the page: a dialog mounted in the protected layout closing while this sheet is open no
+   * longer takes the lock away with it.
    */
   useEffect(() => {
     if (!sheetOpen) return;
-    const root = document.documentElement;
-    const gutter = window.innerWidth - root.clientWidth;
-    const restoreTo = window.scrollY;
-    root.style.setProperty("--nav-scroll-gutter", `${gutter}px`);
-    root.classList.add("nav-scroll-locked");
-    return () => {
-      root.classList.remove("nav-scroll-locked");
-      root.style.removeProperty("--nav-scroll-gutter");
-      // Every engine we target keeps the offset across an `overflow: hidden` spell, but one that
-      // clamped it to zero would dump the reader back at the top; the guarantee is nearly free.
-      if (window.scrollY !== restoreTo) window.scrollTo(0, restoreTo);
-    };
+    lockPageScroll();
+    return unlockPageScroll;
   }, [sheetOpen]);
 
   // Keyboard path: opening the sheet moves focus into it, Tab cycles WITHIN it, and Escape closes it
@@ -559,7 +554,18 @@ export function DynamicIslandNav() {
         </motion.header>
       </div>
 
-      {/* Full navigation sheet: keyboard-reachable path to every destination the user qualifies for. */}
+      {/* Full navigation sheet: keyboard-reachable path to every destination the user qualifies for.
+
+          The overlay's rung is `z-[90]`, not the `z-40` it shipped with, and the reason is
+          `AppShell`'s <main>. That element used to carry `z-10`, which made it a stacking context
+          and quietly capped everything a page mounts — however high the page declared it — below
+          this scrim. It carries no z-index now (the media lightbox and the full-screen editor, both
+          `z-[100]`, could not otherwise clear the island), so in-page fixed chrome competes with
+          this overlay directly in the ROOT stacking context, and a tie there is settled by tree
+          order alone — which this loses, because the nav renders BEFORE <main>. `UploadTray` is
+          fixed at `z-40`, so at the old rung an upload in flight painted its dock over an open
+          `aria-modal` sheet: undimmed and still clickable. 90 clears anything a page mounts and
+          stays below the `z-[100]` dialog rung, so this scrim still yields to a true modal. */}
       <AnimatePresence>
         {sheetOpen ? (
           <motion.div
@@ -567,7 +573,7 @@ export function DynamicIslandNav() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
-            className="nav-sheet-overlay fixed inset-0 z-40"
+            className="nav-sheet-overlay fixed inset-0 z-[90]"
           >
             {/* The scrim is its own element rather than the sheet's parent: `touch-action: none` is
                 what stops a drag on the dimmed page from panning it on iOS, and from an ancestor

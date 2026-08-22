@@ -11,6 +11,12 @@ from app.core.config import get_settings
 from app.core.db import db
 from app.core.security import decode_access_token
 
+# The platform allow-list, consulted on USE of a dataset credential and not only on its issue — see
+# the revocation paragraph in the SCOPED TOKENS banner below. Imported here rather than inside the
+# function because there is no cycle to avoid: `services/access_roster` reaches for `core.config`,
+# `core.db` and `services/designers`, and none of those reaches back for this module.
+from app.services import access_roster
+
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -74,6 +80,36 @@ def is_admin(user: Any) -> bool:
 
 def is_master_admin(user: Any) -> bool:
     return role_value(user) == "MASTER_ADMIN"
+
+
+def is_break_glass_master(user: Any) -> bool:
+    """Is this account the ONE identity the platform allow-list must never be able to bar?
+
+    THE BREAK-GLASS, SPELLED ONCE. ``access_roster`` decides who may sign in, and it is a table
+    administrators edit; the argument that made it safe to widen that gate from designers to
+    everybody is that there is always one account the gate itself exempts, so a bad UPDATE — or an
+    admin barring the master admin on their way out — cannot leave the institution with nobody able
+    to reach the roster screen and let people back in. See ``auth.assert_access_admits``.
+
+    TWO CLAUSES, AND THE SECOND IS NOT REDUNDANT. The role is the normal answer; the configured
+    ``MASTER_ADMIN_EMAIL`` is the answer on a fresh deployment where the row that carries the role
+    has not been seeded yet, or where somebody has demoted it. A break-glass that only works while
+    the database already says the right thing is not a break-glass.
+
+    Both sides of the address comparison must be non-empty. An unset ``MASTER_ADMIN_EMAIL`` and a
+    user row with no address would otherwise compare equal and exempt an account nobody chose —
+    the one direction this predicate must never fail in.
+
+    Lives here rather than in ``auth.py`` because it is now asked at more than one door: the sign-in
+    path and ``POST /api/datasets/token``, which mints a thirty-day machine credential and must
+    exempt exactly the same account for exactly the same reason. Copied instead of shared, the two
+    would drift, and the half that drifted would either lock the break-glass out or open it wider.
+    """
+    if is_master_admin(user):
+        return True
+    address = str(get_value(user, "email") or "").strip().lower()
+    configured = (get_settings().master_admin_email or "").strip().lower()
+    return bool(address) and address == configured
 
 
 def can_manage_questionnaire(user: Any) -> bool:
@@ -448,8 +484,25 @@ async def resolve_user(user_id: str) -> Any:
 # the first route that forgot, and "read-only" would have meant "may DELETE /crafts/{id}".
 #
 # Tokens are not revocable within their lifetime (there is no token store). What IS revocable is the
-# account: ``resolve_user`` re-reads the User row on every request behind a 5-second cache, so
-# demoting or deleting the service admin kills every token it ever minted, within 5 seconds.
+# ACCOUNT, and by two separate acts, because two separate tables can end somebody's access:
+#
+# * its RANK — ``resolve_user`` re-reads the User row on every request behind a 5-second cache, so
+#   demoting or deleting the service admin kills every token it ever minted, within 5 seconds; and
+# * its PLATFORM ACCESS — ``require_dataset_admin`` re-reads ``AccessRoster`` per request, so
+#   suspending or rejecting the account on the access screen stops the token at its next use.
+#
+# THE SECOND ONE IS NEW AND IT WAS THE GAP. Suspension writes the roster status and never
+# ``User.role``, so before it existed the mint gate in ``routes/datasets`` refused a suspended admin
+# a NEW token while the thirty-day one they already held kept working to its expiry — an
+# administrator pressing Suspend on a departing colleague believed bulk data access was cut, and it
+# was not. A gate on issue alone revokes nothing for the life of the credential already out there.
+#
+# WHAT IS STILL NOT REVOKED, STATED SO NOBODY HAS TO INFER IT: an ordinary SESSION token. It is
+# checked by ``get_current_user``, which asks for rank and not for platform access, so a suspended
+# account keeps the interactive application until its session token expires (``jwt_expires_minutes``,
+# seven days). The allow-list read is paid HERE and not there deliberately: this dependency guards
+# the one credential that hands over the whole repository to a machine and is asked a handful of
+# times a day, where ``get_current_user`` is on the hot path of every request in the API.
 # =================================================================================================
 
 #: Scope claim carried by a dataset token: the bulk read-only export API and nothing else.
@@ -519,6 +572,30 @@ async def require_dataset_admin(
     Deliberately stricter than ``require_dataset_downloader`` (Professor and above, or an explicit
     grant), which gates the in-app export surfaces. This API hands over the repository in bulk to a
     non-interactive caller, so it is admin-only exactly as asked.
+
+    **THE PLATFORM ALLOW-LIST IS RE-READ ON EVERY USE, NOT ONLY WHERE THE TOKEN IS MINTED**, and
+    that is what makes suspension mean anything here. ``routes/datasets.mint_dataset_token`` runs
+    the sign-in gate, so a suspended admin cannot take a NEW credential — but the one they were
+    given yesterday is good for thirty days (``dataset_token_expires_minutes``) and no store exists
+    to tear it up. An administrator who presses Suspend on a departing colleague is entitled to
+    believe bulk data access is cut; a gate that stops at the issuing door leaves it running.
+
+    READ AS A CUT LIST, exactly as ``services/access_roster.barred_emails`` is: REJECTED and
+    SUSPENDED are refused, and everything else — including PENDING and an address with no row at
+    all — is let through. The stronger "require an ACTIVE row" is deliberately NOT used at this
+    door. It belongs at the gate, where a refusal can enqueue the person for an administrator and
+    where the empanelment clause can heal a missing row; here there is no person to enqueue and no
+    healing to do, so failing closed would only strand a live credential on a state the sign-in
+    path would have admitted. The barring states are the two no sign-in heals, and they are the
+    only two an administrator ever chose.
+
+    A PURE READ, and that is a security property rather than an economy. The full gate WRITES —
+    ``access_roster.record_refused_attempt`` bumps an attempt count and can 503 when the approval
+    queue is full — and a cron job polling this API every minute must not be able to inflate an
+    administrator's queue, nor to start failing because other people's join requests filled it.
+
+    The master admin is exempt through the same ``is_break_glass_master`` both other doors use: the
+    break-glass has to open at every door or it is not one.
     """
     user = await _user_from_bearer(credentials, allowed_scopes=frozenset({DATASET_READ_SCOPE}))
     if not is_admin(user):
@@ -526,6 +603,21 @@ async def require_dataset_admin(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required for the bulk dataset API.",
         )
+    if not is_break_glass_master(user):
+        row = await access_roster.access_row(getattr(user, "email", None))
+        if access_roster.status_of(row) in access_roster.BARRED:
+            # Named plainly, because the caller has already proved it holds this account: the
+            # operator reading a cron job's log needs to know the credential was not corrupted and
+            # has not expired but was revoked, and which screen restores it. There is no attempt
+            # row behind this refusal to send them to, so the sentence is all they get.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This account's platform access has been withdrawn on the access screen, so "
+                    "its dataset credential is refused. Ask an administrator to restore the "
+                    "account's access; minting a new token will not help until they do."
+                ),
+            )
     return user
 
 
@@ -684,6 +776,23 @@ def assert_can_contribute_fields(record: Any, user: Any, data: dict[str, Any], o
 
     # A populated field is locked to non-privileged editors whether they try to CHANGE it or CLEAR it.
     # (The earlier version skipped an incoming empty value, which let anyone blank out a populated field.)
+    #
+    # WHAT "CLEAR" CAN AND CANNOT MEAN HERE, because the sentence above was read as covering more
+    # than it does. ``guard_record_edit`` hands this function the CLEANED payload — its docstring
+    # says so — and ``records.clean_data`` has already dropped every ``None`` except the global
+    # ``CLEARABLE_KEYS`` and the per-model names the route declared in ``clearable=``. So the two
+    # halves are enforced in two different places, and both have to hold for the sentence to be true:
+    #
+    #   * ``""`` and other empty values always reach this loop, on every field, and are refused here.
+    #   * ``None`` reaches this loop only on a name the route declared clearable — where it IS
+    #     refused. On any other name the null never gets this far, and nothing is written either, so
+    #     the field is still not blanked; it is simply not this function that stopped it.
+    #
+    # The failure mode to watch for is therefore not a leak but a MISMATCH: a route that adds a name
+    # to its ``clearable=`` tuple is also handing this guard a case it did not previously see, and a
+    # route that removes one takes that case away. Neither can open a hole in this rule — a name that
+    # is not clearable cannot be cleared at all — but a reader tracing "who may blank this column"
+    # has to look at the route's tuple as well as at this list.
     locked_fields = [
         field
         for field, next_value in data.items()

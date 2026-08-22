@@ -297,7 +297,21 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4"
+      /*
+        THE DIALOG RUNG, NOT THE ISLAND'S.
+
+        This was `z-50`, the island's own rung, and it lost to the island twice over. Every call
+        site renders this component inside `AppShell`'s `<main>`, which used to carry `z-10` and was
+        therefore a STACKING CONTEXT: nothing inside it could out-paint anything outside it,
+        whatever z-index it declared, so a fixed full-screen overlay sat UNDER a navigation pill
+        that still took clicks. `main` has given its z-index up (see the note there), but a tie on
+        50 would then be settled by source order alone, which is not a thing a modal should depend
+        on. The pill lit and clickable over a surface that has just declared `aria-modal="true"` is
+        the defect: `BackButton`'s leave interception guards the round arrow, not the island's
+        links, so clicking one navigated away from an unsaved record form without a word. 100 is the
+        app's dialog layer — `FieldDialog`'s default — and that is what this is.
+      */
+      className="fixed inset-0 z-[100] grid place-items-center bg-black/70 p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`Preview ${item.name}`}

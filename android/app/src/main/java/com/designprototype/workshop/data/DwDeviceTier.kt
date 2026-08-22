@@ -77,23 +77,61 @@ import java.util.Locale
  * constructor beside the model id, and refuses to be built without one: it is not possible anywhere
  * in this app to hold a recommendation that names a model and not the cap it was measured at.
  *
- * ── AND TIER 1 IS NOT BUILT EITHER, WHICH IS A DIFFERENT SENTENCE — AND NO LONGER ONE SENTENCE ─
+ * ── TIER 1 IS BUILT, AND THIS PARAGRAPH SAID THE OPPOSITE FOR TEN DAYS ────────────────────────
  *
- * Offline speech recognition (sherpa-onnx + AI4Bharat IndicConformer) is step 4 of the plan's
- * sequence and NO ASR RUNTIME IS IN THIS APK. This file may describe what a handset COULD run; it
- * must never imply the app can run it today. [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] is that
- * distinction made into a value, so the difference survives being rendered.
+ * Offline speech recognition is sherpa-onnx + a CTC model, and **THE ENGINE IS IN THIS APK**:
+ * `lib/arm64-v8a/libsherpa-onnx-jni.so`, 23,646,824 bytes, read off the installed `base.apk`.
+ * [DW_TIER1_RUNTIME_PRESENT] has been `true` since 2026-08-12 and must stay true —
+ * `System.loadLibrary` cannot reach `filesDir`, so the engine cannot live anywhere else. This file
+ * may describe what a handset COULD run and must never imply the app can run more than it can; the
+ * failure this correction repairs is the opposite one, an app claiming LESS than it holds.
  *
- * **WHAT CHANGED ON 2026-08-12: THE ENGINE IS NOW SOMETHING A DESIGNER CAN INSTALL, SO "NO ENGINE IN
- * THIS BUILD" STOPPED BEING THE WHOLE ANSWER.** It is still the answer every handset gets today —
- * see below — but it is now REACHED rather than assumed, and the states around it have multiplied.
- * `DwAsrRuntime.kt` owns the engine's install state, and [dwTier1Offer] asks it instead of returning
- * a constant. **EIGHT distinct refusals are now reachable where there was one** — count them off the
- * `when` in [dwTier1Offer] rather than off this table, which groups some of them by situation:
+ * **CORRECTED 2026-08-22.** This paragraph read *"NO ASR RUNTIME IS IN THIS APK"* and the table below
+ * marked the no-engine refusal *"today, everywhere"*. Both were written before the AAR was vendored
+ * and neither moved when it was. **That is not a stale comment, it is the same drift that already
+ * shipped as a user-facing sentence** — in the build at `ec46d2a` the Appearance screen opened
+ * *"This app has no speech engine of its own on this phone, and there is none published for it to
+ * fetch"* on a handset carrying 23.6 MB of exactly that.
  *
- *  | the handset's situation | the refusal it gets |
+ * **THAT QUOTATION IS THE SENTENCE AS IT SHIPPED, NOT THE ONE IN THIS FILE TODAY**, and the
+ * difference matters enough to state: `db97489` cut that arm from 102 words to 38, so the TIER_1
+ * arm of [dwTierRefusalSentence] now opens *"This app has no speech engine of its own yet — that is
+ * work that has not been built."* The rewrite changed the wording and kept the false claim, which is
+ * the whole shape of this drift; a reader checking the quote against the constant would otherwise
+ * find them different and conclude the quote was invented.
+ *
+ * The constant was fixed; the prose describing it was not — in SEVEN places in this file (this
+ * header, the [dwTier1Offer] summary, the [DW_TIER1_RUNTIME_PRESENT] summary, both `…Choices` fields
+ * on [DwTierRecommendation], the [dwTierDownloadMayBeOffered] gate, and the
+ * `NOTHING_PUBLISHED_TO_INSTALL` arm of the `when` inside [dwTier1Offer]) and EIGHT in
+ * docs/DEVICE-TIER-MEASUREMENT.md (the 6–8 GB recommendation cell, the three paragraphs under that
+ * table, two rows of *What was and was NOT changed*, the Tier 1 third-sentence paragraph, two rows
+ * of the pinning table, and the `dwRecommendTiers` probe table).
+ * All fifteen are corrected together, which is what the last paragraph of this header asks of
+ * anybody who moves one of them. **Thirteen were corrected on 2026-08-22 and the last two the same
+ * day, by a review of that pass** — the `when` arm named above, which was still asserting the old
+ * claim inside the very block this header tells the reader to count refusals off, and the probe
+ * table in the document, whose two tier rows had not merely gone stale but had swapped. A count is
+ * put in this header precisely so the next reader can check it rather than trust it.
+ *
+ * **WHAT A HANDSET ACTUALLY GETS TODAY.** [DW_TIER1_RUNTIME_PRESENT] is `true`, so [dwTier1Offer]
+ * takes its installed branch on every device, and [DW_TIER1_CATALOGUE] holds one measured row — so
+ * the answer is a real [DwTierOffer.Available] on a phone with room for it, and whatever [dwPlanFits]
+ * says on one without — [DwTierRefusal.NOT_ENOUGH_FREE_RAM_NOW], [DwTierRefusal.DEVICE_TOO_SMALL],
+ * [DwTierRefusal.ABI_NOT_BUILT_FOR] and the rest. [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] is
+ * reached by no production handset at all. `DwDeviceTierTest` pins that anything offered is a row
+ * somebody weighed on a named handset, which is the rule the old "nothing is ever offered" assertion
+ * was a stand-in for.
+ *
+ * **THE EIGHT REFUSALS BELOW HAVE NOT GONE AWAY — THEY MOVED BEHIND A PARAMETER.** `DwAsrRuntime.kt`
+ * owns the engine's install state and [dwTier1Offer] still asks it; that branch is what a build
+ * WITHOUT the vendored AAR takes, and it is reached in production by nothing and in tests by
+ * `runtimeInApk = false`. Count them off the `when` in [dwTier1Offer] rather than off this table,
+ * which groups some of them by situation:
+ *
+ *  | the handset's situation (in a build with no engine in the package) | the refusal it gets |
  *  |---|---|
- *  | nothing published to install (**today, everywhere**) | [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] |
+ *  | nothing published to install (**every handset, in such a build**) | [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] |
  *  | an artifact exists and this phone could take it, is fetching it, or has no connection to fetch it with | [DwTierRefusal.RUNTIME_NOT_INSTALLED] |
  *  | an artifact exists and this phone cannot take it | [DwTierRefusal.ABI_NOT_BUILT_FOR] / [DwTierRefusal.ABI_UNMEASURED] / [DwTierRefusal.NOT_ENOUGH_FREE_STORAGE] / [DwTierRefusal.FREE_STORAGE_UNMEASURED] |
  *  | the engine is installed, and there is no model — or it cannot be installed because there is none | [DwTierRefusal.NO_MEASURED_MODEL] |
@@ -1271,8 +1309,20 @@ val DW_TIER1_CATALOGUE: List<DwModelPlan> = listOf(
 )
 
 /**
- * Whether this APK **CONTAINS** a speech-recognition runtime. **IT NOW DOES, AND THIS CONSTANT IS
- * THEREFORE KNOWN-FALSE. READ THE CORRECTION BEFORE THE REST.**
+ * Whether this APK **CONTAINS** a speech-recognition runtime. **IT DOES, AND THIS CONSTANT SAYS SO:
+ * IT IS `true`, AND FLIPPING IT BACK IS A DEFECT THIS PROJECT HAS ALREADY SHIPPED ONCE.**
+ *
+ * The reason it cannot be `false` is at the foot of this block: `System.loadLibrary` resolves only
+ * through `nativeLibraryDirectories`, `filesDir` is not in that list and cannot be put in it, so the
+ * engine is in the package by necessity and this constant is the honest description of that.
+ *
+ * **THIS SUMMARY LINE READ "IT NOW DOES, AND THIS CONSTANT IS THEREFORE KNOWN-FALSE" UNTIL
+ * 2026-08-22, WHICH WAS TRUE FOR THE HOURS BETWEEN THE MEASUREMENT AND THE FLIP AND FALSE FOR THE
+ * TEN DAYS AFTER IT.** The block below is a correction written before the flip and then a record of
+ * the flip; the opening sentence was never brought forward, so the first line a reader saw described
+ * a value the file had already stopped holding. Everything under the two rules below is preserved
+ * verbatim, dated, and still worth reading — it is the argument, and the argument is why the value
+ * is what it is.
  *
  * ── CORRECTED 2026-08-12, EVENING, BY THE LANE THAT REVIEWED THE ENGINE ──────────────────────
  *
@@ -1288,10 +1338,13 @@ val DW_TIER1_CATALOGUE: List<DwModelPlan> = listOf(
  *
  * **WHAT THE STALE VALUE COSTS A DESIGNER, CONCRETELY.** With this constant `false` and
  * [DW_ASR_ARTIFACTS] empty, [dwAsrMayLoad] is false, so [dwTier1Offer] answers
- * [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] and the sentence rendered under it opens *"This app has no
- * speech engine of its own on this phone"* — on a phone carrying 23.6 MB of exactly that. **The error
- * points the safe way**: the app claims LESS than it holds and never more, which is why this is a
- * correction to act on rather than a defect that stops a release.
+ * [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] and the sentence rendered under it opened, in the build
+ * at `ec46d2a`, *"This app has no speech engine of its own on this phone, and there is none published
+ * for it to fetch"* — on a phone carrying 23.6 MB of exactly that. (Quoted as it then read;
+ * `db97489` shortened that arm of [dwTierRefusalSentence] and kept the claim, so today it opens
+ * *"This app has no speech engine of its own yet"*.) **The error points the safe way**: the app
+ * claims LESS than it holds and never more, which is why this is a correction to act on rather than
+ * a defect that stops a release.
  *
  * **WHY IT WAS NOT SIMPLY FLIPPED IN PASSING.** `true` sends [dwTier1Offer] down the installed branch
  * to [DwTierRefusal.NO_MEASURED_MODEL], which is the truthful answer while [DW_TIER1_CATALOGUE] is
@@ -1329,7 +1382,9 @@ val DW_TIER1_CATALOGUE: List<DwModelPlan> = listOf(
  * **WHAT THE STALE `false` WAS COSTING, WHICH IS THE REASON THIS IS A DEFECT AND NOT A TIDY-UP.**
  * With it `false` and [DW_ASR_ARTIFACTS] empty, [dwAsrMayLoad] is false, so [dwTier1Offer] answered
  * [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] and the Appearance screen opened *"This app has no speech
- * engine of its own on this phone"* — **on a phone carrying 23.6 MB of exactly that.** Worse,
+ * engine of its own on this phone, and there is none published for it to fetch"* (the wording at
+ * `ec46d2a`; `db97489` shortened it and kept the claim) — **on a phone carrying 23.6 MB of exactly
+ * that.** Worse,
  * `DwDeviceTierTest` asserted the falsehood in its own failure message, so the green suite certified
  * it. The tests moved in this same commit, which is what the paragraph above asked for.
  *
@@ -1536,7 +1591,12 @@ data class DwTierRecommendation(
     val connection: DwConnection,
     /**
      * **EVERY MEASURED TIER 1 MODEL, JUDGED AGAINST THIS HANDSET — THE LIST A DESIGNER CHOOSES
-     * FROM.** Empty today, because [DW_TIER1_CATALOGUE] is.
+     * FROM.** One row today, because [DW_TIER1_CATALOGUE] holds one.
+     *
+     * **CORRECTED 2026-08-22: this said "Empty today, because [DW_TIER1_CATALOGUE] is."** That was
+     * written while the catalogue was empty and did not move when a measured row was added to it, so
+     * it told a reader the designer had nothing to choose from on the very screen where they choose.
+     * The Tier 2 line below it had drifted the same way and is corrected with it.
      *
      * It is not the same list as "what we recommend": it holds the ones this phone is comfortable
      * with, the ones it can run with less room to spare, the ones that will not fit at all and the
@@ -1544,7 +1604,16 @@ data class DwTierRecommendation(
      * [dwModelDownloadMayBeOffered] for the one gate that decides whether a control is drawn.
      */
     val tier1Choices: List<DwModelChoice> = emptyList(),
-    /** The same for Tier 2. Empty today, because [DW_TIER2_CATALOGUE] is. */
+    /**
+     * The same for Tier 2. **Two rows today** — [DW_TIER2_CATALOGUE] delegates to `DW_TIER2_PLANS`,
+     * which holds two. This said "Empty today, because [DW_TIER2_CATALOGUE] is" and was corrected
+     * 2026-08-22 alongside [tier1Choices]; the catalogue stopped being empty on 2026-08-13.
+     *
+     * A NON-EMPTY LIST IS NOT AN OFFER. [tier2] is still [DwTierOffer.None] on every handset, because
+     * [DW_TIER2_RUNTIME_PRESENT] is `false` and [dwTier2Offer] checks it — so nothing here is ever
+     * drawn with a download control beside it. `DwTier2ModelsTest` pins that for every row against
+     * every connection, and it is that constant, not the length of this list, that holds the line.
+     */
     val tier2Choices: List<DwModelChoice> = emptyList(),
 ) {
     /** True when the server chain can be reached right now. The only tier that is ever available. */
@@ -1703,10 +1772,19 @@ internal fun dwTier2Offer(
 }
 
 /**
- * What this handset is offered for Tier 1 — **still [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] on every
- * device today, but ASKED rather than assumed.**
+ * What this handset is offered for Tier 1 — **the engine is in the package, so this takes its
+ * installed branch on every production device and answers from [DW_TIER1_CATALOGUE].**
  *
- * ── WHY THE ANSWER IS THE SAME AND THE CODE IS NOT ────────────────────────────────────────────
+ * **CORRECTED 2026-08-22.** This summary read *"still [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] on
+ * every device today, but ASKED rather than assumed"*, and the paragraph below it said the same. It
+ * was contradicted six lines further down by [runtimeInApk]'s own documentation, which states
+ * plainly that [DW_TIER1_RUNTIME_PRESENT] is now `true` and that the whole not-installed branch is
+ * therefore unreachable in production. One function, two answers, and the wrong one first: with
+ * `runtimeInApk` defaulting to `true` the first `if` below is taken, `catalogue.isEmpty()` is false
+ * because [DW_TIER1_CATALOGUE] holds a measured row, and the result is [dwBestPlan]'s — an
+ * [DwTierOffer.Available] on a handset with the room for it.
+ *
+ * ── WHY THE NOT-INSTALLED BRANCH IS STILL HERE, AND WHAT IT IS FOR ────────────────────────────
  *
  * Until 2026-08-12 this function's whole body was `if (!DW_TIER1_RUNTIME_PRESENT) return …`, a
  * compile-time constant that made "there is no engine in this build" the answer on every handset in
@@ -1716,11 +1794,11 @@ internal fun dwTier2Offer(
  * it; and not looked at yet. Each of those sends a designer somewhere different, so each gets its own
  * refusal — see the table in this file's header, which docs/DEVICE-TIER-MEASUREMENT.md mirrors.
  *
- * TODAY EVERY ONE OF THEM RESOLVES TO THE SAME PLACE, because [DW_ASR_ARTIFACTS] is empty: nothing has
- * been published to install, so the answer is "no engine, and none to be had", which is
- * [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] and is the same value the constant used to return. **The
- * shipped sentence is therefore nearly unchanged and the reasoning behind it is completely different**,
- * which is exactly the state the measurement document predicted this lane would be in.
+ * IN A BUILD THAT DOES NOT BUNDLE THE ENGINE, every one of them resolves to the same place, because
+ * [DW_ASR_ARTIFACTS] is empty: nothing has been published to install, so the answer is "no engine,
+ * and none to be had", which is [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD]. **That is not this build.**
+ * This build vendors the AAR, [DW_TIER1_RUNTIME_PRESENT] is `true`, and none of those refusals is
+ * reachable without passing [runtimeInApk] `false` — which only a test does.
  *
  * ── THE ORDER, AND WHY THE ENGINE QUESTION COMES BEFORE THE MODEL QUESTION ────────────────────
  *
@@ -1792,8 +1870,15 @@ internal fun dwTier1Offer(
          * functions with the same default are not the same as two functions with one answer.
          */
         when (dwAsrOffer(runtime, measurement, connection, artifacts, catalogue, runtimeInApk)) {
-            // Nothing published, no digest pinned: there is no engine and none to be had. TODAY'S
-            // ANSWER, on every handset in the fleet.
+            // Nothing published, no digest pinned: there is no engine and none to be had.
+            //
+            // CORRECTED 2026-08-22: this read "TODAY'S ANSWER, on every handset in the fleet", which
+            // was written before the AAR was vendored and is the same claim the rest of this pass
+            // corrected elsewhere — three hundred lines above, the header now says no production
+            // handset reaches [DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD] at all, and it says to count
+            // the refusals off THIS `when`. The whole branch is reached only with
+            // `runtimeInApk = false`, so this is the answer in a build that does not bundle the
+            // engine, which no production build is.
             DwAsrOffer.NOTHING_PUBLISHED_TO_INSTALL -> DwTierRefusal.NO_RUNTIME_IN_THIS_BUILD
 
             // An engine exists for this phone and could be fetched — or is being fetched right now.
@@ -1892,10 +1977,15 @@ fun dwRecommendTiers(
  * This function only ever decides whether a BUTTON EXISTS; the fetch itself is a designer's own tap
  * on it, with the size printed above it first.
  *
- * It returns false for every handset in existence today, because every [DwTierOffer] this app can
- * currently produce is a [DwTierOffer.None]. `DwDeviceTierTest` asserts exactly that, across every
- * device class and every connection, so a future catalogue entry cannot quietly turn a download
- * loose on the fleet without a test going red first.
+ * **CORRECTED 2026-08-22.** This read *"It returns false for every handset in existence today,
+ * because every [DwTierOffer] this app can currently produce is a [DwTierOffer.None]. `DwDeviceTierTest`
+ * asserts exactly that"* — and both halves had stopped being true. [DW_TIER1_CATALOGUE] holds a
+ * measured row, so a phone with the room for it IS offered a Tier 1 download, which is the feature
+ * working rather than the guard failing; and the test deliberately narrowed itself when that row
+ * landed. What it asserts now is the rule the old state was standing in for: **Tier 2 is offered on
+ * no handset and no connection, nothing at all is offered with no connection, and anything that IS
+ * offered is a row somebody weighed on a named handset.** That is the guard, and it goes on holding
+ * after the next measurement lands.
  */
 fun dwTierDownloadMayBeOffered(offer: DwTierOffer, connection: DwConnection): Boolean =
     offer is DwTierOffer.Available && connection != DwConnection.NONE

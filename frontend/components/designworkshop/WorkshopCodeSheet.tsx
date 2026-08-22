@@ -31,9 +31,28 @@
  *
  * WHY IT DOES NOT INVERT IN DARK MODE. The sheet is a depiction of paper — the same exemption
  * `ReportSheet` takes, for the same reason. Everything outside the sheet is themed as usual.
+ *
+ * WHY THE PRINT BLOCK MARKS AN ANCESTOR INSTEAD OF THE SHEET ITSELF. The block hides every direct
+ * child of AppShell's `<main>` and puts one back, which is the only way to drop chrome this
+ * component does not own. It used to put back `#main-content > .wc-host` — the sheet's own root —
+ * and that only worked if a caller happened to mount the sheet as a direct child of `<main>`. The
+ * one caller does not: `design-workshops/[id]/codes` wraps it in a spacing div, so the hidden
+ * wrapper took the sheet down with it and the Print button on the only print screen in the feature
+ * produced a page with nothing on it. Measured in Chromium with `emulateMedia({ media: "print" })`
+ * before the fix: the nested sheet's `checkVisibility()` was `false`. So {@link usePrintKeepMarker}
+ * now walks up from the sheet to whichever element IS the direct child and marks THAT — which also
+ * strips the wrapper's own margin and border out of the printout, exactly as `.rp-host` does for
+ * the report. A caller can nest the sheet as deeply as it likes and printing still works.
+ *
+ * PRINTING ONE CARD. {@link WorkshopCodePrintout} is the entry path for a single record's code:
+ * `RecordCode.tsx` renders it while a designer is printing the tool in their hand, and it reuses
+ * every millimetre and every rule above rather than growing a second, subtly different card. It
+ * borrows the print block by mounting a hidden container as a direct child of `<main>` — see the
+ * component for why the container is created by hand rather than portalled straight into `<main>`.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 
 import { encodeQr, qrSvgPath, QrEncodeError } from "@/lib/qrEncode";
 import {
@@ -221,11 +240,22 @@ function sheetStyles(): string {
   #main-content { padding: 0 !important; max-width: none !important; }
   .nav-island-frame, .nav-sheet-overlay { display: none !important; }
 
+  /* A modal is never part of a printout. FieldDialog portals to <body>, so it is outside the group
+     hidden below and would otherwise print its backdrop across the cards — including the dialog a
+     designer may have the record open in when they press Print on one card. */
+  [data-field-dialog-overlay] { display: none !important; }
+
   /* EVERYTHING THAT IS NOT THE SHEET IS DROPPED — the page header, the scanner, the kind picker,
      the banners. They are direct children of AppShell's <main>, hidden as a group so that the next
-     section anybody adds to this page does not silently start printing itself. */
+     section anybody adds to this page does not silently start printing itself.
+
+     .wc-print-keep and NOT .wc-host: the class is put on whichever direct child of <main>
+     CONTAINS the sheet (see usePrintKeepMarker), because a caller that wraps the sheet in a
+     spacing div had its wrapper hidden here and the sheet went down with it. The reset that
+     follows is the same one .rp-host gets, and it is what sheds the wrapper's margin, border
+     and shadow so the paper starts at the paper's edge. */
   #main-content > * { display: none !important; }
-  #main-content > .wc-host {
+  #main-content > .wc-print-keep {
     display: block !important;
     padding: 0 !important; margin: 0 !important; border: 0 !important;
     border-radius: 0 !important; box-shadow: none !important; background: transparent !important;
@@ -240,6 +270,31 @@ function sheetStyles(): string {
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 }
 `;
+}
+
+/**
+ * Mark the element the print block has to put back, and take the mark off again on unmount.
+ *
+ * The block above hides every direct child of `#main-content` and un-hides one. WHICH one cannot be
+ * written in CSS, because it depends on how deep the caller mounted the sheet — and the only caller
+ * mounts it one level down, inside a spacing div, which is how the Cards & tags Print button came to
+ * produce an empty page. So the sheet walks up from itself to the direct child of `<main>` and puts
+ * the class there. Marking an ancestor rather than the sheet also strips that wrapper's own margin
+ * and chrome out of the printout, which is what the CSS reset beside the class is for.
+ *
+ * No `#main-content` (a sheet rendered outside AppShell, or in a test harness) simply means no mark:
+ * nothing is hidden in that document either, so the sheet prints as ordinary page content.
+ */
+function usePrintKeepMarker(hostRef: RefObject<HTMLDivElement | null>): void {
+  useEffect(() => {
+    const main = document.getElementById("main-content");
+    let node: HTMLElement | null = hostRef.current;
+    while (node && node.parentElement && node.parentElement !== main) node = node.parentElement;
+    if (!main || !node || node.parentElement !== main) return;
+    const marked = node;
+    marked.classList.add("wc-print-keep");
+    return () => marked.classList.remove("wc-print-keep");
+  }, [hostRef]);
 }
 
 /**
@@ -258,6 +313,8 @@ export function WorkshopCodeSheet({
   emptyMessage: string;
 }) {
   const geometry = GEOMETRY[recordType];
+  const hostRef = useRef<HTMLDivElement>(null);
+  usePrintKeepMarker(hostRef);
 
   const rendered = useMemo(() => cards.map(renderCard), [cards]);
 
@@ -271,7 +328,7 @@ export function WorkshopCodeSheet({
 
   if (!cards.length) {
     return (
-      <div className="wc-host">
+      <div className="wc-host" ref={hostRef}>
         <style>{sheetStyles()}</style>
         <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">{emptyMessage}</p>
       </div>
@@ -279,7 +336,7 @@ export function WorkshopCodeSheet({
   }
 
   return (
-    <div className="wc-host">
+    <div className="wc-host" ref={hostRef}>
       <style>{sheetStyles()}</style>
       {/* Horizontally scrollable rather than shrunk to fit: a sheet drawn at anything but 100% is
           not a preview of what will come out of the printer, which is the one question this screen
@@ -336,5 +393,110 @@ export function WorkshopCodeSheet({
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * Print ONE card — the record a designer is holding, from the screen that record is open on.
+ *
+ * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────────────────────
+ *
+ * Until it did, the only print path in the feature was the Cards & tags page, which prints a sheet
+ * of thirty. A designer with one tool in their hand and one label to tie to it had to print forty
+ * tags and cut out the one they wanted, or not print at all. `RecordCode.tsx` offered Expand,
+ * Download PNG, Download SVG and Copy — every way of moving a code around except the one a workshop
+ * actually uses, which is paper.
+ *
+ * ── WHY IT REUSES THE SHEET RATHER THAN DRAWING A CARD OF ITS OWN ────────────────────────────
+ *
+ * Everything a printed card needs is already decided here and decided in millimetres: the 26mm QR
+ * box that keeps a module above the resolution floor of a handset camera, the geometry per record
+ * type, the two-line name clamp that protects the printed code, the amber refusal, the hairline cut
+ * guide. A second card layout would be a second set of those numbers, and the first time one of them
+ * drifted the symptom would be a tag that scans on the designer's phone and on nobody else's. So
+ * this is the same component with an array of one, at the same error-correction level, over the same
+ * payload — one record has one symbol, whichever surface drew it.
+ *
+ * ── WHY A CONTAINER IS CREATED BY HAND ───────────────────────────────────────────────────────
+ *
+ * The print block un-hides a direct child of `#main-content`, and a `RecordCodeCard` is never one:
+ * it sits inside a page's grid, or a table row, or a dialog. So the sheet is portalled OUT to a
+ * container appended to `<main>`. The container is created with `document.createElement` rather than
+ * portalling straight into `#main-content` because React is already reconciling that element's
+ * children — two writers on one child list is how a route change turns into a `removeChild` crash.
+ * Our own div is ours to remove, and React only ever touches what is inside it.
+ *
+ * It carries an INLINE `display: none`, not a class: the stylesheet that hides it only exists while
+ * a sheet is mounted, so a class would leave one frame in which a full A4 page of paper appears
+ * under the record. The print block's `!important` beats the inline style — measured in Chromium
+ * with `emulateMedia({ media: "print" })`, the container computes `display: block` there and `none`
+ * on screen.
+ *
+ * ── WHY IT IS MOUNTED ONLY WHILE PRINTING ────────────────────────────────────────────────────
+ *
+ * `sheetStyles()` is a global stylesheet with an `@media print` block that hides most of the page.
+ * Leaving it mounted on every record screen would mean every record screen quietly printed like a
+ * card sheet. Mount it for the length of one print and take it away again.
+ */
+export function WorkshopCodePrintout({
+  card,
+  onFinished
+}: {
+  card: WorkshopCodeCard;
+  /**
+   * Called once the print dialog has been dismissed, so the caller can unmount this. MUST be stable
+   * (`useCallback`) — a new identity re-runs the effect below, and the guard beside it is the only
+   * thing that then stops a second print dialog opening on top of the first.
+   */
+  onFinished: () => void;
+}) {
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  const printed = useRef(false);
+
+  useEffect(() => {
+    const main = document.getElementById("main-content");
+    // Nothing to hang the printout on. Silent rather than thrown: the caller checks for `<main>`
+    // before it mounts this and says so in words, and a throw here would take the record screen
+    // down over a print.
+    if (!main) return;
+    const node = document.createElement("div");
+    node.style.display = "none";
+    main.append(node);
+    setContainer(node);
+    return () => node.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!container || printed.current) return;
+    printed.current = true;
+    const finish = () => onFinished();
+    let settle: ReturnType<typeof setTimeout> | null = null;
+    window.addEventListener("afterprint", finish);
+    // A frame, so the browser has laid the sheet out before it is asked to paginate it. `print()`
+    // itself forces layout, but a symbol that has not been measured yet is the kind of thing that
+    // comes out of a printer half-drawn.
+    const frame = requestAnimationFrame(() => {
+      window.print();
+      // Chrome and Firefox block inside print() until the preview closes and fire `afterprint` on
+      // the way out; a browser that does neither is covered by asking again on the next task.
+      settle = setTimeout(finish, 0);
+    });
+    return () => {
+      window.removeEventListener("afterprint", finish);
+      cancelAnimationFrame(frame);
+      if (settle !== null) clearTimeout(settle);
+    };
+  }, [container, onFinished]);
+
+  if (!container) return null;
+  return createPortal(
+    <WorkshopCodeSheet
+      recordType={card.recordType}
+      cards={[card]}
+      // Unreachable — one card is always one card — but the prop is required, and a sentence that
+      // could never be read is still better than one that lies about what happened.
+      emptyMessage="This record has no code to print."
+    />,
+    container
   );
 }

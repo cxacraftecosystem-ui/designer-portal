@@ -217,6 +217,31 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   const [settings, setSettings] = useState<DwEntryData>(EMPTY_SETTINGS);
   const [preview, setPreview] = useState<DwPreview | null>(null);
   const [previewing, setPreviewing] = useState(true);
+  /**
+   * Whether there is no preview because something FAILED, as opposed to because there is nothing to
+   * show.
+   *
+   * The panel at the foot of this page had two states for three situations, and the missing one is
+   * the one that stranded people. `previewing` was cleared in exactly two places — the local-only
+   * branch above, and the preview loader's `finally` — and the loader is gated on `templateId`,
+   * which only the SUCCESSFUL workshop read ever sets. So a failed first load left the flag true
+   * with nothing left running that could ever clear it: "Building the preview…" for the life of the
+   * tab, over a red banner naming the failure, with the template dropdown empty (the list is read by
+   * the same request) so there was not even a selection change to retrigger the loader with. The
+   * only way out was a manual page reload, which is precisely the action a spinner tells somebody
+   * not to take.
+   *
+   * A separate flag rather than reading `error`: that banner is shared with the download handler and
+   * the settings panel, so a failed .docx would otherwise repaint the preview panel as broken while
+   * the sheets it is holding are perfectly good.
+   */
+  const [previewFailed, setPreviewFailed] = useState(false);
+  /**
+   * Bumped by "Try again" to re-run the workshop read, which has no other trigger — `remoteId` is
+   * resolved once from the draft and does not change, so the effect below would never fire a second
+   * time on its own.
+   */
+  const [retryToken, setRetryToken] = useState(0);
   const [transcripts, setTranscripts] = useState<DwTranscriptList | null>(null);
   const [transcriptOverride, setTranscriptOverride] = useState<TranscriptOverride>("");
   /**
@@ -337,6 +362,10 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     };
   }, [id]);
 
+  /**
+   * THE WORKSHOP, ITS REGISTRY AND THE TEMPLATE LIST — the read every other thing on this page
+   * waits behind, and the one whose failure used to leave the page spinning for ever.
+   */
   useEffect(() => {
     if (!remoteId) return;
     let cancelled = false;
@@ -348,6 +377,11 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           listReportTemplates()
         ]);
         if (cancelled) return;
+        // This read owns the banner it writes in its own catch, so a run that succeeds takes it
+        // down. Without this, "Try again" on a workshop that names no template lands on the
+        // "No preview available." panel with the previous attempt's red "could not be loaded"
+        // still at the top of the page — two contradictory verdicts on one load that worked.
+        setError(null);
         setRegistry(nextRegistry);
         setDetail(nextDetail);
         setTemplates(nextTemplates);
@@ -365,16 +399,33 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         // stage answer, produced the catalogue from the same record. One record, two documents, and
         // the required answer the form insisted on inert on this surface. Every other stage-20
         // setting on this page is already read off the stage entry; `templateId` was the exception.
-        setTemplateId(reportTemplateId(settingText(nextSettings, "templateId"), nextDetail.templateId));
+        const seeded = reportTemplateId(settingText(nextSettings, "templateId"), nextDetail.templateId);
+        setTemplateId(seeded);
+        // `reportTemplateId` answers "" when neither stage 20 nor the header column names one, and
+        // the preview loader below refuses to run without an id — so nothing would clear the flag
+        // this page mounts with. Rare, but it is the same eternal spinner as the catch, reached from
+        // a workshop that simply has no template on it.
+        if (!seeded) setPreviewing(false);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
+        /*
+          AND STOP CLAIMING A PREVIEW IS BEING BUILT.
+
+          Cleared HERE, after the cancelled guard, and deliberately not in a `finally`: the success
+          path sets `templateId`, which fires the preview effect below on a LATER commit, so a
+          `finally` would drop the flag in between and flash "No preview available." across every
+          healthy load. Guarded by `cancelled` for the same reason every setter in this effect is —
+          a late failure from a superseded read must not repaint the screen the current one owns.
+        */
+        setPreviewing(false);
+        setPreviewFailed(true);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [remoteId]);
+  }, [remoteId, retryToken]);
 
   /**
    * Rebuild the sheets. `template` is what the DESIGNER asked for and is empty for "the server
@@ -403,13 +454,18 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
       if (!remoteId) return;
       const mine = ++previewGeneration.current;
       setPreviewing(true);
+      // A fresh attempt is not a failed one. Unguarded on purpose — this is the newest request by
+      // construction, so there is no older generation whose verdict it could be overwriting.
+      setPreviewFailed(false);
       try {
         const next = await previewDesignWorkshopReport(remoteId, template || undefined);
         if (mine !== previewGeneration.current) return;
         setPreview(next);
+        setPreviewFailed(false);
         setError(null);
       } catch (err) {
         if (mine !== previewGeneration.current) return;
+        setPreviewFailed(true);
         setError(
           // `isUnreachable`, not `isTransient`: a 5xx means the server WAS reached and then failed,
           // and telling a designer their connection is at fault sends them to look at their signal
@@ -436,6 +492,28 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
   useEffect(() => {
     if (!templateId) return;
     loadPreview(templateTouched ? templateId : "");
+  }, [templateId, templateTouched, loadPreview]);
+
+  /**
+   * "Try again", offered by the preview panel — and it has to re-run whichever half failed.
+   *
+   * With a template on screen the workshop read succeeded and only the preview call is worth
+   * repeating. With none, the workshop read is what failed, and it is the read that has to be
+   * re-fired — not because `loadPreview` would refuse (it would not: its only early return is on
+   * `remoteId`, which is necessarily set here, and `previewDesignWorkshopReport(remoteId, undefined)`
+   * is a call the server answers). Because it would repaint the SHEETS while leaving everything the
+   * failed read owns still empty: `detail`, so the header has no workshop, `registry`, and
+   * `templates`, so the selector has nothing in it. Bumping `retryToken` re-runs the effect above,
+   * which is the only thing that fills those.
+   */
+  const retryPreview = useCallback(() => {
+    if (templateId) {
+      void loadPreview(templateTouched ? templateId : "");
+      return;
+    }
+    setPreviewFailed(false);
+    setPreviewing(true);
+    setRetryToken((token) => token + 1);
   }, [templateId, templateTouched, loadPreview]);
 
   /**
@@ -676,10 +754,20 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     <>
       <PageHeader
         title="Report"
+        /*
+          "Loading…" WAS ALSO PERMANENT, and for the same reason as the panel at the foot of the
+          page: `detail` is only ever set by the one read, so a read that failed — or a workshop the
+          server has no copy of, which never issues the read at all — left the header describing a
+          fetch that had stopped hours ago. Both of those are states with something to say.
+        */
         description={
           detail
             ? `Generated from “${detail.title}” — the same document the .docx and .pdf are written from.`
-            : "Loading…"
+            : localOnly
+              ? "This workshop has not reached the repository yet, and the report is written by the server from the copy it holds."
+              : previewFailed
+                ? "This workshop could not be loaded. The panel at the foot of the page offers a retry."
+                : "Loading…"
         }
         icon={<FileText className="h-5 w-5" aria-hidden />}
         actions={
@@ -1184,7 +1272,34 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           blank page. */}
       <section className="panel rp-host p-4 sm:p-6">
         {preview === null ? (
-          <p className="text-sm text-ink-700">{previewing ? "Building the preview…" : "No preview available."}</p>
+          /*
+            THREE STATES, BECAUSE THERE ARE THREE SITUATIONS.
+
+            This was a single ternary on `previewing`, and the flag it read could only ever be
+            cleared by the very code path that had just failed — see the note on `previewFailed`. So
+            a workshop whose first read failed sat under "Building the preview…" until the tab was
+            closed, and every other route to an empty preview said "No preview available.", which
+            reads as a settled fact about the record rather than as a request that did not arrive.
+
+            The retry is the part that matters. Without it there is no control anywhere on this page
+            that can re-issue the failed read: the template dropdown is populated by the same
+            response, so on a failed load it is empty and cannot be changed.
+          */
+          previewing ? (
+            <p className="text-sm text-ink-700">Building the preview…</p>
+          ) : previewFailed ? (
+            <div className="grid justify-items-start gap-2">
+              <p className="text-sm text-ink-700">
+                The preview could not be built. The banner at the top of this page says what the server or the connection
+                answered; nothing you have captured is affected.
+              </p>
+              <button type="button" className="field-button-secondary" onClick={retryPreview}>
+                Try again
+              </button>
+            </div>
+          ) : (
+            <p className="text-sm text-ink-700">No preview available.</p>
+          )
         ) : (
           <>
             <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b border-line-200 pb-3" data-rp-noprint>

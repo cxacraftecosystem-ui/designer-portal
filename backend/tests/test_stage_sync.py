@@ -1075,3 +1075,249 @@ async def test_a_stranger_is_still_told_nothing_about_a_deleted_workshop(
     assert stranger.status_code == 404, stranger.text
     assert stranger.json()["detail"] == "Record not found"
     client.post(f"/api/design-workshops/{workshop}/restore")
+
+
+# ── THE SINGLETON, AND THE RACE THAT USED TO SPLIT IT IN TWO ───────────────────────────────────
+#
+# `test_a_singleton_is_updated_not_duplicated` above asserts the SEQUENTIAL case, which Python
+# alone was always able to get right: read the stage, find the row, update it. The three tests
+# below are about the case Python alone cannot get right, because the read and the write are two
+# statements with a network in between.
+#
+# `@@unique([designWorkshopId, entityKey, clientKey])` could not enforce one singleton per workshop
+# while those rows carried a NULL key — Postgres treats NULLs as distinct under a unique index — so
+# uniqueness was a read-then-write with, on a field link, most of a second between the halves. Two
+# designers share a workshop by design (`DesignWorkshopViewer` exists for it), and both saving the
+# same stage in that window inserted two rows. The duplicate was not the damage: `entry_rows`
+# returns them unordered and completeness, `assemble_workshop_data` and the stage payload all take
+# last-write-wins over that order, so WHICH answer is scored, printed into the .docx and shown on
+# the form could differ between two reads of unchanged data.
+
+
+def test_the_reserved_key_differs_per_stage_because_custom_reuses_one_entity_key():
+    """No database, and the one property in this file that a database would not have caught.
+
+    The unique index is `(designWorkshopId, entityKey, clientKey)` and does NOT include `stageKey`.
+    For the fourteen registry singletons a bare constant would be enough, because an `EntitySpec.key`
+    is unique across the whole registry and so names its stage implicitly. **The reserved `_custom`
+    container is not**: every stage of a workshop that has a custom section stores its answers under
+    the same literal `_custom`. A bare constant would therefore have made stage 3's container and
+    stage 9's container collide inside one workshop, and the index would have REFUSED the second
+    stage's custom answers outright — a worse failure than the duplicate the key exists to prevent,
+    and one that would only appear on a workshop with custom sections on two stages.
+    """
+    from app.services.custom_sections import CUSTOM_ENTITY_KEY
+    from app.services.design_workshops import singleton_client_key
+
+    assert singleton_client_key("DESIGN_BRIEF") != singleton_client_key("WORKSHOP_OUTCOMES")
+    # Stable across calls: the same row must be addressed by the same value on every save.
+    assert singleton_client_key("DESIGN_BRIEF") == singleton_client_key("DESIGN_BRIEF")
+    # And it must not be mistakable for something a client generated.
+    assert singleton_client_key("DESIGN_BRIEF").startswith("__")
+    assert CUSTOM_ENTITY_KEY.startswith("_"), (
+        "this test's premise is that `_custom` is one entity key shared by every stage"
+    )
+
+
+def _brief(client, workshop_id, concept):
+    return client.put(
+        f"/api/design-workshops/{workshop_id}/stages/DESIGN_BRIEF",
+        json={"entries": [{"entityKey": "designBrief", "data": {
+            "concept": concept, "targetCategories": ["TABLE_LINEN"]}}]},
+    )
+
+
+async def _brief_rows(workshop_id):
+    return await db.dwstageentry.find_many(
+        where={"designWorkshopId": workshop_id, "entityKey": "designBrief"}
+    )
+
+
+async def test_a_singleton_row_carries_the_reserved_client_key(client, workshop):
+    """The key is what makes the index able to refuse a second row at all.
+
+    Asserted on the stored row rather than on the response, because the response never carried it
+    and the whole point is what is in the database.
+
+    THIS COVERS ONE OF THE TWO WRITERS. `designBrief` only ever exists because a save made it, so
+    this exercises `save_stage`'s INSERT and nothing else — which is precisely why the two tests
+    below exist. An invariant with one tested writer is a tested writer, not an invariant.
+    """
+    from app.services.design_workshops import singleton_client_key
+
+    assert _brief(client, workshop, "First concept").status_code == 200
+    rows = await _brief_rows(workshop)
+    assert len(rows) == 1
+    assert rows[0].clientKey == singleton_client_key("DESIGN_BRIEF"), (
+        "without a non-null clientKey the unique index cannot see this row, and two designers "
+        "saving at once get two rows the read paths choose between at random"
+    )
+
+
+async def test_the_prefill_seeded_singleton_carries_the_reserved_key_too(client):
+    """THE OTHER WRITER, AND THE ONE THAT ACTUALLY RUNS ON EVERY WORKSHOP.
+
+    `seed_designer_prefill` creates singleton rows straight from `POST /design-workshops`, and it
+    seeds `workshopSetup` — the singleton carrying the promoted columns — for any creator with a
+    profile or with craft/cluster/state/district/dates typed into the create form, which is very
+    nearly all of them. It wrote no `clientKey` at all, so the commonest singleton in the
+    repository sat outside `@@unique([designWorkshopId, entityKey, clientKey])` for the workshop's
+    whole life while a test over `designBrief` reported the invariant held. Postgres treats NULLs
+    as distinct, so the index does not merely fail to help there — it does not apply.
+
+    `stageKey` is read off the row rather than written here, because the registry is explicitly
+    designed to be reorganised and the prefill asks it which stage the entity belongs to.
+    """
+    from app.services.design_workshops import singleton_client_key
+
+    response = client.post(
+        "/api/design-workshops",
+        json={"title": "Prefilled workshop", "craftName": "Blue pottery"},
+    )
+    assert response.status_code == 201, response.text
+    workshop_id = response.json()["id"]
+
+    rows = await db.dwstageentry.find_many(
+        where={"designWorkshopId": workshop_id, "entityKey": "workshopSetup"}
+    )
+    assert len(rows) == 1, (
+        f"the create seeded {len(rows)} workshopSetup rows; this test's premise is that it seeds one"
+    )
+    assert rows[0].clientKey == singleton_client_key(rows[0].stageKey), (
+        "a seeded singleton with a null clientKey is invisible to the unique index, so the "
+        "guarantee the schema states — one row per (workshop, entity) — is not enforced on the "
+        "entity that carries the workshop's craft, cluster, state, district and dates"
+    )
+
+
+async def test_a_singleton_written_before_the_reserved_key_adopts_it_on_the_next_save(
+    client, workshop
+):
+    """THE ROWS THE BACKFILL DID NOT SEE, which is every row written after it ran.
+
+    `20260822094000_dw_singleton_client_key` is a one-off. A workshop restored from an older dump,
+    or a row some future writer creates unkeyed, would otherwise carry a null key for ever, because
+    the UPDATE branch of `save_stage` writes data, ordinal, deletedAt and fieldProvenance and none
+    of those is the key. Adopting on the next ordinary save is what turns "true as of one migration"
+    into "true from now on".
+
+    Asserted as ONE row with the ORIGINAL id, not just as a non-null key: upgrading the row must not
+    be an insert wearing an update's clothes, or the workshop ends with the duplicate this whole
+    mechanism exists to prevent and loses whatever the first row held.
+    """
+    from app.services import design_workshops as dw
+
+    legacy = await db.dwstageentry.create(data={
+        "designWorkshopId": workshop,
+        "stageKey": "DESIGN_BRIEF",
+        "entityKey": "designBrief",
+        "ordinal": 0,
+        "data": dw._json({"concept": "Written before the key existed"}),
+        # No clientKey: this is exactly the shape every pre-migration singleton has.
+    })
+    assert legacy.clientKey is None, "this test's premise is a row with no client key"
+
+    assert _brief(client, workshop, "Edited today").status_code == 200
+
+    rows = await _brief_rows(workshop)
+    assert len(rows) == 1, f"the save split the singleton into {len(rows)} rows"
+    assert rows[0].id == legacy.id, "the existing row must be updated, not replaced"
+    assert rows[0].clientKey == dw.singleton_client_key("DESIGN_BRIEF"), (
+        "the row is still invisible to the unique index, so this workshop's singleton can still "
+        "be duplicated by two designers saving at once"
+    )
+
+
+async def test_two_concurrent_saves_of_one_singleton_leave_one_row(
+    client, workshop, monkeypatch
+):
+    """THE RACE, MADE DETERMINISTIC RATHER THAN HOPED FOR.
+
+    Firing two requests and trusting the scheduler to interleave them at the right await is how a
+    concurrency test becomes a flake that everybody re-runs. So the other designer's transaction is
+    committed at exactly the moment that matters: `hydrate_entries` runs AFTER `save_stage` has read
+    the stage's rows and BEFORE it opens its transaction, which is precisely the window the real
+    race lives in. What the request under test has in hand at that point — "there is no designBrief
+    row, I must INSERT one" — is now false, and it has no way to know.
+
+    What must happen: the INSERT is refused by the unique index (that is the improvement — before
+    the reserved key it SUCCEEDED, and the workshop was left with two rows), the refusal is absorbed
+    into an UPDATE of the row that won, and the designer gets a 200 with their answer stored. A 500
+    would be no better than the duplicate: their work would still not be saved.
+    """
+    from app.services import design_workshops as dw
+
+    original = dw.hydrate_entries
+    injected: list[str] = []
+
+    async def hydrate_then_lose_the_race(entries):
+        await original(entries)
+        if injected:
+            return
+        row = await db.dwstageentry.create(data={
+            "designWorkshopId": workshop,
+            "stageKey": "DESIGN_BRIEF",
+            "entityKey": "designBrief",
+            "ordinal": 0,
+            "data": dw._json({"concept": "The other designer's concept"}),
+            "clientKey": dw.singleton_client_key("DESIGN_BRIEF"),
+            # Left NULL on purpose: the assertion below is that the recovery does NOT rewrite it.
+            "createdById": None,
+        })
+        injected.append(row.id)
+
+    monkeypatch.setattr(dw, "hydrate_entries", hydrate_then_lose_the_race)
+
+    response = _brief(client, workshop, "My concept")
+    assert response.status_code == 200, response.text
+    assert injected, "the competing row was never inserted; this test proved nothing"
+
+    body = response.json()
+    assert body["created"] == 0, "the INSERT should have been absorbed into an UPDATE"
+    assert body["updated"] == 1
+
+    rows = await _brief_rows(workshop)
+    assert len(rows) == 1, (
+        f"the singleton split into {len(rows)} rows; the unique index did not refuse the second "
+        "INSERT, which is the entire defect the reserved client key exists to close"
+    )
+    assert rows[0].id == injected[0], "the loser must write into the winner's row, not its own"
+    assert to_plain(rows[0].data["concept"]) == "My concept"
+    assert rows[0].createdById is None, (
+        "the row was created by the other designer's save; crediting this request with it would "
+        "put a wrong author beside every field it did not set"
+    )
+
+
+async def test_two_entries_for_one_singleton_in_one_payload_make_one_row(client, workshop):
+    """The same duplicate, arriving from inside a single request instead of from two.
+
+    `_clientKey` and `_entryId` have both been guarded against a duplicate-in-payload since the
+    collisions they caused. A singleton needs no key to be addressed, so it had no guard at all and
+    the second entry simply became a second row — an INSERT the index could not refuse while both
+    keys were null.
+
+    FOLDED RATHER THAN DROPPED: the later entry wins the keys it sends and the earlier one keeps the
+    rest, so a client that serialised one form twice loses nothing. The collision is reported in
+    `droppedKeys` because it is a client bug somebody should be able to find.
+    """
+    response = client.put(
+        f"/api/design-workshops/{workshop}/stages/DESIGN_BRIEF",
+        json={"entries": [
+            {"entityKey": "designBrief", "data": {
+                "concept": "First half", "targetCategories": ["TABLE_LINEN"]}},
+            {"entityKey": "designBrief", "data": {"concept": "Second half"}},
+        ]},
+    )
+    assert response.status_code == 200, response.text
+
+    rows = await _brief_rows(workshop)
+    assert len(rows) == 1, f"one singleton, {len(rows)} rows"
+    assert to_plain(rows[0].data["concept"]) == "Second half", "the later entry wins its own keys"
+    assert rows[0].data["targetCategories"] == ["TABLE_LINEN"], (
+        "the earlier entry's keys must survive where the later one is silent"
+    )
+    assert any("designBrief" in key for key in response.json()["droppedKeys"]), (
+        "a client sending two entries for one singleton is a bug, and the response is where it "
+        "becomes findable"
+    )

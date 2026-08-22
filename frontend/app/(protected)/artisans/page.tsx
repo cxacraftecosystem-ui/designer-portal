@@ -21,6 +21,14 @@ import { apiFetch, listResource } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { Artisan, PageResult } from "@/lib/types";
 
+/**
+ * The block of launch cards a selected artisan reveals, named so the control that reveals it can
+ * declare what it controls. Rendered only while something is selected, which is why every
+ * `aria-controls` below is conditional — pointing at an id that is not in the document is worse
+ * than pointing at nothing.
+ */
+const LAUNCH_PANEL_ID = "artisan-entry-launchers";
+
 export default function ArtisansPage() {
   const { adminMode } = useAdminView();
   const confirm = useConfirm();
@@ -177,7 +185,7 @@ export default function ArtisansPage() {
       <FunnelFilters value={funnel} onChange={onFunnelChange} />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
       {selectedArtisan ? (
-        <section className="mb-5 grid gap-3 md:grid-cols-3">
+        <section id={LAUNCH_PANEL_ID} className="mb-5 grid gap-3 md:grid-cols-3">
           {[
             { href: artisanEntryHref("/tools/new", selectedArtisan), title: "Make a tool entry", body: "Document a tool used by this artisan.", icon: Hammer },
             { href: artisanEntryHref("/products/new", selectedArtisan), title: "Make a product entry", body: "Record an object, product or sample.", icon: Boxes },
@@ -222,7 +230,40 @@ export default function ArtisansPage() {
                   <tr key={artisan.id} className="cursor-pointer hover:bg-field-100" onClick={() => setSelectedArtisan(artisan)}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-ink-900">{artisan.name}</span>
+                        {/*
+                          A REAL BUTTON, because the row's own `onClick` is the only clickable table
+                          row in this frontend and a keyboard could not reach it. The row carries no
+                          `tabIndex`, no key handler and — deliberately — no `role="button"`: that
+                          role would destroy the implicit `row` role and orphan all seven cells for a
+                          screen reader, which is a bigger loss than the one it fixes. The pointer
+                          affordance on the row stays exactly as it was; this is the same action
+                          offered again as something the Tab key can land on and Enter or Space can
+                          press. `stopPropagation` so a mouse click here does not also run the row's
+                          handler — every other control in this row already does the same.
+
+                          `aria-expanded` is what tells a reader the press DID something: the launch
+                          cards it reveals are rendered above the table, well out of earshot of the
+                          row that summoned them. Which is also why this button TOGGLES while the
+                          row's own handler stays select-only. `aria-expanded="true"` is a promise
+                          that pressing again collapses the region; nothing else in this file ever
+                          clears `selectedArtisan`, so without the toggle the attribute would say
+                          "expanded" for the rest of the session and the press would do nothing —
+                          worse for the reader who trusts it than the pointer-only row it replaced.
+                          A mouse user loses nothing: clicking anywhere else on the row still
+                          selects, and only this control closes.
+                        */}
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedArtisan((current) => (current?.id === artisan.id ? null : artisan));
+                          }}
+                          aria-expanded={selectedArtisan?.id === artisan.id}
+                          aria-controls={selectedArtisan?.id === artisan.id ? LAUNCH_PANEL_ID : undefined}
+                          className="rounded-sm text-left font-medium text-ink-900 underline-offset-2 hover:underline"
+                        >
+                          {artisan.name}
+                        </button>
                         {/* Identity numbers are regulated data and never printed in a list: the chip
                             only answers "is this artisan's card on file?", which is what a
                             researcher scanning for gaps actually needs to know. */}

@@ -57,10 +57,11 @@ from app.services.design_workshops import (
     REFERENCE_MODELS,
     ReferencePhoto,
 )
+from app.services.report_annexures import TranscriptItem, attach_transcripts
 from app.services.report_builder import (
     COVER_INFO_ROWS,
-    ReportBuilder,
     ReferencedRecord,
+    ReportBuilder,
     WorkshopData,
     build_report,
     format_value,
@@ -77,7 +78,6 @@ from app.services.report_model import (
     TableBlock,
     runs_text,
 )
-from app.services.report_annexures import TranscriptItem, attach_transcripts
 from app.services.report_templates import TEMPLATES, SpecialSection, template
 from app.services.stage_schema import (
     ENUMS,

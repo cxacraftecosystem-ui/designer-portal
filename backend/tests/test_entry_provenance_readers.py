@@ -41,8 +41,7 @@ from fastapi import HTTPException
 
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.api.routes import design_workshops as routes
-from app.services import design_workshops as dw
-from app.services import entry_provenance as ep
+from app.services import design_workshops as dw, entry_provenance as ep
 
 ASHA = SimpleNamespace(id="usr_asha", name="Asha Patel", role="DESIGNER")
 MEENA = SimpleNamespace(id="usr_meena", name="Meena Iyer", role="RESEARCHER")
