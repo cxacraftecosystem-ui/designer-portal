@@ -487,9 +487,17 @@ anchor and widens nothing.
 
 ### Secrets — CLEAN, and the ship-blocker fix holds
 * `git diff 144e046` scanned for `AKIA|ASIA|-----BEGIN|ghp_|github_pat_|xox[baprs]-|sk-…|eyJhbGciOi|
-  postgres(ql)://|supabase` — the only hits are **documentation naming secret names**
-  (`docs/CI.md`'s `EC2_SSH_KEY` and `SUPABASE_DATABASE_URL` rows) and a test literal
-  `password="not-the-password"`. No credential material is committed.
+  postgres(ql)://|supabase` — that provider **no longer** hosts this deployment (2026-08-23) and the
+  word is a grep pattern here, not a claim. The only hits are **documentation naming secret names**
+  (`docs/CI.md`'s `EC2_SSH_KEY` and its **legacy** database-URL secret, whose name outlived the
+  migration) and a test literal `password="not-the-password"`. No credential material is committed.
+  Who hosts production now
+  is recorded in exactly one place, `docs/ENVIRONMENT.md`'s "The database" section, and
+  `backend/.env.production` is the authority behind it. The secret name is legacy and outlived the
+  migration; renaming it belongs to `docs/CI.md` together with the GitHub Actions secret itself.
+  Noted here because the docs checker's provider sweep — added in this same change set — flagged this
+  line twice on its first two runs: once for the unlabelled historical mention, and again when the
+  fix named the current provider a second time. Both are the sweep working, not false positives.
 * **The `vercel-ci-setup.mjs` fix holds.** I executed its parser rather than reading it:
 
   | input | result |
