@@ -906,9 +906,15 @@ export { aiLayerProblem } from "@/lib/aiLayers";
  * SERVER answered sends them to look at their signal while the real fault sits in a response nobody
  * sees. `ApiUnconfiguredError` is excluded first because it is a 503 no server ever sent — the
  * request was never made, and its own message names the administrator action that fixes it.
+ *
+ * IT NO LONGER CARRIES ITS OWN 408 RULE. The `ApiError` arm used to read `error.status === 408`,
+ * which is exactly what `isUnreachable` answers for an `ApiError` — a third copy of the one rule
+ * `lib/failureTriage.ts` exists to hold, and a third chance for it to drift. The explicit
+ * `ApiUnconfiguredError` guard stays: `isUnreachable` would answer false for it anyway (it is a 503,
+ * so `transient`), but a reader has to be able to see that the exclusion is deliberate rather than
+ * an accident of which status `lib/api.ts` happened to pick for a request that never went out.
  */
 export function isVerbOffline(error: unknown): boolean {
   if (error instanceof ApiUnconfiguredError) return false;
-  if (error instanceof ApiError) return error.status === 408;
   return isUnreachable(error);
 }

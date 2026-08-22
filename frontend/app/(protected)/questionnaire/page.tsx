@@ -66,11 +66,19 @@ const clipTraySectionId = (key: string) => `question-audio-${key.replace(SECTION
  * Why a batch was refused, in one clause — WITHOUT the advice `MediaBatchError`'s own message ends
  * with.
  *
- * That message reads "…Check your internet connection and try again — the record was saved, so
- * re-open it and re-attach the media", which is true of every other record type and false of an
- * interview: the row actions here are its code and delete, there is no edit screen to re-open, and
- * the clips exist only in this form's memory. Only the underlying per-file reason is taken, and the
- * banner says what to do on this screen instead.
+ * That message is two clauses: the per-file reason, then what to do about it. The second clause is
+ * written for a record with an edit screen — every variant of it ends "re-open it and re-attach the
+ * media" — and an interview has none: the row actions here are its code and delete, and the clips
+ * exist only in this form's memory. So only the reason is taken and the banner below says what to do
+ * on THIS screen, which is to press Save again.
+ *
+ * THE ADVICE CLAUSE IS NO LONGER ONE FIXED SENTENCE, and this function is why it could become
+ * several. It used to be the constant "Check your internet connection and try again — …" whatever
+ * had happened, so a 413 or a 415 sent a researcher out to look for signal they already had;
+ * `adviceForALostBatch` in `lib/media.ts` now picks it from the triage verdict. Nothing here depends
+ * on which one it is: this reads `failures[0].error`, the server's own words about the file, and
+ * falls back to the whole message only when there are no per-file failures to read — which cannot
+ * happen for a batch this page sent, since a `MediaBatchError` is raised only with one per file.
  */
 function batchCause(err: unknown): string {
   if (err instanceof MediaBatchError) return err.failures[0]?.error ?? err.message;
@@ -585,14 +593,26 @@ function QuestionnairePageBody() {
         else, made once, in front of an artisan who has since gone home. This handler used to read
         only the `uploaded` half of each batch result and then clear `mediaFiles` and
         `questionAudioFiles` regardless — so any batch that half landed took the other half with it,
-        with nothing on screen to say a clip had ever been there. Every other media surface in this
-        repository already reads `failed` and returns before its reset (see the crafts page,
-        ArtisanForm, ToolForm); this was the one that did not.
+        with nothing on screen to say a clip had ever been there. The crafts and workshops pages
+        already read what did NOT land and return before their reset, off `outcomes`; this was the one
+        that did not.
 
-        WHICH file failed is read off `uploadedByIndex`, never off `failed[].name`: `uploaded` is
-        compacted and the names are not unique — two takes of one question are both
-        `question-audio-...webm` — so a name match would put back the wrong take. See BatchResult in
-        lib/media.ts, where that same zip is documented as a shipped bug.
+        ARTISANFORM, TOOLFORM AND PRODUCTFORM STILL READ `failed`, AND THAT IS NOT YET ENOUGH FOR THEM
+        — said here because this comment used to claim it was. On their own pages nothing unmounts and
+        the card does keep the whole batch. HOSTED, it does not survive: their partial-failure branch
+        sets the banner and then calls `onCreated`, and `InlineRecordDialog.finish` closes the dialog
+        over it while `StageRecordEmbed` re-keys the form into edit mode (its own T-REMOUNT paragraph
+        says so) — either way the form unmounts and the stranded bytes go with it, on the hosted path
+        the whole embedded-record feature exists for. So those three still want the `outcomes`
+        migration AND a way to hand the stranded files to whoever replaces them; the migration alone
+        would only make the banner truthful for the seconds before it disappears.
+
+        WHICH file failed is read off `outcomes`, never off `failed[].name`: the names are not unique
+        — two takes of one question are both `question-audio-...webm` — so a name match would put back
+        the wrong take. This used to zip `uploadedByIndex` against the page's own `mediaFiles`/`files`
+        array, which was correct but was two arrays that had to stay the same length by agreement;
+        `outcomes` carries the `File` inside the entry, so there is nothing left to line up. See
+        BatchResult in lib/media.ts, where that zip is documented as a shipped bug twice over.
 
         AND THE FORM IS PRUNED, NOT REPLACED. The pass records the `File` objects that DID land and
         the guard below removes exactly those from state with a functional updater. Two reasons, and
@@ -645,13 +665,18 @@ function QuestionnairePageBody() {
         setInterviewProgress(null);
         if (result) {
           // Uploaded clips surface twice: as chips under this section and in the page-level tray.
-          addCompleted(INTERVIEW_SECTION, INTERVIEW_SECTION_LABEL, result.uploaded);
-          const { uploadedByIndex, failed } = result;
-          mediaFiles.forEach((file, index) => {
-            if (uploadedByIndex[index] !== null) landedInterviewAudio.add(file);
-            else failedNames.push(file.name);
-          });
-          if (failed.length) firstCause ??= failed[0].error;
+          addCompleted(
+            INTERVIEW_SECTION,
+            INTERVIEW_SECTION_LABEL,
+            result.outcomes.flatMap((outcome) => (outcome.media ? [outcome.media] : []))
+          );
+          for (const outcome of result.outcomes) {
+            if (outcome.media) landedInterviewAudio.add(outcome.file);
+            else {
+              failedNames.push(outcome.file.name);
+              firstCause ??= outcome.failure?.error ?? null;
+            }
+          }
         } else {
           failedNames.push(...mediaFiles.map((file) => file.name));
         }
@@ -684,15 +709,20 @@ function QuestionnairePageBody() {
           firstCause ??= batchCause(err);
         }
         if (result) {
-          addCompleted(clipTraySectionId(key), batch.trayLabel, result.uploaded);
-          const { uploadedByIndex, failed } = result;
+          addCompleted(
+            clipTraySectionId(key),
+            batch.trayLabel,
+            result.outcomes.flatMap((outcome) => (outcome.media ? [outcome.media] : []))
+          );
           const landed = new Set<File>();
-          files.forEach((file, index) => {
-            if (uploadedByIndex[index] !== null) landed.add(file);
-            else failedNames.push(file.name);
-          });
+          for (const outcome of result.outcomes) {
+            if (outcome.media) landed.add(outcome.file);
+            else {
+              failedNames.push(outcome.file.name);
+              firstCause ??= outcome.failure?.error ?? null;
+            }
+          }
           if (landed.size) landedQuestionAudio.set(key, landed);
-          if (failed.length) firstCause ??= failed[0].error;
         } else {
           failedNames.push(...files.map((file) => file.name));
         }

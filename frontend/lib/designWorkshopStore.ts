@@ -126,12 +126,21 @@ import { uploadMediaBatch } from "@/lib/media";
 // `backend/tests/test_design_workshop_gate.py`.
 import { DESIGN_WORKSHOP_CREATE_REFUSAL, canCreateDesignWorkshops } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
-// The one rule for "did anything reach the server" lives in the outbox and is imported rather than
+// The one rule for "is this the network" lives in `lib/failureTriage.ts` and is imported rather than
 // restated. Two answers to that question is two different ideas of what "offline" means, and the
 // wrong one either strands a queue for ever or replays a rejection until somebody clears storage.
+// This file used to hold a copy of part of it — `error instanceof ApiError && (error.status === 408
+// || error.status === 429)`, written out twice — which is now `serverAskedForTime`.
 // `isUnreachable`, NOT `isTransient`: the latter answers "is it worth retrying" and says yes to
 // every 5xx, which is how a stage the server had permanently refused was reported as a lost signal.
-import { APP_RUN_ID, blocksRetry, isSchemaRefusal, isUnreachable } from "@/lib/offline";
+import {
+  isSchemaRefusal,
+  isUnreachable,
+  schemaRefusalError,
+  serverAskedForTime,
+  triageFailure
+} from "@/lib/failureTriage";
+import { APP_RUN_ID, blocksRetry } from "@/lib/offline";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Constants
@@ -4209,8 +4218,14 @@ export function createMustBeDeclined(
  * twenty-two innocent stages with "correct the answer that caused it" cost.
  */
 export function stageRefusalIsPassLevel(error: unknown): boolean {
-  if (!(error instanceof ApiError)) return true;
-  return error.status === 408 || error.status === 429 || error.status === 409 || error.status === 404;
+  // Two facts about the failure, from the one classifier, rather than a second reading of the status
+  // codes: "did anything reach the server" is `lib/failureTriage.ts`'s question and 408 is already
+  // inside its answer. Only 409 and 404 are named here, because only those two are about SCOPE —
+  // they say the workshop is no longer writable by this account, which is not a network fact at all.
+  const verdict = triageFailure(error);
+  if (verdict.kind === "unreachable") return true;
+  if (verdict.status === 429) return true;
+  return verdict.status === 409 || verdict.status === 404;
 }
 
 /**
@@ -4223,17 +4238,42 @@ export function stageRefusalIsPassLevel(error: unknown): boolean {
  * must not need one.
  */
 export function mediaRefusal(name: string, cause: unknown, attempts: number): DwDraftFailure {
-  const answered = cause instanceof ApiError;
   const message =
     typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "The server refused this file.";
-  const schemaRefusal = isSchemaRefusal(cause);
+  /*
+    THE SERVER'S OWN SENTENCE, NOT THE WRAPPER'S, AND THIS ARM IS THE ONE THAT NEEDED IT MOST.
+
+    `isSchemaRefusal` follows `cause` now, which is what makes the drift branch below reachable from
+    HERE at all — this arm is always handed the escalation of a ONE-FILE `uploadMediaBatch`, so before
+    the unwrap the branch was dead in this function and the bug was invisible. Reached with the
+    wrapper's `message` still in hand, the sentence read:
+
+        "The repository could not read what this copy of the app sent for “loom.jpg”: All 1 media
+         file(s) failed to upload (merge: Extra inputs are not permitted). Check your internet
+         connection and try again — the record was saved, so re-open it and re-attach the media.
+         Nothing is wrong with the file and nothing has been thrown away — this app and the
+         repository are out of step, and it will be sent by itself the next time you open the app…"
+
+    Three instructions that contradict each other: check a connection that is fine, re-attach a file
+    that is not going anywhere, and also do nothing. `schemaRefusalError` hands back the 422 itself,
+    whose message names the KEY the two builds disagree about — the one fact that tells whoever runs
+    the repository what to update. The two siblings that quote a drift (the outbox drain and the
+    workshop arm below) already do this; this was the third and it was missed.
+  */
+  // One call, not `schemaRefusalError` beside `isSchemaRefusal`: the second would be a second
+  // question with the same answer, which is the shape this whole wave exists to stop repeating.
+  const answered = schemaRefusalError(cause);
+  const schemaRefusal = answered !== null;
   // 408 and 429 stay on the "waiting will help" side, the same way the pass-level catch treats them:
   // the first means the request never completed, the second is the server asking for time. Anything
-  // else the server ANSWERED is permanent until a person changes something about the file.
-  const backOff = answered && (cause.status === 408 || cause.status === 429);
+  // else the server ANSWERED is permanent until a person changes something about the file. The test
+  // was written out here AND in the pass-level catch below; it is one import now, and it unwraps —
+  // this arm is handed the error from a one-file `uploadMediaBatch`, so the status it is about is
+  // routinely inside a `MediaBatchError` rather than on it.
+  const backOff = serverAskedForTime(cause);
   return failure(
     schemaRefusal
-      ? `The repository could not read what this copy of the app sent for “${name}”: ${message} Nothing is ` +
+      ? `The repository could not read what this copy of the app sent for “${name}”: ${answered.message} Nothing is ` +
         "wrong with the file and nothing has been thrown away — this app and the repository are out of step, and it " +
         "will be sent by itself the next time you open the app after either has been updated."
       : `The repository refused the file “${name}”: ${message} It is still on this device, and the stage it ` +
@@ -4884,10 +4924,19 @@ async function runSync(): Promise<DwSyncResult> {
             condition where it belongs: it is a WHOLE-WORKSHOP fact, not twenty-two independent
             refusals of twenty-two innocent stages.
           */
-          // `!answered ||` is redundant with the helper, which answers true for anything that is not
-          // an `ApiError` — and it is kept because it is what narrows `error` for the rest of this
-          // block. TypeScript's aliased-condition narrowing follows the const; it cannot follow into
-          // a function, and without this the `error.message` below is `unknown`.
+          // `!answered ||` IS LOAD-BEARING NOW AND MUST STAY. It used to be documented here as
+          // redundant with the helper, on the grounds that the helper answered true for anything that
+          // is not an `ApiError`. That stopped being true when `stageRefusalIsPassLevel` started
+          // classifying through `lib/failureTriage.ts`: the helper opens a wrapper and reports what
+          // is INSIDE it, so a `MediaBatchError` around a 415 or a 500 now answers FALSE and would
+          // fall through to the per-stage refusal below — which reads `error.message`, the wrapper's
+          // sentence, about a stage. Nothing throws a wrapper into this particular catch today
+          // (`saveDesignWorkshopStage` is a single `apiFetch`), so this guard is the thing keeping
+          // that true rather than a coincidence keeping it true.
+          //
+          // It also still does the narrowing job: TypeScript's aliased-condition narrowing follows
+          // the const, it cannot follow into a function, and without this the `error.message` below
+          // is `unknown`.
           if (!answered || stageRefusalIsPassLevel(error)) throw error;
           /*
             A SCHEMA REFUSAL IS NOT THE DESIGNER'S FAULT, AND MUST NOT BE REPORTED AS ONE.
@@ -4913,9 +4962,16 @@ async function runSync(): Promise<DwSyncResult> {
             refusal is recorded and shown exactly as before, and the NEXT app run tries again on its
             own. See `blocksRetry` for why the trigger is an app run and not a build number.
           */
-          // Read before the branch: `isSchemaRefusal` is a type guard, so testing it narrows `error`
-          // to `never` in the arm where it is false — this block has already established that the
-          // error IS an `ApiError`, and there is nothing left to subtract.
+          // `error.message` IS THE SERVER'S OWN SENTENCE HERE, which is why this arm quotes it
+          // directly instead of asking `schemaRefusalError` for the object the way `mediaRefusal` and
+          // the workshop-level catch do. `!answered ||` above has already established that `error` is
+          // an `ApiError` — the API answered this PUT, nothing wrapped it, so there is no wrapper
+          // message to quote by mistake.
+          //
+          // (`isSchemaRefusal` stopped being a type guard in the same change that made it follow
+          // `cause`; it neither narrows nor un-narrows `error` any more. The hoist is kept only
+          // because reading the sentence once beside the flag that decides which sentence to build
+          // is easier to follow, not because the compiler needs it.)
           const said = error.message;
           const schemaRefusal = isSchemaRefusal(error);
           await noteStageFailure(
@@ -5037,8 +5093,7 @@ async function runSync(): Promise<DwSyncResult> {
         carried to the drain. 408 and 429 stay on the offline side: the first means the request
         never completed, the second is the server explicitly asking for time.
       */
-      const backOff = error instanceof ApiError && (error.status === 408 || error.status === 429);
-      if (isUnreachable(error) || backOff) {
+      if (isUnreachable(error) || serverAskedForTime(error)) {
         // Still offline, or the API is down. Stop the pass; everything behind this stays exactly
         // where it is. Nothing is lost and nothing is marked failed — a connection that dropped is
         // not a refusal, and telling a designer their workshop was rejected because the wifi went
@@ -5053,7 +5108,12 @@ async function runSync(): Promise<DwSyncResult> {
       // strands not one stage but the WHOLE fortnight, header, stages, photographs and all, behind a
       // refusal nobody can act on. It is the more expensive half of the same bug, so it gets the same
       // answer: say what happened, and let the next app run find out whether the skew has closed.
-      const schemaRefusal = isSchemaRefusal(error);
+      // The ANSWER, not just a yes/no: its sentence names the key the two builds disagree about, which
+      // is the one piece of information that tells whoever runs the repository what to update.
+      // `isSchemaRefusal` stopped being a type guard when it started following `cause` — narrowing the
+      // ARGUMENT to `ApiError` would be a lie about a `MediaBatchError` — so the object comes from
+      // `schemaRefusalError` instead of from the compiler.
+      const schemaDrift = schemaRefusalError(error);
       await mutate(draft.localId, (current) => ({
         ...current,
         failure: failure(
@@ -5074,8 +5134,8 @@ async function runSync(): Promise<DwSyncResult> {
               "This workshop is no longer available to you on the server: it may have been deleted, or your access to it " +
                 "withdrawn. Nothing more can be sent to it, and everything you captured is still on this device. Ask an " +
                 "admin to restore it or to restore your access, then use Try again."
-            : schemaRefusal
-              ? `The repository could not read what this copy of the app sent for this workshop: ${error.message} Nothing ` +
+            : schemaDrift
+              ? `The repository could not read what this copy of the app sent for this workshop: ${schemaDrift.message} Nothing ` +
                 "you typed is wrong and nothing has been thrown away — this app and the repository are out of step. " +
                 "Everything you captured is safe on this device, and it will be sent by itself the next time you open the " +
                 "app after either has been updated; you do not have to do anything."
@@ -5084,7 +5144,7 @@ async function runSync(): Promise<DwSyncResult> {
                 : "The server refused this workshop.",
           true,
           (current.failure?.attempts ?? 0) + 1,
-          schemaRefusal ? APP_RUN_ID : null
+          schemaDrift ? APP_RUN_ID : null
         )
       }));
       result.failed += 1;

@@ -7,9 +7,13 @@
   Cleartext (plain HTTP) is permitted ONLY for the loopback/emulator development hosts below. It is
   deliberately NOT permitted for any production host: an http:// API call would expose the bearer
   token and every field record to anyone on the network path, and would be trivially modifiable in
-  flight. (The direct EC2 origin — ec2-15-207-145-174…compute.amazonaws.com / 15.207.145.174 — used
-  to be listed here as a manual fallback; it was removed because it is a PRODUCTION host reachable
-  only over plaintext HTTP. Bypass CloudFront only by putting TLS in front of the origin.)
+  flight. (The direct EC2 origin that used to be listed here as a manual fallback was removed because it
+  is a PRODUCTION host reachable only over plaintext HTTP. NOTE WHOSE BOX IT IS: 15.207.145.174 /
+  ec2-15-207-145-174…compute.amazonaws.com is the FIELD REPOSITORY's elastic IP, the sibling
+  product this portal was split out of — not this portal's api box, which is 13.206.216.18. It is
+  named here only as the thing that was removed. Unlabelled sibling identity is a documented defect
+  class in this repository — two instances of it were live user-facing bugs on 2026-08-22 — and
+  `docs/tools/check-docs.mjs` now sweeps for it. Bypass CloudFront only by putting TLS in front of the origin.)
 
   Developing against a backend on your LAN (a real phone, not the emulator): add your machine's
   private IP as another <domain> below TEMPORARILY, alongside apiBaseUrl=http://<ip>:8000/api/ in

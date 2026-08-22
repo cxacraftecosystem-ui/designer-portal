@@ -34,6 +34,29 @@ every secret it needs. Sister documents:
 > | SSH key pair / file | `designrepo-deploy` · `infra/terraform/designrepo-deploy.pem` | `fieldrepo-deploy` · `infra/terraform/fieldrepo-deploy.pem` |
 > | S3 media bucket | `designrepo-media-626159998512` | `fieldrepo-media-626159998512` |
 > | Vercel project | `design-repository` · `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` | `field-repository` · `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` |
+> | Vercel production alias | `design-repository.vercel.app` | `field-repository.vercel.app` |
+> | GitHub repository | `cxacraftecosystem-ui/designer-portal` | not established from this checkout |
+> | CloudFront | **UNRESOLVED — see below** | **UNRESOLVED — see below** |
+>
+> **The CloudFront row is deliberately not filled in, and must stay that way until somebody opens
+> the AWS console.** Two distributions are named in this repository and nothing in a checkout says
+> which is this portal's: [ENVIRONMENT.md](ENVIRONMENT.md) §4 states the whole question under
+> "UNRESOLVED — WHICH CLOUDFRONT DISTRIBUTION IS THIS PORTAL'S?", with both answers and the one
+> command that settles it. `check-docs.mjs` holds the pair open in both directions
+> (`checkAndroidApiHost` ties the handset's compiled-in literal to that document; `checkSiblingIdentity`
+> refuses to let this row name a winner while the question stands, and refuses to let it go on
+> saying UNRESOLVED once the question is gone).
+>
+> **What is open is the DISTRIBUTION, not the box.** Until 2026-08-22 the sweep read any mention of
+> the field repository's Elastic IP `15.207.145.174` near either distribution hostname as a
+> restatement of the question above, and excused it. That was wrong twice over. It excused every
+> OTHER inherited value in the same table as well — putting `fieldrepo-media-626159998512` back into
+> DEPLOYMENT_VERCEL.md §0 produced no finding at all, because a neighbouring row named a CloudFront
+> host. And the IP is not the part in question: the `designrepo` Terraform workspace and
+> [ENVIRONMENT.md](ENVIRONMENT.md) §4 both say that box is the field repository's and this portal's
+> is `13.206.216.18`. A document pairing that IP with "this portal's backend" is making a false
+> claim rather than asking a question, so it is labelled like every other mention: by saying whose
+> box it is.
 >
 > **Until 2026-08-22 the table in §2 below gave the field repository's host AND its key — wrong
 > together, which is the combination that authenticates.** The rows are corrected. If a deploy ran
@@ -78,8 +101,11 @@ before pressing merge. §5 carries the same warning at the point a reader is dec
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 17 → `compileDebugKotlin` → `testDebugUnitTest` → `lintDebug` (advisory) → `assembleDebug` → upload APK |
 | — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Three independent jobs: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). Chained to nothing in either direction. |
 
-There is also `.github/workflows/keep-supabase-active.yml` — an unrelated nightly cron that pings
-Postgres so Supabase does not pause the free-tier project.
+There is also `.github/workflows/keep-supabase-active.yml` — a nightly cron that pinged Postgres so
+a free-tier Supabase project would not pause. **It is dormant as of 2026-08-22:** production is not
+on that provider, its two `schedule:` lines are commented out, and only `workflow_dispatch` remains.
+It asserted nothing about the code either way. The file's header carries the full argument for
+keeping it rather than deleting it, and the date it should be reviewed again.
 
 ### Why the order is a dependency, not a preference
 
@@ -185,7 +211,7 @@ one it closes. Promote it the next time somebody has the token in hand.
 | `VERCEL_TOKEN` | frontend | <https://vercel.com/account/tokens> → **Create Token**. Scope it to the **team that owns `design-repository`**, not "Personal Account", or the CLI 403s. Set an expiry you will actually remember — the deploy starts failing with `Error: Not authorized` the day it lapses. This is the only genuinely sensitive value of the three Vercel ones. |
 | `VERCEL_ORG_ID` | frontend | `team_pcTf4Alb2DCIwq2IZcdu00dS`. Also at Vercel → Team Settings → General → **Team ID**, or in the `.vercel/project.json` that a local `vercel link` writes inside `frontend/` (`orgId`). An identifier, not a credential. Both products live in this one team, so it is the one Vercel value that is the same either way — and therefore the one that cannot warn you. |
 | `VERCEL_PROJECT_ID` | frontend | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel → Project **`design-repository`** → Settings → General → **Project ID**, or the same `.vercel/project.json` (`projectId`), which is what `vercel link` wrote in this checkout. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the field repository's project, and publishing there succeeds — it replaces another product's live site with this one's build. `deploy-backend.yml` pins `BACKEND_CORS_ORIGINS` to `design-repository.vercel.app`, so the correct target is also the only one the API will answer. |
-| `SUPABASE_DATABASE_URL` *or* `DATABASE_URL` | keep-alive cron | The Supabase Postgres connection string (Supabase → Project → Connect). Pre-existing; unrelated to deploys. |
+| `SUPABASE_DATABASE_URL` *or* `DATABASE_URL` | keep-alive cron — **dormant since 2026-08-22** | A PostgreSQL connection string for the keep-alive ping. **Do not add it.** The cron no longer runs on a schedule and the current provider wakes idle compute on connection, so the secret would buy nothing; the script also rewrites `:5432 → :6543` only for a `.pooler.supabase.com` host, so on anything else it pings whatever the URL names. Unrelated to deploys either way. |
 
 > `.vercel/` is gitignored and is created by `vercel link`, so it is absent from a fresh clone —
 > which is why the two rows above name it as a directory `vercel link` produces rather than as a
@@ -421,7 +447,7 @@ tracks `sourceCompatibility`/`jvmTarget` in the same file.
 
 **A deploy hangs on the health poll.** Stage 1 polls `http://127.0.0.1:8000/health` 40 times at 2 s
 and dumps `journalctl -u fieldrepo -n 80` on failure. Read that output first; the usual causes are a
-bad `BACKEND_ENV` value and Supabase pooler connection exhaustion — both covered in
+bad `BACKEND_ENV` value and database connection exhaustion — both covered in
 [QA_AUDIT.md](QA_AUDIT.md).
 
 Note the path: **`/health`, not `/api/health`.** The health routes are declared on the app rather
@@ -517,6 +543,8 @@ parts that are not are exactly the parts that were wrong before.
 | The §5 non-gates | The absence of a job. A row leaves that list when a workflow gains the step — so re-read §5 against the workflow files, not against memory. **This row is not enough on its own and 2026-08-19 proved it:** the Android bullet went stale not because a workflow changed but because the *tree* did — the step was already there, branching on whether `app/src/test` had sources, and the sources arrived. A non-gate bullet that describes the CODE as well as the workflow has two ways to rot, and only one of them is visible in `.github/`. |
 | The measured pytest figure in §5 | **There is no longer a figure to re-date, on purpose.** It said "294 cases passing in 8.7 s" for three weeks after the suite had roughly septupled and grown ~28 `TestClient` modules, and a stale number quoted as the cost of a proposed CI job is worse than no number. §5 points at [REPO_FACTS.md](REPO_FACTS.md), which is generated. If you put a timing back, date it and say which `DATABASE_URL` it ran with — the same command takes seconds with the database modules skipping and minutes with them running. |
 | Vercel project settings (Root Directory, Git link, `createDeployments`) | **UNVERIFIED from here** — dashboard state. §3 and §6 say what they must be; the workflow's own "Assert the project is still rooted at frontend/" step is the only thing that actually checks one of them, and it checks it at deploy time. |
+| **§0's identity register** | `docs/tools/check-docs.mjs` (`checkSiblingIdentity`), which reads THIS table and then sweeps every tracked file for the field repository's values: each occurrence must say whose it is within a few lines, or the run reports it. Where a checkout holds the artefacts §0 names, the *this portal* column is corroborated against them — `outputs.api_public_ip` and `outputs.s3_bucket` of the `designrepo` Terraform workspace, `frontend/.vercel/project.json`, and `git remote get-url origin`. So the way to add a fact is to add a ROW: an identity established anywhere else is one the sweep cannot see, and a row that states its value in prose instead of a backticked literal is a row that has quietly left the sweep — both are failures, and the number of sibling values this table yields is pinned in `EXPECTED_SIBLING_VALUES`. **An unlabelled sibling value is a failure wherever it is written**, .kt and .tf and .env.example included, since those are the files that point a deploy at a machine. The nine mentions already in the tree are listed one per line in `SIBLING_ALLOWLIST` and printed as `known` on every run; shrinking that list is the work. Changed 2026-08-22 — until then only `docs/*.md` could fail, so a reintroduced deploy target in a source file produced a green run. |
+| The CloudFront row staying empty | Two checks, in both directions. `checkAndroidApiHost` requires ENVIRONMENT.md to carry the open question for exactly as long as the handset default and its infrastructure table disagree; `checkSiblingIdentity` requires §0's CloudFront row to say UNRESOLVED for exactly as long as that question stands, and to stop saying it the moment it is answered. Neither picks a side, and neither will let the question be quietly dropped or quietly outlive its answer. |
 
 **Review triggers:** any change under `.github/workflows/`, `frontend/vercel.json`, or
 `infra/terraform/user_data.sh` (which defines the services stage 1 restarts).

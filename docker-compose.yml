@@ -19,9 +19,10 @@
 # local one — the stack runs correctly with NO .env file at all. Copy `.env.docker.example` to
 # `.env` only when you want to override something (an AI provider key, a port that collides).
 #
-# NEVER point this stack at backend/.env. That file holds the LIVE Supabase URL, the real JWT
-# secret and the production AWS keys. The API container refuses to start against a remote database
-# for exactly this reason (docker/backend/entrypoint.sh); .env.docker.example says the rest.
+# NEVER point this stack at backend/.env. That file holds a real DATABASE_URL, the real JWT secret
+# and the production AWS keys — whichever provider that DSN currently names. The API container
+# refuses to start against ANY remote database, classified by host shape rather than by provider
+# name, for exactly this reason (docker/backend/entrypoint.sh); .env.docker.example says the rest.
 #
 # Full prose: docs/DOCKER.md
 # ---------------------------------------------------------------------------------------------
@@ -223,7 +224,7 @@ services:
         condition: service_healthy
     environment:
       # Overrides the placeholder baked into the stage for `prisma generate`. The entrypoint checks
-      # it before the CLI runs, so pointing this at Supabase refuses rather than migrates.
+      # it before the CLI runs, so pointing this at a deployed database refuses rather than migrates.
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/design_workshop}
     command: ["python", "-m", "prisma", "migrate", "deploy", "--schema=./prisma/schema.prisma"]
 

@@ -124,12 +124,40 @@ test("a narrative field renders the rich-text editor, and a mark survives a roun
   await page.getByRole("button", { name: /^save/i }).first().click();
   await expect(page.getByText(/saved/i).first()).toBeVisible({ timeout: 30_000 });
 
-  const stored = await (
-    await page.request.get(`${API}/api/design-workshops/${workshopId}/stages/${STAGE_KEY}`, {
-      headers: auth
-    })
-  ).json();
-  const value = JSON.stringify(stored);
+  /*
+    POLLED, not read once — the same correction the TABLE and IMAGE round-trips in this file were
+    already given, and for the same reason: the "Saved" readout can appear before the editor's
+    debounced sync has pushed the document, so a single read races the thing it is checking. This
+    was the last read-once assertion left in the file and it failed on the first machine that ever
+    ran the spec in a real browser, while the feature underneath it was working perfectly — measured,
+    not assumed: the entry the failing run created was in the database with its mark intact
+    (`{"acknowledgement":{"blocks":[…{"text":"Barpali.","marks":["BOLD"]}]}}`) and a plain `curl` of
+    the very same URL returned it. The read was early; nothing was lost.
+
+    What it demands is unchanged: a block document, and the BOLD mark inside it. A textarea would
+    keep every character here and still fail both, which is the point of the assertion.
+  */
+  const value = await expect
+    .poll(
+      async () => {
+        const stored = await (
+          await page.request.get(`${API}/api/design-workshops/${workshopId}/stages/${STAGE_KEY}`, {
+            headers: auth
+          })
+        ).json();
+        return JSON.stringify(stored);
+      },
+      { message: "the stored value is a block document carrying the bold mark", timeout: 30_000 }
+    )
+    .toContain("BOLD")
+    .then(async () => {
+      const stored = await (
+        await page.request.get(`${API}/api/design-workshops/${workshopId}/stages/${STAGE_KEY}`, {
+          headers: auth
+        })
+      ).json();
+      return JSON.stringify(stored);
+    });
   expect(value, "the stored value is a block document, not a flat string").toContain("blocks");
   expect(value, "the bold mark reached the server").toContain("BOLD");
 
@@ -405,6 +433,18 @@ test("superscript survives the round trip, and it displaces subscript", async ({
     existed answers every assertion below with "the mark is not stored", which is TRUE and is not a
     regression in anything this spec is about. Asking first turns that into a skip that names the
     cause, instead of a failure that reads as "the editor does not store superscript".
+
+    ASK IT WITH A GET, NOT WITH THE PUT'S OWN ANSWER — FIXED 2026-08-23. This probe used to read
+    `probe.json()`, and that body NEVER carries a field value: `save_stage_data`'s docstring
+    (backend/app/api/routes/design_workshops.py, `async def save_stage_data`) says so in as many
+    words — "It does NOT return the cleaned values themselves" — and a real one measured here is
+    `{"stageKey":…,"saved":1,"created":1,"updated":0,"removed":0,"errors":{},…}`. So the question
+    was being put to a response that cannot answer it, `serverKnowsTheMark` was permanently false,
+    and the `test.skip` below fired on every run — with a reason that was not merely unhelpful but
+    UNTRUE, since a GET of the same stage immediately afterwards returns the mark. The round-trip
+    half of this test had therefore never executed anywhere, hidden behind a green-looking skip.
+    Read the value back and the skip means what it says: it fires only for a server that really did
+    drop the mark on the way in.
   */
   const schema = await (
     await page.request.get(`${API}/api/design-workshops/schema`, { headers: auth })
@@ -432,7 +472,16 @@ test("superscript survives the round trip, and it displaces subscript", async ({
       }
     }
   );
-  const serverKnowsTheMark = probe.ok() && JSON.stringify(await probe.json()).includes("SUPERSCRIPT");
+  const readBack = await page.request.get(
+    `${API}/api/design-workshops/${workshopId}/stages/${STAGE_KEY}`,
+    { headers: auth }
+  );
+  const serverKnowsTheMark =
+    probe.ok() &&
+    readBack.ok() &&
+    // The same field, by the same path the assertions below read — not the whole body, so a mark
+    // named anywhere else in a future response shape cannot answer this question by accident.
+    JSON.stringify((await readBack.json())?.singleton?.[FIELD_KEY] ?? {}).includes("SUPERSCRIPT");
 
   await page.getByRole("button", { name: /^save/i }).first().click();
   await expect(page.getByText(/saved/i).first()).toBeVisible({ timeout: 30_000 });

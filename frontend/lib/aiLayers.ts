@@ -1004,7 +1004,12 @@ export function aiLayerProblem(error: unknown, fallback: string): string {
   if (error instanceof ApiUnconfiguredError) return error.message;
   if (error instanceof ApiError) {
     if (serverSaidSomething(error) && error.message.trim()) return error.message;
-    if (error.status === 408) return NO_CONNECTION;
+    // THE SHARED TRIAGE, NOT A LOCAL COPY OF THE 408 RULE. This line used to read `error.status ===
+    // 408`, which is the same answer `lib/failureTriage.ts` gives for an `ApiError` and was a second
+    // place the rule could drift from it. Asked here rather than hoisted above the branch because the
+    // ORDER is load-bearing: a reply that carried a sentence is quoted whatever its status, and only a
+    // status the server put no words behind falls through to a sentence written on this side.
+    if (isUnreachable(error)) return NO_CONNECTION;
     return (
       "The server answered this request without saying why it refused, so there is nothing to pass " +
       "on here. Press Reload to see where these layers actually stand before trying again — this " +

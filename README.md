@@ -48,7 +48,7 @@ The app is split into:
 
 ## Architecture
 
-PostgreSQL stores structured records, media metadata and durable media-processing jobs. In production this can be Supabase Postgres by setting the backend `DATABASE_URL` to the Supabase PostgreSQL connection string. Images, video, audio and PDFs are uploaded directly to S3-compatible storage using signed PUT URLs. The database stores object keys, URLs, MIME type, size, uploaded-by user, linked record IDs, optional GPS metadata, transcript state and queued AI processing state.
+PostgreSQL stores structured records, media metadata and durable media-processing jobs. Any PostgreSQL server will do — the backend's only database configuration is `DATABASE_URL`, and which provider that points at is a deployment choice rather than an architectural one ("PostgreSQL — pointing this at any provider", below). Images, video, audio and PDFs are uploaded directly to S3-compatible storage using signed PUT URLs. The database stores object keys, URLs, MIME type, size, uploaded-by user, linked record IDs, optional GPS metadata, transcript state and queued AI processing state.
 
 This keeps the backend API-first and reusable by both the web client and the Android client.
 
@@ -502,7 +502,7 @@ repository root. The summary below is the short version.
 
 Required backend variables (the app refuses to start without them):
 
-- `DATABASE_URL` — Supabase **session** pooler URL (`:5432`); runtime queries are re-routed to the transaction pooler automatically.
+- `DATABASE_URL` — a PostgreSQL connection string. `prisma migrate deploy` reads it raw and needs **session** mode (advisory locks, DDL); the running app reads it through `Settings` and wants the pooled endpoint where a provider publishes one. Which process gets which value is a deployment arrangement — see `DATABASE_USE_TRANSACTION_POOLER` and [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 - `JWT_SECRET`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
@@ -513,13 +513,13 @@ Useful optional backend variables:
 
 - `AWS_REGION` (default `us-east-1`; production `ap-south-1`) and `AWS_S3_PUBLIC_BASE_URL` for preview/export links — use the **dual-stack** host so media loads on IPv6-only mobile networks.
 - `AWS_S3_ENDPOINT` only for MinIO or other non-AWS storage; leave it unset on real AWS.
-- `DATABASE_USE_TRANSACTION_POOLER`, `DATABASE_CONNECTION_LIMIT` (default `10` per worker — raising it exhausted the pooler), `DATABASE_POOL_TIMEOUT`.
+- `DATABASE_USE_TRANSACTION_POOLER` (default `true`; it *declares* that `DATABASE_URL` is a transaction-mode pooler and adds `pgbouncer=true` to any remote DSN — **set it `false` for a direct endpoint**; no hostname is matched, see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)), `DATABASE_CONNECTION_LIMIT` (default `10` per worker — raising it once exhausted a pooler's client ceiling and crash-looped startup), `DATABASE_POOL_TIMEOUT`.
 - `NEXT_PUBLIC_APP_URL` and `BACKEND_CORS_ORIGINS` — comma-separated **exact** frontend origins, no trailing slash or wildcard.
 - `GOOGLE_CLIENT_ID` to verify Google OAuth ID tokens; `GOOGLE_ANDROID_CLIENT_ID` to also accept Android OAuth audience tokens if needed.
 - `MASTER_ADMIN_NAME` defaults to `Ankit Kumar`; `DEFAULT_SIGNUP_ROLE` defaults to `CROWDSOURCE_VOLUNTEER`.
 - `ELEVENLABS_API_KEY`/`ELEVENLABS_STT_MODEL`, `DEEPGRAM_API_KEY`/`DEEPGRAM_STT_MODEL`, `OPENAI_API_KEY`/`OPENAI_TRANSCRIPTION_MODEL`/`OPENAI_CHAT_MODEL`, `GEMINI_API_KEY`/`GEMINI_API_KEYS`/`GEMINI_MEASUREMENT_MODEL` (default `gemini-2.5-flash-lite`), `NEXT_PUBLIC_MAPTILER_API_KEY` for optional transcription, refinement, measurement and map picking.
 - `MEDIA_QUEUE_WORKER_ENABLED` (set **false** on the production web process — the separate `fieldrepo-queue` service drains the queue), `MEDIA_QUEUE_INTERVAL_SECONDS`, `MEDIA_QUEUE_BATCH_SIZE`, `MEDIA_QUEUE_JOB_MAX_ATTEMPTS`.
-- `SUPABASE_REST_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` only when a deployment also needs Supabase REST/Admin access. The secret key must stay in private runtime secrets.
+- `SUPABASE_REST_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` — **historical, 2026-08-22.** No code in this repository reads them and production is not on that provider. Kept, unset, only so the names are explained rather than mysterious; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 - `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` for seeding the first admin. Keep the password only in private `.env` files or deployment secrets.
 - Security knobs, all safe at their defaults: `JWT_ALGORITHM` (`HS256`; HS-family only), `ALLOW_WEAK_JWT_SECRET` (local dev only), `DATABASE_REQUIRE_SSL` (unset = `sslmode=require` for remote hosts only), `AWS_S3_SSE_ALGORITHM` (`AES256`; empty for MinIO), and `SECURITY_HSTS_ENABLED`/`SECURITY_HSTS_MAX_AGE`/`SECURITY_FORCE_HSTS` — **set `SECURITY_FORCE_HSTS=true` in production**, because nginx overwrites `X-Forwarded-Proto` and the app otherwise never sees that the viewer used TLS. Details in [docs/SECURITY.md](docs/SECURITY.md).
 
@@ -531,11 +531,15 @@ build time**: none can be a secret, and changing one on Vercel needs a redeploy 
 - `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (optional) — blank hides the Google button.
 - `NEXT_PUBLIC_MAPTILER_API_KEY` (optional) — blank falls back to manual latitude/longitude entry.
 
-## Supabase Postgres
+## PostgreSQL — pointing this at any provider
 
-To use Supabase for Postgres, set `DATABASE_URL` in `backend/.env` or the deployment environment to the PostgreSQL connection string from the Supabase dashboard. Use the pooled or direct database URL supplied under database connection settings, not the Supabase REST URL. If your direct host resolves only to IPv6, use Supabase's session/transaction pooler URL for local machines or CI runners without IPv6.
+The application requires **PostgreSQL and nothing more specific**. `backend/prisma/schema.prisma`
+declares `provider = "postgresql"`, no migration installs an extension, and `docker-compose.yml`
+runs `postgres:16-alpine` locally. Any managed PostgreSQL, or a server you run yourself, is a
+candidate; which one is deployed is a property of the environment, not of the code.
 
-After switching `DATABASE_URL`, run:
+To point a deployment at a different one, set `DATABASE_URL` in `backend/.env` (or the deployment's
+environment) to that server's connection string, and then run:
 
 ```powershell
 cd backend
@@ -544,11 +548,35 @@ python scripts/seed_admin.py
 python scripts/seed_questionnaire.py
 ```
 
-Clients still call the FastAPI backend. They should not write directly to Supabase REST because backend validation, review state, role checks, media metadata and JWT authorization live in the API.
+Three things to get right, none of them provider-specific:
 
-### Supabase Keep-Alive
+- **Session mode.** `prisma migrate` takes advisory locks and runs DDL, so `DATABASE_URL` must be a
+  connection that holds a session. If your provider publishes a separate transaction-mode/pooled
+  endpoint, that endpoint is for *runtime* queries, not for migrations.
+- **IPv4.** Some providers hand out an IPv6-only direct host. CI runners and many office networks
+  are IPv4-only, so use whichever endpoint the provider offers for IPv4 clients.
+- **TLS.** Any non-loopback host gets `sslmode=require` appended automatically —
+  `DATABASE_REQUIRE_SSL` forces it either way. Prisma and libpq default to `sslmode=prefer`, which
+  falls back to plaintext without saying so, which is why this is not left to the default.
 
-The repository includes `.github/workflows/keep-supabase-active.yml`, which runs daily and calls `npm run keep-alive`. Add `SUPABASE_DATABASE_URL` as a GitHub repository secret, preferably using the Supabase pooler URL for reliable IPv4-compatible CI access. Set `SUPABASE_DB_SSL=true` only if that database endpoint requires SSL.
+Clients always call the FastAPI backend. Nothing should write to the database — or to any
+provider-side REST/data API — directly, because validation, review state, role checks, media
+metadata and JWT authorization all live in the API.
+
+**Where it runs today** is recorded in exactly one place, with its evidence and how to re-check it
+without reading a secret: the "The database" section of
+[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md). It is deliberately not repeated here, because it being
+repeated in thirty files is what left this repository describing the wrong provider for months.
+
+### Keep-alive cron — dormant since 2026-08-22
+
+`.github/workflows/keep-supabase-active.yml` and `scripts/keep-supabase-active.mjs` exist to ping
+the database nightly. They were written for a free-tier Supabase project, which *paused* after a
+stretch of inactivity and needed a human to restore it — historical, 2026-08-22. The current
+provider suspends idle compute and wakes it on the next connection instead, so the ping buys this
+deployment nothing; the workflow's two `schedule:` lines are commented out and `workflow_dispatch`
+is kept. It is dormant rather than deleted, with the full argument and a review date in that file's
+header. Read the header before re-enabling or removing it.
 
 ## Android Data Flow Notes
 

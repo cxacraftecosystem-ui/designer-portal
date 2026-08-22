@@ -49,8 +49,8 @@ def _acquire_queue_worker_lock() -> Any | None:
         return None
 
 
-# How often the watchdog probes a healthy connection. Cheap (one SELECT 1 through the transaction
-# pooler) and fast enough that a dead connection is noticed well before users hit repeated 500s.
+# How often the watchdog probes a healthy connection. Cheap (one SELECT 1 on the existing database
+# link) and fast enough that a dead connection is noticed well before users hit repeated 500s.
 _DB_PROBE_INTERVAL_SECONDS = 15.0
 
 
@@ -62,14 +62,17 @@ async def _keep_db_connected() -> None:
     without a watchdog the app would serve HTTP 500s until systemd restarted it. While the probe
     succeeds it does nothing but sleep, so the healthy path costs one SELECT 1 per interval.
 
-    The reconnect path is the recovery for a Supabase transaction pooler momentarily at its
-    200 client-connection ceiling. It must NEVER let the process exit: systemd restarts a
-    dead uvicorn in seconds, and each restart spawns fresh query-engine connections, which
-    amplifies a brief pooler spike into a self-sustaining storm that keeps the pooler full
-    (the exact failure that took the API down twice). Staying alive and retrying gently —
-    one connection attempt at a time — lets the pooler drain and the app self-heal with no
-    restart. ``/health`` keeps returning 200 throughout (it does not touch the DB), so the
-    box stays a healthy CloudFront origin while it waits.
+    The reconnect path is the recovery for a database momentarily refusing new connections — the
+    case this deployment has actually lived through is a connection pooler at its client-connection
+    ceiling, whatever that ceiling happens to be (it is the pooler's number, not PostgreSQL's, and
+    an earlier version of this paragraph kept the figure after deleting the vendor's name that made
+    it true). It must NEVER let the process exit: systemd restarts a dead uvicorn in seconds, and
+    each restart spawns fresh query-engine connections, which amplifies a brief spike into a
+    self-sustaining storm that keeps the far end full (the exact failure that took the API down
+    twice). Staying alive and retrying gently — one connection attempt at a time — lets the
+    connections drain and the app self-heal with no restart. ``/health`` keeps returning 200
+    throughout (it does not touch the DB), so the box stays a healthy CloudFront origin while it
+    waits.
 
     Why it disconnects first and probes with ``SELECT 1``: the Prisma client keeps its engine
     reference even when ``connect()`` *raised*, so ``is_connected()`` can read ``True`` while the
@@ -396,6 +399,24 @@ class SelectiveGZipMiddleware:
                     media not in _COMPRESSIBLE_TYPES
                     or "content-encoding" in headers
                     # 204/304 carry no body.
+                    #
+                    # A ROUTE NOW DEPENDS ON THIS CLAUSE, so it is no longer only an optimisation.
+                    # `GET /design-workshops/schema` answers a conditional GET, and because a 304
+                    # never reaches the compression branch below it also never receives the
+                    # `Vary: Accept-Encoding` this middleware appends there — which is why that
+                    # route sets `Vary` on its 304 itself and NOT on its 200. Teaching this
+                    # middleware to touch a 304 would duplicate the header on every revalidation;
+                    # teaching it to compress one would put a body on a response defined to have
+                    # none. See `get_stage_schema` for the argument in full.
+                    #
+                    # WHAT THAT ROUTE MAY NOT ASSUME, and no route should: that the 200 always
+                    # carries `Vary`. This middleware appends it only where it compresses, so the
+                    # early return at the top of `__call__` (no gzip offered) and the
+                    # `minimum_size` branch below both answer 200 with no Vary at all. The schema
+                    # route's 304 is unconditional and its 200 is not, which is fine for a body
+                    # that does not actually vary by request header, and would not be fine for one
+                    # that did. `Vary` is a property of the RESOURCE, so a route in that position
+                    # must set it itself rather than inherit it from here.
                     or message["status"] in (204, 304)
                     # A PARTIAL RESPONSE MUST KEEP ITS BYTE OFFSETS. This clause used to be part of
                     # the comment above and not part of the condition: 206 was absent from the tuple,
@@ -497,8 +518,8 @@ class SecurityHeadersMiddleware:
 # The readiness probe's own deadline. Shorter than an uptime monitor's request timeout on purpose, so
 # a stalled database comes back as an explicit 503 the monitor can quote rather than as a client-side
 # timeout, which says only that *something* did not answer. Also far below CloudFront's origin-response
-# timeout, so the probe can never be the request that holds a connection open. The pooler lives in a
-# different AWS region from this box, so a healthy round trip is a couple of hundred milliseconds and
+# timeout, so the probe can never be the request that holds a connection open. The database endpoint lives in
+# a different region from this box, so a healthy round trip is a couple of hundred milliseconds and
 # the ceiling sits about ten times above that: high enough that ordinary cross-region latency is never
 # mistaken for an outage, low enough to cut short a pool that has stopped handing out connections.
 _READINESS_TIMEOUT_SECONDS = 3.0

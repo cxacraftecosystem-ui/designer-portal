@@ -266,7 +266,8 @@ jobs:
           ./.venv/bin/pip install --upgrade pip
           ./.venv/bin/pip install -e .
           PATH="$PWD/.venv/bin:$PATH" ./.venv/bin/python -m prisma generate
-          # Migrations talk to the Supabase pooler in SESSION mode (pool_size 15). The running app
+          # Migrations need SESSION mode; on the Supabase deployment this was written against, until
+          # 2026-08-22, that meant a pooler with pool_size 15. The running app
           # holds most of those client sessions across its uvicorn workers, so the schema engine had
           # no connection left and failed with "EMAXCONNSESSION max clients reached". Stop the app to
           # free its sessions, then migrate (with a short retry for any sessions the pooler hasn't
@@ -287,7 +288,7 @@ jobs:
           # this service existed.
           sudo systemctl restart fieldrepo-queue 2>/dev/null || true
           if [ "$migrate_ok" != "1" ]; then echo "prisma migrate deploy failed after retries"; exit 1; fi
-          # App startup connects to Supabase (cross-region), so poll instead of a fixed sleep.
+          # App startup connects to a remote database, possibly cross-region, so poll rather than sleep.
           for i in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then echo "healthy after ${i} tries"; break; fi
             if [ "$i" = "40" ]; then echo "service did not become healthy:"; sudo journalctl -u fieldrepo -n 80 --no-pager; exit 1; fi

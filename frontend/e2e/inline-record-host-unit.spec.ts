@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { inlineSeed, scopeNoticeLines } from "@/components/designworkshop/StageReferenceField";
+import { inlineSeed, refusedByUnsavedWork, scopeNoticeLines } from "@/components/designworkshop/StageReferenceField";
 import { seedHasArtisan } from "@/components/forms/inlineRecordHost";
 import { MEASUREMENT_GRID_PURPOSE } from "@/components/media/GridMeasurement";
 import type { DwEntity, DwField, DwReferencePayload } from "@/lib/designWorkshops";
@@ -41,9 +41,15 @@ import type { DwEntity, DwField, DwReferencePayload } from "@/lib/designWorkshop
  *      arrow raise the same prompt and took the same answer, which is correct in a dialog (it
  *      closes) and wrong in an embed (`onCancel` REMOUNTS the form in place). The designer pressed
  *      Back, said Discard, lost everything they had typed and stayed exactly where they were.
- *      HALF-LANDED: the four forms take `onDiscardAndLeave` and route the back arrow through it,
- *      and no host supplies one yet, so the behaviour in the embed is unchanged. The gap is a
- *      `test.fixme` below rather than a sentence here, for the reason bullet 1b itself demonstrates.
+ *      THE FORMS ROUTE THE BACK ARROW THROUGH `onDiscardAndLeave` AND THE EMBED NOW SUPPLIES ONE,
+ *      so the two exits no longer share an answer. THE REFUSED ACT NOW SURVIVES THE REFUSAL TOO:
+ *      `UnsavedChangesGuard` is handed what each control was about to do, holds it against the form
+ *      that blocked, and offers `completeLeave` / `abandonLeave` to that form alone. What is left is
+ *      the answer itself — the four forms' "Discard" does not yet call `completeLeave()`, so the
+ *      embed still clears the form and says the page did not move, and the picker's own refusals say
+ *      the same thing rather than promising an exit no form performs. Both halves are below: the
+ *      carrying is a real test, the answering is the one `test.fixme` after it, and it is that fixme
+ *      that requires both sentences to change when the calls land.
  *  1c. **A form titled a screen its host had already titled.** `ProcessForm` was the only one of the
  *      four with its own `<h2>`, written when /processes was its only host. Every host titles the
  *      surface itself — the page with the SAME two strings — so stage 5 painted two sibling `h2`s
@@ -474,38 +480,275 @@ test("the second exit is ONE contract member, declared once and consumed by all 
 });
 
 /*
-  MARKED `fixme` BECAUSE THE HALF THAT IS MISSING IS IN SOMEBODY ELSE'S FILES, and prose in a header
-  has already been shown not to be enough — `stage-record-embed-unit.spec.ts`'s own comment says the
-  three-of-four threading failure "happened again, to the new host", and that is the failure this
-  member was declared centrally to prevent.
+  THE TWO EXITS, ON THE HOST THE DEFECT WAS REPORTED ON.
 
-  THE FORM SIDE IS DONE AND ASSERTED ABOVE: all four take `onDiscardAndLeave` off
-  `InlineRecordSurfaceProps` and route the back arrow's "Discard" through `leaveAfterDiscard()`.
-  NOBODY SUPPLIES IT. `grep -rn onDiscardAndLeave frontend/` hits the four forms, the contract and
-  this file, and nothing in `StageRecordEmbed.tsx` or `InlineRecordDialog.tsx` — so on the host the
-  defect was reported on, the user-visible behaviour is unchanged today: Back → "Discard" still
-  empties the form and leaves the designer standing on the same page, needing a second Back.
+  `StageRecordEmbed`'s `onCancel` REMOUNTS the form in place, which is the only thing that could
+  clear boxes living in React state and uncontrolled DOM. Routing the page's back control into the
+  same callback meant a designer pressed Back, answered "Discard", lost everything they had typed
+  AND STAYED WHERE THEY WERE — and the single sentence that callback could write had to hedge for
+  both exits at once, so the Cancel button carried an instruction about leaving and the arrow
+  carried a description of a form being emptied.
 
-  The two lines that close it, named so this does not have to be re-derived:
-    1. `StageRecordEmbed.tsx` — a callback beside `onCancel={handleCancel}` on `InlineRecordForm`
-       that completes the stage page's back navigation (the thing `useLeaveGuard` REFUSED; it is
-       abandoned rather than delayed, so only the host can start it again). `handleCancel` is the
-       wrong answer there, and being the wrong answer is the whole finding.
-    2. `InlineRecordDialog.tsx` — one `onDiscardAndLeave={...}` per form in the per-form enumeration
-       around the other four callbacks, IF the dialog ever gains a back control that leaves it open.
-       Absent is correct for it today (closing the dialog is the whole of leaving it), so this
-       assertion is deliberately written against the EMBED only.
-
-  `test.fixme` and not a comment: a skip is on the report every run, and it becomes the assertion by
-  deleting one word the moment those files are free.
+  WHAT IS ASSERTED HERE IS THE SPLIT, WHICH IS THE HALF THAT LANDED. The exit is not COMPLETED, and
+  the `fixme` under this test is that half, kept as a skip on every run rather than as prose.
 */
-test.fixme("the stage embed finishes the exit its back arrow started", () => {
+test("the stage embed answers its two exits with two different callbacks", () => {
   const embed = read("components/designworkshop/StageRecordEmbed.tsx");
   expect(embed, "StageRecordEmbed must pass onDiscardAndLeave= to InlineRecordForm").toContain(
-    "onDiscardAndLeave="
+    "onDiscardAndLeave={handleDiscardAndLeave}"
   );
   // And not by handing it the same callback as Cancel, which is the defect restated.
   expect(embed).not.toContain("onDiscardAndLeave={handleCancel}");
+  /*
+    TWO CALLBACKS ARE WORTH NOTHING IF THEY SAY THE SAME THING, and the sentence is the only thing a
+    designer sees here — nothing about this host visibly changes on either exit except the form
+    emptying. So the notices are pinned as DISTINCT SENTENCES, read out of the source rather than
+    named.
+
+    THE BLOCKED EXIT'S OWN WORDING IS DELIBERATELY NOT PINNED HERE, and that is a correction. This
+    line used to require the phrase "press the same control again", which is a description of a
+    TEMPORARY state: the guard banks the refused act, no form answers with `completeLeave()` yet, and
+    the sentence exists to admit the extra press. The `fixme` below demands that phrase be GONE once
+    the forms answer — so with both assertions standing, the follow-up could not land without turning
+    this green test red, and a wave that has to break a passing test to finish is a wave that deletes
+    it instead. What both states share is that the two exits must not read alike, and that the Cancel
+    one must never tell a designer to press a control again: it is not answering a control at all.
+  */
+  const cancelText = embed.slice(embed.indexOf("const handleCancel"), embed.indexOf("const handleDiscardAndLeave"));
+  const leaveText = embed.slice(embed.indexOf("const handleDiscardAndLeave"), embed.indexOf("const [asked,"));
+  const sentence = (slice: string, what: string) => {
+    const found = /text: `([^`]+)`/.exec(slice);
+    if (!found) throw new Error(`${what} writes no notice of its own`);
+    return found[1];
+  };
+  expect(sentence(cancelText, "the form's own Cancel"), "the two exits must not read alike").not.toBe(
+    sentence(leaveText, "the blocked exit")
+  );
+  expect(cancelText, "the form's own Cancel says nothing about leaving").not.toContain("press the same control again");
+
+  /*
+    AND THE SHARED MOUNT FORWARDS IT TO ALL FOUR FORMS. `InlineRecordForm` is the one place either
+    host reaches a form, so a member it drops is a member no host can supply — the three-of-four
+    threading failure this whole contract exists to prevent, one level up.
+  */
+  const dialog = read("components/designworkshop/InlineRecordDialog.tsx");
+  expect(dialog.match(/onDiscardAndLeave=\{onDiscardAndLeave\}/g)?.length, "one per mounted form").toBe(4);
+  /*
+    `InlineRecordDialog` ITSELF PASSES NONE, and that is the argued answer rather than an omission:
+    its `onCancel` is `onClose`, closing the dialog is the whole of leaving it, and `FieldDialog`
+    traps focus and covers the page, so no back control outside the panel can be pressed while the
+    form is on screen. The fallback in all four forms (`onDiscardAndLeave ?? leave()`) is therefore
+    exactly right there, and a redundant prop would only invite the next reader to make the two
+    hosts agree by making the embed's answer the dialog's.
+  */
+  const mount = dialog.slice(dialog.indexOf("<InlineRecordForm"));
+  expect(mount, "the dialog's own mount takes the fallback").not.toContain("onDiscardAndLeave=");
+});
+
+/*
+  THE REFUSED EXIT SURVIVES THE REFUSAL — the half of the defect above that lives in the guard.
+
+  `useLeaveGuard` does not DELAY a navigation, it REFUSES one: the interceptor returns true and the
+  control that tried to leave abandons what it was doing. While nothing carried that act anywhere,
+  the form's "Discard" had nothing to resume and neither had its host, so the one answer that means
+  "yes, throw it away, I am leaving" delivered the throwing away and not the leaving.
+
+  IT CANNOT BE RECONSTRUCTED AT THE OTHER END, which is why the act travels rather than being
+  guessed. On a stage page three controls reach this guard and they want three different things —
+  `BackButton`'s `router.back()` or its explicit `href`, the stage page's `leave(action)` for
+  "previous stage" / "next stage", and `CollectionTable.toggleRow`, which is not a navigation at all
+  — so a `router.back()` invented inside the embed would be right for one, land on the wrong stage
+  for the second, and throw a designer off the page for the third, the commonest of the three.
+
+  THIS IS ANCHORED TO STRUCTURE RATHER THAN TO WORDING. A test asserting the absence of a phrase
+  goes green for anybody who rewords a notice without touching the guard at all, so what is pinned
+  is the TYPE, the four CALL SITES that hand an act over, and the identity rule that decides who may
+  finish one. A FOURTH caller has joined the three the handover named: the REF picker, which re-keys
+  the embedded record form over a different record and had consulted nothing.
+*/
+test("the refused exit is carried, and every control that is refused hands one over", () => {
+  const guard = read("components/UnsavedChangesGuard.tsx");
+
+  // 1. THE TYPE. A bare `() => boolean` is a refusal that drops what it refused on the floor.
+  expect(guard, "LeaveInterceptor must carry the pending act").not.toContain(
+    "export type LeaveInterceptor = () => boolean;"
+  );
+  expect(guard).toContain("export type LeaveInterceptor = (pending: PendingLeave) => boolean;");
+  expect(guard).toContain("intercept: (pending: PendingLeave) => boolean;");
+  expect(guard, "the hook a control calls takes the act too").toContain(
+    "export function useLeaveInterceptor(): (pending: PendingLeave) => boolean {"
+  );
+
+  /*
+    2. THE PROVIDER HOLDS IT, AND HOLDS WHO REFUSED IT. The identity is not bookkeeping: `complete`
+    and `abandon` are answers to a PARTICULAR prompt, so a sibling form's Discard — or a save that
+    happens to finish ten minutes later — must not fire a navigation nobody asked for. The same
+    identity drops the act when the blocking form unmounts.
+  */
+  expect(guard).toContain("const held = useRef<{ act: PendingLeave; blockedBy: LeaveInterceptor } | null>(null);");
+  expect(guard, "an answer from anyone but the blocker is ignored").toContain(
+    "if (!pending || pending.blockedBy !== answeredBy) return;"
+  );
+  expect(guard, "an exit held for a form that no longer exists can never be answered").toContain(
+    "if (held.current?.blockedBy === next) held.current = null;"
+  );
+  /*
+    AND THE RE-ASK EXCLUDES THE FORM THAT ANSWERED. "Discard" clears the dirty flag through React
+    state and `complete` runs inside the very click handler that set it, so an interceptor asked
+    again would still read `dirty === true` and re-open the prompt it was just dismissed from. Every
+    OTHER dirty form is still asked, which is what keeps stage TRADITIONAL_PROCESS_BASELINE — two of
+    these forms mounted at once — honest: the second one's prompt, not a silent exit past it.
+  */
+  expect(guard).toContain("if (entry === skip) continue;");
+  expect(guard).toContain("if (!ask(pending.act, answeredBy)) pending.act();");
+
+  /*
+    3. EVERY CONTROL HANDS ITS OWN ACT OVER. Read as source rather than driven, because what is
+    being pinned is that the act came FROM the control: a test that only proved "something was
+    passed" would pass for a `router.back()` written four times.
+  */
+  const back = read("components/BackButton.tsx");
+  expect(back, "the arrow's two destinations are one act, chosen where they are known").toContain(
+    "const go = href ? () => router.push(href) : () => router.back();"
+  );
+  expect(back).toContain("if (interceptLeave(go)) return;");
+
+  const stage = read("app/(protected)/design-workshops/[id]/stages/[stageKey]/page.tsx");
+  // The flush travels WITH the navigation: a resumed "next stage" that skipped `flushLocal` would
+  // drop the last seconds of typing on the stage being left.
+  expect(stage).toContain("if (interceptLeave(() => void go())) return;");
+  /*
+    AND THE FLUSH CANNOT SWALLOW THE NAVIGATION. A refused local write already answers `false` and
+    this page has always gone anyway — the refusal is marked on the draft and rendered by
+    `DraftSyncBanner`, so `action()` runs on both outcomes. A flush that THROWS is the same outcome by
+    another route, and the banked path discards its promise (`void go()`), so without the `catch` a
+    rejection there would leave the work discarded, the prompt answered, the page unmoved and nothing
+    said. Pinned as the whole closure, because the property is the ORDER — `action()` after the
+    attempt, inside neither the `try` nor a `finally` that would re-throw past it.
+  */
+  expect(stage, "the banked act performs the navigation whatever the flush did").toMatch(
+    /const go = async \(\) => \{\s*try \{\s*await flushLocal\(\);\s*\} catch \{[\s\S]*?\}\s*action\(\);\s*\};/
+  );
+
+  const entity = read("components/designworkshop/EntityForm.tsx");
+  // A functional update, because a banked act runs after re-renders the closure never saw.
+  expect(entity).toContain("const open = () => setOpenKey((current) => (current === rowKey ? null : rowKey));");
+  expect(entity).toContain("if (closing !== null && interceptLeave(open)) return;");
+
+  /*
+    THE FOURTH, AND IT IS THE ONE NOBODY HAD GUARDED. `StageRecordEmbed` keys the record form on the
+    linked id, so re-pointing this picker — by click, by Enter or by scanning a card — remounts the
+    form and takes its React state, its uncontrolled DOM and its staged files with it. Clearing the
+    link does the same in the other direction. Both are asked about now, and both are banked.
+  */
+  const picker = read("components/designworkshop/StageReferenceField.tsx");
+  expect(picker, "the picker consults the same guard as the back arrow").toContain(
+    'import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";'
+  );
+  expect(picker, "a pick is asked about only when the pointer would really move").toContain(
+    "if (option.id !== selectedId && interceptLeave(() => commitChoice(option))) {"
+  );
+  expect(picker, "clearing the link remounts the form too").toContain("if (interceptLeave(unlink)) {");
+  // A card reader must not announce a write that has not happened; `choose` reports whether it did.
+  expect(picker).toContain("if (decision.commit && !chooseNow(decision.commit)) {");
+  /*
+    AND ALL THREE REFUSALS SAY SO ON THE ROW. The prompt that goes up belongs to a FORM and says
+    nothing about this picker, so a refused pick used to be dropped in silence: the designer answered
+    "Discard", watched the form empty, and had no reason to doubt the row now named the record they
+    had chosen. This is the one assertion in this test that executes rather than reads — the sentence
+    is a real exported function, called here with the three retries the three controls pass.
+  */
+  for (const retry of ["choose the record again", "scan the card again", "press “Clear the link” again"]) {
+    expect(picker, `the ${retry} refusal is worded by the shared helper`).toContain(
+      `refusedByUnsavedWork("${retry}")`
+    );
+    const line = refusedByUnsavedWork(retry);
+    expect(line.tone, "a refusal is not a confirmation").toBe("warn");
+    expect(line.text).toBe(
+      `A form on this stage has unsaved work, so this row was left as it was. Answer the prompt on screen, then ${retry}.`
+    );
+  }
+  /*
+    TWO CLAIMS IT MUST NOT MAKE, both of which an earlier draft of the scan notice did make.
+
+    IT DOES NOT PROMISE THE PICK LANDS BY ITSELF. Nothing calls `completeLeave()` yet, so "Discard"
+    clears the form and the row stays where it was — a sentence saying the scanned record is "chosen
+    straight away" put a false line in amber beside the embed's true one in green.
+
+    AND IT DOES NOT SAY WHOSE PROMPT IT IS. The walk asks EVERY registered form, so on stage
+    TRADITIONAL_PROCESS_BASELINE the blocker can be a sibling row's form, and on an unlinked
+    `mountOnRequest` row there is no form under this picker at all — "the form below this picker"
+    sent the designer looking in the wrong place.
+  */
+  expect(picker, "no notice may promise an exit no form performs yet").not.toContain(
+    "the scanned record is chosen"
+  );
+  expect(picker, "the picker cannot know which form raised the prompt").not.toContain(
+    "the record form below this picker has unsaved work"
+  );
+});
+
+/*
+  THE LAST LINK, AND IT IS ONE LINE IN EACH OF FIVE FILES THIS GROUP DOES NOT OWN.
+
+  The guard now banks the act and offers the two calls that finish or forget it —
+  `useLeaveGuard(...)` returns `{ completeLeave, abandonLeave }`, both scoped to the form's own
+  prompt by identity so neither can fire a navigation belonging to somebody else's. Nothing calls
+  them yet, so "Discard" still empties the form and leaves the page where it was, and
+  `StageRecordEmbed.handleDiscardAndLeave` still says so out loud — which is the honest state, and
+  strictly better than a silent stay.
+
+  WHERE THE CALL GOES, WHICH IS THE WHOLE OF THE CARE THIS CHANGE NEEDS. All four forms answer ONE
+  `UnsavedChangesDialog` for TWO questions and tell them apart AFTER the fact, with
+  `promptFromCancel`:
+
+      resetDirty();
+      if (promptFromCancel) leave();     // the form's own Cancel: "empty this form, I am staying"
+      else leaveAfterDiscard();          // a host control's exit: "take me off this screen"
+
+  `resetDirty()` is ABOVE that branch and runs for both, so `completeLeave()` beside it — which is
+  what an earlier draft of this marker asked for — would fire a banked `router.back()`, stage push or
+  row collapse off the form's own Cancel. That is exactly the defect `promptFromCancel` was added to
+  prevent, so the assertions below pin the `else` BRANCH and refuse the placement above it rather
+  than accepting the substring anywhere in the file. `abandonLeave()` belongs in the "Keep editing"
+  handler for the matching reason: an answer that means "stay" must not leave an act in `held` for
+  the next unrelated Discard to run.
+
+  WHICH WAY ROUND THE TWO CALLS GO IN THAT BRANCH IS THE FOLLOW-UP'S TO DECIDE, so both orders pass.
+  `completeLeave()` may perform a navigation, after which the host's notice is moot; that is the same
+  question as the last line of this test — once the exit really completes, `StageRecordEmbed`'s "press
+  the same control again" is describing something that no longer happens, and it and
+  `StageReferenceField`'s `refusedByUnsavedWork` are the two sentences that go stale together.
+
+  The wording checks are LAST and are not the whole of the bar, for the reason the previous marker
+  here recorded: a fixme asserting only the absence of a phrase goes green for anybody who rewords
+  the notice without touching a thing.
+*/
+test.fixme("the record forms answer the prompt with the act the guard is holding", () => {
+  const guard = read("components/UnsavedChangesGuard.tsx");
+  const embed = read("components/designworkshop/StageRecordEmbed.tsx");
+  expect(guard).toContain("return { completeLeave, abandonLeave };");
+  for (const path of [ARTISAN_FORM, PRODUCT_FORM, TOOL_FORM, PROCESS_FORM]) {
+    const source = read(path);
+    // IN THE BRANCH THAT MEANS "LEAVE", beside the host callback and nowhere else.
+    expect(source, `${path} must finish the exit in the branch that means "leave"`).toMatch(
+      /else \{\s*(completeLeave\(\);\s*leaveAfterDiscard\(\);|leaveAfterDiscard\(\);\s*completeLeave\(\);)\s*\}/
+    );
+    // AND NOT ABOVE THE TEST THAT TELLS THE TWO EXITS APART, where it would also fire on Cancel.
+    const discard = source.slice(source.indexOf("onDiscard={() => {"));
+    const beforeTheBranch = discard.slice(0, discard.indexOf("if (promptFromCancel)"));
+    expect(beforeTheBranch, `${path} must not complete the exit on its own Cancel`).not.toContain("completeLeave()");
+    // AND THE ANSWER THAT MEANS "STAY" FORGETS IT, in that handler rather than somewhere in the file.
+    const keepEditing = source.slice(source.indexOf("onKeepEditing={() => {"));
+    expect(keepEditing.slice(0, keepEditing.indexOf("}}")), `${path} must forget the act on "Keep editing"`).toContain(
+      "abandonLeave()"
+    );
+  }
+  // Both sentences that describe the extra press go with it — see the paragraph above.
+  expect(embed).not.toContain("press the same control again");
+  expect(read(PICKER), "the picker no longer tells a designer to press its control again").not.toContain(
+    "Answer the prompt on screen, then"
+  );
 });
 
 test("no record form titles a screen its host has already titled", () => {
@@ -571,6 +814,215 @@ test("the one capture card that outlives its own mount names a staging owner tha
       "stagingOwnerId="
     );
   }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 2b. The three premises the refusal above rests on
+ *
+ * `inlineRecordHost.ts` refuses BOTH halves of the hoisted-list / stable-owner pair on these four
+ * forms, and the second refusal (2026-08-22) is the stronger one: hoisting the `File[]` above the
+ * embed's remount is not merely insufficient here, it is WRONG, because every remount these forms
+ * get means "throw the attachments away". That conclusion is an argument, and an argument is only
+ * as good as the facts under it — all three of which live in files the contract does not own and
+ * could be changed by someone who never reads it.
+ *
+ * SO THE FACTS ARE PINNED HERE RATHER THAN THE CONCLUSION. Each test below fails if a premise moves,
+ * which is the signal to re-open the decision rather than to discover months later that the reason
+ * for it evaporated. They are deliberately NOT assertions that the store does not exist: building it
+ * is allowed, once one of these has changed to make it safe.
+ *
+ * WHAT THEY CANNOT DO is the limit named at the top of this file — they read source, so they pin the
+ * spelling of a line and not its effect. Nothing here proves an object was or was not deleted from
+ * storage; that needs the stack, and `inline-record-create.spec.ts` is where a browser is driven.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const EMBED = "components/designworkshop/StageRecordEmbed.tsx";
+const ENTITY_FORM = "components/designworkshop/EntityForm.tsx";
+const MEDIA_LIB = "lib/media.ts";
+const CONTRACT = "components/forms/inlineRecordHost.ts";
+
+test("premise 1: attaching a file is unsaved work, so a collapsing row asks before it unmounts", () => {
+  /*
+    THE ONE UNMOUNT THAT IS AN ACCIDENT RATHER THAN A DECISION is a collection row folding up under
+    an open record form, and it is the whole of what a hoisted file list would have been for. The
+    contract's answer is that it is already guarded: the form marks itself dirty the moment a file is
+    attached, and `CollectionTable.toggleRow` asks before it closes anything, so the panel is not
+    unmounted at all unless the designer answers Discard — which means what it says.
+
+    BOTH HALVES OR NEITHER IS A GUARD. A form that stopped counting attached files as unsaved work
+    would collapse silently over them, and `useEagerStaging` would then delete the object already in
+    object storage about two seconds later — the exact defect `StagePendingMediaProvider` was written
+    for, on the surface that decided it did not need one.
+  */
+  for (const path of [ARTISAN_FORM, PRODUCT_FORM, TOOL_FORM]) {
+    const source = read(path);
+    // Every capture card in these three answers with an inline arrow, so slicing on it reaches all
+    // of them — including the grid-measurement card, whose files are form state on the same footing.
+    const handlers = source.split("onFilesChange={(files) => {").slice(1);
+    expect(handlers.length, `${path} draws at least one capture card`).toBeGreaterThan(0);
+    handlers.forEach((handler, index) => {
+      expect(handler.slice(0, 200), `${path} capture card ${index + 1} must mark the form dirty`).toContain(
+        "markDirty();"
+      );
+    });
+  }
+
+  /*
+    `ProcessForm` answers the same question differently and has to be read differently: its guard is
+    a SIGNATURE diff rather than an `onDirty` event, so its cards pass `setPreFiles` and an
+    `updateStep` call with no `markDirty` anywhere. The two counts below are where an attached file
+    enters that signature; drop either and the form goes quiet about a photograph in exactly the way
+    the three above would.
+  */
+  const process = read(PROCESS_FORM);
+  expect(process, "ProcessForm counts pre-process files into its dirty signature").toContain("pre: preFiles.length");
+  expect(process, "ProcessForm counts each step's files into its dirty signature").toContain("files: step.files.length");
+
+  // And the control that does the asking. Without this line the collapse never reaches a form.
+  expect(read(ENTITY_FORM), "a collapse consults the forms mounted inside the row").toContain(
+    "if (closing !== null && interceptLeave(open)) return;"
+  );
+});
+
+test("premise 2: a save leaves the attached files in place, so hoisting them would link them twice", () => {
+  /*
+    THE REASON HOISTING IS WRONG HERE AND NOT MERELY INSUFFICIENT. `StageRecordEmbed` re-keys the
+    form on every save, and none of the four clears its `File[]` on the way through: the list is
+    destroyed by the remount, which is the cleanup. Hoist it above the remount and those same
+    photographs land in the fresh edit-mode mount, where the next Save uploads and links every one of
+    them a second time — a duplicate in a ministry report rather than a missing file.
+
+    IF A FORM EVER DOES CLEAR ITS LIST ON THE SAVE PATH, this premise is gone and the pair is worth
+    re-measuring. That is the point of failing here rather than silently continuing to be right for a
+    reason that stopped being true.
+  */
+  for (const [path, writes] of [
+    [ARTISAN_FORM, ["setMediaFiles("]],
+    [PRODUCT_FORM, ["setMediaFiles(", "setGridFiles("]],
+    [TOOL_FORM, ["setMediaFiles(", "setStageFiles(", "setGridFiles("]],
+    // `ProcessForm` holds a `File[]` PER STEP as well, inside `steps`, and uploads them one at a
+    // time. Those files are in premise 1 (`files: step.files.length` is in its dirty signature), so
+    // they have to be in premise 2 or the two premises disagree about what they cover: the writers
+    // are `setSteps`/`updateStep`, and the value either of them assigns is `files: []`.
+    [PROCESS_FORM, ["setPreFiles(", "setSteps(", "files: []"]]
+  ] as const) {
+    const source = read(path);
+    /*
+      BOTH BRANCHES OF THE SAVE, WHICH IS WHY THIS STARTS AT THE QUEUED TEST AND NOT AT THE RECORD.
+      An earlier revision sliced from `const saved = outcome.saved;`, i.e. from AFTER the
+      `if (outcome.queued)` early return — and that branch is a save path too, the OFFLINE one, where
+      the files have just been copied into IndexedDB by `saveOrQueue` and clearing the list is the
+      natural next thing for a future author to write. Premise 2 would have been false with this test
+      still green. `if (outcome.queued) {` sits immediately above the record line in all four forms,
+      so one contiguous slice covers both; the assertion below refuses a slice that has lost either
+      end rather than quietly reading half of one.
+
+      The catch is searched FROM the queued marker, not from the top of the file: `ProcessForm` has an
+      earlier `catch (err)` in an unrelated helper, and slicing to that one silently reads nothing.
+    */
+    const start = source.indexOf("if (outcome.queued) {");
+    const savePath = source.slice(start, source.indexOf("} catch (err) {", start));
+    expect(start, `${path} has a queued branch to read`).toBeGreaterThan(-1);
+    expect(savePath, `${path}'s slice must reach the online branch as well`).toContain(
+      "const saved = outcome.saved;"
+    );
+    expect(savePath.length, `${path} has a save path to read`).toBeGreaterThan(200);
+    for (const write of writes) {
+      /*
+        THE SETTER NAME AND NOT A GUESSED LITERAL. These guards used to read `setGridFiles([`, and
+        `gridFiles` is not an array: `GridFiles` is `Partial<Record<GridGroup, File>>`, so a clear
+        would be written `setGridFiles({})` and the guard could never match — green over exactly the
+        violation it existed to catch, on the two forms that hold the grid-measurement photographs.
+        Every legitimate call to all of these setters is in an `onFilesChange` handler in the JSX,
+        far below the catch this slice ends at, so the narrower literal was buying nothing anyway.
+      */
+      expect(savePath, `${path} must not clear its file list on the save path`).not.toContain(write);
+    }
+  }
+
+  // And the remount that would otherwise inherit them. Both discards bump the same generation.
+  const embed = read(EMBED);
+  expect(embed, "the form is keyed on the generation as well as the linked record").toContain(":${formGeneration}`}");
+  expect(embed).toContain("const remountForm = useCallback(() => setFormGeneration((generation) => generation + 1), []);");
+  // FOUR SITES, THREE REASONS, AND NO CREATE AMONG THEM — `StageRecordEmbed`'s own paragraph on
+  // `remountForm` spells the mismatch out: the create path re-keys through the linked id instead, the
+  // edit path calls this twice (the re-described row and `adoptEdited`'s could-not-describe branch),
+  // and each discard callback calls it once.
+  expect(embed.match(/remountForm\(\);/g)?.length, "the edit path twice, and the two discards").toBe(4);
+});
+
+test("premise 3: the eagerly-uploaded objects are claimed before any remount can release them", () => {
+  /*
+    WHY TODAY'S BEHAVIOUR IS A CLEANUP AND NOT A LOSS, which is the sentence the whole refusal turns
+    on. `releaseStagedOwner` deletes an owner's unclaimed objects after `RELEASE_GRACE_MS`, and the
+    post-save remount releases the form's per-mount owner — but by then the objects the save cared
+    about are no longer in the store to delete, because both upload entry points claim them
+    SYNCHRONOUSLY, before their first `await`.
+
+    Move either claim behind an await and the post-save remount starts racing the save it is supposed
+    to follow: the release timer would find records still in the store and bin objects the save was
+    about to link. That is a data-loss bug on its own, and it would also make "the files die with the
+    mount, which is correct" false.
+
+    ── THE SLICES ARE BOUNDED AND THE COMMENTS ARE STRIPPED, AND BOTH WERE REAL HOLES ─────────────
+    An earlier revision sliced from each signature to END OF FILE and searched the raw text for
+    `"await "`. Both halves of that were wrong in the same direction — quietly satisfiable.
+    `uploadMediaFile`'s body contains no `await` at all (it returns `linkOrUpload(...)`), so an
+    unbounded slice found an await belonging to some LATER function and compared two positions in two
+    different functions; and the substring matched PROSE, so `lib/media`'s own comment "before the
+    first await, so nothing can reclaim…" escapes only because a comma follows the word rather than a
+    space. Rewording that sentence would have turned this red for no behavioural reason. So: cut each
+    body at the closing brace in column 0, and strip comments before looking for the keyword.
+  */
+  const media = read(MEDIA_LIB);
+
+  /**
+   * One function's body, from the line that closes its parameter list to the `}` in column 0 that
+   * ends it, with comments blanked out.
+   *
+   * Comments are BLANKED RATHER THAN DELETED (replaced by spaces of the same length) so that every
+   * index this test compares still points at the same character of the real file — the failure
+   * message a future reader gets is about the code, not about an offset in a rewritten copy.
+   */
+  function bodyOf(signatureClose: string, from: number): string {
+    const open = media.indexOf(signatureClose, from);
+    expect(open, `lib/media.ts still declares ${signatureClose}`).toBeGreaterThan(-1);
+    const close = media.indexOf("\n}\n", open);
+    expect(close, `${signatureClose}'s body still ends at a brace in column 0`).toBeGreaterThan(open);
+    return media
+      .slice(open, close)
+      .replace(/\/\*[\s\S]*?\*\//g, (run) => run.replace(/[^\n]/g, " "))
+      .replace(/\/\/[^\n]*/g, (run) => " ".repeat(run.length));
+  }
+
+  const batchAt = media.indexOf("export async function uploadMediaBatch({");
+  const body = bodyOf("}): Promise<BatchResult> {", batchAt);
+  const claim = body.indexOf("const records = takeStagedFor(files);");
+  const firstAwait = body.search(/\bawait\b/);
+  expect(claim, "uploadMediaBatch claims the staged objects").toBeGreaterThan(-1);
+  expect(firstAwait, "uploadMediaBatch does await something").toBeGreaterThan(-1);
+  expect(claim, "the claim must come before the first await").toBeLessThan(firstAwait);
+
+  /*
+    `ProcessForm` uploads one file at a time through the other entry point, so it needs the same
+    guarantee — and there it is stated the only way it can be, because that body has no `await` to
+    come before: the claim is the FIRST STATEMENT of the function. Anything inserted above it is
+    either an await (the hazard) or a statement that could grow into one, and both are worth a red
+    test. This is the assertion the dead `if (singleAwait > -1)` guard was pretending to make.
+  */
+  const singleAt = media.indexOf("export async function uploadMediaFile({");
+  const singleBody = bodyOf("}) {", singleAt);
+  const firstStatement = singleBody.split("\n").find((line) => line.trim().length > 0 && !line.startsWith("}") );
+  expect(firstStatement?.trim(), "uploadMediaFile claims the staged object first, above everything").toBe(
+    "const [record] = takeStagedFor([file]);"
+  );
+  expect(singleBody.search(/\bawait\b/), "uploadMediaFile still has no await of its own to race").toBe(-1);
+
+  // The contract points at these three premises by name, so a reader who reaches the refusal can
+  // find out whether it still holds instead of taking it on trust.
+  expect(read(CONTRACT), "the contract names where its premises are pinned").toContain(
+    "inline-record-host-unit.spec.ts"
+  );
 });
 
 test("the contract no longer describes a handoff none of the four forms implements", () => {
@@ -725,6 +1177,60 @@ test("the DIALOG still turns the host callbacks into ones that close it", () => 
   expect(source).not.toContain("footerFields={<");
 });
 
+test("the DIALOG's own two exits ask before they discard the form inside it", () => {
+  /*
+    THE ONE EXIT NOBODY HAD WIRED TO THE LEAVE INTERCEPTOR. Everything else on this dialog was
+    guarded — `dismissOnBackdrop={false}` refuses a stray click beside the panel, and the form's own
+    Cancel raises the form's own prompt — while `FieldDialog`'s document-level Escape handler and its
+    × both ended in a bare `onClose()`. So one keypress over a half-typed artisan discarded the
+    typing, the attached `File[]`, and (about two seconds later, when `releaseStagedOwner` fires) the
+    objects already eagerly uploaded to storage. It is the same class of loss the whole
+    leave-interceptor lane exists to end, arriving by the one key nothing consulted.
+
+    THE OTHER FOUR CALLBACKS MUST STAY UNGUARDED, and that is asserted rather than left to reading:
+    `finish`, `reportQueued` and `adoptExisting` all run AFTER a write, and `onCancel` runs after the
+    form's own prompt has already been answered — where `resetDirty()` has cleared the flag through
+    React state from inside the very handler that would re-ask, so the interceptor would still read
+    `dirty === true` and re-open the prompt it was just dismissed from.
+  */
+  const source = read(DIALOG);
+  expect(source, "the dialog asks the guard the same way every other guarded control does").toContain(
+    'import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";'
+  );
+  expect(source, "the close is refused when a form has taken responsibility for it").toMatch(
+    /const closeUnlessAsked = useCallback\(\(\) => \{\s*if \(interceptLeave\(onClose\)\) return;\s*onClose\(\);\s*\}/
+  );
+  // Handed to `FieldDialog`, which is what routes BOTH the × and Escape through it.
+  expect(source, "FieldDialog's own two exits go through the guarded close").toContain("onClose={closeUnlessAsked}");
+  // And the four that must not: a guarded `onCancel` in particular is an infinite prompt.
+  expect(source).toContain("onCancel={onClose}");
+  expect(source).toContain("onCreated={finish}");
+  expect(source).toContain("onQueued={reportQueued}");
+  expect(source, "a post-write callback must not be routed through the guard").not.toContain(
+    "onCancel={closeUnlessAsked}"
+  );
+  // The backdrop is still refused outright — the guard is an extra question, not a replacement.
+  expect(source).toContain("dismissOnBackdrop={false}");
+  /*
+    AND THE SENTENCE THAT USED TO DESCRIBE THE GAP AS A FEATURE. The comment beside
+    `dismissOnBackdrop` read "The close control and Escape both still work", which is true and reads
+    as reassurance; it now says they ask first. Asserting the correction keeps a later reader from
+    restoring the shorter, more comfortable version.
+  */
+  expect(source).toContain("THE CLOSE CONTROL AND ESCAPE BOTH STILL WORK, and they now ASK FIRST");
+
+  /*
+    THE OTHER HALF LIVES IN `FieldDialog` AND IS DELIBERATELY NOT CHANGED THERE. Its Escape handler
+    calls whatever `onClose` it was handed, with no opinion about guards — which is right for the
+    dozen dialogs that hold no typing (`ConfirmDialog`, `RecordCode`, the rest), and is why the fix
+    belongs in this host rather than in the shared primitive. This assertion says so, so that a
+    future reader who finds the bare call there does not "fix" it for every dialog in the app.
+  */
+  expect(read("components/dialogs/FieldDialog.tsx"), "FieldDialog stays unopinionated about guards").not.toContain(
+    "useLeaveInterceptor"
+  );
+});
+
 /* ────────────────────────────────────────────────────────────────────────────
  * The measurement-grid marker — a three-surface contract
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -819,12 +1325,25 @@ test("the unsaved-changes guard holds a stack, and a form only ever disarms itse
     and asking the rest would stack a second over it.
   */
   expect(guard).toContain("for (let index = stack.length - 1; index >= 0; index -= 1) {");
-  expect(guard).toContain("if (stack[index]()) return true;");
+  /*
+    THE BLOCKER IS ASKED WITH THE ACT IT IS REFUSING, IS RECORDED AS THE ONE HOLDING IT, AND THE WALK
+    STOPS THERE — pinned as ONE atom, because that is how the property behaves. This assertion used
+    to be `toContain("if (stack[index]()) return true;")`; when the interceptor grew its argument it
+    was split into three `toContain`s, one of which was the bare `return true;` — a substring the
+    interceptor body carries whatever shape the loop has, so a rewrite that asked EVERY interceptor
+    instead of stopping at the first would still have satisfied it. The block is matched whole again.
+  */
+  expect(guard, "the walk records the blocker and stops at it").toMatch(
+    /if \(entry\(pending\)\) \{\s*held\.current = \{ act: pending, blockedBy: entry \};\s*return true;\s*\}/
+  );
   expect(guard).not.toContain("const top = interceptors.current[interceptors.current.length - 1];");
   // Removal BY IDENTITY, not by popping: a teardown order React is free to choose must not be able
   // to disarm the wrong form.
   expect(guard).toContain("interceptors.current.filter((entry) => entry !== next)");
-  expect(guard).toContain("return unregister;");
+  // The cleanup runs the unregister it was handed and nothing wider. It is a wrapper now only
+  // because the mount also forgets its own entry, which is what scopes `completeLeave` to it.
+  expect(guard).toContain("unregister();");
+  expect(guard).not.toContain("interceptors.current = [];");
   // The comment that made the old shape look correct is gone with it.
   expect(guard).not.toContain("only one form is ever on screen at a time so a single slot is enough");
 });

@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -58,6 +59,14 @@ import com.designprototype.workshop.data.retentionOutcomeSentence
 import kotlinx.coroutines.CancellationException
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
+// The refused-camera vocabulary, SHARED WITH THE QR SCANNER rather than written a second time here.
+// `DwCameraRefusal.kt` has the argument; the short version is that the clause telling a designer
+// Android has stopped asking is the exact half that drifts when it is copied.
+import com.designprototype.workshop.ui.DW_CAMERA_SETTINGS_BUTTON
+import com.designprototype.workshop.ui.DwCameraUse
+import com.designprototype.workshop.ui.dwCameraBlocked
+import com.designprototype.workshop.ui.dwCameraRefusal
+import com.designprototype.workshop.ui.dwOpenAppPermissionSettings
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.launch
 import java.io.File
@@ -127,6 +136,22 @@ import java.io.File
  * permission. It hands back exactly the one image the designer chose and grants this app no standing
  * access to the gallery at all — the right posture for a control whose entire subject matter is
  * regulated personal data.
+ *
+ * ── A REFUSED CAMERA AND A BLOCKED ONE ARE DIFFERENT SITUATIONS AND USED TO READ ALIKE ────────
+ *
+ * This control answered both with one sentence: "The camera permission was refused, so the card
+ * cannot be photographed. You can still choose a photograph already on the phone, or type the number
+ * in." True of both and useful for only one. A designer who tapped Deny once can press "Photograph
+ * the card" again and get the prompt back. A designer Android has stopped asking for — denied twice,
+ * or "Don't allow" on a build that treats it as permanent — can press it for ever and see nothing
+ * happen at all, because the launcher returns denied without ever showing a dialog. That sentence
+ * never said so, and named nowhere that could undo it.
+ *
+ * Now the two are told apart inside the permission callback, which is the only place the answer is
+ * honest ([dwCameraBlocked] carries the reason), and the blocked one is offered Android's own
+ * permission page beside the buttons. NEITHER SENTENCE IS A DEAD END: both name the picker and the
+ * typed number, and neither of those needs a lens or a permission. The wording is shared with
+ * `DwQrScanControl` through `DwCameraRefusal.kt` rather than written twice.
  *
  * ── WHERE THE PHOTOGRAPH GOES: NOWHERE, UNLESS A PERSON SAYS OTHERWISE ────────────────────────
  *
@@ -446,6 +471,15 @@ internal fun DwIdentityCardControl(
     var working by remember { mutableStateOf(false) }
     var choices by remember { mutableStateOf<List<DwIdentityChoice>>(emptyList()) }
     var unconfirmedByServer by remember { mutableStateOf(false) }
+    /**
+     * Android has stopped asking for the camera, so a way out is offered beside the two buttons.
+     *
+     * Only ever set from inside the permission callback — [dwCameraBlocked] says why that is the only
+     * honest place to read it — and cleared the moment the permission is found granted again, so a
+     * designer who goes to Settings, turns it on and comes back is not left looking at a button for a
+     * problem they have already fixed.
+     */
+    var cameraBlocked by remember { mutableStateOf(false) }
 
     // ── Keep the photograph, or discard it ───────────────────────────────────────────────────────
     //
@@ -669,13 +703,18 @@ internal fun DwIdentityCardControl(
         if (!granted || file == null) {
             discardPhoto()
             if (!granted) {
-                onError(
-                    "The camera permission was refused, so the card cannot be photographed. You can " +
-                        "still choose a photograph already on the phone, or type the number in."
-                )
+                // TOLD APART HERE AND NOWHERE ELSE. A designer who tapped Deny once can press
+                // "Photograph the card" again and get the prompt back; a designer Android has stopped
+                // asking for can press it for ever and see nothing happen at all, because the launcher
+                // returns denied without showing a dialog. This control used to answer both with one
+                // sentence that named neither fact and offered no way to undo the second.
+                val blocked = dwCameraBlocked(context)
+                cameraBlocked = blocked
+                onError(dwCameraRefusal(DwCameraUse.IDENTITY_CARD, blocked))
             }
             return@rememberLauncherForActivityResult
         }
+        cameraBlocked = false
         takePhoto.launch(dwCaptureUri(context, file))
     }
 
@@ -709,6 +748,9 @@ internal fun DwIdentityCardControl(
         val file = File(identityScratchDir(context), "card-${System.currentTimeMillis()}.jpg")
         pending = file
         if (hasPermission(context, Manifest.permission.CAMERA)) {
+            // Granted since the last refusal — the designer has been to Settings and back — so the
+            // way-forward button has done its job and goes away.
+            cameraBlocked = false
             takePhoto.launch(dwCaptureUri(context, file))
         } else {
             cameraPermission.launch(Manifest.permission.CAMERA)
@@ -785,6 +827,27 @@ internal fun DwIdentityCardControl(
                 Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Choose a photo", fontSize = 13.sp)
+            }
+            /*
+             * THE WAY FORWARD, and it appears only once there is nowhere else to go.
+             *
+             * Offered when and only when Android has stopped asking: before that, "Photograph the
+             * card" is itself the way forward and a settings button beside it would send a designer
+             * on a detour through a system screen for a prompt they could have answered in place.
+             *
+             * NOT GATED ON `usable`, unlike the two buttons above, and the difference is deliberate
+             * twice over. A blocked permission is worth fixing while a card is being read, and it is
+             * equally worth fixing on a PEHCHAN field with no signal — where `usable` is false and
+             * the camera is exactly what the designer will need the moment there is a bar of signal.
+             * This button neither reads a card nor writes a number.
+             */
+            if (cameraBlocked) {
+                OutlinedButton(onClick = { context.dwOpenAppPermissionSettings() }) {
+                    Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    // The label the blocked sentence quotes, from the one place it is spelled.
+                    Text(DW_CAMERA_SETTINGS_BUTTON, fontSize = 13.sp)
+                }
             }
         }
         Text(

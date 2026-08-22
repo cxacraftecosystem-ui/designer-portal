@@ -281,8 +281,13 @@ icon chip `mt-1 grid h-10 w-10 place-items-center rounded-xl bg-field-200 text-f
 `flex flex-wrap gap-2`. `back` defaults **true**; only a true root screen passes `back={false}`.
 `PageHeader`'s `mb-6` + the shell's `pt-24` is the whole top-of-page spec.
 
-`BackButton` calls `interceptLeave()` **before both** navigation branches, so an explicit `href` cannot
-skip the unsaved-changes prompt. In a form call `useLeaveGuard(dirty, () => setShowUnsavedDialog(true))`
+`BackButton` builds its navigation first and calls `interceptLeave(go)` **before both** branches, so an
+explicit `href` cannot skip the unsaved-changes prompt. The argument is **not optional**: the act is
+handed over, not merely refused — the provider holds it against the form that blocked, and that form's
+`completeLeave()` / `abandonLeave()` (from `useLeaveGuard`) are the calls that finish or forget it. No
+form calls them yet, so "Discard" still clears the form and leaves the page where it is — if you are
+editing one of the four record forms, that call goes in the `else` branch beside `leaveAfterDiscard()`,
+never beside `resetDirty()` (which also runs for the form's own Cancel). In a form call `useLeaveGuard(dirty, () => setShowUnsavedDialog(true))`
 and add **no** back control of your own — `frontend/e2e/back-control.spec.ts` asserts exactly one arrow
 on five routes, because the opposite shipped four times.
 
@@ -1304,8 +1309,14 @@ The single HTTP entry point. `buildQuery` + `listResource` + `PageResult` on top
 
 ### 14.2 Permissions, as the frontend sees them
 
-Six-tier ladder: CROWDSOURCE(10) · FIELD_CONTRIBUTOR(20) · RESEARCHER(30) · PROFESSOR(40) · ADMIN(50) ·
-MASTER_ADMIN(60). `ROUTE_GUARDS` is enforced by `AppShell` **above every page** because hiding a nav
+**Seven**-tier ladder: CROWDSOURCE(10) · FIELD_CONTRIBUTOR(20) · RESEARCHER(30) · **DESIGNER(35)** ·
+PROFESSOR(40) · ADMIN(50) · MASTER_ADMIN(60). Source of truth is `ROLE_RANK` in
+`backend/app/core/deps.py`, mirrored in `frontend/lib/permissions.ts`; `docs/tools/check-docs.mjs`
+now checks the two against each other. **This line said "Six-tier" and omitted DESIGNER until
+2026-08-23**, and because every agent is told to load this document before any frontend work, it was
+the upstream source of the same miscount in fourteen other files — `permissions.ts`'s own header, the
+landing hero, the login page, and six documents. If you are counting tiers, count them from
+`ROLE_RANK` and not from prose. `ROUTE_GUARDS` is enforced by `AppShell` **above every page** because hiding a nav
 entry only removes the link — `/users`, `/review`, `/data` and the create forms are one typed URL away.
 
 - `canManageCrafts` / `canManageWorkshops` are **rank-only** even though the `User` still carries the

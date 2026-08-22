@@ -545,9 +545,18 @@ whole-set `PUT` that replaces the roster so that removing somebody is sending th
 The request/approve **lifecycle** is not borrowed. There is no `status`, no `requestedById`, no
 `decidedAt`. That vocabulary exists on the sibling table (§4.1) because a researcher may *ask* for a
 workshop and be refused, and `DENIED`/`REVOKED` rows are kept so a refusal cannot be quietly
-re-requested around. **Nothing asks for a design workshop** — an admin decides who is on the team —
-so modelling states nobody can enter would leave those columns permanently equal to `GRANTED` and
-invite the next reader to go looking for the request queue that feeds them.
+re-requested around. A `DesignWorkshopViewer` row is a **grant and nothing else** — it is only ever
+written by an admin, so four of those five lifecycle columns would sit permanently at `GRANTED`.
+
+> **This paragraph used to say "Nothing asks for a design workshop", and that is no longer true.**
+> `DesignWorkshopAccessRequest` is the queue it said did not exist: a designer who scanned a
+> workshop's card asks through `POST /api/design-workshop-access/requests`, and an admin answers at
+> `POST /api/design-workshop-access/requests/{id}/decide`. The sentence is corrected rather than
+> deleted because **the division it argues still holds, and is exactly why the queue is a second
+> table**: an ask and its refusal are auditable history and are kept for ever, a grant is current
+> fact and is deleted when it ends (the next paragraph). Granting a request writes a row *here*,
+> through `services/design_workshop_viewers.replace_viewers`, so there is still exactly one way to
+> be a viewer and `load_workshop_or_404` still asks `has_viewer_grant` and only that.
 
 Removing a viewer therefore **deletes** the row rather than revoking it, which is the one place this
 departs from §4.1's "nothing is ever deleted". A grant here carries no decision to audit: it never

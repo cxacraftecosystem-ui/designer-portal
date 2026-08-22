@@ -9,7 +9,7 @@ import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 const FAQS = [
   {
     q: "Who can sign in?",
-    a: "Only addresses an administrator has admitted. Signing in — by password or with Google — checks your address against the platform allow-list first; if it is not on the list, no account is created and your request goes to the administrators as a pending approval. Everyone already using the repository when the allow-list was introduced was carried onto it, so nothing changed for existing accounts. Once you are admitted you join the six-tier ladder, and an admin raises you up it (field contributor, researcher, professor, admin) as your role in the project grows."
+    a: "Only addresses an administrator has admitted. Signing in — by password or with Google — checks your address against the platform allow-list first; if it is not on the list, no account is created and your request goes to the administrators as a pending approval. Everyone already using the repository when the allow-list was introduced was carried onto it, so nothing changed for existing accounts. Once you are admitted you join the seven-tier ladder, and an admin raises you up it (field contributor, researcher, designer, professor, admin) as your role in the project grows."
   },
   {
     q: "I signed in with Google and was told I need approval. Why?",
@@ -29,7 +29,7 @@ const FAQS = [
   },
   {
     q: "What can a brand-new account actually do?",
-    a: "A newly admitted account starts at the bottom of the ladder — Crowdsource Volunteer unless the administrator who admitted it chose a higher tier — and can take interviews, upload media, and comment on existing records. Creating artisans, products, processes and tools begins at Field Contributor, and an admin raises the tier when the person's role in the project does."
+    a: "A newly admitted account starts at the bottom of the ladder — Crowdsource Volunteer unless the administrator who admitted it chose a higher tier — and can take interviews, upload media, and comment on existing records. Creating artisans, products, processes and tools begins at Researcher — the two tiers below it fill in records rather than open them, which is deliberate and the thing people are most often surprised by. A Field Contributor adds the extra power of reviewing a volunteer's work. An admin raises the tier when the person's role in the project does."
   },
   {
     q: "Does it work offline?",
@@ -37,7 +37,7 @@ const FAQS = [
   },
   {
     q: "What about privacy?",
-    a: "Access is governed by the six-tier role ladder, cross-researcher sharing is opt-in per grant, and every edit carries an audited revision history. Media lives in private cloud storage that only signed-in, authorized users can reach. National identifiers are masked wherever a record leaves its owner: an artisan's Aadhaar number is used to make sure the same person documented at two workshops becomes one record, not two, but it renders as XXXX XXXX 9012 on every shared and exported surface — the data browser, CSV, and the .xlsx report — and only the researcher who recorded that artisan, or a professor and above, can read it in full."
+    a: "Access is governed by the seven-tier role ladder, cross-researcher sharing is opt-in per grant, and every edit carries an audited revision history. Media lives in private cloud storage that only signed-in, authorized users can reach. National identifiers are masked wherever a record leaves its owner: an artisan's Aadhaar number is used to make sure the same person documented at two workshops becomes one record, not two, but it renders as XXXX XXXX 9012 on every shared and exported surface — the data browser, CSV, and the .xlsx report — and only the researcher who recorded that artisan, or a professor and above, can read it in full."
   }
 ];
 

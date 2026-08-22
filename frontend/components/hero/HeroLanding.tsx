@@ -21,7 +21,7 @@ import {
 
 import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { useAuth } from "@/components/AuthProvider";
-import AccessLadder from "@/components/hero/AccessLadder";
+import AccessLadder, { TIER_COUNT_WORD } from "@/components/hero/AccessLadder";
 import HeroFAQ from "@/components/hero/HeroFAQ";
 import HowItWorks from "@/components/hero/HowItWorks";
 import type { CorpusCensus } from "@/components/hero/corpusCensus";
@@ -51,7 +51,11 @@ import { heroEntrance, useHeroReducedMotion } from "@/components/hero/useHeroMot
 const BUTI_TILE = butiTileUrl();
 
 const TRUST_ITEMS = [
-  { icon: ShieldCheck, label: "Six-tier access control" },
+  // The count comes from the ladder itself (`AccessLadder`, which derives it from `ROLES_BY_RANK`),
+  // because this badge and that section's heading are the same claim seen at two scroll positions on
+  // one page. Typed by hand, they drift apart the next time a tier is added and contradict each
+  // other in front of the visitor.
+  { icon: ShieldCheck, label: `${TIER_COUNT_WORD}-tier access control` },
   { icon: Wifi, label: "Works offline in the field" },
   { icon: Languages, label: "Transcribed & translated to English" }
 ];
@@ -390,7 +394,7 @@ export default function HeroLanding({ census }: { census?: CorpusCensus }) {
       {/* ── The pilot collection, on cloth ───────────────────────────────── */}
       <PrintingBed census={census} />
 
-      {/* ── The six-tier access ladder ───────────────────────────────────── */}
+      {/* ── The seven-tier access ladder ─────────────────────────────────── */}
       <AccessLadder />
 
       {/* ── Built for the whole team ─────────────────────────────────────── */}

@@ -52,7 +52,7 @@ production to it twice.
 **What happened.** Prisma opens a connection pool per process. The EC2 box ran `--workers 2`, each
 worker with `connection_limit=40`, and a supervisor that SIGKILLed a worker whose health-ping was
 starved by transcription work — orphaning its query engine, one per kill cycle, each holding its
-pool open. The Supabase pooler hit its client ceiling and returned `FATAL: (EMAXCONN) max client
+pool open. The pooler hit its client ceiling and returned `FATAL: (EMAXCONN) max client
 connections reached`. Every database call 500'd. Login stopped working. `/health` stayed green the
 whole time, because it does not touch the database. The fix was `connection_limit` 40 → 10, one web
 worker, and a separate queue process.
@@ -64,8 +64,27 @@ pods → more connections → more failures → more load → more pods. **An au
 connection exhaustion is worse than no autoscaler**, because the un-scaled version stays up and
 merely gets slow.
 
-**The ceiling.** 200 client connections, Supabase, per project, shared by everything — every pod,
-every environment, every `psql`, the Studio tab you left open.
+**The ceiling.** 200 client connections, shared by everything — every pod, every environment, every
+`psql`, every dashboard tab left open.
+
+> **UNRESOLVED — WHAT IS THE CURRENT PROVIDER'S CONNECTION CEILING? Recorded 2026-08-22; needs a
+> console, not a checkout.** The 200 is a **Supabase per-project** figure, and production left that
+> provider (see "The database" in [ENVIRONMENT.md](ENVIRONMENT.md)). It is the number every budget
+> below, `maxReplicas: 6` in `infra/k8s/base/hpa.yaml`, and both overlays' `DATABASE_CONNECTION_LIMIT`
+> are derived from. **Nothing in this repository establishes the new one**, and it is not the sort of
+> number to guess: too high re-runs the outage above, too low throttles the cluster for no reason.
+>
+> The numbers are therefore **left exactly as they were** rather than re-derived against a ceiling
+> nobody has measured. They are known-survivable on the old provider and are conservative against any
+> larger ceiling; the risk of leaving them is wasted headroom, and the risk of editing them on a guess
+> is the outage. Nothing here is deployed on Kubernetes today — the API runs on EC2 — so the cost of
+> waiting is zero.
+>
+> **The one thing that answers it:** open the current provider's console and read the compute's
+> connection limit (managed PostgreSQL usually states both a direct `max_connections` and a separate
+> pooled-client ceiling; this budget needs the **client** one, and they are rarely the same number).
+> Write it into this block, re-run the arithmetic below, and then adjust `hpa.yaml` and the overlays
+> in one commit — the file headers there point back here and say the same thing.
 
 **The formula.** Every environment must satisfy:
 
@@ -76,7 +95,8 @@ every environment, every `psql`, the Studio tab you left open.
 `+1 surge` is why `maxSurge` is pinned to the absolute `1` and never a percentage: a percentage
 would make peak connection use scale with replica count precisely when the cluster is busiest.
 
-**The whole budget, assuming the worst — all three environments against one Supabase project:**
+**The whole budget, assuming the worst — all three environments against one database, against the
+200-client ceiling recorded above and not yet re-established for the current provider:**
 
 | Consumer | Arithmetic | Connections |
 | --- | --- | --- |
@@ -327,9 +347,16 @@ Three independent layers keep it single-writer, because one is not enough:
    **This is why the Job uses `DATABASE_URL` untouched.** An advisory lock is scoped to a *session*,
    and pgbouncer in transaction mode hands a different server session to every statement — through
    the `:6543` pooler the lock would be taken and dropped between statements and protect nothing.
-   The secret holds the session-pooler URL; `app/core/db.py` rewrites it to `:6543` for the runtime
-   client only, and the Job's container deliberately gets no `envFrom` of the app ConfigMap so that
-   nobody helpfully adds `DATABASE_USE_TRANSACTION_POOLER` to it.
+   The secret holds a session-mode URL, and the Job's container deliberately gets no `envFrom` of
+   the app ConfigMap so that nobody helpfully adds `DATABASE_USE_TRANSACTION_POOLER` to it.
+   **`app/core/db.py` used to rewrite that URL to `:6543` for the runtime client**, which is what
+   let one secret serve both; the rewrite was removed on 2026-08-22, so the runtime now gets
+   whatever endpoint the secret names and `DATABASE_USE_TRANSACTION_POOLER` only *declares* which
+   kind it is. **Open, and it belongs to whoever first applies this directory:** with a provider
+   that publishes two endpoints, the app ConfigMap and this Job now want two different DSNs, so the
+   secret needs a second key. Nothing here has ever been applied (see this file's header), so
+   nothing is broken today — but the one-secret arrangement above is a leftover of the rewrite and
+   will not survive first contact with a real cluster.
 3. **One Job object per release.** `metadata.name` inherits the image tag via `replacements`, so
    `kubectl apply -k` twice in a row is a no-op rather than an error about the immutable Job
    template, and two releases can never share one Job object where the second silently does nothing
@@ -481,8 +508,8 @@ kubectl v1.36.1 (bundled Kustomize v5.8.1); kubeconform v0.7.0
   anyone reaching uvicorn without passing through nginx. Here the equivalent boundary is the pod
   network and the Service, and a loopback bind would simply fail every probe.
 - **The image entrypoint refuses remote databases.** `docker/backend/entrypoint.sh` exists so nobody
-  can hand a throwaway container the production connection string. Supabase is remote by definition,
-  so all three overlays would be stopped dead. It is *answered*, not bypassed:
+  can hand a throwaway container the production connection string. A managed database is remote by
+  definition, so all three overlays would be stopped dead. It is *answered*, not bypassed:
   `ALLOW_REMOTE_DATABASE: "yes-i-mean-it"` in the ConfigMap, and the containers set `args` rather
   than `command` so the entrypoint still runs. Setting `command` would have skipped the script
   entirely — silently, with nothing failing — and lost its startup line naming the database host the

@@ -137,8 +137,10 @@
  *   durable, and silent data loss the moment a record form was mounted inside one. Both now call
  *   `useLeaveInterceptor` first, and `UnsavedChangesProvider` walks its stack instead of asking only
  *   the topmost, because stage 5 mounts TWO of these forms and a clean one was answering for a dirty
- *   one. `handleCancel` says what Discard did, since the four forms cannot tell a host which of
- *   their two exits called it.
+ *   one. THE TWO EXITS NOW HAVE TWO CALLBACKS: the forms route their own Cancel to `onCancel`
+ *   ({@link StageRecordEmbed.handleCancel}) and the page's blocked exit to `onDiscardAndLeave`
+ *   ({@link handleDiscardAndLeave}), which is where the reason this host still cannot FINISH that
+ *   exit — and the change that would let it — is written down.
  *
  * T-OFFLINE. `onCreated` never fires for a save that was banked in the outbox — there is no id, and
  *   a REF field must hold a real server id or the report renders a reference to a deleted record for
@@ -152,8 +154,11 @@
  *   it is subtler and no less real — and on `ProcessForm` it is not subtle at all, because that form
  *   sets `committed` on every accepted write and thereafter refuses to save, reports itself clean
  *   and lets Cancel discard the next correction without asking. {@link remountForm} lists all three
- *   reasons a mount is replaced. The remount destroys anything the form was holding in
- *   its own state, and there is exactly one thing worth holding at that moment: the four forms'
+ *   reasons a mount is replaced — a create, an edit saved from the form, and either of the two
+ *   discards ({@link StageRecordEmbed.handleCancel}, {@link handleDiscardAndLeave}), which are one
+ *   reason with two callbacks — and says why the four call sites do not count to three. The remount
+ *   destroys anything the form was holding in its own state, and there is exactly one thing worth
+ *   holding at that moment: the four forms'
  *   partial-media-failure banner, which names the photographs that did not upload and is set
  *   immediately before `onCreated` is called. `InlineRecordDialog` loses the same message by closing
  *   over it, and its own comment calls that "the trade"; this host makes the same trade for a
@@ -701,8 +706,18 @@ export function StageRecordEmbed({
    * STAGE PAGE telling every entity which record has a form open, since it is the only place that
    * knows both; until then it is the hazard NOT_EMBEDDED's entry describes.
    *
-   * Cancel bumps it too: the values live in React state and uncontrolled DOM inside the form, so
-   * remounting by key is the only thing that could clear them.
+   * THE TWO DISCARDS BUMP IT TOO, and they are one reason counted once even though they are two
+   * call sites: the values live in React state and uncontrolled DOM inside the form, so remounting
+   * by key is the only thing that could clear them. {@link handleCancel} is the form's own Cancel
+   * button; {@link handleDiscardAndLeave} is "Discard" answered to a prompt one of the HOST PAGE's
+   * exits raised. They differ only in what they then say.
+   *
+   * SO THE COUNT DOES NOT MATCH, DELIBERATELY: there are THREE reasons — the two numbered above and
+   * the discard — and FOUR `remountForm()` call sites. Reason 1 never calls it (the linked id in the
+   * key does that work); reason 2 calls it twice, once where the re-described row landed and once in
+   * {@link adoptEdited}'s branch where the record HAS changed but the list could not describe it;
+   * the discard calls it from each of its two callbacks. A reader counting call sites and expecting
+   * three should read this paragraph rather than assume one has gone missing.
    */
   const [formGeneration, setFormGeneration] = useState(0);
   const remountForm = useCallback(() => setFormGeneration((generation) => generation + 1), []);
@@ -990,7 +1005,7 @@ export function StageRecordEmbed({
   }, [noun]);
 
   /**
-   * Cancel, which here means "put the form back to what the record says".
+   * The form's OWN Cancel button: "put the form back to what the record says, I am staying".
    *
    * It cannot navigate and it must not unmount the form: this is not a dialog and there is nowhere
    * to go — the row is still being filled in and the record page is part of it. `forms/inlineRecordHost`
@@ -999,20 +1014,63 @@ export function StageRecordEmbed({
    * actually clears the boxes: the values live in React state and uncontrolled DOM inside the form,
    * so there is nothing here that could reset them one by one.
    *
-   * IT IS ALSO WHERE THE BACK ARROW'S "Discard" LANDS, and that is the one thing said out loud here
-   * rather than left to be inferred. The four forms call this from BOTH exits — the Cancel button
-   * and the unsaved-changes dialog's Discard — and cannot tell a host which one it was. In a dialog
-   * that reads correctly because the dialog visibly closes; here the only visible effect is the form
-   * emptying, so a designer who pressed Back, was asked, and answered Discard would be left standing
-   * on the same page with their typing gone and nothing saying why. The line below says why, and
-   * says that Back still has to be pressed. GIVING THE TWO EXITS DIFFERENT CALLBACKS IS THE REAL
-   * FIX AND IT BELONGS IN THE FOUR FORMS, which this wave does not own.
+   * IT IS NO LONGER WHERE THE BACK ARROW'S "Discard" LANDS. It used to be — the four forms called
+   * one callback from both exits and could not say which — and the sentence this used to write had
+   * to hedge for both at once ("If you were leaving this stage or closing this row, do it again"),
+   * which is noise on the Cancel button and an instruction on the arrow. The two are now separate;
+   * see {@link handleDiscardAndLeave} for the half this one no longer has to cover.
    */
   const handleCancel = useCallback(() => {
     remountForm();
     setNotice({
       tone: "done",
-      text: `The ${noun} form has been cleared and nothing was saved. If you were leaving this stage or closing this row, do it again — nothing unsaved is holding you here now.`
+      text: `The ${noun} form has been cleared and nothing was saved. This row is unchanged.`
+    });
+  }, [noun, remountForm]);
+
+  /**
+   * "Discard", answered to a prompt one of the HOST PAGE'S OWN exits raised.
+   *
+   * ── WHAT THIS CAN DO, AND WHAT IT HONESTLY CANNOT ─────────────────────────────────────────
+   * `InlineRecordHostProps.onDiscardAndLeave` asks a host to "complete the exit its back control
+   * began". THIS HOST CANNOT COMPLETE IT, and saying so here is better than guessing: `useLeaveGuard`
+   * does not delay a navigation, it REFUSES one, and the act that was refused is held by the control
+   * that tried it, none of which is this component or anything below it. There are three of them on
+   * a stage page and they want three different things — `BackButton`'s `router.back()` or its
+   * explicit `href`, the stage page's `leave(action)` for "previous stage" / "next stage", and
+   * `CollectionTable`'s `toggleRow`, which is not a navigation at all. A `router.back()` from here
+   * would be right for the first, land on the wrong stage for the second, and throw a designer off
+   * the page entirely for the third — the most common of the three, since collapsing a row is
+   * ordinary browsing. Trading "you must press it again" for "you were sent somewhere you did not
+   * ask for" is not a fix.
+   *
+   * WHAT IT DOES INSTEAD is everything that is genuinely this host's: clear the form (only a remount
+   * can, for the reason on {@link handleCancel}) and say, in the words of the exit that was actually
+   * blocked, that the page did not move and what will happen on the next press. That is one press
+   * worse than the ideal and it is no longer silent, which is the half of the defect that cost work.
+   *
+   * THE SENTENCE IS SCOPED TO THIS ROW, AND THAT QUALIFICATION IS LOAD-BEARING RATHER THAN CAUTIOUS.
+   * A first draft of it promised outright that the next press would go through "because nothing here
+   * is holding you now". This callback knows only that the form IT hosts is clean; it cannot see the
+   * rest of the guard stack, and `UnsavedChangesProvider` walks that stack and STOPS at the first
+   * interceptor that blocks, one dialog at a time. Stage TRADITIONAL_PROCESS_BASELINE is exactly the
+   * case — see T-PROMPT in the header — mounting a `ProcessForm` singleton from first paint and a
+   * `ToolForm` beside it the moment a tool row opens. With both dirty, the designer answers Discard
+   * on one, presses again, and is asked about the other: correct behaviour, and a flat promise that
+   * the second press "will go through" is a lie about it. So the notice names the row it can vouch
+   * for and names the other form's prompt as the thing that may come next.
+   *
+   * COMPLETING THE EXIT NEEDS THE PENDING ACT TO SURVIVE THE REFUSAL, and that is a change to
+   * `components/UnsavedChangesGuard.tsx` and its three callers rather than to this file: an
+   * interceptor that is handed the act it is blocking, kept while the prompt is on screen, and run
+   * by whichever answer says to leave. Written down here because this is where the next reader will
+   * look for it.
+   */
+  const handleDiscardAndLeave = useCallback(() => {
+    remountForm();
+    setNotice({
+      tone: "done",
+      text: `The unsaved ${noun} was discarded and nothing was saved. This page did not move — press the same control again to go on. Nothing in this row is holding you now; if another form on this stage also has unsaved work, that one will ask you next.`
     });
   }, [noun, remountForm]);
 
@@ -1048,8 +1106,9 @@ export function StageRecordEmbed({
 
       {/*
         KEYED ON THE LINKED RECORD AND ON THE FORM GENERATION — see {@link remountForm} for all three
-        reasons a mount is replaced. Changing the picker's choice has to rebuild the form over the
-        new record: `initial` is read into React state and uncontrolled DOM at mount and never
+        reasons a mount is replaced, and for why they are spread over four call sites. Changing the
+        picker's choice has to rebuild the form over the new record: `initial` is read into React
+        state and uncontrolled DOM at mount and never
         re-read, so a form left standing would go on showing the previous artisan's boxes above the
         new artisan's id — the same fabrication the hydration rules exist to prevent, one level up.
 
@@ -1064,6 +1123,12 @@ export function StageRecordEmbed({
           footerFields={workshopFields}
           onCreated={handleSaved}
           onCancel={handleCancel}
+          /*
+            THE OTHER EXIT, WHICH IS NOT THE SAME ACT — see {@link handleDiscardAndLeave}. Without
+            it both the Cancel button and the page's own back control ended in `handleCancel`, and
+            the one sentence it could write had to hedge for both.
+          */
+          onDiscardAndLeave={handleDiscardAndLeave}
           onQueued={handleQueued}
           /*
             THE DUPLICATE PROMPT, WHICH IS A NAVIGATION WITHOUT THIS — see {@link handleUseExisting}.

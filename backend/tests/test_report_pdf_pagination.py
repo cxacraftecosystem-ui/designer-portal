@@ -57,10 +57,11 @@ def _meta(**kw) -> ReportMeta:
 #: it — the foot and the page number below, the running head above ``MARGIN`` from the top.
 #:
 #: SEVERAL OF THE TESTS BELOW ARE ONLY LIVE BECAUSE THEY FILTER ON IT. ``show_page_numbers``
-#: defaults to True, so "Page 7" is drawn at y=59.53 on every page from the second onwards — it
-#: is below every body baseline and it is on every page. A test that asks "what is the lowest
-#: thing on this page" or "is anything drawn on this page" without excluding it is answered by
-#: the furniture on every page but the first, and passes on a renderer that is entirely broken.
+#: defaults to True, so "Page 7 of 12" is drawn at y=59.53 on every page from the second onwards
+#: — it is below every body baseline and it is on every page. A test that asks "what is the
+#: lowest thing on this page" or "is anything drawn on this page" without excluding it is
+#: answered by the furniture on every page but the first, and passes on a renderer that is
+#: entirely broken.
 PT_PER_MM = 72.0 / 25.4
 MARGIN = 25.0 * PT_PER_MM
 TEXT_FLOOR = MARGIN + 10.0 * PT_PER_MM
@@ -79,37 +80,96 @@ class _Piece:
         self.y = y
 
 
-def _registered_name(base_font: str) -> str:
+def _measurable_faces() -> dict[str, str]:
+    """Every face this process has registered, keyed by every spelling a ``/BaseFont`` can carry.
+
+    A ``/BaseFont`` IS NOT THE NAME ``registerFont`` WAS GIVEN, and it can differ in two unrelated
+    ways at once. ReportLab writes a subset as ``/AAAAAA+<face>`` and may append the subset index,
+    so the face bound as ``NirmalaUI`` can reach the file as ``AAAAAA+NirmalaUI-0``; and the
+    ``<face>`` it writes is the font FILE's PostScript name, NOT the ReportLab name. Measured, not
+    assumed: with ``REPORT_PDF_FONT`` pointed at reportlab's bundled Vera, `report_pdf` binds the
+    override under the family name ``ReportCustom`` and the file comes back saying
+    ``/AAAAAA+BitstreamVeraSans-Roman``.
+
+    THAT SECOND DIFFERENCE IS WHY THIS IS BUILT FROM THE REGISTRY INSTEAD OF BY SURGERY ON THE
+    STRING. Stripping the prefix and the index resolves the Windows face whose PostScript name
+    happens to equal the family it was bound as, and resolves NOTHING bound through
+    ``REPORT_PDF_FONT`` — after which EVERY width in the module became ``len(text) * size * 0.5``.
+
+    WHAT THAT COST, MEASURED RATHER THAN ARGUED, by running the pre-fix module under
+    ``REPORT_PDF_FONT`` pointed at Vera: 2 failed, 14 passed. The two failures are the pair that
+    compares an x-extent against the text column —
+    ``test_a_long_contents_entry_stays_inside_the_text_column`` and
+    ``test_a_contents_entry_that_wraps_prints_the_page_its_section_is_on`` — and neither renderer
+    nor report was wrong; the guess was. The other fourteen went on passing on measurements that
+    were no longer measurements. So the fallback bought nothing in either direction: it turned the
+    assertions sensitive enough to notice into false alarms about the RENDERER, and turned the rest
+    into green that means nothing. Both halves are worse than a refusal, which is why
+    :func:`_registered_name` raises. With the face resolved, the same command is 16 passed.
+
+    A POSTSCRIPT NAME WINS OVER A REGISTERED NAME WHERE THE TWO COLLIDE, which is why the
+    PostScript pass runs first. The string in a ``/BaseFont`` was written by whoever wrote the
+    file, and what it spells is the FONT FILE's PostScript name — so if one string happens to be
+    face A's ReportLab name and face B's PostScript name, the file that carries it means B, and
+    resolving it to A would measure the text with the wrong metrics and produce a wrong advance
+    width silently. That is the one thing this module is built not to do. Collisions among the
+    PostScript names themselves do not need resolving: two registered names whose faces report one
+    PostScript name are two bindings of the same file, so their metrics are identical. The
+    registered-name entries exist to catch the spellings no face's PostScript name has — chiefly
+    the subset-index form, ``NirmalaUI-0`` for the family bound as ``NirmalaUI``.
+    """
+    index: dict[str, str] = {}
+    names = list(pdfmetrics.getRegisteredFontNames())
+    for registered in names:
+        try:
+            face = pdfmetrics.getFont(registered).face
+        except Exception:  # noqa: BLE001 - a name the registry lists but cannot resolve
+            continue
+        ps_name = getattr(face, "name", None)
+        if isinstance(ps_name, bytes):
+            # TTFontFile keeps the name table's bytes; the PDF carries the same ASCII.
+            ps_name = ps_name.decode("latin-1", "replace")
+        if ps_name:
+            index.setdefault(str(ps_name), registered)
+    for registered in names:
+        index.setdefault(registered, registered)
+    return index
+
+
+def _registered_name(base_font: str, faces: dict[str, str]) -> str:
     """The name this process can measure with, from the one the PDF file carries.
 
-    A ``/BaseFont`` is not the name ``registerFont`` was given. ReportLab writes a subset as
-    ``/AAAAAA+NirmalaUI`` and appends the subset index, so the face bound as ``NirmalaUI`` reaches
-    the file as ``NirmalaUI-0``. Measuring against the wrong name silently falls back to an
-    estimate, and an estimate that is twice the real advance turns a dot leader that stops inside
-    the column into a test failure — which is exactly what it did the first time.
+    Raises rather than returning a sentinel when the face cannot be resolved — see
+    :func:`_measurable_faces` for why a fallback here is worse than a failure.
     """
-    name = base_font.lstrip("/").split("+")[-1]
+    name = str(base_font).lstrip("/").split("+")[-1]
     candidates = [name]
     head, _, tail = name.rpartition("-")
     if head and tail.isdigit():
         candidates.append(head)
     for candidate in candidates:
-        try:
-            pdfmetrics.getFont(candidate)
-        except Exception:  # noqa: BLE001 - not registered under that spelling; try the next
-            continue
-        return candidate
-    return ""
+        if candidate in faces:
+            return faces[candidate]
+    raise AssertionError(
+        f"cannot measure text drawn in /BaseFont {base_font!r}: no registered face answers to any "
+        f"of {candidates}. Registered: {sorted(faces)}. Every assertion in this module is made "
+        f"against a measured advance width, so resolve the face — do not let it estimate."
+    )
 
 
 def _pieces(pdf: bytes) -> tuple[list[_Piece], float, float]:
     """Every non-blank string in the file, with its true horizontal extent and its baseline.
 
     The width is measured with the face the PDF itself names, resolved back to the name this
-    process registered it under. A name that resolves to nothing falls back to a half-em estimate,
-    which is only ever enough to decide whether something is grossly off the sheet.
+    process registered it under. NOTHING IS ESTIMATED: a face that will not resolve raises out of
+    the visitor and fails the test that asked for the pieces, naming the ``/BaseFont`` it could not
+    place. The half-em fallback this replaced is measured in :func:`_measurable_faces` — it did not
+    merely weaken the assertions, it made two of them fail on a renderer that was correct.
     """
     reader = PdfReader(BytesIO(pdf))
+    # Built once per file rather than per piece: the render has already registered every face by
+    # the time the bytes exist, so the registry cannot change underneath the loop.
+    faces = _measurable_faces()
     out: list[_Piece] = []
     for number, page in enumerate(reader.pages, 1):
 
@@ -118,16 +178,9 @@ def _pieces(pdf: bytes) -> tuple[list[_Piece], float, float]:
                 return
             # pypdf hands the extractor's line breaks back inside the piece; they are not drawn.
             drawn = text.replace("\n", "").replace("\r", "")
-            base = ""
-            try:
-                base = _registered_name(str((font_dict or {}).get("/BaseFont", "")))
-            except Exception:  # noqa: BLE001
-                base = ""
+            base = _registered_name(str((font_dict or {}).get("/BaseFont", "")), faces)
             size = font_size or 10.0
-            try:
-                width = pdfmetrics.stringWidth(drawn, base, size)
-            except Exception:  # noqa: BLE001
-                width = len(drawn) * size * 0.5
+            width = pdfmetrics.stringWidth(drawn, base, size)
             out.append(_Piece(number, drawn, tm[4], tm[4] + width, tm[5]))
 
         page.extract_text(visitor_text=visit)
@@ -216,7 +269,7 @@ def test_an_over_tall_cell_does_not_cost_a_blank_page(document, label):
     test, against the space actually remaining."""
     pdf, _dropped = render_pdf(document, lambda _ref: None)
     pieces, _width, _height = _pieces(pdf)
-    # THE RUNNING FOOT IS NOT CONTENT. "Page 7" is drawn on every page from the second onwards,
+    # THE RUNNING FOOT IS NOT CONTENT. "Page 7 of 12" is drawn on every page from the second on,
     # so counting all pieces makes every page look occupied and only a blank PAGE ONE is
     # detectable — which is the one the implementer's first attempt happened to leave blank.
     # Counting only what is inside the text column asks the question the name asks.
@@ -258,7 +311,7 @@ def test_no_heading_is_left_alone_at_the_foot_of_a_page():
     Measured on the FILE: a heading is orphaned when nothing else is drawn on its page below it.
 
     THE FLOOR IS BUILT FROM THE TEXT COLUMN ONLY. Built from every extracted piece it was built
-    from the running foot, which draws "Page N" at y=59.53 below every body baseline on every
+    from the running foot, which draws "Page N of M" at y=59.53 below every body baseline on every
     page from the second onwards, so ``lowest_body[page] == heading.y`` was unsatisfiable
     anywhere but page 1 and the metric reported 1 orphan where 11 existed. On four out of five
     arbitrary filler lengths it reported none at all — the test passed on the fully defective
@@ -421,7 +474,9 @@ def test_a_contents_entry_that_wraps_prints_the_page_its_section_is_on():
     assert first_heading_page > 1, "the contents must occupy at least one page of its own"
 
     # The printed number is right-aligned on the entry's last line, at the right edge of the text
-    # column — which is what tells it apart from the "Page N" in the running foot.
+    # column — which is what tells it apart from the "Page N of M" in the running foot. That foot
+    # is drawn with one `drawRightString` and so extracts as a single piece; `isdigit()` on the
+    # whole piece rejects it, and the baseline filter below would reject it a second time.
     numbers = [p for p in pieces
                if p.page < first_heading_page and p.text.strip().isdigit()
                and abs(p.x1 - (width - MARGIN)) < 1.0]

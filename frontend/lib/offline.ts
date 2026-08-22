@@ -19,27 +19,30 @@
  * the record, then upload its media against the new id, then delete the entry. The Android outbox
  * stops at the first failure, which is right for a connection that dropped again — but wrong for a
  * request the server will never accept: one 422 at the head of the queue blocks every entry behind
- * it forever, and nothing tells the user why. So the failure is triaged here:
+ * it forever, and nothing tells the user why. So the failure is triaged — and the triage itself no
+ * longer lives here. `lib/failureTriage.ts` holds ONE table of what every failure IS and what each
+ * surface does about it, and this file reads it. What the drain does with each verdict:
  *
- *   - no connection / 5xx / 408 / 429 → transient. Stop the pass, keep everything queued, try again
- *                                      on the next `online` event. Nothing is lost.
- *   - 4xx (validation, permission)   → permanent. Mark THAT entry with the server's reason, leave
- *                                      it in the outbox for the user to see and discard, and carry
- *                                      on to the next one. One bad record cannot strand the others.
- *   - 422 naming an UNKNOWN KEY      → recorded and shown like a permanent one, but re-attempted by
- *                                      the next app run. Nobody entered anything wrong: this build
- *                                      and the server's disagree about the shape of the request, and
+ *   - unreachable / transient        → stop the pass, keep everything queued, try again on the next
+ *     (no connection, 5xx, 408, 429)   `online` event. Nothing is marked and nothing is lost.
+ *   - credential-expired (401)       → stop the pass, mark NOTHING, ask for a sign-in. One expiry is
+ *                                      one credential, not a queue full of refused records.
+ *   - refused / permanent            → mark THAT entry with the reason, leave it in the outbox for
+ *     (4xx; a 0-byte file)             the user to see and discard, and carry on to the next one.
+ *                                      One bad record cannot strand the others.
+ *   - schema-drift (422, unknown key) → recorded and shown like a refusal, but re-attempted by the
+ *                                      next app run. Nobody entered anything wrong: this build and
+ *                                      the server's disagree about the shape of the request, and
  *                                      what clears it is an update rather than a person. See
- *                                      `isSchemaRefusal` and `blocksRetry` below — the second is the
- *                                      one that stops a refusal outliving the bug that caused it.
+ *                                      `blocksRetry` below — it is what stops a refusal outliving
+ *                                      the bug that caused it.
  *
- * THE SAME THREE LINES GOVERN THE MEDIA LEG, and for a while they did not. The media catch below
- * re-threw only what {@link isUnreachable} recognised — which is a dropped connection and a 408, and
- * nothing else — so a 503 during a deploy window and a 429 from a rate limiter came out of the
- * photograph upload PERMANENTLY refused, while the identical status on the record request one screen
- * up was "try again later". One pass could hold both opinions about one server. The media catch now
- * asks {@link isTransient} of the error the server actually raised, so the retryable set is the same
- * set on both legs, and a queued photograph waits out a deploy instead of parking behind a button.
+ * THE SAME LINES GOVERN THE MEDIA LEG, and for a while they did not. The media catch below re-threw
+ * only what `isUnreachable` recognised — which is a dropped connection and a 408, and nothing else
+ * — so a 503 during a deploy window and a 429 from a rate limiter came out of the photograph upload
+ * PERMANENTLY refused, while the identical status on the record request one screen up was "try again
+ * later". One pass could hold both opinions about one server. That is the class the triage table
+ * exists to close: both legs now read the same verdict, from the same function, unwrapped once.
  *
  * A REPLAY IS RESUMABLE, because "create then upload" is two steps and only the first is cheap to
  * repeat — repeating it makes a second record. So each step is written back to the entry the moment
@@ -59,14 +62,14 @@
  *
  * A FAILED MEDIA UPLOAD IS TRIAGED WHERE IT HAPPENS, not by the pass-level catch. `uploadMediaBatch`
  * escalates a batch in which nothing landed, and it does so with a `MediaBatchError` — which is not
- * an `ApiError`, so `isTransient` said "yes, try again", the pass broke as if the device were
- * offline, and NO FAILURE WAS EVER RECORDED. The entry retried for ever and every entry behind it
+ * an `ApiError`, so the only "is it worth retrying" test this file had said "yes, try again", the pass
+ * broke as if the device were offline, and NO FAILURE WAS EVER RECORDED. The entry retried for ever and every entry behind it
  * never drained, under a banner saying "Still no connection" (false) with no Discard offered
  * (because Discard is gated on a failure record that was never written). It needed no server at all:
  * a 0-byte file is refused by `lib/media.ts` before a request is made. So the media leg now catches
  * its own failure, re-throws whatever is still worth retrying (a connection that never arrived, and
- * the statuses {@link isTransient} names — asked of the error the server raised, because the batch
- * escalation wraps it), and otherwise records the files against the entry so the existing failure
+ * the statuses {@link underlyingIsTransient} names — which opens the batch escalation and asks about
+ * the error the server actually raised), and otherwise records the files against the entry so the existing failure
  * branch writes it, the banner offers a decision, and the loop carries on. Same split, same reason,
  * as the sibling in `lib/designWorkshopStore.ts`, which keeps 408 and 429 on the retryable side too.
  *
@@ -113,6 +116,18 @@
  */
 
 import { ApiError, apiFetch, getToken } from "@/lib/api";
+// `underlyingIsTransient` AND NOT `isTransient` FOR THE DRAIN. They are two readings of one table
+// and differ only in whether a wrapper is opened first; the drain needs the opened one, because
+// every media failure it meets arrives inside a `MediaBatchError` and a false here MARKS the item
+// rather than discarding anything. `isTransient` keeps the as-thrown reading for the interactive
+// callers, where a false throws captured bytes away — argued at length in `lib/failureTriage.ts`.
+import {
+  isCredentialExpiry,
+  isTransient,
+  isUnreachable,
+  schemaRefusalError,
+  underlyingIsTransient
+} from "@/lib/failureTriage";
 import { MediaBatchError, uploadMediaBatch, type BatchResult } from "@/lib/media";
 
 const DB_NAME = "field-repo-outbox";
@@ -568,72 +583,50 @@ function pendingFileCount(entry: OutboxEntry): number {
 // ---------------------------------------------------------------------------
 
 /**
- * A fetch that never reached a server: still offline, so stop the pass and keep everything.
+ * IS THIS THE NETWORK? ASKED IN ONE PLACE, FOR EVERY SURFACE — see `lib/failureTriage.ts`.
  *
- * Exported because `lib/designWorkshopStore.ts` drains its own queue and must triage a failure the
- * same way. Two implementations of this test would be two different ideas of what "offline" means,
- * and whichever one was wrong would either strand a queue for ever or replay a rejection until
- * somebody cleared the browser's storage.
+ * These names are re-exported rather than defined here, and the module they come from explains at
+ * length why. The short version is the reason this file's own header gives for exporting them in the
+ * first place, applied to itself: two implementations of "is this the network" are two different
+ * ideas of what offline means, and whichever one is wrong either strands a queue for ever or replays
+ * a rejection until somebody clears the browser's storage. This file held THREE of them, and they
+ * disagreed: `isTransient` did not follow `cause` and `isUnreachable`, eight lines below it, did;
+ * `isSchemaRefusal` demanded an `ApiError` outright, so a 422 met while uploading a photograph read
+ * as an ordinary refusal of the file. `lib/designWorkshopStore.ts` carried a fourth inline, twice.
+ * Every outbox defect the 2026-08 audit closed was a disagreement between two of them.
+ *
+ * THE IMPORT PATH DID NOT MOVE, on purpose. Every screen that asks one of these questions asks it
+ * through `@/lib/offline`, and none of them wrongly — the outbox is where the questions were first
+ * asked and this is still the file that acts on the answers. Re-exporting means every one of them
+ * started consulting one implementation without a single screen having to be edited, which is what
+ * made the change safe to make at all. HOW MANY there are is deliberately not written down here: two
+ * earlier drafts of this comment and its neighbour in `lib/failureTriage.ts` each stated a count, the
+ * counts disagreed, and both were wrong. `e2e/failure-triage-unit.spec.ts` measures it instead.
+ *
+ * `isSchemaRefusal` IS NO LONGER A TYPE GUARD. It unwraps now, so `error is ApiError` would be a lie
+ * about a `MediaBatchError`. A caller that has to QUOTE the server's sentence calls
+ * `schemaRefusalError`, which hands back the object; the drain below is the one that does.
+ *
+ * `isTransient` AND `underlyingIsTransient` ARE BOTH EXPORTED, AND WHICH ONE YOU WANT DEPENDS ON WHAT
+ * A FALSE DOES. If a false MARKS the item and a true keeps it queued — every drain — take
+ * `underlyingIsTransient`, which reads the refusal inside the batch wrapper. If a false DISCARDS work
+ * (`FieldInput`'s media catch is the one that does, by falling past `stageOffline`), take
+ * `isTransient`, whose answer for a wrapper it cannot read is still "keep it". They are two readings
+ * of one table, not two implementations; `lib/failureTriage.ts` says why the pair exists and what
+ * would have to change in `components/designworkshop/` for it to collapse back into one.
  */
-export function isTransient(error: unknown): boolean {
-  if (error instanceof ApiError) return error.status >= 500 || error.status === 408 || error.status === 429;
-  return true; // TypeError from fetch, an abort, a DNS failure — all "try again later".
-}
-
-/**
- * Did this failure happen because nothing reached the server at all?
- *
- * THE COMPANION QUESTION TO {@link isTransient}, AND NOT THE SAME ONE. `isTransient` answers "is it
- * worth trying again", which is the outbox's question, and every 5xx is a yes to it. It is the
- * WRONG test for anything that says "there is no connection" on screen, because a 5xx means the
- * server was reached and then failed: telling a designer their signal is at fault when the server
- * answered sends them out of the building to look for a better one, and leaves a real bug wearing
- * an offline message. That happened here — a saved page size 500'd because `ReportMeta` has no
- * `__dict__`, and it was reported as an offline problem — which is why `report/page.tsx` split the
- * two by hand. This is that split, named, so the other three call sites can share it.
- *
- * 408 is the one status on the offline side: it is what a proxy answers when the request never
- * completed, so there is nothing the server can be said to have decided.
- *
- * A WRAPPED ERROR IS CLASSIFIED BY WHAT IT WRAPS. The default for an unrecognised error is "the
- * connection is at fault", which is the safe answer for a `TypeError` out of `fetch` and the WRONG
- * one for a rejection that has merely been re-thrown with a friendlier sentence. `uploadMediaBatch`
- * escalates a batch in which nothing landed, and the design-workshop sync hands it ONE file at a
- * time — so "the whole batch failed" is precisely "the server refused this photograph", and
- * flattening the `ApiError` into a message made every refusal look like lost signal, stopped the
- * pass as offline and returned to the same refusal on every future connection. Following `cause`
- * costs nothing for the errors that have none.
- */
-/**
- * Did the server refuse the SHAPE of the request rather than anything a person typed?
- *
- * THE THIRD CLASSIFICATION QUESTION, and it lives here beside the other two for the reason the note
- * above {@link isUnreachable} gives: one rule, imported, never restated. {@link isTransient} asks
- * "is it worth trying again", {@link isUnreachable} asks "did the server answer at all", and this
- * asks "can the person reading the message do anything about it".
- *
- * `APIModel` is `extra="forbid"`, so a client that sends a key the server does not know gets a 422
- * whose body names it exactly:
- *
- *     {"detail":[{"type":"extra_forbidden","loc":["body","entries",0,"merge"], …}]}
- *
- * `type` is matched rather than the message, because the message is prose that may be reworded and
- * translated while the discriminator is part of pydantic's contract.
- *
- * IT IS NOT A HYPOTHETICAL. On 2026-08-08 a client sent the then-new `merge` flag to an API that
- * predated it, and every stage save came back refused with "merge: Extra inputs are not permitted"
- * — under a banner telling the designer to correct the answer that caused it. There was no such
- * answer. The clients and the server are deployed on different days by different people: a handset
- * updates when it next sees wifi, the API when somebody deploys it, so a client running ahead of
- * the server is an ordinary state here rather than a mistake, and it deserves a sentence that says
- * so.
- */
-export function isSchemaRefusal(error: unknown): error is ApiError {
-  if (!(error instanceof ApiError) || error.status !== 422) return false;
-  const detail = (error.payload as { detail?: unknown } | null | undefined)?.detail;
-  if (!Array.isArray(detail)) return false;
-  return detail.some((entry) => (entry as { type?: unknown } | null)?.type === "extra_forbidden");
-}
+export {
+  isCredentialExpiry,
+  isSchemaRefusal,
+  isTransient,
+  isUnreachable,
+  schemaRefusalError,
+  serverAskedForTime,
+  triageAsThrown,
+  triageFailure,
+  underlyingError,
+  underlyingIsTransient
+} from "@/lib/failureTriage";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * How long a recorded refusal is allowed to bind
@@ -722,71 +715,23 @@ export function blocksRetry(refusal: RecordedRefusal | null | undefined): boolea
   return refusal.skewRun === APP_RUN_ID;
 }
 
-export function isUnreachable(error: unknown, depth = 0): boolean {
-  if (error instanceof ApiError) return error.status === 408;
-  // Bounded because `cause` is an ordinary property and nothing stops it pointing at its own error.
-  if (depth < 8 && error instanceof Error) {
-    const cause = (error as { cause?: unknown }).cause;
-    if (cause !== undefined && cause !== null) return isUnreachable(cause, depth + 1);
-  }
-  return true;
-}
-
-/**
- * The error the SERVER actually raised, dug out of whatever was re-thrown around it.
- *
- * The same walk {@link isUnreachable} makes, given a name and a return value so the other
- * classifiers can share it. It exists because `uploadMediaBatch` escalates a dead batch as a
- * `MediaBatchError` carrying the first underlying error as `cause`: asking `isSchemaRefusal` or
- * {@link isCredentialExpiry} about the wrapper answers no to both, so a 422 the two builds disagreed
- * about, and an expired credential, both came out of the media leg looking like an ordinary refusal
- * of the file. Returns the argument unchanged when there is nothing to unwrap, which is most errors.
- */
-export function underlyingError(error: unknown, depth = 0): unknown {
-  if (error instanceof ApiError) return error;
-  if (depth < 8 && error instanceof Error) {
-    const cause = (error as { cause?: unknown }).cause;
-    if (cause !== undefined && cause !== null) return underlyingError(cause, depth + 1);
-  }
-  return error;
-}
-
-/**
- * Did this fail because the CREDENTIAL is finished rather than because anything is wrong with the
- * entry?
- *
- * ── THE FOURTH CLASSIFICATION QUESTION, AND WHY IT IS NOT A SIXTH BRANCH OF `isTransient` ────────
- *
- * The token this app issues lasts seven days, which is shorter than the fortnight this outbox is
- * built for; and a second tab signing out clears the token under this one's feet. Either way EVERY
- * remaining entry gets the same 401, and 401 is not in {@link isTransient} (correctly — the server
- * answered), so the pass marked each one permanently refused with the server's sentence. Nothing
- * could then clear those marks, so a researcher came back to a queue whose only offered control was
- * Discard: the button that deletes the record and its photographs. The work was lost to an expiry.
- *
- * Widening `isTransient` was the tempting one-line version and is wrong: it has five other call
- * sites (`placeSearch`, `FieldInput`, the design-workshops list, `saveOrQueue` here), and a 401
- * there means "you are signed out", not "your signal dropped" — `saveOrQueue` would start banking
- * signed-out saves into the outbox to be refused later. So the question is asked here, once, and
- * only the outbox pass acts on it: STOP, mark nothing, and let the banner ask for a sign-in. That is
- * what Android has always done — see `WorkshopSync.isConnectionFailure`, "401: the credential
- * expired, not the item … re-signing in fixes all of them at once".
- */
-export function isCredentialExpiry(error: unknown): boolean {
-  const answered = underlyingError(error);
-  return answered instanceof ApiError && answered.status === 401;
-}
-
 /**
  * Separate the files that can be sent from the ones this device already knows will be refused.
  *
  * TODAY THAT IS EXACTLY THE EMPTY ONES, and they are separated HERE rather than classified after the
- * fact because `lib/media.ts` refuses a 0-byte file with a bare `Error` before any request is made —
- * and a bare `Error` carries nothing anything downstream can classify. {@link isUnreachable} defaults
- * such a thing to "the connection is at fault", which is the correct default for a `TypeError` out of
- * `fetch` and precisely wrong here: the batch escalation then stopped the whole pass as if the device
- * were offline and came back to the identical empty file on every future connection, jamming every
- * entry behind it. Emptiness is knowable before the call, so it is decided before the call.
+ * fact because `lib/media.ts` refuses a 0-byte file before any request is made — and it used to do so
+ * with a bare `Error`, which carries nothing anything downstream can classify. `isUnreachable`
+ * defaults such a thing to "the connection is at fault", which is the correct default for a
+ * `TypeError` out of `fetch` and precisely wrong here: the batch escalation then stopped the whole
+ * pass as if the device were offline and came back to the identical empty file on every future
+ * connection, jamming every entry behind it. Emptiness is knowable before the call, so it is decided
+ * before the call.
+ *
+ * THE REFUSAL IS TYPED NOW — `LocalRefusalError` in `lib/failureTriage.ts` classifies as `permanent`
+ * from wherever it is caught, wrapped or not — and this function is NOT redundant because of it. The
+ * type is what protects a caller that forgets to ask; this is what means the question never has to be
+ * asked, and what names the empty files in the sentence the researcher reads. A guard that only some
+ * callers remember is the shape of half the defects in this file's history, so it now has both.
  *
  * A 0-byte file is not exotic on this hardware: a capture the camera app never finished writing, a
  * file copied off a card that was pulled mid-write.
@@ -1037,12 +982,18 @@ async function runSync(): Promise<SyncResult> {
           /*
             A 0-BYTE FILE IS REFUSED HERE, WHERE IT CAN BE NAMED, AND NOT BY THE UPLOADER.
 
-            `lib/media.ts` throws a bare `Error` for an empty file before any request is made, and a
-            bare `Error` carries no type anything downstream can classify: `isUnreachable` defaults
-            to "the connection is at fault", so the batch escalation stopped the pass as offline and
-            came back to the identical empty file on every future connection — the whole queue jammed
-            by a file the server never saw. Emptiness is knowable BEFORE the call and does not need
-            classifying after it, so the files are separated out and reported as what they are.
+            `lib/media.ts` refuses an empty file before any request is made. It used to do so with a
+            bare `Error`, which carries no type anything downstream can classify: `isUnreachable`
+            defaults to "the connection is at fault", so the batch escalation stopped the pass as
+            offline and came back to the identical empty file on every future connection — the whole
+            queue jammed by a file the server never saw. Emptiness is knowable BEFORE the call and
+            does not need classifying after it, so the files are separated out and reported as what
+            they are.
+
+            THAT REFUSAL IS TYPED NOW (`LocalRefusalError`, `lib/failureTriage.ts`), and this split
+            stays anyway. The type is the backstop for a caller that forgets; not sending a file the
+            device already knows will be refused is still better than sending it, and only this
+            branch can name the empty ones in the sentence the researcher reads.
 
             Not marked as uploaded: nothing was uploaded. The entry is failure-marked below either
             way, and a person who presses Try again gets the same honest answer rather than a jam.
@@ -1064,8 +1015,9 @@ async function runSync(): Promise<SyncResult> {
             THE MEDIA LEG TRIAGES ITS OWN FAILURE, WHICH IS THE SHIP-BLOCKER THIS CLOSES.
 
             `uploadMediaBatch` escalates a batch in which NOTHING landed, as a `MediaBatchError` —
-            not an `ApiError`. The pass-level catch below asks `isTransient`, which answers "yes,
-            try again" for anything that is not an `ApiError`, so the pass broke as if the device
+            not an `ApiError`. The pass-level catch below asks whether it is worth retrying, and the
+            only test this file had answered "yes" for anything that is not an `ApiError`, so the
+            pass broke as if the device
             were offline: `markFailure` was never reached, the entry retried for ever, EVERY ENTRY
             BEHIND IT NEVER DRAINED, and the banner said "Still no connection" (false) while
             offering no Discard, because Discard is drawn from a failure record that was never
@@ -1084,12 +1036,24 @@ async function runSync(): Promise<SyncResult> {
             AND THE RETRYABLE SET IS THE CREATE LEG'S SET, which for a while it was not. Re-throwing
             only what `isUnreachable` recognises leaves a 503 in a deploy window and a 429 from a
             rate limiter as PERMANENT refusals of the photograph — while the identical status on the
-            record request a few lines up is "try again later". `isTransient` is therefore asked of
-            {@link underlyingError}, the error the SERVER raised rather than the `MediaBatchError`
-            wrapped round it; the first two tests are kept because they are the sentences this
-            failure produces, and the third is the only one that widens anything. The sibling
-            `mediaRefusal` in `lib/designWorkshopStore.ts` keeps 408 and 429 retryable for the same
-            reason.
+            record request a few lines up is "try again later". `underlyingIsTransient` covers those,
+            and it is asked of the error DIRECTLY rather than of `underlyingError(error)`: it follows
+            `cause` itself, so hand-unwrapping first is at best redundant and at worst the next place
+            two readings drift apart. The sibling `mediaRefusal` in `lib/designWorkshopStore.ts` keeps
+            408 and 429 retryable for the same reason.
+
+            IT IS THE `underlying…` ONE AND NOT `isTransient`, WHICH ANSWERS DIFFERENTLY HERE. Every
+            failure this line sees is a `MediaBatchError`, and `isTransient` deliberately does not
+            open one: it is the reading `FieldInput`'s catch needs, where a false discards a capture
+            instead of marking it. Asked here it would answer "worth retrying" to a 415 and this
+            branch would re-throw it, which is the ship-blocker verbatim. `lib/failureTriage.ts`
+            carries the argument for why the two exist rather than one.
+
+            ALL THREE TESTS ARE KEPT even though the triage table could be read as one question. They
+            are three different sentences to the researcher — sign in again, you have no signal, the
+            repository is busy — and this line is the place the pass decides which of the three it
+            is about to stop with. Collapsing them into `retry !== "never"` would be smaller and
+            would lose exactly the distinction the file above spends four hundred lines defending.
           */
           let result: Awaited<ReturnType<typeof uploadMediaBatch>>;
           try {
@@ -1113,7 +1077,7 @@ async function runSync(): Promise<SyncResult> {
               redirectOn401: false
             });
           } catch (error) {
-            if (isCredentialExpiry(error) || isUnreachable(error) || isTransient(underlyingError(error))) throw error;
+            if (isCredentialExpiry(error) || isUnreachable(error) || underlyingIsTransient(error)) throw error;
             // The server answered and refused the lot. Named per file where the uploader said which.
             mediaFailed.push(...refusedFileNames(error, sendable));
             continue;
@@ -1175,15 +1139,22 @@ async function runSync(): Promise<SyncResult> {
       // THE CREDENTIAL, NOT THE ENTRY, AND IT IS ASKED FIRST. A 401 is not transient (the server
       // answered) so it used to fall through to `markFailure` and mark this entry — and then the
       // next, and the next — permanently refused, with nothing in this repository able to clear the
-      // mark afterwards. It is also asked before `isTransient` because a 401 reaching here from the
-      // media leg is WRAPPED, and a wrapper is not an `ApiError`: "Still no connection" would be the
-      // answer to an expired sign-in. Nothing is marked and nothing is lost; the banner asks for a
-      // sign-in and `retryOutboxEntry` is not even needed, because no failure was written.
+      // mark afterwards. It is also asked FIRST, before the retry test below, and that ordering is
+      // load-bearing for one reason only: a 401 must stop the pass WITHOUT marking anything, and
+      // `isCredentialExpiry` is the only test that says so. The reason this comment used to give —
+      // that a 401 arriving wrapped from the media leg is not an `ApiError`, so the retry test would
+      // answer "Still no connection" — no longer holds: `underlyingIsTransient` opens the wrapper and
+      // classifies the 401 as `credential-expired`, which is not in its set either way. The order is
+      // kept because the sentence it produces is the point, not because a wrapper could slip past.
+      // Nothing is marked and nothing is lost; the banner asks for a sign-in and `retryOutboxEntry`
+      // is not even needed, because no failure was written.
       if (isCredentialExpiry(error)) {
         credentialExpired = true;
         break;
       }
-      if (isTransient(error)) {
+      // The opened reading again, for the same reason as the media leg above: a `MediaBatchError`
+      // can reach this catch, and what it wraps is the only thing worth asking about.
+      if (underlyingIsTransient(error)) {
         stoppedOffline = true;
         break; // Still offline (or the API is down) — everything behind this stays queued.
       }
@@ -1191,12 +1162,15 @@ async function runSync(): Promise<SyncResult> {
       // read the shape of what this build sent, so there is nothing on the record for anybody to
       // correct and no reason to keep the entry — and its photographs — parked once one of the two
       // has been updated. Recorded, shown, and re-attempted by the next app run: see `blocksRetry`.
-      // Asked of the error the SERVER raised rather than of whatever was re-thrown around it: a
-      // dialect mismatch met while uploading a photograph arrives wrapped in a `MediaBatchError`,
-      // and asking the wrapper turns "these two builds disagree, wait for an update" into "you got
-      // this wrong, fix it" — a sentence with nothing behind it that no edit can ever clear.
-      const answered = underlyingError(error);
-      if (isSchemaRefusal(answered)) {
+      // A dialect mismatch met while uploading a photograph arrives wrapped in a `MediaBatchError`,
+      // and reading the wrapper turns "these two builds disagree, wait for an update" into "you got
+      // this wrong, fix it" — a sentence with nothing behind it that no edit can ever clear. That
+      // unwrapping is no longer this branch's business: `lib/failureTriage.ts` follows `cause` once,
+      // for every classifier, so the only thing still needed here is the ANSWER ITSELF, to quote.
+      // Its sentence names the key the two builds disagree about, which is the one piece of
+      // information that tells whoever runs the repository what to update.
+      const answered = schemaRefusalError(error);
+      if (answered) {
         const files = pendingFileCount(progress);
         await markFailure(
           progress,

@@ -94,7 +94,7 @@ function ComingSoonBadge() {
 const BRAND_POINTS = [
   "Artisans, crafts, workshops, products, tools and interviews — one connected archive.",
   "Recordings transcribed and translated to English automatically.",
-  "Six-tier access control; every edit audited."
+  "Seven-tier access control; every edit audited."
 ];
 
 /** Shared chrome for the four sign-in actions, so they are one height and one radius. */

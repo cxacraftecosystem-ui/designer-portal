@@ -1029,12 +1029,27 @@ export function CollectionTable({
    *
    * OPENING ANOTHER ROW IS THE SAME EVENT, because `openKey` is one slot: the row that was open is
    * unmounted either way, so both paths go through here rather than only the visible "collapse".
+   *
+   * THE COLLAPSE ITSELF IS HANDED OVER, not just refused. `interceptLeave` banks what it refuses so
+   * that the answer meaning "leave" can finish it — see `UnsavedChangesGuard`'s `PendingLeave`, and
+   * note that no form calls `completeLeave()` yet, so today the collapse still costs a second press.
+   * Of the four guarded acts this is one of the two that are NOT navigations (the other is
+   * `StageReferenceField` re-pointing a row), which is exactly why it has to travel: a
+   * `router.back()` guessed at the other end would throw the designer off the stage over a row they
+   * were only folding up.
+   *
+   * THE BANKED ACT IS A FUNCTIONAL UPDATE AND NOT `setOpenKey(openKey === rowKey ? null : rowKey)`.
+   * Read from the closure it would decide against the `openKey` of the render the press happened in,
+   * and a banked act runs later, after a Discard that may have re-rendered this table several times.
+   * Asking React for the value at the moment it applies is the same answer on the immediate path and
+   * the only correct one on the resumed path.
    */
   const interceptLeave = useLeaveInterceptor();
   function toggleRow(rowKey: string) {
     const closing = openKey !== null && openKey !== rowKey ? openKey : openKey === rowKey ? rowKey : null;
-    if (closing !== null && interceptLeave()) return;
-    setOpenKey(openKey === rowKey ? null : rowKey);
+    const open = () => setOpenKey((current) => (current === rowKey ? null : rowKey));
+    if (closing !== null && interceptLeave(open)) return;
+    open();
   }
 
   function patchRow(index: number, key: string, value: DwValue) {

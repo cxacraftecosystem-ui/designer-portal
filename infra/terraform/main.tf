@@ -1,7 +1,10 @@
 ###############################################################################
 # Design Prototype Workshop infrastructure: S3 (media) + IAM (media access)
-# + EC2 t3.micro (FastAPI behind nginx). Database stays on Supabase, so the box
-# is stateless and can be rebuilt anytime without data loss.
+# + EC2 t3.micro (FastAPI behind nginx). This Terraform provisions NO DATABASE:
+# the box points at a managed PostgreSQL named only by DATABASE_URL in the
+# backend's environment, which is why the box is stateless and can be rebuilt
+# anytime without data loss. Which provider that is, is a deployment fact and is
+# recorded in one place — see "The database" in docs/ENVIRONMENT.md.
 #
 # Usage:
 #   cd infra/terraform

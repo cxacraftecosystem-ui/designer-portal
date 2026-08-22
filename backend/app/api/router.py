@@ -13,6 +13,8 @@ from app.api.routes import (
     data_access,
     data_browser,
     datasets,
+    design_ratings,
+    design_workshop_access,
     design_workshop_viewers,
     design_workshops,
     designers,
@@ -66,6 +68,24 @@ api_router.include_router(questionnaire_forms.router)
 # FastAPI matches in registration order, so the literal path has to be mounted first.
 api_router.include_router(design_workshop_viewers.router)
 api_router.include_router(design_workshops.router)
+# The peer/pool rating ledger, /api/design-ratings. ITS OWN PREFIX, and deliberately not nested
+# under /design-workshops, for two reasons that both point the same way. The prefix above is already
+# shared by two routers and carries GET /{workshop_id}, which swallows any literal path mounted
+# after it (see the note above design_workshop_viewers). And the POOL round is by definition the
+# designers load_workshop_or_404 turns away — routes sharing that prefix would invite somebody to
+# teach the shared loader about POOL, which grants stage WRITES as well as reads. See
+# app/services/design_ratings.py for the narrow door it uses instead.
+api_router.include_router(design_ratings.router)
+# The queue a designer asks to be let into a workshop through, /api/design-workshop-access. ITS OWN
+# PREFIX, for the two reasons design_ratings gives just above. The ordering hazard is one of them —
+# /design-workshops already carries GET /{workshop_id}, which swallows any literal path mounted
+# after it — but the deciding one is the same as that router's: the caller of POST
+# /design-workshop-access/requests is BY DEFINITION somebody load_workshop_or_404 turns away, and a
+# route sharing that prefix invites the next reader to widen the shared loader so it fits. It does
+# not need to be nested to be found; the workshop id travels in the body, beside the code that was
+# scanned to obtain it. See app/services/design_workshop_access.py, whose header sets out why that
+# one route answers the same thing whether the workshop exists or not.
+api_router.include_router(design_workshop_access.router)
 # The empanelment roster that gates a designer's sign-in, and the profile their reports are
 # prefilled from. Next to design_workshops because it is the same product surface, and separate
 # from users because the two facts it keeps are deliberately not the role column — see

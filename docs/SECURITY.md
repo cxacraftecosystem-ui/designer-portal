@@ -5,8 +5,8 @@ is protected between the capture device and storage, what protects it once store
 that are still open. Everything marked **ACTION** needs a human in a console; the code side is
 already in the repository.
 
-Audience: whoever operates the deployment (AWS + Supabase + Vercel consoles) and whoever reviews
-changes to `backend/app/core/*` and the Android network configuration.
+Audience: whoever operates the deployment (the AWS, database-provider and Vercel consoles) and
+whoever reviews changes to `backend/app/core/*` and the Android network configuration.
 
 ---
 
@@ -20,7 +20,7 @@ flowchart LR
   nginx[nginx :80<br/>EC2]
   api[uvicorn :8000<br/>127.0.0.1]
   s3[(S3 bucket)]
-  pg[(Supabase Postgres<br/>pooler :6543)]
+  pg[(PostgreSQL<br/>managed, pooled)]
 
   web -->|TLS 1.2+| cf
   app -->|TLS 1.2+| cf
@@ -43,15 +43,19 @@ flowchart LR
 
 ### 1.1 Database TLS
 
-Supabase's pooler speaks TLS, but libpq and Prisma's Postgres connector default to
-`sslmode=prefer`, which attempts TLS and then **silently falls back to plaintext** if the handshake
-fails. A downgrade — a broken proxy, a hostile network — would then ship the database password and
-every row in the clear, with nothing in the logs to show for it.
+Every managed PostgreSQL worth using speaks TLS — but that is not the point, and assuming it is
+was the bug. libpq and Prisma's PostgreSQL connector default to `sslmode=prefer`, which attempts
+TLS and then **silently falls back to plaintext** if the handshake fails. A downgrade — a broken
+proxy, a hostile network — would then ship the database password and every row in the clear, with
+nothing in the logs to show for it.
 
 `Settings._harden_database_url` therefore appends `sslmode=require` to `DATABASE_URL` as soon as
-settings load, so both the pooler rewrite in `core/db.py` and any script inherit it. The rule:
+settings load, so both `build_runtime_database_url` in `core/db.py` and any script inherit it. (That
+function used to rewrite a vendor's pooler host; the rewrite was removed on 2026-08-22 and the
+hardening was never conditional on it.) The rule:
 
-- **Remote host** (Supabase pooler, RDS, anything not loopback/private) → `sslmode=require`.
+- **Remote host** (any managed PostgreSQL endpoint — anything not loopback/private) →
+  `sslmode=require`.
 - **Local host** (`localhost`, `127.0.0.1`, a private/RFC1918 address, a docker-compose service
   name) → left alone, because the docker-compose Postgres ships no certificate and `require` would
   break local development and the test suite.
@@ -61,7 +65,9 @@ settings load, so both the pooler rewrite in `core/db.py` and any script inherit
 
 `prisma migrate deploy` is unaffected: it reads `DATABASE_URL` straight from the environment, not
 from this Settings object. Add `?sslmode=require` to the deployed `.env` value if you want
-migrations covered too (harmless — Supabase supports it on both pooler ports).
+migrations covered too. It is harmless on any PostgreSQL endpoint that terminates TLS, which is
+every managed one; the only host it would break is a local server with no certificate, and those are
+not what `DATABASE_URL` points at in a deployment.
 
 ### 1.2 Security response headers
 
@@ -139,10 +145,12 @@ call this API as the signed-in user". Keep `BACKEND_CORS_ORIGINS` set to the exa
 
 - `base-config cleartextTrafficPermitted="false"` — TLS required for every host not named below.
 - Cleartext is permitted **only** for `10.0.2.2` (emulator → host machine), `127.0.0.1` and
-  `localhost`. The production EC2 origin (`ec2-15-207-145-174….compute.amazonaws.com`,
-  `15.207.145.174`) was **removed**: it is a production host reachable only over plaintext HTTP, and
-  keeping it listed meant one line in `local.properties` could ship bearer tokens and field data in
-  the clear.
+  `localhost`. The EC2 origin behind the compiled-in CloudFront default
+  (`ec2-15-207-145-174….compute.amazonaws.com`, `15.207.145.174` — the **field repository's** box,
+  per the register in [CI.md](CI.md) §0, and part of the unresolved distribution question in
+  [ENVIRONMENT.md](ENVIRONMENT.md) §4) was **removed**: it is a production host reachable only over
+  plaintext HTTP, and keeping it listed meant one line in `local.properties` could ship bearer
+  tokens and field data in the clear.
 - Trust anchors are `system` only, so a user-installed CA (corporate MITM root, mitmproxy) cannot
   silently decrypt app traffic. `debug-overrides` re-adds `user` for debuggable builds only, so
   proxy debugging still works during development.
@@ -214,16 +222,24 @@ Default encryption already covers them.
 object key (`media/<user-id>/<uuid>/<filename>`) is the only secret. Encryption at rest does not
 change this; SSE-S3 protects the physical disks, not URL holders. See risk P0.
 
-### 2.2 Supabase Postgres
+### 2.2 The database
 
-- Supabase encrypts the underlying storage volumes and automated backups at the platform level
-  (AES-256); no application configuration is required or possible.
+Nothing in this section depends on which provider hosts it, with one exception, which is called out
+first because it is the one that changed under this document's feet.
+
+- **Encryption at rest is the provider's, and this repository cannot verify it.** Until 2026-08-22
+  this section asserted AES-256 volume and backup encryption as a fact about Supabase. Production
+  moved (see "The database" in [ENVIRONMENT.md](ENVIRONMENT.md)), and a claim about one vendor's
+  platform is not transferable to another's. **ACTION:** confirm at-rest encryption and backup
+  encryption in the current provider's console and record the answer here with a date. No
+  application configuration is required or possible either way — which is exactly why it has to be
+  checked in a console rather than in the code.
 - Passwords are stored as bcrypt hashes (`passlib`, `CryptContext(schemes=["bcrypt"])`). Google
   sign-in accounts have no password hash at all.
 - **Nothing is encrypted at the column level.** Artisan names, phone numbers, addresses, GPS
   coordinates, interview transcripts and researcher notes are plaintext columns. Anyone with the
-  database URL, a Supabase dashboard login, or a `DATABASE_URL` leak reads all of it. Treat the
-  Supabase credentials as the crown jewels.
+  database URL, a login to the provider's dashboard, or a `DATABASE_URL` leak reads all of it. Treat
+  the database credentials as the crown jewels.
 - Row Level Security is **not** in use: the API connects as the owning role and enforces every
   access rule in application code (`backend/app/core/deps.py`). A SQL-injection bug or a leaked
   connection string bypasses the entire RBAC ladder in one step. Prisma's parameterised queries are
@@ -298,9 +314,20 @@ admin elevates it.
 
 ---
 
-## 4. Authorisation: the six-tier ladder
+## 4. Authorisation: the seven-tier ladder
 
 Defined in `backend/app/core/deps.py`. Higher ranks inherit everything below them.
+
+**SEVEN, and this heading said six for as long as `DESIGNER` had existed.** The tier was inserted
+at rank 35 — in the gap the original tens deliberately left — and this section went on printing a
+six-row table, so a reader counting down the rows to work out what a designer may do got an answer
+for somebody who is not in the product. A miscounted ladder is a security defect and not a typo:
+this is the document a reviewer reads to decide whether a gate is covered, the repository's own
+main permission test did not cover `DESIGNER` in its LADDER-WIDE tests until 2026-08-22 (`ALL_ROLES`
+in `backend/tests/test_permission_matrix.py` was a six-entry tuple, though the `BELOW_ADMIN` block
+in the same file has always driven the tier), and a sentence that says six is precisely how the
+seventh keeps being left out of the next one. That gap is stated narrowly on purpose: a security
+document that overstates a coverage hole is the same defect as one that understates it.
 
 **The full capability matrix, the review state machine and the three layered access systems are
 [PERMISSIONS.md](PERMISSIONS.md).** This section states only the security-relevant properties, so
@@ -311,9 +338,33 @@ that the matrix has exactly one home and cannot disagree with itself.
 | 60 | `MASTER_ADMIN` | Everything, **plus the three nobody else has**: read/set provider key values, repository settings, publish OTA releases. The only account that may act on a peer. |
 | 50 | `ADMIN` | Delete records, create/delete accounts, grant workshop access, approve **late** submissions |
 | 40 | `PROFESSOR` | Manage crafts/workshops/questionnaire, download the dataset, view and promote users |
+| 35 | `DESIGNER` | Everything a researcher may do, plus running a design & prototype workshop — the stage writes, the custom sections, the AI layers, the consent record (`can_run_design_workshops`). **Not reachable by outranking it** — see the note under this table. |
 | 30 | `RESEARCHER` | **Create** records; edit own; review contributors and volunteers |
 | 20 | `FIELD_CONTRIBUTOR` | Populate existing records; review volunteers. **Cannot create records.** |
 | 10 | `CROWDSOURCE_VOLUNTEER` | Media, questionnaire answers and comments on existing records only |
+
+**The one rule in this section that is not a threshold.** `can_run_design_workshops` is a **SET** —
+`DESIGNER`, `ADMIN`, `MASTER_ADMIN` — so a `PROFESSOR` at rank 40 outranks a designer at 35 and
+still cannot run a design & prototype workshop. `is_admin` is written as a set and
+`is_master_admin` as an equality, but both name the TOP of the ladder and so behave exactly as
+thresholds; this one skips a tier in the middle, which nothing else here does
+([PERMISSIONS.md](PERMISSIONS.md) §1 calls it the one predicate in `deps.py` that is a set and not a
+threshold, for the same reason). It is worth naming in a security document because an auditor who
+reads the table as monotonic will conclude the professor gate covers the designer gate, and it does
+not. The web client carries the identical set in `canRunDesignWorkshops`
+(`frontend/lib/permissions.ts`) and must keep carrying it.
+
+**What this predicate does NOT gate, because the rank row above is easy to read as though it did.**
+Running a workshop is not the same act as generating its report, and two file headers in `backend/`
+carry standing corrections for conflating them: `can_run_design_workshops`' docstring says in capitals
+that "IT DOES NOT DECIDE WHO MAY OPEN A WORKSHOP, AND IT DOES NOT GATE THE REPORT", and the module
+header of `app/api/routes/design_workshops.py` says the same of the report. `generate_report` depends
+only on `get_current_user` and then on `load_workshop_or_404`, so the report is gated by READ access —
+the creator, an admin, or the holder of a `DesignWorkshopViewer` grant. The access CONCLUSION is
+unchanged, because viewer eligibility is itself `DESIGN_WORKSHOP_ROLES`
+(`app/services/design_workshop_viewers.py`), so a professor cannot generate one either; but they are
+two different gates and an auditor looking for the report behind `can_run_design_workshops` will not
+find it there.
 
 Three corrections to what this table said previously, each of which mattered:
 
@@ -564,7 +615,7 @@ that way).
 **Actions:** rotate the IAM access key (IAM console → the media user → Security credentials →
 create new key, update `BACKEND_ENV`, deploy, delete the old key) on a schedule; enable **S3 server
 access logging** or CloudTrail data events on the bucket so an object-URL leak is at least
-detectable; enable **MFA** on the AWS root and Supabase accounts.
+detectable; enable **MFA** on the AWS root account and on the database provider's account.
 
 ---
 

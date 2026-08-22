@@ -58,6 +58,7 @@ flowchart TD
 | [PERMISSIONS.md](PERMISSIONS.md) | The role ladder, the full capability matrix, the review state machine, the late-submission gate, and the four access systems layered on top — including the design-workshop viewer grant and the questionnaire visibility that follows it |
 | [MEDIA_PIPELINE.md](MEDIA_PIPELINE.md) | Every tactic both clients use to get a photograph off a phone on a bad network without losing it, and the on-device quality checks that run before it leaves |
 | [SECURITY.md](SECURITY.md) | Transport, secrets, PII and Aadhaar handling, the authorisation model's security properties, and the open risk register |
+| [SECURITY-REVIEW-2026-08-22.md](SECURITY-REVIEW-2026-08-22.md) | A point-in-time adversarial review of the 2026-08-22/23 change set: five ranked findings, the categories checked and found clean, and what the review could not verify |
 
 ### Operating it
 
@@ -82,6 +83,7 @@ flowchart TD
 |---|---|
 | [SCALABILITY.md](SCALABILITY.md) | What breaks first, what it costs to fix, and the measured finding that relations — not rows — drive the latency |
 | [QA_AUDIT.md](QA_AUDIT.md) | What is tested, what is not, the open failure modes, and the regressions that were documented as working while broken |
+| [TESTING-E2E-LOCAL.md](TESTING-E2E-LOCAL.md) | The order of commands that actually makes the browser suite runnable on a developer machine, and the four environment failures that impersonate product bugs |
 | [AI_FEATURES.md](AI_FEATURES.md) | Background removal, layer separation, vectorisation: providers, costs, and how to turn one on |
 | [RESEARCH_NOTES.md](RESEARCH_NOTES.md) | The measurement write-ups behind the engineering results |
 | [REPO_FACTS.md](REPO_FACTS.md) | **Generated.** Model and enum counts, the API surface, the role ladder, test counts, code volume |

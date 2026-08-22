@@ -17,8 +17,8 @@ Vercel account. Sister documents:
 | Next.js web app | **Vercel** | Deployed by `.github/workflows/deploy-frontend.yml`, **after** the backend deploy succeeds ([docs/CI.md](CI.md)) — not by Vercel's Git integration (§3). 30 of 33 routes prerender to static HTML; the three `[id]/edit` routes render on demand (§8). No route handlers, no server actions, no `fs` access — see §8. |
 | FastAPI API | **AWS EC2** `t3.micro`, behind nginx | Not deployed by Vercel. Auto-deployed by `.github/workflows/deploy-backend.yml`. |
 | HTTPS + IPv6 edge for the API | **CloudFront** `https://d2b34i3e92al6i.cloudfront.net` | The value the browser actually talks to. |
-| Database | **Supabase** Postgres | Reached only by the backend. |
-| Media | **S3** `fieldrepo-media-626159998512` (dual-stack endpoints) | Browsers upload straight to S3 with signed PUT URLs — the bytes never pass through Vercel. |
+| Database | **PostgreSQL**, managed | Reached only by the backend. Which provider hosts it is deliberately not restated here — it is recorded once, with its evidence, under "The database" in [ENVIRONMENT.md](ENVIRONMENT.md). |
+| Media | **S3** `designrepo-media-626159998512` (dual-stack endpoints) | Browsers upload straight to S3 with signed PUT URLs — the bytes never pass through Vercel. |
 
 The browser calls the backend **directly**; there is no Next.js proxy or rewrite in front of it.
 That is deliberate: no API traffic and no media bytes pass through a Vercel Function, so the
@@ -62,7 +62,7 @@ add the first one, because the wrong type here fails silently and takes the whol
 
 Those first three are what the project actually holds today; `NEXT_PUBLIC_APP_URL` is not set there
 at all, which is correct and explained below. The live production alias is
-<https://field-repository.vercel.app>.
+<https://design-repository.vercel.app>.
 
 ### 2.1 The trailing `/api` trap — read this before anything else
 
@@ -81,7 +81,7 @@ The client appends `/api` **itself**. So `NEXT_PUBLIC_API_URL` must be the **ori
 | `https://d2b34i3e92al6i.cloudfront.net` | `https://d2b34i3e92al6i.cloudfront.net/api/artisans` | ✅ correct |
 | `https://d2b34i3e92al6i.cloudfront.net/api` | `https://…/api/api/artisans` | ❌ every screen 404s |
 | `https://d2b34i3e92al6i.cloudfront.net/` | `https://…//api/artisans` | ❌ every screen 404s |
-| `http://15.207.145.174` | blocked before it leaves the browser | ❌ mixed content (§7.1) |
+| `http://15.207.145.174` | blocked before it leaves the browser | ❌ mixed content (§7.1) — and that IP is the **field repository's** box, per [ENVIRONMENT.md](ENVIRONMENT.md) §4; this portal's is `13.206.216.18` |
 
 This has broken the deployment more than once. If the app loads but every list is empty and login
 fails, open devtools → Network and look for a doubled `/api/api/` segment before debugging anything
@@ -174,9 +174,9 @@ One command settles it. Fetch the live JavaScript and grep it for the two values
 there; both are public by definition, so nothing here leaks:
 
 ```bash
-curl -s https://field-repository.vercel.app/login \
+curl -s https://design-repository.vercel.app/login \
   | grep -o '/_next/static/chunks/[^"]*\.js' | sort -u \
-  | while read -r c; do curl -s "https://field-repository.vercel.app$c"; done \
+  | while read -r c; do curl -s "https://design-repository.vercel.app$c"; done \
   | grep -o -e 'https://[a-z0-9]*\.cloudfront\.net' \
             -e '[0-9]\{8,\}-[a-z0-9]*\.apps\.googleusercontent\.com' \
   | sort -u
@@ -374,7 +374,9 @@ Skipping any of the last three leaves the site loading but unable to log in or u
 An HTTPS page may not call an HTTP endpoint; the browser blocks the request before it is sent, so
 the server logs show nothing at all. This is why `NEXT_PUBLIC_API_URL` must point at CloudFront
 (`https://d2b34i3e92al6i.cloudfront.net`) and never at the raw EC2 origin
-(`http://15.207.145.174`). Symptom: every request fails instantly, devtools console shows
+(`http://15.207.145.174` — the **field repository's** box, per [ENVIRONMENT.md](ENVIRONMENT.md) §4,
+which is also where the unresolved question about the distribution in front of it is recorded).
+Symptom: every request fails instantly, devtools console shows
 `Mixed Content: The page at 'https://…' was loaded over HTTPS, but requested an insecure resource`.
 
 ### 7.2 Everything 404s / lists are empty

@@ -596,4 +596,45 @@ test.describe("design workshop visibility", () => {
 
     await context.close();
   });
+
+  /**
+   * THE SECOND MOUNT, TESTED THE SAME WAY — AND IT IS THE HARDER OF THE TWO.
+   *
+   * The panel is now also mounted on /design-workshops, and that page has NO ROUTE_REDIRECTS rule
+   * and must never grow one: designers live on it, it is the list of their own fieldwork. So unlike
+   * the test above there is no redirect to lean on — the gate is a client-side hide over a page the
+   * designer is entitled to, which is precisely the shape the comment above warns has shipped twice
+   * here. What must hold is BOTH halves at once: the page renders in full, and the browser never
+   * asks a viewer endpoint. Either alone would pass while the feature was broken — a redirect would
+   * satisfy "no viewer requests" by taking the fortnight of fieldwork away with it.
+   *
+   * NO STUBS, deliberately, for the same reason as above: the point is what the real application
+   * does to a real designer.
+   */
+  test("a designer keeps the whole workshop list and never asks for a viewer list on it", async ({ browser }) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const asked: string[] = [];
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (/\/design-workshops\/(eligible-viewers|[^/]+\/viewers)$/.test(path)) asked.push(path);
+    });
+
+    await signIn(page, DESIGNER);
+    await page.goto("/design-workshops");
+
+    // THE PAGE IS THEIRS. A narrowing applied one predicate too widely would cost a designer the
+    // page itself, which is a far worse failure than the one the gate prevents — so this is asserted
+    // before anything about the panel.
+    await expect(page.getByRole("heading", { name: /^design workshops$/i })).toBeVisible();
+    await expect(page).toHaveURL(/\/design-workshops(\?|$)/);
+
+    // AND THE ADMINISTRATION IS NOT. Both the section and the panel itself, because the section is
+    // what a designer would see and the panel is what would issue the requests.
+    await expect(page.getByRole("button", { name: /designers on a workshop/i })).toHaveCount(0);
+    await expect(page.locator("[data-design-workshop-viewers]")).toHaveCount(0);
+    expect(asked, "a designer's browser must never ask who can see a design workshop").toEqual([]);
+
+    await context.close();
+  });
 });

@@ -15,7 +15,7 @@ hosts has to change.
 
 **`backend/.env` is the production environment. It must never reach a container.**
 
-It is not a template — it is the live configuration, holding the Supabase pooler URL, the real JWT
+It is not a template — it is the live configuration, holding the production database URL, the real JWT
 signing secret, and the AWS keys for the bucket with every researcher's uploaded media. A
 container started on those values would be reading and writing real records from a sandbox nobody
 is monitoring.

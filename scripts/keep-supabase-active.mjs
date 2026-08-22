@@ -1,3 +1,22 @@
+// ─── DORMANT. THIS SCRIPT'S SCHEDULED CALLER NO LONGER RUNS ON A SCHEDULE ─────────────────────────
+//
+// Invoked by `npm run keep-alive`, which is invoked by `.github/workflows/keep-supabase-active.yml`
+// — whose `schedule:` lines were commented out on 2026-08-22 and which now only fires on
+// `workflow_dispatch`. THAT FILE'S HEADER IS THE ONE TO READ: it carries the whole argument for
+// keeping this rather than deleting it, and the date it should be reviewed again (2027-02-22).
+//
+// WHY IT WAS WRITTEN: a free-tier Supabase project PAUSES after a stretch of inactivity and needs a
+// human to restore it, so a nightly query kept it awake. The provider hosting production today
+// suspends idle compute and wakes it on the next connection instead, which makes the ping pointless
+// here — see "The database" in docs/ENVIRONMENT.md, the one place the current provider is named.
+//
+// NOTHING BELOW IS CHANGED, DELIBERATELY. Every line of it — the `:5432 → :6543` pooler rewrite, the
+// EMAXCONNSESSION reasoning, the retry backoff — is specific to one provider's pooler, and that is
+// the point rather than a defect: this file is the workaround, not the configuration. Generalising
+// it would leave a nightly `select now()` with no reason to exist. Against any other PostgreSQL host
+// the rewrite below simply does not match and the URL is used unchanged, so firing this by hand
+// against the current database is harmless and is a genuine way to confirm a runner can reach it.
+
 import pg from "pg";
 
 const { Client } = pg;

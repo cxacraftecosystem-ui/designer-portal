@@ -146,7 +146,7 @@ security headers to every route and does not touch caching.
 
 ## Why the API distribution must not cache
 
-Every response under `/api/*` is a function of **who is asking**. This system has a six-tier role
+Every response under `/api/*` is a function of **who is asking**. This system has a seven-tier role
 ladder, per-workshop scoping, per-record grants, and Aadhaar masking that depends on the caller's
 permissions. `GET /api/artisans` returns different bytes to a professor and to a crowdsource
 volunteer, from the same URL.

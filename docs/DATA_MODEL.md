@@ -367,6 +367,14 @@ rather than deleted, so nobody can re-request their way quietly around a "no".
 reconstruct a record's original values after a cross-researcher edit. It is written on the contribute
 path, so an edit that goes through the normal PATCH is captured; a direct database write is not.
 
+One exception, in `access.REVISION_REDACTED_FIELDS` (`aadhaarNumber`, `pehchanCardNumber`, `phone`,
+`email`, `address`): those entries record which field changed, who changed it, when, and the
+direction it moved (set / replaced / cleared, flagged `redacted`), but not the value — so their
+originals are **not** reconstructable from the ledger. Clearing a contact column is how a subject's
+"take my number off your system" is honoured, and a ledger that copies the number on the way out
+would make that request a lie. The reasoning, and what it costs on the two unique identity columns,
+is argued out above the set in `backend/app/services/access.py`.
+
 ---
 
 ## 6. Operations
@@ -390,7 +398,7 @@ Every enum, and the thing to know about each. The list of names is generated int
 
 | Enum | Values | Note |
 |---|---|---|
-| `UserRole` | the six tiers | strictly ordered — see [PERMISSIONS.md](PERMISSIONS.md) |
+| `UserRole` | the seven tiers, `DESIGNER` at 35 | strictly ordered by rank, but **`can_run_design_workshops` is a SET** (Designer/Admin/Master Admin), so a Professor outranks a Designer and still cannot run a design workshop — see [PERMISSIONS.md](PERMISSIONS.md) |
 | `AuthProvider` | `LOCAL`, `GOOGLE` | a Google account has no password hash at all |
 | `RecordStatus` | `DRAFT`, `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_REVISION` | `NEEDS_REVISION` is the "sent back with comments" state |
 | `ReviewRecordType` | artisan, workshop, product, tool, process, questionnaire, media | processes and interviews are reviewable because the late-submission gate can pin them `PENDING` |

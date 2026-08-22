@@ -11,8 +11,8 @@ deliberate fix for a production outage, and the reasons it MUST stay separate ar
    chunk — run via ``asyncio.to_thread`` — starved that pong thread for long enough that the supervisor
    killed the worker mid-job. A SIGKILLed process never runs its shutdown hook, so its Prisma
    query-engine subprocess was orphaned (reparented to init). One orphan per kill cycle eventually
-   exhausted the Supabase pooler's client-connection ceiling, after which EVERY DB call (login
-   included) returned HTTP 500 while ``/health`` (which touches no DB) kept returning 200.
+   exhausted the database's client-connection ceiling, after which EVERY DB call (login included)
+   returned HTTP 500 while ``/health`` (which touches no DB) kept returning 200.
 
 2. **Request latency isolation.** Transcription/measurement read whole media files into memory and run
    ffmpeg + AI calls. Keeping that off the request-serving process means API responses stay fast and

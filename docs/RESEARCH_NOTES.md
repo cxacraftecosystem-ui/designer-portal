@@ -83,7 +83,7 @@ flowchart TB
 
   subgraph remote["Managed, off-box"]
     s3[("S3 · media objects<br/>6.66 GiB / 925 objects")]
-    pooler["Supabase transaction pooler :6543<br/>ap-northeast-1 — DIFFERENT REGION"]
+    pooler["Transaction pooler :6543<br/>ap-northeast-1 — DIFFERENT REGION<br/>(Supabase — historical, see below)"]
     pg[("PostgreSQL 16<br/>32 models · 82 indexes")]
     stt["STT providers<br/>ElevenLabs → Deepgram → Whisper"]
   end
@@ -102,9 +102,18 @@ flowchart TB
 **Verification of the topology claims.** The instance class, core count and memory are specified in
 `backend/DEPLOY_AWS.md:19` (`t3.micro` — 2 vCPU burstable, 1 GiB RAM, Ubuntu 24.04) and the
 single-worker uvicorn invocation at `backend/DEPLOY_AWS.md:81`. The cross-region database is not an
-inference: the pooler hostname in `backend/.env` is
-`aws-1-ap-northeast-1.pooler.supabase.com`, while the deployment guide provisions EC2 and S3 in
-`ap-south-1` (`DEPLOY_AWS.md:186,261`). **MEASURED** — hostname read directly, credentials withheld.
+inference: the pooler hostname in `backend/.env` was
+`aws-1-ap-northeast-1.pooler.supabase.com` — historical, that provider hosted this deployment until
+2026-08-22 — while the deployment guide provisions EC2 and S3 in `ap-south-1`
+(`DEPLOY_AWS.md:186,261`). **MEASURED** — hostname read directly, credentials withheld.
+
+> **HISTORICAL AS OF 2026-08-22 — the provider and therefore the region have changed.** This whole
+> document is a dated measurement pass and is deliberately not rewritten when the system moves; the
+> numbers below are only interpretable against the topology they were taken on. Production now runs
+> on a different PostgreSQL provider — recorded once, with its evidence, under "The database" in
+> [ENVIRONMENT.md](ENVIRONMENT.md). **Whether the database is still in a different region from
+> `ap-south-1`, and therefore whether the ~690 ms round trip below still holds, has not been
+> re-measured.** Do not quote a latency from this document as a current figure.
 
 ---
 
@@ -146,6 +155,13 @@ write path described in §5.5 is therefore **exercised by tests, not by producti
 
 Two of the six tiers have no production occupant. The ladder is implemented and enforced (§10) but
 only four tiers are exercised by real accounts.
+
+**This table is a snapshot of a six-tier ladder, and the ladder is now seven.** `DESIGNER` (rank 35)
+was added on **2026-08-07** by `backend/prisma/migrations/20260807120000_designer_role_roster_profile`,
+after the 2026-07-27 measurement above, so it has no row here and **no count has been invented for
+it** — the six figures sum to the measured total of 20 accounts, which is the whole population as it
+stood, not evidence about a tier that did not yet exist. Anyone re-running this count must query
+seven roles and expect a seventh row. §9.1 describes the current ladder.
 
 ### 2.3 Media
 
@@ -492,17 +508,29 @@ each one is about *refusing to do the obvious thing*.
 
 ### 6.1 Session pooling exhausted the server-connection ceiling
 
-Supabase's session-mode pooler (`:5432`) pins one of ~15 server connections for the life of a client
-connection. Two uvicorn workers, each with a Prisma pool, exhausted it; everything else — the
-keep-alive, `prisma migrate` — was rejected with `(EMAXCONNSESSION) max clients reached in session
-mode`.
+*(Measured on Supabase, which hosted this deployment until 2026-08-22. The mechanism is session
+pooling, not the vendor, and any pooler in session mode behaves this way.)* The session-mode pooler
+(`:5432`) pins one of ~15 server connections for the life of a client connection. Two uvicorn
+workers, each with a Prisma pool, exhausted it; everything else — the keep-alive, `prisma migrate` —
+was rejected with `(EMAXCONNSESSION) max clients reached in session mode`.
 
 **Fix:** route runtime queries through the **transaction-mode** pooler (`:6543`, `pgbouncer=true`),
 which returns the server connection after each statement and multiplexes many client connections
-over the same 15. Migrations deliberately keep the session pooler, because `prisma migrate deploy`
-needs advisory locks and DDL that transaction mode cannot provide. Implemented in
-`backend/app/core/db.py::build_runtime_database_url`, which rewrites the URL at runtime and leaves
-anything that is not a Supabase pooler host untouched, so local development is unaffected.
+over the same 15. Migrations deliberately keep the session endpoint, because `prisma migrate deploy`
+needs advisory locks and DDL that transaction mode cannot provide.
+
+**How the fix is implemented has since changed, and the change is the interesting part.** As shipped
+in 2026-06, `build_runtime_database_url` did the routing itself: it **used to** match the
+`.pooler.supabase.com` host suffix — historical, and removed on 2026-08-22 — and rewrite `:5432` to
+`:6543`, leaving anything else untouched so local development was unaffected. When production moved
+to another provider the match stopped firing —
+and it had been carrying the `connection_limit` cap too, so a provider migration silently disabled
+the ceiling that exists to stop §6.2's crash-loop. The rewrite was removed on 2026-08-22. Today the
+function adds `pgbouncer=true` to any **remote** DSN when `DATABASE_USE_TRANSACTION_POOLER` says the
+operator has pointed `DATABASE_URL` at a pooled endpoint, and pointing it there is the operator's
+job rather than the code's. The lesson is worth keeping separately from the incident: **a mechanism
+that only fires against one vendor's hostname is a mechanism that turns itself off during a
+migration, at the moment nobody is looking at connection counts.**
 
 ### 6.2 The crash-loop, and why staying alive is the fix
 
@@ -520,7 +548,9 @@ flowchart LR
 
 **Three changes broke the cycle**, all in `backend/app/main.py` and `backend/app/core/db.py`:
 
-1. **`connection_limit` 40 → 10** (`config.py:94`). Fewer connections requested per worker.
+1. **`connection_limit` 40 → 10** (`Settings.database_connection_limit`; the symbol rather than a
+   line, for the reason §6 gives — a concurrent wave moves the ranges in that file every time).
+   Fewer connections requested per worker.
 2. **A non-fatal lifespan.** A failed initial connect logs and *starts the app anyway*. `/health`
    deliberately does not touch the database, so the box remains a healthy CloudFront origin
    throughout the outage while it heals.
@@ -728,16 +758,33 @@ from keyterm boosting would be unsupported and should not appear in a paper base
 
 ## 9. Result 5 — access control and a regulated national identifier
 
-### 9.1 A six-tier ladder, mirrored exactly in three clients
+### 9.1 A seven-tier ladder, mirrored exactly in three clients
 
 ```mermaid
 flowchart LR
-  v["CROWDSOURCE_VOLUNTEER<br/>10"] --> f["FIELD_CONTRIBUTOR<br/>20"] --> r["RESEARCHER<br/>30"] --> p["PROFESSOR<br/>40"] --> a["ADMIN<br/>50"] --> m["MASTER_ADMIN<br/>60"]
+  v["CROWDSOURCE_VOLUNTEER<br/>10"] --> f["FIELD_CONTRIBUTOR<br/>20"] --> r["RESEARCHER<br/>30"] --> d["DESIGNER<br/>35"] --> p["PROFESSOR<br/>40"] --> a["ADMIN<br/>50"] --> m["MASTER_ADMIN<br/>60"]
 ```
 
 Higher rank inherits every power below it; grantable capability booleans (`canReview`,
 `canDownloadDataset`, `canManageWorkshops`, …) can additionally lift one specific power for one
 lower-tier account without promoting them.
+
+**SEVEN, AND THIS SECTION SAID SIX — dated, because it is a correction to a DERIVED figure and not a
+re-measurement.** `DESIGNER` was added at rank 35 on 2026-08-07 (§2.2), which is after this
+document's pinned snapshot `a0fa3a85`; the diagram and the count above were re-derived from the
+working tree on **2026-08-22** by reading `ROLE_RANK` in `backend/app/core/deps.py` and in
+`frontend/lib/permissions.ts`. The insertion at 35 rather than a renumbering is the point of the
+ten-spacing noted below, and is the first time the design was exercised. Nothing in §2.2 was
+re-measured; the account counts there remain the 2026-07-27 snapshot.
+
+**One predicate in this system is not a threshold, and it is the interesting one for a paper about
+role ladders.** `can_run_design_workshops` is a **SET** — `{DESIGNER, ADMIN, MASTER_ADMIN}` — so a
+`PROFESSOR` at rank 40 outranks a `DESIGNER` at 35 and is still refused. The ladder answers "how much
+may this account do to the repository"; running a design & prototype workshop is a job an institution
+empanels a named person for, ending in a document submitted under that person's name, and seniority
+is not a substitute for having been named. A non-monotonic rule inside an otherwise strictly ordered
+ladder is far easier to let drift than a threshold, which is why the same set is written out in
+`frontend/lib/permissions.ts::canRunDesignWorkshops` rather than derived from rank.
 
 **DERIVED** — the identical ladder appears in `backend/app/core/deps.py::ROLE_RANK`,
 `frontend/lib/permissions.ts::ROLE_RANK`,
@@ -1339,7 +1386,8 @@ Stated plainly, because a paper that does not raise these will have them raised 
 6. **Several described mechanisms have zero production data behind them.** Named individually rather
    than aggregated: Aadhaar validation and masking (0 of 16 artisans populated, §9.4); Unicode path
    segmentation (0 of 925 filenames non-ASCII, 0 of 16 artisans with Devanagari names, §10.2); the
-   structured questionnaire write path (0 answers stored, §2.1); two of the six RBAC tiers (§2.2).
+   structured questionnaire write path (0 answers stored, §2.1); two of the six RBAC tiers that
+   existed at the 2026-07-27 snapshot, and the seventh added after it (§2.2, §9.1).
    These are verified by tests and by reading, not by production traffic.
 
 7. **No user study, no comparison system, no WER baseline.** None was conducted. Any claim about

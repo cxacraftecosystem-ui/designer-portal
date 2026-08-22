@@ -2674,11 +2674,16 @@ private fun launchApkInstaller(context: Context, apk: File) {
 /**
  * Open the web portal in the user's browser. The web app hands out this APK; this is the return leg
  * of the same trip, for the bulk work a phone is the wrong shape for.
+ *
+ * THIS SENT EVERY HANDSET USER TO field-repository.vercel.app UNTIL 2026-08-22 — the SIBLING
+ * PRODUCT'S live site, inherited when this portal was split out of it. A designer tapping "open
+ * the web portal" landed in another product and, if signed in there, saw another product's data.
+ * This portal is design-repository.vercel.app (frontend/.vercel/project.json, docs/CI.md).
  */
 private fun openWebPortal(context: Context) {
     runCatching {
         context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse("https://field-repository.vercel.app"))
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://design-repository.vercel.app"))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }.onFailure {

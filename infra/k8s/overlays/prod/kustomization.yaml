@@ -6,7 +6,10 @@
 #     (maxReplicas + 1 rollout surge + 1 queue) x DATABASE_CONNECTION_LIMIT  <=  100
 #     (6           + 1               + 1      ) x 10                        =   80
 #
-# 100 is half of Supabase's 200-client hard ceiling, and the other half is spoken for — dev (15),
+# 100 is half of a 200-client hard ceiling — SUPABASE'S, measured before production moved off that
+# provider on 2026-08-22; the current one's is an open question in docs/KUBERNETES.md and this number
+# has deliberately not been re-derived against a figure nobody has read. The other half is spoken
+# for — dev (15),
 # staging (20), a transient migration Job (~5), the EC2 box if it is still serving, and a psql
 # session. Full arithmetic in docs/KUBERNETES.md.
 #

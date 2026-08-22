@@ -22,7 +22,8 @@ Read it top to bottom once; after that use it as a lookup table. Deployment clic
 | `.env.example` (repo root) | nothing — aggregate reference of every variable in the monorepo | Yes | No |
 | `android/local.properties` | Gradle | **No** (gitignored) | No |
 | Vercel dashboard | the frontend build (via `vercel pull` on the CI runner) | n/a | No — see the "public means public" rule below, and rule 3 on the variable **type** |
-| GitHub Actions secrets | `.github/workflows/*` | n/a | **Yes** — `BACKEND_ENV`, `EC2_SSH_KEY`, Supabase URL |
+| GitHub Actions secrets | `.github/workflows/*` | n/a | **Yes** — at least `BACKEND_ENV`, `EC2_SSH_KEY`, `EC2_HOST`. **No database URL is set**, which is the fact the dormant keep-alive turns on. That comes from a `gh secret list` recorded in `.github/workflows/keep-supabase-active.yml`'s header, whose full reading was "those three and nothing else" — **but that inventory is undated and cannot be current as written**, because the Actions table below lists `VERCEL_TOKEN`/`VERCEL_ORG_ID`/`VERCEL_PROJECT_ID` as required and quotes two of their values. See the note under that table before relying on either. |
+| `backend/.env.production` | nothing in this repository loads it; it is the developer's local copy of what production runs | **No** (gitignored by `.gitignore:23`, `.env.*`) | **Yes** — and it is this repository's authority for which provider hosts the production database. See "The database" below; establish facts about it by **host substring only** |
 
 Setup, in order, for a fresh machine:
 
@@ -64,7 +65,7 @@ cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
    |---|---|---|
    | API box | `13.206.216.18` | a different Elastic IP |
    | S3 media bucket | `designrepo-media-626159998512` | `fieldrepo-media-626159998512` |
-   | CloudFront | `d3ekigkotd1xa2.cloudfront.net` (origin id `designrepo-ec2-origin`) | its own distribution |
+   | CloudFront | `d3ekigkotd1xa2.cloudfront.net` (origin id `designrepo-ec2-origin`) — **UNRESOLVED**, see below | its own distribution |
    | SSH key pair | `designrepo-deploy` | its own |
    | Vercel | `design-repository.vercel.app` | its own project |
    | Google OAuth | its own web + Android clients (see `2696bfb`) | its own |
@@ -143,6 +144,60 @@ cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
 
 ---
 
+## The database: what is required, and where it runs today
+
+**These are two different facts, and mixing them is what made a provider migration rewrite thirty
+files.** Everything above the line is a property of the application and travels with it. Everything
+below the line is a property of one deployment and changes without a code change.
+
+### Requirement — PostgreSQL, and nothing more specific than that
+
+`backend/prisma/schema.prisma` declares `provider = "postgresql"`. Nothing narrower is required:
+
+| | |
+|---|---|
+| Engine | **PostgreSQL**. Any provider, any host, managed or self-run. |
+| Version | 16 is what `docker-compose.yml` runs locally (`postgres:16-alpine`) and what the migrations are developed against. Nothing in the schema needs a 16-only feature. |
+| Extensions | **None.** `grep -r "CREATE EXTENSION" backend/prisma/migrations/` returns one hit and it is inside a comment explaining why `pg_trgm` was *not* adopted. A stock server is enough. |
+| Connection | One `DATABASE_URL` in libpq/Prisma form. TLS for any non-loopback host — see `DATABASE_REQUIRE_SSL` below. |
+| Pooling | The application does not require an external pooler. Prisma opens `DATABASE_CONNECTION_LIMIT` connections per worker; whether those land on a pooler or on the server is the deployment's business. |
+
+So "which provider" is never the answer to "will this run". If a candidate speaks PostgreSQL and
+accepts a connection string, it is a candidate. **Requirement text anywhere in this repository —
+docs, comments, READMEs — should say PostgreSQL and stop there.**
+
+### Deployment — where it happens to run, stated once
+
+**Production runs on Neon.** *Recorded 2026-08-22.*
+
+| | |
+|---|---|
+| Authority | `backend/.env.production` — it names a `neon.tech` host and no other database provider's. That file is the only thing that decides this, and it is gitignored, so **this table is a report of it, never a second source of truth.** |
+| How to re-check without reading a secret | `grep -c neon.tech backend/.env.production` → a line count, never a line. That is the whole method: **presence of a host substring**, which is all the evidence this fact needs and the only evidence that can be gathered without handling a credential. Do not open the file, do not paste from it, do not connect with it. |
+| What else is in there | The same file also names an `amazonaws` host. That is **not a second database**: §8c tests for the `rds.amazonaws.com` substring among its known provider hosts and does not match, so whatever that AWS host is, it is not AWS's managed-PostgreSQL endpoint — it is the S3 media storage documented in the AWS section below. Established the same way as everything else here: by substring, without reading a line. |
+| Asserted by | `docs/tools/check-docs.mjs` §8c, which reads that same host substring and nothing else, and fails this run if the sentence above stops matching it. |
+| Previously | Supabase, until the move recorded here. `backend/.env.supabase.bak` is the leftover of that migration and is why the old provider is still named in historical notes throughout these docs — see [RESEARCH_NOTES.md](RESEARCH_NOTES.md) and [QA_AUDIT.md](QA_AUDIT.md), where the incidents that shaped today's connection settings were measured against it. |
+
+**The one place a provider name legitimately appears is the row above.** Everywhere else, if a
+sentence names a provider, it is either (a) describing a past incident, in which case it must carry
+the date and be written in the past tense, or (b) wrong.
+
+**What the runtime code knows about the provider: nothing, as of 2026-08-22.** Both files that touch
+the DSN say so in their own headers — `backend/app/core/config.py`'s reads "THIS FILE NAMES NO
+DATABASE PROVIDER, AND MUST NOT LEARN ONE", and `backend/app/core/db.py`'s reads "THIS MODULE KNOWS
+THAT THE DATABASE IS POSTGRESQL AND NOTHING ELSE ABOUT IT". Each of them **used to** know one:
+`build_runtime_database_url` matched the host suffix `.pooler.supabase.com` and rewrote `:5432` to
+`:6543`, and the pool ceiling rode on that same match — so when the deployment moved, the ceiling
+silently stopped applying. Every decision either file makes now turns on **shape** (is the host
+loopback or private? — `_is_local_db_host`) or on an explicit setting.
+
+**That is a change in what the settings mean, not just in the code.** `DATABASE_USE_TRANSACTION_POOLER`
+is no longer a no-op against an unrecognised host: it applies to **every** remote DSN, so it has to be
+set to match the endpoint you actually pointed `DATABASE_URL` at. See its row below, which is the
+operator-facing half of this paragraph.
+
+---
+
 ## Backend — FastAPI (`backend/.env`)
 
 Source of truth: `backend/app/core/config.py`. "Default" is the value the code uses when the
@@ -152,9 +207,9 @@ variable is absent; a blank default means the app **refuses to start** without i
 
 | Variable | Required | Default | Secret | Notes |
 |---|---|---|---|---|
-| `DATABASE_URL` | **Yes** | — | **Yes** | Prisma/Postgres connection string. Use the Supabase **session** pooler URL (`…pooler.supabase.com:5432`) — migrations need session mode for advisory locks and DDL. Not the Supabase REST URL. |
-| `DATABASE_USE_TRANSACTION_POOLER` | No | `true` | No | Re-routes *runtime* queries to the transaction pooler (`:6543`, `pgbouncer=true`) so a few workers can't exhaust the 15-connection session pool (`EMAXCONNSESSION`). Leave it on for Supabase. |
-| `DATABASE_CONNECTION_LIMIT` | No | `10` | No | Client connections **per uvicorn worker**. Do not raise to 40 — that tripped the pooler's 200-client ceiling (`EMAXCONN`) and crash-looped startup. |
+| `DATABASE_URL` | **Yes** | — | **Yes** | Prisma/PostgreSQL connection string, in libpq form. **Two different consumers read this one name, and on a provider with two endpoints they want different values.** `prisma migrate deploy` reads it *raw* out of `schema.prisma`'s `env("DATABASE_URL")` — never through `Settings` — and needs a connection that supports **SESSION** mode, because it takes advisory locks and runs DDL that transaction pooling cannot hold across statements. The running app reads it through `Settings` and wants the **pooled** endpoint, declared as such with `DATABASE_USE_TRANSACTION_POOLER` below. Which value each process gets is a deployment arrangement, not a code decision: see `backend/app/core/db.py`'s header, and `infra/k8s/base/job-migrate.yaml`, which gives the migration Job the secret's value with no app ConfigMap attached. On a provider with a single endpoint, or a direct server, there is one value and the flag below goes `false`. |
+| `DATABASE_USE_TRANSACTION_POOLER` | No | `true` | No | **A declaration about the endpoint `DATABASE_URL` names — not a router, and it matches no hostname.** True means "this DSN is a transaction-mode pooler", and `build_runtime_database_url` (`backend/app/core/db.py`) adds `pgbouncer=true` so the query engine stops relying on session-pinned named prepared statements that transaction pooling cannot keep. It takes effect on **any remote host**; a loopback/private DSN is returned untouched, and a `pgbouncer` already written into the URL always wins. **Set it `false` when `DATABASE_URL` is a direct, non-pooling endpoint** — including a provider that publishes only one endpoint. Default true because the two mistakes are not symmetric: true-against-direct costs prepared-statement caching, false-against-pooled fails queries under load. It **used to** be a host-suffix rewrite for one vendor's pooler (`.pooler.supabase.com`, `:5432 → :6543`); that was removed on 2026-08-22 and both files' headers record why. |
+| `DATABASE_CONNECTION_LIMIT` | No | `10` | No | Client connections **per uvicorn worker**. Do not raise to 40: on the Supabase deployment this ran on until 2026-08-22 that tripped a 200-client pooler ceiling (`EMAXCONN`) and crash-looped startup. The *ceiling* was that provider's; the *lesson* — that this number multiplies by every worker, pod and rollout surge — is arithmetic and applies everywhere. **Whatever the current provider's ceiling is has not been established from this repository; see the open question in [KUBERNETES.md](KUBERNETES.md).** |
 | `DATABASE_POOL_TIMEOUT` | No | unset → Prisma's own (10 s) | No | Seconds to wait for a pooled connection. |
 | `DATABASE_REQUIRE_SSL` | No | unset → automatic | No | Forces `sslmode=require` on/off. Unset means: append it for a **remote** host, leave a loopback/private host alone (docker-compose Postgres ships no certificate). A URL that already carries an `ssl*` parameter always wins. Matters because libpq/Prisma default to `sslmode=prefer`, which silently falls back to plaintext. |
 
@@ -234,7 +289,7 @@ Emitted by `app.main.SecurityHeadersMiddleware`. Defaults are correct for local 
 | `GOOGLE_ANDROID_CLIENT_ID` | No | unset | No | Extra accepted audience if Android tokens arrive with the Android client ID. |
 | `MASTER_ADMIN_EMAIL` | **Yes** | — | No | Google account permanently at `MASTER_ADMIN` (rank 60). The app will not start without it. |
 | `MASTER_ADMIN_NAME` | No | `Ankit Kumar` | No | Display name for that account. |
-| `DEFAULT_SIGNUP_ROLE` | No | `CROWDSOURCE_VOLUNTEER` | No | Tier given to brand-new self-registered Google accounts on the six-tier ladder. Set `RESEARCHER` to restore the old open-signup behaviour. |
+| `DEFAULT_SIGNUP_ROLE` | No | `CROWDSOURCE_VOLUNTEER` | No | Tier given to brand-new self-registered Google accounts on the seven-tier ladder. Set `RESEARCHER` to restore the old open-signup behaviour. |
 
 ### Speech-to-text and AI (all optional)
 
@@ -308,9 +363,9 @@ The names, so this file remains a complete index of what `config.py` reads:
 | `ADMIN_EMAIL` | `backend/scripts/seed_admin.py` | No | `admin@example.com` | No | First email/password admin, so you can log in before Google OAuth exists. |
 | `ADMIN_NAME` | same | No | `Repository Admin` | No | |
 | `ADMIN_PASSWORD` | same | No (script skips without it) | — | **Yes** | Change it before any real data is entered. |
-| `SUPABASE_REST_URL` | nothing today | No | — | No | Kept so a deployment needing Supabase REST has one place for the values. |
-| `SUPABASE_PUBLISHABLE_KEY` | nothing today | No | — | No | Anon/publishable key. |
-| `SUPABASE_SECRET_KEY` | nothing today | No | — | **Yes** | Service-role key. Runtime secrets only. |
+| `SUPABASE_REST_URL` | nothing today | No | — | No | **Historical, 2026-08-22.** Left from the Supabase deployment. Nothing in this repository reads any of these three, and production is not on that provider — see "The database" above. They cost nothing to leave and would cost a reader a search to explain if deleted silently; delete them the next time `backend/.env.example` is revised. |
+| `SUPABASE_PUBLISHABLE_KEY` | nothing today | No | — | No | Same. Anon/publishable key. |
+| `SUPABASE_SECRET_KEY` | nothing today | No | — | **Yes** | Same. Service-role key; if a value is still sitting in any `.env`, rotate it at the provider and remove it. |
 
 ---
 
@@ -391,9 +446,28 @@ Set at **Settings → Secrets and variables → Actions**. Never in a file.
 | `VERCEL_TOKEN` | `deploy-frontend.yml` | Yes | **Yes** | Vercel → Account Settings → Tokens. Must be scoped to the **team** owning `design-repository`, not a personal account, or the CLI 403s. The only genuinely sensitive one of the three. Absent, stage 2 skips with instructions rather than failing. |
 | `VERCEL_ORG_ID` | same | Yes | No | `team_pcTf4Alb2DCIwq2IZcdu00dS`. An identifier, not a credential. Both products live in this one team, so it is the one Vercel value that is the same either way — and therefore the one that cannot warn you. |
 | `VERCEL_PROJECT_ID` | same | Yes | No | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel project **`design-repository`**, which is what `vercel link` wrote into this checkout's `frontend/.vercel/project.json`. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the *field repository's* project, and publishing there does not fail — it succeeds, replacing another product's live site with this one's build. Never put that value in this repository. |
-| `SUPABASE_KEEPALIVE_URL` / `SUPABASE_DATABASE_URL` | `keep-supabase-active.yml` → `scripts/keep-supabase-active.mjs` | One of them (falls back to `DATABASE_URL`) | **Yes** | The script rewrites a Supabase pooler URL from `:5432` to `:6543`, because a session-mode keep-alive is rejected with `EMAXCONNSESSION` while the live backend holds those 15 slots. |
-| `SUPABASE_KEEPALIVE_NO_REWRITE` | same | No | No | `"true"` disables that `:5432 → :6543` rewrite. Only for a non-Supabase database. |
-| `SUPABASE_DB_SSL` | same | No | No | `"false"` disables TLS for the keep-alive connection; any other value keeps SSL on. |
+| `SUPABASE_KEEPALIVE_URL` / `SUPABASE_DATABASE_URL` | `keep-supabase-active.yml` → `scripts/keep-supabase-active.mjs` | **No — none of these three is set, and the workflow no longer runs on a schedule** | **Yes** | **Dormant since 2026-08-22.** A nightly ping existed because a free-tier Supabase project *pauses* when idle; the provider hosting production today suspends idle compute and wakes it on the next connection (see [The database](#the-database-what-is-required-and-where-it-runs-today)), so the ping buys this deployment nothing. That workflow's own header records a `gh secret list` finding no database URL, so the cron had been failing nightly since at least 9 August. The workflow keeps `workflow_dispatch` and the whole Supabase code path; the two `schedule:` lines are commented out. Read that file's header before changing any of this. |
+| `SUPABASE_KEEPALIVE_NO_REWRITE` | same | No | No | Same dormancy. `"true"` disables the script's `:5432 → :6543` rewrite. Only needed on a provider that is not Supabase — and against such a host the rewrite is already a no-op, because it only matches the `.pooler.supabase.com` host suffix. **This is the script's own rewrite and it is still there**; the equivalent in `backend/app/core/db.py` was removed on 2026-08-22. |
+| `SUPABASE_DB_SSL` | same | No | No | Same dormancy. `"false"` disables TLS for the keep-alive connection; any other value keeps SSL on. |
+
+**The two secret inventories in this document do not agree, and this is the unresolved half.** The
+`gh secret list` quoted above (in `keep-supabase-active.yml`'s header, undated) found `BACKEND_ENV`,
+`EC2_HOST` and `EC2_SSH_KEY` **and nothing else**. The three `VERCEL_*` rows say Required = **Yes**
+and quote two configured values. Both cannot describe the same moment, and the two readings have
+very different operational meaning:
+
+* **The inventory is current** → `VERCEL_TOKEN` is absent, so `deploy-frontend.yml`'s gate takes the
+  `HAVE_VERCEL_TOKEN != true` branch and stage 2 has been **skipping with instructions on every
+  push**, exactly as long as the keep-alive was failing. Deliberately a skip, not a failure, so it
+  produces a green run and no alert — the failure mode this shape was chosen for.
+* **The inventory is stale or partial** → the `VERCEL_*` rows stand and only the "and nothing else"
+  clause is wrong.
+
+**Nothing in this repository can tell them apart.** The one command that settles it, from a machine
+authenticated to this repository: `gh secret list --repo <this repo>`. Re-run it, **date the answer
+here**, and delete whichever of the two readings it disproves. Do not re-derive the answer from a
+workflow's header again — that is how an undated inventory came to be quoted as present-tense
+evidence in the first row of this document.
 
 The `NEXT_PUBLIC_*` values are deliberately **not** in this table. They live in the Vercel project
 and `vercel pull` fetches them into the runner at build time, so the Environment Variables screen
@@ -491,7 +565,8 @@ grep -oP 'alias="\K[A-Z_0-9]+' backend/app/core/config.py | sort
 | Defaults | The `Field(default=…)` in `config.py`. **One default is a lie by design** and is called out in a blockquote: `ELEVENLABS_STT_MODEL`. If another such case appears, it needs the same treatment — a table cell cannot express "the config default is not what runs". |
 | `SCALE_*` and the AI-feature keys | Owned elsewhere: `backend/app/scale/README.md` and [AI_FEATURES.md](AI_FEATURES.md). This file lists the names only, so it stays a complete index without becoming a second source of truth. |
 | GitHub Actions secrets | `.github/workflows/*.yml`. `grep -ho 'secrets\.[A-Z_]*' .github/workflows/*.yml \| sort -u` is the equivalent set difference. |
-| `VERCEL_PROJECT_ID` / `VERCEL_ORG_ID` | `checkVercelIds` in `docs/tools/check-docs.mjs`, which ties this table's two rows to [CI.md](CI.md) §2 and to `.github/workflows/deploy-frontend.yml`'s header, and confirms them against `frontend/.vercel/project.json` when a checkout has one. Added 2026-08-22 because this table survived the wave that corrected the other three, still handing the reader the *field repository's* project id and calling it harmless. |
+| `VERCEL_PROJECT_ID` / `VERCEL_ORG_ID` | `checkVercelIds` in `docs/tools/check-docs.mjs`, which ties this table's two rows to [CI.md](CI.md) §2 and to `.github/workflows/deploy-frontend.yml`'s header, and confirms them against `frontend/.vercel/project.json` when a checkout has one. Added 2026-08-22 because this table survived the wave that corrected the other three, still handing the reader the *field repository's* project id and calling it harmless. Any *other* `prj_`/`team_` id — a typo, or one copied out of an old dashboard link — is caught by `checkSiblingIdentity`'s shape rule, which runs over every tracked file rather than these three. |
+| §4's infrastructure table | `checkSecondRegister` in `docs/tools/check-docs.mjs` compares it row by row with [CI.md](CI.md) §0's register, which is the one place these facts are meant to be established. Rows only this table carries (Google OAuth, the systemd units) are declared there; a new row that is in neither list fails, and so does a filled-in CloudFront cell while the question in §4 is still open. Added 2026-08-22, when the two tables were already disagreeing about CloudFront and inverting this one's S3 row produced no finding at all. |
 | Vercel variables | The Vercel dashboard — **UNVERIFIED from this repository**. `vercel env ls production` is the check, and rule 3 (Encrypted, never Sensitive) is the thing it exists to catch. |
 
 **Review triggers:** `backend/app/core/config.py`, `backend/.env.example`, any new `process.env.`

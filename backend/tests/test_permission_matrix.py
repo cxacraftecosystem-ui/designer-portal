@@ -2,10 +2,27 @@
 
     ADMIN (50) / MASTER_ADMIN (60)  everything, everywhere.
     PROFESSOR (40)                  create + update crafts and workshops, but NOT delete them;
-                                    edit the data of anyone ranked below them.
+                                    edit the data of anyone ranked below them. NOT a design
+                                    workshop — see the last block of this file.
+    DESIGNER (35)                   every record type a researcher may open — artisan, product,
+                                    tool, process and interview, all five driven below — plus the
+                                    writes inside a design workshop that no other tier has. NOT
+                                    crafts or workshops: those are a rank floor at Professor, and
+                                    35 < 40.
     RESEARCHER (30)                 create an artisan, product, tool, process or interview.
     FIELD_CONTRIBUTOR (20) /        create NOTHING. They populate what already exists: attach media
     CROWDSOURCE_VOLUNTEER (10)      to an artisan, answer an existing interview, comment on a record.
+
+DESIGNER SAT OUTSIDE ``ALL_ROLES`` UNTIL 2026-08-22, so every LADDER-WIDE test in this file — the
+ones that iterate the whole tuple, namely the edit/review-ladder identity and the crafts-and-workshops
+rank predicates — skipped the account this product is built for. Not the whole file: ``BELOW_ADMIN``
+below has carried DESIGNER all along and drives it over real HTTP against the transcription refusal,
+where it is the row the consent 409 was written for. The hole was the tuple, not the coverage.
+Nothing failed when the tier was added — the gates were already right — but "already right" and
+"asserted" are different states, and the two rows that matter are the non-monotonic ones: a designer
+is refused the taxonomy a professor may edit, and a professor is refused the workshop writes a
+designer may perform. A ladder read as a floor gets both of those backwards, and neither direction
+had a test.
 
 The last line is the one worth testing hardest. Tightening creation is a two-line change and it is
 very easy to tighten it one endpoint too far — POST /questionnaire/interviews in particular is BOTH
@@ -37,8 +54,23 @@ from app.api.routes import data_access, media, questionnaire
 from app.core import deps
 from app.services.artisan_identity import verhoeff_ok
 
-ALL_ROLES = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "PROFESSOR", "ADMIN", "MASTER_ADMIN")
+#: Every tier, in ladder order. It must BE ``deps.ROLE_RANK`` and not a hand-kept copy of it —
+#: ``test_this_matrix_still_covers_every_tier_that_exists`` below is the assertion that says so,
+#: because a tuple that silently lags the ladder is precisely how DESIGNER stayed out of every
+#: LADDER-WIDE test in this file for as long as the tier has existed. It was never wholly untested
+#: here — the ``BELOW_ADMIN`` block further down has always driven it — but the tests that iterate
+#: the ladder itself could not see it.
+ALL_ROLES = (
+    "CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "PROFESSOR", "ADMIN",
+    "MASTER_ADMIN",
+)
 LOWER_TIERS = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR")
+#: The tiers that may OPEN a record but may not touch the TAXONOMY — everything at or above the
+#: Researcher floor and below the Professor one, which today is exactly these two. Hand-written
+#: because a parametrisation has to be, and tied back to those two predicates in
+#: ``test_this_matrix_still_covers_every_tier_that_exists`` so a new tier landing in the gap cannot
+#: quietly miss both halves of the rule this tuple exists to pin.
+RECORD_CREATORS = ("RESEARCHER", "DESIGNER")
 
 
 def _user(role: str, user_id: str = "u1", **grants: Any) -> SimpleNamespace:
@@ -249,9 +281,16 @@ def _returning(value: Any):
 # --- Crafts and workshops: rank, and nothing but rank --------------------------------------------
 
 
+@pytest.mark.parametrize("role", RECORD_CREATORS)
 @pytest.mark.parametrize("path,body", TAXONOMY)
-def test_a_researcher_cannot_create_or_update_a_craft_or_workshop(api: _Api, path: str, body: dict) -> None:
-    caller = api.as_(_user("RESEARCHER"))
+def test_a_researcher_or_designer_cannot_create_or_update_a_craft_or_workshop(
+    api: _Api, path: str, body: dict, role: str
+) -> None:
+    """DESIGNER is the row worth having here. The taxonomy is a rank FLOOR at Professor and a
+    designer ranks 35, so they are refused it — even though they may open every record type a
+    researcher can and hold writes inside a workshop that a professor does not. Read as "designers
+    are senior contributors" this looks like an inconsistency; it is the ladder working."""
+    caller = api.as_(_user(role))
 
     created = caller.call("POST", path, body)
     updated = caller.call("PATCH", f"{path}/x1", body)
@@ -332,9 +371,35 @@ def test_the_two_bottom_tiers_cannot_open_a_new_record(api: _Api, path: str, bod
     assert api.tripwire.touched is False
 
 
+@pytest.mark.parametrize("role", RECORD_CREATORS)
 @pytest.mark.parametrize("path,body", CREATE_BODIES)
-def test_a_researcher_opens_all_four_record_types(api: _Api, path: str, body: dict) -> None:
-    assert api.as_(_user("RESEARCHER")).call("POST", path, body).reached
+def test_a_researcher_or_designer_opens_all_four_record_types(
+    api: _Api, path: str, body: dict, role: str
+) -> None:
+    """The designer half is the point of the workshop product: the stage forms embed these very
+    creates, so a designer refused here would be a designer who cannot fill a workshop."""
+    assert api.as_(_user(role)).call("POST", path, body).reached
+
+
+@pytest.mark.parametrize("role", RECORD_CREATORS)
+def test_a_researcher_or_designer_opens_the_fifth_record_type_an_interview(api: _Api, role: str) -> None:
+    """The FIFTH type, which is not in ``CREATE_BODIES`` because it is not a plain create.
+
+    ``POST /questionnaire/interviews`` is two operations behind one path: for an artisan set that
+    already has an interview it FOLDS into it (open to every tier, asserted below the divider), and
+    only for a set that has none is it a create. The matrix asserted the refusing half for the two
+    bottom tiers and never the admitting half, so "a designer may open every record type a
+    researcher can" was a claim about four types dressed as a claim about five.
+
+    ``questionnaireinterview`` is preloaded to return ``None`` — mirroring
+    ``test_a_volunteer_may_not_open_an_interview_for_an_artisan_set_that_has_none``, whose refusal
+    is only meaningful because the fold could not happen. Past the gate the handler writes the
+    subject location first, so the tripwire fires there and ``reached`` means exactly what it means
+    everywhere else in this file.
+    """
+    api.preload("questionnaireinterview", SimpleNamespace(find_unique=_returning(None)))
+
+    assert api.as_(_user(role)).call("POST", "/questionnaire/interviews", INTERVIEW_BODY).reached
 
 
 # --- The lower tiers keep every path they exist for ----------------------------------------------
@@ -550,3 +615,109 @@ def test_the_craft_and_workshop_predicates_read_rank_alone() -> None:
         expected = deps.has_rank(granted, "PROFESSOR")
         assert deps.can_manage_crafts(granted) is expected, role
         assert deps.can_manage_workshops(granted) is expected, role
+
+
+# --- The design workshop: a SET, and the one place the ladder does not apply ----------------------
+#
+# Every other rule in this file is "this tier and above". `_require_designer` is
+# `deps.can_run_design_workshops`, which is the SET {DESIGNER, ADMIN, MASTER_ADMIN} — so a PROFESSOR
+# outranks a designer everywhere in this codebase and still cannot write a workshop, and that
+# refusal is the reason this block exists. `tests/test_design_workshop_gate.py` asserts the
+# PREDICATE; what it does not do is drive the routes, and the gate is stated inside each handler
+# rather than as a dependency, so "the predicate is right" and "the route calls it" are two claims.
+#
+# THE STAGE SAVE IS THE ROW THAT MATTERS. It is the whole fortnight of fieldwork behind one PUT, and
+# it is one of the eighteen routes `_require_designer` guards — a count that lived nowhere until its
+# docstring was rewritten to carry it, having previously described the gate as covering "the two
+# capture aids".
+#
+# `{}`-ish bodies are deliberate: all three schemas — `DesignWorkshopUpdate`, `StageSaveIn` and
+# `CustomSectionsIn` — are all-optional, so FastAPI validates them before the handler runs and the
+# decision reached is the GATE's rather than a 422's.
+
+DESIGNER_SET = ("DESIGNER", "ADMIN", "MASTER_ADMIN")
+OUTSIDE_DESIGNER_SET = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "PROFESSOR")
+WORKSHOP_WRITES = [
+    ("PATCH", "/design-workshops/w1", {"title": "Renamed in the field"}),
+    ("PUT", "/design-workshops/w1/stages/WORKSHOP_SETUP", {"entries": []}),
+    ("PUT", "/design-workshops/w1/custom-sections", {"sections": []}),
+]
+
+
+@pytest.mark.parametrize("method,path,body", WORKSHOP_WRITES)
+@pytest.mark.parametrize("role", OUTSIDE_DESIGNER_SET)
+def test_nobody_outside_the_designer_set_writes_a_workshop(
+    api: _Api, method: str, path: str, body: dict, role: str
+) -> None:
+    """PROFESSOR is in this list on purpose and is the only surprising member of it."""
+    outcome = api.as_(_user(role)).call(method, path, body)
+
+    assert outcome.refused, outcome
+    assert "Designer access or above" in outcome.detail
+    # Refused before the workshop was even looked up, so no row leaks through the timing either.
+    assert api.tripwire.touched is False
+
+
+@pytest.mark.parametrize("method,path,body", WORKSHOP_WRITES)
+@pytest.mark.parametrize("role", DESIGNER_SET)
+def test_the_designer_set_reaches_the_workshop_write(
+    api: _Api, method: str, path: str, body: dict, role: str
+) -> None:
+    """A "reached" outcome here means the gate passed and `load_workshop_or_404` began — which is
+    as far as this file can see, and exactly the right depth: WHICH workshop this account may open is
+    ownership, decided by that helper and tested where it lives, not rank."""
+    assert api.as_(_user(role)).call(method, path, body).reached
+
+
+# --- The tuple that let this happen --------------------------------------------------------------
+
+
+def test_this_matrix_still_covers_every_tier_that_exists() -> None:
+    """``ALL_ROLES`` must be the ladder, not a copy of it that was true once.
+
+    DESIGNER existed in ``deps.ROLE_RANK`` for the whole life of the design-workshop product and was
+    absent from this tuple the entire time, so no test that ITERATES THE LADDER ever ran as the
+    account the product is built for. (``BELOW_ADMIN`` did run it, which is why the claim is about
+    the ladder-wide tests and not about the file.) A hand-kept list cannot notice that; this
+    assertion can, and it fails on the commit that adds the eighth tier rather than on the audit
+    that finds it a year later.
+
+    THE TIER-SPECIFIC TUPLES ARE CHECKED TOO, and that is the half the first draft of this test
+    forgot. Closing the hole in ``ALL_ROLES`` while leaving three more hand-kept tuples beside it
+    recreates the identical defect one level down: the eighth tier is appended to ``ALL_ROLES`` to
+    make the first assertion pass, and is silently absent from the designer block below. So the
+    PARTITION is asserted and not merely the membership — every tuple below the divider is tied
+    back to the predicate in ``deps`` that decides it.
+    """
+    assert set(ALL_ROLES) == set(deps.ROLE_RANK), (
+        "a role exists that this matrix never exercises — add it to ALL_ROLES and to whichever "
+        "tier-specific tuples below the divider it belongs in"
+    )
+    # Ladder order, so a reader of a parametrised failure sees the tiers in the order they rank.
+    assert list(ALL_ROLES) == sorted(ALL_ROLES, key=lambda role: deps.ROLE_RANK[role])
+
+    # The designer block: a SET and its complement, both tied to the server's own frozenset.
+    assert set(DESIGNER_SET) == set(deps.DESIGN_WORKSHOP_ROLES), (
+        "DESIGNER_SET no longer IS deps.DESIGN_WORKSHOP_ROLES, so the workshop-write block is "
+        "asserting a set the server does not have"
+    )
+    assert not set(DESIGNER_SET) & set(OUTSIDE_DESIGNER_SET), (
+        "a tier is listed as both inside and outside the designer set"
+    )
+    assert set(DESIGNER_SET) | set(OUTSIDE_DESIGNER_SET) == set(deps.ROLE_RANK), (
+        "a tier is in neither workshop tuple, so it is neither admitted nor refused by any test "
+        "here — put it in DESIGNER_SET or in OUTSIDE_DESIGNER_SET"
+    )
+
+    # RECORD_CREATORS is not a set the server declares, so it is derived from the two predicates
+    # whose DISAGREEMENT it exists to pin: may open every record type (a floor at Researcher), may
+    # not touch the taxonomy (a floor at Professor). Exactly the tiers between 30 and 40.
+    between = {
+        role
+        for role in deps.ROLE_RANK
+        if deps.can_create_records(_user(role)) and not deps.can_manage_crafts(_user(role))
+    }
+    assert set(RECORD_CREATORS) == between, (
+        "RECORD_CREATORS is no longer 'may open a record, may not edit the taxonomy' — a tier was "
+        "added between Researcher and Professor, or one of those two floors moved"
+    )

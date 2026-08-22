@@ -20,8 +20,16 @@ Plus one that belongs to none of them and is the most important of the four:
 ``GET /design-workshops/schema`` serves the field registry itself. Every client — the web form,
 the Android capture screens, the on-device report builder — renders from that payload rather
 than from its own copy of the field list, which is what keeps three surfaces describing one
-workshop the same way. It is cached by ``version``; a changed version is the signal an Android
-draft store uses to run its migration.
+workshop the same way. It is also the biggest body this API serves to a cold client — 149,465
+bytes of JSON, 23,618 on the wire once gzipped, MEASURED on 2026-08-22 — so it answers a
+conditional GET, which turns a revalidation into 664 bytes: see
+:func:`get_stage_schema` for the ETag, why the validator is derived from the response bytes rather
+than from ``registry_version()``, and why the freshness lifetime is zero.
+
+It does NOT drive an Android draft migration, whatever a reader of ``version`` may assume. That
+claim stood here for months and ``stage_schema.registry_to_dict`` refutes it at length from a
+measurement on a real handset: the browser keys its IndexedDB registry store by the version, the
+server stamps it on the workshop row, and Android merely rewrites a cache file.
 
 **Nothing here hard-deletes.** ``DELETE`` sets ``deletedAt``. This is a research data set, the
 requirement is explicit that data is retained, and a designer's two weeks of fieldwork is not
@@ -39,8 +47,11 @@ because one of them is not a rank threshold:
   gone from it: each was implied by the gate that replaced them, and a predicate that can never
   fire is how a rule quietly comes back.
 * EVERYTHING ELSE A DESIGNER DOES IS UNCHANGED, and that is a load-bearing sentence rather than
-  reassurance. ``PATCH``, every stage write, the two capture aids (OCR and dictation), the AI
-  layers and the report all call ``_require_designer`` — ``can_run_design_workshops``, a SET,
+  reassurance. ``PATCH``, every stage write, the custom sections, the two capture aids (OCR and
+  dictation), the AI layers and the five AI verbs all call ``_require_designer`` — eighteen routes,
+  counted out in that function's own docstring. NOT the report: generating one is open to anyone who
+  can READ the workshop, as the clause four bullets down says, and this sentence claimed the
+  opposite of it for as long as the two have sat here. ``can_run_design_workshops``, a SET,
   ``{DESIGNER, ADMIN, MASTER_ADMIN}``, not a floor, so a PROFESSOR outranks a designer everywhere
   else in this codebase and still cannot touch a workshop. A designer opens a workshop an admin
   created (or granted them), fills all 22 stages, creates records inside it and submits the
@@ -93,10 +104,12 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     Response,
     UploadFile,
     status,
 )
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.core.db import db
@@ -235,18 +248,150 @@ _SERVER_TIER = ai_layers.AiTier.TIER_3
 # --------------------------------------------------------------------------------------
 
 
+#: What a client may assume about a registry it already holds: **nothing, without asking**.
+#:
+#: `max-age=0, must-revalidate` is not timidity, it is the only honest number available. The registry
+#: changes when the server is deployed and at no other moment, and there is no signal a deployment
+#: emits that a handset in a village could consult — so any positive lifetime is a window in which a
+#: phone renders a form the server will no longer accept, silently dropping the keys it does not know
+#: (`droppedKeys` on the save response is what a designer would eventually see, if they looked). This
+#: repository has already paid for a stale registry once: `registry_version`'s docstring records a
+#: bundled Android asset that carried three fewer derived fields than the server and reported
+#: agreement anyway.
+#:
+#: What conditional GET buys is therefore NOT the round trip — that still happens on every cold start
+#: — it is the bytes the round trip used to carry. MEASURED end to end through the real middleware
+#: stack on 2026-08-22: the 200 is 23,618 bytes on the wire (149,465 of JSON, gzipped to 22,875 by
+#: `SelectiveGZipMiddleware`, plus headers) and the 304 is 664, of which 382 is the Permissions-Policy
+#: and CSP block `SecurityHeadersMiddleware` puts on every response. **35.6x**, and on the 40 kB/s
+#: link §1 of docs/SCALABILITY.md sizes this deployment against, 0.59 s down to 0.017 s per client
+#: per cold start.
+#:
+#: NOTE FOR ANYONE COMPARING THIS AGAINST THE 118 KB IN THE SCALE AUDIT: that figure is the
+#: UNCOMPRESSED payload, and no client has received an uncompressed one since `SelectiveGZipMiddleware`
+#: landed. The saving is real and it is 22.9 KB, not 118.
+#:
+#: `private` because the route is behind `get_current_user`. The body does not vary per caller — that
+#: is what makes the ETag well-defined at all — but a shared cache holding an authenticated response
+#: is a habit worth not starting.
+_SCHEMA_CACHE_CONTROL = "private, max-age=0, must-revalidate"
+
+
+def _etag_opaque(tag: str) -> str:
+    """One entity-tag stripped to the part a comparison may look at.
+
+    The weakness prefix is dropped because ``If-None-Match`` is defined to use the WEAK comparison
+    function (RFC 9110 §13.1.2) — ``W/"x"`` and ``"x"`` match — and this endpoint issues a weak tag
+    anyway.
+    """
+    tag = tag.strip()
+    return tag[2:] if tag[:2] in ("W/", "w/") else tag
+
+
+def _if_none_match_matches(header: str, etag: str) -> bool:
+    """Does an ``If-None-Match`` header value name ``etag``?
+
+    A DELIBERATELY NAIVE SPLIT ON COMMAS, and the direction of its error is the reason it is
+    acceptable. A conforming entity-tag may not contain a comma, but a malformed one sent by some
+    client we have never seen could — and that tag would then fail to match, so the caller receives
+    the full 200 they would have received before this function existed. Every way this parser can
+    MISREAD A TAG costs bytes and nothing else.
+
+    ``*`` IS THE ONE INPUT THAT CAN BE ANSWERED WITH A STALE REPRESENTATION, and it is not a parse
+    error — it is the client asserting that any stored response it holds will do (RFC 9110 §13.1.2).
+    A caller sending it keeps whatever it has indefinitely, because ``max-age=0, must-revalidate``
+    makes it revalidate every time and this branch answers 304 every time without comparing
+    anything. That is the defined meaning of the header, and no client in this repository sends it —
+    so the honest statement of the guarantee is that a MANGLED TAG can only cost bytes, not that no
+    input at all can be met with a stale body. ``test_a_star_matches_anything`` pins the branch.
+    """
+    tags = [t for t in (part.strip() for part in header.split(",")) if t]
+    if not tags:
+        return False
+    if "*" in tags:
+        return True
+    wanted = _etag_opaque(etag)
+    return any(_etag_opaque(t) == wanted for t in tags)
+
+
 @router.get("/schema")
-async def get_stage_schema(_: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def get_stage_schema(
+    request: Request, _: Any = Depends(get_current_user)
+) -> Response:
     """The field registry every client renders its forms from.
 
     Served rather than duplicated, for the same reason ``/reference/address`` is: a field list
     that lives in three codebases is three field lists, and they drift. Whatever a form offers
     is by construction exactly what this API accepts and exactly what the report prints.
 
-    A pure constant — no database read — so a client should cache it and re-fetch only when
-    ``version`` changes.
+    A pure constant — no database read — and the largest body this API serves TO A COLD CLIENT (the
+    qualifier matters: ``SelectiveGZipMiddleware``'s own docstring records an 839 KB report preview,
+    which is larger and is not something every client fetches once per start): **149,465 bytes of
+    JSON, 22,875 after the gzip middleware, 23,618 on the wire with headers** (MEASURED 2026-08-22;
+    ``docs/SCALABILITY.md`` §9.1 has the command). Every cold start of every client pays for it, so
+    it answers a conditional GET, which brings a revalidation down to a 664-byte 304.
+
+    **THE VALIDATOR IS A DIGEST OF THE RESPONSE BODY, NOT ``registry_version()``, AND THAT IS THE
+    WHOLE CORRECTNESS ARGUMENT.** Binding the ETag to the version digest is the obvious move — it
+    already exists, it is already published inside the payload, and it is already the thing clients
+    compare. It is also wrong, because that digest deliberately covers LESS than this body carries.
+    ``registry_version`` hashes key, type, tier, required, enum name, deprecation, derivation and
+    hydration, and it says in its own docstring that it is "deliberately insensitive to labels and
+    help text" so that retitling a field does not invalidate every cached draft on every phone. Seven
+    kinds of change were tried against the live registry on 2026-08-22 and each moved the body while
+    leaving the version character-for-character identical: a field label, a field's help text, a
+    stage title, an ENUM option's label, ``columnWidthPct``, ``maxLength`` and ``minValue``. Bind the
+    ETag to the version and a client that has revalidated once holds all seven wrong for ever — a
+    handset showing an option labelled with the wording a ministry asked us to correct, with the
+    server reporting agreement. So the tag is ``sha256`` of the exact bytes below, which cannot
+    disagree with them. ``tests/test_schema_conditional_get.py`` reruns all seven and asserts BOTH
+    halves: the tag moved, and the version did not.
+
+    **WEAK, not strong.** ``SelectiveGZipMiddleware`` may re-encode these bytes on the way out, so
+    one validator ends up describing two content-codings. That is precisely what a weak tag declares
+    and what a strong one would misstate (RFC 9110 §8.8.1). Nothing here serves a Range, which is the
+    only thing weakness costs.
+
+    Deliberately NOT memoised. Building and hashing the payload costs 6.05 ms + 0.67 ms (MEASURED,
+    same run), on a route hit once per cold start and never in a loop; a module-level cache of a
+    constant that only tests ever mutate is a stale-schema trap for a saving that small.
     """
-    return registry_to_dict()
+    payload = JSONResponse(registry_to_dict())
+    etag = f'W/"{hashlib.sha256(payload.body).hexdigest()[:32]}"'
+    headers = {"ETag": etag, "Cache-Control": _SCHEMA_CACHE_CONTROL}
+
+    if _if_none_match_matches(request.headers.get("if-none-match", ""), etag):
+        # RFC 9110 §15.4.5: a 304 carries the header fields a 200 would have sent that are needed to
+        # keep the stored response usable, and no body. ETag, Cache-Control and Vary all qualify —
+        # without the Cache-Control the client's next revalidation would be governed by a heuristic
+        # instead of by this endpoint's own answer.
+        #
+        # VARY IS SET HERE AND NOT ON THE 200, WHICH LOOKS LIKE AN OVERSIGHT AND IS NOT. The 200
+        # receives it from `SelectiveGZipMiddleware`, which appends `Vary: Accept-Encoding` at the
+        # moment it compresses; setting it here as well would emit the header twice on every
+        # compressed response, for a list whose duplicate entry means nothing. The 304 never reaches
+        # that branch — the middleware passes 204 and 304 straight through, precisely because they
+        # carry no body — so this is the only place it can be added to a 304 at all.
+        #
+        # "AT THE MOMENT IT COMPRESSES" IS A CONDITION AND NOT A FIGURE OF SPEECH. The middleware
+        # returns before it captures anything when the request does not offer gzip, and appends
+        # `vary` only inside the compression branch, which a body under `minimum_size` also skips —
+        # so `Accept-Encoding: identity` gets a 200 with ETag, Cache-Control and NO Vary at all
+        # (MEASURED through `create_app()`, and
+        # `test_the_200_carries_no_vary_when_the_client_refuses_gzip` pins it). Harmless as
+        # deployed: both clients send gzip, and `private` keeps this body out of a shared cache
+        # regardless. Named here because the alternative — setting Vary on the 200 too — trades a
+        # duplicated header on every compressed response for one that is always present, and that
+        # is a trade to make deliberately rather than to stumble into on the belief that the 200
+        # already had it.
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED,
+            headers={**headers, "Vary": "Accept-Encoding"},
+        )
+
+    for name, value in headers.items():
+        payload.headers[name] = value
+    return payload
 
 
 @router.get("/templates")
@@ -3570,13 +3715,63 @@ async def _transcripts_payload(entries: list[Any], viewer: Any) -> dict[str, Any
 
 
 def _require_designer(user: Any) -> None:
-    """Gate the two capture aids on the same rank that may run a workshop at all.
+    """The designer set — ``{DESIGNER, ADMIN, MASTER_ADMIN}`` — in front of sixteen of this
+    router's twenty-two non-GET routes. **This is not a gate on "the two capture aids", which is
+    what this docstring said while fourteen call sites in this file were reading it.**
 
-    Stated here rather than as a dependency because both routes already take ``current_user`` for
-    other reasons, and because these are not record operations: there is no workshop to own and no
-    row to check, only a question of whether this account is one the app invites to capture. A card
-    scan sends a photograph of somebody's Aadhaar to a third-party model and a dictation spends
-    provider credit per press, so neither is something to leave open to every signed-in account.
+    THE COUNTS BELOW ARE ASSERTED, NOT REMEMBERED.
+    ``tests/test_design_workshop_gate.py::test_the_designer_gate_still_stands_where_this_docstring_says_it_does``
+    walks this module's own source, counts the direct calls and the ungated non-GET routes, and
+    fails naming this paragraph if either moves. A hand-kept count in a comment is the shape this
+    repository has a rot detector for; the test is the version of it that cannot quietly go stale.
+
+    Counted from the source, the fourteen direct calls are:
+
+    * the two CAPTURE AIDS the old sentence named — ``POST /ocr/identity`` and
+      ``POST /ocr/identity/retention`` — plus the two allowance probes beside them,
+      ``GET /dictation-allowance`` and ``GET /ai-verb-allowance``;
+    * ``POST /{workshop_id}/dictate`` and ``POST /{workshop_id}/dictation-consent``;
+    * **``PATCH /{workshop_id}``**, which renames a workshop and rewrites its promoted columns, and
+      **``PUT /{workshop_id}/stages/{stage_key}``**, which is every one of the 22 stages — the whole
+      fortnight of fieldwork — together with ``PUT /{workshop_id}/custom-sections``;
+    * the AI layer writes: ``POST /{workshop_id}/ai-layers`` and the accept / unaccept / delete trio
+      on ``/{workshop_id}/ai-layers/{layer_id}``;
+    * ``_verb_gate``, one call standing in front of five more routes — proofread, expand,
+      translate, caption and subtitles.
+
+    So: **eighteen routes, and the stage save is one of them.** The count is written down because a
+    gate whose docstring understates its reach by an order of magnitude is how somebody later lifts
+    it off a route they have been told is unimportant. If you add a call, add it here.
+
+    WHAT IT IS NOT. It is not ownership and not visibility — ``load_workshop_or_404`` decides who
+    may open THIS workshop, and the workshop-scoped routes above pair the two. It is not the create
+    gate either: ``assert_can_create_design_workshops`` is strictly narrower and a DESIGNER is
+    refused by it. And it is a SET rather than a floor, so a PROFESSOR outranks a designer
+    everywhere else in this codebase and is refused here — see ``deps.can_run_design_workshops``.
+
+    AND IT IS NOT EVERY WRITE. Six non-GET routes do not call it, five of them deliberately and
+    argued elsewhere: ``POST /`` (the create, gated narrower), ``DELETE /{workshop_id}`` and
+    ``POST /{workshop_id}/restore`` (``assert_can_delete`` / ``require_admin``),
+    ``POST /{workshop_id}/report`` (open to anyone who may READ the workshop — the module header's
+    own clause), and the retired id-less ``POST /dictate``, which answers 410 to everyone.
+
+    **The sixth is ``POST /{workshop_id}/exports`` and it is not argued anywhere.** It writes a
+    ``DwReportExport`` ledger row behind ``load_workshop_or_404(for_edit=True)`` alone, and
+    ``for_edit`` performs no role check whatsoever (``services/design_workshops.py`` admits the
+    creator, an admin, or ANY ``DesignWorkshopViewer`` grantee regardless of tier) — so a RESEARCHER
+    or a PROFESSOR holding a viewer grant can append to the export ledger of a workshop they may
+    only read. This predates the docstring that now names it and is left standing rather than
+    tightened here: it is a permission decision, the row is an attestation about a file the caller
+    could already generate, and narrowing it is the owner's call, not a docstring's. It is written
+    down so the enumeration above is honest about its own edge.
+
+    Stated inside each handler rather than as a dependency because every one of these routes already
+    takes ``current_user`` for other reasons, and because the question it asks is not about a row:
+    there is nothing to own yet at ``/ocr/identity``, only whether this account is one the app
+    invites to do a designer's work at all. A card scan sends a photograph of somebody's Aadhaar to
+    a third-party model and a dictation spends provider credit per press, so neither is something to
+    leave open to every signed-in account — and a stage write is a fortnight of somebody else's
+    fieldwork, which is a stronger reason of the same kind.
     """
     if not can_run_design_workshops(user):
         raise HTTPException(

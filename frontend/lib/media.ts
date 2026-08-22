@@ -1,4 +1,10 @@
 import { API_BASE, ApiError, apiFetch, getToken, listResource, type ApiFetchOptions } from "@/lib/api";
+// "Is this the network?" is asked in ONE place for the whole web client, and this module is not
+// exempt from it just because its second leg talks to a bucket instead of to the API. `StorageError`
+// is DECLARED there rather than here so the classification can read its `status`: an S3 403 or 413
+// used to reach the outbox drain as an unrecognised error, default to "the connection is at fault",
+// and be re-thrown for ever under "Still no connection" — the whole jam, through the storage leg.
+import { LocalRefusalError, StorageError, triageFailure } from "@/lib/failureTriage";
 import type { MediaFile, MediaType } from "@/lib/types";
 
 /**
@@ -9,7 +15,9 @@ import type { MediaFile, MediaType } from "@/lib/types";
  * - **Multipart above a size threshold** — big videos go up in parts, each retried independently,
  *   with the whole upload aborted (never left half-written) on failure.
  * - **Safe-request retry** — presign / multipart-setup / complete are re-issued on 502/503/504 and on
- *   transport errors; record-creating calls are never auto-retried.
+ *   anything that never reached a server at all; record-creating calls are never auto-retried. The
+ *   classification is `lib/failureTriage.ts`'s, not this module's; the NARROWING (no 429, no 500 in a
+ *   tight four-attempt loop) is this module's and is argued at {@link isRetriableApiFailure}.
  * - **Idempotent completion** — `/media/complete` de-duplicates on `objectKey`, so a retried finish
  *   returns the row the first attempt created instead of duplicating it.
  * - **Orphan cleanup** — every staged object is journalled; discarding a file, closing the page, or
@@ -425,24 +433,42 @@ export function audioExtensionForMimeType(mimeType: string | null | undefined): 
 // Transport primitives
 // ---------------------------------------------------------------------------
 
-/** An object-storage (S3/MinIO) failure, carrying the HTTP status when there was one. */
-class StorageError extends Error {
-  status: number | null;
-
-  constructor(message: string, status: number | null = null) {
-    super(message);
-    this.name = "StorageError";
-    this.status = status;
-  }
-}
-
 /** Raised when S3 answered a part PUT without an ETag the browser is allowed to read. */
 class EtagUnavailableError extends Error {}
 
+/**
+ * May {@link apiRetry} send this SAFE request again, right now, inside the same call?
+ *
+ * ── DELIBERATELY NARROWER THAN "IS IT WORTH RETRYING", AND THE DIFFERENCE IS THE POINT ──────────
+ *
+ * This is a TIGHT loop — four attempts, 800ms apart, while a researcher watches a progress bar — and
+ * not the outbox, which retries on the next connection an hour later. The two want different sets,
+ * and this function used to express that by holding its own private copy of the network rules
+ * (`Set([502, 503, 504])` plus `error instanceof TypeError`). That copy was the sixth answer to "is
+ * this the network" in a repository whose whole defect class is answers that disagree, and it was the
+ * one no sweep could see, because `Set.has(...)` does not look like `status === 408`.
+ *
+ * So the CLASSIFICATION comes from `lib/failureTriage.ts` now and only the NARROWING lives here:
+ *
+ *   • nothing answered at all — a `fetch` TypeError, DNS, a dropped connection, a 408 from a proxy
+ *     saying the request never completed — is repeated. Nothing was decided, and every call this
+ *     wraps (presign, multipart create/abort, `/media/complete`) is safe to repeat by construction.
+ *   • of the answers, only the GATEWAY codes are repeated: 502/503/504 mean the origin was too slow
+ *     or is being deployed, which is what an 800ms wait is for. Android's OkHttp interceptor uses the
+ *     same three, which is where they came from.
+ *   • A 429 IS NOT REPEATED HERE, and that is the one place this must differ from the drains. The
+ *     server has explicitly asked for time; four requests in three seconds is the opposite of giving
+ *     it any, and on a metered rural connection it is somebody's data being spent to be refused
+ *     again. The outbox's `underlyingIsTransient` keeps the work and comes back later, which is the
+ *     right answer at that timescale and the wrong one at this.
+ *   • A 500 IS NOT REPEATED HERE either: it is a fault in the request's own handling rather than a
+ *     gateway being slow, so an immediate repeat reproduces it. The batch result still carries it
+ *     out to the drain, which keeps the file and tries again on the next connection.
+ */
 function isRetriableApiFailure(error: unknown): boolean {
-  if (error instanceof ApiError) return RETRIABLE_GATEWAY_CODES.has(error.status);
-  // fetch() rejects with a TypeError for DNS/connection/CORS-level failures.
-  return error instanceof TypeError;
+  const { kind, status } = triageFailure(error);
+  if (kind === "unreachable") return true;
+  return status !== null && RETRIABLE_GATEWAY_CODES.has(status);
 }
 
 /**
@@ -683,7 +709,22 @@ export function uploadStorageObject(options: ObjectUploadOptions): Promise<Stage
 
 async function uploadObject(options: ObjectUploadOptions): Promise<StagedObject> {
   const { file } = options;
-  if (file.size === 0) throw new Error(`"${file.name}" is empty (0 bytes) — there is nothing to upload.`);
+  /*
+    A `LocalRefusalError` AND NOT A BARE `Error`, WHICH IS THE WHOLE POINT OF THE TYPE.
+
+    Presign rejects a zero-byte object (`sizeBytes > 0`), so this refusal is correct and is made here
+    to save a round trip. It used to be a bare `new Error`, and a bare `Error` is indistinguishable
+    from a `TypeError` out of `fetch` to every classifier downstream — whose default is, correctly,
+    "the connection is at fault". So an empty file came out of the outbox drain classified as OFFLINE:
+    the batch escalation stopped the whole pass, nothing was recorded, no Discard was offered, and the
+    next connection met the identical empty file. A queue jammed for ever by a file no server saw.
+
+    `lib/offline.ts` also separates empty files out BEFORE calling here (`splitUnsendableFiles`), and
+    should go on doing so — not sending is better than sending and being refused. But that only
+    protects the callers that remember it. The type protects the ones that do not: see
+    `lib/failureTriage.ts`, where it is the one thing that resolves to kind `permanent`.
+  */
+  if (file.size === 0) throw new LocalRefusalError(`"${file.name}" is empty (0 bytes) — there is nothing to upload.`);
   const mediaType = inferMediaType(file);
   const mimeType = file.type || "application/octet-stream";
   // Hashed alongside the transfer, not before it, so it never delays the bytes leaving the device.
@@ -956,8 +997,9 @@ async function deleteStagedObject(objectKey: string) {
     );
     forgetStagedObject(objectKey);
   } catch (error) {
-    // 403 / 404 / 409 are all terminal answers ("not yours" / "gone" / "now attached to a record"),
-    // so stop tracking it. A transport failure keeps the journal entry for the next sweep.
+    // ONLY A REFUSAL FORGETS THE OBJECT — 403 / 404 / 409 are terminal answers ("not yours" / "gone"
+    // / "now attached to a record"), and there is nothing left to reclaim. Every other verdict keeps
+    // the journal entry for the next sweep.
     //
     // A 401 IS AN `ApiError` AND IS EMPHATICALLY NOT ONE OF THEM, and that only became load-bearing
     // when this call stopped navigating. Before, the first 401 replaced the document and the tab
@@ -967,7 +1009,13 @@ async function deleteStagedObject(objectKey: string) {
     // staged object in the bucket with nothing left to reclaim it by — the one outcome this journal
     // exists to prevent. The object is still there and still ours; only the credential died. A 5xx
     // says the same thing about the server rather than the object, so it keeps the entry as well.
-    if (error instanceof ApiError && error.status !== 401 && error.status < 500) {
+    //
+    // WRITTEN AS `kind === "refused"` RATHER THAN `status !== 401 && status < 500`, which is what it
+    // said and which was a seventh private copy of the network rules. The rewrite also fixes two
+    // statuses the hand-rolled version got wrong in the dangerous direction: a 408 (the request never
+    // completed — the server was never asked about this object) and a 429 (the server asking for
+    // time) both used to FORGET the key and strand the object. See `lib/failureTriage.ts`.
+    if (triageFailure(error).kind === "refused") {
       forgetStagedObject(objectKey);
     }
   }
@@ -1488,7 +1536,47 @@ export type BatchFailure = {
   cause?: unknown;
 };
 
+/**
+ * ONE INPUT FILE'S FATE, WITH THE FILE ITSELF ATTACHED.
+ *
+ * The shape a caller cannot mis-zip, because there is nothing to zip: the `File`, what it became and
+ * why it did not are one object, at the position the caller passed the file in. Everything else on
+ * {@link BatchResult} is a view of this array, kept because a dozen call sites read them.
+ */
+export type BatchOutcome = {
+  /** The `File` the caller passed at this position. Identity, not name — see {@link BatchResult.outcomes}. */
+  file: File;
+  /** What it became, or null when it did not land. */
+  media: MediaFile | null;
+  /** Why it did not land, or null when it did. Exactly one of these two is non-null. */
+  failure: BatchFailure | null;
+};
+
 export type BatchResult = {
+  /**
+   * ONE ENTRY PER INPUT FILE, AT ITS POSITION, CARRYING THE FILE. The authoritative result; the three
+   * fields below are derived from it and exist because a dozen call sites already read them.
+   *
+   * ── WHY THE AUTHORITATIVE SHAPE IS THIS ONE ──────────────────────────────────────────────
+   * This function RESOLVES on a partly-failed batch and throws only when nothing landed, so
+   * `const { uploaded } = await uploadMediaBatch(...)` reads as success and is not. Two ship-blockers
+   * came out of that, and both were index arithmetic on top of it: `uploaded` is COMPACTED (the
+   * by-index array with its nulls filtered out) so its ORDER is the caller's and its POSITIONS are
+   * not, and a caller that walked it with a counter into its own `File[]` recorded every surviving
+   * file against the wrong one. `FieldInput` did exactly that, and its reader is `IdentityCardReader`,
+   * which prints a file's name beside the identity number it OCR'd out of the bytes — so the misfile
+   * showed a designer one photograph's name over another photograph's identity number, defeating the
+   * one cross-check that surface relies on. On identity data.
+   *
+   * `uploadedByIndex` was added to close that instance. This closes the CLASS: with the file inside
+   * the record there is no second array to line up, so the arithmetic that produced both defects has
+   * nowhere to happen. `e2e/batch-result-sweep-unit.spec.ts` is the other half — it fails if any
+   * caller destructures `uploaded` without also taking `failed` or `outcomes`.
+   *
+   * NEVER MATCHED BACK BY `file.name`. Two photographs off one handset are routinely both
+   * `IMG_0001.jpg`; a name match would misfile them and look like it had worked.
+   */
+  outcomes: BatchOutcome[];
   uploaded: MediaFile[];
   failed: BatchFailure[];
   /**
@@ -1538,16 +1626,66 @@ export class MediaBatchError extends Error {
 }
 
 /**
+ * The second half of {@link MediaBatchError}'s sentence — what to DO, chosen by what happened.
+ *
+ * ── THE ONE STRING THAT STAYED HAND-ROLLED AFTER THE RULE WAS SHARED ────────────────────────────
+ *
+ * This clause was a constant: "Check your internet connection and try again — the record was saved,
+ * so re-open it and re-attach the media", appended to every total failure whatever caused it. The
+ * classification underneath had already been unified — `cause` is carried, `triageFailure` reads it,
+ * every drain acts on the verdict — and the SENTENCE went on saying the one thing the verdict most
+ * often contradicts. A 413 on an over-size video, a 415 on a heic the server will not take, a 422
+ * naming a key the two builds disagree about: the server answered all three, and each of them told
+ * the researcher to go and look for signal they already had. `e2e/draft-store-drift-unit.spec.ts`
+ * pins the worst of them, where the advice arrived stacked with two others that contradicted it.
+ *
+ * IT BRANCHES ON `screen`, WHICH IS THE FIELD FOR EXACTLY THIS. `ScreenAction` in
+ * `lib/failureTriage.ts` is the triage's own answer to "what must a screen somebody is looking at
+ * say", so this function is a lookup and not a seventh opinion — nothing here decides anything
+ * about a status, and the `default` arm exists only so a kind added there cannot silently lose its
+ * sentence.
+ *
+ * THE PREFIX IS UNCHANGED and so is the shape: a reason clause, then an advice clause. Callers that
+ * strip the advice and keep the reason — `batchCause` on the questionnaire page is the one that does,
+ * because an interview has no edit screen to "re-open" — go on working unaltered, and callers that
+ * surface `.message` whole get a sentence that is true of what happened instead of one that is true
+ * a third of the time.
+ */
+function adviceForALostBatch(cause: unknown): string {
+  const { screen } = triageFailure(cause);
+  switch (screen) {
+    case "say-signed-out":
+      return "Your sign-in has expired, so nothing could be sent — sign in again. The record was saved, so re-open it and re-attach the media.";
+    case "say-try-later":
+      return "The repository was reached but could not take the media just now, so this is not your connection — wait a minute. The record was saved, so re-open it and re-attach the media.";
+    case "say-out-of-step":
+      return "This app and the repository are out of step about the shape of the request — nothing you did is wrong and nothing here will change it until one of them is updated. The record was saved.";
+    case "say-refused":
+      return "The repository answered and refused the media, so this is not your connection — the reason above is what has to change. The record was saved, so re-open it and re-attach the media once it has.";
+    case "say-unsendable":
+      return "Nothing was sent: the reason above is about the file itself, so no connection and no retry can clear it. The record was saved, so re-open it and attach a good copy.";
+    case "say-offline":
+    default:
+      return "Check your internet connection and try again — the record was saved, so re-open it and re-attach the media.";
+  }
+}
+
+/**
  * Upload many files resiliently: files that were eagerly pre-uploaded only need linking (so saving is
  * near-instant), the rest transfer now — up to {@link UPLOAD_CONCURRENCY} at a time. Each file
  * retries independently, a failure of one does not abort the rest, and per-byte progress + ETA is
  * reported across the whole batch.
  *
+ * IT RESOLVES ON A PARTLY-FAILED BATCH and throws only when NOTHING landed, so a resolved promise is
+ * not a success and `const { uploaded } = await uploadMediaBatch(...)` is a bug in the reading of it.
+ * Take {@link BatchResult.outcomes} — one entry per input file, at its position, with the `File`
+ * attached — or at minimum take `failed` alongside `uploaded` and say what did not make it.
+ * `e2e/batch-result-sweep-unit.spec.ts` fails the build if a call site does neither.
+ *
  * `uploaded` KEEPS THE CALLER'S ORDER AND NOT THE CALLER'S POSITIONS, and the difference is a bug
  * this sentence used to hide: it is the by-index array with its nulls removed, so `uploaded[2]` is
- * the third file that LANDED, not the third file that was passed in. A caller that needs to know
- * which `File` produced which result reads {@link BatchResult.uploadedByIndex}, which is that array
- * before the compaction. See the note there for what the zip cost.
+ * the third file that LANDED, not the third file that was passed in. See {@link BatchResult.outcomes}
+ * for what that zip cost, on identity data, twice.
  *
  * `redirectOn401` IS HOW A BACKGROUND PASS STOPS BEING A NAVIGATION. Every request this makes went
  * out with `apiFetch`'s default, which sends the browser to /login on an expired token — right for a
@@ -1593,7 +1731,11 @@ export async function uploadMediaBatch({
   // Claimed synchronously, before the first await, so nothing can reclaim these objects mid-save.
   const records = takeStagedFor(files);
   const uploadedByIndex = new Array<MediaFile | null>(files.length).fill(null);
-  const failed: BatchFailure[] = [];
+  // BY INDEX, NOT BY ARRIVAL. `runPool` runs UPLOAD_CONCURRENCY files at once, so a pushed array is
+  // in COMPLETION order — which read like input order in every test with one slow file and was not.
+  // `failed` below is rebuilt from this in the caller's own order, so `failed[0]` is the first file
+  // the caller passed that did not land, rather than whichever request happened to lose first.
+  const failureByIndex = new Array<BatchFailure | null>(files.length).fill(null);
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0) || 1;
   const loaded = new Array<number>(files.length).fill(0);
   const startedAt = Date.now();
@@ -1646,11 +1788,11 @@ export async function uploadMediaBatch({
       // `cause` keeps the ORIGINAL error, `ApiError` and all. Reducing it to `.message` here is what
       // made a refusal indistinguishable from a dropped connection two callers away: every test of
       // "did the server actually answer" is `error instanceof ApiError`, and a string is not.
-      failed.push({
+      failureByIndex[index] = {
         name: file.name,
         error: error instanceof Error ? error.message : "Upload failed",
         cause: error
-      });
+      };
     }
     // Settled either way — count its bytes so the bar still reaches the end of the batch.
     loaded[index] = file.size;
@@ -1658,26 +1800,43 @@ export async function uploadMediaBatch({
     report();
   });
 
+  /*
+    THE ONE ARRAY EVERYTHING ELSE IS A VIEW OF. Built here, at `files.length`, so a position in it is
+    a position in the caller's own array and the two can never be a different length. See
+    {@link BatchResult.outcomes} for the two ship-blockers that came out of lining up two arrays.
+  */
+  const outcomes: BatchOutcome[] = files.map((file, index) => ({
+    file,
+    media: uploadedByIndex[index],
+    failure: failureByIndex[index]
+  }));
+  const failed = outcomes.map((outcome) => outcome.failure).filter((failure): failure is BatchFailure => failure !== null);
+
   // Total failure (nothing got through) is escalated so every caller surfaces it — the record was
   // already saved before this ran, so the fix is to retry the media, not redo the whole form.
   //
   // THE THROW CARRIES `cause`, AND THAT IS NOT A DETAIL. The offline sync uploads ONE file per call,
   // so for it "every file failed" is simply "this file was refused" — and a bare `new Error` made a
   // 415 on a video the server will never accept look exactly like a lost signal to `isUnreachable`,
-  // which stopped the pass as offline and came back to the same refusal for ever. The message is
-  // unchanged, so callers that only surface `.message` are unaffected.
+  // which stopped the pass as offline and came back to the same refusal for ever.
   if (files.length > 0 && failed.length === files.length) {
     throw new MediaBatchError(
       `All ${files.length} media file(s) failed to upload (${failed[0]?.error ?? "network error"}). ` +
-        "Check your internet connection and try again — the record was saved, so re-open it and re-attach the media.",
+        adviceForALostBatch(failed[0]?.cause),
       failed
     );
   }
   return {
+    outcomes,
+    // COMPACTED, and the three lines that say so are the whole reason `outcomes` exists: this is the
+    // by-index array with its nulls removed, so its ORDER is the caller's and its POSITIONS are not.
+    // Callers that only need "what landed" go on reading it; callers that need "what THIS file
+    // became" read `outcomes`, where the file is attached and there is nothing to line up.
     uploaded: uploadedByIndex.filter((item): item is MediaFile => item !== null),
     failed,
-    // The uncompacted array, handed over as it is. Callers that only need "what landed" go on
-    // reading `uploaded`; callers that need "what THIS file became" read the positions.
+    // The uncompacted array, kept for the callers that already read it by position. New readers
+    // should take `outcomes` instead — it is the same information with the `File` attached, so a
+    // wrong index is a type error rather than a photograph filed under another photograph's name.
     uploadedByIndex
   };
 }

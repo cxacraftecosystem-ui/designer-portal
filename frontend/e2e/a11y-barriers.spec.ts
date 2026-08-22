@@ -428,8 +428,24 @@ test("a media preview takes focus, keeps it, and gives it back", async ({ page }
   await signIn(page);
   await page.goto("/artisans/new");
 
-  const file = page.locator('input[type="file"]').first();
-  await expect(file).toBeAttached({ timeout: 45_000 });
+  /*
+    THE GALLERY'S INPUT, NOT THE PAGE'S FIRST ONE — RE-ANCHORED 2026-08-23.
+
+    This read `input[type="file"]').first()`, which was the media gallery's input for as long as the
+    gallery was the only thing on this form that took a file. Identity-card scanning then added FOUR
+    file inputs to the "Identity" section, and that section renders ABOVE "Artisan media" — so
+    `.first()` handed the 1x1 PNG to the identity-card READER instead of the gallery. Measured, not
+    guessed: the attach fired `POST /api/design-workshops/ocr/identity`, which answered
+    `503 Identity-card scanning is switched off`, no tile was ever created, and the failure named the
+    preview button while actually reporting that the photograph went somewhere else entirely.
+
+    `[multiple]` is the discriminator and it is a property of what each control is FOR, not of where
+    it sits: the gallery accepts a set of files, and every identity-card input takes exactly one card
+    (all four are `multiple: false` — enumerated from the live page). A positional selector on this
+    form is now a selector that will move again the next time a field is added above it.
+  */
+  const file = page.locator('input[type="file"][multiple]').first();
+  await expect(file, "the artisan media gallery's own file input").toBeAttached({ timeout: 45_000 });
   await file.setInputFiles({
     name: "loom.png",
     mimeType: "image/png",

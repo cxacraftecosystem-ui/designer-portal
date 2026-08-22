@@ -203,6 +203,12 @@ model User {
   // Design workshops this account has been let into by an admin, and the grants it made as one.
   designWorkshopsVisible DesignWorkshopViewer[] @relation("DesignWorkshopViewerUser")
   designWorkshopViewersGranted DesignWorkshopViewer[] @relation("DesignWorkshopViewerGrantedBy")
+  /// Design workshops this account has ASKED to be let into, and the requests it has answered as an
+  /// admin. Cascade on the first (a request is not authorship and must not hold up an account
+  /// deletion) and SetNull on the second (the decision outlives the admin who made it) — the same
+  /// pairing as the two viewer relations above. See DesignWorkshopAccessRequest.
+  designWorkshopAccessRequested DesignWorkshopAccessRequest[] @relation("DwAccessRequestRequestedBy")
+  designWorkshopAccessDecided   DesignWorkshopAccessRequest[] @relation("DwAccessRequestDecidedBy")
   // The platform allow-list, from the two sides an account can be on it: the admin who put an
   // address on the list, and the admin who approved or rejected a request. Both SetNull on the far
   // side — the record that somebody was admitted outlives the admin who admitted them.
@@ -228,6 +234,11 @@ model User {
   /// DwWorkshopConsentDecision.
   dwDictationConsentsRecorded DesignWorkshop[]            @relation("DesignWorkshopDictationConsentBy")
   dwDictationConsentDecisions DwWorkshopConsentDecision[] @relation("DwWorkshopConsentDecisionActor")
+  /// The sketches and prototypes this account has rated. RESTRICT on the far side, joining the two
+  /// relations above rather than the meters below: a rating is a named judgement of a colleague's
+  /// work that is shown to admins with the name on it and counted into a ranking the maker sees, so
+  /// it must outlive the account the way a consent decision does. See DwReviewRating.
+  dwReviewRatings             DwReviewRating[]            @relation("DwReviewRatingReviewer")
   /// This account's server-dictation spend, one row per India-time day. Cascade: a meter reading is
   /// not authorship and must not hold an account deletion up. See DwDictationDailyUsage.
   dwDictationDailyUsage       DwDictationDailyUsage[]     @relation("DwDictationDailyUsageUser")
@@ -1780,6 +1791,11 @@ model DesignWorkshop {
   /// The colleagues an admin has let into this workshop besides `createdBy`. See
   /// `DesignWorkshopViewer` for why the creator is not the whole team.
   viewers   DesignWorkshopViewer[] @relation("DesignWorkshopViewers")
+  /// The people who have ASKED to be let in and have not been, plus the settled history of every
+  /// ask ever answered. A separate table from `viewers` on purpose — a grant is current fact and is
+  /// deleted when it ends, an ask and its refusal are history and are kept. See
+  /// `DesignWorkshopAccessRequest`.
+  accessRequests DesignWorkshopAccessRequest[] @relation("DesignWorkshopAccessRequests")
   /// Custom questionnaires attached to this workshop through the designer's dropdown. Nullable on
   /// the far side, so an unattached questionnaire is a first-class thing rather than an orphan.
   questionnaires Questionnaire[] @relation("DesignWorkshopQuestionnaires")
@@ -1801,6 +1817,9 @@ model DesignWorkshop {
   /// answer IS; this says what it has BEEN, which is the only way "granted on the 3rd, withdrawn on
   /// the 9th" is answerable at all.
   dictationConsents DwWorkshopConsentDecision[] @relation("DesignWorkshopDictationConsents")
+  /// Every peer- and pool-round rating filed against this workshop's sketches and prototypes.
+  /// Denormalised onto the rating so the level-1 review page needs no join; see DwReviewRating.
+  reviewRatings     DwReviewRating[]            @relation("DesignWorkshopReviewRatings")
 
   // The list's default order, and the two filters a researcher reaches for first.
   @@index([createdAt])
@@ -1832,12 +1851,19 @@ model DesignWorkshop {
 /// WHAT IS BORROWED FROM `WorkshopAssignment`, and what deliberately is not. The shape is the same:
 /// one row per (record, user), unique on the pair, `@@index([userId])` for the reverse question,
 /// admin-only administration, and a whole-set PUT that replaces the roster. The request/approve
-/// LIFECYCLE is not — there is no `status`, no `requestedById`, no `decidedAt`. That vocabulary
-/// exists because a researcher may ASK for a workshop and be refused, and DENIED/REVOKED rows are
-/// kept so a refusal cannot be silently re-requested around. Nothing asks for a design workshop:
-/// an admin or master admin decides who is on the team, full stop. Modelling states nobody can
-/// enter would leave four of the five columns permanently equal to 'GRANTED' and invite a reader
-/// to believe a request queue exists somewhere.
+/// LIFECYCLE is not — there is no `status`, no `requestedById`, no `decidedAt`. This row is a
+/// GRANT and nothing else: it is only ever written by an admin, so four of the five lifecycle
+/// columns would sit permanently at 'GRANTED' if they were here.
+///
+/// ⚠ THIS DOCSTRING USED TO CONTINUE "Nothing asks for a design workshop", AND THAT IS NO LONGER
+/// TRUE. `DesignWorkshopAccessRequest` below is the queue it said did not exist — a designer who
+/// scanned a workshop's card can now ask, because every route that could put them on a workshop is
+/// admin-only and until that table landed there was no endpoint through which they could even ask.
+/// The sentence is corrected rather than deleted because the DIVISION it describes still holds and
+/// is the whole reason the queue is a second table: an ASK and its refusal are auditable history
+/// and are kept for ever, a GRANT is current fact and is deleted when it ends. Granting a request
+/// writes a row HERE, through `services/design_workshop_viewers.replace_viewers`, so there is
+/// still exactly one way to be a viewer.
 ///
 /// Removing a viewer therefore DELETES the row rather than revoking it, which is the one place
 /// this departs from the sibling table's "nothing is ever deleted". A grant here carries no
@@ -1880,6 +1906,153 @@ model DesignWorkshopViewer {
   /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
   /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
   @@index([grantedById])
+}
+
+/// WHAT A REQUEST CAN BE — the three states one can be in, and there is no fourth.
+///
+/// PENDING is the only state that means anything is owed to anybody; GRANTED and DENIED are both
+/// settled. There is deliberately no REVOKED, unlike `WorkshopAssignment.status`: revoking access
+/// is taking a name off `DesignWorkshopViewer`, which is the viewers PUT's job and leaves no
+/// question here to answer. A request that was granted and later revoked stays GRANTED, because
+/// what it records is that the ASK was answered yes — not that the access still stands.
+///
+/// AN ENUM AND NOT TEXT, on `DwReviewRound`'s reasoning rather than `WorkshopAssignment.status`'s.
+/// This column decides WHICH QUEUE a row is in, and a typo'd status is a request that appears in
+/// neither the pending list an admin works through nor the settled history they audit — a person
+/// waiting for access that nobody can see they asked for, which is the exact failure the whole
+/// feature exists to end. Postgres refuses the typo; TEXT would store it.
+enum DwAccessRequestStatus {
+  PENDING
+  GRANTED
+  DENIED
+}
+
+/// HOW THE REQUESTER CAME BY THE ID THEY ASKED ABOUT, which is the one thing an admin working the
+/// queue actually needs and cannot otherwise get.
+///
+/// The owner's rule is that a designer PARTICIPATES in a workshop somebody else created, and the
+/// way they are meant to meet one is by scanning the card the creator prints
+/// (`frontend/lib/workshopCodes.ts`). SCAN means the request carried a well-formed `DPW1:G:...`
+/// code that decoded to this workshop; MANUAL means it did not, and the id arrived some other way.
+///
+/// **IT IS EVIDENCE, NOT AUTHORISATION, AND THE DIFFERENCE IS LOAD-BEARING.** The code's four check
+/// characters are FNV-1a, the algorithm is in a file shipped to the browser, and that file says so
+/// in terms: "it is a typo detector and nothing more ... anyone can compute a valid check for any
+/// id". So SCAN does not prove possession of a card and must never be treated as though it did.
+/// What it is worth is exactly what was asked for — an admin can see at a glance that a request
+/// came from a real code rather than a guessed id — and an admin deciding a MANUAL request knows
+/// to ask how the person came by the identifier.
+enum DwAccessRequestSource {
+  SCAN
+  MANUAL
+}
+
+/// A designer asking to be let into a design & prototype workshop they are not on.
+///
+/// -- THE GAP THIS CLOSES ----------------------------------------------------------------------
+///
+/// Every route that can put somebody on a design workshop is `Depends(require_admin)`, and that is
+/// deliberate and is not weakened here: a designer must never be able to create a workshop (two
+/// devices holding rival copies of one workshop is how a fortnight of fieldwork gets split in
+/// half), and administering the team belongs to somebody who is still here when the creator leaves.
+/// The consequence nobody had built for is that a designer standing next to the person who made the
+/// workshop, holding the card they were just handed, had NO ENDPOINT through which to ask. The web
+/// client knows it today: `unresolvedWorkshopCodeMessage` in `frontend/lib/workshopCodes.ts` returns
+/// a sentence telling that designer to send the code to an admin and ask, and the comment above that
+/// `return` says why — "AND IT DOES NOT SAY 'REQUEST SENT', because nothing has been sent". A
+/// previous wave deliberately shipped no "pending" state on the client rather than tell a designer
+/// their request was queued somewhere no admin would ever look. This table is the queue that makes
+/// that state honest.
+///
+/// -- WHY IT IS NOT MORE COLUMNS ON `DesignWorkshopViewer` -------------------------------------
+///
+/// That is the shape `WorkshopAssignment` took — one row carrying both the ask and the grant — and
+/// it is wrong here for a reason that table demonstrates rather than avoids. A viewer row is
+/// DELETED when access ends, because it is current fact with no decision in it to audit (see the
+/// docstring above, which argues exactly that). A request and its refusal are the opposite: they
+/// are history, they are kept for ever, and keeping them is what stops a designer re-asking their
+/// way around a no. Merging the two would force one of those rules onto the other — either a
+/// removed viewer leaves a tombstone the viewers screen has to learn to hide, or a refusal is
+/// erased the next time somebody edits the roster.
+///
+/// Keeping them apart also keeps the promise that there is ONE way to be a viewer. Nothing reads
+/// this table to decide access: `load_workshop_or_404` still asks `has_viewer_grant` and nothing
+/// else, and granting a request calls `replace_viewers`, so a GRANTED row here is a receipt for a
+/// write that happened over there.
+///
+/// -- IDEMPOTENCY IS THE UNIQUE BELOW, NOT A SERVICE CHECK -------------------------------------
+///
+/// One row per (workshop, requester), enforced by Postgres. A request typed in a courtyard reaches
+/// this server whenever the handset next finds signal, and a flaky link retries: the SAME ask
+/// arriving twice must be one row, and a designer pressing the button again next week must not
+/// deposit a second card in an admin's queue. A read-then-write in the service is not that
+/// promise — it is two round trips with a window in the middle, which is the shape that has
+/// already produced a double-filed government record in this repository.
+///
+/// A REPLAY IS A NO-OP AND DOES NOT MOVE `createdAt`, which is the opposite of what
+/// `POST /workshops/access-requests` does to a re-request, and the difference is deliberate rather
+/// than an inconsistency. There, a fresh ask after a REFUSAL is genuinely a new request and the
+/// queue should re-rank it. Here the second delivery is the same ask, so restamping it would push
+/// the person who asked first down a queue ordered oldest-first — the anti-spam rule inverted into
+/// a way to jump the queue.
+model DesignWorkshopAccessRequest {
+  id String @id @default(cuid())
+
+  designWorkshopId String
+  /// WHO IS ASKING. Not nullable, unlike `WorkshopAssignment.requestedById`, because that column
+  /// distinguishes an admin's grant from a user's ask on a shared row and this table holds only
+  /// asks — a request nobody filed is not a state that exists.
+  requestedById    String
+
+  status DwAccessRequestStatus @default(PENDING)
+  source DwAccessRequestSource
+
+  /// THE CODE AS IT WAS SCANNED, stored in its canonical `DPW1:G:...:CHCK` form and NULL for a
+  /// MANUAL ask. Kept as the string rather than reduced to the `source` beside it so an admin can
+  /// compare it against the card in front of them, and so a support conversation about a misprinted
+  /// batch has something to look at. It carries no identity data by construction — see
+  /// `frontend/lib/workshopCodes.ts`, which refuses at runtime to encode anything that is not
+  /// shaped like an id this repository issues, naming Aadhaar and Pehchan numbers specifically.
+  scannedCode String?
+
+  /// What the requester wants to say to the admin ("Rekha asked me to join stage 4"). Optional: a
+  /// bare ask is legitimate, and demanding a sentence is how people stop asking.
+  note String?
+
+  decidedById  String?
+  decidedAt    DateTime?
+  decisionNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  designWorkshop DesignWorkshop @relation("DesignWorkshopAccessRequests", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+
+  /// CASCADE on both accounts' own rows, matching `DesignWorkshopViewer` rather than the authorship
+  /// relations. A request is not research anybody recorded; it is a person having once asked to be
+  /// let in, which is worth nothing once the account is gone — and RESTRICT would invent a new
+  /// reason an admin cannot delete an account, with no screen anywhere offering to clear it.
+  requestedBy User  @relation("DwAccessRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+  /// SetNull, matching `DesignWorkshopViewer.grantedBy`: the decision must outlive the admin who
+  /// made it. "Who refused this" is worth having and is not worth an outage.
+  decidedBy   User? @relation("DwAccessRequestDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  /// ONE ASK PER PERSON PER WORKSHOP. This is the whole idempotency guarantee — see the header.
+  /// THERE IS NO "HAS THIS PERSON ALREADY ASKED" PROBE, AND THERE MUST NOT BE ONE. The request
+  /// route inserts with ON CONFLICT DO NOTHING (`create_many(skip_duplicates=True)`) and reads the
+  /// returned count, so THIS INDEX is what makes a replayed ask a no-op — a read-then-write in the
+  /// service would be the two round trips with a window in the middle that the header refuses. Its
+  /// leading column is also what the `designWorkshopId` CASCADE walks.
+  @@unique([designWorkshopId, requestedById])
+  /// THE QUEUE, COLUMN FOR COLUMN: `where={"status": "PENDING"}` ordered `createdAt` ascending, so
+  /// the pending list an admin works through is a range scan of this btree rather than a sort of
+  /// every request ever filed. Ordering oldest-first is what stops a queue nobody finishes.
+  @@index([status, createdAt])
+  /// The account pointers, indexed for the onDelete actions they are on the wrong end of rather
+  /// than for a read — the unique above cannot serve `requestedById`, which is its SECOND column.
+  /// See the long note on `DwStageEntry.createdById` for the decision this follows.
+  @@index([requestedById])
+  @@index([decidedById])
 }
 
 /// One record of one entity of one stage. A SINGLETON entity has exactly one row per workshop;
@@ -1965,6 +2138,9 @@ model DwStageEntry {
 
   designWorkshop DesignWorkshop @relation(fields: [designWorkshopId], references: [id], onDelete: Cascade)
   createdBy      User?          @relation("DwStageEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  /// What designers thought of this row, when it is a sketch or a prototype. Empty for the other
+  /// forty-one entity kinds, which are not rated by anybody. See DwReviewRating.
+  reviewRatings  DwReviewRating[] @relation("DwStageEntryReviewRatings")
 
   /// The read pattern: every row of one stage of one workshop, in order.
   @@index([designWorkshopId, stageKey, ordinal])
@@ -2718,6 +2894,228 @@ model DwAiVerbDailyUsage {
   /// starts with the account — and the day before the verb because the allowance is scoped to the
   /// day and the verb is only ever the breakdown.
   @@id([userId, istDay, verb])
+}
+
+// ======================================================================================
+// Peer and pool review: what one designer thought of one sketch or prototype
+// ======================================================================================
+
+/// WHICH AUDIENCE A RATING CAME FROM. The same two tokens as the registry's `REVIEW_ROUND`
+/// controlled list (`stage_schema.ENUMS`), and `test_review_rating_ledger` asserts the two lists are
+/// identical member for member — a token that exists on one side and not the other is a rating the
+/// form can file and the aggregate cannot count, or the reverse.
+///
+/// A Postgres enum and not TEXT, on `DwDictationConsent`'s reasoning rather than
+/// `DwAiVerbDailyUsage.verb`'s: this value is not a meter label whose typo costs a wrong breakdown
+/// line. It decides WHICH POPULATION a mean score is taken over, so a row with a typo'd round is a
+/// row that silently belongs to neither round and is dropped from both averages. Postgres refuses
+/// the typo; TEXT would store it.
+enum DwReviewRound {
+  /// The people who were in the room: this workshop's designers, the master craftsperson, the
+  /// artisans who made the thing. Runs while the workshop does.
+  PEER
+  /// Every designer on the platform, most of whom have never seen the cluster. Opens for one
+  /// prototype on the day `prototype.peerRoundClosedAt` is set on it.
+  POOL
+}
+
+/// One designer's rating of one sketch or one prototype, in one round.
+///
+/// WHY THIS CANNOT LIVE IN `DwStageEntry`, WHICH IS THE OBVIOUS-LOOKING HOME. Three independent
+/// reasons and any one of them settles it:
+///
+///   1. A stage entry's answers are a JSON blob in a shared table, so ONE-RATING-PER-REVIEWER IS NOT
+///      EXPRESSIBLE. A unique index cannot reach inside `data`, and enforcing it in the service is a
+///      read-then-write with a network round trip in the middle — the same hole
+///      `DwStageEntry.clientKey` documents on singleton rows, where two designers on one workshop
+///      each found nothing and each inserted one.
+///   2. THE REGISTRY'S `REF` TYPE CANNOT POINT AT AN ACCOUNT. `reference_options` resolves a REF
+///      against the five `REFERENCE_MODELS` — Artisan, ProductDocumentation, ToolDocumentation,
+///      Process, Craft — or against an entity of the same workshop, and `User` is in neither set. So
+///      a reviewer stored in a stage entry could only ever be a typed-in name, and "who rated what"
+///      would be answerable to a reader and not to a query.
+///   3. THE POOL ROUND IS READ BY THE PEOPLE THE WORKSHOP DOOR TURNS AWAY. A `DwStageEntry` is
+///      reachable only through `load_workshop_or_404`, which admits the creator, an admin and the
+///      holder of a viewer grant — and which grants READ PLUS STAGE WRITES, because the stage save
+///      routes go through that same helper. The pool round is by definition everybody else, so
+///      serving it from inside the stage row would mean widening that helper, which would hand
+///      every designer in the country write access to every finished workshop's 22 stages. The
+///      ledger is a separate object behind a separate, narrower door
+///      (`design_ratings.load_ratable_workshop_or_404`).
+///
+///      NOT because the pool read is cross-workshop — IT IS NOT, and an earlier draft of this
+///      docstring said it was. `GET /design-ratings/rounds/{{round}}` requires a `workshopId` for
+///      BOTH rounds, because the placed order is `DwStageEntry.ordinal` and an ordinal orders one
+///      collection inside one workshop. Level 2 is the same list read by a wider audience.
+///
+/// MODELLED ON `DwWorkshopConsentDecision` for its shape, its onDelete rules and its two clocks, and
+/// IT DIVERGES FROM IT IN ONE STATED WAY: that table is append-only and this one is not. Consent is
+/// an event history because a withdrawal must not erase the answer nine sends were made under. A
+/// rating is a CURRENT OPINION — a designer who moves a score from 3 to 4 has not made two
+/// judgements, they have one — so the unique triple below makes the second filing an update of the
+/// first, and `updatedAt` says when they last changed their mind. Ranking reads the opinion, never a
+/// history of it.
+///
+/// THE READ PATH IS THE POINT AND IS NOT OPTIONAL. This repository already carries three ledgers
+/// that are written and never read back — `ReviewLog` has two create sites and no reader, and both
+/// decision tables above say "RECORDED, NOT YET SERVED" in as many words. That is tolerable for an
+/// audit trail somebody can reach with psql; it is not tolerable here, because the ratings ARE the
+/// feature: the default sort order of the review page is the mean of this column, and a table with
+/// no reader would leave that page sorting by nothing. `test_review_rating_ledger` pins the pairing
+/// rather than trusting it — the day any code in `app/` writes a row here, some code in `app/` has
+/// to read one back or the suite fails.
+model DwReviewRating {
+  id String @id @default(cuid())
+
+  /// The workshop the rated thing belongs to, denormalised off the stage entry.
+  ///
+  /// COPIED AND NOT JOINED, for the one read that cannot afford the join: "every rating filed in
+  /// this workshop's peer round" is the level-1 review page, and without this column it is a join
+  /// through `DwStageEntry` on every load. It is also what the CASCADE below probes. It is written
+  /// from the stage entry at insert time and is never edited — a stage entry cannot move between
+  /// workshops, so the two can never disagree.
+  designWorkshopId String
+
+  /// WHAT IS BEING RATED: the `DwStageEntry` row holding the sketch or the prototype.
+  ///
+  /// The row id and not `(workshop, entityKey, ordinal)`, because the ordinal is exactly the thing
+  /// review CHANGES: a rating keyed on a position would follow the position rather than the object
+  /// the moment anybody dragged the list, which is the one operation this whole feature exists to
+  /// support.
+  stageEntryId String
+
+  /// `sketch` or `prototype`, copied from the entry so the round listing filters without the join —
+  /// `workshop_ratings` names this column beside the workshop and the round.
+  ///
+  /// A String and not an enum, unlike `round` below, and deliberately. The list of rateable
+  /// entities is `design_ratings.RATEABLE_ENTITIES` — a hard-coded `frozenset({"sketch",
+  /// "prototype"})` that `load_subject` checks the entry against. It is NOT read off the registry
+  /// today, so a sixth reviewable entity needs a Python edit whichever column type this is; the
+  /// difference is what ELSE it needs. TEXT: a constant changes and the next deploy carries it.
+  /// An enum: an ALTER TYPE has to land, in its own migration, BEFORE the code that writes the new
+  /// token — a two-step ordering across a fleet that syncs late, for a value that is already
+  /// constrained by the service on the way in. DERIVING THE SET FROM THE REGISTRY would make the
+  /// TEXT choice load-bearing rather than merely cheap, and is the better end state; it is
+  /// `design_ratings`' change to make, handed to that module's owner rather than made from here.
+  entityKey String
+
+  /// WHO RATED IT — a real foreign key and not a typed-in name, which is the whole reason this is a
+  /// table. "Admins and master admins see who rated what, when and how; designers see the same for
+  /// their own records only" is a predicate on this column, and a name column could not carry it.
+  reviewerId String
+
+  round DwReviewRound
+
+  /// THE QUANTITATIVE HALF, on the registry's `QUALITY_RATING` scale of 1 to 5 — the same five
+  /// tokens `prototypeValidation` already scores five separate qualities on, so a designer meets one
+  /// scale on this feature and not two. The 1..5 bound is a CHECK constraint in the migration rather
+  /// than a convention, because this column is AVERAGED: a stray 40 does not look wrong in a row,
+  /// it looks wrong in every ranking the row is part of, and by then nobody is looking at rows.
+  score Int
+
+  /// THE QUALITATIVE HALF, and it is two columns because the owner asked for two things — designers
+  /// "rate peers work qualitatively and quantitatively, leave suggestions". An assessment ("the
+  /// joinery is cleaner than the sketch promised") and a proposed change ("try the narrower base")
+  /// are different speech acts with different readers: the first belongs beside the score, the
+  /// second belongs in the maker's list of what to do next. Collapsed into one box, the suggestions
+  /// are unfindable inside the prose.
+  ///
+  /// Both optional. A score with no words is a legitimate rating and demanding a sentence for it is
+  /// how a reviewer stops rating.
+  comment    String?
+  suggestion String?
+
+  /// WHAT THE DEVICE SAID, as distinct from when this server heard it — `DwWorkshopConsentDecision`
+  /// `.recordedAt`'s column, for its reason. A rating typed in a courtyard reaches the server on the
+  /// next sync, which on this fleet can be a fortnight later; `createdAt` below is always when the
+  /// row appeared here. NULL when the rating was filed straight against the server, where the two
+  /// are the same moment and repeating it would add nothing.
+  ///
+  /// MILLISECONDS, AND WIDENING THE COLUMN DOES NOT CHANGE THAT — measured, because it looks like
+  /// the fix and is not. A bare `DateTime` generates `TIMESTAMP(3)`, and this stays that way even
+  /// though the replay rule wants an exact match: `design_ratings._is_stale_delivery` decides a
+  /// REPLAY by `incoming <= stored`, so a redelivery of the identical capture is only recognised
+  /// when the stored clock comes back equal to the one that was sent. It does not. A Python
+  /// datetime carries microseconds; the Prisma query engine truncates a datetime to milliseconds
+  /// on the way out, before Postgres is involved at all. `@db.Timestamp(6)` was tried here on
+  /// 2026-08-22 and the column then stored `...053000` for every row — the microsecond digits
+  /// arrive as zeroes whatever the column can hold, and the round-trip test stayed red. So the
+  /// column matches the precision the client can actually deliver, and the comparison is what has
+  /// to tolerate the truncation — that is `_is_stale_delivery`'s to do, and it is raised there.
+  ratedAt DateTime?
+
+  createdAt DateTime @default(now())
+  /// When the reviewer last changed their mind. Present here and absent on the two decision tables
+  /// above because those are append-only and this one is an upsert — see the model docstring.
+  updatedAt DateTime @updatedAt
+
+  /// CASCADE on both, matching every other design-workshop child table. Both fire on a HARD delete
+  /// only: the API's workshop delete is a soft one and `save_stage` soft-deletes a removed row
+  /// rather than dropping it, so an ordinary deletion leaves the ratings intact and a restore brings
+  /// them back with the thing they are about.
+  designWorkshop DesignWorkshop @relation("DesignWorkshopReviewRatings", fields: [designWorkshopId], references: [id], onDelete: Cascade)
+  stageEntry     DwStageEntry   @relation("DwStageEntryReviewRatings", fields: [stageEntryId], references: [id], onDelete: Cascade)
+
+  /// RESTRICT, exactly as `DwWorkshopConsentDecision.actor`, `DwAiLayerDecision.actor` and
+  /// `ReviewLog.reviewer` are. This row says a named designer judged a colleague's work, and that
+  /// judgement is shown to admins WITH THE NAME ON IT and is counted into the ranking the maker
+  /// sees. An account deleted out from under it would leave a score in a ranking that nobody filed.
+  /// Deleting such an account already fails on a dozen other relations, and the message the admin is
+  /// shown degrades honestly for relations it cannot name (`_undeletable_detail` in
+  /// api/routes/users.py).
+  reviewer User @relation("DwReviewRatingReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  /// ONE PERSON, ONE THING, ONE ROUND — the constraint that stops a reviewer filing five ratings of
+  /// the same sketch and quintupling their own weight in its mean. In the database and not in the
+  /// service, because the service alone is a read-then-write and the offline case retries: a phone
+  /// that syncs a rating twice over a flaky link is the ordinary way this happens, not the
+  /// adversarial one.
+  ///
+  /// ROUND IS IN THE KEY BECAUSE THE SAME PERSON LEGITIMATELY RATES TWICE. A workshop's own designer
+  /// is also a member of the pool, and their peer-round view of a prototype and their pool-round
+  /// view of the finished thing are two different judgements of two different objects. Leaving
+  /// round out would silently discard the second.
+  ///
+  /// IT IS ALSO THE READ INDEX FOR ONE OBJECT'S RATINGS. Leading with `stageEntryId` means the
+  /// aggregate behind the default sort — every rating of this sketch — is a prefix probe of this
+  /// same btree, and the CASCADE from `DwStageEntry` uses it too. No second index is added for
+  /// either, on `DwDictationDailyUsage`'s stated reasoning: an index nothing probes is a write cost
+  /// with no read behind it.
+  @@unique([stageEntryId, reviewerId, round])
+
+  /// THE ROUND LISTING, COLUMN FOR COLUMN: `design_ratings.workshop_ratings` is
+  /// `where={designWorkshopId, entityKey, round}`, which is exactly these three equality
+  /// predicates, and it is the one query behind every render of the review tab. The leading column
+  /// is also what the workshop CASCADE probes, so this index does two jobs — the same double duty
+  /// `DwWorkshopConsentDecision_designWorkshopId_createdAt_idx` does.
+  @@index([designWorkshopId, entityKey, round])
+
+  /// THE RESTRICT ABOVE, AND NOTHING ELSE — indexed for the WRITE it is on the wrong end of rather
+  /// than for any read, exactly as `DwWorkshopConsentDecision`'s index on (actorId) is. Deleting a
+  /// user makes Postgres look for a rating naming them, on every account deletion, and without this
+  /// that is a sequential scan.
+  ///
+  /// NO `createdAt` BESIDE IT, and no per-reviewer index at all, because NOTHING QUERIES BY
+  /// REVIEWER. "Who rated what, when" looks like a per-reviewer read and is not one: `visible_rows`
+  /// takes the round's rows and filters them in Python, and the only reviewer-keyed probe
+  /// (`existing_rating`'s `find_first` — NOT `rating_plan`, which is a pure planner and issues no
+  /// query at all) also names `stageEntryId` and so rides the unique index above.
+  /// A composite here would be a write cost with no read behind it — `DwDictationDailyUsage`'s
+  /// stated rule, applied to the case it was written for.
+  @@index([reviewerId])
+
+  /// NO CROSS-WORKSHOP INDEX, and the reason is a property of the feature rather than an omission.
+  /// The pool round reads no wider than the peer round does: `GET /design-ratings/rounds/{round}`
+  /// requires a `workshopId` for BOTH rounds, because the placed order is `DwStageEntry.ordinal`
+  /// and an ordinal orders one collection inside one workshop — two prototypes in two workshops are
+  /// both ordinal 0, so a mixed list has no arrangement anywhere to be stored. Level 2 is therefore
+  /// THE SAME LIST READ BY A WIDER AUDIENCE, not a wider list, and every read of this table is
+  /// scoped by workshop or by subject. An index on `round` leading would have nothing to probe it.
+  ///
+  /// If a cross-workshop BROWSE is ever built — a different feature, as that route's docstring says
+  /// — it needs an index on (round, entityKey, createdAt) and it needs it for
+  /// `DwStageEntry`'s index on (entityKey)'s stated reason: a read whose cost grows with the archive
+  /// rather than with the answer. It is deliberately NOT added ahead of the query that would use it.
 }
 
 // ======================================================================================

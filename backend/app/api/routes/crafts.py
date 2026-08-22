@@ -40,6 +40,38 @@ router = APIRouter(prefix="/crafts", tags=["crafts"])
 RELATIONS = (Relation("workshop", "workshop", "workshopId"),)
 INCLUDE = include_of(RELATIONS)
 
+# CRAFT'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null`` through for
+# on this model, so emptying a box on the craft form actually empties the column instead of
+# answering 200 and keeping the old value.
+#
+# THE FIFTH ROUTE, ADDED AFTER the artisan/product/tool/process wave: this route was never in that
+# sweep, so until now clearing a craft's category or description was the same silent no-op the other
+# four had. It matters less here than on Artisan — a craft is a taxonomy row, not a person, so
+# nothing on this list is a retraction — but "the box is empty, the save said OK, the value is still
+# there on the next load" is the same lie whatever the column holds.
+#
+# ``place`` IS THE ENTRY THAT PROVES WHY THIS TUPLE IS PER MODEL AND NOT GLOBAL. It is ``String?``
+# on Craft and NOT NULL on Artisan, ProductDocumentation and ToolDocumentation — the sibling routes
+# name it under "deliberately absent" for exactly that reason. Copying this tuple onto one of them
+# would turn an emptied box into a constraint violation; copying theirs onto this one would leave
+# ``place`` unclearable here. Derived from ``model Craft`` in prisma/schema.prisma, intersected with
+# what ``CraftUpdate`` actually accepts.
+#
+# Only valid because ``update_craft`` dumps with ``exclude_unset=True``; see the note at that call.
+#
+# DELIBERATELY ABSENT: ``name`` (NOT NULL, and @unique — the column the 409 below is about),
+# ``recordedAt``/``recordedTimezone`` (NOT NULL with defaults), ``workshopId`` (already in the global
+# ``records.CLEARABLE_KEYS``, which is what makes the unlink at the end of this route reachable), and
+# ``extraMetadata``, which would be inert: ``merge_field_provenance`` rebuilds and reassigns that
+# column further down this route, so a null could never reach Prisma through it. ``createdById`` is
+# nullable but is not a key ``CraftUpdate`` accepts.
+_CLEARABLE_COLUMNS = (
+    "localName",
+    "category",
+    "description",
+    "place",
+)
+
 
 @router.get("")
 async def list_crafts(
@@ -132,7 +164,10 @@ async def update_craft(
     # null in exactly the case that needs cleaning up. See the ``sync_workshop_craft`` call at the
     # end of this route for the unlink this pairs with, and ``update_artisan`` for the twin.
     previous_workshop_id = craft.workshopId
-    data = clean_data(payload.model_dump(exclude_unset=True))
+    # ``exclude_unset=True`` IS THE PRECONDITION OF ``clearable``, not a stylistic choice: it is what
+    # makes a present key mean "the caller sent this". Drop it and every optional the client left
+    # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
+    data = clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     # Moving a record into (or between) workshops is a workshop submission too, so the create-time
     # guard can't be bypassed by PATCHing the workshop in afterwards.
     check = None

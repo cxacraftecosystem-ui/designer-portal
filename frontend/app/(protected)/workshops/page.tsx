@@ -350,7 +350,10 @@ function WorkshopsPageBody() {
       }
       const saved = outcome.saved;
       if (mediaFiles.length) {
-        const { uploaded, failed } = await uploadMediaBatch({
+        // `outcomes` AND NOT `uploaded`: one entry per file we handed over, at its position, with the
+        // `File` attached. `uploaded` is COMPACTED, so its positions are not this page's — see
+        // `BatchResult.outcomes` for the two ship-blockers that came out of lining those up.
+        const { outcomes } = await uploadMediaBatch({
           files: mediaFiles,
           linkedRecordType: "workshop",
           linkedRecordId: saved.id,
@@ -360,11 +363,43 @@ function WorkshopsPageBody() {
         });
         setUploadProgress(null);
         // The uploaded files surface twice: as chips under this section and in the page-level tray.
-        addCompleted(MEDIA_SECTION, MEDIA_SECTION_LABEL, uploaded);
-        if (failed.length) {
+        addCompleted(
+          MEDIA_SECTION,
+          MEDIA_SECTION_LABEL,
+          outcomes.flatMap((outcome) => (outcome.media ? [outcome.media] : []))
+        );
+        const stranded = outcomes.filter((outcome) => outcome.failure !== null);
+        if (stranded.length) {
+          /*
+            KEEP THE BYTES THAT DID NOT LAND, AND ONLY THOSE. The early return already left the whole
+            batch in the capture card, so nothing was destroyed — but the card then described files
+            that ARE attached to the workshop as still needing to be sent, and a second Save would
+            have re-uploaded every one of them. Narrowing it to the stranded outcomes makes the card
+            mean what it says. `outcome.file` and not a name lookup: two photographs off one handset
+            are routinely both IMG_0001.jpg.
+
+            THE SENTENCE DOES NOT SAY "NOTHING HAS BEEN LOST", AND IT DID. That was true of this
+            instant and false of the move it recommended: the row's Edit button and the `?edit=`
+            deep link's `onEdit` both go through `resetForm`, which calls `setMediaFiles([])` — so
+            "re-open the workshop" is exactly the action that discards the bytes the sentence
+            promised were safe. `dirty` is still true here, so the unsaved-changes dialog interposes
+            and nothing vanishes without a click; being asked to confirm a Discard right after
+            reading a promise is still us misleading the designer.
+
+            AND NOT "PRESS SAVE AGAIN", which is the only remedy in reach and is wrong after a
+            CREATE: `editing` is still null on this return, so a second Save POSTs a SECOND workshop.
+            The crafts page carries the identical sentence for the identical reason — the two are
+            kept word for word so a fix to one is visibly owed to the other.
+          */
+          setMediaFiles(stranded.map((outcome) => outcome.file));
           setError(
-            `${failed.length} of ${mediaFiles.length} file(s) failed to upload: ${failed.map((item) => item.name).join(", ")}. ` +
-              "The workshop was saved; re-open it to retry those files."
+            `${stranded.length} of ${mediaFiles.length} file(s) failed to upload: ${stranded
+              .map((outcome) => outcome.file.name)
+              .join(", ")}. ` +
+              "The workshop was saved and the rest are attached. The files that did not go up are still in the " +
+              "capture card above, but only in this browser: leaving this form or opening another workshop discards " +
+              "them. Re-open the workshop to attach them again — anything captured here and saved nowhere else has " +
+              "to be taken again."
           );
           setSaving(false);
           return;

@@ -34,12 +34,32 @@
  *      tracked files and is the DEPLOY TARGET, so they are tied to each other rather than trusted
  *      to be threaded by hand — which is exactly what failed on 2026-08-22, three files out of four.
  *
- * What it deliberately does NOT do: check that a sentence is true. Nothing can. The per-document
- * "How this document is kept true" section names the human check for the rest.
+ *   5. IDENTITY INHERITED FROM THE FIELD REPOSITORY, this project's sibling. This portal was split
+ *      from another product and kept its identity in about a dozen places; three had been corrected
+ *      one at a time, and two of those three were ship-blockers in a single week — including a docs
+ *      table naming the other product's live box beside the matching SSH key, which is the pairing
+ *      that authenticates and SUCCEEDS. So the facts are established ONCE, in docs/CI.md §0's
+ *      two-column register, and `checkSiblingIdentity` sweeps every tracked file for the other
+ *      product's values: each one must say, within a few lines, whose it is. Fixing them one at a
+ *      time is how the twelfth survives. "ONCE" is itself checked — ENVIRONMENT.md §4 carries a
+ *      second copy of the same table, and `checkSecondRegister` holds the two to each other cell by
+ *      cell, because they had already drifted apart on the row nobody can answer.
+ *   6. COMMENTS THAT ASSERT A STATE THE CODE HAS LEFT BEHIND. A docstring ending "delete this
+ *      paragraph when X lands, not before" is an instruction the next reader obeys — after X has
+ *      landed and the paragraph became false; one such docstring declared a shipped feature
+ *      unreachable in the file that implements it. `checkRottableClaims` flags the shapes that rot
+ *      that way when no date sits beside them, WARNING ONLY, against a written-out baseline of the
+ *      instances already here. Its escape is the fix: put a date on the claim.
  *
- *   node docs/tools/check-docs.mjs           # verify; exit 1 on any failure
- *   node docs/tools/check-docs.mjs --write   # regenerate docs/REPO_FACTS.md, then verify
- *   node docs/tools/check-docs.mjs --quiet   # only failures
+ * What it deliberately does NOT do: check that a sentence is true. Nothing can. The per-document
+ * "How this document is kept true" section names the human check for the rest. Nor does it pick a
+ * side in the one question the repository cannot answer about itself — which CloudFront
+ * distribution is this portal's; §8 and §10 both hold that open in BOTH directions instead.
+ *
+ *   node docs/tools/check-docs.mjs                  # verify; exit 1 on any failure
+ *   node docs/tools/check-docs.mjs --write          # regenerate docs/REPO_FACTS.md, then verify
+ *   node docs/tools/check-docs.mjs --quiet          # drop the "ok" notes only; known, rot, warn and FAIL all still print
+ *   node docs/tools/check-docs.mjs --rot-baseline   # print a replacement ROT_BASELINE block
  */
 
 import { execSync } from "node:child_process";
@@ -52,6 +72,7 @@ const DOCS = join(REPO, "docs");
 const FACTS_FILE = join(DOCS, "REPO_FACTS.md");
 const WRITE = process.argv.includes("--write");
 const QUIET = process.argv.includes("--quiet");
+const ROT_BASELINE_WRITE = process.argv.includes("--rot-baseline");
 
 // Documents written and owned by a different workstream. Findings in these are reported as
 // warnings rather than failures, so this check's exit code speaks for the documents its owner can
@@ -69,17 +90,50 @@ const OWNED_ELSEWHERE = new Set([
 const failures = [];
 const warnings = [];
 const notes = [];
+// Rot findings are their OWN bucket, never a failure and never mixed in with the warnings above.
+// The warnings above mean "a real problem in a file this run's owner cannot edit"; a rot finding
+// means "this sentence cannot be re-checked by anybody". Folding the second into the first would
+// bury the first, and the first is the one that has produced ship-blockers.
+const rots = [];
+// Sibling-identity mentions that are already written down in SIBLING_ALLOWLIST (§10). Printed in
+// full on every run, never fatal. Their own bucket for the same reason `rots` has one: "known and
+// listed" and "in a file another workstream owns" are different states, and folding either into
+// the warnings would make the list of things nobody has looked at indistinguishable from the list
+// of things somebody decided about.
+const knowns = [];
 const ownerOf = (msg) => {
   const m = msg.match(/(?:^|\/)([A-Z_]+\.md)/);
   return m && OWNED_ELSEWHERE.has(m[1]) ? "elsewhere" : "here";
 };
 const fail = (m) => (ownerOf(m) === "here" ? failures : warnings).push(m);
+// There is deliberately no per-path severity helper here any more. §10's sweep used to route any
+// finding outside `docs/*.md` to the warnings, which meant a reintroduced deploy target in a .kt,
+// a .tf or a .env.example produced a GREEN run with one line in the log — and those are precisely
+// the files that point a deploy at a machine. §10 now fails on anything not in its written-out
+// allowlist, whatever the file's extension; see the SEVERITY paragraph there. Removed 2026-08-22.
+const rot = (m) => rots.push(m);
+const known = (m) => knowns.push(m);
 const note = (m) => notes.push(m);
 // Normalise line endings on the way in. Half these files are CRLF and half are LF, and every regex
 // below that anchors on "\n" silently matched NOTHING in the CRLF half — which is how four documents'
 // mermaid blocks went unchecked while the run stayed green. A check that quietly inspects less than
 // it claims to is worse than no check.
-const read = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
+// Memoised. The two sweeps at the bottom of this file each walk every tracked file, and without a
+// cache the whole tree is read twice per run — the doubling is most of the wall clock.
+//
+// ONE FILE IS WRITTEN AND THEN READ BACK: docs/REPO_FACTS.md, under `--write`. That is safe only
+// because `checkFacts` runs FIRST and drops its own cache entry on the way out — an invariant
+// rather than an accident, so it is enforced there instead of assumed here. Do not move
+// `checkFacts` down the run order.
+//
+// NOT FOR SECRETS. Anything read through here is retained for the whole process, so the designrepo
+// Terraform state — which holds a live AWS secret access key beside the two outputs §10 consults —
+// is deliberately read with a bare `readFileSync` instead. See `checkSiblingIdentity`.
+const READ_CACHE = new Map();
+const read = (p) => {
+  if (!READ_CACHE.has(p)) READ_CACHE.set(p, readFileSync(p, "utf8").replace(/\r\n/g, "\n"));
+  return READ_CACHE.get(p);
+};
 
 /* ── ground truth, derived from the repository ──────────────────────────────────────────────── */
 
@@ -371,6 +425,9 @@ function checkFacts() {
   const rendered = renderFacts();
   if (WRITE) {
     writeFileSync(FACTS_FILE, rendered);
+    // The one file this script writes and later checks read back. Drop the pre-write copy so a
+    // `--write` run measures the file it just produced rather than the one it replaced.
+    READ_CACHE.delete(FACTS_FILE);
     note(`wrote ${FACTS_FILE.replace(REPO + "\\", "").replace(REPO + "/", "")}`);
     return;
   }
@@ -1149,19 +1206,32 @@ const VERCEL_ID_FILES = [
   [".github/workflows/deploy-frontend.yml", join(REPO, ".github", "workflows", "deploy-frontend.yml")],
 ];
 
-function checkVercelIds() {
+/** The pair docs/CI.md §2 tells a human to paste, read off its own table rows. Memoised, because
+ *  §8b checks the other two files against it and §10 checks the whole tree for ids that are neither
+ *  these nor a value the register already accounts for. */
+let CANONICAL_VERCEL = null;
+function canonicalVercelIds() {
+  if (CANONICAL_VERCEL) return CANONICAL_VERCEL;
   // The canonical pair: the first id quoted on CI.md's own `| \`VERCEL_PROJECT_ID\` |` table row.
   const ci = read(join(DOCS, "CI.md"));
-  const canonical = {};
+  const ids = {};
+  const missing = [];
   for (const [name, prefix] of [["VERCEL_PROJECT_ID", "prj_"], ["VERCEL_ORG_ID", "team_"]]) {
     const row = ci.match(new RegExp(`^\\|\\s*\`${name}\`[^\\n]*$`, "m"));
     const id = row && row[0].match(new RegExp(`${prefix}[A-Za-z0-9]+`));
-    if (!id) {
-      fail(`docs/CI.md §2 has no \`${name}\` row naming a \`${prefix}\` id — the value the other files are checked against no longer exists`);
-      return;
-    }
-    canonical[name] = id[0];
+    if (id) ids[name] = id[0];
+    else missing.push([name, prefix]);
   }
+  CANONICAL_VERCEL = { ids, missing };
+  return CANONICAL_VERCEL;
+}
+
+function checkVercelIds() {
+  const { ids: canonical, missing } = canonicalVercelIds();
+  for (const [name, prefix] of missing) {
+    fail(`docs/CI.md §2 has no \`${name}\` row naming a \`${prefix}\` id — the value the other files are checked against no longer exists`);
+  }
+  if (missing.length) return;
 
   for (const [rel, abs] of VERCEL_ID_FILES) {
     if (rel === "docs/CI.md") continue;
@@ -1188,25 +1258,13 @@ function checkVercelIds() {
     }
   }
 
-  // Any other id must be labelled with whose it is, within two lines.
-  let quoted = 0;
-  for (const [rel, abs] of VERCEL_ID_FILES) {
-    const lines = read(abs).split("\n");
-    lines.forEach((line, i) => {
-      for (const id of line.match(/prj_[A-Za-z0-9]+|team_[A-Za-z0-9]+/g) || []) {
-        if (id === canonical.VERCEL_PROJECT_ID || id === canonical.VERCEL_ORG_ID) return;
-        const window = lines.slice(Math.max(0, i - 2), i + 3).join("\n");
-        if (/field[- ]repository/i.test(window)) {
-          quoted += 1;
-        } else {
-          fail(
-            `${rel}:${i + 1} names ${id}, which is neither this portal's project nor its team, and nothing within two lines says whose it is. ` +
-            "Either it is stale, or it is the field repository's and must be labelled as the value never to use here.",
-          );
-        }
-      }
-    });
-  }
+  // The second half of this check — "any other id must say whose it is" — MOVED to
+  // `checkSiblingIdentity` (§10) on 2026-08-22 and is not duplicated here. It runs there as a SHAPE
+  // rule (`VERCEL_ID_SHAPE`) over every tracked file, rather than against a list of known literals
+  // over these three — so an id that is in NO register, a typo or a leftover from an old link, is
+  // caught wherever it is written. What stays here is the part that is specific to Vercel: the
+  // three files that TELL AN OPERATOR WHAT TO PASTE must agree with each other, which is a
+  // different claim from "this id is labelled".
 
   // The article itself, when this checkout has one. `vercel link` writes it and `.gitignore`
   // keeps it out, so its absence is the normal state in CI and is not a finding.
@@ -1227,9 +1285,575 @@ function checkVercelIds() {
     }
   }
   note(
-    `Vercel ids agree across ${VERCEL_ID_FILES.length} tracked files (${canonical.VERCEL_PROJECT_ID}, ${canonical.VERCEL_ORG_ID}); ` +
-    `${quoted} labelled mention(s) of another product's id; ${confirmed}`,
+    `Vercel ids agree across ${VERCEL_ID_FILES.length} tracked files (${canonical.VERCEL_PROJECT_ID}, ${canonical.VERCEL_ORG_ID}); ${confirmed}`,
   );
+}
+
+
+/** 8c. WHICH POSTGRESQL PROVIDER HOSTS PRODUCTION — established once, from the only file that knows.
+ *
+ *  WHY THIS EXISTS. A provider migration landed before 2026-08-22 and left roughly THIRTY tracked
+ *  files saying something untrue: docs/ENVIRONMENT.md, ARCHITECTURE.md, SCALABILITY.md, SECURITY.md,
+ *  KUBERNETES.md, CI.md, DOCKER.md, DEPLOYMENT_VERCEL.md, README.md, the k8s base and both overlays,
+ *  the Terraform, and a whole nightly workflow written for the old provider's pause behaviour. None
+ *  of it failed anything. It rotted for months because the fact "where the database is" had no owner
+ *  and no assertion — it was retyped into every document that needed to mention a database at all.
+ *
+ *  THE RULE THIS ENFORCES, and it is the one that stops a repeat: the APPLICATION REQUIRES
+ *  PostgreSQL, and that requirement names no vendor. WHERE IT RUNS is a deployment fact, stated in
+ *  ONE place — docs/ENVIRONMENT.md's "The database" section — beside the file that is its authority.
+ *  Everything else either says "PostgreSQL" or says, with a date, that it is describing the past.
+ *
+ *  THE EVIDENCE, AND THE RULE ABOUT READING IT. The authority is `backend/.env.production`, which
+ *  holds live credentials and is gitignored. So this check reads it for the PRESENCE OF A HOST
+ *  SUBSTRING AND NOTHING ELSE: `providerFromEnvFile` returns provider NAMES off its own hardcoded
+ *  table, never a line, never a URL, never a match from the file. No value read out of that file
+ *  reaches a variable that any message interpolates. It is deliberately NOT routed through `read()`,
+ *  whose cache lives for the whole run and is shared with every other check — a secret this one has
+ *  to touch should not become a secret all the others are holding.
+ *
+ *  ABSENCE IS NOT A FAILURE. The file is gitignored, so it is missing from CI and from every fresh
+ *  clone. Missing evidence reports what it cannot check and moves on; it never guesses, and it never
+ *  falls back to `backend/.env`, because that file is a DEVELOPER'S local configuration and on a
+ *  working machine it can name a local container and a cloud host at the same time. Only
+ *  `.env.production` answers the question this check asks.
+ *
+ *  THE SECOND HALF is the part that would have caught the original rot: every tracked file that
+ *  names a provider which is NOT the current one must say, within the lines around it, that it is
+ *  talking about the past. `HISTORY_LABEL` is what counts as saying so. A mention that says nothing
+ *  is either a leftover from the migration or a fresh copy-paste, and in a diff those look the same.
+ *  Filenames are exempt: `keep-supabase-active.yml` is a real path and §2 checks it as one. */
+const KNOWN_PROVIDERS = [
+  // [name as written in prose, host substring that proves it, sweepable?]
+  //
+  // `sweepable` is the third column and the one that took a measurement to get right. A name has TWO
+  // jobs here and they need different things of it. Identifying the provider FROM ITS HOST SUBSTRING
+  // (job one) works for any name and is the assertion that actually matters. SWEEPING THE TREE FOR
+  // THE NAME (job two) only works if the name is not also an ordinary word in this codebase.
+  //
+  // MEASURED — re-measured 2026-08-23 the same way, by flipping `Render` and `Timescale` to `true`
+  // and re-running: **302 extra findings** (300 files naming `render`, 2 naming `timescale`), 681
+  // individual mentions, and ZERO of them about a database. The `render` population is React
+  // rendering plus the `Render:` prefix on a great many Playwright test titles; the `timescale` one
+  // is `frontend/lib/media.ts` and an Android device-tier probe test. THAT 302 IS THE ONLY MEASURED
+  // NUMBER IN THIS COMMENT and it is the same number quoted in `selfTestDatabaseProvider` — an
+  // earlier draft carried 309 in one place and 302 in two, which is exactly the kind of unmeasured
+  // figure this repository's first house rule is about. A check with that false-positive rate is not
+  // a strict check, it is a check somebody deletes, and it would have buried the real Supabase
+  // findings this sweep actually produced.
+  //
+  // So a name is swept only where the word means nothing else here. The rest are still IDENTIFIED by
+  // host; they are simply not grep-able by name. If a future migration lands on one of them, the
+  // honest move is to leave `sweepable` false and rely on the ENVIRONMENT.md sentence — not to flip
+  // it and drown the run. Re-measure the same way before changing any of these.
+  //
+  // `sweepable` ALSO governs the "stated once" count at the foot of this check, which is why Neon's
+  // is `true`: that count is about the CURRENT provider, and it can only be enforced for a name the
+  // tree can be grepped for. Measured 2026-08-23 over the 1,228 files `trackedTextFiles` returns:
+  // `\bneon\b` occurs on 3 lines, all of them in docs/ENVIRONMENT.md's authority section, and on
+  // zero lines anywhere else. The word is not the CSS colour keyword or an adjective in this tree,
+  // whatever it is elsewhere — so it is grep-able, and the "once" can be asserted instead of claimed.
+  ["Neon", "neon.tech", true],            // measured: 3 lines, one file — see the paragraph above
+  ["Supabase", "supabase.co", true],      // means nothing else; the whole reason this check exists
+  ["Amazon RDS", "rds.amazonaws.com", true],
+  ["Cloud SQL", "cloudsql", false],       // "cloud" plus a product word, both common in prose here
+  ["Azure", "postgres.database.azure.com", false],
+  ["Render", "render.com", false],        // React renders; every spec file says it
+  ["Railway", "railway.app", false],
+  ["DigitalOcean", "ondigitalocean.com", true],
+  ["Timescale", "tsdb.cloud.timescale.com", false], // "timescale" appears in the media/transcript code
+];
+
+/** The two files whose ENTIRE PURPOSE is the old provider, exempt from the name sweep by path.
+ *
+ *  They are not documents that happen to mention a provider — they are the workaround that exists
+ *  only because of one provider's pause behaviour, and every line of the script is about that
+ *  provider's pooler. Labelling each mention individually would mean interleaving a date into
+ *  working code to satisfy a grep. Their DORMANCY is stated once, at the top of each file, with the
+ *  date it should be reviewed; that is the honest place for it. If they are ever deleted, delete
+ *  these two lines with them. */
+const PROVIDER_WORKAROUND_FILES = new Set([
+  ".github/workflows/keep-supabase-active.yml",
+  "scripts/keep-supabase-active.mjs",
+]);
+
+/** The words that say, in the lines around a provider name, that the sentence is about the past.
+ *  A bare date is deliberately NOT enough — dates decorate live facts all over this repository — and
+ *  neither is "was", which appears in every third sentence of this prose. */
+const HISTORY_LABEL = new RegExp(
+  [
+    String.raw`\bhistoric(?:al|ally)?\b`,
+    String.raw`\bdormant\b`,
+    String.raw`\bdormancy\b`,
+    String.raw`\bpreviously\b`,
+    String.raw`\bformerly\b`,
+    String.raw`\bno longer\b`,
+    String.raw`\bused to\b`,
+    String.raw`\blegacy\b`,
+    String.raw`\bleft that provider\b`,
+    String.raw`\bmoved off\b`,
+    String.raw`\buntil 2\d{3}-\d{2}-\d{2}\b`,
+    String.raw`\bhosted this deployment until\b`,
+    String.raw`\bran on until\b`,
+    String.raw`\bmeasured on\b`,
+    String.raw`\bnot yet re-established\b`,
+    String.raw`\bis not on that provider\b`,
+    String.raw`\bwas never independently verified\b`,
+  ].join("|"),
+  "i",
+);
+
+/** Runs a wrapped block of prose back into one line, so a label can be matched across the break.
+ *
+ *  THIS EXISTS BECAUSE OF A MEASURED BUG, TWICE OVER. The sweep first tested HISTORY_LABEL against
+ *  the raw window, and markdown wraps at ~100 columns — so "production left that\nprovider on
+ *  2026-08-22" carries a newline through the middle of its own label and every multi-word entry in
+ *  HISTORY_LABEL silently failed. Collapsing whitespace fixed the plain-prose case and left two
+ *  more: a wrapped label inside a `>` blockquote flattens to "left that > provider", and one inside
+ *  a `#` comment block to "until # 2026-08-22". The continuation MARKER is part of the wrap, so it
+ *  has to come off with the newline.
+ *
+ *  Both variants were found the same way, by reading the findings the sweep produced during the
+ *  2026-08-22 wave and checking each against the file: a dated note in `docs/KUBERNETES.md`'s
+ *  blockquote and one in `.github/workflows/deploy-backend.yml`'s comment block were reported as rot
+ *  while both said exactly what the check asks for. A check that reports correct work as rot is a
+ *  check somebody deletes, so this is a load-bearing part of the sweep rather than a tidying
+ *  convenience. Only LEADING markers are stripped, and only where a line begins with one, so a `#`
+ *  or a `*` inside a sentence is left alone — the self-test pins that. */
+function flattenProse(text) {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/^\s*(?:>\s*)*(?:#+|\/\/+|\*|-|\d+\.)?\s*/, ""))
+    .join(" ")
+    .replace(/\s+/g, " ");
+}
+
+/** The lines that may carry the label for a provider mention on line `ln` (1-based). TIGHT ON
+ *  PURPOSE: the SAME table row, or the hit's line plus its two neighbours.
+ *
+ *  IT USED TO BE `labelWindow`, AND THAT WAS A REAL HOLE — the same one §10 documents finding and
+ *  fixing for the sibling sweep. `labelWindow` returns ±4 lines or, for a table row, THE WHOLE
+ *  TABLE, so ONE correctly dated row licensed every other unlabelled provider claim in the same
+ *  table. Measured against the shipped functions: a five-row table whose third row said "Same
+ *  dormancy." made a fourth row reading "Use the Supabase session pooler URL for DATABASE_URL."
+ *  pass. It was not hypothetical — docs/ENVIRONMENT.md's own `DATABASE_USE_TRANSACTION_POOLER` row
+ *  named a vendor pooler host with nothing dating it and was excused by the row underneath.
+ *
+ *  WHY ±1 RATHER THAN ±4 FOR PROSE. Markdown here wraps at ~100 columns, so a label and the mention
+ *  it labels can straddle exactly one break — that is the case `flattenProse` exists for and the
+ *  case this window has to keep reaching. Two lines away is a DIFFERENT SENTENCE, and a different
+ *  sentence vouching for this one is the hole above in slower motion. A writer whose label ends up
+ *  further away should move the label, which is better prose anyway.
+ *
+ *  §10's `labelWindow` is deliberately left alone: it answers a different question (which product a
+ *  value belongs to, stated in a table header a dozen lines up) and has its own mitigation in
+ *  `windowSaysWhose`. */
+function providerLabelWindow(lines, ln) {
+  const isRow = (s) => /^\s*>?\s*\|/.test(s ?? "");
+  if (isRow(lines[ln - 1])) return lines[ln - 1];
+  return lines.slice(Math.max(0, ln - 2), ln + 1).join("\n");
+}
+
+/** Where the ONE deployment statement lives, and the shape it must keep. Pinned to a SENTENCE
+ *  rather than a table cell, because a sentence is what a reader actually believes. */
+const PROVIDER_CLAIM = /\*\*Production runs on ([A-Z][A-Za-z0-9 ._-]{1,30}?)\.\*\*/;
+
+/** Filenames that contain a provider name. A PATH IS NOT A CLAIM: `keep-supabase-active.yml` and
+ *  `backend/.env.supabase.bak` are real files, §2 checks the paths that are written down, and the
+ *  whole point of keeping the `.bak` one named is that a reader who finds it can tell what it is.
+ *  Stripped from a line before the line is swept; the self-test pins that a claim sharing the line
+ *  with a filename still reports. */
+const PROVIDER_IN_A_FILENAME = /[\w./-]*(?:keep-supabase-active|\.env\.supabase)[\w./-]*/gi;
+
+/** Reads `backend/.env.production` and returns ONLY the names of providers whose host substring is
+ *  present — names taken from KNOWN_PROVIDERS above, never from the file. Nothing derived from the
+ *  file's text is returned, stored, or logged. Returns null when there is no file to read. */
+function providerFromEnvFile(abs) {
+  if (!existsSync(abs)) return null;
+  try {
+    const hay = readFileSync(abs, "utf8").toLowerCase();
+    return KNOWN_PROVIDERS.filter(([, host]) => hay.includes(host)).map(([name]) => name);
+  } catch {
+    return null;
+  }
+}
+
+function checkDatabaseProvider() {
+  const found = providerFromEnvFile(join(REPO, "backend", ".env.production"));
+
+  const env = read(join(DOCS, "ENVIRONMENT.md"));
+  const claim = env.match(PROVIDER_CLAIM);
+  if (!claim) {
+    fail(
+      "docs/ENVIRONMENT.md has no `**Production runs on <Provider>.**` sentence. That one sentence is where this " +
+      "repository states which PostgreSQL hosts production; without it every other document is free to invent an " +
+      "answer, which is exactly how the last provider move went unrecorded in thirty files.",
+    );
+    return;
+  }
+  const claimed = claim[1];
+  if (!KNOWN_PROVIDERS.some(([name]) => name === claimed)) {
+    fail(
+      `docs/ENVIRONMENT.md says production runs on "${claimed}", which is not in KNOWN_PROVIDERS in this file. Add ` +
+      "it there with the host substring that proves it, or this check cannot verify the claim against " +
+      "backend/.env.production and is asserting nothing at all.",
+    );
+    return;
+  }
+
+  if (found === null) {
+    // The normal state in CI and in a fresh clone. Say what is unverified rather than implying it passed.
+    note(
+      `docs/ENVIRONMENT.md says production runs on ${claimed}; backend/.env.production is not in this checkout ` +
+      "(gitignored), so that sentence is UNVERIFIED here rather than confirmed",
+    );
+  } else if (found.length === 0) {
+    fail(
+      `backend/.env.production names none of the ${KNOWN_PROVIDERS.length} provider hosts this check knows, while ` +
+      `docs/ENVIRONMENT.md says production runs on ${claimed}. Either the deployment moved to a provider that is not ` +
+      "in KNOWN_PROVIDERS — add it, with its host substring — or that sentence is now fiction. (Nothing from that " +
+      "file is printed here, by design; a host substring is all the evidence this needs.)",
+    );
+  } else if (!found.includes(claimed)) {
+    fail(
+      `docs/ENVIRONMENT.md says production runs on ${claimed}, but the host in backend/.env.production is ` +
+      `${found.join(" + ")}'s. The env file is the authority and the document is a report of it, so the document is ` +
+      "the thing that is wrong. Fix that sentence FIRST, then sweep the mentions reported below — and do not paste " +
+      "anything out of that file to do it.",
+    );
+  } else {
+    note(
+      `production database provider: ${claimed}, confirmed by the host substring in backend/.env.production` +
+      (found.length > 1 ? ` (${found.join(" + ")} both present — see ENVIRONMENT.md)` : ""),
+    );
+  }
+
+  // ── The sweep: a provider that is not the current one must be labelled as history. ──
+  const stale = KNOWN_PROVIDERS.filter(([name, , sweepable]) => sweepable && name !== claimed);
+  const seen = new Map();
+  for (const rel of trackedTextFiles()) {
+    // This file is exempt from its own sweep: naming every provider is what its table is FOR.
+    if (rel === "docs/tools/check-docs.mjs") continue;
+    if (PROVIDER_WORKAROUND_FILES.has(rel)) continue;
+    const lines = read(join(REPO, rel)).split("\n");
+    for (const [name] of stale) {
+      const re = new RegExp(String.raw`\b${name.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}\b`, "i");
+      for (let i = 0; i < lines.length; i += 1) {
+        if (!re.test(lines[i])) continue;
+        // Strip the filenames that legitimately contain a provider name, then re-test.
+        if (!re.test(lines[i].replace(PROVIDER_IN_A_FILENAME, " "))) continue;
+        if (HISTORY_LABEL.test(flattenProse(providerLabelWindow(lines, i + 1)))) continue;
+        const key = `${rel} ${name}`;
+        seen.set(key, (seen.get(key) ?? 0) + 1);
+      }
+    }
+  }
+
+  let unexplained = 0;
+  for (const [key, count] of [...seen].sort()) {
+    const allowed = PROVIDER_ALLOWLIST.get(key) ?? 0;
+    if (count > allowed) {
+      unexplained += 1;
+      fail(
+        `${key}: ${count} unlabelled mention(s)${allowed ? ` of which ${allowed} are allowlisted` : ""} of a provider ` +
+        "that does not host production. Say PostgreSQL where it is a REQUIREMENT; where it is HISTORY say when it " +
+        "stopped being true — a date plus one of the words in HISTORY_LABEL. Adding it to PROVIDER_ALLOWLIST to go " +
+        "green is the one thing that list is not for.",
+      );
+    } else if (count) {
+      known(`${key}: ${count} mention(s), allowlisted — a former provider named with nothing dating it`);
+    }
+  }
+  if (!unexplained) {
+    note(
+      `no unlabelled mention of ${stale.map(([n]) => n).join(", ") || "a former provider"} outside ` +
+      `PROVIDER_ALLOWLIST (${PROVIDER_ALLOWLIST.size} entr${PROVIDER_ALLOWLIST.size === 1 ? "y" : "ies"}) ` +
+      `in the ${trackedTextFiles().length} files trackedTextFiles() returns; ` +
+      `${KNOWN_PROVIDERS.length - stale.length - 1} other provider name(s) are identified by host but not swept ` +
+      "by name — see KNOWN_PROVIDERS",
+    );
+  }
+
+  // ── "Stated once" — the half the sweep above structurally cannot see. ──
+  //
+  // The sweep looks for FORMER providers. A SECOND statement of the CURRENT one is invisible to it,
+  // and copying the current provider's name into every file that mentions a database is precisely how
+  // the thirty untrue files were produced: each of them was accurate on the day it was written.
+  // docs/ENVIRONMENT.md asserts "stated once" as the architecture, so this counts it rather than
+  // taking its word for it. ENVIRONMENT.md itself is exempt — it is the one place the name belongs —
+  // and so is this file, whose table has to spell every provider out.
+  //
+  // ONLY POSSIBLE FOR A SWEEPABLE NAME. If the current provider's name is also an ordinary word here,
+  // grepping for it measures nothing, and the honest output is to say the "once" is unenforced rather
+  // than to print a green line that means "we did not look".
+  const claimedRow = KNOWN_PROVIDERS.find(([name]) => name === claimed);
+  if (!claimedRow?.[2]) {
+    note(
+      `"stated once" is NOT enforced for ${claimed}: its KNOWN_PROVIDERS row is not sweepable, so the name cannot be ` +
+      "counted across the tree without false findings. ENVIRONMENT.md's claim that the provider is named in one place " +
+      "is unverified here.",
+    );
+    return;
+  }
+  const claimedRe = new RegExp(String.raw`\b${claimed.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}\b`, "i");
+  const elsewhere = new Map();
+  for (const rel of trackedTextFiles()) {
+    if (rel === "docs/tools/check-docs.mjs" || rel === "docs/ENVIRONMENT.md") continue;
+    const n = read(join(REPO, rel)).split("\n").filter((l) => claimedRe.test(l)).length;
+    if (n) elsewhere.set(rel, n);
+  }
+  if (elsewhere.size === 0) {
+    note(
+      `"${claimed}" is named in docs/ENVIRONMENT.md and nowhere else in the ${trackedTextFiles().length} files swept — ` +
+      `the "stated once" rule is enforced, not just asserted`,
+    );
+  } else {
+    for (const [rel, n] of [...elsewhere].sort()) {
+      fail(
+        `${rel}: names the CURRENT provider "${claimed}" on ${n} line(s). That fact belongs in exactly one place — ` +
+        'docs/ENVIRONMENT.md\'s "The database" section — and a second copy is a file that will be silently wrong on ' +
+        "the day the deployment moves, which is how the last migration left thirty of them. Say what the sentence " +
+        "actually needs instead (\"the provider hosting production today\", \"a PostgreSQL that suspends idle " +
+        "compute\") and point at that section.",
+      );
+    }
+  }
+}
+
+/** Files that still name a former provider with nothing saying it is the past.
+ *
+ *  READ THIS LIST; DO NOT GROW IT. Same contract as SIBLING_ALLOWLIST above: keyed FILE + PROVIDER
+ *  with a count, so an edit elsewhere in the file does not churn the key, and a SECOND unlabelled
+ *  mention in an already-listed file is a new finding rather than a free ride. Every entry is a real
+ *  leftover of the migration; shrinking the list to nothing is the work. */
+const PROVIDER_ALLOWLIST = new Map([
+  // The container entrypoint's refusal-to-boot guard, and the header explaining it. Both name the
+  // old provider as the example of "a remote host you must not hand a throwaway container", which is
+  // still a correct illustration and is not a claim about where production is — but it reads as one,
+  // and the guard itself is host-shape logic that names no provider. `docker/` is outside the
+  // documentation workstream that added this check, so it is listed rather than edited from here.
+  // Whoever next touches that file: the two mentions can simply say "a managed database".
+  ["docker/backend/entrypoint.sh Supabase", 2],
+  // Two ignore-files that came into this sweep's reach when KEEP_BASENAMES was added (see
+  // trackedTextFiles). Both are real leftovers and both are OUTSIDE the documentation group that
+  // wrote this check, so they are listed with the correction rather than edited from here:
+  //   * `.dockerignore` — the comment above the `**/.env` pattern says backend/.env "holds the LIVE
+  //     PRODUCTION Supabase URL". The pattern is right and the reason is right; only the vendor name
+  //     is stale. It should read "the live production database URL" — the safety argument does not
+  //     need to know whose database it is.
+  //   * `.gitignore` — the block explaining why `.env.*` is ignored names `.env.supabase.bak` (a real
+  //     path, and correctly excused by PROVIDER_IN_A_FILENAME) but then describes its contents as "a
+  //     live Supabase DATABASE_URL". Past tense plus a date fixes it; the file it describes IS a
+  //     leftover of the migration, so it is history, not a requirement.
+  [".dockerignore Supabase", 1],
+  [".gitignore Supabase", 1],
+  // The root frontend env template's keep-alive block. Its mention is a TRUE description of what
+  // `scripts/keep-supabase-active.mjs` does — it really does match `*.pooler.supabase.com:5432` and
+  // nothing else — so it is the same category as PROVIDER_WORKAROUND_FILES above, one step removed:
+  // a template documenting that script's own variables. It is not a claim about where production
+  // runs, and it dies when the script does. Listed rather than edited because the env templates are
+  // another workstream's files; whoever retires the workflow deletes that block and this line.
+  [".env.example Supabase", 1],
+]);
+
+/** Self-test for §8c. Every moving part of this check can be disarmed by an edit that reads as a
+ *  copy-edit — a widened label word, a narrowed claim regex, a host substring that swallows another
+ *  — so each one is exercised here against a case that must pass and a case that must not. */
+function selfTestDatabaseProvider() {
+  let n = 0;
+
+  // The claim sentence must be found, and must yield the provider name alone.
+  n += 1;
+  const m = "text\n**Production runs on Neon.** *Recorded 2026-08-22.*\nmore".match(PROVIDER_CLAIM);
+  if (!m || m[1] !== "Neon") {
+    fail(
+      "check-docs: §8c's PROVIDER_CLAIM no longer reads the provider out of its own sentence " +
+      `(got ${m ? `"${m[1]}"` : "no match"}). The check would report a missing sentence on a document that has one.`,
+    );
+  }
+  // …and must not match a sentence that merely discusses the claim without making it.
+  n += 1;
+  if (PROVIDER_CLAIM.test("the sentence that says **Production runs on** something")) {
+    fail("check-docs: §8c's PROVIDER_CLAIM matches a sentence with no provider name in it");
+  }
+
+  // HISTORY_LABEL: what must, and must not, count as saying "this is the past".
+  const labelCases = [
+    [true, "**Historical, 2026-08-22.** Left from the Supabase deployment."],
+    [true, "Supabase, which hosted this deployment until 2026-08-22."],
+    [true, "It is dormant as of 2026-08-22."],
+    [true, "production left that provider on 2026-08-22"],
+    [true, "Measured on Supabase, before the move."],
+    [true, "Supabase is no longer what this points at."],
+    // The trap: a bare date decorates live claims all over this repository.
+    [false, "On 2026-08-22 the Supabase pooler ceiling is 200 client connections."],
+    [false, "Use the Supabase session pooler URL for DATABASE_URL."],
+    [false, "The Supabase pooler speaks TLS, so this was thought to be safe."],
+  ];
+  for (const [want, line] of labelCases) {
+    n += 1;
+    if (HISTORY_LABEL.test(line) !== want) {
+      fail(
+        `check-docs: §8c's HISTORY_LABEL ${want ? "no longer accepts" : "now accepts"} "${line}". ` +
+        (want
+          ? "A correctly dated historical note would be reported as rot, and a check that cries wolf gets deleted."
+          : "An unlabelled live claim about a former provider would pass, which is the exact rot this check exists for."),
+      );
+    }
+  }
+
+  // The provider table must separate the current provider from the old one BY SUBSTRING, which is
+  // the whole reason this check never has to read a credential.
+  n += 1;
+  const hosts = new Map(KNOWN_PROVIDERS.map(([name, host]) => [name, host]));
+  if (!hosts.get("Neon") || !hosts.get("Supabase") || hosts.get("Neon") === hosts.get("Supabase")) {
+    fail("check-docs: §8c's KNOWN_PROVIDERS no longer tells Neon from Supabase by host substring");
+  }
+  // No host substring may contain another, or one deployment would report as two providers.
+  for (const [aName, aHost] of KNOWN_PROVIDERS) {
+    for (const [bName, bHost] of KNOWN_PROVIDERS) {
+      if (aName === bName) continue;
+      n += 1;
+      if (aHost.includes(bHost)) {
+        fail(
+          `check-docs: §8c's host substring for ${bName} (${bHost}) is contained in ${aName}'s (${aHost}) — ` +
+          "one deployment would be reported as two providers, and the disagreement message would be nonsense",
+        );
+      }
+    }
+  }
+
+  // SWEEPABILITY. The measured failure of the first version of this check was sweeping for names
+  // that are ordinary words, so both directions are pinned: Supabase and Neon must stay swept, and
+  // the two words that produced the 302 false findings must stay unswept. That 302 is the figure in
+  // KNOWN_PROVIDERS' header and the only one; if you re-measure it, change it in both places.
+  const sweepable = new Map(KNOWN_PROVIDERS.map(([name, , sweep]) => [name, !!sweep]));
+  const WHY_SWEPT = {
+    Supabase: "Supabase is the provider this repository actually migrated off; not sweeping for it leaves the check asserting nothing about the tree.",
+    Neon: 'Neon is the CURRENT provider, and the "stated once" count at the foot of the check can only run on a sweepable name — measured 2026-08-23, `\\bneon\\b` occurs on 3 lines in this tree, all in docs/ENVIRONMENT.md.',
+  };
+  for (const [name, want] of [["Supabase", true], ["Neon", true], ["Render", false], ["Timescale", false]]) {
+    n += 1;
+    if (!sweepable.has(name)) {
+      fail(`check-docs: §8c's KNOWN_PROVIDERS no longer has a ${name} row, so its sweepability cannot be pinned`);
+    } else if (sweepable.get(name) !== want) {
+      fail(
+        `check-docs: §8c now ${want ? "declines to sweep" : "sweeps"} for "${name}". ` +
+        (want
+          ? WHY_SWEPT[name]
+          : `"${name}" is an ordinary word in this codebase — measured, sweeping for it and the other one adds 302 findings, none about a database.`),
+      );
+    }
+  }
+  // At least one provider must remain sweepable, or the second half of the check is dead code.
+  n += 1;
+  if (![...sweepable.values()].some(Boolean)) {
+    fail("check-docs: §8c has no sweepable provider left — the tree sweep would silently check nothing");
+  }
+
+  // The filename escapes must exempt a PATH without excusing a claim that shares its line.
+  for (const line of [
+    "See .github/workflows/keep-supabase-active.yml for the cron.",
+    "(`infra/terraform/fieldrepo-deploy.pem`, `backend/.env.supabase.bak`, and the rest)",
+  ]) {
+    n += 1;
+    if (/\bSupabase\b/i.test(line.replace(PROVIDER_IN_A_FILENAME, " "))) {
+      fail(`check-docs: §8c reports a filename as though it were an unlabelled provider claim — ${line}`);
+    }
+  }
+  n += 1;
+  if (!/\bSupabase\b/i.test("keep-supabase-active.yml pings Supabase so the project does not pause.".replace(PROVIDER_IN_A_FILENAME, " "))) {
+    fail("check-docs: §8c's filename escape now swallows a real provider claim that shares a line with the filename");
+  }
+
+  // LABELS THAT WRAPPED. The measured bug, in all three variants it was found in: a label straddling
+  // a line break is invisible to the sweep unless the continuation marker comes off with the newline.
+  const wraps = [
+    ["plain prose", "The 200 is a Supabase per-project figure, and production left that\nprovider on 2026-08-22."],
+    ["a `>` blockquote", "> The 200 is Supabase's, and production left that\n> provider on 2026-08-22."],
+    ["a `#` comment block", "# Migrations talk to the Supabase pooler. Written against that provider until\n# 2026-08-22."],
+    ["a `*` list item", "* Supabase's ceiling, which is no longer\n  the one that applies."],
+  ];
+  for (const [what, text] of wraps) {
+    n += 1;
+    if (!HISTORY_LABEL.test(flattenProse(text))) {
+      fail(
+        `check-docs: §8c no longer recognises a history label wrapped across two lines in ${what}. ` +
+        "That is the exact bug flattenProse exists for: without it, a correctly dated note reports as rot, " +
+        "and a check that cries wolf gets deleted rather than fixed.",
+      );
+    }
+  }
+  // …and flattening must not invent a label where the raw text has none.
+  n += 1;
+  if (HISTORY_LABEL.test(flattenProse("Use the Supabase session pooler URL.\nIt is the one that works."))) {
+    fail("check-docs: §8c's flattenProse now manufactures a history label out of two unlabelled lines");
+  }
+  // The marker strip must only take LEADING markers, or a sentence loses its own words.
+  n += 1;
+  if (flattenProse("a line\n# 2026-08-22 and a # inside it") !== "a line 2026-08-22 and a # inside it") {
+    fail(
+      "check-docs: §8c's flattenProse no longer strips only LEADING continuation markers " +
+      `(got "${flattenProse("a line\n# 2026-08-22 and a # inside it")}")`,
+    );
+  }
+
+  // THE WINDOW. A row must not be excused by its NEIGHBOURS — the hole §10 found for the sibling
+  // sweep and this one shipped with, because it borrowed §10's `labelWindow` (±4 lines, or the WHOLE
+  // TABLE for a row). These four cases are the ones that were reported by hand against the shipped
+  // functions during the 2026-08-23 repair; they are here so the next borrowing gets caught.
+  const table = [
+    "| Variable | Notes |",
+    "|---|---|",
+    "| A | Same dormancy. |",
+    "| B | Use the Supabase session pooler URL for DATABASE_URL. |",
+    "| C | plain |",
+  ];
+  n += 1;
+  if (HISTORY_LABEL.test(flattenProse(providerLabelWindow(table, 4)))) {
+    fail(
+      "check-docs: §8c's label window excuses a table row using a DIFFERENT row's label. One dated row then " +
+      "licenses every other unlabelled provider claim in the same table — the exact defect §10's windowSaysWhose " +
+      "exists to stop, and the one that let docs/ENVIRONMENT.md carry an undated vendor pooler host.",
+    );
+  }
+  n += 1;
+  if (!HISTORY_LABEL.test(flattenProse(providerLabelWindow(table, 3)))) {
+    fail("check-docs: §8c's label window no longer reads a table row's OWN label, so every dated row reports as rot");
+  }
+  // Prose: the immediately adjacent line still counts (that is the ~100-column wrap), two away does not.
+  const prose = [
+    "It used to match a vendor pooler host —",
+    "`.pooler.supabase.com` — and rewrite the port.",
+    "",
+    "A separate sentence about Supabase entirely.",
+  ];
+  n += 1;
+  if (!HISTORY_LABEL.test(flattenProse(providerLabelWindow(prose, 2)))) {
+    fail("check-docs: §8c's label window no longer reaches the previous line — a label that wrapped would report as rot");
+  }
+  n += 1;
+  if (HISTORY_LABEL.test(flattenProse(providerLabelWindow(prose, 4)))) {
+    fail(
+      "check-docs: §8c's label window reaches a label three lines away. That is a different sentence vouching for " +
+      "this one, which is the table hole above in slower motion.",
+    );
+  }
+
+  // COVERAGE. The sweep's green line says how many files it swept; extensionless files are the ones
+  // that silently fell out of that count, so the basename escape is pinned here rather than trusted.
+  n += 1;
+  const swept = new Set(trackedTextFiles());
+  for (const p of [".dockerignore", ".gitignore"]) {
+    if (existsSync(join(REPO, p)) && !swept.has(p)) {
+      fail(
+        `check-docs: ${p} is tracked and carries prose, but trackedTextFiles() no longer returns it — so every sweep ` +
+        "below reports itself as tree-wide while skipping it. See KEEP_BASENAMES.",
+      );
+    }
+  }
+
+  note(`${n} self-test cases for the database-provider check`);
 }
 
 /** 9. Every document in docs/ is listed in docs/README.md.
@@ -1290,11 +1914,944 @@ function checkCrossLinks() {
   note(`${checked} relative links resolved`);
 }
 
+/** Every tracked file whose bytes are prose or source, as repo-relative POSIX paths.
+ *
+ *  `git ls-files` rather than a directory walk: the sweeps below are about what a reader of THIS
+ *  REPOSITORY can find, and an untracked scratch file is not that. It also keeps `node_modules`,
+ *  build output and the sibling worktrees under `.claude/worktrees/` out without a denylist that
+ *  would need maintaining. Lockfiles are excluded by name — they are megabytes of hashes that no
+ *  identity fact is ever written into, and scanning them is most of this script's runtime.
+ */
+let TRACKED = null;
+function trackedTextFiles() {
+  if (TRACKED) return TRACKED;
+  const KEEP = /\.(md|py|ts|tsx|js|jsx|mjs|cjs|kt|kts|yml|yaml|xml|sh|tf|tfvars|sql|toml|ini|cfg|gradle|properties|example|env|txt|json)$/i;
+  // KEEP REQUIRES AN EXTENSION, AND SOME OF THE MOST PROSE-HEAVY FILES HERE HAVE NONE. Measured
+  // against the regex above: `.dockerignore` false, `.gitignore` false, `Dockerfile` false — so every
+  // sweep below silently skipped them while reporting itself as tree-wide. That was not theoretical:
+  // `.dockerignore` carries a commented claim about which provider holds the LIVE PRODUCTION URL and
+  // `.gitignore` carries one about `.env.supabase.bak`, which is exactly the rot §8c exists to catch.
+  // Listed by BASENAME rather than loosened into KEEP, because "no extension" would also admit
+  // binaries; anything added here has to be a text file somebody writes sentences in.
+  const KEEP_BASENAMES = new Set([".dockerignore", ".gitignore", ".gitattributes", "Dockerfile"]);
+  const keep = (p) => KEEP.test(p) || KEEP_BASENAMES.has(p.split("/").pop());
+  const DROP = /(^|\/)(node_modules|\.claude|test-results)\//;
+  let out = [];
+  try {
+    out = execSync("git ls-files -z", { cwd: REPO, encoding: "utf8", maxBuffer: 256e6 })
+      .split("\0")
+      .filter(Boolean)
+      .filter((p) => keep(p) && !DROP.test(p) && !/(package|skills)-lock\.json$/.test(p))
+      // THIS FILE IS EXEMPT FROM ITS OWN TWO SWEEPS, and the reason is not modesty. It is the one
+      // place in the tree where "field-repository", "when X lands" and ", not before" are DATA:
+      // they are the patterns being searched for, written out in the docstrings that explain them.
+      // A checker that reports its own rule definitions reports five findings on its first run and
+      // teaches its reader that the whole section is noise. Everything else it says about itself
+      // still applies — its paths, its citations and its links are checked like any other file's.
+      .filter((p) => p !== "docs/tools/check-docs.mjs");
+  } catch {
+    // No git in the environment (a tarball export, some CI images). The sweeps below then have
+    // nothing to walk, and each says so rather than reporting a clean result it never measured.
+    out = [];
+  }
+  TRACKED = out;
+  return out;
+}
+
+/* ── 10. identity inherited from the field repository ───────────────────────────────────────── */
+
+/** 10. Every fact that distinguishes this portal from the field repository, asserted from ONE place.
+ *
+ *  WHY THIS EXISTS, AND WHY IT IS ONE CHECK RATHER THAN A DOZEN. This portal was split from the
+ *  field repository and kept that product's identity in about a dozen places. Three had been
+ *  corrected one at a time before this check was written, and two of the three were ship-blockers
+ *  in a single week: a setup script that sealed this portal's secrets into the other repository,
+ *  and docs/CI.md §2 naming the other product's live box TOGETHER WITH the matching SSH key
+ *  — wrong together, which is the pairing that authenticates and SUCCEEDS. Fixing them one at a
+ *  time is how the twelfth survives, so the values are established once and swept for everywhere.
+ *
+ *  THE REGISTER IS docs/CI.md §0 — the two-column banner table headed "This portal" / "The field
+ *  repository — never put these here". It was already there with five rows; this check turns it
+ *  from a table a reader may consult into the thing the tree is measured against, and three rows
+ *  were added with it (the Vercel production alias, the GitHub slug, and CloudFront). Ground truth
+ *  for the "this portal" column is not this checker's business — the banner names the two artefacts
+ *  it was read out of — but where a checkout HOLDS one of those artefacts it is consulted, because
+ *  a register nothing can corroborate is a better-formatted rumour.
+ *
+ *  THE ASSERTION THAT CATCHES THE NEXT ONE is the second half: the field repository's values are
+ *  QUOTED deliberately, all over this repository, as the values never to use. So a sibling value is
+ *  acceptable exactly where the surrounding lines say whose it is. Anywhere else it is either a
+ *  leftover from the split or a fresh copy-paste, and the two are indistinguishable in a diff. The
+ *  window is four lines either side, widened to the whole markdown table when the hit is a table
+ *  row, because a table labels its rows in a header that can sit a dozen rows above them.
+ *
+ *  THE REGISTER'S OWN SHAPE IS ASSERTED TOO, because the sweep reads its values OUT of that table
+ *  and a copy-edit can therefore disarm it silently. Every row must still yield a backticked
+ *  literal in BOTH columns unless it says in words why it cannot, and the number of sibling values
+ *  the table yields is pinned at EXPECTED_SIBLING_VALUES. Replacing one value with prose used to
+ *  drop it from the sweep, silence every finding that depended on it, and leave the exit code
+ *  untouched, while reading in a diff as tidying.
+ *
+ *  THE ONE FACT THIS DELIBERATELY LEAVES OPEN. Which CloudFront distribution is this portal's
+ *  cannot be settled from a checkout — see `checkAndroidApiHost` above and ENVIRONMENT.md §4. So
+ *  the register's CloudFront row must say UNRESOLVED for exactly as long as that question stands,
+ *  and must stop saying it the moment the question is answered; both directions fail. ENVIRONMENT.md
+ *  §4 carries a SECOND copy of this register, and `checkSecondRegister` below holds the two to
+ *  each other cell by cell — including that marker — because two registers that can disagree are
+ *  worse than one, and they already had.
+ *
+ *  WHAT THE OPEN QUESTION IS NOT AN EXCUSE FOR — corrected 2026-08-22. This check first shipped with
+ *  an escape that read ANY sibling value within four lines of `d2b34i3e92al6i` or `d3ekigkotd1xa2`
+ *  as a restatement of that question. It was argued for the Elastic IP and applied to every value,
+ *  so — measured — putting `fieldrepo-media-626159998512` back into DEPLOYMENT_VERCEL.md §0's table
+ *  produced ZERO findings, because a neighbouring row of the same table named a CloudFront host,
+ *  and the whole table is one label window. The escape is deleted, and its premise was wrong even
+ *  for the IP it was written for: the DISTRIBUTION is open, the BOX is not. `15.207.145.174` is the
+ *  field repository's, corroborated by the designrepo Terraform state and said in so many words by
+ *  ENVIRONMENT.md §4, so a document pairing it with "this portal's backend" is making a false claim
+ *  rather than restating a question — and is labelled the way everything else is, by saying whose
+ *  box it is. Deleting the escape made five mentions visible; the two in this workstream's own
+ *  DEPLOYMENT_VERCEL.md were labelled and the other three are on the allowlist below.
+ *
+ *  SEVERITY, AND WHY IT IS AN ALLOWLIST RATHER THAN A RULE ABOUT PATHS. An unlabelled sibling value
+ *  is a FAILURE wherever it sits. Until 2026-08-22 only `docs/*.md` could fail, which meant a
+ *  reintroduced deploy target in a .kt, a .tf or a .env.example produced a green run with one line
+ *  in the log — and those are the files that actually point a build at a machine. What keeps
+ *  today's tree green is SIBLING_ALLOWLIST: the nine mentions already here, written out one per
+ *  line with whose file each is, for the same reason ROT_BASELINE is written out rather than
+ *  hidden. Anything not on it is red, whatever its extension. Shrinking the list is the work.
+ */
+const REGISTER_ROWS = [
+  "API box (Elastic IP)",
+  "EC2 instance",
+  "SSH key pair / file",
+  "S3 media bucket",
+  "Vercel project",
+  "Vercel production alias",
+  "GitHub repository",
+  "CloudFront",
+];
+/** Words that say, in the lines around a sibling value, whose value it is. */
+const SIBLING_LABEL = /field[- ]repository|field repo\b|fieldrepo|the other product|another product|never put these here|never appear here|must NOT be pasted/i;
+/** True when the label regex matches the WHOLE literal, i.e. the value is its own label. */
+const isOwnLabel = (v) => { const m = v.match(SIBLING_LABEL); return !!m && m[0].length === v.length; };
+
+/** How many distinct field-repository literals docs/CI.md §0 is expected to yield.
+ *
+ *  PINNED, because the sweep reads its values out of that table, so a copy-edit to the table
+ *  disarms the sweep with nothing going red. Measured 2026-08-22: replacing the S3 row's
+ *  `fieldrepo-media-626159998512` with the words "the sibling bucket" took the run's note from
+ *  "6 field-repository values … 37 labelled mention(s) across 16 file(s)" to "5 … 32 … 12", dropped
+ *  the three findings in next.config.ts and variables.tf, and left the exit code where it was. The
+ *  diff read as prose polish. A pinned count is the one thing a copy-edit cannot quietly remove. */
+const EXPECTED_SIBLING_VALUES = 6;
+
+/** Rows whose "field repository" cell legitimately holds no literal, and the words that say so.
+ *  Every OTHER row must name a value in BOTH columns: a row that stops naming one stops being
+ *  swept, and a fact that is not swept is not a fact this check knows about. */
+const ROWS_WITHOUT_A_SIBLING_VALUE = new Map([
+  ["CloudFront", /unresolved/i],
+  ["GitHub repository", /not established/i],
+]);
+
+/** A two-segment `owner/repo` slug, as opposed to a filesystem path.
+ *
+ *  The literal filter drops anything containing `/` — the SSH row names
+ *  `infra/terraform/fieldrepo-deploy.pem`, which is a path, is checked as one by §2, and is not an
+ *  identity fact. But the GitHub repository IS a register row and `owner/repo` is the only way to
+ *  write it, so the one row whose value must contain a slash could never be swept at all. Two
+ *  segments and no more is what separates the two. */
+const A_SLUG = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+const cellLiterals = (cell) =>
+  [...cell.matchAll(/`([^`]+)`/g)]
+    .map((x) => x[1])
+    .filter((v) => v.length >= 8 && (!v.includes("/") || A_SLUG.test(v)));
+
+/** A Vercel project or team id, by SHAPE rather than by being on a list.
+ *
+ *  Twenty-four base-62 characters with at least one capital and one digit in them. The class
+ *  discriminates: `team_workshop` is a fixture name in `backend/tests/test_media_entitlement.py`
+ *  and matches `team_[A-Za-z0-9]+`, which is why the rule this replaced could only ever be run over
+ *  three hand-listed files. Sixteen characters is the floor rather than twenty-four so a truncated
+ *  paste is still caught. */
+const VERCEL_ID_SHAPE = /\b(?:prj|team)_(?=[A-Za-z0-9]{16,})(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]+/g;
+
+/** The field-repository values still written down somewhere with nothing saying whose they are.
+ *
+ *  READ THIS LIST; DO NOT GROW IT. Every entry is a real leftover from the split, kept out of the
+ *  exit code only so that the check can be red for the NEXT one — an allowlist that a reader can
+ *  see is the difference between "nine known problems" and "no problems". Keyed FILE + VALUE with a
+ *  count rather than by line number, so an unrelated edit above the mention does not churn it, and
+ *  a SECOND copy of the same value in the same file is a new finding rather than a free pass.
+ *
+ *  Every one of these was invisible until 2026-08-22: five behind the deleted CloudFront escape,
+ *  four behind the rule that only `docs/*.md` could fail. None of the files is this workstream's. */
+const SIBLING_ALLOWLIST = new Map([
+  // The repository's front page presents the field repository's box as this portal's live backend,
+  // and its Android section repeats the pairing. ENVIRONMENT.md §4 already records that it is wrong
+  // — the IP is the sibling's; this portal's is 13.206.216.18 — but which distribution sits in
+  // front of it is the open question, so the fix is a label, not a new value picked here.
+  ["README.md 15.207.145.174", 2],
+  // A worked troubleshooting example that curls the sibling's origin directly.
+  ["docs/CDN.md 15.207.145.174", 1],
+  // A handover note naming the other product's SSH key file.
+  ["SESSION_HANDOVER.md fieldrepo-deploy", 1],
+  // The handset's own source. A .kt cannot fail this run's owner's build, but it is a live client.
+  ["android/app/src/main/java/com/designprototype/workshop/MainActivity.kt field-repository.vercel.app", 1],
+  ["android/app/src/main/res/xml/network_security_config.xml 15.207.145.174", 1],
+  // The two that matter most: a Next.js image host and a Terraform default, both naming the other
+  // product's media bucket. These are configuration, not prose — they are what runs.
+  ["frontend/next.config.ts fieldrepo-media-626159998512", 2],
+  ["infra/terraform/variables.tf fieldrepo-media-626159998512", 1],
+]);
+
+function registerFacts() {
+  const ci = read(join(DOCS, "CI.md"));
+  const facts = [];
+  for (const m of ci.matchAll(/^>\s*\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*$/gm)) {
+    const [, label, ours, theirs] = m;
+    if (/^-+$/.test(label)) continue;
+    facts.push({
+      label,
+      ours: cellLiterals(ours),
+      theirs: cellLiterals(theirs),
+      oursCell: ours,
+      theirsCell: theirs,
+    });
+  }
+  return facts;
+}
+
+/** Does the window around a hit say whose value it is?
+ *
+ *  EVERY sibling value is blanked before the label is looked for, not just the one being judged.
+ *  `fieldrepo-media-…` contains the word that would otherwise label it, so a value must not vouch
+ *  for itself — and it must not vouch for its NEIGHBOURS either: "the bucket is fieldrepo-media-…
+ *  and the box is 15.207.145.174" would otherwise have the bucket silently excusing the IP, which
+ *  is exactly the pairing docs/CI.md §0 exists to stop.
+ *
+ *  SIBLING_LABEL IS THE ONLY THING THAT LABELS. There was briefly a second escape here — a window
+ *  naming either CloudFront host counted as a restatement of the open distribution question — and
+ *  because a markdown table is one window, one CloudFront row excused every other inherited value
+ *  in the same table. Pinned by `selfTestSiblingSweep`. */
+function windowSaysWhose(lines, ln, siblings) {
+  let win = labelWindow(lines, ln);
+  for (const s of siblings) win = win.split(s.v).join(" ");
+  return SIBLING_LABEL.test(win);
+}
+
+/** The lines that may carry the label for a hit on line `ln` (1-based): ±4, or the whole table. */
+function labelWindow(lines, ln) {
+  const isRow = (s) => /^\s*>?\s*\|/.test(s ?? "");
+  if (isRow(lines[ln - 1])) {
+    let a = ln - 1;
+    let b = ln - 1;
+    while (a > 0 && isRow(lines[a - 1])) a -= 1;
+    while (b < lines.length - 1 && isRow(lines[b + 1])) b += 1;
+    return lines.slice(Math.max(0, a - 2), b + 1).join("\n");
+  }
+  return lines.slice(Math.max(0, ln - 5), ln + 4).join("\n");
+}
+
+function checkSiblingIdentity() {
+  const facts = registerFacts();
+  if (facts.length === 0) {
+    fail("docs/CI.md §0: no `> | … | … | … |` register table found — the sibling-identity sweep has nothing to check against");
+    return;
+  }
+  const byLabel = new Map(facts.map((f) => [f.label, f]));
+  for (const want of REGISTER_ROWS) {
+    const row = byLabel.get(want);
+    if (!row) {
+      fail(
+        `docs/CI.md §0's register has no \`${want}\` row. That table is what every other file's identity is measured ` +
+        "against, so a fact with no row in it is a fact that can diverge silently — which is the whole reason it exists.",
+      );
+      continue;
+    }
+    // A row that has stopped NAMING a value is a row that has stopped being checked. Pinning the
+    // labels alone left the sweep disarmable by prose; see EXPECTED_SIBLING_VALUES.
+    const excuse = ROWS_WITHOUT_A_SIBLING_VALUE.get(want);
+    for (const [side, lits, cell] of [["This portal", row.ours, row.oursCell], ["The field repository", row.theirs, row.theirsCell]]) {
+      if (lits.length || (excuse && excuse.test(cell))) continue;
+      fail(
+        `docs/CI.md §0's \`${want}\` row gives no backticked value in the "${side}" column — it reads "${cell.trim() || "(empty)"}". ` +
+        "Every other file's identity is measured against the literals in this table, so a row that states its value in prose " +
+        "is a row that is no longer checked anywhere, and the diff that did it reads as tidying.",
+      );
+    }
+  }
+
+  // 10a. CloudFront stays open for exactly as long as ENVIRONMENT.md's question does.
+  const cf = byLabel.get("CloudFront");
+  const asks = read(join(DOCS, "ENVIRONMENT.md")).includes(API_HOST_QUESTION);
+  const cfOpen = cf ? /unresolved/i.test(cf.oursCell) && /unresolved/i.test(cf.theirsCell) : false;
+  if (cf && asks && !cfOpen) {
+    fail(
+      "docs/CI.md §0's CloudFront row names a distribution while ENVIRONMENT.md still carries " +
+      `"${API_HOST_QUESTION}". Nothing in a checkout settles that — answer it in ENVIRONMENT.md first, or put the row back to UNRESOLVED.`,
+    );
+  }
+  if (cf && !asks && cfOpen) {
+    fail("docs/CI.md §0's CloudFront row still says UNRESOLVED although ENVIRONMENT.md no longer asks the question. Fill the row in from the answer.");
+  }
+
+  // 10b. The register's own column, corroborated where this checkout holds the artefact it was read
+  //      from. Only the two NON-SENSITIVE Terraform outputs are looked at: that state file also
+  //      holds a live AWS secret access key, and a documentation checker has no business with it.
+  //
+  //      READ WITH A BARE `readFileSync`, NOT THROUGH `read()`. The memoising reader would keep the
+  //      whole state file — secret included — in this process's memory for the rest of the run, so
+  //      "only two outputs are read" would be true of the JSON access and false of the file. The
+  //      parsed object goes out of scope with this block; nothing retains it.
+  const witnessed = [];
+  const tfstate = join(REPO, "infra", "terraform", "terraform.tfstate.d", "designrepo", "terraform.tfstate");
+  if (existsSync(tfstate)) {
+    try {
+      const out = JSON.parse(readFileSync(tfstate, "utf8")).outputs ?? {};
+      for (const [label, key] of [["API box (Elastic IP)", "api_public_ip"], ["S3 media bucket", "s3_bucket"]]) {
+        const claimed = byLabel.get(label)?.ours ?? [];
+        const actual = out[key]?.value;
+        if (!actual || claimed.length === 0) continue;
+        if (!claimed.includes(actual)) {
+          fail(
+            `docs/CI.md §0 gives ${label} as ${claimed.join(", ")} while the designrepo Terraform workspace's ` +
+            `\`${key}\` output is ${actual}. One of the two is describing a different deployment.`,
+          );
+        } else witnessed.push(label);
+      }
+    } catch {
+      note("the designrepo Terraform state is present but unreadable — the register went uncorroborated on this run");
+    }
+  }
+  // The GitHub slug is the one register value with a `/` in it. `A_SLUG` is what keeps the literal
+  // filter from dropping it — that filter exists to keep filesystem paths out — so the row is swept
+  // like any other the day a sibling slug is written into it, instead of being the one fact with no
+  // assertion at all, which is precisely the state every row was in before this check.
+  //
+  // The remote is the article, when there is one: an export or a fresh `git init` has none, and
+  // that is reported rather than passed over, because "no remote" and "the right remote" are not
+  // the same result and a checker that conflates them is claiming a measurement it did not take.
+  const slugRow = byLabel.get("GitHub repository");
+  if (slugRow) {
+    const claimed = [...slugRow.oursCell.matchAll(/`([^`]+)`/g)].map((m) => m[1])[0];
+    let remote = null;
+    try {
+      remote = execSync("git remote get-url origin", { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch { /* no remote, or no git: reported in the note below rather than guessed at */ }
+    const slugOf = (u) => (u.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?$/) || [])[1];
+    if (claimed && remote && slugOf(remote) !== claimed) {
+      fail(
+        `docs/CI.md §0 gives the GitHub repository as \`${claimed}\` while this checkout's \`origin\` is ${remote}. ` +
+        "The register is what tells a reader which repository's Actions secrets the deploy targets belong to.",
+      );
+    } else if (claimed && remote) witnessed.push("GitHub repository");
+    else if (!remote) note("no `origin` remote in this checkout — docs/CI.md §0's GitHub row went uncorroborated on this run");
+  }
+
+  const link = join(REPO, "frontend", ".vercel", "project.json");
+  if (existsSync(link)) {
+    try {
+      const name = JSON.parse(read(link)).projectName;
+      const claimed = byLabel.get("Vercel project")?.ours ?? [];
+      if (name && claimed.length && !claimed.includes(name)) {
+        fail(`docs/CI.md §0 gives the Vercel project as ${claimed.join(", ")} while frontend/.vercel/project.json links this checkout to \`${name}\`.`);
+      } else if (name) witnessed.push("Vercel project");
+    } catch {
+      /* checkVercelIds already fails on unreadable JSON here; one message is enough. */
+    }
+  }
+
+  // 10c. The sweep. Every sibling value, everywhere, must say whose it is.
+  // A sibling value that IS the label vocabulary cannot be swept: `field-repository` is both the
+  // other product's Vercel project name and the words every correct mention of it uses, so every
+  // occurrence would be reported and every one of them would be a false alarm. Skipped when the
+  // label regex matches the WHOLE literal — which leaves `field-repository.vercel.app` (a deploy
+  // target), `fieldrepo-media-…` and `fieldrepo-deploy` swept, because there the label matches only
+  // a prefix and the rest of the string is the part that does damage.
+  const siblings = [];
+  for (const f of facts) for (const v of f.theirs) if (!isOwnLabel(v)) siblings.push({ v, label: f.label });
+  siblings.sort((a, b) => b.v.length - a.v.length); // longest first: one hit, not one per prefix
+  if (siblings.length !== EXPECTED_SIBLING_VALUES) {
+    fail(
+      `docs/CI.md §0's register yields ${siblings.length} sweepable field-repository value(s), and EXPECTED_SIBLING_VALUES says ` +
+      `${EXPECTED_SIBLING_VALUES}. Fewer means a row stopped naming its value and the sweep silently stopped looking for it; ` +
+      "more means a fact was added without anybody deciding it should be swept. Either way, say so here.",
+    );
+  }
+  // 10d's shape rule needs to know which ids are THIS portal's before it can call the rest unknown.
+  // When §2 has lost a row, `checkVercelIds` has already failed for it and every canonical id here
+  // would be reported as a stranger — one real failure turned into a flood, which is how a reader
+  // learns to skim. So the shape rule stands down and says so, and the literal sweep carries on.
+  const vercel = canonicalVercelIds();
+  const canonicalIds = new Set(Object.values(vercel.ids));
+  const idShapeRuns = vercel.missing.length === 0;
+  if (!idShapeRuns) note("docs/CI.md §2 is missing an id row, so §10d's unknown-Vercel-id rule stood down this run");
+  const allowanceLeft = new Map(SIBLING_ALLOWLIST);
+  let labelled = 0;
+  let carrying = 0;
+  for (const rel of trackedTextFiles()) {
+    let text;
+    try { text = read(join(REPO, rel)); } catch { continue; }
+    const anyId = VERCEL_ID_SHAPE.test(text);
+    VERCEL_ID_SHAPE.lastIndex = 0;
+    if (!anyId && !siblings.some((s) => text.includes(s.v))) continue;
+    if (siblings.some((s) => text.includes(s.v))) carrying += 1;
+    const lines = text.split("\n");
+
+    const saysWhose = (i) => windowSaysWhose(lines, i + 1, siblings);
+    lines.forEach((line, i) => {
+      const taken = [];
+      for (const { v, label } of siblings) {
+        for (let at = line.indexOf(v); at !== -1; at = line.indexOf(v, at + 1)) {
+          if (taken.some(([a, b]) => at < b && at + v.length > a)) continue;
+          taken.push([at, at + v.length]);
+          if (saysWhose(i)) { labelled += 1; continue; }
+          const key = `${rel} ${v}`;
+          const left = allowanceLeft.get(key) ?? 0;
+          if (left > 0) {
+            allowanceLeft.set(key, left - 1);
+            known(
+              `${rel}:${i + 1} writes \`${v}\` — the FIELD REPOSITORY's ${label} — with nothing beside it saying whose it is. ` +
+              "On SIBLING_ALLOWLIST, so not fatal. Shrink that list; do not grow it.",
+            );
+          } else {
+            fail(
+              `${rel}:${i + 1} writes \`${v}\` — the FIELD REPOSITORY's ${label}, per the register in docs/CI.md §0 — ` +
+              "and nothing within four lines says whose it is. Either it is a leftover from the split and this file " +
+              "should name this portal's value instead, or it is quoted on purpose and must say so.",
+            );
+          }
+        }
+      }
+      // 10d. And an id of the Vercel SHAPE that is in no register at all. The literal sweep above
+      // can only find values somebody already wrote into §0; a stale id, a typo, or one copied from
+      // an old dashboard link is in none of them, and it is still a deploy target. This is the half
+      // of `checkVercelIds` that moved here on 2026-08-22, widened from three files to every one.
+      for (const m of idShapeRuns ? line.matchAll(VERCEL_ID_SHAPE) : []) {
+        const id = m[0];
+        if (canonicalIds.has(id)) continue;
+        if (siblings.some((s) => s.v === id)) continue; // already judged, above
+        if (saysWhose(i)) continue;
+        fail(
+          `${rel}:${i + 1} writes \`${id}\`, a Vercel id that is neither this portal's (docs/CI.md §2) nor the field ` +
+          "repository's (docs/CI.md §0). An id nobody has written down is still a deploy target: the wrong one does not " +
+          "fail, it publishes this build over whatever is at the other end. Name it in §0 or say whose it is.",
+        );
+      }
+    });
+  }
+  const unused = [...allowanceLeft].filter(([, n]) => n > 0);
+  for (const [key, n] of unused) {
+    note(`SIBLING_ALLOWLIST has ${n} unused slot(s) for \`${key}\` — the mention is gone, so delete the entry`);
+  }
+  note(
+    `${facts.length} identity facts registered in docs/CI.md §0 ` +
+    `(${witnessed.length ? `corroborated here: ${witnessed.join(", ")}` : "no corroborating artefact in this checkout"}); ` +
+    `${siblings.length} field-repository values swept over ${trackedTextFiles().length} tracked files — ` +
+    `${labelled} labelled mention(s) across ${carrying} file(s), ` +
+    `${[...SIBLING_ALLOWLIST.values()].reduce((a, b) => a + b, 0)} allowlisted; ` +
+    `CloudFront ${cfOpen ? "deliberately UNRESOLVED, see ENVIRONMENT.md §4" : "resolved"}`,
+  );
+}
+
+/* ── 10e. the second register ───────────────────────────────────────────────────────────────── */
+
+/** 10e. ENVIRONMENT.md §4's copy of the register must agree with docs/CI.md §0, cell for cell.
+ *
+ *  §10 above says the facts are established ONCE. They were not: ENVIRONMENT.md §4 carries a second
+ *  two-column table with the same rows — API box, S3 media bucket, CloudFront, SSH key pair, Vercel
+ *  — and it is, by that document's own words, "the one document a reader is likeliest to open to
+ *  look up a variable's value". Nothing compared the two. MEASURED 2026-08-22: swapping that table's
+ *  S3 row end for end, so it told every reader this portal's bucket was `fieldrepo-media-…`,
+ *  produced no finding at all, because both values sit under a "Field repository" header and the
+ *  sweep therefore counts both as labelled. The sweep cannot catch this; only a comparison can.
+ *
+ *  The two had ALREADY diverged on the one row this section exists to hold open: §0 says CloudFront
+ *  is UNRESOLVED, and §4's table filled it in. Both must carry the marker while the question stands.
+ *
+ *  A ROW §4 HAS AND §0 DOES NOT is fine, and two of them are the point of §4's table (Google OAuth,
+ *  and the systemd units that are deliberately IDENTICAL on both boxes) — but it has to be DECLARED
+ *  here, so that a row added to one register and not the other is a decision somebody made rather
+ *  than a drift nobody saw. And if §4's table is ever collapsed into a pointer at §0 — the other
+ *  good answer to this — the check says so and passes, because one register cannot disagree. */
+const SECOND_REGISTER_HEADER = "| | Designer portal (this repo) | Field repository |";
+const SECOND_REGISTER_ROWS = new Map([
+  ["API box", "API box (Elastic IP)"],
+  ["S3 media bucket", "S3 media bucket"],
+  ["CloudFront", "CloudFront"],
+  ["SSH key pair", "SSH key pair / file"],
+  ["Vercel", "Vercel production alias"],
+  ["Google OAuth", null], // §0 does not carry it; nothing to compare
+  ["systemd units", null], // identical on both boxes ON PURPOSE — the row exists to say so
+]);
+
+function checkSecondRegister() {
+  const text = read(join(DOCS, "ENVIRONMENT.md"));
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => l.trim() === SECOND_REGISTER_HEADER);
+  if (at === -1) {
+    note("ENVIRONMENT.md carries no second register — docs/CI.md §0 is the only one, which is the simplest way for these to agree");
+    return;
+  }
+  const byLabel = new Map(registerFacts().map((f) => [f.label, f]));
+  const asks = text.includes(API_HOST_QUESTION);
+  let compared = 0;
+  for (let i = at + 1; i < lines.length && /^\s*\|/.test(lines[i]); i += 1) {
+    const cells = lines[i].split("|").map((c) => c.trim());
+    if (cells.length < 5) continue;
+    const [, label, ours, theirs] = cells;
+    if (!label || /^-+$/.test(label)) continue;
+    if (!SECOND_REGISTER_ROWS.has(label)) {
+      fail(
+        `ENVIRONMENT.md §4's register has a \`${label}\` row that SECOND_REGISTER_ROWS does not know about. Either it restates a ` +
+        "docs/CI.md §0 row — in which case map it here so the two are compared — or it is a fact only this table carries, " +
+        "in which case say so here. Two registers that can drift apart are worse than one.",
+      );
+      continue;
+    }
+    const want = SECOND_REGISTER_ROWS.get(label);
+    if (!want) continue;
+    const row = byLabel.get(want);
+    if (!row) continue; // §0 has lost the row; the loop above already failed for it
+    if (want === "CloudFront" && asks && !/unresolved/i.test(lines[i])) {
+      fail(
+        "ENVIRONMENT.md §4's CloudFront row states a distribution with no UNRESOLVED marker on it, while the document itself " +
+        `still carries "${API_HOST_QUESTION}" and docs/CI.md §0's row says UNRESOLVED. This is the table a reader opens to ` +
+        "look up the value, so it is the one place the open question must not be quietly answered.",
+      );
+    }
+    for (const [side, registered, cell] of [["Designer portal (this repo)", row.ours, ours], ["Field repository", row.theirs, theirs]]) {
+      const here = cellLiterals(cell);
+      if (!here.length || !registered.length) continue; // one side states it in prose; nothing to compare
+      const disagree = here.filter((v) => !registered.includes(v));
+      if (disagree.length) {
+        fail(
+          `ENVIRONMENT.md §4's \`${label}\` row gives ${disagree.join(", ")} in the "${side}" column, and docs/CI.md §0's ` +
+          `\`${want}\` row gives ${registered.join(", ")}. Two registers, two answers: a reader takes whichever one they opened.`,
+        );
+      }
+    }
+    compared += 1;
+  }
+  note(`${compared} row(s) of ENVIRONMENT.md §4's register compared cell-for-cell with docs/CI.md §0`);
+}
+
+/* ── 11. comments that assert a state the code has left behind ──────────────────────────────── */
+
+/** 11. Comment shapes that rot, reported as warnings against a baseline of the ones already here.
+ *
+ *  THE PATTERN THIS REPOSITORY NAMED ABOUT ITSELF. COMPUTED_FINDINGS.md §7 records a docstring on
+ *  `workshop_cost_integrity` that said no designer sees a cost-integrity finding on any surface
+ *  today, and ended "delete this paragraph when the ports and a panel land, not before". Both ports
+ *  landed. Nobody deleted it. The sentence was then not merely stale but ARMED: the only reader who
+ *  could act on the instruction was one who already knew the answer, and the claim above it is
+ *  exactly what stops such a reader looking. A shipped feature was documented as unreachable for a
+ *  fortnight, in the file that implements it. Roughly a dozen live instances of the same family
+ *  were found across Python, Kotlin, TypeScript and Markdown in the same audit.
+ *
+ *  WHAT IS CHECKED, AND WHY EACH SHAPE. Prose cannot be verified, but a claim about the state of
+ *  the world that carries NO DATE cannot be re-checked by anyone either, and that is mechanical:
+ *
+ *    * `when X lands` / `when it ships` — a promise about a future edit, paired either with a
+ *      not-yet-built noun (route, endpoint, panel, port, migration…) or with an obligation in the
+ *      lines around it (must, should, delete, rewrite). Without one of those two it is almost
+ *      always runtime prose — "when the upload lands" — and is left alone.
+ *    * `, not before` — the tail of the instruction form above, and the exact words of the one this
+ *      repository named.
+ *    * `today, everywhere` and `for now` — a claim scoped to a moment that does not name the moment.
+ *    * `Phase 2` / `Phase 3` — a plan's vocabulary, meaningless to a reader who was not in the room
+ *      and unfalsifiable once the plan is superseded.
+ *    * a bare count of call sites — "all three callers", "the two call sites". The count is an
+ *      invariant the comment is asserting, and the fourth caller does not come with a reminder.
+ *
+ *  THE ESCAPES, WHICH ARE THE POINT RATHER THAN A CONCESSION. Three, and each of them is the fix
+ *  rather than a suppression:
+ *
+ *    1. AN ISO DATE within three lines silences every shape. That is the shape this repository's own
+ *       docs recommend over an instruction — "true as of «date»; check `«grep»`" — because a dated
+ *       claim tells the next reader what to re-check and when it was last true, while an undated
+ *       one only tells them what to believe. So the cheapest way to clear a warning here is to
+ *       improve the comment in exactly the direction the house style already asks for.
+ *    2. A QUOTATION is somebody else's words. `stage_definitions.py` quotes the source Word
+ *       document's margin notes — "Phase 2 work", "we may consider deleting this entire section
+ *       for now" — and those are evidence, not claims: the quotation is true forever precisely
+ *       because the document said it. Text inside quotes is skipped.
+ *    3. A FILE WHOSE NAME CARRIES A DATE is dated by construction. `docs/AUDIT-2026-08-15.md` is a
+ *       record of what was true on 15 August; asking it to date its sentences is asking it to
+ *       repeat its own filename nine hundred times.
+ *
+ *  WARNING, NOT FAILURE, AND WHY THE BASELINE IS SPELLED OUT IN FULL. A gate that goes red on the
+ *  day it lands gets disabled, and this one started with 57 hits across five languages, most of
+ *  them in files this workstream does not own. So the existing ones are listed below and the check
+ *  reports only what is NOT in that list. The list is written out one line per instance rather than
+ *  kept in a side file on purpose: a baseline nobody reads is a suppression list, and this one is
+ *  meant to be read and emptied. Regenerate it with `--rot-baseline`, which prints a replacement
+ *  block to stdout — and shrinking it is the work, not regenerating it.
+ *
+ *  THE KEY IS SHAPE + FILE + A HASH OF THE COMMENT LINE, deliberately not a line number: comments
+ *  move constantly and a baseline that churns on every unrelated edit is one nobody will trust. The
+ *  consequence is that REWORDING a baselined comment re-reports it, which is correct — a reworded
+ *  claim about the state of the world is a new claim, and it is exactly the moment to date it.
+ */
+const ROT_SHAPES = [
+  ["not-before", /(?:^|[,;—-])\s*not before\b/i],
+  ["today-everywhere", /\btoday,?\s+everywhere\b/i],
+  ["for-now", /\bfor now\b/i],
+  ["phase-n", /\bPhase\s*[23]\b/i],
+  [
+    "undated-call-site-count",
+    /\b(?:all|the|its|only|both|these|those)\s+(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+)\s+(?:call[- ]sites?|callers?|usages?|use[- ]sites?)\b/i,
+  ],
+];
+const ROT_FUTURE_EVENT = /\bwhen\b[^.\n]{0,70}\b(?:lands?|ships?|goes live)\b/i;
+const ROT_PENDING_WORK = /\b(?:route|endpoint|panel|port|feature|screen|surface|migration|column|flag|gate|answer|counterpart|that|it|one)\s+(?:lands?|ships?)\b/i;
+const ROT_OBLIGATION = /\b(?:must|should|has to|have to|delete|remove|rewrite|revisit|re-?enable|update this|then this|becomes)\b/i;
+const ISO_DATE = /\b20\d\d-\d\d-\d\d\b/;
+
+/** The instances that were already here when this check landed. Shrink it; do not grow it. */
+const ROT_BASELINE = new Set([
+  "when-x-lands SESSION_HANDOVER.md 6ea56210", // when the ports land — SESSION_HANDOVER.md:482
+  "not-before SESSION_HANDOVER.md 1c61ff15", // , not before — SESSION_HANDOVER.md:1108
+  "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/MainActivity.kt 239c6854", // the three call sites — android/app/src/main/java/com/designprototype/workshop/MainActivity.kt:4207
+  "when-x-lands android/app/src/main/java/com/designprototype/workshop/MainActivity.kt 6cba3dce", // when it lands — android/app/src/main/java/com/designprototype/workshop/MainActivity.kt:14231
+  "when-x-lands android/app/src/main/java/com/designprototype/workshop/data/DwAiVerbs.kt e4600780", // When the route lands — android/app/src/main/java/com/designprototype/workshop/data/DwAiVerbs.kt:526
+  "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/data/DwAsrModelInstall.kt c0423c23", // Its two call sites — android/app/src/main/java/com/designprototype/workshop/data/DwAsrModelInstall.kt:620
+  "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/data/DwCustomSections.kt 465a57a0", // The two callers — android/app/src/main/java/com/designprototype/workshop/data/DwCustomSections.kt:379
+  "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/data/DwDownload.kt 49f32f75", // THE TWO CALLERS — android/app/src/main/java/com/designprototype/workshop/data/DwDownload.kt:265
+  "when-x-lands android/app/src/main/java/com/designprototype/workshop/data/DwTier2Layer.kt 3a5c5af7", // When the route lands — android/app/src/main/java/com/designprototype/workshop/data/DwTier2Layer.kt:249
+  "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/data/DwWorkshopCreation.kt 2135d31b", // the two callers — android/app/src/main/java/com/designprototype/workshop/data/DwWorkshopCreation.kt:104
+  "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/data/StageSchema.kt 9b006348", // the two callers — android/app/src/main/java/com/designprototype/workshop/data/StageSchema.kt:2085
+  "when-x-lands android/app/src/main/java/com/designprototype/workshop/ui/AppNavigation.kt 19198349", // When one lands — android/app/src/main/java/com/designprototype/workshop/ui/AppNavigation.kt:396
+  "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/ui/LocationFields.kt 18a6fb0c", // the three call sites — android/app/src/main/java/com/designprototype/workshop/ui/LocationFields.kt:793
+  "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/ui/NumberedPointsField.kt 9fdf3210", // its two call sites — android/app/src/main/java/com/designprototype/workshop/ui/NumberedPointsField.kt:40
+  "undated-call-site-count android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwAsrModelInstallUi.kt 1a0907eb", // the two callers — android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwAsrModelInstallUi.kt:249
+  "when-x-lands android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwAsrModelInstallUi.kt f382a97f", // when it lands — android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwAsrModelInstallUi.kt:1080
+  "when-x-lands android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/WorkshopListScreen.kt 65e530ee", // when the create lands — android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/WorkshopListScreen.kt:1072
+  "undated-call-site-count android/app/src/test/java/com/designprototype/workshop/report/ChartLabelSizeTest.kt 82f18988", // The two callers — android/app/src/test/java/com/designprototype/workshop/report/ChartLabelSizeTest.kt:130
+  "undated-call-site-count backend/app/api/routes/design_workshops.py 39a94a67", // ITS TWO CALLERS — backend/app/api/routes/design_workshops.py:2902
+  "not-before backend/app/api/routes/design_workshops.py 1e2d0f71", // , not before — backend/app/api/routes/design_workshops.py:3128
+  "undated-call-site-count backend/app/api/routes/media.py f267bc6a", // THE TWO CALL SITES — backend/app/api/routes/media.py:100
+  "not-before backend/app/api/routes/media.py 1560bf63", // , not before — backend/app/api/routes/media.py:105
+  "undated-call-site-count backend/app/api/routes/questionnaire_forms.py 8c04658c", // the three callers — backend/app/api/routes/questionnaire_forms.py:291
+  "not-before backend/app/schemas/design_workshops.py 55a6b50b", // , not before — backend/app/schemas/design_workshops.py:77
+  "undated-call-site-count backend/app/services/ai_layers.py e31cb9ed", // THE TWO CALL SITES — backend/app/services/ai_layers.py:691
+  "for-now backend/app/services/app_settings.py b7989001", // For now — backend/app/services/app_settings.py:3
+  "undated-call-site-count backend/app/services/artisan_identity.py 63ae41be", // the two callers — backend/app/services/artisan_identity.py:165
+  "undated-call-site-count backend/app/services/design_workshops.py 7ddb27dc", // all three callers — backend/app/services/design_workshops.py:2161
+  "undated-call-site-count backend/app/services/design_workshops.py 761aefe4", // the five call sites — backend/app/services/design_workshops.py:3691
+  "phase-n backend/app/services/stage_definitions.py 7304f9b7", // Phase 3 — backend/app/services/stage_definitions.py:24
+  "for-now backend/app/services/stage_definitions.py d3c8d720", // for now — backend/app/services/stage_definitions.py:47
+  "for-now backend/app/services/stage_definitions.py d4adf2c4", // for now — backend/app/services/stage_definitions.py:1620
+  "phase-n backend/scripts/reconcile_interview_set_keys.py b15aa9c5", // Phase 2 — backend/scripts/reconcile_interview_set_keys.py:51
+  "phase-n backend/scripts/reconcile_interview_set_keys.py 389a10f2", // Phase 3 — backend/scripts/reconcile_interview_set_keys.py:90
+  "when-x-lands backend/tests/test_designer_roster.py b794c92b", // WHEN THAT LANDS — backend/tests/test_designer_roster.py:873
+  "for-now backend/tests/test_stage_schema.py 9bced674", // for now — backend/tests/test_stage_schema.py:415
+  "not-before docs/COMPUTED_FINDINGS.md 0254fd77", // , not before — docs/COMPUTED_FINDINGS.md:506
+  "undated-call-site-count docs/SCALABILITY.md 29c4c9a2", // all 57 call sites — docs/SCALABILITY.md:637
+  "when-x-lands frontend/components/BackButton.tsx 9888ff6a", // when the page knows where "back" should land — frontend/components/BackButton.tsx:10
+  "for-now frontend/components/SignaturePad.tsx 099005d8", // for now — frontend/components/SignaturePad.tsx:112
+  "for-now frontend/components/designworkshop/AiVerbReviewDialog.tsx 9aef7fa5", // for now — frontend/components/designworkshop/AiVerbReviewDialog.tsx:193
+  "undated-call-site-count frontend/components/designworkshop/StageRecordEmbed.tsx 8ec67a5f", // its three callers — frontend/components/designworkshop/StageRecordEmbed.tsx:1041
+  "undated-call-site-count frontend/components/dictation/onDeviceSpeech.ts 11511c84", // the two callers — frontend/components/dictation/onDeviceSpeech.ts:214
+  "undated-call-site-count frontend/components/forms/MediaCaptureField.tsx 03d86ba2", // all twelve call sites — frontend/components/forms/MediaCaptureField.tsx:184
+  "undated-call-site-count frontend/components/forms/inlineRecordHost.ts b4a0ea0c", // ITS THREE CALLERS — frontend/components/forms/inlineRecordHost.ts:274
+  "when-x-lands frontend/components/settings/ProviderOrderPanel.tsx b2302a21", // When it lands — frontend/components/settings/ProviderOrderPanel.tsx:366
+  "not-before frontend/e2e/guide-walkthrough-unit.spec.ts 326990ef", // , not before — frontend/e2e/guide-walkthrough-unit.spec.ts:51
+  "undated-call-site-count frontend/e2e/inline-record-host-unit.spec.ts e0a75647", // the two call sites — frontend/e2e/inline-record-host-unit.spec.ts:270
+  "undated-call-site-count frontend/e2e/inline-record-host-unit.spec.ts 3719c355", // ITS THREE CALLERS — frontend/e2e/inline-record-host-unit.spec.ts:541
+  "when-x-lands frontend/e2e/inline-record-host-unit.spec.ts 5ec39b6e", // When it lands — frontend/e2e/inline-record-host-unit.spec.ts:543
+  "undated-call-site-count frontend/e2e/process-refusal-a11y-unit.spec.ts 5fd64ec0", // these two call sites — frontend/e2e/process-refusal-a11y-unit.spec.ts:51
+  "when-x-lands frontend/e2e/qr-decode-unit.spec.ts 56b5829d", // when it lands — frontend/e2e/qr-decode-unit.spec.ts:309
+  "when-x-lands frontend/lib/aiLayers.ts 7169ea6f", // when the model volunteered a number, so it l — frontend/lib/aiLayers.ts:887
+  "undated-call-site-count frontend/lib/aiVerbs.ts 19cfbc00", // all three call sites — frontend/lib/aiVerbs.ts:672
+  "undated-call-site-count frontend/lib/aiVerbs.ts dca8ada2", // all three call sites — frontend/lib/aiVerbs.ts:716
+  "undated-call-site-count frontend/lib/designWorkshopStore.ts 315664c5", // the two callers — frontend/lib/designWorkshopStore.ts:4180
+  "not-before frontend/lib/media.ts 39b007b9", // , not before — frontend/lib/media.ts:705
+]);
+
+/** Spans of a line that sit inside quotation marks — quoted words are evidence, not a claim.
+ *
+ *  THE STRAIGHT SINGLE QUOTE IS WORD-BOUNDARY DELIMITED, and that is not a nicety. This repository's
+ *  comment style is dense with possessives and contractions, and a bare `'…'` treats any two
+ *  apostrophes on a line as one quotation: "Don't delete this when the panel lands, not before the
+ *  port's done" opened a span at `n't` and closed it at `port'`, swallowing both shapes in the
+ *  archetype this whole check is named for. The lookarounds cost a real quotation nothing —
+ *  `'Phase 2 work'` still escapes, because the mark that opens one follows a space and precedes a
+ *  letter, never the reverse. Pinned by four cases in ROT_SELFTEST. */
+function quotedSpans(line) {
+  const spans = [];
+  for (const re of [/"[^"]{1,300}"/g, /“[^”]{1,300}”/g, /(?<![A-Za-z])'[^'\n]{3,300}'(?![A-Za-z])/g, /‘[^’]{1,300}’/g]) {
+    for (const m of line.matchAll(re)) spans.push([m.index, m.index + m[0].length]);
+  }
+  return spans;
+}
+
+/** Which lines of a file are comment or docstring. Markdown is prose throughout, so all of it. */
+function commentLinesOf(path, text) {
+  const lines = text.split("\n");
+  if (path.endsWith(".md")) return lines.map((l, i) => [i + 1, l]);
+  const out = [];
+  let inDoc = false;
+  let docQ = null;
+  let inBlock = false;
+  lines.forEach((raw, i) => {
+    const t = raw.trim();
+    let isComment = false;
+    if (/\.(ya?ml|sh|tf|tfvars|toml|ini|cfg|properties|env|example)$/i.test(path)) {
+      isComment = t.startsWith("#");
+    } else if (path.endsWith(".py")) {
+      if (inDoc) {
+        isComment = true;
+        if (t.includes(docQ)) inDoc = false;
+      } else {
+        const m = t.match(/^[rbfu]*("""|''')/);
+        if (m) {
+          docQ = m[1];
+          isComment = true;
+          if (!t.slice(t.indexOf(docQ) + 3).includes(docQ)) inDoc = true;
+        } else if (t.startsWith("#")) isComment = true;
+      }
+    } else {
+      // C-family: Kotlin, TypeScript, JavaScript. A `*` continuation line counts, which is what
+      // makes a KDoc or JSDoc block visible at all — the shapes above live in their prose.
+      if (inBlock) {
+        isComment = true;
+        if (t.includes("*/")) inBlock = false;
+      } else if (t.startsWith("//")) isComment = true;
+      else if (t.startsWith("/*")) {
+        isComment = true;
+        if (!t.includes("*/")) inBlock = true;
+      } else if (t.startsWith("*")) isComment = true;
+    }
+    if (isComment) out.push([i + 1, raw]);
+  });
+  return out;
+}
+
+/** FNV-1a, 32 bits. Only needs to be stable and short; nothing here is adversarial. */
+function fnv1a(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+const rotKey = (shape, path, line) => `${shape} ${path} ${fnv1a(line.trim().toLowerCase().replace(/\s+/g, " "))}`;
+
+function scanRottableClaims() {
+  const hits = [];
+  const COMMENTED = /\.(md|py|ts|tsx|js|jsx|mjs|cjs|kt|kts|ya?ml|sh|tf|tfvars|toml|ini|cfg|properties|env|example)$/i;
+  for (const rel of trackedTextFiles()) {
+    if (!COMMENTED.test(rel) || ISO_DATE.test(rel)) continue;
+    let text;
+    try { text = read(join(REPO, rel)); } catch { continue; }
+    const all = text.split("\n");
+    for (const [ln, line] of commentLinesOf(rel, text)) {
+      if (ISO_DATE.test(all.slice(Math.max(0, ln - 4), ln + 3).join("\n"))) continue;
+      const spans = quotedSpans(line);
+      const outside = (m) => m && !spans.some(([a, b]) => m.index >= a && m.index < b);
+      const near = all.slice(Math.max(0, ln - 3), ln + 2).join("\n");
+      const found = [];
+      const fe = line.match(ROT_FUTURE_EVENT);
+      if (outside(fe) && (ROT_PENDING_WORK.test(line) || ROT_OBLIGATION.test(near))) found.push(["when-x-lands", fe[0]]);
+      for (const [name, re] of ROT_SHAPES) {
+        const m = line.match(re);
+        if (outside(m)) found.push([name, m[0].trim()]);
+      }
+      for (const [shape, phrase] of found) hits.push({ shape, rel, ln, phrase, key: rotKey(shape, rel, line) });
+    }
+  }
+  return hits;
+}
+
+function checkRottableClaims() {
+  const hits = scanRottableClaims();
+  if (ROT_BASELINE_WRITE) {
+    console.log("const ROT_BASELINE = new Set([");
+    for (const h of hits) console.log(`  ${JSON.stringify(h.key)}, // ${h.phrase.slice(0, 44)} — ${h.rel}:${h.ln}`);
+    console.log("]);");
+    return;
+  }
+  const fresh = hits.filter((h) => !ROT_BASELINE.has(h.key));
+  for (const h of fresh) {
+    rot(
+      `${h.rel}:${h.ln} — "${h.phrase}". A claim about the state of the world with no date beside it: nobody can re-check it, ` +
+      "so it survives the thing it describes. Prefer the dated form this repository already recommends — " +
+      "\"true as of «2026-08-22»; check `«grep»`\".",
+    );
+  }
+  const stale = [...ROT_BASELINE].filter((k) => !hits.some((h) => h.key === k));
+  note(
+    `${hits.length} rottable comment shape(s) in tracked source and docs — ${hits.length - fresh.length} baselined, ` +
+    `${fresh.length} new (warning only); ${stale.length} baseline entr${stale.length === 1 ? "y" : "ies"} no longer match, ` +
+    "so the fix is landing. Regenerate the list with `--rot-baseline`.",
+  );
+}
+
+/** Cases that hold §11's detector to its word, and — more importantly — to its ABSTENTIONS.
+ *
+ *  A rot detector earns its keep by what it declines to report. The first three drafts of this one
+ *  reported 261, then 1,020, then 94 findings over the same tree, almost all of them prose about
+ *  runtime — "when the upload lands", "the two callers dispose of their handle" — and a list that
+ *  long is a list nobody reads. The escapes are what brought it to 57, so each of them is pinned
+ *  here: break one and the run goes red at this line instead of quietly re-flooding the output.
+ *
+ *  The FIRES cases are written from the instance this repository named about itself
+ *  (COMPUTED_FINDINGS.md §7), so the detector cannot silently stop catching the thing it was built
+ *  for; the ABSTAINS cases are the real sentences that made the earlier drafts unusable. */
+const ROT_SELFTEST = [
+  // ── fires ──
+  ["FIRES", "x.py", '# delete this paragraph when the ports and a panel land, not before.'],
+  ["FIRES", "x.kt", "// When the route lands, this map is the contract it has to satisfy."],
+  ["FIRES", "x.ts", "// Retained so the three call sites need no edit."],
+  ["FIRES", "x.md", "There is no designer-facing surface today, everywhere it could sit is unbuilt."],
+  ["FIRES", "x.py", "#: Phase 2 work — the Advanced tier is not implemented."],
+  ["FIRES", "x.ts", "// Good enough for now; the real gate goes in beside the reducer."],
+  // ── abstains, and each of these is why the check is usable ──
+  ["ABSTAINS", "x.kt", "// A hold-up that resolves itself when an upload lands, which is normal."],
+  // Pinned as FIRES because it DOES, and it should not: this is `ProviderOrderPanel.tsx`'s real
+  // comment about keyboard focus, caught by "when it lands" + "goes" in the obligation window. It
+  // is the detector's precision limit written down rather than hidden — the baseline absorbs it,
+  // and a future tightening that abstains here should delete this case rather than be surprised.
+  ["FIRES", "x.ts", "// Follow the row. When it lands on either end its arrow goes disabled."],
+  ["ABSTAINS", "x.py", '# The margin note read "Phase 2 work", which is quoted, not claimed.'],
+  // The same escape through STRAIGHT SINGLE QUOTES, which is the form that had to be narrowed:
+  // a real quotation still silences the shape …
+  ["ABSTAINS", "x.py", "# The margin note read 'Phase 2 work', which is quoted, not claimed."],
+  // … while two possessives no longer do. Both of these reported nothing before 2026-08-22, and the
+  // first is the archetype from COMPUTED_FINDINGS.md §7 with an apostrophe added to each half.
+  ["FIRES", "x.ts", "// Don't delete this when the panel lands, not before the port's done."],
+  ["FIRES", "x.ts", "// The portal's default is good enough for now, per the reader's note."],
+  // A miss that survives the narrowing, pinned so it is written down rather than assumed absent:
+  // the call-site shape wants its determiner NEXT TO the numeral, and "the store's three callers"
+  // puts a possessive between them. A future widening that fires here should delete this case.
+  ["ABSTAINS", "x.ts", "// The store's three callers each dispose of it, and that's deliberate."],
+  ["ABSTAINS", "x.ts", "const threeCallers = 1; // not a comment line, so not scanned at all"],
+  ["ABSTAINS", "x.md", "All three callers agree — true as of 2026-08-22; check `grep -rn hydrate`."],
+];
+
+function selfTestRot() {
+  let fired = 0;
+  for (const [want, name, line] of ROT_SELFTEST) {
+    // The date escape reads three lines either side, so a case is fed as its own little file.
+    const text = `${line}\n`;
+    const hits = [];
+    const all = text.split("\n");
+    for (const [ln, l] of commentLinesOf(name, text)) {
+      if (ISO_DATE.test(all.slice(Math.max(0, ln - 4), ln + 3).join("\n"))) continue;
+      const spans = quotedSpans(l);
+      const outside = (m) => m && !spans.some(([a, b]) => m.index >= a && m.index < b);
+      const near = all.slice(Math.max(0, ln - 3), ln + 2).join("\n");
+      const fe = l.match(ROT_FUTURE_EVENT);
+      if (outside(fe) && (ROT_PENDING_WORK.test(l) || ROT_OBLIGATION.test(near))) hits.push("when-x-lands");
+      for (const [shape, re] of ROT_SHAPES) if (outside(l.match(re))) hits.push(shape);
+    }
+    const got = hits.length ? "FIRES" : "ABSTAINS";
+    if (got !== want) {
+      fail(
+        `check-docs: §11's rot detector ${got} on a case pinned as ${want} — "${line.trim().slice(0, 70)}". ` +
+        (want === "ABSTAINS"
+          ? "An escape has been lost, and the next run will bury its real findings in prose about runtime."
+          : "The shape this check exists for is no longer detected."),
+      );
+    } else fired += 1;
+  }
+  note(`${fired} self-test cases for the rottable-comment shapes (${ROT_SELFTEST.filter((c) => c[0] === "ABSTAINS").length} of them abstentions)`);
+}
+
+/** Cases for §10's two judgements: which sibling values are swept, and where a label may sit. */
+function selfTestSiblingSweep() {
+  const cases = [
+    // Swept: the part after the label prefix is the part that does the damage.
+    [false, "fieldrepo-media-626159998512"],
+    [false, "field-repository.vercel.app"],
+    [false, "fieldrepo-deploy"],
+    [false, "15.207.145.174"],
+    [false, "prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0"],
+    // Not swept: the literal IS the words every correct mention of it uses.
+    [true, "field-repository"],
+    [true, "fieldrepo"],
+  ];
+  for (const [want, v] of cases) {
+    if (isOwnLabel(v) !== want) {
+      fail(
+        `check-docs: §10 would ${want ? "sweep" : "skip"} \`${v}\`, and it must ${want ? "skip" : "sweep"} it. ` +
+        (want
+          ? "A value that is also its own label reports every correct mention of the other product."
+          : "Dropping this value from the sweep is dropping the fact it identifies."),
+      );
+    }
+  }
+  // A table labels its rows from a header that can sit well above them, so the window widens to
+  // the whole block. This is the case that made docs/CI.md §0's own register report itself.
+  const table = ["prose", "| | This portal | The field repository |", "|---|---|---|", "| a | x | y |", "| b | p | q |", "| c | m | n |"];
+  if (!SIBLING_LABEL.test(labelWindow(table, 6))) {
+    fail("check-docs: §10's labelWindow no longer reaches a markdown table's header row — every register row will report itself");
+  }
+  if (SIBLING_LABEL.test(labelWindow(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "the field repository"], 1))) {
+    fail("check-docs: §10's labelWindow reaches eleven lines away in prose — a label that distant is not a label the reader will see");
+  }
+
+  // THE DEFECT THIS PINS SHIPPED ONCE. A table where one row names a CloudFront host and another
+  // carries an inherited bucket, with nothing anywhere saying whose the bucket is: for a fortnight
+  // that counted as labelled, because the disputed hostname was a second escape and a table is one
+  // window. Re-introducing `fieldrepo-media-626159998512` into DEPLOYMENT_VERCEL.md then produced
+  // zero findings. Only SIBLING_LABEL labels.
+  const swept = [{ v: "fieldrepo-media-626159998512", label: "S3 media bucket" }, { v: "15.207.145.174", label: "API box (Elastic IP)" }];
+  const cfTable = [
+    "| Piece | Where it runs | Notes |",
+    "|---|---|---|",
+    "| HTTPS edge | CloudFront `https://d2b34i3e92al6i.cloudfront.net` | the value the browser talks to |",
+    "| Media | S3 `fieldrepo-media-626159998512` | uploads go straight there |",
+  ];
+  if (windowSaysWhose(cfTable, 4, swept)) {
+    fail(
+      "check-docs: §10 counts an inherited value as labelled because a CloudFront host sits in the same table. " +
+      "That is the escape deleted on 2026-08-22 — it excused the bucket, the alias, the deploy key and the project id, " +
+      "not the one Elastic IP it was argued for.",
+    );
+  }
+  // …and the header that DOES label it still does.
+  if (!windowSaysWhose([...cfTable.slice(0, 1), "| | This portal | The field repository |", ...cfTable.slice(1)], 5, swept)) {
+    fail("check-docs: §10 no longer reads a 'field repository' table header as a label — every register row will report itself");
+  }
+
+  // The Vercel id SHAPE rule that replaced `checkVercelIds`'s deleted half. `team_workshop` is a
+  // fixture name in backend/tests/test_media_entitlement.py and is why the old rule could only run
+  // over three hand-listed files; the shape has to tell it from a real id without a list.
+  const idCases = [
+    [true, "prj_QQQQQQQQ9QQQQQQQQQQQQQ"],
+    [true, "team_ZZZZZZZZ7ZZZZZZZZ"],
+    [false, "team_workshop"],
+    [false, "prj_short1A"],
+    [false, "team_alllowercasenodigits"],
+  ];
+  for (const [want, id] of idCases) {
+    VERCEL_ID_SHAPE.lastIndex = 0;
+    if (VERCEL_ID_SHAPE.test(id) !== want) {
+      fail(
+        `check-docs: §10's Vercel id shape ${want ? "no longer matches" : "now matches"} \`${id}\`. ` +
+        (want
+          ? "An unregistered deploy target written anywhere in the tree will go unreported."
+          : "A name that merely starts with the prefix is not an id, and reporting it is how this rule gets deleted."),
+      );
+    }
+  }
+  VERCEL_ID_SHAPE.lastIndex = 0;
+
+  note(`${cases.length + idCases.length + 4} self-test cases for the field-repository sweep`);
+}
+
 /* ── run ────────────────────────────────────────────────────────────────────────────────────── */
 
 selfTestDrift();
 selfTestFactsDrift();
 selfTestExemptions();
+selfTestRot();
+selfTestSiblingSweep();
+selfTestDatabaseProvider();
 checkFacts();
 checkRoleParity();
 checkRouteGuardTable();
@@ -1305,9 +2862,18 @@ checkMermaid();
 checkCrossLinks();
 checkAndroidApiHost();
 checkVercelIds();
+checkDatabaseProvider();
 checkIndexListsEveryDoc();
+checkSiblingIdentity();
+checkSecondRegister();
+checkRottableClaims();
 
 if (!QUIET) for (const n of notes) console.log(`  ok    ${n}`);
+// The allowlisted identity mentions print on every run, above the warnings and below the notes.
+// A list of known problems that nobody sees is a suppression list; this one is meant to be read
+// down to nothing. See SIBLING_ALLOWLIST.
+for (const k of knowns) console.log(`  known ${k}`);
+for (const r of rots) console.log(`  rot   ${r}`);
 for (const w of warnings) console.log(`  warn  ${w}   [owned by another workstream]`);
 for (const f of failures) console.error(`FAIL    ${f}`);
 console.log(

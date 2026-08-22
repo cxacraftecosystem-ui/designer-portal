@@ -171,6 +171,90 @@ def test_the_create_route_carries_the_create_gate_and_only_that_one():
     )
 
 
+# ── 2b. The gate's REACH, counted rather than remembered ─────────────────────────────────────────
+
+
+#: The non-GET routes in ``design_workshops.py`` that do NOT call ``_require_designer``, keyed the
+#: way the decorator spells them. Five are argued in the module header and in the gate's own
+#: docstring; ``/{workshop_id}/exports`` is the one that is only DESCRIBED there, because it is a
+#: write sitting behind ``load_workshop_or_404(for_edit=True)`` alone and tightening it is an
+#: owner's decision rather than a test's. Either way it is pinned: adding a seventh ungated write,
+#: or gating one of these six, fails here and makes somebody say which they meant.
+UNGATED_WRITES = {
+    ("POST", ""),                          # create — assert_can_create_design_workshops, narrower
+    ("DELETE", "/{workshop_id}"),          # assert_can_delete
+    ("POST", "/{workshop_id}/restore"),    # require_admin
+    ("POST", "/{workshop_id}/report"),     # open to anyone who may READ the workshop
+    ("POST", "/dictate"),                  # retired: answers 410 to everyone
+    ("POST", "/{workshop_id}/exports"),    # load_workshop_or_404(for_edit=True) and nothing else
+}
+
+
+def _router_routes():
+    """Every ``@router.<verb>("<path>")`` in the module, with the source of the handler beneath it.
+
+    Read as TEXT for the same reason ``test_the_create_route_carries_the_create_gate_and_only_that_one``
+    does: the gate is stated INSIDE each handler rather than declared as a dependency, so there is
+    nothing on the route object to inspect and calling the handlers would need a database.
+    """
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "app/api/routes/design_workshops.py"
+    ).read_text(encoding="utf-8")
+    lines = source.splitlines()
+    found = [
+        (i, m.group(1).upper(), m.group(2))
+        for i, line in enumerate(lines)
+        if (m := re.match(r'@router\.(get|post|put|patch|delete)\("([^"]*)"', line.strip()))
+    ]
+    bounds = [i for i, _, _ in found] + [len(lines)]
+    return [
+        (verb, path, "\n".join(lines[start:bounds[n + 1]]))
+        for n, (start, verb, path) in enumerate(found)
+    ], source
+
+
+def test_the_designer_gate_still_stands_where_this_docstring_says_it_does():
+    """``_require_designer``'s docstring states its reach in numbers. This is what keeps them true.
+
+    THE DEFECT THIS REPLACES was a docstring that described the gate as covering "the two capture
+    aids" while fourteen call sites read it — an understatement large enough that somebody could
+    have lifted the gate off the stage save believing it guarded an OCR button. Rewriting it fixed
+    the sentence; only this test fixes the class of defect, because a hand-kept count in a comment
+    rots the first time anybody adds a route. ``docs/tools/check-docs.mjs`` has a rot detector for
+    exactly this shape and its regex does not reach the words "calls" or "routes", so the claim
+    slipped past it rather than satisfying it.
+
+    If this fails, the source moved and the docstring did not. Update
+    ``app/api/routes/design_workshops.py::_require_designer`` — the enumerated list, the counts in
+    its opening line and in "eighteen routes", and ``UNGATED_WRITES`` above — in the same commit.
+    """
+    routes, source = _router_routes()
+    writes = [(verb, path, body) for verb, path, body in routes if verb != "GET"]
+
+    direct = source.count("_require_designer(current_user)")
+    assert direct == 14, (
+        f"_require_designer has {direct} direct call sites, not the fourteen its docstring "
+        f"enumerates — add or remove the route there too"
+    )
+
+    gated = {(v, p) for v, p, body in writes if "_require_designer(current_user)" in body}
+    via_verb_gate = {(v, p) for v, p, body in writes if "_verb_gate(" in body} - gated
+    ungated = {(v, p) for v, p, _ in writes} - gated - via_verb_gate
+
+    # Eleven direct + five behind `_verb_gate` = the sixteen of twenty-two the docstring claims.
+    assert (len(writes), len(gated), len(via_verb_gate)) == (22, 11, 5), (
+        f"{len(writes)} non-GET routes, {len(gated)} gated directly and {len(via_verb_gate)} behind "
+        f"_verb_gate — _require_designer's docstring says 22, 11 and 5"
+    )
+    assert ungated == UNGATED_WRITES, (
+        "the set of writes OUTSIDE the designer set changed. A new one is a permission decision, "
+        "not a refactor: name it in _require_designer's 'WHAT IT IS NOT' section and here"
+    )
+
+
 # ── 3. The half that must NOT have moved ─────────────────────────────────────────────────────────
 
 

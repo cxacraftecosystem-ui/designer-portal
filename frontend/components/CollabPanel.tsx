@@ -150,7 +150,16 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
       {revisions ? (
         <div>
           <h3 className="font-display font-bold text-base text-ink">Edit history</h3>
-          <p className="text-xs text-ink-muted">Original values are the first &quot;before&quot; of each field. Visible to the owner and admins.</p>
+          {/* The caption has to match what the API actually returns. Identity and contact columns
+              (Aadhaar, Pehchan card, phone, email, address) are logged by the server WITHOUT their
+              value — see access.REVISION_REDACTED_FIELDS — so they render as "(value recorded) →
+              (cleared)". Saying "original values are the first before" without that exception told
+              an admin the left-hand column was the old number when it never is for those fields. */}
+          <p className="text-xs text-ink-muted">
+            Original values are the first &quot;before&quot; of each field — except identity and contact fields
+            (Aadhaar, Pehchan card, phone, email, address), where only the fact that they changed is recorded, never
+            the value. Visible to the owner and admins.
+          </p>
           <ul className="mt-2 grid gap-2">
             {revisions.length === 0 ? <li className="text-sm text-ink-muted">No edits recorded.</li> : null}
             {revisions.map((r) => (

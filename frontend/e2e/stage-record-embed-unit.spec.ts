@@ -676,12 +676,22 @@ test("a collapsing row asks whatever is mounted inside it first", () => {
     its own submit — and for a file it is worse than "lost", because `useEagerStaging` then releases
     its owner and the object already in storage is deleted about two seconds later. Opening another
     row is the same event: `openKey` is one slot, so the row that was open is unmounted either way.
+
+    AND THE COLLAPSE IS HANDED OVER, NOT MERELY REFUSED. The guard banks what it refuses so the
+    answer that means "leave" can finish it (`UnsavedChangesGuard`'s `PendingLeave`), and this is the
+    one guarded act that is NOT a navigation — which is exactly why it has to travel rather than be
+    reconstructed at the other end. It is banked as a FUNCTIONAL update: a banked act runs after
+    re-renders the closure that created it never saw, so `openKey` read from that closure would be
+    stale by the time it applied.
   */
   expect(ENTITY_FORM).toContain("const interceptLeave = useLeaveInterceptor();");
-  expect(ENTITY_FORM).toContain("if (closing !== null && interceptLeave()) return;");
+  expect(ENTITY_FORM).toContain("const open = () => setOpenKey((current) => (current === rowKey ? null : rowKey));");
+  expect(ENTITY_FORM).toContain("if (closing !== null && interceptLeave(open)) return;");
   expect(ENTITY_FORM).toContain("onClick={() => toggleRow(rowKey)}");
-  // And the stage's own prev/next, which were an unguarded exit for the same reason.
-  expect(STAGE_PAGE).toContain("if (interceptLeave()) return;");
+  // And the stage's own prev/next, which were an unguarded exit for the same reason. Its act carries
+  // the draft flush with it: a resumed "next stage" that skipped `flushLocal` would drop the last
+  // seconds of typing on the stage being left.
+  expect(STAGE_PAGE).toContain("if (interceptLeave(() => void go())) return;");
 });
 
 test("a clean sibling form cannot answer for a dirty one", () => {

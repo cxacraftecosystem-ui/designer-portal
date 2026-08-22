@@ -4,13 +4,13 @@ Architecture for the cheapest durable setup:
 
 | Concern        | Service                | Persistence |
 |----------------|------------------------|-------------|
-| Database       | **Supabase** (already) | Managed Postgres, already persistent |
+| Database       | **Managed PostgreSQL** (not provisioned here) | Already persistent. This guide provisions no database and names no provider: the box only needs a `DATABASE_URL`. Which provider is deployed is recorded once, under "The database" in [../docs/ENVIRONMENT.md](../docs/ENVIRONMENT.md). |
 | Object storage | **AWS S3**             | Durable, 11 9's |
 | API server     | **AWS EC2 (t3.micro)** | The only piece you host |
 | Web frontend   | **Vercel** (free) or the same EC2 | — |
 
-Keep the DB on Supabase and media on S3 so the EC2 box is stateless and can be rebuilt anytime
-without data loss.
+Keep the database off the box and media on S3, so the EC2 box is stateless and can be rebuilt
+anytime without data loss. That is the whole reason this guide provisions no database.
 
 ---
 
@@ -193,9 +193,17 @@ Fully annotated version: `backend/.env.example`. Every variable with its default
 required and whether it is a secret: [docs/ENVIRONMENT.md](../docs/ENVIRONMENT.md).
 
 ```dotenv
-# SESSION pooler URL (:5432) — migrations need it; the app re-routes runtime queries to the
-# transaction pooler (:6543) automatically (DATABASE_USE_TRANSACTION_POOLER, default true).
-DATABASE_URL=postgresql://...supabase-pooler...:5432/postgres   # keep Supabase
+# The connection string, and it is read by two things with different needs. `prisma migrate deploy`
+# reads it RAW (out of schema.prisma's env("DATABASE_URL")) and needs SESSION mode — advisory locks
+# and DDL, which transaction pooling cannot hold across statements. The running app reads it through
+# Settings and wants the POOLED endpoint where the provider publishes one.
+#
+# DATABASE_USE_TRANSACTION_POOLER (default TRUE) is how you say which of the two this value is. It
+# matches no hostname: true adds `pgbouncer=true` to any remote DSN. SET IT FALSE if the host below
+# is a direct, non-pooling endpoint — on this single-box deploy, where one .env serves both uvicorn
+# and the migration step, that is usually the case.
+DATABASE_URL=postgresql://USER:PASSWORD@YOUR-POSTGRES-HOST:5432/DBNAME
+# DATABASE_USE_TRANSACTION_POOLER=false   # only if the host above is NOT a transaction pooler
 # DATABASE_CONNECTION_LIMIT=10   # per worker; do NOT raise to 40 — that exhausted the pooler
 JWT_SECRET=<long-random>
 MASTER_ADMIN_EMAIL=you@example.com
@@ -270,7 +278,7 @@ Creates the **S3 bucket** (public-read `media/*` + CORS), an **IAM user** with
 `PutObject/GetObject/DeleteObject` and a fresh **access key**, and a **t3.micro**
 EC2 box with an **Elastic IP**, a 2 GiB swap file, **nginx** (reverse proxy on 80,
 so port 8000 is never exposed) and **ffmpeg** (needed for Whisper long-audio
-chunking), plus the `fieldrepo` systemd unit. The DB stays on Supabase.
+chunking), plus the `fieldrepo` systemd unit. It creates **no database** — that stays off the box.
 
 > Terraform/AWS auth needs an **IAM access key pair**, not the console
 > email+password. Create an IAM admin user in the console first, then:

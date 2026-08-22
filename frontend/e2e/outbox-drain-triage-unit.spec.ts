@@ -18,7 +18,8 @@ import {
   refusedFileNames,
   splitUnsendableFiles,
   syncOutbox,
-  underlyingError
+  underlyingError,
+  underlyingIsTransient
 } from "@/lib/offline";
 
 /**
@@ -88,14 +89,82 @@ const NOTHING_HAPPENED = {
  * 1. A refused photograph is not a lost connection
  * ──────────────────────────────────────────────────────────────────────────── */
 
-test("the jam's mechanism is still exactly what it was — which is why the media leg catches", () => {
-  // NOT a regression test for a fix: this is the fact the fix is built on. `isTransient` is shared
-  // with five other call sites and must go on answering "yes, worth retrying" for anything it does
-  // not recognise, so the media leg cannot be made safe by changing it — it has to triage locally.
+test("the jam's mechanism has been closed at the root, and the media leg still catches", () => {
+  /*
+    WHAT THIS TEST USED TO ASSERT, WHAT A REWRITE TRIED TO MAKE IT ASSERT, AND WHY IT ASSERTS BOTH.
+
+    It read: "`isTransient` is shared with five other call sites and must go on answering 'yes,
+    worth retrying' for anything it does not recognise, so the media leg cannot be made safe by
+    changing it — it has to triage locally."
+
+    A first attempt at closing the class overturned that pin, on the argument that "none of the other
+    call sites is ever handed a `MediaBatchError`". THAT ARGUMENT IS FALSE, and it was checked rather
+    than believed. `isTransient` has four call sites outside this spec:
+    `app/(protected)/design-workshops/page.tsx:461` (a `createDesignWorkshop` catch),
+    `lib/placeSearch.ts:188` (an `apiFetch` catch), `lib/offline.ts`'s `saveOrQueue` (an `apiFetch`
+    catch, additionally guarded by `!(error instanceof ApiError)`) — and
+    `components/designworkshop/FieldInput.tsx:1874`, which is the catch of an `await
+    uploadMediaBatch(...)` and is therefore handed a `MediaBatchError` AND NOTHING ELSE.
+
+    What FieldInput does with a true is `stageOffline(chosen)` — the only thing that keeps the
+    captured bytes, since the drain effect below it has already taken those files out of the capture
+    card. A false falls to `setProblem(err.message)` and the photograph is gone. So the "obvious"
+    unwrap would have turned a 413 on one identity photograph into a silent deletion of it, under the
+    batch wrapper's "Check your internet connection and try again" — the sentence this repository's
+    headers repeatedly forbid when the server answered.
+
+    THE PIN THEREFORE STANDS, and the fix is a second reading rather than a changed one.
+    `isTransient` goes on answering for the value AS THROWN, which is what a caller that discards work
+    on a false needs. `underlyingIsTransient` opens the wrapper, and it is what both drains call —
+    where a false MARKS the item and nothing is thrown away. Two readings of one table
+    (`lib/failureTriage.ts`), pinned against both columns of the matrix in
+    `e2e/failure-triage-unit.spec.ts`, which is the property the old pair of hand-written
+    implementations could not have had.
+
+    The media leg still triages locally, and must: it has to tell an expired credential from a lost
+    signal from a busy server, which is three sentences, not one boolean.
+  */
   const refusedByServer = new MediaBatchError("All 1 media file(s) failed to upload (Unsupported media type).", [
     { name: "loom.mp4", error: "Unsupported media type", cause: new ApiError(415, "Unsupported media type", null) }
   ]);
-  expect(isTransient(refusedByServer), "a wrapper is not an ApiError, so the pass-level test says retry").toBe(true);
+  expect(
+    isTransient(refusedByServer),
+    "the as-thrown reading keeps its answer: FieldInput's catch reads a false as 'discard the capture'"
+  ).toBe(true);
+  expect(
+    underlyingIsTransient(refusedByServer),
+    "and the drains' reading is classified by the 415 it wraps — this is the jam, closed"
+  ).toBe(false);
+  expect(isTransient(new TypeError("Failed to fetch")), "and an unrecognised failure is still 'try again'").toBe(true);
+  expect(underlyingIsTransient(new TypeError("Failed to fetch")), "under both readings").toBe(true);
+});
+
+test("the two readings of 'worth retrying' can differ ONLY about a wrapper", () => {
+  /*
+    THE GUARD ON THE PAIR ITSELF. Two functions answering "is this the network" is the defect class
+    this whole wave exists to close, and this file now has two on purpose. What makes that a split
+    rather than a relapse is that they are the same table asked of a different depth: for anything
+    that is not a wrapper they must be indistinguishable, and if somebody re-implements one of them
+    by hand this is where it shows up.
+  */
+  const bare: unknown[] = [
+    new ApiError(500, "boom", null),
+    new ApiError(503, "unavailable", null),
+    new ApiError(429, "slow down", null),
+    new ApiError(408, "timeout", null),
+    new ApiError(401, "Could not validate credentials", null),
+    new ApiError(403, "Not permitted", null),
+    new ApiError(413, "Payload too large", null),
+    new ApiError(415, "Unsupported media type", null),
+    new TypeError("Failed to fetch"),
+    new Error("something went wrong"),
+    "not an error at all"
+  ];
+  for (const error of bare) {
+    expect(isTransient(error), `${String(error)}: nothing to unwrap, so the two must agree`).toBe(
+      underlyingIsTransient(error)
+    );
+  }
 });
 
 test("a batch the server refused is recorded, not retried for ever", () => {
@@ -121,7 +190,9 @@ test("a deploy window and a rate limit are retried on the media leg, exactly as 
       { name: "loom.jpg", error: `${status}`, cause: new ApiError(status, "…", null) }
     ]);
     expect(
-      isCredentialExpiry(wrapped) || isUnreachable(wrapped) || isTransient(underlyingError(wrapped)),
+      // The media leg's line verbatim — see `lib/offline.ts`. `underlyingIsTransient`, because every
+      // failure that reaches it is a `MediaBatchError` and what it wraps is the whole question.
+      isCredentialExpiry(wrapped) || isUnreachable(wrapped) || underlyingIsTransient(wrapped),
       `a ${status} on a photograph must stop the pass and keep it queued, not refuse the file`
     ).toBe(true);
   }
@@ -131,7 +202,9 @@ test("a deploy window and a rate limit are retried on the media leg, exactly as 
       { name: "loom.jpg", error: `${status}`, cause: new ApiError(status, "…", null) }
     ]);
     expect(
-      isCredentialExpiry(wrapped) || isUnreachable(wrapped) || isTransient(underlyingError(wrapped)),
+      // The media leg's line verbatim — see `lib/offline.ts`. `underlyingIsTransient`, because every
+      // failure that reaches it is a `MediaBatchError` and what it wraps is the whole question.
+      isCredentialExpiry(wrapped) || isUnreachable(wrapped) || underlyingIsTransient(wrapped),
       `a ${status} is the server refusing this file — waiting will not change it`
     ).toBe(false);
   }
@@ -201,9 +274,10 @@ test("a batch refused without per-file detail names every file that was attempte
 });
 
 test("a dialect mismatch met while uploading is still read as a dialect mismatch", () => {
-  // The 422 arrives WRAPPED here, and `isSchemaRefusal` asks `instanceof ApiError`. Unwrapped, the
-  // entry gets "the two builds are out of step, it will send itself"; wrapped, it got "you got this
-  // wrong, correct it" — about an answer nobody typed, which no edit can ever clear.
+  // The 422 arrives WRAPPED here. `isSchemaRefusal` used to ask `instanceof ApiError` and answer no,
+  // so the entry got "you got this wrong, correct it" — about an answer nobody typed, which no edit
+  // can ever clear — instead of "the two builds are out of step, it will send itself". It follows
+  // `cause` now, like every other classifier, because they all read one verdict.
   const inner = new ApiError(422, "merge: Extra inputs are not permitted", {
     detail: [{ type: "extra_forbidden", loc: ["body", "merge"], msg: "Extra inputs are not permitted" }]
   });
@@ -211,8 +285,8 @@ test("a dialect mismatch met while uploading is still read as a dialect mismatch
     { name: "a.jpg", error: "merge: Extra inputs are not permitted", cause: inner }
   ]);
 
-  expect(isSchemaRefusal(wrapped), "the wrapper is not an ApiError — this is the bug").toBe(false);
-  expect(isSchemaRefusal(underlyingError(wrapped)), "the error the server raised is").toBe(true);
+  expect(isSchemaRefusal(wrapped), "the wrapper carries no opinion; the 422 inside it decides").toBe(true);
+  expect(isSchemaRefusal(underlyingError(wrapped)), "and unwrapping by hand first changes nothing").toBe(true);
   expect(underlyingError(inner), "an unwrapped error is returned unchanged").toBe(inner);
   expect(underlyingError("not an error at all")).toBe("not an error at all");
 });
@@ -238,9 +312,10 @@ test("nothing else is mistaken for an expired sign-in", () => {
   expect(isCredentialExpiry(new ApiError(403, "Not permitted", null))).toBe(false);
   expect(isCredentialExpiry(new ApiError(422, "…", null))).toBe(false);
   expect(isCredentialExpiry(new TypeError("Failed to fetch"))).toBe(false);
-  // And the five other call sites of `isTransient` are untouched: a 401 there still means "signed
-  // out", not "your signal dropped" — widening it would start banking signed-out saves in the queue.
+  // And 401 stays out of BOTH readings of "worth retrying": a 401 there still means "signed out",
+  // not "your signal dropped" — widening it would start banking signed-out saves in the queue.
   expect(isTransient(new ApiError(401, "Could not validate credentials", null))).toBe(false);
+  expect(underlyingIsTransient(new ApiError(401, "Could not validate credentials", null))).toBe(false);
 });
 
 test("the outbox's own create never navigates the researcher away", async () => {

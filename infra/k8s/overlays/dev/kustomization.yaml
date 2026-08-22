@@ -39,10 +39,10 @@ patches:
         DESIGN_WORKSHOP_ENV: "dev"
 
         # HALF the production per-pod limit, because dev's share of the ceiling is not proportional
-        # to dev's importance. Every environment that points at the same Supabase project spends
-        # from the SAME 200-client budget, so a dev cluster left running overnight is subtracted
-        # from what production can scale into. Five is more than one developer will ever saturate.
-        # If dev gets its own Supabase project this can go back to 10 — and docs/KUBERNETES.md's
+        # to dev's importance. Every environment that points at the same database spends from the
+        # SAME client budget, so a dev cluster left running overnight is subtracted from what
+        # production can scale into. Five is more than one developer will ever saturate.
+        # If dev gets its own database this can go back to 10 — and docs/KUBERNETES.md's
         # arithmetic gets easier, not harder.
         DATABASE_CONNECTION_LIMIT: "5"
 

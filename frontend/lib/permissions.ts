@@ -1,9 +1,52 @@
 import type { User, UserRole } from "@/lib/types";
 
 /**
- * The six-tier role ladder, mirroring the backend exactly (app/core/deps.py).
+ * The seven-tier role ladder, mirroring the backend exactly (app/core/deps.py).
  * Higher rank inherits every power of the ranks below it; the grantable can*
  * booleans additionally lift a single capability for a lower tier.
+ *
+ * SEVEN, AND THIS SENTENCE SAID SIX FOR AS LONG AS DESIGNER HAS EXISTED — the same off-by-one the
+ * backend's own ladder carried, corrected there with a note saying so. The tier is in the map
+ * below, with its own explanation of why 35. It is not a typo with no consequence: this file is
+ * where every client-side permission question is answered, and a reader who trusts prose over map
+ * goes looking for six rows in a product whose primary user is the seventh. README.md's role table
+ * and docs/PERMISSIONS.md had already been corrected for the same miscount, and this map is the
+ * client's answer to every permission question, so it is the worst remaining place to be wrong.
+ * IT IS NOT THE LAST ONE, and the remaining list is now short enough to name rather than gesture at.
+ * Nothing in the web client says six any more: the one site that was RENDERED CONTENT rather than a
+ * comment — `components/hero/AccessLadder.tsx`, the public landing page's ladder, a literal six-row
+ * array with no Designer in it whose own header claimed "the exact labels of ROLE_LABELS in
+ * lib/permissions.ts" — now derives its rows, its labels and the count in its own heading from
+ * `ROLES_BY_RANK` / `ROLE_LABELS` here, over a `Record<UserRole, string>` of copy that fails `tsc`
+ * until a new tier is given its sentence. What is left is outside this client: `docs/PERMISSIONS.md`
+ * and `SESSION_HANDOVER.md` say "six-tier" only to narrate that correction, `docs/RESEARCH_NOTES.md`
+ * keeps a provenance-labelled six-row snapshot on purpose and says so, and the live miscounts are
+ * comments in the Android client (`MainActivity.kt`, `ui/AppNavigation.kt`) and in the backend
+ * (`.env.example`, `app/core/config.py`, `tests/test_review_edit_authority.py`) plus the frontend
+ * skill file agents load (`.claude/skills/field-repo-frontend/SKILL.md`, which enumerates the six).
+ * Nothing mechanical counts prose, which is why they rot one file at a time — cited by string and
+ * not by line, because these files move under each other.
+ *
+ * "MIRRORING EXACTLY" IS A CLAIM ABOUT FOUR PROPERTIES — the same seven keys, at the same numbers,
+ * with the same labels, in the same declaration order — and it is worth saying which of them a
+ * machine checks, because "already right" and "asserted" are different states:
+ *  - KEYS and NUMBERS: `docs/tools/check-docs.mjs::checkRoleParity` parses `ROLE_RANK` out of both
+ *    this file and `backend/app/core/deps.py` and diffs them in both directions.
+ *  - LABELS and KEY ORDER: `frontend/e2e/role-ladder-parity-unit.spec.ts`, which reads `deps.py`
+ *    off disk and diffs `ROLE_LABELS` and the key sequence the same way. Before that spec existed
+ *    this paragraph claimed all four had been "compared when the note was written", which is a
+ *    hand-check dressed as a guarantee.
+ * `ROLE_LABELS` has FOUR copies in this repository — here, `deps.py`, and two in the Android client
+ * (`MainActivity.kt`, `TaskAdminScreen.kt`). Only the first two are diffed by anything; the Kotlin
+ * pair is hand-kept, was correct when last read, and nothing would say if it stopped being.
+ *
+ * DECLARATION ORDER IS A CONVENTION HERE, NOT A BEHAVIOUR, and an earlier draft of this note said
+ * the opposite. `ROLES_BY_RANK` below sorts on the VALUES, and all seven ranks are distinct, so the
+ * array it produces is identical whatever order these keys are written in — nothing in the client
+ * reads the declaration order at all (`ROLES_BY_RANK` and `ROLE_RANK` are read only by
+ * `AssignmentBuilder.tsx` and `activity/page.tsx`, both by value). The order is kept in step with
+ * `deps.py` so the two files diff against each other by eye, and the spec pins it for that reason
+ * alone. A picker's order comes from the sort, and the sort cannot drift.
  */
 export const ROLE_RANK: Record<UserRole, number> = {
   CROWDSOURCE_VOLUNTEER: 10,

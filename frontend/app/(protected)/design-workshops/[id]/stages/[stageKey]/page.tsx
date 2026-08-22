@@ -126,7 +126,7 @@ import {
 } from "@/lib/designWorkshopStore";
 import { registryProvenanceNotice } from "@/lib/registryProvenance";
 import { localWriteDecision, stageRefusalResult, stageRefusalWroteCount } from "@/lib/stageSaveOutcome";
-import { isUnreachable } from "@/lib/offline";
+import { isUnreachable, serverAskedForTime, triageFailure } from "@/lib/offline";
 import { neverReconciled } from "@/lib/workshopOpenability";
 import { readStageFocus } from "@/lib/workshopSearch";
 
@@ -737,10 +737,23 @@ function DesignWorkshopStagePageBody({
           if (stageNeverRead(draft, stageKey)) setNeverDownloaded(true);
           return;
         }
-        if (err instanceof ApiError && err.status >= 500) {
+        /*
+          THE SERVER ANSWERED AND THE ANSWER MEANS "NOT NOW" — asked of `lib/failureTriage`, which is
+          the one place in this client an HTTP number becomes a decision.
+
+          IT USED TO TEST `err.status` AGAINST 500 HERE, in its own hand, which was one of the six
+          private answers to "is this the network" that module was written to end. Two things changed
+          by moving it, and both are the point of moving it: a 5xx arriving inside a wrapper is now
+          recognised through its `cause`, and a 429 lands here too instead of falling through to the
+          bare `err.message` below — the server asking for a moment is emphatically not a connection
+          problem, and the sentence this branch writes is the true one for it.
+        */
+        const verdict = triageFailure(err);
+        if (verdict.kind === "transient") {
           setError(
-            `The repository could not send this stage: ${err.message} The server was reached, so this is not a connection ` +
-              "problem. What is shown below is the copy saved on this device."
+            `The repository could not send this stage: ${verdict.answered?.message ?? "The server did not say why."} ` +
+              "The server was reached, so this is not a connection problem. What is shown below is the copy saved on " +
+              "this device."
           );
           if (stageNeverRead(draft, stageKey)) setNeverDownloaded(true);
           return;
@@ -1056,15 +1069,44 @@ function DesignWorkshopStagePageBody({
    * did. Asked BEFORE the flush, because a flush the designer then cancels out of is work done for a
    * navigation that did not happen.
    *
+   * AND THE WHOLE OF THE EXIT IS HANDED OVER, FLUSH INCLUDED. `interceptLeave` banks what it refuses
+   * so that "Discard" finishes it (see `UnsavedChangesGuard`'s `PendingLeave`), and what has to be
+   * finished here is not `action` alone: a resumed "next stage" that skipped `flushLocal` would drop
+   * the last few seconds of typing on the stage being left. So the flush and the action are ONE
+   * closure, handed over whole and awaited on whichever path runs it — which also keeps "asked
+   * before the flush" true, since the closure does not run at all while the prompt is up.
+   *
+   * AND THE FLUSH CANNOT SWALLOW THE NAVIGATION ON EITHER PATH, which is why the `catch` is there
+   * rather than being tidied away. A REFUSED local write already answers `false` and has always
+   * navigated anyway — the refusal is marked on the draft and `DraftSyncBanner` says so out loud,
+   * while stranding the designer on a stage whose buttons have stopped responding would hide it. A
+   * flush that THROWS is the same outcome arriving by a different route, so it is treated the same
+   * way instead of skipping `action()`. It matters most on the BANKED path: that one runs long after
+   * the press, from a form's "Discard", where a dropped rejection would leave the work discarded, the
+   * prompt answered, the page exactly where it was, and nothing on screen to say why.
+   *
+   * `action` is a route push chosen by the button that called this ("previous stage" / "next
+   * stage"), and it is why the act travels rather than being reconstructed at the other end: a
+   * `router.back()` guessed inside the record form would land on the stage before this one.
+   *
    * No second back control is added anywhere on this page: `e2e/back-control.spec.ts` asserts
    * exactly one arrow, because the opposite shipped four times.
    */
   const interceptLeave = useLeaveInterceptor();
   const leave = useCallback(
     async (action: () => void) => {
-      if (interceptLeave()) return;
-      await flushLocal();
-      action();
+      const go = async () => {
+        try {
+          await flushLocal();
+        } catch {
+          // Nothing to add that the store has not already recorded — `putDraftStage` marks its own
+          // failure (`noteStoreFailure`) and answers `false` for the ordinary refusal, which this
+          // path treats identically. See the paragraph above for why the navigation still happens.
+        }
+        action();
+      };
+      if (interceptLeave(() => void go())) return;
+      await go();
     },
     [flushLocal, interceptLeave]
   );
@@ -1389,15 +1431,33 @@ function DesignWorkshopStagePageBody({
         );
         return;
       }
-      if (err instanceof ApiError && err.status === 429) {
+      /*
+        THE TWO ANSWERS A REACHED SERVER CAN GIVE, BOTH ASKED OF `lib/failureTriage` — the one place
+        in this client where an HTTP number becomes a decision, and the module that ended six private
+        copies of this question disagreeing with each other.
+
+        THEY USED TO TEST `err.status` AGAINST 429 AND AGAINST 500, WRITTEN OUT HERE. The order is
+        what preserves them exactly: `serverAskedForTime` is 408-or-429, and 408 has already been
+        taken by `isUnreachable` above (the triage table calls a 408 `unreachable` — a proxy saying
+        the request never completed decided nothing), so reaching it here means 429 and nothing else.
+        Whatever the server answered that is still worth retrying is then `transient`, which is the
+        5xx branch under its real name.
+
+        THE SPLIT IS KEPT AND MUST BE. A 429 is a NOTICE — the work is banked, the queue carries it,
+        nothing needs a person. A 5xx is an ERROR that names the stage, because the save was refused
+        by a server that answered and retrying it unchanged will be refused again.
+      */
+      if (serverAskedForTime(err)) {
         setNotice(
           "Saved on this device. The repository asked for a moment before accepting more, so this stage sends itself shortly."
         );
         return;
       }
-      if (err instanceof ApiError && err.status >= 500) {
+      const verdict = triageFailure(err);
+      if (verdict.kind === "transient") {
         setError(
-          `The repository refused to save ${stage.number}. ${stage.title}: ${err.message} It is safe on this device and ` +
+          `The repository refused to save ${stage.number}. ${stage.title}: ` +
+            `${verdict.answered?.message ?? "The server did not say why."} It is safe on this device and ` +
             "nothing has been thrown away — but the server was reached, so this is not a connection problem and retrying " +
             "unchanged will be refused again. Check the answers named above, or report this stage."
         );

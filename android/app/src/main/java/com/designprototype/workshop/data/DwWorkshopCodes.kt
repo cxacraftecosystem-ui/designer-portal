@@ -150,7 +150,12 @@ val SUPPORTED_VERSIONS: Set<Int> = setOf(1)
  * ⚠ KEEP THIS ENUM IN EXACT STEP WITH `TYPE_LETTER` in `frontend/lib/workshopCodes.ts`. A letter that
  * means one thing on the handset and another in the browser produces a code that opens the wrong
  * record — which is the entire failure this file exists to prevent, arriving by the front door.
- * `DwWorkshopCodesTest` pins every letter so the drift is a failing test, not a mis-scanned tag.
+ * `DwWorkshopCodesTest` pins every letter, but it pins them BY HAND and so can only ever agree
+ * with itself — it caught nothing when the browser added `G`. The pin that actually reads this
+ * enum and `TYPE_LETTER` and compares them is `backend/tests/test_workshop_code_letters.py`; a
+ * letter added, moved or renamed on either surface fails there, in either direction. It reads a
+ * THIRD copy as well — `backend/app/services/design_workshop_access.py`, which decodes the code in
+ * a join request and so has its own letter, namespace and id pattern to keep in step.
  *
  * [wire] is the spelling the web uses for the same value, so a record type that arrives as a string
  * — out of the stage registry, or off a saved intent — reaches [encodeWorkshopCode] unchanged.
@@ -181,6 +186,22 @@ enum class DwWorkshopRecordType(
      */
     QUESTIONNAIRE("questionnaire", "Q", "Interview", "interviews"),
     MEDIA("media", "M", "Media file", "media files"),
+
+    /**
+     * desiGn workshop. `W` is the repository [WORKSHOP] and CANNOT MOVE — tags reading `DPW1:W:…`
+     * are tied to craft-documentation records today, and the rule at the top of this table is that
+     * a live letter is never re-pointed. `D` and `S` were already spent on the product and the
+     * process, so the letter comes from the middle of the word exactly as those two do.
+     *
+     * Labelled "Design workshop" and not "Workshop", which is the OTHER record type in this same
+     * enum: the two labels are read side by side in the "codes exist for…" refusal, and a reader
+     * who met "Workshop" twice would have no way to tell which of them their card was.
+     *
+     * Placed here, immediately before [PROTOTYPE], because the enum's order is the order the
+     * refusal sentence reads out and the web's `WorkshopRecordType` union puts `designWorkshop`
+     * in this position. Anywhere else and the two clients explain one refusal in two orders.
+     */
+    DESIGN_WORKSHOP("designWorkshop", "G", "Design workshop", "design workshops"),
     PROTOTYPE("prototype", "P", "Prototype", "prototypes");
 
     companion object {
@@ -201,7 +222,7 @@ enum class DwWorkshopRecordType(
  *
  * Built from the enum rather than written as prose so that adding a record type updates the sentence
  * with it. A hand-written list is how a caller comes to be told that codes exist for two kinds of
- * record on a build that prints nine.
+ * record on a build that prints ten.
  */
 private fun knownRecordTypesSentence(): String {
     val words = DwWorkshopRecordType.entries.map { it.plural }
@@ -234,6 +255,51 @@ data class DwWorkshopCodeRef(
  * every id this grammar now admits is the same 25-character lower-case cuid it already admitted.
  */
 private val ID_PATTERN = Regex("^[a-z0-9][a-z0-9-]{7,63}$")
+
+/**
+ * The prefix the BROWSER puts on a design-workshop draft that exists only in the tab that made it,
+ * and — with [DW_LOCAL_ID_PREFIX], which is this handset's spelling of the same idea — the one
+ * shape of id this grammar refuses despite it matching [ID_PATTERN] perfectly.
+ *
+ * ──── WHY THIS IS A REFUSAL AND NOT A CONVENIENCE ────────────────────────────────────────────
+ *
+ * `dwlocal-<uuid>` is minted by `frontend/lib/designWorkshopStore.ts::createLocalDraft`, and
+ * `local-<uuid>` by `ui/designworkshop/WorkshopListScreen.kt`, for a workshop opened with no signal.
+ * Each is a key into ONE device's storage. Neither is an identifier this repository issues, and
+ * neither ever becomes one: `createDesignWorkshop` carries no client key and the create route
+ * de-duplicates nothing (see [WorkshopSync]), so when the draft finally syncs the server allocates a
+ * fresh cuid and the local id is discarded. Nothing anywhere resolves it again, on any device but
+ * the one that minted it.
+ *
+ * THAT IS EXACTLY THE DIVERGENCE A SHARED CODE EXISTS TO PREVENT. A designer who could print this
+ * would hand a colleague a tag that resolves to nothing, on every device, for ever — and a colleague
+ * who scans a workshop tag and is told there is no such workshop does the only thing left to do,
+ * which is start their own. Two devices, two workshops, one fortnight of fieldwork split between
+ * them.
+ *
+ * THE TWO PREFIXES ARE SCOPED DIFFERENTLY, and the asymmetry is the web's, kept exactly. `dwlocal-`
+ * is a string nothing else in this repository could plausibly issue, so refusing it for every record
+ * type is free. Bare `local-` is not: it is six generic characters a future id space or an import
+ * could legitimately begin with, and a gate that refused a real record's code would be worse than
+ * the failure it prevents. A device-local workshop is the only record either client mints under that
+ * prefix, so [DwWorkshopRecordType.DESIGN_WORKSHOP] is the only type that needs it.
+ *
+ * `isDeviceLocalId` in `frontend/lib/workshopCodes.ts` is the same predicate over the same two
+ * constants. `backend/tests/test_workshop_code_letters.py` pins the LETTERS the two clients agree
+ * on and not this, so a change here still has to be made in both places by hand.
+ */
+private const val WEB_DEVICE_LOCAL_ID_PREFIX = "dwlocal-"
+
+/**
+ * Is this an id only the device holding it can resolve — either client's spelling?
+ *
+ * One predicate for the encoder and the decoder so the two cannot come to disagree about which ids
+ * are private, which would mean printing a code this same build then refuses to read.
+ */
+private fun isDeviceLocalId(recordType: DwWorkshopRecordType, id: String): Boolean {
+    if (id.startsWith(WEB_DEVICE_LOCAL_ID_PREFIX)) return true
+    return recordType == DwWorkshopRecordType.DESIGN_WORKSHOP && id.startsWith(DW_LOCAL_ID_PREFIX)
+}
 
 /** The check alphabet: Crockford base32, which has no I, L, O or U to confuse on a printed card. */
 private const val CHECK_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -343,6 +409,12 @@ enum class DwEncodeRefusal {
 
     /** Shaped like regulated identity data. Refused loudly — see the file header. */
     ID_LOOKS_SENSITIVE,
+
+    /**
+     * A draft that exists only on this device. Well-formed, and deliberately refused — see
+     * [WEB_DEVICE_LOCAL_ID_PREFIX] for the divergence this is the whole guard against.
+     */
+    ID_IS_DEVICE_LOCAL,
 }
 
 sealed interface DwEncodeResult {
@@ -408,6 +480,20 @@ fun encodeWorkshopCode(recordType: String, id: String?): DwEncodeResult {
         )
     }
 
+    // BEFORE THE GENERIC PATTERN, because `dwlocal-<uuid>` and this handset's `local-<uuid>` both
+    // PASS that pattern — lower case, hyphenated, the right length — so the refusal underneath
+    // would never fire and a tag naming one device's private draft would print cleanly. Named
+    // separately so the designer is told the one thing that is actually true and actionable: the
+    // workshop has not been shared yet. See [isDeviceLocalId].
+    if (isDeviceLocalId(type, trimmed)) {
+        return DwEncodeResult.Refused(
+            DwEncodeRefusal.ID_IS_DEVICE_LOCAL,
+            "This workshop exists only on this device, so there is nothing for anybody else to scan " +
+                "yet — a code for it would open nothing on their phone. It gets a shareable code once " +
+                "it has reached the server: connect this device, let it sync, and print the code then."
+        )
+    }
+
     if (!ID_PATTERN.matches(trimmed)) {
         return DwEncodeResult.Refused(
             DwEncodeRefusal.ID_NOT_AN_IDENTIFIER,
@@ -451,6 +537,14 @@ enum class DwDecodeRefusal {
 
     /** Ours, but the wrong number of parts, or an id that is not one. */
     MALFORMED,
+
+    /**
+     * Ours and well-formed, but it names a draft private to some device. [encodeWorkshopCode]
+     * refuses to print one, so this is reachable only by hand — and it is answered rather than
+     * folded into [MALFORMED] because the code is not damaged, and telling somebody to re-read the
+     * card would send them round a loop that cannot end.
+     */
+    DEVICE_LOCAL,
 
     /** Ours and well-formed, but the check does not agree with the id. */
     CHECK_FAILED,
@@ -535,6 +629,19 @@ fun decodeWorkshopCode(input: String?): DwDecodeResult {
         )
 
     val id = parts[2].lowercase()
+    // Symmetric with the encoder's refusal, and checked BEFORE the pattern for the same reason: a
+    // `dwlocal-` id (or this handset's `local-`) satisfies [ID_PATTERN], so without this it would
+    // decode cleanly and every caller downstream would go looking for a workshop that cannot exist
+    // for them — landing on "ask an admin to add you", which is confidently wrong about a workshop
+    // that is on one device and nowhere else.
+    if (isDeviceLocalId(recordType, id)) {
+        return DwDecodeResult.Refused(
+            DwDecodeRefusal.DEVICE_LOCAL,
+            "That code names a workshop that had not been shared yet when it was written down — it " +
+                "only ever meant anything on the device that made it. Ask whoever created the " +
+                "workshop to sync their device and send you the code it prints then."
+        )
+    }
     if (!ID_PATTERN.matches(id)) {
         return DwDecodeResult.Refused(
             DwDecodeRefusal.MALFORMED,
@@ -607,6 +714,45 @@ fun unresolvedWorkshopCodeMessage(recordType: DwWorkshopRecordType): String {
             "row may not have reached this device yet — open the workshop that made it, or find the " +
             "prototype in the list."
     }
+    if (recordType == DwWorkshopRecordType.DESIGN_WORKSHOP) {
+        // ⚠ NO PRODUCTION CALL SITE REACHES THIS ARM YET, AND THAT IS WORTH KNOWING BEFORE YOU
+        // TRUST IT. All four production call sites either pass a literal type or are guarded:
+        // `WorkshopCodesScreen`'s lookup panel reaches it under `ref.recordType == PROTOTYPE`, its
+        // artisan lookup passes `ARTISAN`, and `RecordCodeLookup.lookUpRecordCode` passes `PROTOTYPE`
+        // from its exhaustive `when` and `ref.recordType` from its `HttpException` catch — which a
+        // `G` code never reaches, because that function refuses a design workshop before it asks the
+        // network at all (see [designWorkshopCodeNotOpenableMessage]).
+        // The sentence is kept, written, and pinned against the browser's anyway: the browser DOES
+        // reach it (`frontend/lib/workshopCodeLookup.ts` on an `ApiError`), so leaving it out would
+        // leave the browser's live sentence with nothing to agree with, and it becomes the handset's
+        // answer the moment `MainActivity` can route a scanned workshop to the workshop it names.
+        // Until then, do not cite this arm as the words a designer reads.
+        //
+        // THE JOIN CASE, AND THE ONE MESSAGE HERE THAT MUST NOT SAY "SEARCH FOR IT BY NAME".
+        //
+        // For every other record type the two states behind a 404 are "it is not there" and "it is
+        // not yours", and the API refuses to distinguish them so that a card cannot be used to
+        // enumerate the repository. That holds here too. But a design workshop is the ONE type where
+        // the second state is overwhelmingly the likely one and is also completely fixable: somebody
+        // has just been handed this code by the colleague standing next to them, precisely so they
+        // can work on it together. The generic sentence would send them to search a workshop list
+        // that cannot show them a workshop they are not on yet, which is a loop with no end in it.
+        //
+        // It names the next move instead of the diagnosis, which gives away nothing a 403 would not
+        // have: it does not confirm the workshop exists — it says what to do IF it does, which is
+        // true advice in both states and is the same sentence either way.
+        //
+        // AND IT DOES NOT SAY "REQUEST SENT", because nothing has been sent. Granting access is
+        // `PUT /design-workshops/{id}/viewers`, which is admin-only — a designer cannot put
+        // themselves on a workshop even with a perfect connection.
+        //
+        // Word for word the web's, in `frontend/lib/workshopCodes.ts`: two clients explaining one
+        // refusal two ways is the failure this whole file is written against.
+        return "No design workshop you can open matches that code. If a colleague has just shared " +
+            "it with you, the workshop is there and you have not been added to it yet — only an " +
+            "admin can do that, so send them the code and ask to be put on it. Everything you have " +
+            "already recorded on this device stays where it is."
+    }
     // `lowercase()` and not `toLowerCase()`: the latter is the DEFAULT locale, and on a handset set to
     // Turkish it maps `I` to a dotless `ı`, so an "Interview" would be described to a designer with a
     // character the web never writes. Every label here is ASCII, so the root-locale mapping is exact.
@@ -614,6 +760,35 @@ fun unresolvedWorkshopCodeMessage(recordType: DwWorkshopRecordType): String {
     return "No $noun you can open matches that code. It may not be in the repository, or it may " +
         "belong to work you do not have access to — search for the $noun by name instead."
 }
+
+/**
+ * What to say when a design-workshop code is READ SUCCESSFULLY and this build still cannot act on it.
+ *
+ * A DIFFERENT SITUATION FROM [unresolvedWorkshopCodeMessage], AND THE DIFFERENCE IS WHOSE LIMIT IT
+ * IS. That sentence answers a lookup that was made and came back with nothing. This one answers a
+ * lookup that was never made: `RecordCodeLookup`'s typed-code box decodes a `DPW1:G:…` card
+ * perfectly and then has nowhere to send it, because opening a design workshop from a code needs
+ * routing in `MainActivity` that does not exist yet — its `searchRecordEntryMode` falls back to
+ * `EntryMode.ARTISAN`, so a resolved workshop id would be opened AS AN ARTISAN one press later,
+ * which is precisely the wrong-record failure the codes exist to remove.
+ *
+ * SO IT NAMES THE BUILD'S LIMIT AND NOT THE CARD'S NATURE. "That is a design workshop code, not a
+ * record code" would be a claim about the code that the browser flatly contradicts — there,
+ * `workshopCodeLookup.ts` resolves a `G` code and opens `/design-workshops/{id}` — so a designer
+ * comparing the two surfaces would be told the card is the wrong kind of thing on one of them. A
+ * capability this version does not have is true on both, and stops being true here without anybody
+ * having to re-argue the wording.
+ *
+ * AND IT NEVER SAYS THE WORKSHOP EXISTS. Nothing was asked, so nothing is known: the access half is
+ * conditional ("if a colleague has just shared this one with you"), the same hedge the web's
+ * unresolved sentence carries. A card naming a deleted workshop, or one from another deployment,
+ * must not send a designer to an admin about a workshop that is not there.
+ */
+fun designWorkshopCodeNotOpenableMessage(): String =
+    "This version of the app cannot open a design workshop from a code — a design workshop is " +
+        "opened from the design workshop list. If a colleague has just shared this one with you and " +
+        "it is not in your list yet, only an admin can add you to it, so send them the code and ask " +
+        "to be put on it."
 
 // --------------------------------------------------------------------------------------
 // The rows a tag is printed for

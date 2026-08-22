@@ -19,6 +19,12 @@ The governing constraint, stated once so every recommendation below can be check
 > infrastructural must be optional and must degrade to an in-process default. Fixes that help at
 > *both* ends — removing a round trip, adding an index, collapsing sequential awaits — always win.
 
+Two sections answer questions the ranked inventory does not, and are written to be readable on their
+own: [§9.1](#91-the-one-cache-that-is-not-a-cache-conditional-get-on-the-field-registry) measures the
+largest single body this API serves to a cold client and what a conditional GET does to it, and
+[§15](#15-retention-every-table-with-no-delete-path-and-the-answer-for-each) writes down the
+retention answer for every table nothing can delete a row from.
+
 ---
 
 ## 0. How to read the numbers
@@ -52,7 +58,7 @@ flowchart LR
   nginx["nginx :80<br/>EC2 t3.micro"]
   uvicorn["uvicorn<br/>1 worker"]
   engine["Prisma query engine"]
-  pooler["Supabase pooler :6543<br/>DIFFERENT REGION"]
+  pooler["Managed pooler<br/>DIFFERENT REGION"]
   pg[("PostgreSQL")]
 
   browser -->|"~101 ms round trip<br/>MEASURED, GET /health"| cf
@@ -422,17 +428,33 @@ worth naming rather than hiding, because the workbook styling in `xlsx_report.py
 
 ### What is configured
 
-- `DATABASE_CONNECTION_LIMIT = 10` per process (`config.py:94`), cut from 40 after a documented
-  pooler-exhaustion incident.
-- Runtime traffic goes through the Supabase **transaction** pooler on :6543 with `pgbouncer=true`
-  (`db.py:15-65`). Session mode pinned one of a small number of server connections per client and
-  crash-looped the service; transaction mode returns the connection after each statement.
+Line numbers are deliberately absent from this section. Everything it describes lives in two files
+that a concurrent wave rewrites, so each item names the **symbol** instead — which is what a reader
+follows anyway, and what `check-docs.mjs`'s citation check asks for when a range has come loose.
+
+- `Settings.database_connection_limit` = **10** per process, cut from 40 after a documented
+  pooler-exhaustion incident. Its declaration in `backend/app/core/config.py` carries the incident.
+- `build_runtime_database_url` (`backend/app/core/db.py`) adds `pgbouncer=true` to the DSN when
+  `Settings.database_use_transaction_pooler` is set, which it is by default. That flag is a
+  **declaration by the operator** that `DATABASE_URL` already names a transaction-mode endpoint — it
+  matches no hostname and re-routes nothing. Transaction mode is what matters here: session mode
+  pinned one of a small number of server connections per client and crash-looped the service, while
+  transaction mode returns the connection after each statement. The function **used to** do the
+  routing itself, rewriting a `.pooler.supabase.com` host from `:5432` to `:6543`; that was removed
+  on 2026-08-22, so pointing `DATABASE_URL` at the pooled endpoint is now the operator's job and the
+  flag is how they say they did it. The *measurements* below were taken while the rewrite was live.
 - One web process (uvicorn, single worker) plus one separate queue process
   (`backend/app/worker.py`), so **20 client connections** in steady state.
-- `pool_timeout` is unset, so Prisma's default 10 s applies (`config.py:96`).
-- The pooler's ceilings quoted in `config.py:88-93` and `db.py:20-28` are **200 client connections**
-  multiplexed over **~15 server connections**. Those are the comments' numbers; I did not
-  independently verify them against the Supabase project.
+- `Settings.database_pool_timeout` is unset, so Prisma's default 10 s applies.
+- **200 client connections** multiplexed over **~15 server connections** is the ceiling every
+  connection budget in this repository is derived from. Those numbers were comments in `config.py`
+  and `db.py` **until 2026-08-22** — they are still there at commit `72bb087` and gone from the tree
+  this document ships in, dropped as provider-specific by the same wave that removed the host
+  rewrite. This section and [RESEARCH_NOTES.md §6.1](RESEARCH_NOTES.md) are now the whole surviving
+  record of them. They described the **Supabase** project this ran on until 2026-08-22, they were
+  never independently verified even then, and **they are not known to hold for the current
+  provider** —
+  see the open question in [KUBERNETES.md](KUBERNETES.md).
 
 ### What it actually sustains — MEASURED
 
@@ -764,6 +786,129 @@ then it is a service to operate for no benefit. The generation-counter scheme in
 identically in both backends, which is what makes the switch a configuration change rather than a
 rewrite.
 
+### 9.1 The one cache that is not a cache: conditional GET on the field registry
+
+`GET /api/design-workshops/schema` is the largest body this API serves to a cold client, it does not
+vary per caller, and every cold start of every web session and every handset pays for it. It is the
+single biggest byte saving available to the field client, and it needs no cache at all — only an
+`ETag` and a 304.
+
+**MEASURED 2026-08-22**, driven through `create_app()` — the real middleware stack, not the route in
+isolation — with the identity dependency overridden:
+
+| | Bytes | On the 40 kB/s link of §1 |
+|---|---|---|
+| Registry as JSON | 149,465 | — |
+| 200, gzipped by `SelectiveGZipMiddleware` | 22,875 body / **23,618 on the wire** | 0.59 s |
+| 304 to a client that returned the tag | 0 body / **664 on the wire** | 0.017 s |
+
+**35.6x**, and 382 of the 664 bytes are the `Permissions-Policy` and CSP headers that
+`SecurityHeadersMiddleware` puts on every response — the payload itself is gone.
+
+**The 118 KB in the audit is the uncompressed figure.** No client has received an uncompressed
+registry since `SelectiveGZipMiddleware` landed, so the saving available here was never 118 KB — it
+is 22.9 KB per cold start, which is still the largest single item on this endpoint list.
+
+**The freshness lifetime is deliberately zero** — `private, max-age=0, must-revalidate`. Conditional
+GET buys the bytes, not the round trip, and that is the right trade here rather than a compromise:
+the registry changes on deployment and at no other moment, no deployment emits a signal a handset in
+a village could consult, and a phone rendering a form the server has moved past silently drops the
+keys it does not know at save time. This repository has already paid for a stale registry once —
+`registry_version`'s docstring records a bundled Android asset that carried three fewer derived
+fields than the server and reported agreement anyway.
+
+**The validator is a digest of the response body, and it must not be `registry_version()`.** That is
+the trap, and it is not theoretical. The version digest deliberately covers less than the payload
+does, saying so in its own docstring ("deliberately insensitive to labels and help text: retitling a
+field must not invalidate every cached draft on every phone"). Seven kinds of change were applied to
+the live registry on 2026-08-22 and each moved the response body while leaving
+`registry_version()` character-for-character identical:
+
+| Changed | In the body as | `registry_version()` moves? |
+|---|---|---|
+| A field label | `label` | no |
+| A field's help text | `help` | no |
+| A stage title | `title` | no |
+| An ENUM option's label | `enums[…].label`, `options[…].label` | no |
+| `columnWidthPct` | `columnWidthPct` | no |
+| `maxLength` | `maxLength` | no |
+| `minValue` | `minValue` | no |
+| A field's *type* (the control) | `type` | **yes** |
+
+Bind the ETag to the version and a client that has revalidated once holds all seven wrong for ever.
+So the tag is `W/"<sha256 of the emitted bytes, 32 hex>"`, which cannot disagree with the body it
+describes. Weak rather than strong because the gzip middleware may re-encode those bytes below the
+route, so one validator ends up describing two content-codings — which is exactly what weakness
+declares and what strength would misstate.
+
+Pinned by `backend/tests/test_schema_conditional_get.py` — 39 tests, no database, MEASURED green on
+2026-08-23, three times (`39 passed` in 449.22 s, 477.04 s and 533.93 s). The count was 36 before the
+three `Vary` tests below were added. Only **18.60 s** of that is the tests' own call time; the rest is
+the `app.services.stage_definitions` import every backend module pays, which is why the wall figure
+moves by 85 s between runs of an unchanged file and should not be quoted as a bound — the module's own
+header says so at more length.
+
+Every assertion about the seven rows above is doubled: the ETag moved **and** the version did not, so
+that widening `registry_version()` some day cannot leave the suite green while it silently tests
+nothing.
+
+One asymmetry is deliberate and is asserted rather than left to be noticed: `Vary: Accept-Encoding`
+is set by the route on the **304**, and on the **200** by `SelectiveGZipMiddleware` *when it
+compresses*. The middleware passes 204 and 304 straight through — they have no body to compress —
+so the route is the only place a 304 can acquire the header, and setting it in the route for both
+would emit it twice on every compressed response.
+
+**The middleware half is conditional, and the qualifier is the whole of it.** `SelectiveGZipMiddleware`
+returns early when the request does not offer gzip, and appends `vary` only inside the compression
+branch, which a body under `minimum_size` also skips. MEASURED through `create_app()`: the same
+request with `Accept-Encoding: identity` answers 200 carrying `ETag` and `Cache-Control` and **no
+`Vary` at all**, while every 304 carries it. Harmless as deployed — both clients send gzip, and
+`private` keeps this response out of a shared cache, and `docs/CDN.md` records the distribution's
+cache policy as `Managed-CachingDisabled` anyway
+— but it is a conditional the two comments describing it must not state as a law. Both halves are now
+pinned by tests that drive the real middleware stack:
+`test_the_200_carries_vary_when_the_middleware_compresses_it` and
+`test_the_200_carries_no_vary_when_the_client_refuses_gzip`.
+
+**Reproduce it:**
+
+```bash
+cd backend && PYTHONUTF8=1 .venv/Scripts/python.exe - <<'EOF'
+import asyncio, httpx
+from types import SimpleNamespace
+from app.main import create_app
+from app.core import deps
+app = create_app()
+app.dependency_overrides[deps.get_current_user] = lambda: SimpleNamespace(
+    id="u", email="d@e.test", role="DESIGNER")
+def wire(r):
+    head = f"HTTP/1.1 {r.status_code}\r\n" + "".join(f"{k}: {v}\r\n" for k, v in r.headers.items()) + "\r\n"
+    return len(head.encode()) + int(r.headers.get("content-length") or len(r.content))
+async def main():
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://m.test") as c:
+        a = await c.get("/api/design-workshops/schema")
+        b = await c.get("/api/design-workshops/schema", headers={"if-none-match": a.headers["etag"]})
+        print("200", a.status_code, "decoded", len(a.content),
+              "content-length", a.headers["content-length"], "wire", wire(a))
+        print("304", b.status_code, "body", len(b.content), "wire", wire(b))
+asyncio.run(main())
+EOF
+```
+
+**NEITHER CLIENT COLLECTS THIS SAVING YET, and that is not a defect in the server half.** Stated
+plainly so nobody reads a measured 35.6x as a shipped 35.6x:
+
+- The web client cannot. `frontend/lib/api.ts` passes `cache: "no-store"` to every `fetch`, which
+  bypasses the browser HTTP cache entirely — no stored response means no `If-None-Match`. Relaxing
+  that for this one path (`cache: "default"`, or a bare `fetch` for the registry) is all the browser
+  needs; it then revalidates and serves the 304 from its own cache with no further code.
+- The Android client cannot. `WorkshopRepositoryApi.kt` declares `@GET("design-workshops/schema")`
+  through Retrofit, and no `okhttp3.Cache` is installed on the client, so OkHttp never stores a
+  response and never conditions a request. Installing a small disk `Cache` is the whole change.
+
+Both are in other files and other workstreams. The server is unconditionally correct without them:
+a request with no `If-None-Match` gets exactly the payload it always got.
+
 ---
 
 ## 10. The media queue (rank 7)
@@ -824,7 +969,9 @@ durable half is already right — `_defer_rate_limited_job` writes `runAfter` on
 - Move the rate-limit cooldown into the same lease row (or into a settings row) so it coordinates
   across workers instead of relying on there being only one.
 - Split the cooldown **per provider**. The chain is ElevenLabs → Deepgram → Whisper
-  (`config.py:166-175`); a 429 from one should not idle the other two.
+  (`DEFAULT_STT_PROVIDER_ORDER` in `backend/app/services/app_settings.py` — this bullet cited
+  `config.py:166-175` until 2026-08-23, which is neither the right file nor, after the connection
+  settings moved, the right lines); a 429 from one should not idle the other two.
 
 **Cost to the pilot:** none at the defaults — one worker, one lease, identical behaviour. The lease
 row adds one write per renewal interval.
@@ -934,3 +1081,173 @@ Steps 1 to 7 make the **pilot** faster and lighter, today, with no new infrastru
 dependency. Steps 8 to 10 are the ones that only matter later, and each is written so that the
 small deployment never takes the expensive path. That ordering is not a compromise between the two
 cases — it is what happens when you rank by evidence instead of by which problem sounds biggest.
+
+
+---
+
+## 15. Retention: every table with no delete path, and the answer for each
+
+A scale review naturally asks which tables only ever grow. This one asks a narrower and more useful
+question, because a government research data set **should** retain most of what it records: for
+every table nothing can remove a row from, is that deliberate — and is the reason written down
+anywhere a maintainer would find it? An unbounded table with an argued reason is a design. An
+unbounded table with no reason recorded is a table nobody has decided about, and the two are
+indistinguishable from the outside. This section removes that ambiguity for all of them.
+
+**Nothing in this section changes behaviour.** No prune is added, and §15.4 argues why not.
+
+### 15.1 Method, and what it can miss
+
+Every model in `backend/prisma/schema.prisma` classified by whether any code path in `backend/app/`
+can remove a row:
+
+| Verdict | Meaning |
+|---|---|
+| `DIRECT` | `db.<model>.delete` or `.delete_many` is called somewhere in `app/` |
+| `SOFT` | the model has `deletedAt` and `app/` writes it |
+| `CASCADE` | `onDelete: Cascade` to a parent that is itself removable, transitively |
+| `CASCADE-DEAD` | `onDelete: Cascade` to a parent that is only ever SOFT-deleted, so the cascade can never fire |
+| `NONE` | nothing at all |
+
+**MEASURED 2026-08-22** on the working tree: **55 models — 27 `DIRECT`, 2 `SOFT`, 11 `CASCADE`,
+11 `NONE`, 4 `CASCADE-DEAD`.** The last two groups are the fifteen this section is about.
+
+`CASCADE-DEAD` is the finding a table-by-table read would miss. Four models carry
+`onDelete: Cascade` on a parent that is only ever soft-deleted, so the clause is real in the DDL and
+unreachable in practice. `DwReportExport → DesignWorkshop` is the clearest: the workshop `DELETE`
+route sets `deletedAt`, and `db.designworkshop.delete` appears nowhere in `app/`, so no export row
+has ever been removed by that cascade or by anything else. A reader who sees the cascade and stops
+there concludes the table is bounded. It is not.
+
+**The blind spot, stated rather than hidden.** The scan is a regex for `db.<lowercased model>.delete`,
+so a delete issued through a *dynamically resolved* delegate is invisible to it. Two such delegates
+exist — `design_ratings.RATING_DELEGATE` (`"dwreviewrating"`) and the delegate map in
+`dictation_consent._writable_model` — and both were read by hand. Neither deletes. Any new `getattr(db, name)`
+access needs the same manual check, because this method cannot see it.
+
+Two further routes look like deletions and are not, which is why the models below appear under
+`NONE` despite having a `DELETE` verb pointed at them:
+
+- `DELETE /designers/roster/{id}` and `DELETE /access/roster/{id}` both call `.update` and set
+  `SUSPENDED`. `DesignerRoster`'s own model comment gives the reason and it is a good one: removing a
+  departed designer by demotion "silently rewrites the authorship of every workshop they ran".
+- `DELETE /questionnaire/questions/{id}` sets `isActive = false`, and says so in its docstring:
+  "THIS HAS ALWAYS BEEN A RETIRE RATHER THAN A DELETE".
+
+### 15.2 The eleven with no delete path of any kind
+
+| Model | What adds a row | Growth | Retention answer | Argued where |
+|---|---|---|---|---|
+| `AppSetting` | `app_settings.get_or_create_app_settings` | **Cannot grow.** One row, `id = "singleton"` | Deliberate — a singleton is not a retention question | Model comment |
+| `SecretTestResult` | `managed_secrets.record_environment_verdict` (upsert) | **Cannot grow.** `key String @id`, one row per environment-variable name | Deliberate — bounded by the number of secrets, and the row holds a verdict with no secret value in it | Model comment |
+| `Location` | `records.attach_location` | Reference data. 15 rows — the `Location` model comment counts them ("the fifteen rows keep exactly the coordinates they have") | Deliberate — reference rows a researcher curates; deleting one orphans the records that cite it | Model comment |
+| `AppRelease` | `app_release.publish_release` | One row per published APK, a handful a year | Deliberate — "the highest versionCode is the current release", so the history *is* the rollback path | Model comment |
+| `QuestionnaireSection` | `questionnaire.create_section` | One per section of the standing instrument | Deliberate — retired via `isActive`, never removed, because answers reference it | Route docstring |
+| `QuestionnaireQuestion` | `questionnaire.create_question` / `update_question` | One per question of the standing instrument | Deliberate — same rule, and `QuestionnaireResponse.question` is `onDelete: Restrict` so the database refuses it too. (Not `QuestionnaireFormAnswer.question`, which is also `Restrict` and guards the *other* model, `QuestionnaireFormQuestion` — the designer-uploaded instrument's questions) | Route docstring + schema |
+| `Questionnaire` | `questionnaire_forms.create_from_parsed` | One per designer-uploaded instrument | Deliberate — `entries` cascade off it, so a delete would take a fortnight of recorded answers with it. The model comment already makes that argument for the workshop link (`SetNull, never Cascade`) | Model comment |
+| `ReviewLog` | `review.set_review_status` / `edit_reviewed_record` | One row per review decision | Deliberate — an append-only audit trail. `DwReviewRating`'s comment names it as one of this repository's write-only ledgers, which is a readership problem and not a retention one | **NEW, here** |
+| `RecordRevision` | `access.record_revision` | One row per edit to a record's fields | Deliberate — "an immutable audit row… so an admin can reconstruct the original values alongside every subsequent edit". A prune deletes exactly the reconstruction it exists for | Model comment |
+| `DesignerRoster` | `designers.add_to_roster` | One row per empanelled designer | Deliberate — suspension, not deletion, because the role is read when deciding who may review whose work, so a removal is retroactive | Model comment |
+| `AccessRoster` | `access_roster.admit` / `record_refused_attempt` | One row per admitted address | Deliberate — the platform allow-list; a removed row is an admission nobody can audit | Model comment |
+
+### 15.3 The four whose cascade can never fire
+
+These are the ones the audit is right to single out, because each *looks* bounded in the schema.
+
+| Model | Cascade parent | Why it never fires | Growth | Retention answer |
+|---|---|---|---|---|
+| `QuestionnaireFormEntry` | `Questionnaire` | The parent has no delete path (§15.2) | One row per respondent sitting | **Deliberate, and a prune here would be a data-loss bug.** An entry is primary research data, and `QUESTIONNAIRE_ANNEXURE` is used by all six report templates (`report_templates.py`), so a submitted report can cite any of them |
+| `DwReportExport` | `DesignWorkshop` | The workshop is soft-deleted only | One row per report generated, server-side or on a phone | **Deliberate, and a prune would corrupt a live feature.** `report_history` computes each file's `generation` as its one-based place in the whole export record; drop the oldest rows and every "Generation N" a designer has already seen renumbers. The route's docstring is explicit that the row is evidence: "An export row whose size or checksum could be rewritten afterwards would not be evidence of anything" |
+| `DwWorkshopConsentDecision` | `DesignWorkshop` | Same | One row per consent answer, rare per workshop | **Deliberate, and the model says so in its first line**: "kept for ever". A withdrawal must not erase the answer that earlier sends were made under — "granted on the 3rd, withdrawn on the 9th" is only answerable from a log |
+| `DwReviewRating` | `DesignWorkshop`, `DwStageEntry` | Same | One row per (stage entry, reviewer, round); a changed score updates the row rather than appending | **Deliberate.** The unique triple already bounds it to one row per opinion rather than one per keystroke, and the ratings *are* the review feature — the page's default sort is the mean of this column |
+
+### 15.4 Why no prune is added, and what would change that
+
+The honest outcome of working through all fifteen is that **none of them wants a prune**, and the
+reasons divide into three kinds rather than being fifteen separate judgement calls:
+
+1. **Four cannot grow at all** — `AppSetting` (a singleton), `SecretTestResult` (keyed by
+   environment-variable name), `Location` and `AppRelease` (curated by hand). A prune would be
+   machinery guarding a table that has no growth to guard against.
+2. **Seven are audit or provenance records** — `ReviewLog`, `RecordRevision`,
+   `DwWorkshopConsentDecision`, `DwReportExport`, `DesignerRoster`, `AccessRoster` and
+   `DwReviewRating`. Pruning an audit trail deletes precisely the evidence it was created to hold,
+   and for two of them a prune is not merely wasteful but incorrect: it renumbers report generations,
+   and it erases the consent an already-sent recording was sent under.
+3. **Four are the research data set itself** — `Questionnaire`, `QuestionnaireSection`,
+   `QuestionnaireQuestion` and `QuestionnaireFormEntry`. The requirement is retention and the report
+   templates cite them. What refuses their deletion is NOT the same in all four, and stating it as
+   one rule overstates three of them:
+
+   | Model | `isActive` retire | Something `Restrict`s it | What actually protects it |
+   |---|---|---|---|
+   | `QuestionnaireQuestion` | yes (`DELETE /questionnaire/questions/{id}`) | yes — `QuestionnaireResponse.question` | both, and this is the only one of the four where "twice over" is literal |
+   | `QuestionnaireSection` | yes (`DELETE /questionnaire/sections/{id}`) | no — `QuestionnaireSectionStatus.section` is `Cascade`, `QuestionnaireQuestion.section` is `SetNull` | the retire, plus having no delete path |
+   | `Questionnaire` | yes (`PATCH …{isActive: false}`, "what this API has INSTEAD of a delete") | no — `entries` and `sections` `Cascade` OFF it | having no delete path. A delete would take a fortnight of recorded answers with it, so here the schema is the hazard rather than the guard |
+   | `QuestionnaireFormEntry` | **no such column** | no — its answers `Cascade` off it | having no delete path at all (§15.3) |
+
+   The common protection is therefore the absence of a delete path, which is exactly what §15.3
+   argues for `QuestionnaireFormEntry`; the `Restrict` is one model's extra belt and not the group's.
+
+The growth that remains is genuinely slow, and slow in a shape that does not hurt. `RecordRevision`
+and `ReviewLog` grow per *edit* and per *review decision*, not per read; every table above is queried
+by its own primary key or by an indexed foreign key, so none of them gets slower as it lengthens.
+Against §0's production volumes — 16 artisans, 1 workshop, 25 questionnaire interviews — the largest
+is measured in thousands of narrow rows a year. **MODELLED**, from those volumes: a decade at ten
+times the current pace puts every table in this section under 10 MB, on a box whose media bucket is
+already 6.66 GiB. There is no scale argument for a prune here, only a tidiness one, and tidiness is
+not worth a job that can delete a row a ministry document cites.
+
+**What would change the answer.** Two things, and neither is true of the fifteen above:
+
+- **A table that grows per request rather than per human act.** The nearest candidate in the schema
+  is `MediaProcessingJob` — one row per queued transcription or measurement run — and it is
+  deliberately *not* in this section, because it does have a delete path: `CASCADE` from `MediaFile`,
+  which `media.delete_media` and `design_workshops.decide_identity_photograph` both hard-delete. If a prune is ever wanted,
+  that is the table to want it for, and the rule would be: remove rows in `COMPLETED` older than N
+  days, never `QUEUED`, `PROCESSING` or `FAILED`, and never the newest row for a given
+  `mediaFileId`. It is safe because a job's durable output is written to `MediaFile.transcriptText`
+  and not to the job row — `media_queue._transcript_write` is the whole contract. It belongs in
+  `app/services/media_queue.py`, which owns that table's lifecycle; anywhere else splits the queue's
+  rules across two files.
+- **A retention *policy* arriving from outside** — a ministry data-protection rule with a stated
+  period. That is a different instruction from "this table is large", it would apply to exactly the
+  audit tables this section is most protective of, and it needs an owner decision rather than an
+  engineering one. Recorded here so that it is a decision and not a discovery.
+
+**Reproduce the classification:**
+
+```bash
+cd backend && PYTHONUTF8=1 .venv/Scripts/python.exe - <<'EOF'
+import collections, re, pathlib
+root = pathlib.Path(".")
+sch = (root / "prisma/schema.prisma").read_text(encoding="utf-8")
+blocks = dict(re.findall(r"^model (\w+) \{(.*?)^\}", sch, re.S | re.M))
+src = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in (root / "app").rglob("*.py"))
+direct, soft, parents = set(), set(), {}
+for name, body in blocks.items():
+    low = name.lower()
+    if re.search(rf"\b(?:db|tx|client)\.{low}\.(?:delete|delete_many)\b", src):
+        direct.add(name)
+    if "deletedAt" in body and re.search(rf"\b(?:db|tx|client)\.{low}\.(?:update|update_many)\b", src):
+        soft.add(name)
+    parents[name] = [ln.strip().split()[1].rstrip("?[]") for ln in body.splitlines()
+                     if "onDelete: Cascade" in ln and ln.strip().split()[1].rstrip("?[]") in blocks]
+def live(name, seen=None):
+    seen = seen or set()
+    if name in seen:
+        return False
+    seen.add(name)
+    return any(p in direct or live(p, seen) for p in parents.get(name, []))
+verdicts = {}
+for name in blocks:
+    verdicts[name] = ("DIRECT" if name in direct else "SOFT" if name in soft
+                      else ("CASCADE" if live(name) else "CASCADE-DEAD") if parents.get(name) else "NONE")
+for name, v in verdicts.items():
+    if v in ("NONE", "CASCADE-DEAD"):
+        print(f"{v:13} {name}")
+# The tally of section 15.1, so the sentence is re-derivable and not only the two tables.
+tally = collections.Counter(verdicts.values())
+print(f"{len(verdicts)} models -", ", ".join(f"{n} {v}" for v, n in tally.most_common()))
+EOF
+```

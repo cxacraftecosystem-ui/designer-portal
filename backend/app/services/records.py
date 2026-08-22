@@ -25,6 +25,20 @@ _SENSITIVE_KEYS = {"passwordHash"}
 # Both columns exist on Artisan and nowhere else, so an encoded dict carrying either key IS an
 # artisan — which means it also carries its own ``createdById``, and the entitlement decision can be
 # made per node without the walk knowing anything about the shape it is walking.
+#
+# THREE ENCODED SHAPES CARRY THESE KEYS WITHOUT BEING AN ARTISAN ROW, all three measured rather than
+# imagined, and this comment claimed there was ONE until an audit widened the count. Every one of
+# them is a blob KEYED BY COLUMN NAME, which is what makes a column-name rule mis-fire on it:
+#   * ``RecordRevision.changes`` — an audit entry for a retracted Aadhaar arrives as
+#     ``{"aadhaarNumber": {"old": ..., "new": ...}}``, so the key holds a dict, not a number;
+#   * ``extraMetadata.fieldProvenance`` — ``merge_field_provenance`` stamps every field it saw
+#     CHANGE, ``aadhaarNumber`` included (it is not in :data:`PROVENANCE_SKIP_FIELDS`), so an edited
+#     identity column leaves ``{"aadhaarNumber": {"by": ..., "byName": ..., "at": ...}}`` behind;
+#   * the REST of ``extraMetadata`` — a client-writable Json column that ``merge_field_provenance``
+#     merges from the request body and ``public_encode`` echoes whole. Anything a caller puts under
+#     these two key names inside it arrives here, in any shape it likes.
+# See :func:`_mask_identity_node` for what each of the three gets and why. The scalar case — the
+# artisan row itself — is still the overwhelmingly common one and is masked at the call site.
 _IDENTITY_KEYS = ("aadhaarNumber", "pehchanCardNumber")
 
 # THE FIELDS THAT HAND OVER BYTES. A ``MediaFile.url`` is not a description of a file, it IS the file:
@@ -155,6 +169,109 @@ def mask_identity_number(value: Any) -> Any:
     return mask_aadhaar(value)
 
 
+#: What a nested identity value is replaced with. NOT ``mask_identity_number``'s "XXXX XXXX 9012":
+#: see :func:`_mask_identity_node` for why the four digits are deliberately withheld one level down.
+_NESTED_IDENTITY_MASK = "XXXX XXXX XXXX"
+
+
+#: The keys a ``fieldProvenance`` stamp can have, and no others: ``{by, byName, at}`` from
+#: :func:`merge_field_provenance` plus whatever ``MeasurementProvenance.stamp`` adds for a dimension.
+#: Retyped rather than imported because the measurement half is built key by key inside that method
+#: and has no constant to import — and the direction of a mismatch is safe: a stamp carrying a key
+#: this set has not heard of is not recognised as a stamp and is masked whole, which loses a "who
+#: filled this in" line rather than leaking anything.
+_PROVENANCE_STAMP_KEYS = frozenset(
+    {
+        "by",
+        "byName",
+        "at",
+        "method",
+        "methodProvider",
+        "methodModelId",
+        "methodConfidence",
+        "methodTechnique",
+    }
+)
+
+
+def _mask_identity_node(node: Any) -> Any:
+    """What a CONTAINER under an identity key is served as. Never reached for a scalar.
+
+    A scalar under one of :data:`_IDENTITY_KEYS` is the artisan column, and the call site hands that
+    straight to ``mask_identity_number`` — byte for byte as it always has, "XXXX XXXX 9012" and all.
+    A container is one of the three column-name-keyed blobs named above that set, and this function
+    exists because ``mask_identity_number`` normalises with ``str(value)`` before it slices, so
+    handing it a dict returned the last few characters of the dict's *repr*: a
+    ``RecordRevision.changes`` entry for a retracted Aadhaar came out of
+    ``GET /api/data-access/revisions`` as the literal string ``"XXXX XXXX rue}"`` — the tail of
+    ``…'redacted': True}`` with the spaces stripped. That is not a leak, but it destroyed the entry
+    on BOTH readers of this blob — ``frontend/components/CollabPanel.tsx`` renders
+    ``String(change.old ?? "—")`` and Android's ``MainActivity.RecordCollabSection`` renders
+    ``jsonText(change.old)``; a string has neither ``.old`` nor an ``old`` member, so the row an admin
+    opened the edit history to find printed as ``— → —``. The screens that exist to show that
+    something was done to a record showed that nothing was.
+
+    Three recognised shapes, then a total mask. THE DEFAULT IS THE TOTAL MASK, and that is the whole
+    safety property: no leaf value, and no dict KEY, is echoed out of a container under an identity
+    key unless this function recognised the container.
+
+    * AN ENTRY THAT IS ALREADY ONE OF ``access._redacted_change``'s — exact key set, ``redacted``
+      True, AND an ``(old, new)`` pair in ``access.REDACTED_PLACEHOLDER_PAIRS`` — is returned
+      untouched. It contains no value by construction, and masking a placeholder as an identity
+      number ("XXXX XXXX ded)") is the same destruction with better spelling. THE PAIR IS CHECKED
+      AGAINST THE CLOSED SET RATHER THAN THE FLAG BELIEVED, because ``extraMetadata`` is
+      client-writable: a bare ``{"redacted": true, "note": "123456789012"}`` under this key name used
+      to be returned verbatim, which is 12 digits echoed by the function whose job is that they are
+      not.
+    * ANY OTHER AUDIT-SHAPED ENTRY (keys within ``{old, new, redacted}``, at least one of the two
+      present) is RE-DERIVED through ``access.redacted_placeholder``, which reads only whether each
+      side was empty. Those are the historical ledger rows written before
+      ``access.REVISION_REDACTED_FIELDS`` existed, which still hold real retracted numbers, and this
+      is what they are worth: no digit of the stored value crosses, and the served row reads exactly
+      like one written today. Re-deriving rather than masking both sides is also the fix for the
+      REPLACEMENT row — ``{"old": "1111…", "new": "4444…"}`` masked twice is
+      ``"XXXX XXXX XXXX" → "XXXX XXXX XXXX"``, legible and reading as though nothing changed, which
+      is the exact failure ``_redacted_change``'s four distinct wordings exist to prevent.
+      Serving the last four instead (what every other surface shows) is a one-line change and an
+      OWNER's call: it is the difference between an admin being able to trace a duplicate artisan
+      back to the number that freed the unique key, and not. House rule 5 has no "but only a little"
+      clause, so the default here is nothing.
+    * A ``fieldProvenance`` STAMP (:data:`_PROVENANCE_STAMP_KEYS`) is returned untouched. It holds
+      who/when, never the value, and it is the one of the three shapes that is NOT client-writable:
+      ``merge_field_provenance`` drops ``fieldProvenance`` from the incoming body and from the stored
+      seed, so every stamp reaching here was composed by this server. Masking it was a live defect
+      rather than caution — the stamp for an edited ``aadhaarNumber`` reached
+      ``FieldProvenance.tsx`` with ``byName`` and ``at`` replaced by ``"XXXX XXXX XXXX"``, i.e. the
+      provenance panel naming a mask as the person who filled the field in.
+
+    Anything else — any other dict, any list, and every leaf inside them — becomes
+    :data:`_NESTED_IDENTITY_MASK` in full. That is deliberately blunter than walking: a walk that
+    replaced only ``str`` leaves left ``{"old": 987654321098}`` untouched (integers are not strings),
+    and a walk that replaced every leaf still echoed the dict's KEYS. Nothing in this repository puts
+    a structure worth preserving under one of these two key names, so the shape is not worth a single
+    digit.
+    """
+    from app.services.access import (
+        REDACTED_CHANGE_KEYS,
+        REDACTED_PLACEHOLDER_PAIRS,
+        redacted_placeholder,
+    )
+
+    if isinstance(node, dict):
+        keys = set(node)
+        if (
+            keys == REDACTED_CHANGE_KEYS
+            and node.get("redacted") is True
+            and (node.get("old"), node.get("new")) in REDACTED_PLACEHOLDER_PAIRS
+        ):
+            return node
+        if keys <= REDACTED_CHANGE_KEYS and ("old" in keys or "new" in keys):
+            return redacted_placeholder(node.get("old"), node.get("new"))
+        if keys and keys <= _PROVENANCE_STAMP_KEYS:
+            return node
+    return _NESTED_IDENTITY_MASK
+
+
 def _redact_sensitive(
     value: Any,
     viewer_id: str | None,
@@ -167,7 +284,11 @@ def _redact_sensitive(
 
     * password hashes are dropped outright, however deeply nested;
     * identity numbers are masked unless ``unmasked`` (professor and above) or the node's own
-      ``createdById`` is the viewer — entitlement follows the ARTISAN, not the payload;
+      ``createdById`` is the viewer — entitlement follows the ARTISAN, not the payload. An identity
+      key holding a CONTAINER rather than a number is not an identity number at all but one of the
+      three column-name-keyed blobs listed above :data:`_IDENTITY_KEYS`; it goes through
+      :func:`_mask_identity_node`, which serves the two server-written shapes legibly and masks
+      anything else WHOLE rather than flattening it into the tail of its own repr;
     * media URLs AND transcript text (:data:`_MEDIA_TAKEABLE_KEYS`) are dropped unless ``media_urls``
       is ``None`` (all allowed) or contains the node's own ``uploadedById`` — entitlement follows the
       FILE'S UPLOADER, for the same reason.
@@ -181,7 +302,16 @@ def _redact_sensitive(
         if not unmasked and not (viewer_id and value.get("createdById") == viewer_id):
             for key in _IDENTITY_KEYS:
                 if key in value:
-                    value[key] = mask_identity_number(value[key])
+                    column = value[key]
+                    # A container under an identity key is an audit entry or a provenance stamp,
+                    # not a number. Masking it as if it were one flattens it to the tail of its own
+                    # repr — see :func:`_mask_identity_node` for the three shapes and what each
+                    # gets. Anything it does not recognise is masked whole, keys included.
+                    value[key] = (
+                        _mask_identity_node(column)
+                        if isinstance(column, (dict, list))
+                        else mask_identity_number(column)
+                    )
         # The marker is READ before the keys are dropped, which matters because ``objectKey`` is both
         # the marker and one of the keys.
         # Dropped rather than blanked. A key present and null reads as "this file has no URL",

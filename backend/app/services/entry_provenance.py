@@ -22,7 +22,9 @@ working one:
     repository's rule is "everybody may LOOK at every record while taking data out stays earned".
   * ONLY THE CHANGED FIELDS, PER EDITOR. ``access.record_revision`` writes one ``RecordRevision``
     per edit holding exactly ``{field: {old, new}}`` for the fields that actually changed, stamped
-    with ``editedById``. Nothing else is duplicated.
+    with ``editedById`` — with one exception, ``access.REVISION_REDACTED_FIELDS``, where the pair
+    describes the direction of the change instead of carrying the identity or contact value.
+    Nothing else is duplicated.
   * PER-FIELD PROVENANCE THAT MOVES ON EDIT. ``records.merge_field_provenance`` stores
     ``extraMetadata.fieldProvenance = {field: {by, byName, at}}`` on every record type, and its
     rule is already the requirement's rule verbatim: on create every non-empty field is attributed

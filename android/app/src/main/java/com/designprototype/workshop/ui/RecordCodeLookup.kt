@@ -42,6 +42,7 @@ import com.designprototype.workshop.data.DwWorkshopCodeRef
 import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.decodeWorkshopCode
+import com.designprototype.workshop.data.designWorkshopCodeNotOpenableMessage
 import com.designprototype.workshop.data.unresolvedWorkshopCodeMessage
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
@@ -151,6 +152,28 @@ suspend fun lookUpRecordCode(repository: WorkshopRepository, ref: DwWorkshopCode
             // the grammar fails this `when`'s exhaustiveness check instead of falling into a branch
             // somebody else wrote.
             DwWorkshopRecordType.PROTOTYPE -> return RecordCodeOutcome.Refused(unresolvedWorkshopCodeMessage(ref.recordType))
+
+            // AND THIS IS THAT EXHAUSTIVENESS CHECK DOING ITS JOB. `DESIGN_WORKSHOP` / `G` arrived in
+            // the grammar with the browser's workshop card, and the compiler stopped here rather than
+            // letting a `G` code fall into somebody else's branch.
+            //
+            // IT REFUSES INSTEAD OF RESOLVING, and that is a decision rather than a stub.
+            // `repository.designWorkshop(id)` would answer perfectly well and this panel would then
+            // show a title and an Open button — but Open reports through `onOpen(recordType.wire, id)`
+            // into `MainActivity.searchRecordEntryMode`, whose `else` is `EntryMode.ARTISAN`. A
+            // designer who scanned a workshop card would be shown the right workshop and then handed
+            // its id AS AN ARTISAN, which is the wrong-record failure this whole feature exists to
+            // remove, arriving one press after a correct scan. Routing a scanned workshop to the
+            // workshop it names is real work in `MainActivity` and is not done here.
+            //
+            // THE WORDS ARE NOT WRITTEN HERE, deliberately: every sentence a code can produce lives in
+            // `DwWorkshopCodes` next to the grammar it is about, because each one has to be argued
+            // against the browser's copy and pinned to it. This one names what this BUILD cannot do
+            // and never claims the workshop exists — see [designWorkshopCodeNotOpenableMessage],
+            // which also explains why it is not `unresolvedWorkshopCodeMessage`: nothing was asked
+            // here, so "no design workshop you can open matches that code" would not be true.
+            DwWorkshopRecordType.DESIGN_WORKSHOP ->
+                return RecordCodeOutcome.Refused(designWorkshopCodeNotOpenableMessage())
         }
         RecordCodeOutcome.Found(ref, hit)
     } catch (e: HttpException) {

@@ -108,11 +108,11 @@ is listening on that port, rather than skipping. **This paragraph said the oppos
 rather than a convenience"), and the reversal matters in both directions: it told a developer their
 local run was skipping the database half when it was in fact erroring through it, and it told a
 reader the guard was protecting production data that `.env` does not name. **The guard is still worth
-having, for the reason the file itself gives**: `backend/.env` carries the compose value with the
-instruction "replace with the Supabase URL for any shared/deployed database", so on somebody's machine
-it DOES name a live one — which is why the guard reads the host out of the resolved DSN every run
-instead of trusting the file. Where the guard reads the
-value from is itself under active change; read `backend/tests/conftest.py` rather than assuming, and
+having, for the reason the file itself gives**: `backend/.env` carries the compose value with an
+instruction to replace it with a real database URL for any shared or deployed database, so on
+somebody's machine it DOES name a live one — which is why the guard reads the host out of the
+resolved DSN every run instead of trusting the file. Where the guard reads that value from is itself
+under active change; read `backend/tests/conftest.py` rather than assuming, and
 do not restate its contents here.
 
 **Two consequences a reader planning work needs, in the order they will meet them:**
@@ -271,7 +271,12 @@ the CloudFront console. The nginx side is already generous (`proxy_read_timeout 
 value is currently ≥ 60 s cannot be read from this repository. Check it — [CDN.md](CDN.md) documents
 the setting and the symptom.
 
-### F5 — Supabase pooler connection exhaustion · **mitigated, fragile**
+### F5 — Pooler connection exhaustion · **mitigated, fragile**
+
+*(Both incidents below were measured on Supabase, which hosted this deployment until 2026-08-22.
+The root cause is connections-per-process multiplied by processes, which is provider-independent;
+the specific ceiling that was hit was that provider's — see the open question in
+[KUBERNETES.md](KUBERNETES.md).)*
 
 Two distinct incidents, same root, both fixed:
 
@@ -464,8 +469,8 @@ done
 ```
 
 **Never** point a write test at production. `backend/.env` in this tree names the local compose stack
-(`127.0.0.1:55442`), but the file's own comment beside it says "replace with the Supabase URL for any
-shared/deployed database" — so the value on the machine in front of you is whatever the last person
+(`127.0.0.1:55442`), but the file's own comment beside it tells the reader to replace it for any
+shared or deployed database — so the value on the machine in front of you is whatever the last person
 set, and it is not safe to assume. **Read the DSN before running anything that writes**: a test that
 writes, migrates, or enables the media queue worker writes to whatever that string names, and against
 the live database that is real field data. This paragraph asserted flatly that `.env` *is* the live

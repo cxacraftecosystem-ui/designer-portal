@@ -516,6 +516,17 @@ class PdfRenderer:
         self.bottom = self.margin + 10 * MM   # room for the running foot
 
         self.base_size = self.theme.base_size_pt
+        #: How many pages the LAST MEASURING PASS produced, which is what the running foot prints
+        #: after "of". The .docx twin has said "Page N of M" since it was written — Word resolves
+        #: NUMPAGES itself — and this renderer said "Page N", so the two files of one download
+        #: numbered their pages differently and a reader holding both had no way to tell which
+        #: was the whole document. Nothing here can ask a PDF how long it is; the measuring pass
+        #: is the only thing that knows, and it knows before a single page is drawn.
+        #:
+        #: Zero until `build` has measured. `_draw_furniture` is only ever reached from the
+        #: drawing pass, so in the ordinary path it is always set — but a caller that drives the
+        #: renderer by hand gets "Page N" rather than "Page N of 0".
+        self._total_pages = 0
         self._heading_pages: dict[str, int] = {}
         self._toc_entries: list[tuple[int, str, str, str]] = []  # level, number, text, bookmark
         # WHAT THE CONTENTS PAGE LAYS OUT, which is deliberately NOT `_toc_entries`.
@@ -775,7 +786,15 @@ class PdfRenderer:
         self.c.setStrokeColorRGB(*_rgb(t.rule))
         self.c.setLineWidth(0.5)
         self.c.line(self.margin, foot_y + 4 * MM, self.page_w - self.margin, foot_y + 4 * MM)
-        page_label = f"Page {self._page}" if meta.show_page_numbers else ""
+        # "Page N of M", the same label the .docx builds from PAGE and NUMPAGES — see
+        # `_total_pages` for why the two disagreed and what M is. The total comes from the
+        # measuring pass, so it can only be wrong if the drawing pass paginated differently from
+        # the pass that measured it; `build` checks exactly that and says so in the log, because
+        # that disagreement is the defect this renderer has shipped three times.
+        page_label = ""
+        if meta.show_page_numbers:
+            page_label = (f"Page {self._page} of {self._total_pages}"
+                          if self._total_pages else f"Page {self._page}")
         page_w = self._string_width(page_label, self.fonts.regular, 7.8) if page_label else 0.0
         # The foot shares its first line with the page number, so it gets the column MINUS that.
         foot_w = max(self.text_w - (page_w + 4 * MM if page_label else 0.0), 20 * MM)
@@ -1898,6 +1917,10 @@ class PdfRenderer:
         self._toc_entries = []
         self._heading_pages = {}
         self._run_pass(drawing=False)
+        # The length of the document, learned here and printed by every running foot. This is the
+        # layout the drawing pass is about to reproduce, so it is the layout whose page count the
+        # reader will be holding — see `_total_pages`.
+        self._total_pages = self._page
 
         buffer = BytesIO()
         meta = self.doc.meta
@@ -1912,6 +1935,22 @@ class PdfRenderer:
         self._draw_furniture()
         self.c.showPage()
         self.c.save()
+        if self._page != self._total_pages:
+            # THE TWO PASSES DISAGREED ABOUT HOW LONG THE DOCUMENT IS, which is the failure this
+            # renderer has shipped three times: a clearance, a heading rule and a keepNext
+            # reservation each applied on one pass and not the other. Every symptom of it is
+            # silent — a contents page whose numbers are one or two too low, and now a running
+            # foot that counts past its own total. There is nothing to do about it at render
+            # time (the drawn document is the document), so it is reported rather than repaired,
+            # named precisely enough that the next instance is found from the log instead of
+            # from a printed report.
+            logger.error(
+                "report_pdf: the drawing pass produced %d pages and the measuring pass measured "
+                "%d. The contents page numbers and the 'of %d' in the running foot describe a "
+                "layout that was not drawn; something in the layout is applied on one pass and "
+                "not the other.",
+                self._page, self._total_pages, self._total_pages,
+            )
         return buffer.getvalue()
 
 

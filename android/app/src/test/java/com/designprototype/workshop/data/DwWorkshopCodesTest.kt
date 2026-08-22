@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -202,7 +203,7 @@ class DwWorkshopCodesTest {
         )
         assertEquals(
             "No code can be printed for a “designer” — codes exist for artisans, crafts, workshops, " +
-                "products, processes, tools, interviews, media files and prototypes.",
+                "products, processes, tools, interviews, media files, design workshops and prototypes.",
             messageOf(encodeWorkshopCode("designer", ARTISAN_ID))
         )
         assertEquals(
@@ -485,6 +486,13 @@ class DwWorkshopCodesTest {
         // digit agreeing all the way. Every value below was read off `frontend/lib/workshopCodes.ts`,
         // and every code string was printed by that module — see the file header. Changing one strands
         // every card and tag already printed against it.
+        //
+        // THIS MAP IS HAND-HELD AND SO CAN ONLY EVER AGREE WITH ITSELF. It stayed green for as long
+        // as the browser had a `designWorkshop` letter this enum did not, because nothing here reads
+        // the browser. `backend/tests/test_workshop_code_letters.py` is the pin that does: it reads
+        // this enum and `TYPE_LETTER` as text and fails on a letter that differs, or is present on
+        // one surface and absent on the other. What is kept here is the CODE STRINGS below, which
+        // that pin cannot check — it compares tables, not payloads.
         val letters = linkedMapOf(
             DwWorkshopRecordType.ARTISAN to "A",
             DwWorkshopRecordType.CRAFT to "C",
@@ -494,6 +502,7 @@ class DwWorkshopCodesTest {
             DwWorkshopRecordType.TOOL to "T",
             DwWorkshopRecordType.QUESTIONNAIRE to "Q",
             DwWorkshopRecordType.MEDIA to "M",
+            DwWorkshopRecordType.DESIGN_WORKSHOP to "G",
             DwWorkshopRecordType.PROTOTYPE to "P",
         )
 
@@ -573,6 +582,146 @@ class DwWorkshopCodesTest {
         assertFalse(workshopCodeMatchesRow(refOf(tag)!!, emptyMap()))
         // An artisan card never matches a prototype row, whatever its id says.
         assertFalse(workshopCodeMatchesRow(DwWorkshopCodeRef(DwWorkshopRecordType.ARTISAN, CLIENT_KEY), synced))
+    }
+
+    // ----------------------------------------------------------------------------------
+    // The design workshop letter, and the id shape it is the only type to refuse
+    // ----------------------------------------------------------------------------------
+
+    @Test
+    fun `a workshop that exists only on one device gets no code, on either client's spelling of its id`() {
+        // THE FAILURE THIS PREVENTS, and it is the reason a designer cannot create a workshop at all.
+        // `local-<uuid>` is what `WorkshopListScreen` mints for a workshop opened with no signal, and
+        // `dwlocal-<uuid>` is the browser's. Neither ever becomes a server id — the create route
+        // carries no client key, so the draft is allocated a fresh cuid on sync and the local id is
+        // thrown away. A tag printed from one resolves to nothing on every device but the one that
+        // made it, and a colleague told there is no such workshop starts their own: two devices, two
+        // workshops, one fortnight of fieldwork split between them.
+        //
+        // Both prefixes pass [ID_PATTERN] perfectly — lower case, hyphenated, the right length — so
+        // this has to be its own refusal ahead of the pattern rather than a consequence of it.
+        val local = "local-3f7a91c2-0b4d-4e19-9c2a-1d5e6f708a9b"
+        val webLocal = "dwlocal-3f7a91c2-0b4d-4e19-9c2a-1d5e6f708a9b"
+
+        assertEquals(
+            DwEncodeRefusal.ID_IS_DEVICE_LOCAL,
+            refusalOf(encodeWorkshopCode(DwWorkshopRecordType.DESIGN_WORKSHOP, local))
+        )
+        assertEquals(
+            DwEncodeRefusal.ID_IS_DEVICE_LOCAL,
+            refusalOf(encodeWorkshopCode(DwWorkshopRecordType.DESIGN_WORKSHOP, webLocal))
+        )
+
+        // SCOPED THE WAY THE WEB SCOPES IT, and the asymmetry is the point. `dwlocal-` is a string
+        // nothing else here could issue, so it is refused for every type; bare `local-` is six
+        // generic characters, and refusing a real record's code would be worse than the failure it
+        // prevents. A device-local workshop is the only record either client mints under it.
+        for (type in DwWorkshopRecordType.entries) {
+            assertEquals(
+                "$type must refuse the browser's device-local prefix",
+                DwEncodeRefusal.ID_IS_DEVICE_LOCAL,
+                refusalOf(encodeWorkshopCode(type, webLocal))
+            )
+            if (type == DwWorkshopRecordType.DESIGN_WORKSHOP) continue
+            // THE POSITIVE, AND NOT ONLY THE ABSENCE OF THIS REASON. `assertNotEquals` on the reason
+            // alone is satisfied by ANY other refusal, so a change that started refusing a bare
+            // `local-` id for every type under some new reason would keep this green while doing
+            // exactly what the scoping exists to prevent. The web analogue asserts the encode really
+            // succeeds, so this asserts a code came back — with the reason still named, because a
+            // failure that prints "expected not ID_IS_DEVICE_LOCAL" reads better than "expected not
+            // null" when the scoping itself is what broke.
+            assertNotEquals(
+                "$type must NOT refuse a bare `local-` id — only a design workshop mints one",
+                DwEncodeRefusal.ID_IS_DEVICE_LOCAL,
+                refusalOf(encodeWorkshopCode(type, local))
+            )
+            assertNotNull(
+                "$type must still PRINT a code for a bare `local-` id — the prefix is scoped to the " +
+                    "design workshop, and refusing a real record's code is worse than the failure it prevents",
+                codeOf(encodeWorkshopCode(type, local))
+            )
+        }
+
+        // AND THE DECODER SAYS THE SAME THING, because a code the encoder refuses to print is one a
+        // colleague can still type in off a photograph of somebody's screen. Not folded into
+        // MALFORMED: the code is not damaged, and "check it against the card" would send a designer
+        // round a loop that cannot end.
+        val prefix = "DPW1:G:LOCAL-3F7A91C2-0B4D-4E19-9C2A-1D5E6F708A9B"
+        val typed = "$prefix:${workshopCodeCheck(prefix)}"
+        assertEquals(DwDecodeRefusal.DEVICE_LOCAL, refusalOf(decodeWorkshopCode(typed)))
+        assertEquals(
+            "That code names a workshop that had not been shared yet when it was written down — it " +
+                "only ever meant anything on the device that made it. Ask whoever created the " +
+                "workshop to sync their device and send you the code it prints then.",
+            messageOf(decodeWorkshopCode(typed))
+        )
+
+        // A REAL design workshop id still prints, which is the whole point of the letter.
+        assertEquals(
+            "DPW1:G:CMSIK2JG8000EH8XC1LCY661A:${workshopCodeCheck("DPW1:G:CMSIK2JG8000EH8XC1LCY661A")}",
+            codeOf(encodeWorkshopCode(DwWorkshopRecordType.DESIGN_WORKSHOP, ARTISAN_ID))
+        )
+    }
+
+    @Test
+    fun `a design workshop code that does not resolve names the admin, not a search box`() {
+        // ⚠ THIS SENTENCE IS NOT YET WHAT A DESIGNER READS ON THIS CLIENT, and the test says so
+        // rather than implying otherwise. No production call site passes `DESIGN_WORKSHOP` to
+        // `unresolvedWorkshopCodeMessage`: the typed-code box refuses a `G` code before it asks the
+        // network (see the test below), and the two `WorkshopCodesScreen` call sites are reached only
+        // for `PROTOTYPE` and `ARTISAN`. It is pinned anyway because the BROWSER reaches its copy on
+        // an `ApiError`, and this is the copy that copy has to agree with —
+        // `backend/tests/test_workshop_code_letters.py` compares the two — and because it becomes
+        // this client's answer unchanged the moment `MainActivity` can route a scanned workshop.
+        // THE ONE TYPE WHOSE UNRESOLVED SENTENCE IS NOT THE GENERIC ONE. For every other record the
+        // two states behind a 404 are "not there" and "not yours" and the API refuses to tell them
+        // apart. That holds here too — but a design workshop is the one type where the second state
+        // is both the likely one and completely fixable: the code was handed over by the colleague
+        // standing next to you, precisely so you could work on it together. "Search for the design
+        // workshop by name instead" is a loop with no end in it: a list cannot show a workshop you
+        // are not on yet.
+        //
+        // Word for word the web's `unresolvedWorkshopCodeMessage`, because two clients explaining one
+        // refusal two ways is the failure the whole module is written against.
+        assertEquals(
+            "No design workshop you can open matches that code. If a colleague has just shared " +
+                "it with you, the workshop is there and you have not been added to it yet — only an " +
+                "admin can do that, so send them the code and ask to be put on it. Everything you have " +
+                "already recorded on this device stays where it is.",
+            unresolvedWorkshopCodeMessage(DwWorkshopRecordType.DESIGN_WORKSHOP)
+        )
+        assertEquals("Design workshop", workshopRecordTypeLabel(DwWorkshopRecordType.DESIGN_WORKSHOP))
+        // It must not become a "request sent" — nothing has been sent, and granting access is an
+        // admin-only PUT that a designer cannot make even with a perfect connection.
+        val message = unresolvedWorkshopCodeMessage(DwWorkshopRecordType.DESIGN_WORKSHOP).lowercase()
+        assertFalse(message.contains("request sent"))
+        assertFalse(message.contains("we have asked"))
+    }
+
+    @Test
+    fun `the answer to a scanned workshop this build cannot open names the build's limit, not the card`() {
+        // WHAT `RecordCodeLookup` RETURNS FOR A `G` CODE TODAY, which is a different situation from the
+        // sentence above: nothing was asked of the server, so nothing is known about the workshop. The
+        // typed-code box decodes the card perfectly and has nowhere to send it, because opening a
+        // design workshop from a code needs routing in `MainActivity` that does not exist yet.
+        val message = designWorkshopCodeNotOpenableMessage()
+
+        // IT MUST NOT CLAIM THE WORKSHOP IS MISSING. The browser RESOLVES a `G` code and opens
+        // `/design-workshops/{id}`, so "no design workshop matches that code" would be false here for
+        // any designer who is on the workshop, and would contradict the other client outright.
+        assertFalse(message.lowercase().contains("matches that code"))
+        // NOR THAT IT EXISTS. The access half is conditional, which is the hedge the web's unresolved
+        // sentence carries: a card naming a deleted workshop, or one from another deployment, must not
+        // send a designer to an admin about a workshop that is not there.
+        assertTrue(message.contains("If a colleague has just shared this one with you"))
+        // A CAPABILITY, NOT A CLAIM ABOUT THE CARD. "That is a design workshop code, not a record
+        // code" is a statement about the code that the browser contradicts; "this version of the app
+        // cannot" is true on both surfaces and stops being true here without a rewording argument.
+        assertTrue(message.startsWith("This version of the app cannot open a design workshop from a code"))
+        // And it must not become a "request sent", for the same reason as the sentence above: granting
+        // access is an admin-only PUT that a designer cannot make even with a perfect connection.
+        assertFalse(message.lowercase().contains("request sent"))
+        assertFalse(message.lowercase().contains("we have asked"))
     }
 
     // ----------------------------------------------------------------------------------

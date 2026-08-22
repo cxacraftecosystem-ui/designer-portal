@@ -80,20 +80,55 @@ INCLUDE = include_of(RELATIONS)
 # so an editor can already empty the box today by sending ``""``. NULL is the honest spelling of the
 # same edit rather than a state the model did not already have.
 #
-# ── WHAT A RETRACTION DOES **NOT** ERASE, AND IT IS TWO PLACES, NOT ONE ──────────────────────────
+# ── WHAT A RETRACTION DOES **NOT** ERASE: THREE PLACES, ONE NOW CLOSED, TWO STILL OPEN ───────────
 # Clearing the column is not the same as forgetting the value, and anybody reading this list as a
-# right-to-erasure mechanism should know exactly how far it reaches. Both residues below are
+# right-to-erasure mechanism should know exactly how far it reaches. The residues below are
 # PRE-EXISTING for ``aadhaarNumber`` and ``pehchanCardNumber``, which were globally clearable long
 # before this list existed; naming the contact and free-text columns here widens them to those too.
-# Closing either is an OWNER DECISION, because both are audit surfaces and quietly redacting an
-# audit surface is its own kind of wrong:
+# The two that remain are audit and report surfaces, and quietly redacting one of those is its own
+# kind of wrong — so closing EITHER OF THOSE TWO is an OWNER DECISION, not a follow-up patch. The
+# first residue was different in kind: it was a second copy the product had no use for, and it is
+# now closed in code. Do not read this block as three open questions.
 #
-#   1. ``services/access.record_revision`` writes the OLD value into an immutable
-#      ``RecordRevision.changes`` blob. It does not skip empty new values, and its
-#      ``REVISION_SKIP_FIELDS`` holds only extraMetadata / location / locationId / updatedAt /
-#      createdAt / createdById / recordedAt / recordedTimezone — so the phone number the subject
-#      asked to have removed is copied INTO the ledger by the request that removes it.
-#   2. ``merge_field_provenance`` skips a cleared field entirely (its loop reads
+#   1. CLOSED, for the identity and contact columns only. ``services/access.record_revision`` used
+#      to write the OLD value into an immutable ``RecordRevision.changes`` blob for every column not
+#      in ``REVISION_SKIP_FIELDS`` (which holds only infrastructural churn), so the phone number the
+#      subject asked to have removed was copied INTO the ledger by the request that removed it.
+#      ``access.REVISION_REDACTED_FIELDS`` now covers aadhaarNumber / pehchanCardNumber / phone /
+#      email / address: the ledger keeps which field changed, who changed it, when and in which
+#      direction, and drops the value. THE REST OF THIS LIST IS NOT CLOSED, and the set is wider than
+#      just the free text: ``notes``, ``dos``, ``donts`` and ``localName`` are excluded deliberately
+#      (the old text is the only way to see what a malicious edit quietly removed), and so are
+#      ``gender``, ``dateOfBirth`` and ``experienceYears`` — ``dateOfBirth`` is named above that set
+#      as the closest call, being personal but load-bearing derived data (``participant.age``).
+#      Widening the set is a one-line edit and an owner's call; read the argument first.
+#      The closure only holds because the READER end was fixed with it. Every response goes through
+#      ``records.public_encode``, which masks ``aadhaarNumber``/``pehchanCardNumber`` BY KEY NAME —
+#      and ``changes`` is keyed by column name too, so those two entries (dicts) were handed to a
+#      masker that normalises with ``str(value)`` and ``GET /api/data-access/revisions`` served the
+#      string ``"XXXX XXXX rue}"``. ``CollabPanel`` reads ``change.old`` off that, gets undefined,
+#      and printed the row as "— → —": for the two identity columns the redaction had cancelled
+#      itself out on both screens that read the ledger — the web panel and Android's
+#      ``RecordCollabSection`` "Edit history", which does the same ``change.old``/``change.new``
+#      render. ``records._mask_identity_node`` is what stops a container under an identity key being
+#      flattened; see it for what a HISTORICAL ledger row (written before the redaction, still
+#      holding a real number) is served as, and why. The handset is not yet at parity on the CAPTION
+#      naming this exception, nor on the ``redacted`` flag (``RevisionChange`` does not model it, so
+#      ``ignoreUnknownKeys`` drops it) — both are raised in ``access.REVISION_REDACTED_FIELDS``'s
+#      block as open Android items, and neither is a leak: the placeholders carry no value.
+#   2. STILL OPEN, AND LARGER THAN THE LEDGER EVER WAS. ``address``, ``email`` and ``phone`` are
+#      carried verbatim into every workshop stage entry that references the artisan
+#      (``stage_definitions``' ``fromref("address"/"email"/"phone", ...)``, fed by the Artisan
+#      reference ``data`` lambda in ``services/design_workshops``), and the masked Pehchan card
+#      rides across as ``participant.artisanCardNo``. Hydration copies at SAVE time and the report
+#      never re-resolves, so clearing the column here leaves the value in every ``DwStageEntry.data``
+#      and every generated report that already referenced her. That is the settled architecture
+#      working as intended — a document handed to a ministry officer must not change because a
+#      record was edited afterwards — which is exactly why erasing it is an owner decision and not a
+#      bug fix. The Aadhaar is not in this residue: it is carried into no stage entry at any masking.
+#   3. STILL OPEN, AND BY DESIGN RATHER THAN BY OVERSIGHT — an attribution outliving the value it
+#      attributes is the price of "an untouched field keeps the contributor it already had".
+#      ``merge_field_provenance`` skips a cleared field entirely (its loop reads
 #      ``if field in PROVENANCE_SKIP_FIELDS or is_empty_value(value): continue``, and
 #      ``deps.is_empty_value(None)`` is True), so ``extraMetadata.fieldProvenance.phone`` keeps its
 #      old ``{by, byName, at}`` stamp on a column that is now NULL. Not the number, but the web

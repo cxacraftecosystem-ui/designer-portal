@@ -801,6 +801,8 @@ releaseRuntimeClasspath - Runtime classpath of '/release'.
 |         +--- com.google.android.gms:play-services-tasks:18.2.0 (*)
 |         +--- com.google.mlkit:common:18.11.0 (*)
 |         \--- com.google.mlkit:vision-common:17.3.0 (*)
++--- :sherpa-onnx-static-link-onnxruntime-1.13.5
++--- com.google.zxing:core:3.5.3
 +--- com.squareup.retrofit2:retrofit:2.11.0
 |    \--- com.squareup.okhttp3:okhttp:3.14.9 -> 4.12.0 (*)
 +--- com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0

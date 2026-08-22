@@ -54,9 +54,67 @@
  * commit. Today the two die together, which is a cleanup. Pin the owner and the object outlives
  * every reference to it.
  *
- * WHAT WOULD HAVE TO COME FIRST is the same fix `FieldInput` got: hoist the file lists above the
- * remount — a host-owned store keyed by surface, which is what `StagePendingMediaProvider` is —
- * and only then name a stable owner for each. Two props, added together, or neither.
+ * WHAT WOULD HAVE TO COME FIRST looked like the same fix `FieldInput` got: hoist the file lists
+ * above the remount — a host-owned store keyed by surface, which is what `StagePendingMediaProvider`
+ * is — and only then name a stable owner for each. Two props, added together, or neither.
+ *
+ * ── MEASURED AGAIN 2026-08-22, AND THE ANSWER IS STILL NEITHER — FOR A SECOND REASON ──────────
+ * The pair was re-examined to be built, and hoisting the file list turns out to be WRONG here
+ * rather than merely insufficient, which is not true of the control `FieldInput` fixed. A stage
+ * media control is unmounted by an accident of layout (its row was collapsed) and its files should
+ * plainly survive that. These four forms are re-keyed by `StageRecordEmbed` for exactly two reasons
+ * and both of them MEAN "throw the attachments away":
+ *
+ *  * AFTER A SAVE. `uploadMediaBatch` claims the staged objects with `takeStagedFor`, synchronously
+ *    and before its first `await`, precisely "so a form that unmounts the instant it saves can never
+ *    delete an object the save is about to link" — so the objects that mattered are already out of
+ *    the store and out of the owner's reach before the remount happens. A hoisted list would instead
+ *    carry the just-linked photographs into the fresh edit-mode mount, where the next Save would
+ *    upload and link every one of them a second time.
+ *  * ON CANCEL AND ON DISCARD. Emptying the form is the whole request. A list that survived it would
+ *    be a Cancel that did not cancel.
+ *
+ * AND THE THIRD UNMOUNT — the picker above re-pointing the row, which re-keys the form over a
+ * DIFFERENT record — must delete them too: those files were attached to the artisan the designer
+ * abandoned, and carrying them onto the newly chosen one would attach a stranger's photographs to
+ * her record. (That path asks no question first, which is a real gap, but it is a missing prompt in
+ * `StageReferenceSelect` and not something an owner id could answer.)
+ *
+ * WHAT IS LEFT IS THE ACCIDENTAL UNMOUNT — a collection row collapsing under an open record form —
+ * and that one is already guarded: all four forms mark themselves dirty when a file is attached
+ * (`ProcessForm` counts `preFiles.length` and each step's `files.length` into its signature; the
+ * other three call `markDirty` from `onFilesChange`), and `CollectionTable.toggleRow` asks
+ * `useLeaveInterceptor` before it closes anything. So the designer is asked, and Discard means what
+ * it says. NEITHER PROP, THEN — and the reason is no longer "the other half is missing" but "there
+ * is nothing left for the pair to save".
+ *
+ * ── MEASURED A THIRD TIME 2026-08-22, AND THE PREMISES ARE NOW PINNED ─────────────────────────
+ * A third pass was sent to build the store outright and re-derived the same answer, so the reason
+ * this paragraph keeps being re-litigated is that the argument above rests on three facts that live
+ * in files this contract does not own — any of which could be changed by someone who never reads it,
+ * silently turning a measured refusal into a stale one:
+ *
+ *  1. All four forms count an attached file as unsaved work, so `CollectionTable.toggleRow`'s
+ *     interceptor asks before the one unmount that is an accident rather than a decision.
+ *  2. None of the four clears its `File[]` on the SAVE path, which is why hoisting the list above
+ *     the remount would carry just-linked photographs into the next mount to be linked again.
+ *  3. `uploadMediaBatch` and `uploadMediaFile` both claim the staged objects synchronously, before
+ *     their first `await`, which is what makes the post-save remount a cleanup rather than a race.
+ *
+ * All three are now asserted in `e2e/inline-record-host-unit.spec.ts` (section 2b), one test each,
+ * so a fourth reader is told by a red test whether the refusal still holds instead of having to
+ * re-measure the tree to find out. They pin the FACTS and not the conclusion: building the store is
+ * allowed the moment one of them has changed to make it safe.
+ *
+ * AND PREMISE 2 IS A PRICE, NOT A CLOSED DOOR — said plainly, because the paragraph above reads as
+ * though the double-link were unfixable and it is only uncosted. A host-owned store would be keyed
+ * by surface rather than global, and `StageRecordEmbed` already learns of every accepted write in one
+ * place (`handleSaved`, which routes to `adoptCreated` or `adoptEdited`), so clearing that surface's
+ * entry there is where the save-time clear would go. What premise 2 establishes is therefore "a store
+ * with no save-time clear links the same photographs twice", not "no clear is possible". The pair
+ * stays refused because it needs BOTH halves plus that third piece, in three files owned by three
+ * groups, to buy back one already-guarded unmount — so the next pass should cost the whole change
+ * rather than re-derive a door that was never locked.
  *
  * A CARD THAT UNMOUNTS UNDER A FORM THAT STAYS IS A DIFFERENT CASE and carries no such hazard:
  * there the file list IS hoisted (it is the form's own state), so a stable owner is safe rather
@@ -221,9 +279,11 @@ export type InlineRecordHostProps<TRecord> = {
    * and not the leaving.
    *
    * ── WHAT A HOST DOES WITH IT ──────────────────────────────────────────────────────────────
-   * Whatever its back control was about to do before the form blocked it. `useLeaveGuard` works by
-   * REFUSING the navigation and handing the form the question instead, so the navigation is not
-   * merely delayed — it was abandoned, and nothing but the host can start it again.
+   * Whatever it can honestly do about its back control having been refused. `useLeaveGuard` does not
+   * DELAY a navigation, it REFUSES one: the control abandons what it was doing, so nothing the host
+   * can see is still in flight. The act itself is banked by `UnsavedChangesGuard` against the form
+   * that blocked — which is why a host's job here is to clear what it hosts and SAY where the
+   * designer is, and the finishing belongs to the form (see the paragraph below).
    *
    * ── ABSENT MEANS "THE TWO EXITS ARE THE SAME", WHICH IS TRUE OF BOTH OTHER HOSTS ──────────
    * The forms fall back to the ordinary exit (`onCancel`, or `router.back()` with no host at all),
@@ -232,13 +292,31 @@ export type InlineRecordHostProps<TRecord> = {
    * can be LEFT WITHOUT BEING CLOSED has anything to add here — which today is the stage embed,
    * and it is the host the defect was reported on.
    *
-   * ── NOT YET SUPPLIED BY ANY HOST, SO THE DEFECT ABOVE IS STILL ON SCREEN ──────────────────
-   * Said here rather than left to be discovered: the four forms consume this member, and
-   * `StageRecordEmbed` does not pass it, so its Back → "Discard" still empties the form in place.
-   * The declaration is the half that could be written while that file belonged to another change;
-   * the wiring is one line beside its `onCancel`. `e2e/inline-record-host-unit.spec.ts` carries a
-   * `test.fixme` naming it, which is a marker on every run rather than a paragraph nobody re-reads
-   * — DELETE BOTH THIS SECTION AND THE `fixme` TOGETHER when the host lands.
+   * ── THE EMBED SUPPLIES IT NOW, AND WHAT IT CAN DO WITH IT IS BOUNDED ──────────────────────
+   * `StageRecordEmbed.handleDiscardAndLeave` is the one host implementation, and it clears the form
+   * and says that the page did not move rather than moving it. A HOST STILL CANNOT MOVE IT: this
+   * member asks a host to finish the exit its back control began, and no host can name that exit.
+   * Four controls on a stage page can raise the prompt and they want four different things — the
+   * header arrow's `router.back()` or its explicit `href`, "previous stage" / "next stage", a
+   * collection row's own collapse (not a navigation at all), and `StageReferenceField` re-pointing
+   * the row at another record — so a `router.back()` chosen here would be right for one and wrong,
+   * or actively destructive, for the other three.
+   *
+   * WHAT CHANGED IS THAT THE ACT NOW SURVIVES THE REFUSAL. `components/UnsavedChangesGuard.tsx`
+   * hands each interceptor the act it is blocking and HOLDS it against the form that blocked, and all
+   * four of those callers now pass their own act in; the blocking form is given `completeLeave()` and
+   * `abandonLeave()` and is the only party allowed to answer. So finishing the exit is no longer a
+   * host's problem or this contract's — it is one line in the FORM, in the `else` branch beside
+   * `leaveAfterDiscard()` (never beside `resetDirty()`, which runs for the form's own Cancel too).
+   * Until those calls land, this member's implementation costs one extra press and says so out loud,
+   * which is the half of the defect that was losing work.
+   *
+   * AND ITS SENTENCE SCOPES THE PROMISE TO ITS OWN ROW, which is not fussiness. A host implementation
+   * knows only that the form IT hosts has gone clean; `UnsavedChangesProvider` walks the whole stack
+   * and stops at the FIRST interceptor that blocks, one dialog at a time. Stage
+   * TRADITIONAL_PROCESS_BASELINE mounts two of these forms at once, so "press again and it will go
+   * through" is false there whenever both are dirty — the second press meets the other form's
+   * prompt, correctly. Any future host writing a notice here owes the same qualification.
    */
   onDiscardAndLeave?: () => void;
   /**

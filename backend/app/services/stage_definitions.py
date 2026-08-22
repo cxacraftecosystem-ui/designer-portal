@@ -1569,6 +1569,72 @@ STAGE_11 = StageSpec(
               phase_note="Reviewer: “May be Deepika app for now”.",
               help="An SVG or vector export, if one was produced."),
             f("annotations", "Annotations", RICH, A, report_role=NARR),
+            # ── THE OVERRIDE MARKER, AND WHY THE ROW ORDER ALONE CANNOT BE IT ────────────────
+            #
+            # Sketches are ranked by dragging them, and the rank IS `DwStageEntry.ordinal` — both
+            # clients already derive it from array order and both already have up/down arrows, so
+            # ranking needed no new mechanism. What it had no way to record is WHO DECIDED and
+            # WHEN, because `_ordinal` is one of the sync protocol's `_`-prefixed keys that
+            # `entry_provenance.stamp` skips by name (“stamping it would put three phantom rows in
+            # every provenance panel”). A reorder therefore has no author and no timestamp, and a
+            # list of ten sketches in score order is byte-for-byte the same thing as a list of ten
+            # sketches a designer deliberately arranged.
+            #
+            # THESE TWO FIELDS ARE THAT DIFFERENCE AND ONLY THAT: blank means the default sort
+            # still stands. They are not written by a drag — a drag is a save of the ordinal like
+            # any other — but by the act of FIXING an order, which is the moment somebody takes
+            # responsibility for it over the computed score.
+            #
+            # A NAME, NOT AN ACCOUNT ID, and TEXT rather than REF for a checked reason: REF
+            # resolves against the five `REFERENCE_MODELS` (Artisan, ProductDocumentation,
+            # ToolDocumentation, Process, Craft) or an entity of this workshop, and `User` is not
+            # among them, so a REF here would be a picker with nothing behind it. The precedent is
+            # `sketchReview.reviewedBy` and `prototypeValidation.approvedBy`, both plain TEXT names
+            # for the same reason — and a name is also what the report can print, where a cuid is
+            # not. The ACCOUNT that saved it is recorded anyway, by `fieldProvenance`, which stamps
+            # this key like any other designer-typed field.
+            f("rankFixedBy", "Rank fixed by", T, A,
+              help="Who settled this order, when it was set deliberately rather than left in "
+                   "score order."),
+            f("rankFixedAt", "Rank fixed on", DATE, A,
+              help="Leave blank while the order is still the default one."),
+            # ── THE SKETCH'S OWN END OF PEER REVIEW ──────────────────────────────────────────
+            #
+            # The sibling of `prototype.peerRoundClosedAt`, and it exists because the registry
+            # already says twice over that a sketch has two review rounds. `sketchReview` — the
+            # entity whose whole subject is a sketch — declares `reviewRound` over the two-token
+            # REVIEW_ROUND list, and its own note reads "a sketch is reviewed by the people who
+            # were in the room, and again … by the whole pool of designers". `design_ratings`
+            # then names `sketch` alongside `prototype` in its rateable set, and the ledger's
+            # `round` column carries the same two tokens for either. Three declarations assume a
+            # sketch can be in a POOL round; before this field, the ONE thing that decides whether
+            # a round is open — a finalisation date on the row — was declared on `prototype`
+            # alone, so POOL was a value a designer could pick on a sketch review and a column the
+            # ledger could never write. The omission was the outlier, not the rule.
+            #
+            # THE GATE IS THE SKETCH'S OWN DATE AND NOT ITS PROTOTYPES'. The obvious alternative
+            # — open a sketch to the pool once some prototype carrying its `sketchRef` is
+            # finalised — was rejected on three counts. It would never open the sketches stage 12
+            # exists to record, the ones set aside and never prototyped, which are exactly the
+            # designs a wider pool might pick up. It would make the gate a join computed at read
+            # time in an architecture where every other gate is one column on the row being read.
+            # And it would put the switch on a DIFFERENT row from the one being published: editing
+            # or deleting a prototype would un-open the sketch above it, by a hand that never
+            # touched the sketch. UN-OPENING IS STILL POSSIBLE HERE AND IS ACCEPTED — clearing this
+            # date, or soft-deleting the row (`design_ratings.load_subject` returns None on
+            # `deletedAt`), withdraws a sketch the pool has already seen — but it takes an edit to
+            # the sketch itself, which is the workshop's own hand on its own row. An earlier draft
+            # of this note claimed backwards was "the one direction this gate must never run",
+            # which overstated what the chosen design buys.
+            #
+            # BLANK MEANS CLOSED, so appending it widens nothing on its own: every sketch already
+            # in the database carries no value here, `design_ratings.pool_is_open` fails closed on
+            # an absent key, and a sketch reaches the pool only when somebody in the workshop
+            # deliberately dates it. That is what makes this the conservative direction as well as
+            # the symmetric one — the field grants the ABILITY to open a sketch, not the fact.
+            f("peerRoundClosedAt", "Peer review closed on", DATE, A,
+              help="The day this sketch was declared finished and opened to designers outside "
+                   "the workshop. Blank means peer review is still running."),
         ), label_field="name"),
     ),
 )
@@ -1621,10 +1687,73 @@ STAGE_12 = StageSpec(
             f("estimatedCost", "Estimated cost", MONEY, S, unit="INR", min_value=0),
             f("estimatedTimeDays", "Estimated time", DEC, S, unit="days", min_value=0),
             f("skillRequired", "Skill required", LT, S),
+            # RETIRED BECAUSE IT NEVER ORDERED ANYTHING, WHICH IS NOT THE SAME AS NEVER BEING
+            # SEEN. This INT has been in the registry since it was written and nothing anywhere
+            # SORTS by it: no client list, no validator, no query — a designer could type “3” into
+            # it and no screen would move. Ranking is `DwStageEntry.ordinal`, the row order both
+            # clients already drag and arrow, so a second hand-typed rank beside it is two answers
+            # to one question with nothing to reconcile them. `replaced_by` names the sync
+            # protocol's own wire key for that ordinal rather than a field of this entity, because
+            # the successor genuinely is not a field.
+            #
+            # IT WAS, HOWEVER, PRINTED, and an earlier draft of this note wrongly said it was not.
+            # `FieldSpec.report_role` defaults to `KEY_VALUE` and this declaration passes no role,
+            # so a filled `rank` came out as a “Rank: 3” pair under its review's sub-heading in
+            # every template — `ReportTemplate.max_tier` defaults to ADVANCED and only
+            # COMPACT_SUMMARY drops to BASIC. Deprecating it therefore takes a printed line out of
+            # regenerated reports, and takes it out SILENTLY: `report_builder._visible` excludes a
+            # deprecated field, and `fields_hidden_by_tier` — the “these filled fields were left
+            # out” warning — skips deprecated fields too, so nothing tells the reader.
+            #
+            # AND IT COSTS THE STORED VALUE. `entity_to_dict` omits a deprecated field from the
+            # wire, so the box disappears from both forms, and `validate_entry` rebuilds `cleaned`
+            # from the specs and skips it, so a value already stored under the key is dropped the
+            # next time its row is saved.
+            #
+            # THE TEN ROWS ARE STILL NOT MIGRATED, and the corrected facts make the case stronger
+            # rather than weaker. This repository's development database holds ten sketchReview
+            # rows carrying ranks 1‑10 (checked 2026‑08‑22, one workshop, ordinals 0‑9) — and NOT
+            # ONE OF THEM CARRIES A `sketchRef`: the JSON has no such key on any of the ten. A rank
+            # that does not name the sketch it ranks cannot be turned into that sketch's position,
+            # because there is no sketch on the other end of it. There is nothing here to
+            # translate, only ten integers with no subject. The printed “Rank: N” line for those
+            # ten rows is given up deliberately; the honest translation of “this sketch placed
+            # third” is a row in third position, which is a judgement for whoever next opens that
+            # workshop and not something to synthesise from an unlinked column.
             f("rank", "Rank", INT, A, min_value=1,
-              help="Where this sketch placed in a ranked review."),
+              help="Where this sketch placed in a ranked review.",
+              deprecated=True, replaced_by="_ordinal"),
             f("voiceFeedback", "Voice feedback", AUDIO, A),
             f("voiceFeedbackTranscript", "Transcript", RICH, A, report_role=NARR),
+            # WHOSE REVIEW THIS IS. A sketch is reviewed by the people who were in the room, and
+            # again — once the sketch itself is finalised, which is `sketch.peerRoundClosedAt` and
+            # nothing else — by the whole pool of designers, and both write a row into this entity.
+            # (This note used to say "once prototypes are finalised", which was the owner's phrase
+            # for when the second level generally begins and not a gate anything read. The gate is
+            # per piece: the sketch's own date, exactly as a prototype's is its own.)
+            # Without this token the two rounds are one
+            # undifferentiated pile in the one place a stage entry is ever read back by a human:
+            # a report cannot say whether a rejection was the cluster's own verdict or a
+            # stranger's. That is the whole of the reason, and it is a REPORT reason — the field
+            # is descriptive, and its reader is the report builder's generic KEY_VALUE path, the
+            # same reader every other descriptive key on this entity has.
+            #
+            # IT IS NOT AN INPUT TO ANYTHING, AND THE LEDGER IS AUTHORITATIVE. The round a rating
+            # actually counts under is `DwReviewRating.round`, set server-side from
+            # `design_ratings.RatingRound` after `pool_is_open` has decided it; this key is a
+            # dropdown a designer picks. Nothing copies one into the other, so the two CAN
+            # disagree — a sketchReview row saying POOL beside ledger rows all saying PEER — and
+            # when they do, the ledger is right and this key is a designer's description of their
+            # own row. Nothing in `app/` reads it, and `test_the_review_round_key_is_descriptive`
+            # fails the day something starts to: at that point it has to be DERIVED at save the
+            # way every other mirrored field is, not read as a second source of truth.
+            #
+            # BASIC BUT NOT REQUIRED, and the distinction is what the tier rule is for. It belongs
+            # to the minimum a review has to say about itself; making it required would put every
+            # review row already in the database into a permanently incomplete stage, over a
+            # question nobody was asked when they filled it in.
+            f("reviewRound", "Review round", ENUM, B, enum="REVIEW_ROUND",
+              help="Peers from this workshop, or the whole pool of designers."),
         ), label_field="sketchRef"),
     ),
 )
@@ -1702,6 +1831,34 @@ STAGE_13 = StageSpec(
             f("turntablePhotos", "360° capture", IMGS, A,
               phase_note="Reviewer: “Kumar da team”."),
             f("modelFile", "3D model", FILE, A, phase_note="Reviewer: “Kumar da team”."),
+            # The same override marker `sketch` carries, for the same reason and under the same
+            # rule: blank means the prototypes are still in their computed order. See the long note
+            # on `sketch.rankFixedBy` for why this is TEXT and not a REF to an account.
+            f("rankFixedBy", "Rank fixed by", T, A,
+              help="Who settled this order, when it was set deliberately rather than left in "
+                   "score order."),
+            f("rankFixedAt", "Rank fixed on", DATE, A,
+              help="Leave blank while the order is still the default one."),
+            # ── THE EVENT THAT CLOSES ONE ROUND AND OPENS THE OTHER ──────────────────────
+            #
+            # Peer review runs while the workshop does; the pool round is what the rest of the
+            # platform's designers do to a prototype that has been declared finished. “Finished” is
+            # a moment somebody chooses and not a state that can be derived — a prototype with
+            # every field filled in may still be a week away from being shown to anyone — so it is
+            # recorded here rather than computed from completeness.
+            #
+            # ON THE PROTOTYPE AND NOT ON THE WORKSHOP, because prototypes finish one at a time. A
+            # workshop-level flag would open the pool round on nine unfinished prototypes the day
+            # the tenth was done.
+            #
+            # `sketch` CARRIES THE SAME KEY, for the same reason and read by the same code — see
+            # the long note at its declaration in stage 11 for why a sketch has a pool round at
+            # all. The two are siblings and must stay in step: `design_ratings` names one field
+            # (`POOL_OPENS_WHEN_FIELD`) and reads it off whichever row it was handed, so removing
+            # it from either entity silently closes that entity's second round for ever.
+            f("peerRoundClosedAt", "Peer review closed on", DATE, A,
+              help="The day this prototype was declared finished and opened to designers outside "
+                   "the workshop. Blank means peer review is still running."),
         ), label_field="name"),
         many("prototypeStageLog", "DwPrototypeStageLog", "Stage logs", (
             f("prototypeRef", "Prototype", REF, B, required=True, ref_model="DwPrototype",
@@ -1841,6 +1998,21 @@ STAGE_15 = StageSpec(
             f("userTestingNotes", "User testing", RICH, A, report_role=NARR),
             f("qualityChecklist", "Quality checklist", RICH, A, report_role=BULLETS,
               help="One check per line; prefix with ✓ or ✗."),
+            # The sibling of `sketchReview.reviewRound`, for the same reason and with the same
+            # standing: it says which audience filed THIS validation row, so a reader of the
+            # report can tell the cluster's own verdict from a stranger's. Same tier, same reason
+            # for not being required, same authority — `DwReviewRating.round` decides what a
+            # rating counts as, and this key only describes the row it sits on. See that field.
+            #
+            # AN EARLIER DRAFT OF THIS NOTE CLAIMED THE FIVE QUALITY_RATING SCORES ABOVE ARE WHAT
+            # A RANKING IS COMPUTED FROM. They are not, and nothing else is either: the ranking is
+            # `design_ratings.rank`, which averages `DwReviewRating.score` and reads no registry
+            # field at all. `technicalQuality`, `functionality`, `aesthetics`, `craftIntegrity`
+            # and `marketSuitability` are report table columns with no aggregate reader anywhere
+            # under `app/`. The mixed-audience averaging hazard is real but it lives on the
+            # ledger's `score` column, which partitions on its own `round` — not here.
+            f("reviewRound", "Review round", ENUM, B, enum="REVIEW_ROUND",
+              help="Peers from this workshop, or the whole pool of designers."),
         ), label_field="prototypeRef"),
     ),
 )

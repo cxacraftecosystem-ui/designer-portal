@@ -46,9 +46,24 @@
  *   3. Drafts that were ALREADY on the device when this shipped are adopted, not stranded and never
  *      deleted — "Move into a workshop" on the row, `AdoptLocalDraftDialog`, and
  *      `adoptDraftIntoWorkshop` in the store.
+ *
+ * AND THE OTHER HALF OF THAT RULE LIVES HERE TOO: if only an admin may open a workshop, an admin
+ * must be able to put the designers onto it without leaving the page where they just made it. That
+ * is the collapsed "Designers on a workshop" section below — `DesignWorkshopViewersPanel`, the same
+ * component /workshop-access/manage mounts, over `DesignWorkshopViewer`. The long note at the mount
+ * point says why that is the right one of the three rosters a designer's name can appear on, why the
+ * section is gated on `isAdmin` rather than on `allowCreate`, and why it is ANDed with `adminMode`
+ * here when the panel's other mount is exempt from that toggle.
+ *
+ * AND THE WORKSHOP'S SHAREABLE CODE is offered from every row, in an expanded row beneath the one
+ * whose button was pressed (`app/(protected)/media/page.tsx`'s pattern — the card belongs where the
+ * finger was, not at the top of a list somebody has scrolled). It is how a group ends up on ONE
+ * workshop instead of rival copies of a fortnight; the note at the mount says what a scan can and
+ * cannot do, and why a workshop that exists only on this device gets a refusal there rather than a
+ * code.
  */
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CloudOff, DraftingCompass, Info, Plus } from "lucide-react";
@@ -58,6 +73,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { DateRangePicker, toIsoDate } from "@/components/forms/DateTimeField";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordCodeCard } from "@/components/RecordCode";
 import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
@@ -88,6 +104,7 @@ import {
   type DwDraftHeader
 } from "@/lib/designWorkshopStore";
 import { AdoptLocalDraftDialog } from "@/components/designworkshop/AdoptLocalDraftDialog";
+import { DesignWorkshopViewersPanel } from "@/components/settings/DesignWorkshopViewersPanel";
 import { isTransient, isUnreachable } from "@/lib/offline";
 import { formatDate } from "@/lib/format";
 import {
@@ -167,6 +184,28 @@ function DesignWorkshopsPageBody() {
    * having tapped a button that did nothing at all — the single most confusing possible answer.
    */
   const [createRefused, setCreateRefused] = useState(false);
+
+  /**
+   * Is the "Designers on a workshop" panel unfolded, and a token that makes it re-read when it is.
+   *
+   * Two pieces of state rather than one, because they answer different questions: the panel is
+   * mounted only while open (so a closed panel costs no requests at all), and the token is what tells
+   * an already-mounted panel that the world may have moved under it. Folding and unfolding without
+   * the token would remount and refetch anyway; the token is what keeps that true if the panel is
+   * ever changed to stay mounted.
+   */
+  const [viewersOpen, setViewersOpen] = useState(false);
+  const [viewersRefresh, setViewersRefresh] = useState(0);
+
+  /**
+   * The workshop whose shareable code is on screen, or null.
+   *
+   * THE TITLE IS CARRIED ALONGSIDE THE ID rather than looked up again when the card renders. The row
+   * that was clicked is the one whose name belongs over the symbol, and the list underneath can be
+   * re-sorted, re-filtered or re-fetched while the card is open — a card that re-derived its heading
+   * from the current page would relabel itself, in place, as some other workshop.
+   */
+  const [codeFor, setCodeFor] = useState<{ id: string; title: string } | null>(null);
 
   /**
    * Every draft this browser holds, live.
@@ -502,6 +541,23 @@ function DesignWorkshopsPageBody() {
     return [...extras, ...serverRows.map((row) => byId.get(row.id) ?? row)];
   }, [data, drafts, offline]);
 
+  /**
+   * A shown code may not outlive the row it belongs to.
+   *
+   * The card is drawn in an expanded row beneath its own row, so paging away or filtering the
+   * workshop out takes it off screen with the row — but the STATE would survive, and coming back to
+   * that page would silently re-open a card nobody asked for a second time. Cleared against `rows`
+   * rather than against page/query/status separately, because `rows` is what all three of those
+   * produce and it also covers the case none of them do: an admin elsewhere deleting the workshop
+   * out from under a refresh.
+   *
+   * Deliberately NOT cleared on every refetch. A background reload that still contains the row must
+   * leave the card up — somebody is holding the screen out for a colleague to scan.
+   */
+  useEffect(() => {
+    if (codeFor && !rows.some((row) => row.id === codeFor.id)) setCodeFor(null);
+  }, [rows, codeFor]);
+
   /** Which rows carry something this device has not sent — read once, drawn on the row. */
   const unsentIds = useMemo(
     () => new Set(drafts.filter(draftIsUnsent).map((draft) => draft.remoteId ?? draft.localId)),
@@ -729,6 +785,108 @@ function DesignWorkshopsPageBody() {
         </form>
       ) : null}
 
+      {/*
+        WHO ELSE IS ON A WORKSHOP — the designer multi-select, mounted here rather than built here.
+
+        ── WHICH OF THE THREE ROSTERS THIS IS, BECAUSE THEY ARE CONSTANTLY CONFUSED ─────────────────
+
+        There are three lists a designer's name can go on and only ONE of them lets them work on a
+        workshop. This is that one.
+
+          1. `DesignWorkshopViewer` — THIS control. `load_workshop_or_404` admits the creator, an
+             admin, and anybody holding one of these rows ("THREE WAYS IN, not two", in its own
+             docstring), and the same helper guards the stage WRITES. Adding somebody here is the
+             single act that lets them open the workshop and fill in its stages.
+          2. The DESIGNER ROSTER at /admin/designers. That decides who may sign in as a designer AT
+             ALL — it is global, it is about employment and institutional standing, and a name on it
+             grants access to no workshop whatsoever. A suspended row there also REMOVES somebody
+             from this control's eligible set, which is the only place the two touch.
+          3. The stage-3 participant roster. That is `many("participant", "DwParticipant",
+             "Participating artisans", …)` in `backend/app/services/stage_definitions.py` — ARTISANS,
+             recorded as research data about who attended. Putting a designer's name there records a
+             false fact about the fieldwork and confers no access at all. It is the wrong answer that
+             looks most like the right one, because it is the list that is literally called
+             "participants".
+
+        ── ADMIN-GATED BECAUSE THE SERVER IS ───────────────────────────────────────────────────────
+
+        All three viewer routes in `backend/app/api/routes/design_workshop_viewers.py` are
+        `Depends(require_admin)` — the two GETs as well as the PUT. So a designer cannot read this
+        list, let alone change it, and rendering the panel to one would be a form whose every request
+        401s. `isAdmin` here is not a UI preference; it mirrors the gate. It is deliberately NOT
+        `allowCreate`, even though the two sets are identical today: that predicate answers "may this
+        account start a workshop" and this one answers "may this account administer access to one",
+        and the day either moves the other must not move with it silently.
+
+        ── AND `adminMode`, WHICH IS THE OTHER HALF AND WAS MISSING ────────────────────────────────
+
+        `AdminViewProvider` states the contract on the field itself — "True only when the user has
+        admin rights AND has admin view turned on. Gate admin UI on this" — and its default leaves
+        every admin but the master admin OUT of admin view. Without it a plain ADMIN arriving here
+        with default settings was handed a full workshop-administration panel while the Delete
+        control further down this same file, gated `allowDelete && adminMode`, was correctly hidden
+        from them: two admin affordances on one page disagreeing about what admin view means.
+
+        The panel's own docblock reasons that it is safe to render unconditionally because
+        /workshop-access/manage is in ADMIN_CHROME_ROUTES — a route that IS admin chrome, where the
+        toggle is not applied because the whole page is the exemption. /design-workshops is not in
+        that list and must not be: designers live on this page. So the exemption does not carry over
+        and the toggle governs here, exactly as it governs Delete below.
+
+        ── MOUNTED, NOT REBUILT ────────────────────────────────────────────────────────────────────
+
+        `DesignWorkshopViewersPanel` already exists on /workshop-access/manage and already solves the
+        four things that make this hard: the PUT replaces the whole set so it always sends complete
+        membership, the creator is shown outside the picker because the PUT cannot revoke them, a
+        current viewer who is no longer eligible stays ticked so that saving does not silently drop
+        them, and the people search is the SERVER'S because the eligible list is capped at 2000 and
+        that cap is being hit. A second picker over the same endpoint would have to get all four
+        right again, and the fourth is invisible when it is wrong.
+
+        It is COLLAPSED by default. This is the workshop list, and an admin arrives here to find a
+        workshop far more often than to change who is on one; an always-open panel carrying two
+        dropdowns and a search box would push the list itself below the fold.
+      */}
+      {isAdmin(user) && adminMode ? (
+        <section className="panel mb-5 overflow-hidden">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+            aria-expanded={viewersOpen}
+            onClick={() => {
+              // Bumped on OPEN so the panel re-reads the workshop list and each viewer set every
+              // time it is unfolded. An admin who has just created a workshop above expects to find
+              // it in the picker, and a panel that cached its list on first mount would not have it.
+              //
+              // COMPUTED HERE AND NOT INSIDE THE UPDATER. React requires a state updater to be pure
+              // and StrictMode double-invokes it in development, so a `setViewersRefresh` call from
+              // inside `setViewersOpen`'s callback ran twice per open. Harmless for a token nobody
+              // reads the value of — but it is the shape that bites the day the work in there stops
+              // being idempotent, so it does not get to live here.
+              const next = !viewersOpen;
+              setViewersOpen(next);
+              if (next) setViewersRefresh((token) => token + 1);
+            }}
+          >
+            <span>
+              <span className="font-display text-lg font-bold text-ink-900">Designers on a workshop</span>
+              <span className="mt-1 block text-sm leading-6 text-ink-muted">
+                Add designers to a design &amp; prototype workshop so they can open it and fill in its stages. A designer
+                who is not on this list is told the workshop does not exist.
+              </span>
+            </span>
+            <span aria-hidden className="shrink-0 text-sm text-ink-500">
+              {viewersOpen ? "Hide" : "Show"}
+            </span>
+          </button>
+          {viewersOpen ? (
+            <div className="border-t border-line-200 p-4">
+              <DesignWorkshopViewersPanel refreshToken={viewersRefresh} />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_14rem]">
         <SearchInput
           value={query}
@@ -789,7 +947,8 @@ function DesignWorkshopsPageBody() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {rows.map((workshop) => (
-                  <tr key={workshop.id}>
+                  <Fragment key={workshop.id}>
+                  <tr>
                     <td className="px-4 py-3">
                       <Link href={`/design-workshops/${workshop.id}`} className="font-medium text-ink-900 underline-offset-2 hover:underline">
                         {workshop.title}
@@ -841,6 +1000,26 @@ function DesignWorkshopsPageBody() {
                         <Link className={rowAction("neutral")} href={`/design-workshops/${workshop.id}/report`}>
                           Report
                         </Link>
+                        {/*
+                          THE CODE OTHERS SCAN TO GET ONTO THIS WORKSHOP. Offered on every row,
+                          including a workshop that exists only on this device — the card renders
+                          `encodeWorkshopCode`'s refusal for those, which says the workshop has not
+                          been shared yet and to sync first. That is the sentence somebody standing
+                          in a courtyard needs; hiding the control would leave them believing the
+                          feature is missing rather than that their workshop has not gone up yet.
+                        */}
+                        <button
+                          type="button"
+                          className={rowAction("neutral", codeFor?.id === workshop.id ? "bg-surface-50" : undefined)}
+                          aria-expanded={codeFor?.id === workshop.id}
+                          onClick={() =>
+                            setCodeFor((current) =>
+                              current?.id === workshop.id ? null : { id: workshop.id, title: workshop.title }
+                            )
+                          }
+                        >
+                          {codeFor?.id === workshop.id ? "Hide code" : "Show code"}
+                        </button>
                         {offerMove && orphanDrafts.has(workshop.id) ? (
                           <button
                             type="button"
@@ -861,6 +1040,49 @@ function DesignWorkshopsPageBody() {
                       </RowActions>
                     </td>
                   </tr>
+                  {codeFor?.id === workshop.id ? (
+                    /*
+                      THE WORKSHOP'S OWN CODE, and the whole of what "join by QR" can honestly be.
+
+                      One person creates the workshop; everybody else needs to end up on THAT one
+                      rather than starting their own, which is how a group ends up with rival copies
+                      of one fortnight. This is the artefact that prevents it: an opaque
+                      `DPW1:G:<id>` naming exactly one `DesignWorkshop`, shown on a screen in a room,
+                      scanned or read aloud with no signal on either side.
+
+                      IN AN EXPANDED ROW UNDER THE BUTTON THAT OPENED IT, following
+                      `app/(protected)/media/page.tsx` — the other list in this repository that
+                      toggles a code from a ROW rather than from an inline edit form. The first
+                      version of this rendered the card above the search box, at the top of the page:
+                      on row 12 of a 25-row list the only feedback a press gave was the label
+                      flipping to "Hide code" while the card itself appeared several screens away.
+                      Crafts and workshops put their card at the top legitimately, but their card
+                      belongs to the record open in the inline EDIT FORM, which is already up there
+                      and already has the reader's eye; there is no such form here.
+
+                      WHAT A SCAN CANNOT DO, said here because the control is what invites the
+                      expectation: it cannot admit anybody. A `DesignWorkshopViewer` row is written
+                      only by `PUT /design-workshops/{id}/viewers`, which is `Depends(require_admin)`
+                      — so a designer cannot put themselves on a workshop with a perfect connection,
+                      and there is no offline "request" to queue because there is no route for one to
+                      drain into. The scan removes the typing and names the workshop unambiguously;
+                      an admin still does the admitting. The scanner's wording for each of those
+                      states lives in `DESIGN_WORKSHOP_SCAN_COPY`.
+
+                      A LOCAL-ONLY WORKSHOP GETS A REFUSAL HERE, NOT A CODE, and that is the point
+                      rather than a limitation — see the device-local gate in `lib/workshopCodes.ts`.
+                      Its id is a key into this browser's IndexedDB and never becomes anything else
+                      (`DesignWorkshopCreate` carries no client key), so a code for it would scan
+                      cleanly on a colleague's phone and resolve to nothing, and the colleague would
+                      then start the second copy this whole mechanism exists to prevent.
+                    */
+                    <tr className="bg-surface-50">
+                      <td className="px-4 py-3" colSpan={6}>
+                        <RecordCodeCard recordType="designWorkshop" id={workshop.id} title={workshop.title} />
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

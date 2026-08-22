@@ -8,9 +8,16 @@ free "might as well". Unset (the default) constructs nothing and imports nothing
 real replica exists, and watch the memory after the first deploy that has it on.
 
 WHAT IT BUYS. The read path and the write path stop competing for the same connection pool. Today
-both share one Prisma pool of ten connections through the Supabase transaction pooler, so a burst of
-slow list queries (``/search`` measured 8.9s, ``/dashboard/stats`` 10.5s) can leave a save waiting
-for a connection. Sending the slow reads elsewhere means a write never queues behind a dashboard.
+both share ONE Prisma pool to the primary — ten connections where a pooler is declared, otherwise
+whatever the engine sizes for the box — so a burst of slow list queries (``/search`` measured 8.9s,
+``/dashboard/stats`` 10.5s) can leave a save waiting for a connection. Sending the slow reads
+elsewhere means a write never queues behind a dashboard.
+
+A REPLICA IS JUST A SECOND DSN. Nothing here knows or asks who provides it — a managed provider's
+read endpoint, a streaming standby somebody runs themselves, a copy for a one-off migration. It is
+absent by default and everything works without it; see ``DATABASE_READ_REPLICA_URL`` in config.py.
+It is also SHAPED independently of the primary, which is why it has its own
+``DATABASE_READ_REPLICA_USE_TRANSACTION_POOLER`` rather than inheriting a single global answer.
 
 WHERE IT MUST NOT BE USED. Anything that reads back what it just wrote. Replication lag is real and
 unbounded during a spike, so a create that returns the row it just made, a form that re-reads after
@@ -71,14 +78,35 @@ async def _build(url: str) -> Any | None:
     """Construct and connect the replica client once, or demote permanently and return None."""
     global _client, _demoted
     try:
+        from datetime import timedelta
+
+        from app.core.config import get_settings
         from app.core.db import build_runtime_database_url
         from prisma import Prisma
 
-        # The same URL treatment the primary gets: the Supabase pooler rewrite and the deliberately
-        # small connection limit. A replica pointed at the same pooler with an unbounded pool would
-        # spend the client-connection budget the primary needs (the EMAXCONN failure this deployment
-        # has already lived through twice).
-        client = Prisma(datasource={"url": build_runtime_database_url(url)})
+        # The same treatment the primary gets, and for the same reasons: the pooler parameters on
+        # the URL, the cold-start allowance on the client. A replica sharing the primary's pooler
+        # with an unbounded pool would spend the client-connection budget the primary needs (the
+        # EMAXCONN failure this deployment has already lived through twice), and a replica that
+        # idle-suspends is demoted permanently on the first wake if it is given a timeout meant for
+        # a warm server — see app/core/db.py.
+        #
+        # BUT THE POOLING QUESTION IS ASKED OF THIS DSN, not of the primary's. These are two
+        # endpoints and either may be pooled without the other: a replica is often the pooled one,
+        # since it carries the wide read queries, while the primary stays direct so migrations can
+        # take session-mode advisory locks. Passing the primary's flag here — which is what this
+        # call used to do implicitly, by letting build_runtime_database_url read settings itself —
+        # makes an honest answer about the primary into a wrong one about the replica, and the cost
+        # of wrong-in-that-direction is correctness, not speed. ``None`` means "same as the
+        # primary", so the common case still needs no second variable.
+        settings = get_settings()
+        pooled = settings.database_read_replica_use_transaction_pooler
+        if pooled is None:
+            pooled = settings.database_use_transaction_pooler
+        client = Prisma(
+            datasource={"url": build_runtime_database_url(url, pooled=pooled)},
+            connect_timeout=timedelta(seconds=settings.database_connect_timeout),
+        )
         await client.connect()
         await client.query_raw("SELECT 1")
     except Exception as exc:  # noqa: BLE001 - a missing replica is a degradation, not an outage

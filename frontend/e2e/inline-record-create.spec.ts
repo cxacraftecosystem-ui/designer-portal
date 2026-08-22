@@ -14,6 +14,14 @@ import { signIn } from "./support/session";
  * carries an Aadhaar checksum, a duplicate check against the repository's deduplication key, a
  * mandatory location and the Do's and Don'ts. A four-box "quick create" would be a second answer
  * to what an artisan is, and the records it made would be the ones quietly missing fields.
+ *
+ * A DIALOG IS THE ANSWER FOR CREATING AND NO LONGER THE ANSWER FOR CORRECTING. Once a row is LINKED,
+ * the record's own page is embedded beneath the picker, so there is no pencil to press and no dialog
+ * to open — `StageReferenceField.tsx:1871` suppresses the "Edit this artisan" control for precisely
+ * as long as a form is mounted over that record, because two editors over one repository row end
+ * with the first one's pre-edit snapshot overwriting the second one's correction. The third test
+ * below therefore asserts the embed and the ABSENCE of the pencil; it used to assert the pencil, and
+ * that is a change in what the product does rather than a relaxation of what the test demands.
  */
 
 const EMAIL = process.env.E2E_EMAIL ?? "";
@@ -80,10 +88,15 @@ test("a reference picker offers to create the missing record, without leaving th
 
   // Open the artisan reference picker on that row. The picker's trigger carries the field's own
   // accessible name, so it is found by the label the registry gives the field.
-  // `.last()`: two controls carry this name on the page — the stage-level "Add several from
-  // artisan record" roster multi-select, and the ROW's own single picker. It is the row's one that
-  // this feature is about.
-  const picker = page.getByRole("button", { name: /artisan record/i }).last();
+  //
+  // ANCHORED, and it has to be. This read `/artisan record/i` with `.last()`, on the reasoning that
+  // exactly two controls carried the phrase — the stage-level "Add several from artisan record"
+  // roster multi-select and the row's own picker — so the last one was the row's. A third arrived
+  // with QR scanning: "Scan a card or tag into “Artisan record”, in Participating artisans", which
+  // renders immediately AFTER the picker. `.last()` therefore selected the SCANNER, the picker never
+  // opened, and the failure named the create button while actually reporting a clicked camera.
+  // `/^artisan record$/i` matches the trigger's whole accessible name and nothing else on the page.
+  const picker = page.getByRole("button", { name: /^artisan record$/i });
   await expect(picker).toBeVisible({ timeout: 30_000 });
   await picker.click();
 
@@ -192,16 +205,39 @@ test("a linked record can be corrected without leaving the stage", async ({ page
   // reference field and its controls do not exist until it is opened.
   await page.getByRole("button", { name: new RegExp(`Inline Edit Artisan ${stamp}`, "i") }).first().click();
 
-  const edit = page.getByRole("button", { name: /edit this artisan/i }).first();
-  await expect(edit, "a linked record offers to be corrected in place").toBeVisible({ timeout: 30_000 });
-  await edit.click();
+  /*
+    RE-POINTED 2026-08-23, AND SAY SO: this test used to click an "Edit this artisan" pencil and
+    assert on the dialog it opened. That pencil is now deliberately ABSENT on a linked row, and the
+    absence is the feature — `StageReferenceSelect` renders it only while
+    `recordFormMountedOver !== selectedId` (StageReferenceField.tsx; cite the symbol, not a line —
+    that file moves, and this comment shipped once already naming 1871 for a guard on 1873), and `StageRecordEmbed.tsx::embeddedRecordId` states the
+    rest: "A LINKED row is never gated, so 'the row names a record' and 'there is a form open over
+    it' are the same answer." Two editors over one repository record is the bug that guard exists to
+    prevent — the one opened first posts its pre-edit snapshot over the correction made in the other.
 
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible({ timeout: 15_000 });
-  await expect(dialog.getByText(/edit artisan/i).first()).toBeVisible();
-  // The record was RE-READ, not seeded from the picker's option — the name is in the form.
+    So the affordance the old assertion was looking for has not gone missing; it has been replaced by
+    something stronger, which is what is asserted here instead. What the test is FOR is unchanged and
+    its title still says it: a linked record can be corrected without leaving the stage. The one
+    assertion that carried real information — that the record was RE-READ rather than seeded from the
+    picker's option, which holds only a label and a sublabel — is kept exactly as it was, because a
+    form seeded from that option would show a blank name box rather than this one.
+  */
   await expect(
-    dialog.locator(`input[value*="Inline Edit Artisan ${stamp}"]`).first(),
-    "the form holds the real record, not just the picker's label"
+    page.getByText(/the page below IS that record/i).first(),
+    "the linked row says, in the product's own words, that the record itself is open below it"
+  ).toBeVisible({ timeout: 30_000 });
+
+  await expect(
+    page.getByRole("button", { name: /edit this artisan/i }),
+    "no second editor is offered over a record whose form is already mounted — see StageReferenceSelect's recordFormMountedOver guard"
+  ).toHaveCount(0);
+
+  // The record was RE-READ, not seeded from the picker's option — the name is in the embedded form.
+  await expect(
+    page.locator(`input[value*="Inline Edit Artisan ${stamp}"]`).first(),
+    "the embedded form holds the real record, not just the picker's label"
   ).toBeVisible({ timeout: 20_000 });
+
+  // And nothing navigated: correcting the record did not cost the half-filled stage.
+  expect(page.url()).toContain(`/design-workshops/${workshopId}/stages/`);
 });

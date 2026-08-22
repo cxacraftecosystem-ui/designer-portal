@@ -806,14 +806,18 @@ class WorkshopRepository(
     )
 
     /**
-     * Read the number off a photographed identity card.
+     * Read the number off a photographed identity card, ON THE SERVER — the second rung of a ladder
+     * whose first rung is the handset itself.
      *
-     * THROWS, unlike its neighbours, and deliberately. Every other call in this block has an offline
-     * answer worth degrading to; this one does not — the recognition happens on the server, so there
-     * is no cached anything that could stand in for it. A failure here has to reach the designer as a
-     * sentence ("there is no connection, type the number in") rather than as a silently empty result,
-     * because a silently empty result reads as "the card is unreadable" and sends them photographing
-     * it again in better light for a problem that is not about light.
+     * THE OFFLINE ANSWER IS NOT IN THIS FILE, WHICH IS WHY THIS ONE STILL THROWS. `DwIdentityCardControl`
+     * asks `MlKitIdentityCardRecognizer` first, out of a model bundled in the APK, and only reaches
+     * this call when the phone found nothing and there IS a connection. So the sentence this paragraph
+     * used to carry — "there is no cached anything that could stand in for it" — is no longer true of
+     * the feature, though it remains true of this function: there is nothing here to degrade to, and a
+     * failure has to reach the designer as a sentence ("there is no connection, type the number in")
+     * rather than as a silently empty result, because a silently empty result reads as "the card is
+     * unreadable" and sends them photographing it again in better light for a problem that is not
+     * about light.
      *
      * The bytes are read from the DURABLE copy under filesDir rather than from a content Uri, so a
      * retry a minute later still has something to send.

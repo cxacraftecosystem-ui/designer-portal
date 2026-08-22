@@ -45,6 +45,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { FieldDialog } from "@/components/dialogs";
+import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { apiFetch } from "@/lib/api";
 import { ArtisanForm } from "@/components/forms/ArtisanForm";
 import { ProcessForm } from "@/components/forms/ProcessForm";
@@ -155,6 +156,7 @@ export function InlineRecordForm({
   footerFields,
   onCreated,
   onCancel,
+  onDiscardAndLeave,
   onQueued,
   onUseExisting
 }: {
@@ -176,6 +178,18 @@ export function InlineRecordForm({
   onCreated: (record: CreatedRecord) => void;
   /** Back out without saving. Required: without it the forms fall back to `router.back()`. */
   onCancel: () => void;
+  /**
+   * "Discard", answered to a prompt the HOST'S OWN back control raised — see
+   * {@link InlineRecordHostProps.onDiscardAndLeave}, which carries the argument.
+   *
+   * OPTIONAL, AND OMITTING IT IS A REAL ANSWER RATHER THAN A GAP. The four forms fall back to
+   * `onCancel` when it is absent, which is exactly right for a host whose cancel already IS the
+   * whole of leaving: `InlineRecordDialog` closes, and there is nothing else the two exits could
+   * mean while `FieldDialog` traps focus and covers the page behind it, so no back control outside
+   * the panel can be pressed in the first place. Only a host that can be LEFT WITHOUT BEING CLOSED
+   * needs to answer differently, which today is `StageRecordEmbed` and nothing else.
+   */
+  onDiscardAndLeave?: () => void;
   /** The save went into the offline outbox: no record, no id, nothing to link. */
   onQueued?: () => void;
   /** The artisan the duplicate check found — {@link UseExistingArtisan}. `Artisan` only. */
@@ -266,6 +280,7 @@ export function InlineRecordForm({
               footerFields={footerFields}
               onCreated={onCreated}
               onCancel={onCancel}
+              onDiscardAndLeave={onDiscardAndLeave}
               onQueued={onQueued}
               onUseExisting={onUseExisting}
             />
@@ -277,6 +292,7 @@ export function InlineRecordForm({
               footerFields={footerFields}
               onCreated={onCreated}
               onCancel={onCancel}
+              onDiscardAndLeave={onDiscardAndLeave}
               onQueued={onQueued}
             />
           ) : null}
@@ -287,6 +303,7 @@ export function InlineRecordForm({
               footerFields={footerFields}
               onCreated={onCreated}
               onCancel={onCancel}
+              onDiscardAndLeave={onDiscardAndLeave}
               onQueued={onQueued}
             />
           ) : null}
@@ -305,6 +322,7 @@ export function InlineRecordForm({
               footerFields={footerFields}
               onDone={onCancel}
               onCancel={onCancel}
+              onDiscardAndLeave={onDiscardAndLeave}
               onCreated={onCreated}
               onQueued={onQueued}
             />
@@ -442,10 +460,55 @@ export function InlineRecordDialog({
     [onUseExisting, onClose]
   );
 
+  /**
+   * THE CLOSE CONTROL AND ESCAPE, WHICH ARE THE TWO EXITS THAT USED TO DISCARD WORK IN SILENCE.
+   *
+   * ── THE DEFECT ────────────────────────────────────────────────────────────────────────────────
+   * Everything else on this dialog was guarded. `dismissOnBackdrop={false}` below refuses a stray
+   * click beside the panel; the form's own Cancel raises the form's own "Unsaved changes" prompt
+   * before it calls `onCancel`. `FieldDialog`'s own two exits did not: its document-level Escape
+   * handler and its × both end in a bare `onClose()`, so a half-typed artisan — an Aadhaar number
+   * read off a card, a location captured at the place, photographs already staged — went away on one
+   * keypress with nothing asked. And it was worse than losing the typing: the eagerly-staged objects
+   * lose their owner on that unmount, and `releaseStagedOwner` deletes them `RELEASE_GRACE_MS` later.
+   * That is the exact class of loss the leave-interceptor work exists to end, on the one exit nobody
+   * had wired to it.
+   *
+   * ── SO IT ASKS FIRST, THROUGH THE SAME CALL EVERY OTHER GUARDED CONTROL MAKES ─────────────────
+   * `interceptLeave` returns true when a form has taken responsibility and put its own prompt on
+   * screen; the close is then abandoned rather than delayed. The act is banked with the provider, and
+   * the form's "Discard" reaches `leaveAfterDiscard()`, which falls back to `leave()` → `onCancel` →
+   * `onClose` when no host supplies `onDiscardAndLeave` — and no host does here, because in a dialog
+   * closing IS leaving (see `InlineRecordHostProps.onDiscardAndLeave`). So Discard closes the dialog
+   * on the same press and "Keep editing" leaves the typing exactly where it was.
+   *
+   * ── IT MAY BE ANSWERED BY A FORM THAT IS NOT IN THIS DIALOG, AND THAT IS THE HOUSE BEHAVIOUR ──
+   * `UnsavedChangesProvider` walks EVERY registered interceptor innermost-first and stops at the
+   * first that blocks. The form inside this dialog is the innermost, so it answers whenever it is
+   * dirty — but on a stage that also has an embedded record form open and dirty (stage
+   * TRADITIONAL_PROCESS_BASELINE mounts a `ProcessForm` from first paint), a CLEAN dialog's Escape
+   * can be refused by that sibling instead, and closing then costs a second press once its prompt has
+   * been answered. `StageReferenceField`'s three refusal notices and `StageRecordEmbed`'s
+   * `handleDiscardAndLeave` make the identical trade and say so in the same words; a second press is
+   * the documented cost of the stack, and it is the cheaper half of this pair by a long way.
+   *
+   * NOT WRAPPED AROUND `onCancel`, `finish`, `reportQueued` OR `adoptExisting`. Those four run AFTER
+   * the form has had its say — three of them after a write — and `resetDirty()` clears the flag
+   * through React state from inside the very handler that would re-ask, so the interceptor would
+   * still read `dirty === true` and re-open the prompt it was just dismissed from, for ever.
+   */
+  const interceptLeave = useLeaveInterceptor();
+  const closeUnlessAsked = useCallback(() => {
+    if (interceptLeave(onClose)) return;
+    onClose();
+  }, [interceptLeave, onClose]);
+
   return (
     <FieldDialog
       open={open}
-      onClose={onClose}
+      // The × and Escape, both of which reach this. See {@link closeUnlessAsked} for why they are the
+      // only two that go through the guard and the other four callbacks deliberately do not.
+      onClose={closeUnlessAsked}
       title={editing ? `Edit ${noun}` : `New ${noun}`}
       description={
         editing
@@ -455,8 +518,12 @@ export function InlineRecordDialog({
       /*
         NOT dismissible on a stray backdrop click. The form inside holds real typing — an Aadhaar
         number read off a card, a location captured at the place — and losing it to a misplaced
-        click beside the panel is the one failure this dialog must not have. The close control and
-        Escape both still work.
+        click beside the panel is the one failure this dialog must not have.
+
+        THE CLOSE CONTROL AND ESCAPE BOTH STILL WORK, and they now ASK FIRST rather than closing
+        outright: they are routed through {@link closeUnlessAsked}, because a bare `onClose()` on
+        those two was the same loss this flag refuses, arriving by a different key. This sentence
+        used to stop at "still work", which read as reassurance about a gap.
       */
       dismissOnBackdrop={false}
       surfaceClassName="max-w-4xl"

@@ -398,8 +398,10 @@ async def edit_reviewed_record(
     gate was narrowed there was no honest way to say that.
 
     The change is attributable twice over: a ``RecordRevision`` captures the exact old -> new values
-    (the same edit history ``services/access.py`` writes for a granted cross-researcher edit) and a
-    ``ReviewLog`` row records that this reviewer edited the record and why.
+    (the same edit history ``services/access.py`` writes for a granted cross-researcher edit —
+    including its one exception, the identity and contact columns in
+    ``access.REVISION_REDACTED_FIELDS``, where the row records the direction of the change but not
+    the value) and a ``ReviewLog`` row records that this reviewer edited the record and why.
 
     The status is NOT touched unless ``approve`` is set — an edit is not an approval.
     """

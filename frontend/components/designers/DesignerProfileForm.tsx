@@ -28,7 +28,18 @@
  * pre-uploads eagerly the moment a file is attached, so by the time Save runs `uploadMediaBatch`
  * usually only has to LINK the finished object — and because that call resolves rather than throws
  * on a partly-failed batch, the failures it reports are named on screen instead of being read as
- * success.
+ * success. A FAILURE ALSO LEAVES THE FILE IN THE CAPTURE CARD: the save used to clear both cards
+ * unconditionally, in the same statement that wrote "so the one already on file was kept" into the
+ * notice, which discarded a photograph that existed nowhere but in this browser. See `uploadOne`,
+ * whose `stranded` files are what the two cards are re-seeded with.
+ *
+ * AND THE NOTICE SAYS SO, WHICH IS THE HALF THAT WAS MISSING. Keeping the bytes silently was still
+ * wrong: the designer read "Profile saved", got an "Unsaved changes" chip and a leave prompt on it,
+ * and nothing on screen said why either had happened or what to do. So the trouble sentence names
+ * the card, and one sentence added beside it names the retry — which on THIS form is a real one and
+ * not a hopeful one: `save` is a single idempotent PUT keyed on `profile.userId`, so a second Save
+ * re-sends the file that failed and creates nothing. (The crafts and workshops pages cannot say that
+ * — a second Save there POSTs a second record — which is why their wording differs.)
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -179,13 +190,21 @@ export function DesignerProfileForm({
       let nextPhotoId = photoId;
       let nextSignatureId = signatureId;
 
+      // The files that did NOT go up, kept so the save path below can put them back in the capture
+      // card instead of clearing it. Empty when there was nothing to upload, which is the ordinary
+      // case and is exactly what the old unconditional clear did.
+      let strandedPhotos: File[] = [];
+      let strandedSignatures: File[] = [];
+
       if (photoFiles.length) {
-        const uploaded = await uploadOne(photoFiles, profile.userId, "Designer photograph", troubles);
-        if (uploaded) nextPhotoId = uploaded;
+        const attempt = await uploadOne(photoFiles, profile.userId, "Designer photograph", troubles);
+        if (attempt.mediaId) nextPhotoId = attempt.mediaId;
+        strandedPhotos = attempt.stranded;
       }
       if (signatureFiles.length) {
-        const uploaded = await uploadOne(signatureFiles, profile.userId, "Designer signature", troubles);
-        if (uploaded) nextSignatureId = uploaded;
+        const attempt = await uploadOne(signatureFiles, profile.userId, "Designer signature", troubles);
+        if (attempt.mediaId) nextSignatureId = attempt.mediaId;
+        strandedSignatures = attempt.stranded;
       }
 
       const body = fullDesignerProfileBody({
@@ -231,9 +250,36 @@ export function DesignerProfileForm({
       setSignatureId(saved.signatureMediaId);
       setStateName(saved.state ?? "");
       setPincode((saved.pincode ?? "").replace(/\D/g, "").slice(0, 6));
-      setPhotoFiles([]);
-      setSignatureFiles([]);
+      /*
+        THE CAPTURE CARDS KEEP WHAT DID NOT GO UP. These two lines were `setPhotoFiles([])` and
+        `setSignatureFiles([])`, unconditionally, and they ran on the path that had just written
+        "the one already on file was kept" into the notice. The sentence was true about the COLUMN
+        and false about the screen: the photograph the designer had attached — often taken on the
+        spot, existing nowhere but in this browser's memory — was discarded by the same save that
+        told them it had not been. Re-seeding with the stranded files means the notice explains a
+        card that still holds the bytes it is talking about.
+
+        Both are `[]` when everything landed, which is every ordinary save.
+      */
+      setPhotoFiles(strandedPhotos);
+      setSignatureFiles(strandedSignatures);
       resetDirty();
+      /*
+        …EXCEPT while a photograph is still sitting in a capture card because its upload failed.
+        `resetDirty` is right about the twenty text boxes — they match what the server now holds — and
+        wrong about the card: those bytes are unsaved work that exists nowhere else, and the back
+        control is one click away. Both the leave guard and the "Unsaved changes" chip read this flag.
+
+        AND THE SENTENCE IS RAISED WITH IT, in the same `if`, because a chip and a leave prompt on a
+        save that announced itself as successful are unexplained on their own — that was the whole of
+        the defect the first version of this left behind. One sentence for both cards rather than one
+        per card: `uploadOne` has already named each file and each card, and repeating the retry twice
+        when both a photograph and a signature failed reads like two different retries.
+      */
+      if (strandedPhotos.length || strandedSignatures.length) {
+        markDirty();
+        troubles.push("Press Save again to send just that — this form saves in one PUT, so nothing is duplicated by retrying.");
+      }
       setBackPromptOpen(false);
       onSaved(saved);
       setNotice(
@@ -613,18 +659,36 @@ function text(form: FormData, key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** What one image column's upload attempt produced — see {@link uploadOne}. */
+type OneUpload = {
+  /** The id to write into the profile column, or null when nothing landed. */
+  mediaId: string | null;
+  /**
+   * The files that did NOT land, as the very `File` objects the caller passed.
+   *
+   * THE CALLER PUTS THESE BACK IN THE CAPTURE CARD, and that is the whole reason this is returned
+   * rather than counted. See the note on the save path below for what clearing them cost.
+   */
+  stranded: File[];
+};
+
 /**
- * Upload one image and return its media id, appending a sentence to `troubles` for anything that
- * did not make it.
+ * Upload one image and report both what landed and what did not, appending a sentence to `troubles`
+ * for anything that did not make it.
  *
  * `uploadMediaBatch` RESOLVES on a partly-failed batch and throws only when nothing landed at all,
  * so a caller that treats a resolved promise as success loses files without a word. The names of
  * the ones that failed are collected rather than thrown, because the other nineteen fields on this
  * form are still worth saving and a failed photograph must not take them down with it.
+ *
+ * IT READS `outcomes`, NOT `uploaded`/`failed`, and the difference is the `File`. `failed` carries a
+ * NAME, and a name cannot be matched back to an input file — two photographs off one handset are
+ * routinely both IMG_0001.jpg. `outcomes` carries the object, so the caller can re-seed the capture
+ * card with exactly the bytes that still have to go somewhere.
  */
-async function uploadOne(files: File[], userId: string, caption: string, troubles: string[]): Promise<string | null> {
+async function uploadOne(files: File[], userId: string, caption: string, troubles: string[]): Promise<OneUpload> {
   try {
-    const { uploaded, failed } = await uploadMediaBatch({
+    const { outcomes } = await uploadMediaBatch({
       files,
       linkedRecordType: DESIGNER_PROFILE_MEDIA_RECORD_TYPE,
       linkedRecordId: userId,
@@ -633,14 +697,24 @@ async function uploadOne(files: File[], userId: string, caption: string, trouble
       // a provider call on an image and put an empty transcript on the row.
       transcribeAudio: false
     });
-    if (failed.length) {
-      troubles.push(`The ${caption.toLowerCase()} did not upload (${failed.map((item) => item.name).join(", ")}), so the one already on file was kept.`);
+    const stranded = outcomes.filter((outcome) => outcome.failure !== null);
+    if (stranded.length) {
+      troubles.push(
+        `The ${caption.toLowerCase()} did not upload (${stranded
+          .map((outcome) => outcome.file.name)
+          .join(", ")}), so the one already on file was kept and the new one is still attached below.`
+      );
     }
-    return uploaded[0]?.id ?? null;
+    return {
+      mediaId: outcomes.find((outcome) => outcome.media !== null)?.media?.id ?? null,
+      stranded: stranded.map((outcome) => outcome.file)
+    };
   } catch (err) {
     troubles.push(
-      `The ${caption.toLowerCase()} did not upload (${err instanceof Error ? err.message : "the transfer failed"}), so the one already on file was kept.`
+      `The ${caption.toLowerCase()} did not upload (${err instanceof Error ? err.message : "the transfer failed"}), so the one already on file was kept and the new one is still attached below.`
     );
-    return null;
+    // A THROW FROM `uploadMediaBatch` MEANS NOTHING LANDED, so every file handed in is still owed a
+    // retry and every one of them goes back to the caller.
+    return { mediaId: null, stranded: files };
   }
 }

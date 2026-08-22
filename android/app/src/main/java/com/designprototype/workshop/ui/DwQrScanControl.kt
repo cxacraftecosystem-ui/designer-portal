@@ -1,10 +1,7 @@
 package com.designprototype.workshop.ui
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
-import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -101,15 +98,18 @@ import java.io.File
  * can tap Scan for ever and see nothing happen at all, because the launcher returns denied without
  * showing a dialog. The two need opposite next actions, and the second one needs a destination.
  *
- * [scanHostActivity] plus `shouldShowRequestPermissionRationale` tells them apart. It is read INSIDE
- * the permission callback, which is the only place it can be read honestly: the flag is false both
- * before the first prompt and after a permanent denial (see `LocationCapture.diagnose`, which needs
- * a `promptShown` latch for exactly that reason), and inside the callback the prompt has by
- * definition just been made, so a false there means blocked and nothing else.
+ * [dwCameraBlocked] tells them apart, and it is read INSIDE the permission callback, which is the
+ * only place it can be read honestly — its own comment has the reason.
  *
  * NEITHER SENTENCE IS A DEAD END, and both name the routes that need no lens: the picture picker and
  * the typed code. The blocked one additionally offers Android's own permission page, because that is
  * the only place a blocked permission can be undone and nothing on this screen could say so.
+ *
+ * BOTH SENTENCES NOW COME FROM `DwCameraRefusal.kt`, WHICH THE IDENTITY-CARD READER ALSO USES. They
+ * were written here first and were this file's own; the identity control had a single sentence
+ * covering both situations and no way out of the blocked one. Rather than copy this pair into it —
+ * the exact drift this file's own header warns about — the shape of both sentences moved out and each
+ * surface now supplies only its subject, its button label and its camera-free routes.
  */
 
 /** The scratch directory a scanned photograph lives in for the second it exists. */
@@ -120,50 +120,6 @@ private fun qrScratchDir(context: Context): File =
 private fun sweepQrScratch(context: Context) {
     runCatching { qrScratchDir(context).listFiles()?.forEach { it.delete() } }
 }
-
-/**
- * The Activity behind the Compose context, which `shouldShowRequestPermissionRationale` needs.
- *
- * A THIRD COPY OF THIS FIVE-LINE LOOP, and it is a deliberate copy rather than an oversight.
- * `LocationCapture.kt` and `Theme.kt` each declare their own, both file-`private`, and promoting
- * either to `internal` would leave two same-signature top-level functions visible in one package at
- * the call sites inside the file that still declares the private one. The loop is platform plumbing
- * with no behaviour to drift; the thing this file refuses to duplicate is the refusal WORDING, and
- * that still lives in exactly one place.
- */
-private fun Context.scanHostActivity(): Activity? {
-    var cursor: Context? = this
-    while (cursor is ContextWrapper) {
-        if (cursor is Activity) return cursor
-        cursor = cursor.baseContext
-    }
-    return null
-}
-
-/** Android's own permission page for this app — the only place a blocked permission can be undone. */
-private fun Context.openAppPermissionSettings() {
-    runCatching {
-        startActivity(
-            // Fully qualified: `Settings` is the material icon in this file's imports, and the
-            // system class and the picture of a cog must not be made to look like one name.
-            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-    }
-}
-
-/** Tapped Deny, and Android will ask again next time. */
-private const val CAMERA_DENIED_MESSAGE =
-    "The camera permission was refused, so a code cannot be photographed. Press “Scan a code” again " +
-        "to be asked once more — or, without the camera at all, choose a picture of the code that is " +
-        "already on this phone, or type the code printed under the QR."
-
-/** Android has stopped asking, so pressing Scan again would do nothing at all. */
-private const val CAMERA_BLOCKED_MESSAGE =
-    "The camera is blocked for this app, so Android will not ask again and pressing Scan will do " +
-        "nothing. Turn it back on in this app's permission settings — the button below opens them — " +
-        "or carry on without the camera: choose a picture of the code that is already on this phone, " +
-        "or type the code printed under the QR."
 
 /**
  * The two buttons and the sentence under them.
@@ -238,17 +194,12 @@ fun DwQrScanControl(
             if (!granted) {
                 // READ HERE AND NOWHERE ELSE. Inside this callback the prompt has by definition just
                 // been made, which is the only state in which `shouldShowRequestPermissionRationale`
-                // separates "denied once" from "Android has stopped asking" — see the header.
-                val activity = context.scanHostActivity()
-                val canAskAgain = activity != null &&
-                    androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
-                        activity,
-                        Manifest.permission.CAMERA
-                    )
-                cameraBlocked = !canAskAgain
+                // separates "denied once" from "Android has stopped asking" — see [dwCameraBlocked].
+                val blocked = dwCameraBlocked(context)
+                cameraBlocked = blocked
                 // BOTH SENTENCES NAME THE OTHER DOORS, which is the whole reason a refused permission
                 // is not a dead end here. Both remaining routes still work and neither needs a lens.
-                onRefusal(if (canAskAgain) CAMERA_DENIED_MESSAGE else CAMERA_BLOCKED_MESSAGE)
+                onRefusal(dwCameraRefusal(DwCameraUse.QR_CODE, blocked))
             }
         } else {
             cameraBlocked = false
@@ -315,12 +266,13 @@ fun DwQrScanControl(
              */
             if (cameraBlocked) {
                 OutlinedButton(
-                    onClick = { context.openAppPermissionSettings() },
+                    onClick = { context.dwOpenAppPermissionSettings() },
                     modifier = Modifier.heightIn(min = 48.dp),
                 ) {
                     Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Camera settings", fontSize = 13.sp)
+                    // The label the blocked sentence quotes, from the one place it is spelled.
+                    Text(DW_CAMERA_SETTINGS_BUTTON, fontSize = 13.sp)
                 }
             }
         }

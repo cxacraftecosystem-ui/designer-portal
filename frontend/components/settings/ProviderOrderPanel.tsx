@@ -63,7 +63,10 @@ import {
   XCircle
 } from "lucide-react";
 
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
+// Through `@/lib/offline`, which is the path every screen in this client asks the network question
+// on — see that file's re-export note for why the path did not move when the answer was unified.
+import { triageFailure } from "@/lib/offline";
 
 /** Editorial copy stays here; names and key state come from the server so the two cannot drift. */
 const BLURBS: Record<string, string> = {
@@ -139,9 +142,26 @@ type Trouble = {
  * for an endpoint that had not been deployed yet. FastAPI's 404 body carries the literal string
  * "Not Found" and nothing else, so there is no sentence to surface: it has to be written here,
  * against the status, or it does not exist.
+ *
+ * ── THE NETWORK QUESTION IS ASKED ONCE, IN `lib/failureTriage.ts` ───────────────────────────────
+ *
+ * This panel used to hold its own answer: `status >= 500` meant "give it a minute", `status === 0`
+ * meant "could not reach the server", and everything else fell to "the server refused". That left
+ * two statuses wearing the wrong sentence. A 408 is a proxy saying the request never completed, so
+ * nothing was refused and nothing was decided — it read as a refusal of the provider order. A 429 is
+ * the server asking for time in so many words — it read as a refusal too, so the one sentence that
+ * would have helped ("give it a minute and press Try again") was the one it did not get.
+ *
+ * The verdict answers all three, so the branches below are named readings of it. THE STATUSES THAT
+ * ARE STILL COMPARED DIRECTLY — 404 and 403 — ARE NOT NETWORK QUESTIONS: both are `refused`, and
+ * what separates them is what this endpoint in particular means by each, which no shared classifier
+ * can know. `ApiUnconfiguredError` stays FIRST because it is a synthetic 503 that no server sent:
+ * the triage correctly calls it `transient`, and "give it a minute" is the wrong advice for a build
+ * that shipped without an API address.
  */
 function describeTrouble(error: unknown, action: string): Trouble {
-  const status = error instanceof ApiError ? error.status : 0;
+  const verdict = triageFailure(error);
+  const status = verdict.status ?? 0;
   const serverSentence = error instanceof Error ? error.message : "";
   const technical = `HTTP ${status || "—"} from /settings/transcription-providers${
     serverSentence ? ` — “${serverSentence}”` : ""
@@ -180,7 +200,7 @@ function describeTrouble(error: unknown, action: string): Trouble {
       retryable: false
     };
   }
-  if (status === 401) {
+  if (verdict.kind === "credential-expired") {
     return {
       headline: "Your session has ended.",
       advice: `Sign in again and come back to this page; the ranking itself is untouched.`,
@@ -188,7 +208,11 @@ function describeTrouble(error: unknown, action: string): Trouble {
       retryable: false
     };
   }
-  if (status >= 500) {
+  // A 5xx AND A 429 GET THE SAME SENTENCE, which is the point of asking the triage: both mean the
+  // server was reached and asked for time, and neither is a refusal of the order. The 429 used to
+  // fall past this into "the server refused", which is the one reading that makes a designer stop
+  // pressing the button that would have worked.
+  if (verdict.kind === "transient") {
     return {
       headline: "The server ran into a problem of its own.",
       advice:
@@ -199,7 +223,9 @@ function describeTrouble(error: unknown, action: string): Trouble {
       retryable: true
     };
   }
-  if (status === 0) {
+  // Nothing reached a server: no answer at all, or a 408 from a proxy saying the request never
+  // completed. The old test was `status === 0`, so the 408 arrived here wearing a refusal's words.
+  if (verdict.kind === "unreachable") {
     return {
       headline: "The page could not reach the server at all.",
       advice:

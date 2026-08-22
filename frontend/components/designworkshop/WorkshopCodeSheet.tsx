@@ -102,11 +102,14 @@ const OBJECT_TAG: CardGeometry = { widthMm: 63, heightMm: 45, columns: 3 };
 /**
  * A TOTAL record and not a partial one, deliberately: adding a record type to `workshopCodes.ts`
  * fails this file's typecheck until somebody has decided what a sheet of them is cut to. Every type
- * other than the artisan is tagged rather than worn, which is why they all take the tag.
+ * other than the artisan and the design workshop is tagged rather than worn, which is why they all
+ * take the tag.
  *
- * Only the artisan and the prototype are OFFERED as a sheet today — this component's one caller is
- * the workshop's Cards & tags page. Every other record type carries its code on its own record
- * screen, one at a time, where it is expanded and downloaded rather than printed forty to a page.
+ * EVERY VALUE HERE IS LIVE, including the types no SHEET offers. Two callers reach this table, not
+ * one: the workshop's Cards & tags page builds a full sheet (artisans and prototypes today), and
+ * {@link WorkshopCodePrintout} prints a SINGLE card for whatever type it is handed — which is how
+ * `RecordCode.tsx`'s Print button works, on every record screen in the app. So a geometry in this
+ * table is the size a printed card of that type actually comes out at, never a reserved value.
  */
 const GEOMETRY: Record<WorkshopRecordType, CardGeometry> = {
   artisan: ID_CARD,
@@ -117,6 +120,19 @@ const GEOMETRY: Record<WorkshopRecordType, CardGeometry> = {
   tool: OBJECT_TAG,
   questionnaire: OBJECT_TAG,
   media: OBJECT_TAG,
+  /**
+   * THE ONE CODE IN THIS TABLE THAT SEVERAL PEOPLE SCAN AT ONCE, so it takes the larger geometry
+   * despite not being worn. A workshop code is held up in front of a group, or pinned to the wall of
+   * the room for the fortnight — read from two metres by four handsets, not from arm's length by
+   * one — and the tag size puts the modules below what a phone resolves at that distance.
+   *
+   * AND IT IS REACHED TODAY, so this is a live size rather than a reserved one. The design-workshop
+   * list page mounts `RecordCodeCard recordType="designWorkshop"` on every row, and that card's
+   * Print button renders {@link WorkshopCodePrintout}, which renders this component with this
+   * geometry. No SHEET of design workshops is offered — there is no page that would want forty of
+   * them — but a single card of one is printed on ID-1 stock the moment anybody presses Print.
+   */
+  designWorkshop: ID_CARD,
   prototype: OBJECT_TAG
 };
 

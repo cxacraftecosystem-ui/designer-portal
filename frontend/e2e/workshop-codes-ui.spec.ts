@@ -58,9 +58,24 @@ test.skip(!PASSWORD, "Set E2E_PASSWORD to run the signed-in specs.");
  * `WorkshopCodeScanner`'s header for the measurement that removed that gate), so these flags are
  * what stop an accidental press from hanging on a permission prompt rather than what makes the
  * button appear.
+ *
+ * AND IT CARRIES THE CONFIG'S RESOLVER RULE FORWARD, because declaring `launchOptions` here REPLACES
+ * the one `playwright.config.ts` sets — the hazard its header warns about in capitals, and the
+ * reason its value is exported as `E2E_OBJECT_STORE_MAP` for exactly this. Nothing in this file
+ * uploads today, so dropping it costs nothing today; the next test that renders a stored photograph
+ * on this sheet would fail with ERR_NAME_NOT_RESOLVED on `minio:9000`, which is a reason nobody
+ * looks for while reading a QR test. Cheaper to keep the two in agreement than to find that out.
  */
+const OBJECT_STORE_MAP = process.env.E2E_OBJECT_STORE_MAP ?? "";
+
 test.use({
-  launchOptions: { args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] },
+  launchOptions: {
+    args: [
+      "--use-fake-device-for-media-stream",
+      "--use-fake-ui-for-media-stream",
+      ...(OBJECT_STORE_MAP ? [`--host-resolver-rules=MAP ${OBJECT_STORE_MAP}`] : [])
+    ]
+  },
   permissions: ["camera"]
 });
 
@@ -444,7 +459,35 @@ test.describe("camera lifecycle", () => {
     await openCodes(page);
     await page.getByTestId("workshop-code-scan").click();
 
-    await expect(page.getByTestId("workshop-code-preview")).toBeVisible();
+    /*
+      MAKE THE FIRST FAILURE SAY WHY — added 2026-08-23, after this assertion failed for a reviewer
+      twice in multi-file runs and said nothing but "`class=\"hidden\"`, nine resolutions, fifteen
+      seconds". It could not be reproduced here (this test passed alone, and in 2-, 4- and 7-file
+      selections, on the same build), so the cause is still open — which is exactly why the assertion
+      should carry the answer next time rather than the symptom.
+
+      `startCamera` only sets `scanning` — the state that unhides this element — AFTER `getUserMedia`
+      resolves, and every way it can fail instead writes a sentence into `workshop-code-problem` and
+      returns: "No camera was found on this device" for `NotFoundError`, a permission sentence for
+      `NotAllowedError`, an https sentence when `mediaDevices` is absent altogether. That first one is
+      what a browser launched WITHOUT `--use-fake-device-for-media-stream` says on this machine, so
+      the reason distinguishes a launch-flag or environment problem from the product bug this test is
+      about. Racing the two is not a weaker assertion — the poll still demands the preview — it is the
+      same assertion with the component's own explanation attached to its failure.
+    */
+    const preview = page.getByTestId("workshop-code-preview");
+    const refusal = page.getByTestId("workshop-code-problem");
+    await expect
+      .poll(
+        async () =>
+          (await preview.isVisible())
+            ? "the preview is visible"
+            : (await refusal.count())
+              ? `the camera was refused: ${(await refusal.innerText()).trim()}`
+              : "neither a preview nor a reason yet",
+        { message: "the camera opened and the preview element unhid", timeout: 20_000 }
+      )
+      .toBe("the preview is visible");
     await expect(page.getByRole("button", { name: /stop the camera/i })).toBeVisible();
     // The element is actually carrying the stream — the bug this catches is a preview that mounts
     // after the stream is attached, which opens the camera and then shows nothing.

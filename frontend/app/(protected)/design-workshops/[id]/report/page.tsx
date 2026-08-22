@@ -25,8 +25,19 @@
  * `PAGEBREAK` is a break the template asked for and both writers honour it exactly. Where the
  * OTHER breaks fall is decided by measuring wrapped text against the remaining height of a page,
  * which Word does on open and ReportLab does by laying the body out twice — neither is possible in
- * a browser, so the sheet count is a floor and says so. An invented "Page 7 of 26" would be quoted
- * in a covering email.
+ * a browser, so the sheet count is a floor.
+ *
+ * THE RUNNING FOOT STILL PRINTS "Page N of M" ANYWAY, which reverses what this paragraph used to
+ * say, so here is why. All four FILE renderers print that shape — both .docx writers off
+ * `NUMPAGES`, both .pdf writers off their measuring pass — and a designer who proofs "Page 3" on
+ * this screen and then hands over a document reading "Page 3 of 12" is holding two
+ * differently-shaped numbers for one page, which is the same divergence the file-side fix existed
+ * to close. So the shape matches and the M is the DECLARED page count, a floor: the strip above
+ * the sheets says that in as many words, and `previewModel`'s `splitIntoSheets` is where the
+ * reasoning lives. The old worry — an invented "Page 7 of 26" quoted into a covering email — is
+ * answered where it actually bites, which is PRINT rather than the screen: `Ctrl+P` drops the
+ * strip with the rest of the chrome, so `ReportSheet`'s print rules drop the "of M" with it and
+ * the handed-over file carries the ordinal alone, with no total it cannot stand behind.
  *
  * THE FIGURES ARE DRAWN LIVE. The map is the repository's own `IndiaMap`, over the same projection
  * and the same boundary assets `/map` uses, so the report's map and the app's map cannot disagree

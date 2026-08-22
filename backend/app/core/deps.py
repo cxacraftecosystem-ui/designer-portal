@@ -136,8 +136,15 @@ DESIGN_WORKSHOP_ROLES = frozenset({"DESIGNER", "ADMIN", "MASTER_ADMIN"})
 
 
 def can_run_design_workshops(user: Any) -> bool:
-    """RUN a design & prototype workshop: open one, fill its 22 stages, create records inside it,
-    and generate its report.
+    """RUN a design & prototype workshop: the WRITES inside one — every stage save, the custom
+    sections, the capture aids, the AI layers, the consent record.
+
+    IT DOES NOT DECIDE WHO MAY OPEN A WORKSHOP, AND IT DOES NOT GATE THE REPORT, although this
+    docstring said both for as long as it has existed. Both are ``load_workshop_or_404``: opening
+    admits the creator, an admin, or the holder of a ``DesignWorkshopViewer`` grant, and generating
+    a report is open to anyone who can read the workshop, because a report is a view of data the
+    caller can already see. ``api/routes/design_workshops.py``'s module header carries the same
+    correction and the counted list of what this predicate really stands in front of.
 
     NOT "create one". Starting a NEW workshop is :func:`can_create_design_workshops`, which is a
     strictly narrower set — see there for why the two were split. Everything else a designer has

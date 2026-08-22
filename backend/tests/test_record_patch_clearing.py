@@ -8,6 +8,13 @@ workaround, and the stored value still there on the next load. The case with no 
 retracting personal information a subject has asked to have removed — a researcher told to delete an
 artisan's phone number could not do it, and the API told them it had worked.
 
+ONE MORE ROUTE WAS FOUND BY THE SWEEP THAT CHECKED THIS MODULE FOR COMPLETENESS. ``update_craft`` was
+never part of the "four record PATCHes" the wave named, so it kept the defect after the other four
+lost it: ``localName``, ``category``, ``description`` and ``place`` on a Craft were still a 200 that
+did nothing. It is covered here on the same terms as the rest, and
+``test_every_nullable_column_a_client_can_send_is_either_clearable_or_exempt`` now lists it too,
+because a route absent from that table is a route the completeness net cannot see.
+
 WHY THE ROUTES ARE DRIVEN HERE AND NOT THE HELPER. Every assertion in this module would still pass
 with the ``clearable=`` deleted from the route if it were written against ``clean_data`` directly,
 because such a test hands the helper its own tuple. ``tests/test_record_write_path`` says the same
@@ -108,7 +115,7 @@ async def _no_relations(_rows, _relations):
 
 
 # --------------------------------------------------------------------------------------
-# The four record PATCH routes
+# The record PATCH routes: the original four, plus the craft PATCH the sweep found
 # --------------------------------------------------------------------------------------
 
 
@@ -206,26 +213,64 @@ def _drive_process(monkeypatch, fields: dict[str, Any], stored: _Row) -> tuple[A
     return writes, payload
 
 
+def _drive_craft(monkeypatch, fields: dict[str, Any], stored: _Row) -> tuple[Any, _Payload]:
+    """THE FIFTH ROUTE, WHICH THE ORIGINAL SWEEP MISSED.
+
+    ``update_craft`` was not one of the four PATCHes the ``clearable`` wave wired, so a craft's
+    category, description, local name and place were the same 200-that-does-nothing until this
+    module grew the driver below. A craft is taxonomy rather than a person, so nothing here is a
+    retraction — but ``Craft.place`` is the sharpest illustration in the schema of why the tuple is
+    per model: it is ``String?`` here and NOT NULL on the three record models beside it.
+    """
+    from app.api.routes import crafts
+
+    writes = _Writes()
+
+    async def _require_record(_delegate, _record_id):
+        return stored
+
+    async def _sync(_previous, _next, _craft_id):
+        return None
+
+    monkeypatch.setattr(crafts, "db", SimpleNamespace(craft=writes))
+    monkeypatch.setattr(crafts, "require_record", _require_record)
+    monkeypatch.setattr(crafts, "guard_record_edit", _privileged)
+    monkeypatch.setattr(crafts, "apply_status_policy_update", _no_status_policy)
+    monkeypatch.setattr(crafts, "sync_workshop_craft", _sync)
+    monkeypatch.setattr(crafts, "public_encode", lambda row, _viewer=None, **_kw: row)
+
+    payload = _Payload(fields)
+    asyncio.run(crafts.update_craft("crf_1", payload, _editor()))
+    return writes, payload
+
+
 #: Every column each record route declares clearable, and the driver that exercises that route.
 #: Read off the route modules rather than retyped, so a name added to or removed from a route's
 #: tuple is covered (or stops being covered) without this file having to be edited in step — a
 #: hand-copied list here would be the same "the test agrees with itself" trap the module docstring
 #: describes.
+#:
+#: THE FOURTH ELEMENT IS AN EDIT THAT TOUCHES NOTHING ON THE CLEARABLE LIST, and it has to be per
+#: route rather than one shared body: ``{"status": "PENDING"}`` is the natural "some other edit" for
+#: the four record models, and Craft HAS NO ``status`` COLUMN at all (``pin_pending_if_late``'s
+#: docstring names it as the model it is a no-op for), so driving that route with one would assert
+#: against a key the real schema cannot send.
 def _record_routes():
-    from app.api.routes import artisans, processes, products, tools
+    from app.api.routes import artisans, crafts, processes, products, tools
 
     return (
-        ("artisan", _drive_artisan, artisans._CLEARABLE_COLUMNS),
-        ("product", _drive_product, products._CLEARABLE_COLUMNS),
-        ("tool", _drive_tool, tools._CLEARABLE_COLUMNS),
-        ("process", _drive_process, processes._CLEARABLE_COLUMNS),
+        ("artisan", _drive_artisan, artisans._CLEARABLE_COLUMNS, {"status": "PENDING"}),
+        ("product", _drive_product, products._CLEARABLE_COLUMNS, {"status": "PENDING"}),
+        ("tool", _drive_tool, tools._CLEARABLE_COLUMNS, {"status": "PENDING"}),
+        ("process", _drive_process, processes._CLEARABLE_COLUMNS, {"status": "PENDING"}),
+        ("craft", _drive_craft, crafts._CLEARABLE_COLUMNS, {"name": "Bandhani"}),
     )
 
 
 def _record_cases():
     return [
         pytest.param(driver, column, id=f"{name}.{column}")
-        for name, driver, columns in _record_routes()
+        for name, driver, columns, _untouched in _record_routes()
         for column in columns
     ]
 
@@ -260,7 +305,7 @@ def test_an_explicit_null_on_a_record_patch_actually_clears_the_column(monkeypat
 
 @pytest.mark.parametrize(
     ("name", "driver"),
-    [(name, driver) for name, driver, _columns in _record_routes()],
+    [(name, driver) for name, driver, _columns, _untouched in _record_routes()],
 )
 def test_a_key_the_client_never_sent_is_not_nulled(monkeypatch, name, driver):
     """AN ABSENT KEY IS STILL "LEAVE IT ALONE", which is the whole difference ``clearable`` rests on.
@@ -269,7 +314,9 @@ def test_a_key_the_client_never_sent_is_not_nulled(monkeypatch, name, driver):
     carries one edit and nothing else, and a save that also wrote NULL over every other optional
     would be a far worse defect than the one this wave fixed.
     """
-    _name, _driver, columns = next(entry for entry in _record_routes() if entry[0] == name)
+    _name, _driver, columns, untouched = next(
+        entry for entry in _record_routes() if entry[0] == name
+    )
     stored = _Row(
         id="rec_1",
         createdById="usr_7",
@@ -279,7 +326,7 @@ def test_a_key_the_client_never_sent_is_not_nulled(monkeypatch, name, driver):
         **dict.fromkeys(columns, "still on the row"),
     )
 
-    writes, _payload = driver(monkeypatch, {"status": "PENDING"}, stored)
+    writes, _payload = driver(monkeypatch, dict(untouched), stored)
 
     written = writes.updated[0][1]
     for column in columns:
@@ -290,10 +337,10 @@ def test_a_key_the_client_never_sent_is_not_nulled(monkeypatch, name, driver):
 
 
 @pytest.mark.parametrize(
-    ("name", "driver"),
-    [(name, driver) for name, driver, _columns in _record_routes()],
+    ("name", "driver", "untouched"),
+    [(name, driver, untouched) for name, driver, _columns, untouched in _record_routes()],
 )
-def test_the_record_patch_dumps_with_exclude_unset(monkeypatch, name, driver):
+def test_the_record_patch_dumps_with_exclude_unset(monkeypatch, name, driver, untouched):
     """THE PRECONDITION ``clearable`` IS ONLY SOUND UNDER, ASSERTED RATHER THAN ASSUMED.
 
     ``clean_data``'s docstring states it: pass ``clearable`` only from a route that dumps with
@@ -304,7 +351,7 @@ def test_the_record_patch_dumps_with_exclude_unset(monkeypatch, name, driver):
     """
     stored = _Row(id="rec_1", createdById="usr_7", status="PENDING", extraMetadata={})
 
-    _writes, payload = driver(monkeypatch, {"status": "PENDING"}, stored)
+    _writes, payload = driver(monkeypatch, dict(untouched), stored)
 
     assert payload.dumped_with.get("exclude_unset") is True, (
         f"{name}: the PATCH no longer dumps with exclude_unset=True, so its `clearable=` tuple has "
@@ -340,13 +387,13 @@ def test_clearing_a_populated_field_is_still_refused_for_a_non_author(monkeypatc
     assert "phone" in artisans._CLEARABLE_COLUMNS
 
 
-def test_the_four_record_routes_do_not_share_one_clearable_list():
+def test_the_record_routes_do_not_share_one_clearable_list():
     """A GLOBAL LIST WOULD CORRUPT THREE MODELS TO FIX ONE, which is why ``clean_data`` takes the
-    names per call. The four tuples must therefore stay genuinely different: each is that model's
+    names per call. The tuples must therefore stay genuinely different: each is that model's
     own nullable columns, and the moment somebody "tidies" them into one shared constant the fix
     starts writing NULL into columns that are NOT NULL on the other tables.
     """
-    from app.api.routes import artisans, products, tools
+    from app.api.routes import artisans, crafts, products, tools
 
     # A tool measures height/width/thickness/weight/radius; a product measures heightInches. Neither
     # list is a subset of the other, and neither belongs on Artisan.
@@ -357,21 +404,58 @@ def test_the_four_record_routes_do_not_share_one_clearable_list():
     assert "phone" in artisans._CLEARABLE_COLUMNS
     assert "phone" not in products._CLEARABLE_COLUMNS
 
-    # ``place`` is NOT NULL on all three. It is the shape of the mistake this test exists to catch:
-    # nullable on some models in this schema, and a hard constraint violation on these.
+    # ``place`` IS THE WHOLE ARGUMENT IN ONE COLUMN NAME. It is ``String?`` on Craft and NOT NULL on
+    # the other three, so it MUST be clearable on the craft route and MUST NOT be on theirs. One
+    # shared constant cannot satisfy both, and whichever way it was written it would be wrong
+    # somewhere: a silent no-op on the craft form, or a constraint violation on the other three.
+    assert "place" in crafts._CLEARABLE_COLUMNS
     for module in (artisans, products, tools):
         assert "place" not in module._CLEARABLE_COLUMNS
 
     # Nor may a route reach the same end by pushing its own names into the global set.
     from app.services.records import CLEARABLE_KEYS
 
-    for module in (artisans, products, tools):
+    for module in (artisans, crafts, products, tools):
         assert not (set(module._CLEARABLE_COLUMNS) & CLEARABLE_KEYS)
 
 
 # --------------------------------------------------------------------------------------
 # The list is COMPLETE, not merely correct — read off the schema, not off the routes
 # --------------------------------------------------------------------------------------
+
+
+def _clearable_argument_of(route) -> tuple[str, ...]:
+    """The ``clearable=`` tuple a route hands ``clean_data``, read out of the route's OWN source.
+
+    Every other entry in ``cases`` below reads a module constant, for the reason that test's
+    docstring gives: a retyped copy agrees with itself and catches nothing. ``update_interview``
+    passes its tuple as a literal at the call site instead, and ``routes/questionnaire.py`` is not
+    this unit's file to edit — so the tuple is parsed out of the function's source rather than
+    retyped here. Promoting it to a module constant (``_INTERVIEW_CLEARABLE_COLUMNS``, the spelling
+    the other nine use) and reading it like the rest is the tidier end state and belongs to whoever
+    owns that route; this keeps the completeness net honest in the meantime.
+
+    Asserts it found exactly one, so the day that route grows a second ``clean_data`` call this
+    fails loudly instead of silently checking the wrong one.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(route)))
+    found = [
+        tuple(ast.literal_eval(keyword.value))
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "attr", getattr(node.func, "id", None)) == "clean_data"
+        for keyword in node.keywords
+        if keyword.arg == "clearable"
+    ]
+    assert len(found) == 1, (
+        f"{route.__name__}: expected exactly one `clean_data(..., clearable=...)` call to read, "
+        f"found {len(found)}"
+    )
+    return found[0]
 
 
 def _nullable_columns(model: str) -> set[str]:
@@ -515,19 +599,48 @@ def test_every_nullable_column_a_client_can_send_is_either_clearable_or_exempt()
     An exemption is a decision, so adding one has to be a deliberate edit HERE, with a reason, and
     not a name quietly missing from a route.
 
-    ALL EIGHT PATCHES THIS WAVE TOUCHED ARE COVERED, not only the four record ones. The four
+    EVERY PATCH THAT PASSES ``clearable`` IS COVERED, not only the four record ones. The four
     questionnaire-form PATCHes are the same surface with the same failure mode, and one of them is
     one line away from it: ``Questionnaire.sourceFilename`` is nullable today and stays out of every
     tuple only because ``QuestionnaireUpdate`` does not accept it.
+
+    ``Craft`` IS HERE BECAUSE THIS TEST IS THE THING THAT WOULD HAVE CAUGHT IT. The craft PATCH was
+    not in the original four, so ``localName``/``category``/``description``/``place`` were exactly
+    the silent no-op described above until the route grew its own tuple — a route missing from the
+    list below is a route this net does not cover, which is a different failure from a name missing
+    from a tuple and is why every ``clean_data(..., clearable=...)`` caller belongs in ``cases``.
+
+    ``QuestionnaireInterview`` IS THE TENTH, AND IT WAS MISSING FROM THIS LIST WHILE THE SENTENCE
+    ABOVE CLAIMED OTHERWISE. ``routes/questionnaire.update_interview`` passes
+    ``clearable=("interviewDate", "place", "language", "notes")`` as a literal at the call site, and
+    that tuple happens to be complete today — but "complete today" is precisely what this net exists
+    not to take anybody's word for. Its tuple is read with :func:`_clearable_argument_of` rather than
+    retyped, for the same reason the other nine are read off their modules; see that helper for why
+    it is parsed instead of imported.
     """
-    from app.api.routes import artisans, processes, products, questionnaire_forms, tools
+    from app.api.routes import (
+        artisans,
+        crafts,
+        processes,
+        products,
+        questionnaire,
+        questionnaire_forms,
+        tools,
+    )
     from app.schemas.questionnaire import (
         CustomQuestionUpdate,
         CustomSectionUpdate,
         QuestionnaireEntryUpdate,
+        QuestionnaireInterviewUpdate,
         QuestionnaireUpdate,
     )
-    from app.schemas.records import ArtisanUpdate, ProcessUpdate, ProductUpdate, ToolUpdate
+    from app.schemas.records import (
+        ArtisanUpdate,
+        CraftUpdate,
+        ProcessUpdate,
+        ProductUpdate,
+        ToolUpdate,
+    )
     from app.services.records import CLEARABLE_KEYS
 
     system_managed = {
@@ -542,6 +655,7 @@ def test_every_nullable_column_a_client_can_send_is_either_clearable_or_exempt()
         ("ProductDocumentation", ProductUpdate, products._CLEARABLE_COLUMNS),
         ("ToolDocumentation", ToolUpdate, tools._CLEARABLE_COLUMNS),
         ("Process", ProcessUpdate, processes._CLEARABLE_COLUMNS),
+        ("Craft", CraftUpdate, crafts._CLEARABLE_COLUMNS),
         (
             "Questionnaire",
             QuestionnaireUpdate,
@@ -561,6 +675,11 @@ def test_every_nullable_column_a_client_can_send_is_either_clearable_or_exempt()
             "QuestionnaireFormSection",
             CustomSectionUpdate,
             questionnaire_forms._SECTION_CLEARABLE_COLUMNS,
+        ),
+        (
+            "QuestionnaireInterview",
+            QuestionnaireInterviewUpdate,
+            _clearable_argument_of(questionnaire.update_interview),
         ),
     )
     for model, schema, declared in cases:
@@ -776,3 +895,62 @@ def test_the_section_patch_has_no_nullable_column_to_declare():
         "/questionnaires/{id}/sections/{id} now needs a `clearable=` tuple like its three siblings: "
         f"{nullable}"
     )
+
+
+# --------------------------------------------------------------------------------------
+# The interview patch: the one ``clearable`` caller whose precondition was never asserted
+# --------------------------------------------------------------------------------------
+#
+# ``routes/questionnaire.update_interview`` passes ``clearable=("interviewDate", "place", "language",
+# "notes")`` and was the one caller in the tree with no test of its own precondition.
+# ``tests/test_record_write_path`` covers the columns — it drives this route and asserts each null
+# survives — but every ``exclude_unset`` assertion in the repository was in THIS module, and none of
+# them was about this route. That is the asymmetric half: losing the ``clearable=`` tuple makes a
+# retraction silently fail, which is bad; losing ``exclude_unset=True`` makes every optional the
+# client left blank get written as NULL on every save, which is worse and just as silent. The one
+# route whose tuple was verified and whose dump was not is the one worth closing.
+
+
+def test_the_interview_patch_dumps_with_exclude_unset(monkeypatch):
+    """THE PRECONDITION, ON THE LAST ROUTE THAT HAD IT UNASSERTED.
+
+    ``QuestionnaireInterviewUpdate`` carries ``title``, ``status``, ``interviewDate``, ``place``,
+    ``language``, ``notes``, ``workshopId``, a location and more — so a dump without
+    ``exclude_unset`` would hand ``clean_data`` a ``None`` for every one the researcher did not
+    touch, four of which this route has declared clearable and would therefore write as NULL.
+    """
+    from app.api.routes import questionnaire as module
+
+    stored = _Row(id="int_1", createdById="usr_7", status="PENDING", notes="on the row")
+    writes = _Writes(row=stored)
+
+    async def _require_record(_delegate, _record_id):
+        return stored
+
+    async def _privileged_edit(_record, _user, _data, _kind):
+        return True
+
+    async def _attach_location(data):
+        return data
+
+    monkeypatch.setattr(module, "db", SimpleNamespace(questionnaireinterview=writes))
+    monkeypatch.setattr(module, "require_record", _require_record)
+    monkeypatch.setattr(module, "guard_record_edit", _privileged_edit)
+    monkeypatch.setattr(module, "apply_status_policy_update", _no_status_policy)
+    monkeypatch.setattr(module, "attach_location", _attach_location)
+    monkeypatch.setattr(module, "hydrate_relations", _no_relations)
+    monkeypatch.setattr(module, "public_encode", lambda row, _viewer=None, **_kw: row)
+
+    # ``artisanIds``/``responses`` are relations with their own guards, excluded from the dump; None
+    # is "the client sent no list", which is the shape of every scalar-only save.
+    payload = _Payload({"notes": None}, artisanIds=None, responses=None)
+    asyncio.run(module.update_interview("int_1", payload, _editor()))
+
+    assert payload.dumped_with.get("exclude_unset") is True, (
+        "PATCH /questionnaires/interviews/{id} no longer dumps with exclude_unset=True, so its "
+        "`clearable=` tuple has become a licence to NULL interviewDate, place, language and notes "
+        "on every save that does not mention them"
+    )
+    assert len(writes.updated) == 1, "the PATCH wrote nothing at all"
+    written = writes.updated[0][1]
+    assert "notes" in written and written["notes"] is None

@@ -59,7 +59,7 @@ systemctl restart nginx
 # CPU-credit-throttled box a heavy transcription chunk (run via asyncio.to_thread) starved that
 # pong thread, so the supervisor SIGKILLed the worker mid-job. SIGKILL skips the shutdown hook, so
 # the worker's Prisma query-engine subprocess was orphaned (reparented to init) — one orphan per
-# kill cycle — until the orphans exhausted the Supabase pooler and EVERY DB call (login included)
+# kill cycle — until the orphans exhausted the pooler's client ceiling and EVERY DB call (login included)
 # returned HTTP 500 while /health (no DB) stayed 200. One process = no supervisor = no SIGKILL loop.
 # The media queue runs in its OWN service (fieldrepo-queue, below), so its heavy AI/ffmpeg work is
 # never in the request-serving process — that both removes the SIGKILL trigger and keeps responses
@@ -77,8 +77,8 @@ EnvironmentFile=/home/ubuntu/app/backend/.env
 Environment=MEDIA_QUEUE_WORKER_ENABLED=false
 ExecStart=/home/ubuntu/app/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=always
-# 10s (not 3s) between restarts so that IF the process ever does exit while the Supabase
-# transaction pooler is at its client-connection ceiling, restarts don't hammer the pooler
+# 10s (not 3s) between restarts so that IF the process ever does exit while the database's
+# pooler is at its client-connection ceiling, restarts don't hammer the pooler
 # faster than its connections can drain. (The app also now keeps serving and reconnects to
 # the DB in the background instead of exiting, so this is defense-in-depth.)
 RestartSec=10

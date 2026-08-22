@@ -64,6 +64,15 @@ process.env.E2E_API_URL ??= API_URL;
 
 export default defineConfig({
   testDir: "./e2e",
+  /**
+   * Checked ONCE, before the first spec: is the stack this suite needs actually there?
+   *
+   * Nothing here starts a server, so a run against a stopped stack used to report a hundred
+   * unrelated failures whose only real content was one unstated fact. `e2e/support/preflight.ts`
+   * states it — and only when the run has credentials and has selected something other than the
+   * service-free `-unit` specs, so the CI unit gate is untouched.
+   */
+  globalSetup: "./e2e/support/preflight.ts",
   timeout: 90_000,
   expect: { timeout: 15_000 },
   // The specs sign in as the same user and navigate real records; running them concurrently would

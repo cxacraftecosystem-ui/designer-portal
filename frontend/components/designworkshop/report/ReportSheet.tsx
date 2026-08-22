@@ -143,7 +143,15 @@ function documentStyles(
   border-top: 0.5pt solid var(--rp-rule);
   padding-top: 1.4mm; margin-top: 7mm;
 }
-.rp-runfoot span:last-child { margin-left: auto; }
+/* The page label is a reserved column, not another word in the footer text. report_pdf does this
+   in points -- '_draw_furniture' measures the label, subtracts it plus 4 mm from the text column
+   and wraps the footer inside what is left (and logs it when the footer still does not fit). The
+   preview reserved nothing, and the label was short enough for that not to show: once it grew from
+   "Page 12" to "Page 12 of 240" a long stage-20 footer could wrap it onto a second line, which
+   pushes past 'min-height: var(--rp-page-h)' and makes the sheet taller than the paper it is
+   depicting -- the one thing this screen exists to show accurately. So the label never wraps and
+   never shrinks, and the footer text is what gives way, exactly as it does in the file. */
+.rp-runfoot > .rp-pageno { margin-left: auto; white-space: nowrap; flex: 0 0 auto; }
 
 /* Headings. 17 / 13.5 / 11.5 / 10.5 pt with accent, accent, accent-soft, muted — report_pdf's
    own ladder. The .docx ladder is a shade larger (18 / 14 / 12 / 11); the .pdf is the one
@@ -376,6 +384,18 @@ function documentStyles(
 
   .rp-print-hide { display: none !important; }
   .rp-print-only { display: block !important; }
+
+  /* THE TOTAL IS A SCREEN CLAIM AND DOES NOT TRAVEL INTO THE FILE. On screen the "of M" is safe
+     because the strip above the sheets says in as many words that M is the declared-page floor --
+     but that strip carries 'data-rp-noprint' and is dropped above with every other piece of
+     chrome, because a warning must not print inside a document going to a ministry. A printed
+     "Page 3 of 5" with nothing left to qualify it is precisely the number that gets quoted in a
+     covering email. Worse, the rules above hand pagination back to the browser -- the sheet loses
+     its min-height and only asks for a break after itself -- so a sheet whose content overflows
+     becomes two printed pages, and then the printed total is not a floor, it is simply wrong. The
+     ordinal alone is what this file can stand behind, so that is all it carries. Deleting this
+     rule silently re-arms the failure; 'e2e/report-page-label-unit.spec.ts' pins it. */
+  .rp-of { display: none !important; }
 }
 `;
 }
@@ -486,7 +506,8 @@ export function ReportSheets({
             the pagination itself: only breaks the template asked for are knowable in a browser. */}
         <span>
           Page breaks the template declares are shown. Where a section runs long the file adds pages this preview
-          cannot know about, so the numbering below is a floor, not the final count.
+          cannot know about, so the &ldquo;of {sheets.length}&rdquo; in each running foot below is a floor, not the
+          final count.
         </span>
         {scale < 0.995 ? <span>Scaled to {Math.round(scale * 100)}% to fit this window; printing uses full size.</span> : null}
         {/* Which of the two colour situations the reader is in. Never silent about it: the
@@ -517,7 +538,7 @@ export function ReportSheets({
                       ) : null}
                       <article
                         className="rp-sheet"
-                        aria-label={sheet.isCover ? "Cover page" : `Page ${sheet.pageNumber}`}
+                        aria-label={sheet.isCover ? "Cover page" : `Page ${sheet.pageNumber} of ${sheets.length}`}
                       >
                         {/* The cover carries no running furniture, in the file and here: both
                             writers suppress it on page one, and a craft name printed above a
@@ -537,7 +558,26 @@ export function ReportSheets({
                         {sheet.isCover ? null : (
                           <div className="rp-runfoot" aria-hidden>
                             <span>{footerText}</span>
-                            <span>Page {sheet.pageNumber}</span>
+                            {/* "Page N of M", the label all four FILE renderers print — both .docx
+                                writers resolve it from PAGE/NUMPAGES and both PDF renderers take M
+                                from their measuring pass. This screen is the fifth surface that
+                                prints it and was the last one the fix reached: a designer who
+                                proofed "Page 3" here and then handed over a document reading
+                                "Page 3 of 12" had two numbers of different shapes for the same
+                                page. The M here is the DECLARED page count and is a floor rather
+                                than the file's own total — see `splitIntoSheets` for why nothing
+                                in a browser can know the rest, and the strip above the sheets for
+                                where that is said to the reader.
+
+                                THE "of M" IS ITS OWN ELEMENT SO THAT PRINT CAN DROP IT. The strip
+                                that qualifies the number is chrome and does not print, and a
+                                total with nothing left to qualify it — in the one artefact a
+                                designer emails — is the failure that floor sentence exists to
+                                prevent. See the `.rp-of` rule in the print block above. */}
+                            <span className="rp-pageno">
+                              Page {sheet.pageNumber}
+                              <span className="rp-of"> of {sheets.length}</span>
+                            </span>
                           </div>
                         )}
                       </article>

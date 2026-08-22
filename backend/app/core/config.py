@@ -1,9 +1,39 @@
+"""Every environment-supplied setting, and the order the environment is read in.
+
+WHERE A VALUE COMES FROM, HIGHEST PRECEDENCE FIRST. Written down because a provider migration
+turned this into a live hazard: whichever file happens to be reachable from the working directory
+decides which database the process talks to, and getting that wrong is not a typo, it is a
+connection to somebody else's data.
+
+  1. The process environment. systemd's ``EnvironmentFile``, a Kubernetes ConfigMap/Secret, a
+     ``DATABASE_URL=... uvicorn ...`` prefix on the command line. pydantic-settings always prefers
+     this over any file, so an explicit export is how you override for one command.
+  2. ``backend/.env``, resolved by ABSOLUTE PATH below. It used to be ``env_file=".env"``, which is
+     relative to the WORKING DIRECTORY: the same command produced different settings depending on
+     whether it was typed in ``backend/`` or at the repository root, and at the root it produced
+     none at all. ``backend/tests/conftest.py`` documents at length what that cost the test suite.
+  3. The defaults declared on the fields below.
+
+``backend/.env.production`` IS NOT IN THAT LIST AND IS READ BY NO CODE IN THIS REPOSITORY. It is an
+operator file: the deployment copies it onto the box as the unit's ``EnvironmentFile``, which is how
+its values arrive at rule 1. Nothing here loads it, so editing it changes nothing until a deploy.
+
+THIS FILE NAMES NO DATABASE PROVIDER, AND MUST NOT LEARN ONE. Everything below that used to branch
+on a vendor hostname now branches on SHAPE (is the host loopback/private?) or on an explicit
+setting. The provider is a deployment detail: one DSN, plain PostgreSQL, nothing else.
+"""
+
 from functools import lru_cache
 from ipaddress import ip_address
+from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 from pydantic import AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: ``backend/`` — this file is ``backend/app/core/config.py``. Used to anchor the .env lookup on the
+#: repository rather than on whatever directory the command was typed in; see the header.
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 # Only symmetric HMAC signing is ever legitimate for this API's tokens. The allow-list exists to
 # stop "algorithm confusion": JWT_ALGORITHM is read from the environment (the field has no alias, so
@@ -25,8 +55,15 @@ def _is_local_db_host(host: str) -> bool:
     """True when the database host is loopback / on a private network, i.e. a development database.
 
     Covers both named hosts (``localhost``, a docker-compose service name) and literal addresses
-    (``127.0.0.1``, ``10.x``, ``192.168.x``, IPv6 loopback). Anything else — Supabase's pooler, an
-    RDS endpoint — counts as remote and therefore MUST be reached over TLS.
+    (``127.0.0.1``, ``10.x``, ``192.168.x``, IPv6 loopback). Anything else — a managed Postgres
+    endpoint, whoever runs it — counts as remote and therefore MUST be reached over TLS.
+
+    CLASSIFIES BY SHAPE, NEVER BY PROVIDER NAME, and that is the whole point of it: a hostname
+    allow-list has to be edited every time a deployment moves, and the edit that gets forgotten is
+    the one that silently downgrades a remote link to plaintext. An unrecognised host is remote.
+
+    ``docker/backend/entrypoint.sh`` mirrors this function deliberately and cites it by name; keep
+    the two in step, and if you rename it, rename it there too.
     """
     host = host.strip().strip("[]").lower()
     if not host or host in _LOCAL_DB_HOSTNAMES or host.endswith((".local", ".internal", ".localhost")):
@@ -41,12 +78,12 @@ def _is_local_db_host(host: str) -> bool:
 def _with_explicit_sslmode(url: str, require: bool | None) -> str:
     """Return *url* with an explicit ``sslmode`` so traffic to a remote database is encrypted.
 
-    Why this is not redundant with "Supabase already speaks TLS": libpq and Prisma's Postgres
+    Why this is not redundant with "the provider already speaks TLS": libpq and Prisma's Postgres
     connector default to ``sslmode=prefer``, which tries TLS and then **silently falls back to
     plaintext** if the handshake fails. A downgrade attack (or a proxy that terminates TLS badly)
     therefore ships credentials and every row of field data in the clear, with nothing in the logs.
     ``sslmode=require`` refuses to connect at all rather than fall back, which is the property we
-    want for the pooler URL.
+    want for any DSN that leaves this machine.
 
     The decision is automatic by default: remote hosts get ``sslmode=require``; loopback/private
     hosts (docker-compose Postgres, which ships no certificate) are returned untouched so local
@@ -76,27 +113,69 @@ def _with_explicit_sslmode(url: str, require: bool | None) -> str:
 
 class Settings(BaseSettings):
     database_url: str = Field(alias="DATABASE_URL")
-    # Route the RUNTIME Prisma client through the Supabase transaction-mode pooler (:6543,
-    # pgbouncer=true) instead of the session pooler (:5432). Session mode pins one of only 15
-    # server connections per client for its whole life, so a couple of uvicorn workers exhaust
-    # the pool (EMAXCONNSESSION). Transaction mode releases the connection per statement and
-    # multiplexes many app connections (up to the pooler's 200-client ceiling) over the 15
-    # server connections. Migrations still use the session URL from the env (see core/db.py).
+    # DECLARES WHAT ``DATABASE_URL`` POINTS AT — that one DSN and no other. True means "a
+    # transaction-mode connection pooler", which makes the runtime client add ``pgbouncer=true`` so
+    # the query engine stops relying on session-pinned named prepared statements a transaction
+    # pooler cannot keep, and makes it bound our share of the pooler's client budget.
+    #
+    # ONE FLAG PER ENDPOINT, and this is the correction to an earlier version of this comment that
+    # said "what DATABASE_URL points at" while the code applied the answer to the read replica too.
+    # A replica is a separate endpoint and may be pooled when the primary is not, or the reverse; a
+    # deployment in that shape could not be expressed by configuration at all, which defeats the
+    # purpose of the flag. ``DATABASE_READ_REPLICA_USE_TRANSACTION_POOLER`` below is its own answer,
+    # and ``build_runtime_database_url`` now takes ``pooled`` as an argument so that every caller
+    # has to say which DSN's intent it is passing.
+    #
+    # This USED TO REWRITE THE HOST — it moved a ``.pooler.supabase.com`` DSN from port 5432 to
+    # 6543 — and that is exactly the kind of knowledge this file is not allowed to have. Every
+    # managed Postgres ships a pooler, each on its own host and port convention, so the only
+    # portable expression is: the operator supplies the pooled DSN, and this flag says whether it
+    # is one. Migrations get the DIRECT DSN instead (they need session-mode advisory locks and
+    # DDL), which is a deployment decision — see the header of core/db.py.
+    #
+    # DEFAULT TRUE BECAUSE THE TWO MISTAKES ARE NOT SYMMETRIC. True against a direct connection
+    # costs prepared-statement caching, i.e. a little speed. False against a transaction pooler
+    # costs correctness: the engine issues named prepared statements onto a connection it does not
+    # keep, and queries start failing with "prepared statement already exists" under load only.
     database_use_transaction_pooler: bool = Field(
         default=True, alias="DATABASE_USE_TRANSACTION_POOLER"
     )
-    # Max client connections the runtime engine opens to the pooler, PER uvicorn worker. Kept SMALL on
-    # purpose: the pooler enforces a 200 *client*-connection ceiling shared across every worker AND
+    # Max client connections the runtime engine opens, PER uvicorn worker. Kept SMALL on purpose:
+    # a connection pooler enforces a ceiling on *client* connections shared across every worker AND
     # every overlapping process during a deploy/restart. At 40 × 2 workers (plus restart overlap and
     # the background queue worker) we were tripping (EMAXCONN) "max client connections reached", which
     # crash-looped startup and made uploads fail intermittently. Real query concurrency is gated by the
-    # pooler's ~15 server connections anyway, so a small client pool loses nothing and leaves headroom.
+    # far smaller number of SERVER connections behind the pooler anyway, so a small client pool loses
+    # nothing and leaves headroom.
+    #
+    # TEN IS A REDUCTION AGAINST A POOLER AND HAS NEVER BEEN EVALUATED AS ANYTHING ELSE. There is no
+    # shared client budget in front of a DIRECT endpoint, and Prisma's engine sizes its own pool from
+    # the CPU count when nothing says otherwise, so on a small box writing this number onto a direct
+    # DSN RAISES the pool rather than capping it. ``build_runtime_database_url`` therefore writes it
+    # only where a pooler is declared, or where this variable was explicitly supplied — setting it is
+    # how an operator states a pool size for a direct endpoint. See the header of core/db.py.
     database_connection_limit: int = Field(default=10, alias="DATABASE_CONNECTION_LIMIT")
-    # Optional Prisma pool acquire timeout (seconds). Left unset uses Prisma's default (10s).
+    # Optional Prisma pool acquire timeout (seconds). Left unset uses Prisma's own default.
     database_pool_timeout: int | None = Field(default=None, alias="DATABASE_POOL_TIMEOUT")
+    # SECONDS ALLOWED FOR ONE ATTEMPT TO ESTABLISH THE DATABASE CONNECTION, and it exists for COLD
+    # DATABASES. A managed Postgres that suspends when idle (scale-to-zero, autosuspend, a
+    # serverless tier — every provider sells it under a different word) does not answer the first
+    # connection of the morning at the speed of one that has been warm all night: it has to be woken
+    # first. prisma-client-py allows 10 seconds by default — ``prisma/_constants.py``,
+    # ``DEFAULT_CONNECT_TIMEOUT: timedelta = timedelta(seconds=10)`` — which is a number chosen for a
+    # server that is always there. When a wake takes longer, the attempt is abandoned and the app
+    # reports a database that was merely asleep as one that is down.
+    #
+    # Thirty is a chosen number, not a measured one: comfortably more than a wake, and still bounded,
+    # because the retry loop in core/db.py is the other half of the answer and it wants attempts that
+    # end. Deliberately NOT a URL parameter: it is passed to the Prisma client as its
+    # ``connect_timeout``, which is a documented argument of the library actually installed here,
+    # whereas an unrecognised query parameter in a DSN is a guess about a Rust engine's parser and
+    # the cost of guessing wrong is a database URL the engine refuses at boot.
+    database_connect_timeout: int = Field(default=30, alias="DATABASE_CONNECT_TIMEOUT")
     # Force TLS on the database link. None (default) decides automatically — sslmode=require for a
     # remote host, untouched for a loopback/private one so docker-compose Postgres still works.
-    # See _with_explicit_sslmode for why "Supabase already uses TLS" is not sufficient.
+    # See _with_explicit_sslmode for why "the provider already uses TLS" is not sufficient.
     database_require_ssl: bool | None = Field(default=None, alias="DATABASE_REQUIRE_SSL")
     jwt_secret: str = Field(alias="JWT_SECRET")
     # Constrained to HMAC algorithms by _normalise_jwt_algorithm below (see _ALLOWED_JWT_ALGORITHMS).
@@ -304,9 +383,29 @@ class Settings(BaseSettings):
     # app has always used. Setting it starts a SECOND Prisma query-engine process — real memory on
     # a 1 GiB box — so it is worth doing only when a genuine replica exists to point it at.
     database_read_replica_url: str | None = Field(default=None, alias="DATABASE_READ_REPLICA_URL")
+    # Whether the REPLICA DSN above is a transaction pooler. None (the default) means "the same as
+    # the primary", which is the common case and keeps this variable something nobody has to know
+    # about until they need it. Set it only when the two endpoints differ in shape.
+    #
+    # It exists because one boolean cannot describe two endpoints. A read replica is very often the
+    # one that is pooled — it takes the wide list and aggregate queries, which is exactly the load a
+    # pooler is bought for — while migrations keep the primary on the direct endpoint. With a single
+    # flag, telling the truth about the primary silently strips ``pgbouncer=true`` from a pooled
+    # replica, and the symptom is "prepared statement already exists" on read endpoints under load
+    # only: the worst kind of failure to go looking for, because it does not reproduce quietly.
+    database_read_replica_use_transaction_pooler: bool | None = Field(
+        default=None, alias="DATABASE_READ_REPLICA_USE_TRANSACTION_POOLER"
+    )
 
+    # ABSOLUTE, NOT ".env". See rule 2 in this module's header: a relative env_file is resolved
+    # against the working directory, so `python -m uvicorn app.main:app` from backend/ and the same
+    # command from the repository root read DIFFERENT configuration — and from the root they read
+    # none, which for DATABASE_URL means the process refuses to boot rather than reaching the local
+    # database that is sitting right there. Anchoring on this file's own location makes the answer
+    # the same wherever the command is typed. The process environment still outranks it (rule 1),
+    # so an explicit export is still how a deployment or a one-off overrides anything here.
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_BACKEND_ROOT / ".env"),
         env_file_encoding="utf-8",
         populate_by_name=True,
         extra="ignore",

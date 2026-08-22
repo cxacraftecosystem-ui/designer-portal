@@ -37,16 +37,24 @@ const remotePatterns: NonNullable<NextConfig["images"]>["remotePatterns"] = [
   // Any CloudFront distribution — currently d2b34i3e92al6i.cloudfront.net, which fronts the API
   // (and any media proxied through it) over HTTPS + IPv6.
   { protocol: "https", hostname: "**.cloudfront.net", pathname: "/**" },
-  // Production media bucket: dual-stack host (what the backend mints today)…
+  // Production media bucket: dual-stack host (what the backend mints today).
+  //
+  // THESE TWO HOSTS SAID `fieldrepo-` UNTIL 2026-08-22, WHICH IS THE FIELD REPOSITORY'S BUCKET AND
+  // NOT THIS PORTAL'S. next/image matches `remotePatterns` by exact hostname, so every production
+  // media URL the backend minted was REFUSED by the optimiser — inherited at the split from the
+  // sibling product, like the deploy secrets and the setup script before it. The bucket is
+  // `designrepo-media-626159998512`, per docs/ENVIRONMENT.md's AWS_S3_BUCKET row,
+  // backend/.env.example and the designrepo Terraform workspace. `docs/tools/check-docs.mjs`
+  // now sweeps for unlabelled sibling identity so the next one cannot land silently.
   {
     protocol: "https",
-    hostname: "fieldrepo-media-626159998512.s3.dualstack.ap-south-1.amazonaws.com",
+    hostname: "designrepo-media-626159998512.s3.dualstack.ap-south-1.amazonaws.com",
     pathname: "/**"
   },
   // …and the plain regional host, still present on rows written before dual-stack promotion.
   {
     protocol: "https",
-    hostname: "fieldrepo-media-626159998512.s3.ap-south-1.amazonaws.com",
+    hostname: "designrepo-media-626159998512.s3.ap-south-1.amazonaws.com",
     pathname: "/**"
   },
   // Local MinIO (docker-compose) — path-style URLs, e.g. http://localhost:9000/design-workshop/...

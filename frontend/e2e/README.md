@@ -17,8 +17,15 @@ Bring the stack up first, **from the repository root and nowhere else**:
 
 ```bash
 docker compose up -d          # run from the REPO ROOT
-cd frontend && npm run dev    # separate terminal; the config never starts a server itself
+cd frontend
+npx next build                # separate terminal; the config never starts a server itself
+npx next start -p 3000        # a BUILD, not `npm run dev` — see below
 ```
+
+> `npm run dev` (`next dev`) is the alternative and is **not** what is known to work here: on this
+> machine it booted in 82 s and then never served `/login` at all. The measurements, and the trap that
+> comes with serving a build (`next build` underneath a live `next start`), are in
+> `docs/TESTING-E2E-LOCAL.md`.
 
 > Running `docker compose` from `backend/` picks up `backend/.env`, whose `DATABASE_URL` names the
 > **host** port. The API then comes up unable to reach its own database, and every spec fails with
@@ -146,3 +153,21 @@ A full run needs the API for its whole length. On a developer box that is also b
 running pytest, WSL2 has been observed terminating the Docker VM part-way through — after which
 every remaining spec fails for a reason that is not in this repository. If a run produces a wall of
 failures, check `docker compose ps` **before** believing any of them.
+
+That check is now automatic. `support/preflight.ts` runs as `globalSetup` before the first spec: it
+probes the API's `/health`, signs in once for real, and probes the base URL, and on any of those it
+throws **one** sentence naming what is missing and the command that starts it. It deliberately does
+nothing when `E2E_EMAIL`/`E2E_PASSWORD` are absent (every signed-in spec skips itself anyway, and the
+`-unit` specs must keep running on a machine with no services at all), and it recognises a unit-only
+selection so `npm run test:unit` never starts asking for a stack.
+
+It exists because a missing service does not announce itself: the same stack has come up with the
+API answering `/health` 200 while every real request returned 500, because Docker Desktop had exited
+underneath it and `prisma-client-py`'s query engine had died without the API noticing. That shape —
+`/health` fine, `/api/auth/login` 500 with `httpx.ConnectError: All connection attempts failed` —
+means the query engine is gone and the API must be **restarted** after the database comes back; it
+does not reconnect on its own. The preflight says so rather than leaving you to find out.
+
+**`docs/TESTING-E2E-LOCAL.md`** is the order-of-operations companion to this file: the four commands
+in sequence, why a production build (`next build` + `next start`) is the only thing that serves
+reliably on a slow disk here, and the measurements behind that claim.

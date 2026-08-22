@@ -436,6 +436,30 @@ ENUMS: dict[str, dict[str, str]] = {
         "REVISE": "Revise and resubmit",
         "PENDING": "Pending review",
     },
+    # WHICH AUDIENCE PASSED JUDGEMENT, which is a different question from what they decided and
+    # was previously unanswerable. A sketch or a prototype is reviewed twice by design: first by
+    # the people who were in the room — the workshop's own designers, the master craftsperson,
+    # the artisans who made it — and again by the whole pool of designers on the platform, most of
+    # whom have never seen the cluster. Both write a review row into the same entity, and until
+    # this list existed the two were indistinguishable, so a report could not say whether
+    # "Selected" was the room's verdict or the pool's, and a mean score could not be computed over
+    # one round without silently including the other.
+    #
+    # THE SECOND ROUND OPENS PER PIECE, on `sketch.peerRoundClosedAt` or
+    # `prototype.peerRoundClosedAt` — the one column `design_ratings.pool_is_open` reads off
+    # whichever row it was handed. This note used to say the pool round begins "once prototypes are
+    # finalised"; that was the owner's phrase for when the second level generally starts, not a
+    # gate anything in the code reads, and stated as fact it is false of a sketch: a sketch set
+    # aside and never prototyped reaches the pool on its own date, with no prototype in existence.
+    #
+    # TWO MEMBERS AND NO "OTHER". A review is filed by somebody standing in one of exactly two
+    # relations to the workshop, and the server knows which — an OTHER member would only ever be
+    # filled in by a client that had failed to work out the answer, and would then poison the very
+    # split the field exists to make. A third round, if one is ever wanted, is a new token here.
+    "REVIEW_ROUND": {
+        "PEER": "Workshop peers",
+        "POOL": "All designers",
+    },
     "DEMAND_LEVEL": {
         "HIGH": "High",
         "MEDIUM": "Medium",

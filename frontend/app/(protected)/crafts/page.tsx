@@ -207,7 +207,12 @@ function CraftsPageBody() {
       }
       const saved = outcome.saved;
       if (mediaFiles.length) {
-        const { uploaded, failed } = await uploadMediaBatch({
+        // `outcomes` AND NOT `uploaded`: one entry per file we handed over, at its position, with the
+        // `File` itself attached. That is what lets the two lines below be about the same batch —
+        // what landed goes to the tray, what did not stays in the capture card as the actual bytes,
+        // with nothing to line up between them and no name-matching (two photographs off one handset
+        // are routinely both IMG_0001.jpg).
+        const { outcomes } = await uploadMediaBatch({
           files: mediaFiles,
           linkedRecordType: "craft",
           linkedRecordId: saved.id,
@@ -217,11 +222,48 @@ function CraftsPageBody() {
         });
         setUploadProgress(null);
         // The uploaded files surface twice: as chips under this section and in the page-level tray.
-        addCompleted(MEDIA_SECTION, MEDIA_SECTION_LABEL, uploaded);
-        if (failed.length) {
+        addCompleted(
+          MEDIA_SECTION,
+          MEDIA_SECTION_LABEL,
+          outcomes.flatMap((outcome) => (outcome.media ? [outcome.media] : []))
+        );
+        const stranded = outcomes.filter((outcome) => outcome.failure !== null);
+        if (stranded.length) {
+          /*
+            KEEP THE BYTES THAT DID NOT LAND, AND ONLY THOSE. The early return already left the whole
+            batch sitting in the capture card, so nothing was ever destroyed here — but the card was
+            then describing files that ARE attached to the craft as though they still had to be sent,
+            and a second Save would have uploaded every one of them again. Narrowing it to the
+            stranded outcomes makes the card mean what it says.
+
+            `outcome.file` and not a lookup by name: two photographs off one handset are routinely
+            both IMG_0001.jpg, so the only safe identity is the object itself, which is why this
+            reads `outcomes` rather than pairing `failed` back against `mediaFiles`.
+
+            THE SENTENCE DOES NOT SAY "NOTHING HAS BEEN LOST", AND IT DID. That reading was true of
+            this instant and false of the next move it recommended: the row's Edit button and the
+            `?edit=` deep link's `onEdit` both go through `resetForm`, which begins `setMediaFiles([])`
+            — so "re-open the craft" is the one action that discards the bytes the sentence promised
+            were safe. The unsaved-changes dialog does interpose (nothing clears `dirty` before this
+            return), which made it a false reassurance rather than a silent deletion, but a designer
+            who reads a promise and then confirms a Discard has been misled by us.
+
+            THE TWO REMEDIES THAT WOULD MAKE IT SAFE ARE BOTH OUT OF THIS BRANCH'S REACH, so it
+            states the position instead of inventing one. "Press Save again" is wrong after a CREATE:
+            `editing` is still null on this return, so a second Save POSTs a SECOND craft. Pointing
+            `editing` at `saved` would fix that and break something quieter — the EXIF remark for the
+            WHOLE batch is already appended to the saved description, and the re-mounted form would
+            append the stranded files' remark to it a second time, into a column a ministry officer
+            reads. That is a rework of the remark, not a line here.
+          */
+          setMediaFiles(stranded.map((outcome) => outcome.file));
           setError(
-            `${failed.length} of ${mediaFiles.length} file(s) failed to upload: ${failed.map((item) => item.name).join(", ")}. ` +
-              "The craft was saved; re-open it to retry those files."
+            `${stranded.length} of ${mediaFiles.length} file(s) failed to upload: ${stranded
+              .map((outcome) => outcome.file.name)
+              .join(", ")}. ` +
+              "The craft was saved and the rest are attached. The files that did not go up are still in the capture " +
+              "card above, but only in this browser: leaving this form or opening another craft discards them. " +
+              "Re-open the craft to attach them again — anything captured here and saved nowhere else has to be taken again."
           );
           setSaving(false);
           return;

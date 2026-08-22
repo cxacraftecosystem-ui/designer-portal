@@ -18,7 +18,7 @@ spec:
     rollingUpdate:
       # ABSOLUTE 1, never a percentage. Surge is not a scheduling preference here — it is database
       # connections. Each extra pod opens up to DATABASE_CONNECTION_LIMIT client connections to the
-      # Supabase pooler *before* an old pod releases its own, so a percentage surge would make peak
+      # database *before* an old pod releases its own, so a percentage surge would make peak
       # connection use scale with replica count exactly when the cluster is busiest. One extra pod is
       # one predictable +N on the budget in docs/KUBERNETES.md.
       maxSurge: 1
@@ -83,7 +83,7 @@ spec:
           # ONE uvicorn worker per pod, deliberately, for two independent reasons.
           #
           # 1. Connections. Workers are processes and each one opens its own Prisma pool, so
-          #    --workers 2 would silently double this pod's share of the Supabase client-connection
+          #    --workers 2 would silently double this pod's share of the client-connection
           #    ceiling and make the budget in docs/KUBERNETES.md wrong by a factor of two. In
           #    Kubernetes, replicas are the unit of concurrency; workers are not.
           # 2. It is what fixed a production outage. With >1 worker uvicorn runs a supervisor that
@@ -157,7 +157,7 @@ spec:
           # All three probes hit /health, which deliberately never touches the database, and that is
           # the important decision here rather than an oversight. /health/ready exists and is the
           # right thing for alerting to watch, but it is the WRONG thing to gate traffic on in this
-          # topology: every replica talks to the same Supabase pooler, so a pooler blip fails
+          # topology: every replica talks to the same pooler, so a pooler blip fails
           # readiness on all of them at the same instant, the Service loses every endpoint, and the
           # ingress starts refusing requests the pods could still have served. The app is written to
           # survive exactly that window — it keeps serving while a background watchdog reconnects —

@@ -1007,12 +1007,23 @@ interface WorkshopRepositoryApi {
         @Query("limit") limit: Int? = null
     ): DwReferenceResponseDto
 
-    // Read the number off a photographed identity card.
+    // Read the number off a photographed identity card — THE SERVER HALF OF A LADDER WHOSE FIRST
+    // RUNG IS THIS PHONE.
     //
-    // ONLINE ONLY, and there is no offline substitute: the recognition runs server-side. The caller
-    // must therefore check connectivity BEFORE offering the control, because a request that hangs for
-    // a two-minute timeout in a village is indistinguishable, to the designer holding the phone, from
-    // an app that has crashed.
+    // THIS COMMENT USED TO SAY "ONLINE ONLY, and there is no offline substitute: the recognition runs
+    // server-side", AND THAT STOPPED BEING TRUE. `MlKitIdentityCardRecognizer` reads an Aadhaar
+    // number on the handset out of a bundled model, with no connection and no Play Services download,
+    // and `DwIdentityCardControl.send` asks it FIRST — this route is reached only when the phone found
+    // nothing AND there is a connection, because a large vision model still reads a creased or glared
+    // card that a bundled 10 MB one gives up on. What remains genuinely online-only is a PEHCHAN
+    // number, which has no checksum and therefore cannot be picked out of raw recognised text without
+    // guessing; `IdentityCardText`'s header has that argument in full.
+    //
+    // THE CONNECTIVITY CHECK IS STILL MANDATORY BEFORE THIS CALL, for the reason it always was: a
+    // request that hangs for a two-minute timeout in a village is indistinguishable, to the designer
+    // holding the phone, from an app that has crashed. What changed is what the check gates. It no
+    // longer decides whether the CONTROL is offered — gating that on signal was the state a designer
+    // in a courtyard is always in — only whether this request is worth making.
     //
     // `retention` DECLARES WHAT THE CALLER INTENDS TO DO WITH ITS OWN COPY. It is not an instruction:
     // this route has no storage path and its reply says `photograph.stored: false` regardless. It is

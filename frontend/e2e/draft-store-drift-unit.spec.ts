@@ -16,6 +16,7 @@ import {
   type DwDraft,
   type DwDraftStage
 } from "@/lib/designWorkshopStore";
+import { MediaBatchError } from "@/lib/media";
 import { APP_RUN_ID, blocksRetry } from "@/lib/offline";
 import type { DwStage, DwStageData } from "@/lib/designWorkshops";
 
@@ -314,6 +315,42 @@ test("a dialect mismatch clears itself on the next app run instead of blaming th
   // recover from a skew after the skew had gone: the designer would be told to correct a file that
   // was never wrong, for ever, with no button that would help.
   expect(blocksRetry({ ...refusal, skewRun: "a-previous-app-run" })).toBe(false);
+});
+
+test("a dialect mismatch met WHILE UPLOADING quotes the server's key, not the batch wrapper's advice", () => {
+  /*
+    THE SHAPE THIS ARM IS ACTUALLY HANDED, WHICH THE THREE TESTS ABOVE NEVER WERE. `runSync` uploads
+    ONE file per `uploadMediaBatch` call, so every failure it catches is a `MediaBatchError` and the
+    bare `ApiError`s above are a shape this function does not meet in production.
+
+    It matters because the classifier follows `cause` and the SENTENCE used not to. Reached that way,
+    the drift branch quoted the wrapper and told the designer three contradictory things at once:
+
+        "The repository could not read what this copy of the app sent for “loom.jpg”: All 1 media
+         file(s) failed to upload (merge: Extra inputs are not permitted). Check your internet
+         connection and try again — the record was saved, so re-open it and re-attach the media.
+         Nothing is wrong with the file and nothing has been thrown away…"
+
+    Check a connection that is fine, re-attach a file that is not going anywhere, and also do nothing.
+    The 422's own message names the KEY the two builds disagree about, which is the one fact worth
+    printing, and it is what `schemaRefusalError` hands back.
+  */
+  const answered = new ApiError(422, "merge: Extra inputs are not permitted", {
+    detail: [{ type: "extra_forbidden", loc: ["body", "merge"], msg: "Extra inputs are not permitted" }]
+  });
+  const wrapped = new MediaBatchError(
+    "All 1 media file(s) failed to upload (merge: Extra inputs are not permitted). Check your internet connection " +
+      "and try again — the record was saved, so re-open it and re-attach the media",
+    [{ name: "loom.jpg", error: "merge: Extra inputs are not permitted", cause: answered }]
+  );
+  const refusal = mediaRefusal("loom.jpg", wrapped, 1);
+
+  expect(refusal.skewRun, "the wrapper carries no opinion; the 422 inside it decides").toBe(APP_RUN_ID);
+  expect(refusal.message, "the server's own sentence, naming the key").toContain(
+    "merge: Extra inputs are not permitted"
+  );
+  expect(refusal.message, "and NOT the batch wrapper's connection advice").not.toContain("Check your internet");
+  expect(refusal.message).not.toContain("re-attach the media");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

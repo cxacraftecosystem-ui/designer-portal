@@ -48,6 +48,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { Check, ChevronDown, Loader2, Pencil, Plus, ScanLine, Search, X } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import {
   INLINE_MODEL_NOUN,
   InlineRecordDialog,
@@ -719,6 +720,38 @@ const SCANNER_OPENED = "dw-stage-scanner-opened";
  */
 type PickerNotice = { tone: "warn" | "done"; text: string };
 
+/**
+ * WHAT THE ROW SAYS WHEN THE UNSAVED-CHANGES GUARD TOOK THE PRESS INSTEAD OF THE ROW.
+ *
+ * Three controls on this picker can be refused — a pick from the list, a card read by the scanner
+ * and "Clear the link" — and all three used to leave nothing behind but a prompt raised somewhere
+ * else on the stage, so the designer answered it and had no idea their pick had been dropped.
+ *
+ * ── IT DOES NOT PROMISE THAT "DISCARD" FINISHES THE PICK, BECAUSE TODAY IT DOES NOT ─────────────
+ * The act is banked — `useLeaveInterceptor` hands it to the provider, which holds it against the
+ * form that blocked — but no form calls `completeLeave()` yet: the four record forms' "Discard" runs
+ * `resetDirty()` and then their host's `onDiscardAndLeave`, and `StageRecordEmbed`'s implementation
+ * of that clears the form and says the page did not move. A sentence here promising that the record
+ * is chosen "straight away" would therefore be a false claim sitting in the same panel as the
+ * embed's true one, in amber next to green. So the instruction is the one that actually works:
+ * answer the prompt, then press this again. WHEN `completeLeave()` LANDS IN THE FOUR FORMS THIS
+ * SENTENCE CHANGES WITH IT — the retry clause is the whole of what becomes wrong.
+ *
+ * ── AND IT DOES NOT SAY WHOSE PROMPT IT IS, BECAUSE THIS CONTROL CANNOT KNOW ─────────────────────
+ * `interceptLeave` answers a bare boolean, and `UnsavedChangesProvider` walks EVERY registered form
+ * innermost-first. On stage TRADITIONAL_PROCESS_BASELINE that is a `ProcessForm` singleton mounted
+ * from first paint plus a `ToolForm` for every open tool row, so the form that blocked can belong to
+ * a different row entirely; and on an unlinked `mountOnRequest` row there may be no form under this
+ * picker at all. "The form below this picker" would send the designer looking in the wrong place,
+ * which is the same qualification `StageRecordEmbed.handleDiscardAndLeave`'s notice argues for.
+ */
+export function refusedByUnsavedWork(retry: string): PickerNotice {
+  return {
+    tone: "warn",
+    text: `A form on this stage has unsaved work, so this row was left as it was. Answer the prompt on screen, then ${retry}.`
+  };
+}
+
 /** What a by-id lookup stashed for the commit, and the cascade value it was resolved under. */
 export type ScanHeld = { id: string; filter: string; option: DwReferenceOption };
 
@@ -1008,6 +1041,22 @@ export function StageReferenceSelect({
     const had = lastFilter.current;
     lastFilter.current = filterValue;
     if (!selectedId) return;
+    /*
+      NO GUARD HERE, AND FOR THE PRESSES IT IS NOT A GAP. This clear also re-keys the embedded record
+      form below. When the parent field moved because somebody PRESSED the picker above — `choose`, or
+      "Clear the link" — the asking has already happened, and it covered this field too: the guard's
+      walk asks EVERY registered form innermost-first, not only the one under the picker that was
+      pressed. Asking again here would be a second prompt for one act.
+
+      THE PARENT VALUE CAN ALSO MOVE WITHOUT A PRESS, and those cases are genuinely unasked. The
+      create continuation is the known one and is argued for where it happens — see `onCreated`
+      below, which re-points this very field on purpose and explains why a prompt there could only
+      end in an orphaned record. The others are not presses at all: a draft rehydrating from
+      IndexedDB, or a server reconcile landing a confirmed reference. Closing those means asking at
+      the control that STARTS them rather than here, where all that is left is a clear that has to
+      happen either way — leaving the id would attribute one artisan's product to another, which is
+      the trade the paragraph above settles.
+    */
     onChange(null);
     setNotice({
       tone: "warn",
@@ -1078,7 +1127,14 @@ export function StageReferenceSelect({
   // filter changes, and Enter would then commit a row that is not on screen.
   const safeHighlight = highlight >= 0 && highlight < options.length ? highlight : 0;
 
-  const choose = useCallback(
+  /**
+   * Point the row at this record — the write itself, with nothing asked first.
+   *
+   * NOTHING OUTSIDE {@link choose} MAY CALL THIS. It is split out only so the guarded wrapper has a
+   * body to bank; a second caller reaching past the wrapper is a second way to destroy a half-filled
+   * record form without asking, which is the defect the wrapper exists for.
+   */
+  const commitChoice = useCallback(
     (option: DwReferenceOption) => {
       // A pick supersedes a create still waiting to be described. Left armed, the answer landing a
       // moment later would fill this row in from the record made before the designer changed their
@@ -1094,6 +1150,60 @@ export function StageReferenceSelect({
       setNotice(null);
     },
     [entity, field, row, selectedId, onPatch, supersede]
+  );
+
+  /**
+   * ASK BEFORE RE-POINTING THE ROW, BECAUSE A RE-POINT DESTROYS THE FORM UNDERNEATH THIS PICKER.
+   *
+   * ── WHAT THIS CONTROL CAN THROW AWAY ────────────────────────────────────────────────────────────
+   * On a mirror-point entity `StageRecordEmbed` mounts the record's own page directly below this
+   * picker and keys it `${linkedId}:${formGeneration}` — deliberately, so a form can never be left
+   * standing over a record that has moved on. The other edge of that key is this control: choosing a
+   * different record, or scanning a card for one, changes `linkedId` and REMOUNTS the form. Its
+   * name, its identity digits, its uncontrolled DOM and its attached files live in React state and
+   * are read only at that form's own submit, so all of it goes, and for a file it is worse than
+   * silent — `useEagerStaging` releases its owner and the object already in storage is deleted about
+   * two seconds later.
+   *
+   * The back arrow, "previous stage" / "next stage" and a row's own collapse have all consulted the
+   * unsaved-changes guard for a while. This one never did, and it is the control most likely to be
+   * pressed by accident: it sits at the top of the panel, it is the first thing a designer touches on
+   * a row, and its whole purpose is to change the very id the form below is keyed on.
+   *
+   * ── WHY IT IS THE SHARED GUARD AND NOT A LOCAL CONFIRM ──────────────────────────────────────────
+   * The question is "is there unsaved work on this stage", and only the forms themselves can answer
+   * it. The guard asks in each form's own words, with its own Save / Discard / Keep editing, and it
+   * BANKS this pick against the answer that means "yes, throw it away" — though nothing calls
+   * `completeLeave()` yet, so today that answer clears the form and the pick has to be made again.
+   * That is what the refusal's own line says, rather than a promise the forms cannot keep yet: see
+   * {@link refusedByUnsavedWork}.
+   *
+   * ── WHAT IS NOT ASKED ───────────────────────────────────────────────────────────────────────────
+   * Re-picking the record ALREADY chosen: `linkedId` does not move, so nothing remounts and nothing
+   * is lost. And a picker on a row with no dirty form under it blocks nothing at all — the walk in
+   * `UnsavedChangesProvider` returns false when no registered form is dirty, so every ordinary REF
+   * field behaves exactly as it did.
+   *
+   * Returns whether the row was actually pointed, which {@link commitScan} needs: a card reader that
+   * announced "chosen for this row" over a deferred pick would be describing a write that has not
+   * happened and may never.
+   */
+  const interceptLeave = useLeaveInterceptor();
+  const choose = useCallback(
+    (option: DwReferenceOption) => {
+      if (option.id !== selectedId && interceptLeave(() => commitChoice(option))) {
+        // AND THE ROW SAYS SO. The prompt that was raised belongs to a form, names a form and says
+        // nothing about this picker, so without this line the pick is dropped in silence: the
+        // designer answers "Discard", watches the form empty, and has no reason to think the record
+        // they chose is not the one this row now names. See {@link refusedByUnsavedWork} for why the
+        // sentence neither promises the pick will land by itself nor says whose prompt it is.
+        setNotice(refusedByUnsavedWork("choose the record again"));
+        return false;
+      }
+      commitChoice(option);
+      return true;
+    },
+    [commitChoice, interceptLeave, selectedId]
   );
 
   /**
@@ -1307,6 +1417,20 @@ export function StageReferenceSelect({
        * The id is rewritten alongside the patch for the same reason `choose` writes them together,
        * and it is safe to rewrite because a designer who unlinked or re-picked during the round
        * trip has already superseded this continuation above.
+       *
+       * AND IT IS THE ONE RE-POINT BY THIS COMPONENT THAT DOES *NOT* CONSULT THE UNSAVED-CHANGES
+       * GUARD, deliberately. `choose` and "Clear the link" do, because a press that re-keys the
+       * embedded record form below can be refused and banked, and pressing again is a thing a
+       * designer can do. This is not a press: it is the tail of a create the designer started from
+       * this very picker, the record already exists in the repository, and there is nothing to press
+       * again. A prompt here could only end in "Keep editing", which would leave a record made FOR
+       * this row not linked to it — a worse outcome than the one it would be preventing. The cascade
+       * auto-clear names this paragraph as its own exception, and for the same reason.
+       *
+       * WHAT REMAINS TRUE is that this path still remounts the embed below and takes any typing in it
+       * with it; closing that means asking at the press that OPENS the create dialog, which is a
+       * decision about a control that destroys nothing at the moment it is pressed and is not made
+       * here.
        */
       const option: DwReferenceOption = described ?? { id: record.id, label, sublabel: "", data: {} };
       onPatch({
@@ -1411,7 +1535,26 @@ export function StageReferenceSelect({
     scanHit.current = null;
     const { choose: chooseNow, field: fieldNow, filterValue: filterNow } = liveScan.current;
     const decision = scanCommitDecision({ held, ref, resolution, filterValue: filterNow, field: fieldNow });
-    if (decision.commit) chooseNow(decision.commit);
+    /*
+      A SCAN IS A RE-POINT AND IS ASKED ABOUT LIKE ANY OTHER — see {@link StageReferenceSelect}'s
+      `choose`. It goes through the same guarded call precisely so a card cannot do what a click is
+      not allowed to do, which is the rule this whole callback was written to keep.
+
+      AND THE LINE UNDERNEATH MUST NOT CLAIM THE WRITE HAPPENED. `decision.notice` on a commit reads
+      as "chosen for this row"; while the prompt is on screen nothing has been chosen, and if the
+      designer answers "Keep editing" nothing ever will be. The lookup's own `role="status"` block has
+      already said what the code NAMES, so what is owed here is what the row DID.
+    */
+    if (decision.commit && !chooseNow(decision.commit)) {
+      // RE-WORDED OVER THE LINE `choose` HAS JUST SET, deliberately: both run in this one handler so
+      // the last write is what the designer reads, and the retry differs. A designer who came in
+      // through the camera has to scan the card again, not find the record in a list they never
+      // opened. Everything else about the sentence — no promise that "Discard" lands the pick, no
+      // claim about which form is holding them — is {@link refusedByUnsavedWork}'s, for the reasons
+      // written there.
+      setNotice(refusedByUnsavedWork("scan the card again"));
+      return;
+    }
     if (decision.notice) setNotice({ tone: decision.commit ? "done" : "warn", text: decision.notice });
   }, []);
 
@@ -1696,9 +1839,22 @@ export function StageReferenceSelect({
               // answer landing a second later would re-link the record the designer has just
               // deliberately unlinked and fill the row in from it. The handset drops its
               // `pendingHydration` on the same gesture and says the same thing.
-              supersede();
-              onChange(null);
-              setNotice(null);
+              const unlink = () => {
+                supersede();
+                onChange(null);
+                setNotice(null);
+              };
+              // AND IT IS ASKED ABOUT FOR THE SAME REASON A RE-POINT IS — see `choose`. Clearing the
+              // link moves `linkedId` from a record to nothing, which remounts the embedded record
+              // page below in CREATE mode and takes everything typed into it with the old mount.
+              // Banked as well as refused, so that the answer meaning "leave" can perform the unlink
+              // once the forms give that answer; until they do, the line below is what the designer
+              // needs — the link is still there and the control has to be pressed again.
+              if (interceptLeave(unlink)) {
+                setNotice(refusedByUnsavedWork("press “Clear the link” again"));
+                return;
+              }
+              unlink();
             }}
           >
             <X className="h-3 w-3" aria-hidden />

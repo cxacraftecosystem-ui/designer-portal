@@ -46,7 +46,7 @@ flowchart LR
   android[Android app<br/>Kotlin + Compose]
   cf{{CloudFront<br/>dual-stack TLS}}
   api[FastAPI on EC2<br/>behind nginx]
-  db[(PostgreSQL<br/>Supabase, other region)]
+  db[(PostgreSQL<br/>managed, another region)]
   s3[(S3 · ap-south-1<br/>dual-stack endpoint)]
   worker[fieldrepo-queue<br/>separate systemd unit]
   stt{{ElevenLabs → Deepgram → Whisper}}
@@ -95,7 +95,7 @@ flowchart TB
     PE[Prisma query engine]
   end
   subgraph remote["Elsewhere"]
-    PG[("Supabase PostgreSQL<br/>transaction pooler :6543<br/><b>different region</b>")]
+    PG[("PostgreSQL<br/>managed, pooled<br/><b>different region</b>")]
     S3[(S3 bucket)]
   end
 
@@ -178,8 +178,10 @@ The full analysis, the ranked inventory and the reproduction commands are in
 
 `--workers 1`, and it is not a default nobody changed. With more than one worker uvicorn runs a
 supervisor that will `SIGKILL` a busy child; the child's Prisma query engine survives as an orphan
-holding pooler connections, and enough orphans exhaust Supabase's client limit and turn every request
-into a 500. The queue therefore runs as a **separate systemd unit** (`fieldrepo-queue`,
+holding pooler connections, and enough orphans exhaust the server's client-connection limit and turn
+every request into a 500. (Measured on the Supabase deployment this ran on until 2026-08-22; the
+mechanism is leaked connections, not that provider, so it applies to any PostgreSQL with a finite
+client limit.) The queue therefore runs as a **separate systemd unit** (`fieldrepo-queue`,
 `python -m app.worker`) rather than as a second web worker, so ffmpeg and transcription never block
 HTTP and never share the supervisor.
 
@@ -193,7 +195,7 @@ HTTP and never share the supervisor.
 ```mermaid
 flowchart TD
   routes["backend/app/api/routes/*.py<br/>one module per resource"]
-  deps["core/deps.py<br/>auth + the six-tier ladder<br/>+ the identity cache"]
+  deps["core/deps.py<br/>auth + the seven-tier ladder<br/>+ the identity cache"]
   schemas["schemas/*.py<br/>Pydantic, extra=forbid"]
   svc["services/*.py"]
   prisma[Prisma Python client]
@@ -589,8 +591,8 @@ flowchart TB
     E["EC2 t3.micro<br/>nginx + uvicorn(1) + fieldrepo-queue"]
     S3B[(S3 media bucket)]
   end
-  subgraph sb["Supabase — different region"]
-    PG2[(PostgreSQL<br/>session pooler :5432 for migrations<br/>transaction pooler :6543 at runtime)]
+  subgraph sb["Managed PostgreSQL — different region"]
+    PG2[(PostgreSQL<br/>session mode for migrations<br/>pooled/transaction mode at runtime)]
   end
   GH["GitHub Actions<br/>backend → frontend → Android"]
 

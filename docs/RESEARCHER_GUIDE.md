@@ -78,20 +78,28 @@ The web app needs nothing installed. Open the URL, sign in.
 
 ---
 
-## 4. What the six roles actually mean
+## 4. What the seven roles actually mean
 
-Roles are a ladder. Each rung includes everything below it.
+Roles are a ladder. Each rung includes everything below it — with exactly one exception, named
+under the table, and it is the one that concerns designers.
 
 | Role | In practice |
 |---|---|
 | **Crowdsource Volunteer** | The default for a new Google sign-in. You can **add to** the archive — upload media, answer questions in an interview somebody else opened, comment on records — but you cannot **start** a new artisan, product, tool or process. |
 | **Field Contributor** | The same, plus you can review a volunteer's submissions. **Still cannot create records** — this surprises people, and it is deliberate. |
 | **Researcher** | The working tier. Create artisans, products, tools, processes and interviews; edit your own; fill in gaps on other people's. This is the tier most field staff should hold. |
+| **Designer** | Everything a researcher does, plus the one thing this portal exists for: running a design & prototype workshop end to end — its stages, its custom sections, its AI layers — and signing the report that goes out under your name. A designer account can only sign in while the designer roster still lists it. |
 | **Professor** | Everything a researcher does, plus: manage the craft and workshop vocabularies, edit the questionnaire itself, download the full dataset, review anyone below you, and edit records created by anyone below you. |
 | **Admin** | Plus: create and delete user accounts, **delete records**, grant workshop access, assign tasks, and approve late submissions. |
 | **Master Admin** | Plus: provider API keys, repository settings, publishing app updates. One account. |
 
-Two rules that catch people out:
+Three rules that catch people out:
+
+- **Being senior to a designer does not make you one.** Running a design & prototype workshop is
+  the only power on this list that is not inherited upwards: it belongs to designers, admins and
+  the master admin specifically. A professor outranks a designer and is still refused, on purpose
+  — a workshop is a fortnight of a named person's work ending in a report submitted under their
+  name, and that is a job somebody was empanelled for rather than a privilege seniority earns.
 
 - **You can only review work by someone ranked strictly below you.** Two professors cannot approve
   each other; only the master admin reviews everyone. If a record you expected to see is not in your

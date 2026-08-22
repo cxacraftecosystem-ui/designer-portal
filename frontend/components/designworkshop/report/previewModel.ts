@@ -307,7 +307,7 @@ export const PX_PER_MM = 96 / 25.4;
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export type ReportSheetContent = {
-  /** 1-based, matching the "Page N" the .pdf writer draws in its own foot. */
+  /** 1-based: the N in the "Page N of M" every renderer draws in its own foot. */
   pageNumber: number;
   /** The cover is drawn as EXACTLY one page by both writers, and carries no running furniture. */
   isCover: boolean;
@@ -323,9 +323,23 @@ export type ReportSheetContent = {
  * in a browser can know is where the OTHER breaks fall: those are decided by measuring wrapped
  * text against the remaining height on the page, which Word does on open and ReportLab does by
  * laying the body out twice. A sheet below can therefore be a page and a half of the real
- * document, and the preview says so in as many words rather than printing a page count it made
- * up. An invented "Page 7 of 26" that the file disagrees with is worse than no number at all,
- * because it will be quoted in a covering email.
+ * document.
+ *
+ * SO THE COUNT THIS RETURNS IS A FLOOR, AND THE SCREEN HAS TO SAY SO. The running foot prints
+ * "Page N of M" because all four FILE renderers print exactly that and a designer proofing here
+ * must not read a differently-shaped label from the one in the document they hand over — but the
+ * M is THIS count, the pages the template declares, not the file's own total. A total quoted out
+ * of a preview and into a covering email is the failure this paragraph exists to prevent, and
+ * once a number is on the page the only defence left is stating what it is: `ReportSheets` prints
+ * the floor in as many words in the strip above the sheets, and that sentence is load-bearing.
+ *
+ * WHICH IS WHY THE M DOES NOT PRINT. The strip is chrome and `Ctrl+P` drops all of it, so a
+ * printed sheet would carry the total with nothing left to qualify it — and print is where the
+ * covering email actually comes from. The browser also re-paginates when it prints (a sheet loses
+ * its fixed height and only asks for a break after itself), so an overflowing sheet becomes two
+ * printed pages and the total stops being even a floor. `ReportSheets` therefore wraps the "of M"
+ * in its own element and hides it under `@media print`: the screen gets the label the four file
+ * renderers print, and the file a designer hands over gets the ordinal alone.
  *
  * The cover is split off on its own because both writers give it exactly one page and neither
  * draws a running head or foot on it.

@@ -402,6 +402,13 @@ async def list_revisions(
 ) -> list[dict[str, Any]]:
     """The edit history of a record (original values are reconstructable from the first edit's `old`).
     Visible to admins and the record's owner so the original and every subsequent edit can be reviewed.
+
+    ONE EXCEPTION, and it is on the columns a reader is most likely to come here for: for the
+    identity and contact columns in `access.REVISION_REDACTED_FIELDS` the blob holds only the
+    DIRECTION of the change ("(value recorded)" -> "(cleared)" and friends, flagged `redacted`), not
+    the value, so those originals are NOT reconstructable from here. The argument for that is written
+    above the set; the short version is that a retraction which copies the retracted value into an
+    append-only table is not a retraction.
     """
     owner_id = await _resolve_record_owner(recordType, recordId)
     if not is_admin(current_user) and owner_id != get_value(current_user, "id"):

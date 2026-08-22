@@ -2,8 +2,8 @@
 # THE AUTOSCALER IS A DATABASE-CONNECTION ALLOCATOR THAT HAPPENS TO WATCH CPU.
 #
 # maxReplicas is not a capacity decision here. It is the last thing standing between load and a
-# repeat of the outage this project has already had twice: the Supabase pooler enforces a ceiling of
-# 200 CLIENT connections, shared by every process that talks to it, and when that ceiling was hit the
+# repeat of the outage this project has already had twice: the pooler enforces a ceiling on CLIENT
+# connections, shared by every process that talks to it, and when that ceiling was hit the
 # result was not slow requests — it was `FATAL: (EMAXCONN) max client connections reached`, Prisma
 # failing to connect, and the API crash-looping while every login returned 500.
 #
@@ -14,7 +14,15 @@
 #
 # The budget, in full:
 #
-#   ceiling                     200   client connections (Supabase transaction pooler, :6543)
+#   ceiling                     200   client connections. THIS NUMBER IS SUPABASE'S, and production
+#                                       left that provider on 2026-08-22. The current provider's
+#                                       client ceiling has NOT been established from this repository,
+#                                       and none of these numbers has been re-derived against it.
+#                                       Deliberately left as-is rather than guessed: this is known
+#                                       survivable on the old ceiling and conservative against a
+#                                       larger one, nothing here is deployed, and the failure mode of
+#                                       guessing high is the outage above. docs/KUBERNETES.md carries
+#                                       the open question and the console step that answers it.
 #   planning limit              100   deliberately half the ceiling — see below for what eats the rest
 #
 #   per pod                      10   DATABASE_CONNECTION_LIMIT (configmap.yaml)
@@ -27,7 +35,7 @@
 #
 # 85 of a planning limit of 100, and 42% of the hard ceiling. The half that is left over is not
 # slack, it is the things that are not in this file: the EC2 box still serving production during any
-# cutover (~20), a psql session or a Supabase Studio tab, the keepalive script, and the several
+# cutover (~20), a psql session or a provider dashboard tab, the keepalive script, and the several
 # minutes a failed rollout can spend with surge pods that never became ready.
 #
 # TO CHANGE maxReplicas, CHANGE THE PRODUCT, NOT THE NUMBER:
@@ -37,8 +45,8 @@
 # per-pod pool costs far less than the arithmetic suggests — this is a cheap trade, and it is the
 # same one that resolved the incident (40 -> 10).
 #
-# One more consumer, easy to miss: dev and staging pointed at the same Supabase project spend from
-# the SAME 200. Rather than assume they will not, the overlays are sized so that it is survivable if
+# One more consumer, easy to miss: dev and staging pointed at the same database spend from
+# the SAME ceiling. Rather than assume they will not, the overlays are sized so that it is survivable if
 # they do — both halve DATABASE_CONNECTION_LIMIT to 5, which puts all three environments plus a
 # still-running EC2 box at 140 of 200. docs/KUBERNETES.md shows that sum line by line; it is the
 # arithmetic to redo before adding a fourth environment, not after.

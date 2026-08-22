@@ -17,6 +17,12 @@ import { expect, test } from "@playwright/test";
  * recording had ever existed. It needed only a mixed result, which is the ordinary shape of a
  * multi-take batch on a field connection.
  *
+ * WHAT THE HANDLER READS NOW IS `BatchResult.outcomes`: the same guard with the second array taken
+ * out of it. One entry per file we handed over, at its position, carrying the `File` itself — so the
+ * `uploadedByIndex`-against-`files` zip these assertions used to pin is gone, and with it the class
+ * of arithmetic that misfiled identity photographs twice elsewhere in this repository. The
+ * assertions below moved onto the new spelling; the property they pin is the one it always was.
+ *
  * Every sibling surface already guards this — `app/(protected)/crafts/page.tsx`,
  * `app/(protected)/workshops/page.tsx`, `components/forms/ArtisanForm.tsx`, `ProductForm`,
  * `ToolForm` — each by reading the failures, setting an error and returning BEFORE its reset. The
@@ -82,12 +88,24 @@ function afterSave(): string {
 test("a clip that did not upload is kept, and the ones that did are pruned out of the form", () => {
   const submit = afterSave();
 
-  // Both batches — the whole-interview audio and each question's clips — must report what failed.
-  const perFile = submit.split("uploadedByIndex").length - 1;
+  /*
+    Both batches — the whole-interview audio and each question's clips — must read the PER-FILE
+    result rather than only `uploaded`.
+
+    THE SHAPE THIS PINS CHANGED, AND THE PROPERTY DID NOT. It used to be `uploadedByIndex[index]`
+    zipped against the page's own `mediaFiles`/`files` array: correct, but two arrays kept the same
+    length by agreement, which is exactly the arithmetic that misfiled identity photographs twice in
+    `lib/media.ts`'s own history. `BatchResult.outcomes` carries the `File` INSIDE the entry, so the
+    handler now walks one array and there is nothing left to line up. Asserted on `result.outcomes`
+    for the same reason the old assertion named `uploadedByIndex`: reading only `uploaded` is the
+    defect this whole file exists for, and it must stay visible in the source.
+  */
+  const perFile = submit.split("result.outcomes").length - 1;
   expect(perFile, "both uploadMediaBatch calls must read the per-file result, not just `uploaded`").toBeGreaterThanOrEqual(4);
-  // Position, never name: two takes of one question carry the same generated file name, so a name
-  // match would put back the wrong take. See BatchResult in lib/media.ts.
-  expect(submit).toContain("uploadedByIndex[index] !== null");
+  // The FILE, never the name: two takes of one question carry the same generated file name, so a
+  // name match would put back the wrong take. See BatchResult in lib/media.ts.
+  expect(submit).toContain("if (outcome.media) landedInterviewAudio.add(outcome.file);");
+  expect(submit).toContain("failedNames.push(outcome.file.name);");
   expect(submit, "the failures must not be matched by file name").not.toContain("failed.map");
 
   // What landed is what leaves the form; nothing else is touched. A whole-list write-back would
@@ -158,9 +176,20 @@ test("the warning names the cause and the retry that actually exists", () => {
   // MediaBatchError's message carries that sentence and `failed[].error` carries it per file.
   expect(submit, "the reason a batch was refused must not be swallowed by a bare catch").not.toContain("} catch {");
   expect(submit).toContain("firstCause ??= batchCause(err);");
-  expect(submit).toContain("firstCause ??= failed[0].error;");
-  // `batchCause` takes the underlying reason, NOT MediaBatchError's own message: that message ends
-  // "re-open it and re-attach the media", advice no interview row offers.
+  // Read off the OUTCOME that failed, not off `failed[0]` — same first reason in the caller's own
+  // order, taken from the entry that already carries the file it belongs to.
+  expect(submit).toContain("firstCause ??= outcome.failure?.error ?? null;");
+  /*
+    `batchCause` takes the underlying reason, NOT MediaBatchError's own message: that message's
+    second clause is advice for a record with an edit screen ("re-open it and re-attach the media"),
+    which no interview row offers.
+
+    THAT CLAUSE IS NO LONGER ONE SENTENCE. It used to be the constant "Check your internet connection
+    and try again — …" whatever had happened, so a 413 or a 415 sent a researcher out to look for
+    signal they already had; `adviceForALostBatch` in `lib/media.ts` now picks it from the triage
+    verdict. This helper is unaffected either way, which is the point of asserting the reason it
+    reads rather than the words it avoids.
+  */
   const helper = between(read(...PAGE), "function batchCause(err: unknown): string {", "export default function QuestionnairePage()");
   expect(helper).toContain("err instanceof MediaBatchError");
   expect(helper).toContain("err.failures[0]?.error");

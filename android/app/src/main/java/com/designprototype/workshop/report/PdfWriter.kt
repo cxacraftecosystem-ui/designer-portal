@@ -9,6 +9,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.text.TextPaint
+import android.util.Log
 import java.io.OutputStream
 import kotlin.math.max
 import kotlin.math.min
@@ -128,6 +129,36 @@ class PdfWriter(
         private set
 
     /**
+     * `drawn to measured`, set only when the two passes disagreed about how long the report is.
+     *
+     * THE SERVER'S TWIN IS THE `logger.error` AT THE END OF `report_pdf.build`, and it existed here
+     * as nothing at all: the handset ran the drawing pass and wrote the file, so the failure this
+     * diagnostic is for stayed exactly as silent on a phone as it was on the server before the log
+     * was added. That is the class this whole pair of files keeps paying for — a fix lands on one
+     * surface and never reaches the other — so the check is mirrored rather than left to the next
+     * person who reads both loops side by side.
+     *
+     * WHAT IT MEANS WHEN IT IS NOT NULL: something in the layout is applied on one pass and not the
+     * other. This pair of renderers has shipped that three times — a running-head clearance, a
+     * heading rule and a keep-with-next reservation — and every symptom is silent: contents numbers
+     * one or two pages low, and a running foot that counts past its own total. There is nothing to
+     * repair at render time, because the drawn document IS the document, so it is REPORTED, not
+     * fixed.
+     *
+     * Logged as well as recorded, because a field export has no other channel: `Log.e` is what an
+     * `adb logcat` from a designer's handset can be asked for, which is the handset's equivalent of
+     * reading the server log. SURFACING it in the UI is deliberately not done here, for the same
+     * reason as [clippedFurnitureLines]: it would mean a warning list beside
+     * `ReportExport.Result.droppedImages` and the banner in `ReportScreen` that reads it, and both
+     * of those belong to whoever owns those files. [renderPdf] therefore still returns only the
+     * dropped images; this is exposed as a property so that owner has something to read when they
+     * do add it, and so a caller that builds a [PdfWriter] itself — which is what a test does — can
+     * assert on it without parsing a log.
+     */
+    var pageCountDisagreement: Pair<Int, Int>? = null
+        private set
+
+    /**
      * Rasterised map and chart bytes, so the picture path can load them like any other image, and the
      * [ImageRef] each figure block resolved to.
      *
@@ -172,6 +203,18 @@ class PdfWriter(
     private var pageNo = 0
     private var pageStarted = false
     private var y = 0f
+
+    /**
+     * How many pages the LAST MEASURING PASS produced, which is what the running foot prints after
+     * "of". The .docx twin has said "Page N of M" since it was written — Word resolves NUMPAGES
+     * itself — and both PDF renderers said "Page N", so the two files of one export numbered their
+     * pages differently and a reader holding both had no way to tell which was the whole document.
+     * Nothing here can ask a PDF how long it is; the measuring pass is the only thing that knows,
+     * and it knows before a single page is drawn.
+     *
+     * Zero until [writeTo] has measured, which is the only path that reaches [drawFurniture].
+     */
+    private var totalPages = 0
 
     private var pdf: PdfDocument? = null
     private var page: PdfDocument.Page? = null
@@ -557,7 +600,15 @@ class PdfWriter(
         strokePaint.color = argb(t.rule)
         strokePaint.strokeWidth = 0.5f
         canvas.drawLine(margin, cy(footY + 4 * MM), pageW - margin, cy(footY + 4 * MM), strokePaint)
-        val pageLabel = if (meta.showPageNumbers) "Page $pageNo" else ""
+        // "Page N of M", the same label the .docx builds from its PAGE and NUMPAGES fields and the
+        // server PDF builds from its own measured total — see [totalPages] for why all three had to
+        // be made to agree. M can only be wrong if the drawing pass paginated differently from the
+        // pass that measured it, which is the defect this renderer exists to make impossible.
+        val pageLabel = when {
+            !meta.showPageNumbers -> ""
+            totalPages > 0 -> "Page $pageNo of $totalPages"
+            else -> "Page $pageNo"
+        }
         val pageLabelW =
             if (pageLabel.isNotEmpty()) stringWidth(pageLabel, regularFace, 7.8f) else 0f
         // The foot shares its first line with the page number, so it gets the column MINUS that.
@@ -974,11 +1025,11 @@ class PdfWriter(
             // ── THE GUTTER IS RESERVED IN BOTH PASSES, NUMBER OR NO NUMBER ──────────────────────
             //
             // Sizing the wrap column from `pageLabel` makes the measuring pass and the drawing pass
-            // see DIFFERENT geometry, which is the one thing neither renderer may do. Here the first
-            // measuring pass has an empty [headingPages] and every later one does not; on the
-            // `iterations >= 3` exit the map handed to the drawing pass is not the one the last
-            // measuring pass wrapped against either. The server has the same shape and it was
-            // measured there: entries wrapped into 453.5 pt while measuring and 431.4 pt while
+            // see DIFFERENT geometry, which is the one thing neither renderer may do. [writeTo]
+            // clears [headingPages] before the reconciling pass and never fills it during the loop,
+            // and this block is laid out before the first heading refills it — so exactly as on the
+            // server, the label is ALWAYS empty while measuring and ALWAYS present while drawing.
+            // Measured there: entries wrapped into 453.5 pt while measuring and 431.4 pt while
             // drawing, which for a 60-section report put the contents on 5 pages when measured and 6
             // when drawn — all 60 printed numbers one page short, in a file whose bookmark outline is
             // perfectly correct.
@@ -1800,7 +1851,7 @@ class PdfWriter(
     }
 
     /**
-     * Lay the document out twice and write the PDF into [out].
+     * Settle the layout by measuring, then draw it once and write the PDF into [out].
      *
      * The stream is written but NOT closed — [PdfDocument.writeTo] does not close it either, and the
      * caller needs it open to `fd.sync()` before publishing the file. `close()` on the PdfDocument is
@@ -1821,27 +1872,80 @@ class PdfWriter(
             // index and measures it as one title line. If the report then turns out to have forty
             // headings, the real TOC is two pages, every heading after it is one page later than the
             // pass recorded, and the drawing pass prints a contents list in which every single number
-            // is wrong by one. The server has exactly this hole and it is invisible until a report
-            // gets long enough — which is precisely the report nobody proof-reads.
+            // is wrong by one. It is invisible until a report gets long enough — which is precisely
+            // the report nobody proof-reads.
             //
-            // So the measuring pass repeats until the heading -> page map stops changing, capped at
-            // three iterations. Two is the normal answer (empty index, then real index, then equal);
-            // the cap exists because a report balanced exactly on a page boundary can oscillate
-            // between two answers forever, and a slightly wrong contents page is a far better outcome
-            // than an export that never finishes on a phone in a field.
-            var iterations = 0
-            while (true) {
+            // The server settles the same fixed point the same way, and everything below this line
+            // is here because IT LEARNED SOMETHING THIS FILE DID NOT. `report_pdf.build` raised its
+            // cap, made termination explicit, added a reconciling pass, and — at the very end of
+            // the method — a check that the drawing pass produced as many pages as the measuring
+            // pass measured. None of that reached the handset, so the two renderers settled
+            // different layouts for the same long report, printed different contents pages from it,
+            // and said nothing about either. `test_report_parity.py` now pins the shape of both
+            // loops against each other, the closing page-count check included, so the next
+            // server-only fix fails a test here.
+            //
+            // So the measuring pass repeats until the heading -> page map stops changing.
+            //
+            // ── THE CAP WAS THREE, AND "TWO IS THE NORMAL ANSWER" WAS ONLY TRUE OF A SHORT ONE ──
+            //
+            // Each iteration moves the body by however many pages the contents grew by, and a
+            // contents that grows by a page can push a heading onto a new page, which adds a row,
+            // which can grow the contents again. A long report walks toward its fixed point a page
+            // or two at a time and needs as many iterations as it has of that walk left. Measured on
+            // the server against a 150-section document, three iterations sent a reader to page 36
+            // for a section on page 38.
+            //
+            // So the cap is eight, and TERMINATION IS EXPLICIT rather than accidental: every layout
+            // already measured is remembered, and a repeat means the document has returned to a page
+            // assignment it held before — an oscillation, with nothing further to learn from
+            // continuing. A cap is a bound on time; it was doing duty as a convergence argument, and
+            // those are different things. A report balanced exactly on a page boundary still cannot
+            // converge — nothing can change that — but it now stops because it was RECOGNISED.
+            var previous: Map<String, Int> = emptyMap()
+            val seen = HashSet<Map<String, Int>>()
+            for (iteration in 0 until 8) {
                 pendingPages.clear()
                 pendingEntries.clear()
                 runPass(drawing = false)
-                iterations++
-                val stable = pendingPages == headingPages
-                headingPages.clear()
-                headingPages.putAll(pendingPages)
+                // The contents the NEXT pass lays out. Adopted after the pass, never during it: a
+                // pass must measure one stable contents block from start to finish, or the headings
+                // before and after it would be measured against different heights.
                 tocEntries.clear()
                 tocEntries.addAll(pendingEntries)
-                if (stable || iterations >= 3) break
+                if (pendingPages == previous) break
+                if (!seen.add(HashMap(pendingPages))) break
+                previous = HashMap(pendingPages)
             }
+
+            // ── RECONCILE, SO THE NUMBERS BELONG TO THE CONTENTS THAT IS ACTUALLY DRAWN ─────────
+            //
+            // THIS IS NOT THE CAP, AND RAISING THE CAP DID NOT CLOSE IT. Each iteration measures a
+            // layout using the PREVIOUS iteration's contents and then adopts its own for the next
+            // one, so on any exit that is not a clean convergence the page map was measured against
+            // the predecessor of the contents block about to be drawn. The numbers and the
+            // pagination then come from two different layouts. It stays hidden because it only shows
+            // when the loop fails to converge, and whether a given document converges depends on the
+            // FONT — which is why it survived on the server until a CI runner with a different face
+            // failed the identical commit that passed on a developer's box.
+            //
+            // One more measuring pass, with [tocEntries] LEFT EXACTLY AS THE LOOP LEFT IT, makes the
+            // two agree by construction: the page map now describes the layout that this contents
+            // block produces, which is the layout about to be drawn. [tocEntries] is deliberately
+            // NOT re-adopted afterwards — that would put the contents one step ahead of the map
+            // again, which is the shape of the original defect.
+            // [headingPages] is cleared FIRST as well, because [blockToc] runs before any heading in
+            // every measuring pass including this one and must see the same empty index it saw in
+            // all the others. That is why the room for a contents page number comes from a constant
+            // rather than from the number itself — see the note in [blockToc].
+            pendingPages.clear()
+            pendingEntries.clear()
+            headingPages.clear()
+            runPass(drawing = false)
+            headingPages.putAll(pendingPages)
+            // The length of the document, learned here and printed by every running foot. This is
+            // the layout the drawing pass is about to reproduce, so it is the one the reader holds.
+            totalPages = pageNo
 
             // droppedImages would otherwise report every missing photo once per measuring
             // iteration, so it is rebuilt wholesale by the drawing pass.
@@ -1855,10 +1959,24 @@ class PdfWriter(
             // three whole-file reads per printed photo where two will do.
             sizeCache.entries.removeAll { it.value == null }
 
+            pageCountDisagreement = null
             runPass(drawing = true)
             if (pageStarted) {
                 drawFurniture()
                 finishPage()
+            }
+            if (pageNo != totalPages) {
+                // THE TWO PASSES DISAGREED ABOUT HOW LONG THE DOCUMENT IS — the server says the
+                // same thing in the same place, and see [pageCountDisagreement] for why it is
+                // reported rather than repaired and why it is not on screen.
+                pageCountDisagreement = pageNo to totalPages
+                Log.e(
+                    "PdfWriter",
+                    "the drawing pass produced $pageNo pages and the measuring pass measured " +
+                        "$totalPages. The contents page numbers and the 'of $totalPages' in the " +
+                        "running foot describe a layout that was not drawn; something in the " +
+                        "layout is applied on one pass and not the other.",
+                )
             }
             document.writeTo(out)
         } finally {

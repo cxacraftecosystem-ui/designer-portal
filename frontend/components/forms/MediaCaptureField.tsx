@@ -24,10 +24,102 @@ import {
 import { useEagerStaging } from "@/lib/uploads";
 import type { MediaType } from "@/lib/types";
 
-const imageAccept = "image/*,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.tif,.tiff,.bmp,.avif";
+/**
+ * WHAT EACH CHOOSER OFFERS, AND THE RULE THAT KEEPS THE FOUR LISTS HONEST.
+ *
+ * THE FOUR LISTS ARE THE CHOOSER'S BUCKETS, NOT A CLASSIFICATION OF FILE FORMATS, and the rule is
+ * about the first thing rather than the second: a token must sit in a bucket whose `allowedTypes`
+ * will ADMIT the file it matches. `addFiles` puts every incoming file through {@link inferMediaType}
+ * against the caller's `allowedTypes`, so an extension advertised to a NARROWED field that will then
+ * reject it is offered by the operating system's chooser and dropped on the floor with nothing said
+ * — which reads to a designer as the app losing their file rather than refusing it.
+ *
+ * WHICH BUCKETS ARE ACTUALLY NARROWED IS THE PART THAT MAKES THE RULE USABLE. `pickAccept` narrows
+ * only when a caller passes `allowedTypes`, and today three callers do: `["IMAGE"]`, `["AUDIO"]`,
+ * `["VIDEO"]` (see `ALLOWED_TYPES` in `components/designworkshop/FieldInput.tsx`, the questionnaire's
+ * audio field, and `DesignerProfileForm`). So the three wildcard-led lists are the ones the rule
+ * bites on, and there `inferMediaType` and the bucket must agree exactly.
+ *
+ * `documentAccept` IS THE `FILE` FIELD'S ATTACHMENT LIST AND NOT A `DOCUMENT` CLASSIFIER. A FILE
+ * field passes no `allowedTypes` at all, so its chooser is these four joined AND `addFiles` filters
+ * nothing — every token in this list is admitted whatever `inferMediaType` says about it. That is
+ * why `.pdf` belongs here even though `inferMediaType` answers `"PDF"` for `application/pdf`: this
+ * is the list a FILE field reaches, `ACCEPT_BY_TYPE.PDF` is a separate narrow slot with no caller,
+ * and deleting `.pdf` from here in the name of the rule would silently stop every FILE field
+ * offering the scanned consent form `ALLOWED_TYPES`' own comment says must stay pickable.
+ *
+ * `.webm` IS GENUINELY AMBIGUOUS BY EXTENSION and sits in both `audioAccept` and `videoAccept`,
+ * which is the one place the strict form of the rule cannot hold: the container carries either, the
+ * chooser only ever sees the extension, and dropping it from one list would hide half of a real
+ * format from the field that wants it. The residual cost is the small one it trades for — a
+ * `video/webm` picked into an AUDIO-only field is still dropped silently.
+ *
+ * A token missing from ALL FOUR is a box that cannot be answered at all, since a FILE field's
+ * chooser is the join of the four (see `pickAccept`).
+ */
+
+/*
+  `.svg` IS AN IMAGE HERE BECAUSE `inferMediaType` SAYS SO: `image/svg+xml` starts with `image/`.
+  It was already reachable through the leading `image/*` on every platform that maps the extension
+  to that type, and naming it is for the platforms that do not — a chooser holding no mapping for
+  `.svg` matches neither the wildcard nor any extension token, and the file cannot be selected at
+  all. The registry asks for exactly this file: `sketch.lineArtFile`'s help text is "An SVG or
+  vector export, if one was produced". `lib/imageQuality`'s `isMeasurableImage` already excludes
+  `image/svg+xml` from the blur/duplicate measurement, which is the other half of treating a vector
+  as an image without pretending it is a photograph.
+
+  AND THE PART THAT IS NOT A CONVENIENCE: AN SVG IS A SCRIPTABLE DOCUMENT, not an inert raster. It
+  can carry `<script>`, an `onload` handler and external references, and this pipeline does not
+  sanitise the bytes anywhere. `POST /media/presign` has no allowlist — it signs whatever
+  `mimeType` it is handed (`backend/app/api/routes/media.py:188`) and puts it straight on the stored
+  object (`"headers": {"Content-Type": payload.mimeType}`, same file, line 199) — so the object comes
+  back down labelled `image/svg+xml`, and `components/media/MediaLightbox.tsx` gives it an "Open"
+  control that is a TOP-LEVEL NAVIGATION to that URL (lines 345 and 378,
+  `<a href={item.url} target="_blank" rel="noreferrer">`). Rendered through `<img src>` the markup is
+  inert; opened in a tab it is a document that executes.
+
+  WHY THE TOKEN STILL STANDS, measured rather than waved through. `public_url_for_key`
+  (`backend/app/services/s3.py:160`) serves media from the configured S3/CDN base, which is a
+  DIFFERENT ORIGIN from the app — so what executes cannot read this app's storage or cookies — and
+  the leading `image/*` above already made an SVG selectable on every desktop platform that maps the
+  extension, so this token widens an existing path rather than opening one. What it deliberately
+  does is guarantee reachability on the platforms that could not select one before, so it is a
+  widening and is recorded as one.
+
+  THE CHEAP BELT, IF THE OWNER WANTS IT, is on the bucket/CDN rather than here: serve
+  `image/svg+xml` with `Content-Disposition: attachment`, or with a `Content-Security-Policy:
+  sandbox` response header. Either kills the executing-tab case and leaves `<img src>` rendering
+  untouched. It is one rule on the distribution, not a code change, which is why it is named here
+  rather than attempted from a chooser list.
+*/
+const imageAccept = "image/*,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.tif,.tiff,.bmp,.avif,.svg";
 const audioAccept = "audio/*,.mp3,.wav,.m4a,.aac,.ogg,.oga,.opus,.webm,.flac,.amr";
 const videoAccept = "video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.3gp";
-const documentAccept = ".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.json";
+/*
+  `.glb` AND `.gltf` CLOSE THE ONE SLOT THAT WAS GENUINELY UNREACHABLE. The registry declares
+  `prototype.modelFile` as a FILE field labelled "3D model", and a FILE field's chooser is these
+  four lists joined — none of which matched a 3D model, and the three wildcards cannot reach one
+  either: a browser with no mapping for `.glb` reports an empty type, which is the case
+  `lib/media`'s `file.type || "application/octet-stream"` was written for. The box was declared,
+  drawn, and unanswerable through the chooser.
+
+  THEY SIT IN THE DOCUMENT LIST RATHER THAN ONE OF THEIR OWN because that list IS the FILE field's
+  attachment list (see the rule above), which is the only field type asking for a 3D model, and
+  because a file the browser cannot type is in any case what `inferMediaType` calls a DOCUMENT —
+  nothing matches its `image/` `video/` `audio/` `application/pdf` arms. There is no 3D member of
+  `MediaType` on either side of the wire to promote them to (`lib/types.ts`, `prisma/schema.prisma`),
+  and inventing one would be a migration and a registry change for a label.
+
+  WIDER 3D FORMATS ARE DELIBERATELY NOT HERE. `.stl`, `.obj`, `.fbx` and `.usdz` are all plausible
+  in a prototyping room and none of them was asked for; glTF is the pair that the web and AR
+  pipelines both write, so it makes the slot usable without guessing at a list nobody has been
+  consulted about. Each of the others is one token here and no other change anywhere.
+
+  THE HANDSET NEEDS NOTHING FOR EITHER: `DwMediaCapture.kt`'s `galleryMimeFor` answers the
+  match-anything wildcard for every field that is not IMAGE/VIDEO/AUDIO, so Android could always
+  attach both. This list was the divergent half.
+*/
+const documentAccept = ".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.json,.glb,.gltf";
 
 const ACCEPT_BY_TYPE: Record<MediaType, string> = {
   IMAGE: imageAccept,

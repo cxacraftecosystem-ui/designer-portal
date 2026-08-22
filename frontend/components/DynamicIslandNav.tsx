@@ -32,6 +32,7 @@ import {
   Settings as SettingsIcon,
   Share2,
   SlidersHorizontal,
+  Star,
   UserCog,
   Users,
   Wrench,
@@ -217,6 +218,35 @@ export const NAV_ITEMS: NavItem[] = [
     gate: "get_current_user"
   },
   { href: "/sharing", label: "Share data access", icon: Share2, group: "Browse", can: everyone, gate: "get_current_user" },
+  // THE POOL ROUND of Sketches & Prototypes — the SECOND of the owner's two review levels, and the
+  // reason it is a destination of its own rather than a tab inside a workshop is a permission fact
+  // rather than a layout one. `load_workshop_or_404` admits the creator, an admin and a
+  // `DesignWorkshopViewer` grantee and 404s everybody else, and every one of the 22 stage WRITE
+  // routes is gated by it — so the pool reviewer, who is by definition somebody it turns away,
+  // could not be let in there without handing them stage writes as well. `/design-review` goes
+  // through `design_ratings.load_ratable_workshop_or_404` instead, which lets a design-workshop
+  // role read the rateable rows of one workshop and nothing else about it.
+  //
+  // Gated on `canRunDesignWorkshops` because that helper's first refusal is
+  // `if not can_run_design_workshops(user): raise not_found` — this is a mirror of the API's own
+  // predicate, not a narrowing, so nobody is hidden from a page the server would serve them.
+  //
+  // NO `ROUTE_GUARDS` ROW GOES WITH IT YET, and that is stated rather than forgotten:
+  // `lib/permissions.ts` is outside this change's files, so `AppShell` — which applies that table
+  // above every page — has nothing to apply here and `canAccessRoute` answers true for any signed-in
+  // account. The gap is covered in the second of the two places it has to be: the page refuses for
+  // itself, with the same `canRunDesignWorkshops` predicate and a lock panel, rather than letting an
+  // unentitled reader reach the API's 404 and see it rendered as "this round could not be read". A
+  // page defending itself is this repository's second line and not its first, so the row in
+  // `lib/permissions.ts` and its twin in `docs/PERMISSIONS.md` §5 are still owed.
+  {
+    href: "/design-review",
+    label: "Design review",
+    icon: Star,
+    group: "Browse",
+    can: canRunDesignWorkshops,
+    gate: "can_run_design_workshops (load_ratable_workshop_or_404 on GET /design-ratings/rounds/{round})"
+  },
   // Linking a tool to an artisan needs a tool or an artisan of your own — both need record creation.
   // The endpoint itself only requires a login and then checks ownership per artisan, so this is the
   // closest STATIC mirror of a dynamic rule: nobody below Field Contributor owns either side.

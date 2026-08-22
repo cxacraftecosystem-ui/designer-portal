@@ -14,18 +14,21 @@ data:
   # configuration is readable without cross-referencing Python.
 
   # --- Database ---------------------------------------------------------------------------------
-  # THE NUMBER THAT MATTERS. Client connections this pod's Prisma engine may open to the Supabase
-  # pooler. Multiply by (replicas + rollout surge + the queue pod) to get the real footprint, and
-  # keep that product under the pooler's ceiling — the arithmetic is worked through in
-  # docs/KUBERNETES.md and the HPA maximum is derived from it.
+  # THE NUMBER THAT MATTERS. Client connections this pod's Prisma engine may open to the database.
+  # Multiply by (replicas + rollout surge + the queue pod) to get the real footprint, and keep that
+  # product under the pooler's ceiling — the arithmetic is worked through in docs/KUBERNETES.md and
+  # the HPA maximum is derived from it.
   #
   # 10 is not a round number picked for looks: it is what production was cut TO after 40 x 2 workers
   # exhausted the pooler's 200-client ceiling and crash-looped the API. Raising it here without
   # lowering the HPA maximum re-opens that outage.
   DATABASE_CONNECTION_LIMIT: "10"
-  # Runtime traffic goes through the TRANSACTION-mode pooler (:6543, pgbouncer=true), which releases a
-  # server connection per statement. Session mode (:5432) pins one of only ~15 server connections for
-  # the life of the client, which is how EMAXCONNSESSION happened. Migrations are the exception and
+  # DATABASE_URL must name a TRANSACTION-mode pooler endpoint, and this key DECLARES that it does:
+  # the runtime adds pgbouncer=true and nothing in the code matches a hostname or rewrites a port
+  # (that host-suffix rewrite existed until 2026-08-22 — see backend/app/core/db.py's header).
+  # Transaction mode releases a server connection per statement; session mode pins one of a small
+  # number of them for the life of the client, which is how EMAXCONNSESSION happened. An overlay
+  # whose DATABASE_URL is a DIRECT endpoint must set this "false". Migrations are the exception and
   # deliberately do NOT use this — see job-migrate.yaml.
   DATABASE_USE_TRANSACTION_POOLER: "true"
   DATABASE_REQUIRE_SSL: "true"
@@ -48,8 +51,8 @@ data:
 
   # The image's entrypoint (docker/backend/entrypoint.sh) refuses to boot when DATABASE_URL names a
   # host that is not loopback/private, so that nobody can hand a throwaway container the production
-  # connection string by accident. Every Kubernetes environment here talks to Supabase, which is
-  # remote by definition, so the guard would stop all three overlays dead.
+  # connection string by accident. Every Kubernetes environment here talks to a managed PostgreSQL,
+  # which is remote by definition, so the guard would stop all three overlays dead.
   #
   # It is answered rather than removed. Deleting the container's `command` would have silenced the
   # guard by skipping the entrypoint entirely; typing its escape hatch keeps the rest of the script,

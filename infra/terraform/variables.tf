@@ -20,7 +20,9 @@ variable "project" {
   # instance's only ingress path.
   #
   # Note this prefix does NOT name the media bucket: `bucket_name` is a separate, required variable
-  # (currently fieldrepo-media-626159998512), because an S3 bucket name is globally unique and
+  # — this portal's designrepo workspace passes `designrepo-media-626159998512`, and the sibling
+  # field repository has its own `fieldrepo-media-…`; the comment named the SIBLING's bucket until
+  # 2026-08-22 — because an S3 bucket name is globally unique and
   # replacing one would strand every uploaded photograph rather than move it.
   #
   # Renaming this is a migration, not an edit: create the new IAM user, roll the new key into the

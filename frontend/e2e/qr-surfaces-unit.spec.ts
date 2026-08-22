@@ -314,7 +314,19 @@ test("every surface that reads a code mounts the shared control, and there are n
 function recordCardMounts(): Map<string, string[]> {
   const found = new Map<string, string[]>();
   for (const path of filesUsing(/<RecordCodeCard\b/)) {
-    const types = [...codeOf(path).matchAll(/<RecordCodeCard\b[^>]*?recordType="([a-z]+)"/g)].map((match) => match[1]);
+    /*
+      `[a-zA-Z]+` AND NOT `[a-z]+`, WHICH IS WHAT THIS READ UNTIL A CAMEL-CASE TYPE EXISTED.
+
+      Every record type was a single lower-case word — artisan, craft, tool — so the narrower class
+      was invisible for as long as that held. `designWorkshop` is the first that is not, and the
+      failure it produced was the worst shape available: the FILE list below matched (the mount is
+      really there and really parses), while the TYPE list silently came up one short, so the
+      assertion read as "that type has no card anywhere" when the card was three lines away. A
+      measuring pass that cannot see the thing it measures reports an absence, not an error.
+    */
+    const types = [...codeOf(path).matchAll(/<RecordCodeCard\b[^>]*?recordType="([a-zA-Z]+)"/g)].map(
+      (match) => match[1]
+    );
     found.set(path, [...new Set(types)].sort());
   }
   return found;
@@ -333,6 +345,12 @@ test("every record type that has a screen shows its code there, and every mount 
   //     beside the row being edited.
   //   - `ArtisanForm` — the panel shown straight after a create, so a tag can be printed for the
   //     artisan still sitting in front of the researcher.
+  //   - `design-workshops` — the DESIGN workshop (a `DesignWorkshop` row, letter `G`), not the
+  //     `Workshop` on the line below it. Shown from its list row rather than from
+  //     `/design-workshops/[id]`, because this code's job is to be held up in a room for other
+  //     designers to scan onto the workshop, and the list is where the person holding the phone
+  //     finds it. A row whose workshop exists only on that device renders the encoder's `dwlocal-`
+  //     refusal instead of a symbol, which is the intended answer and not a missing card.
   //   - `questionnaire` and `media` — neither record type has a per-record web route at all.
   //     `workshopCodeLookup`'s OPEN_HREF says so in as many words, and lands an interview scan on
   //     `/questionnaire` and a media scan on the stored object or, when the caller is not entitled
@@ -343,6 +361,7 @@ test("every record type that has a screen shows its code there, and every mount 
     [
       "app/(protected)/artisans/[id]/edit/page.tsx",
       "app/(protected)/crafts/page.tsx",
+      "app/(protected)/design-workshops/page.tsx",
       "app/(protected)/media/page.tsx",
       "app/(protected)/processes/page.tsx",
       "app/(protected)/products/[id]/edit/page.tsx",
