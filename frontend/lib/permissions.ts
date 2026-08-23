@@ -398,6 +398,61 @@ export const ROUTE_GUARDS: RouteGuard[] = [
       "A review round ranks named designers' sketches and prototypes against each other and records who said what, so it is read and rated by designers, admins and the master admin."
   },
   {
+    /*
+      SKETCHES & PROTOTYPES, CHOSEN-WORKSHOP-FIRST. The same screen as the per-workshop page at
+      /design-workshops/[id]/sketches-and-prototypes, entered from the other end. There, the
+      workshop is already in the URL because the designer walked into it through the workshop's own
+      hub; here, the designer arrives from the menu with nothing chosen and picks the workshop on
+      the page. One extracted component renders both, so the two cannot drift in WHAT they show —
+      but they do not share a guard, and that asymmetry is the only reason this row has to exist.
+
+      WHY IT IS A SIBLING OF THE WORKSHOP TREE AND NOT A CHILD. A route can only sit beneath
+      /design-workshops/:id if an id is known before the page renders, and being reachable when it
+      is NOT known is this page's entire purpose. There is no id to put in the path, so the path
+      cannot be nested — and the moment it is not nested, the `/design-workshops` rule immediately
+      below stops covering it. `routeMatches` compares whole segments: "/sketches-and-prototypes"
+      is neither equal to "/design-workshops" nor prefixed by "/design-workshops/", so before this
+      row nothing in this table answered for it at all. The per-workshop twin, meanwhile, needs no
+      row of its own — that prefix rule covers it, as it covers every other page inside a workshop.
+      Two URLs, one component, one of them gated by a prefix and the other needing its own entry: a
+      reader cannot re-derive that from either file, which is why it is written down rather than
+      left to be noticed.
+
+      WITHOUT THIS ROW THE URL IS OPEN TO EVERY SIGNED-IN ACCOUNT. Not refused-by-a-wider-rule the
+      way `/admin/analytics` and `/admin/designers` are, and not merely unadvertised: `AppShell`
+      applies whatever `routeGuardFor` returns and nothing else, so no row means no refusal, and the
+      nav entry in `components/DynamicIslandNav.tsx` withholds only the LINK. That is the bug this
+      file has now recorded three times — `/design-workshops` itself, then `/design-review` on
+      2026-08-22, now this page — and each time the page shipped before the row did, by a maintainer
+      who had read the table, found nothing beside the design-workshop tree, and believed the
+      closing sentence of docs/PERMISSIONS.md §5.
+
+      Same SET as `/design-workshops` and `/design-review` — Designer, Admin, Master Admin — so a
+      PROFESSOR IS REFUSED, which the rank ladder in docs/PERMISSIONS.md §2 will not give you: a
+      professor outranks a designer everywhere else in this file.
+
+      ON THE PICKER THIS IS A NARROWING AND NOT A MIRROR, and the honest `gate` below says so.
+      `list_design_workshops` takes `get_current_user` — there is no role dependency on the list at
+      all — and scopes rows with `visible_to_clause`, so the server would answer a professor with an
+      empty list rather than a refusal. The refusals are one layer in: the chosen workshop's stage
+      rows go through `load_workshop_or_404`, and the pool round through
+      `load_ratable_workshop_or_404`, which tests `can_run_design_workshops(user)` — NOT as its first
+      line, and the correction matters only to a reader reasoning about it: the role test is third,
+      after the `find_unique` and the `deletedAt` check. Nothing observable turns on the order,
+      because all three raise the identical 404 with the identical detail; what does turn on it is
+      any future argument that the existence check cannot precede the role check. It does.
+      So this rule is the first of three lines and the page refuses for itself as the second, for
+      the same reason `/design-review` does — a page that defends itself still renders its shell
+      first, and this shell is a list of workshop names.
+    */
+    path: "/sketches-and-prototypes",
+    can: canRunDesignWorkshops,
+    gate: "can_run_design_workshops (load_workshop_or_404 once a workshop is chosen; the picker's list is get_current_user + visible_to_clause)",
+    title: "Designer access required",
+    message:
+      "Sketches and prototypes are a named designer's work in progress, uploaded to a workshop and then ranked against other designers' pieces under the name of whoever ranked them, so this page is opened by designers, admins and the master admin."
+  },
+  {
     path: "/design-workshops",
     can: canRunDesignWorkshops,
     gate: "can_run_design_workshops",

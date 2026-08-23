@@ -28,6 +28,7 @@ import {
   MapPinned,
   Menu as MenuIcon,
   MessageSquare,
+  PencilRuler,
   Search,
   Settings as SettingsIcon,
   Share2,
@@ -246,6 +247,56 @@ export const NAV_ITEMS: NavItem[] = [
     group: "Browse",
     can: canRunDesignWorkshops,
     gate: "can_run_design_workshops (load_ratable_workshop_or_404 on GET /design-ratings/rounds/{round})"
+  },
+  // SKETCHES & PROTOTYPES WITH NO WORKSHOP IN HAND, which is the whole of what this destination is
+  // FOR. The same screen already exists inside a workshop, at
+  // /design-workshops/[id]/sketches-and-prototypes, and that page keeps working and keeps its link
+  // on the workshop's hub; one extracted component renders both, so nothing here is a second
+  // implementation of anything. What differs is the WAY IN. That page can only be opened by
+  // somebody who has already navigated into the workshop that owns it — its id is a segment of the
+  // URL — so a designer who knows they want to upload a sketch, and does not remember which of
+  // their workshops it belongs to, had to go to the workshops list, find the row, open it, and
+  // then find the tab. From this menu there is no workshop id yet and there cannot be one, so a
+  // route nested under a workshop could not be offered here at all: this entry is chosen-workshop-
+  // first, and asking which workshop is the first thing the page does.
+  //
+  // Gated on `canRunDesignWorkshops`, the same SET as "Design workshops" and "Design review" above
+  // — Designer, Admin, Master Admin — so a PROFESSOR does not see it even though they outrank a
+  // designer everywhere else in this list.
+  //
+  // ON THE PICKER THAT IS A NARROWING AND NOT A MIRROR, the same distinction the "Design
+  // workshops" comment draws further up and for the same reason: `list_design_workshops` takes
+  // `get_current_user` with no role dependency at all and scopes rows through `visible_to_clause`,
+  // so the server would answer a professor with an empty list rather than refuse them. The
+  // refusals sit one layer in — `load_workshop_or_404` on the chosen workshop's stage rows, and
+  // `load_ratable_workshop_or_404` on the pool round, which tests `can_run_design_workshops` third
+  // rather than first (the row lookup and the `deletedAt` check come before it; all three raise the
+  // same 404 with the same detail, so nothing observable depends on the order and no reader should
+  // conclude from this comment that the existence check cannot precede the role test — it does).
+  // So withholding this row from a professor withholds a page that
+  // would render nothing but its own empty state, which is the kind of narrowing this list allows;
+  // it is not cover for moving a WRITE control behind a hidden link.
+  //
+  // THE `ROUTE_GUARDS` ROW EXISTS, and was written in the same change as this entry rather than
+  // owed afterwards: `/sketches-and-prototypes` in `lib/permissions.ts`, with its twin row in
+  // `docs/PERMISSIONS.md` §5. Note the asymmetry, because neither file shows it alone — the
+  // per-workshop twin needs no row, being covered by the `/design-workshops` prefix, while this
+  // top-level path was covered by nothing until its own row landed. A hidden nav entry has never
+  // been a guard.
+  //
+  // THE LABEL IS NOT AN ANDROID `actionTitle`, and this list's docstring above claims that labels
+  // are. There is no `EntryMode` for this screen anywhere in the working tree, so there was nothing
+  // to copy and nothing to check — the ampersand and the lower-case "prototypes" are the web
+  // owner's wording, not verified parity. Said out loud so the next reader does not inherit the
+  // docstring's claim for this row; if Android ever grows the screen, that name wins and this one
+  // changes to match.
+  {
+    href: "/sketches-and-prototypes",
+    label: "Sketches & prototypes",
+    icon: PencilRuler,
+    group: "Browse",
+    can: canRunDesignWorkshops,
+    gate: "can_run_design_workshops (load_workshop_or_404 on the chosen workshop; get_current_user + visible_to_clause on the picker's list)"
   },
   // Linking a tool to an artisan needs a tool or an artisan of your own — both need record creation.
   // The endpoint itself only requires a login and then checks ownership per artisan, so this is the

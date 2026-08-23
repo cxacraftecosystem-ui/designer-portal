@@ -640,7 +640,7 @@ The client's half of gating is declared **once**, in `ROUTE_GUARDS` in `frontend
 and enforced by `AppShell` for the entire `(protected)` tree. A hidden nav entry is not a guard —
 every one of these routes is reachable by typing the URL.
 
-**All seventeen rules, in the order they are declared, as fifteen rows.** Every one of them,
+**All eighteen rules, in the order they are declared, as sixteen rows.** Every one of them,
 deliberately — see the note under the table about why a partial list here is worse than no list at
 all.
 
@@ -665,6 +665,7 @@ to update is the number of `path:` values; `docs/tools/check-docs.mjs` reports i
 | `/review` | `canReview` | `require_reviewer` |
 | `/data` | `canDownloadDataset` | `require_dataset_downloader` |
 | `/design-review` | `canRunDesignWorkshops` — the same **set**, so a **professor is refused**. A sibling of the workshop tree and not a child, because the pool round reaches ACROSS workshops: a designer ranks work from rounds they were never added to. No prefix rule covered it, so until this row existed the URL was open to every signed-in account | `can_run_design_workshops` (`load_ratable_workshop_or_404`) |
+| `/sketches-and-prototypes` | `canRunDesignWorkshops` — the same **set**, so a **professor is refused**. A sibling of the workshop tree and not a child because the page is CHOSEN-WORKSHOP-FIRST: the designer arrives from the menu with nothing chosen and picks the workshop on the page, so there is no id to nest the path under. Nothing covered it — `routeMatches` compares whole segments — so until this row existed the URL was open to every signed-in account | `can_run_design_workshops` (`load_workshop_or_404` once a workshop is chosen; the picker's own list is `get_current_user` filtered by `visible_to_clause`) |
 | `/design-workshops` | `canRunDesignWorkshops` — a **set**, not a rank threshold: Designer, Admin, Master Admin, so a **professor is refused** | `can_run_design_workshops` |
 | `/questionnaires` (**plural** — see below) | `canRunDesignWorkshops` — the same set, so a **professor is refused** | `can_run_design_workshops` (`_require_designer`) |
 | `/designers/profile` | `canRunDesignWorkshops` | `require_designer` |
@@ -674,6 +675,24 @@ to update is the number of `path:` values; `docs/tools/check-docs.mjs` reports i
 one global artisan questionnaire, it is open to every signed-in user, and `routeMatches` compares
 whole segments so this rule cannot reach it. A future rule written with the singular would lock every
 researcher out of taking an interview.
+
+`/sketches-and-prototypes` has a twin that is NOT in this table and does not belong in it. The same
+screen also exists inside a workshop, at /design-workshops/[id]/sketches-and-prototypes, reached from
+that workshop's hub; one extracted component renders both pages, so they cannot drift in what they
+show. The twin needs no row because the `/design-workshops` prefix already covers it, and the
+top-level path needs one because a prefix that matches whole segments cannot reach it. That is the
+whole asymmetry: two URLs, one component, one guarded by inheritance and one only by its own row.
+
+The twin's path is spelled WITHOUT BACKTICKS in the paragraph above, which is the only place in this
+file it appears at all — the `/sketches-and-prototypes` row does not name it — and that is not an
+oversight. `docs/tools/check-docs.mjs` harvests every backticked path from the whole of a table ROW,
+not just its first cell, and then demands a `ROUTE_GUARDS` rule for each one, so backticking a route
+that deliberately has no rule of its own turns this section red. Worse, `[` and `]` fall outside the
+character class it captures with, so the failure would name `/design-workshops/` and send the next
+reader hunting for a rule that is already there. Prose below the table is not scanned, so the
+backticks would in fact be harmless exactly where they are missing — and the convention is kept here
+anyway, because the obvious next edit to this section is to lift that sentence into the table, and a
+path that arrived already wearing backticks would arrive already red.
 
 Anything unlisted is open to any signed-in user, which is the correct default for read surfaces —
 **but that sentence is only true if this table is complete**, and for a long time it was not. Five

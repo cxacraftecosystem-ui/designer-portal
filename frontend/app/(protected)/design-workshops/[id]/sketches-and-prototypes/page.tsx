@@ -28,21 +28,35 @@
  * rating and ranking surface. Both are VIEWS over the registry's own `sketch` and `prototype` rows
  * — there is no second store of prototypes anywhere in this feature.
  *
- * ── HOW A DESIGNER REACHES THIS PAGE, AND THE ONE LINK THAT IS STILL MISSING ────────────────────
+ * ── THE BODY IS NOT IN THIS FILE ANY MORE, AND THAT IS THE POINT ─────────────────────────────────
  *
- * NOTHING IN THE APPLICATION LINKS HERE YET, and it is written down rather than left to be
- * discovered: a grep for this route across `app/` and `components/` finds only this file. The row of
- * sibling links a designer actually uses — Cards & tags, Import photographs, AI layers, Ready to
- * submit?, Report — lives in `app/(protected)/design-workshops/[id]/page.tsx`, which is outside this
- * unit's files, so the entry has to be added by whoever holds that page:
+ * Everything below the header is `components/sketches/SketchesWorkspace`, because THIS SCREEN NOW
+ * HAS TWO ROUTES. The other is `/sketches-and-prototypes`, the top-level Browse destination, which
+ * exists for the designer who knows they want to upload a sketch and does not remember which of
+ * their workshops it belongs to: it asks for the workshop with a chooser and then mounts the same
+ * component. Read that component's header before changing anything about the tabs, the entity
+ * chooser or the registry read — a change made by copying the body back into one of the two pages
+ * is the exact failure the extraction prevents, and its header enumerates what a copy would lose.
  *
- *     <Link href={`/design-workshops/${id}/sketches-and-prototypes`} className="field-button-secondary">
- *       <PencilRuler className="h-4 w-4" aria-hidden />
- *       Sketches &amp; prototypes
- *     </Link>
+ * WHAT STAYED HERE AND WHY: the page header, the Suspense boundary, and the URL. The header,
+ * because the two routes do not describe themselves in the same words and one of them has a chooser
+ * above it. The URL, because it is a fact about the route and not about the screen — this page's tab
+ * writer emits an absolute `/design-workshops/{id}/sketches-and-prototypes` path and rebuilds its
+ * query from empty, which is correct HERE (there is no other parameter on this URL to lose) and
+ * would have been destructive on the top-level route, whose whole state is `?workshop=`.
  *
- * Until it exists this page is reachable only by typing or pasting its URL, which for the owner's
- * primary deliverable means no designer will find it. Nothing here can fix that from this side.
+ * ── HOW A DESIGNER REACHES THIS PAGE ────────────────────────────────────────────────────────────
+ *
+ * Two ways now, and the older note here — "NOTHING IN THE APPLICATION LINKS HERE YET", followed by
+ * the exact `<Link>` somebody else had to add — is out of date in both directions. That link was
+ * added and is live: `app/(protected)/design-workshops/[id]/page.tsx:432`, in the row of sibling
+ * buttons beside Cards & tags and Import photographs. And `/sketches-and-prototypes` is now on the
+ * Browse menu for the case where the designer has no workshop in hand.
+ *
+ * BOTH DOORS STAY. The top-level route is an additional way in, not a replacement, and this one is
+ * the only one that can be reached from inside a workshop the designer is already standing in —
+ * without it, a designer who has just filled in stage 11 would have to leave the workshop and name
+ * it again in a chooser to attach the drawing they are holding.
  *
  * ── THE TAB LIVES IN THE URL ────────────────────────────────────────────────────────────────────
  *
@@ -51,39 +65,16 @@
  * boundary in Next 16; the page splits at exactly that line and nothing else is inside it.
  */
 
-import { Suspense, use, useCallback, useEffect, useState } from "react";
+import { Suspense, use, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { PencilRuler, Star, Upload } from "lucide-react";
+import { PencilRuler } from "lucide-react";
 
 import { PageHeader } from "@/components/PageHeader";
-import { ReviewPanel } from "@/components/sketches/ReviewPanel";
-import { SketchTabPanel, SketchTabs, type SketchTab } from "@/components/sketches/SketchTabs";
-import { UploadTabHost } from "@/components/sketches/UploadTabHost";
-import type { RateableEntityKey } from "@/components/sketches/reviewRanking";
-import { readRegistry } from "@/components/sketches/stageRows";
-import type { DwRegistry } from "@/lib/designWorkshops";
-
-type TabKey = "upload" | "review";
-
-const TABS: ReadonlyArray<SketchTab<TabKey>> = [
-  {
-    key: "upload",
-    label: "Upload",
-    icon: Upload,
-    hint: "Add the drawings, photographs and 3D models of a piece to the record it belongs to."
-  },
-  {
-    key: "review",
-    label: "Review",
-    icon: Star,
-    hint: "Rate the other designers' work, say what you would change, and settle the order the pieces stand in."
-  }
-];
-
-const ENTITIES: ReadonlyArray<{ key: RateableEntityKey; label: string }> = [
-  { key: "prototype", label: "Prototypes" },
-  { key: "sketch", label: "Sketches" }
-];
+import {
+  SketchesWorkspace,
+  sketchesTabFromQuery,
+  type SketchesTab
+} from "@/components/sketches/SketchesWorkspace";
 
 export default function SketchesAndPrototypesPage({ params }: { params: Promise<{ id: string }> }) {
   // Next 16 hands route params over as a promise; `use` unwraps it in a client component.
@@ -98,32 +89,17 @@ export default function SketchesAndPrototypesPage({ params }: { params: Promise<
 function SketchesAndPrototypes({ workshopId }: { workshopId: string }) {
   const router = useRouter();
   const search = useSearchParams();
-  const tab: TabKey = search.get("tab") === "review" ? "review" : "upload";
-  const [entityKey, setEntityKey] = useState<RateableEntityKey>("prototype");
-  const [registry, setRegistry] = useState<DwRegistry | null>(null);
-
-  /*
-    THE REGISTRY IS READ ONCE HERE AND HANDED DOWN. Both tabs need it — the upload host to name the
-    two stages and their four media fields, the review panel to find the stage a reorder writes
-    through — and `readRegistry` answers from memory, then from IndexedDB, then from the network, so
-    this costs nothing on a device that has opened a workshop before and still answers on one with
-    no signal. A null is a state rather than an error and each tab says what it cannot do with it.
-  */
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const answer = await readRegistry();
-      if (!cancelled) setRegistry(answer);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const tab = sketchesTabFromQuery(search.get("tab"));
 
   const changeTab = useCallback(
-    (next: TabKey) => {
+    (next: SketchesTab) => {
       // `replace`, not `push`: the two tabs are one screen, and pushing would make Back walk through
       // every tab press before it left the page.
+      //
+      // The query is rebuilt from scratch, which is safe on THIS route and only this one: nothing
+      // else is ever in this URL's query string. The top-level twin writes its own, because it has
+      // a `?workshop=` to carry and this line would erase it. See `SketchesWorkspace`'s header for
+      // why the writer is per-route rather than inside the shared component.
       const query = next === "upload" ? "" : `?tab=${next}`;
       router.replace(`/design-workshops/${workshopId}/sketches-and-prototypes${query}`, { scroll: false });
     },
@@ -138,49 +114,12 @@ function SketchesAndPrototypes({ workshopId }: { workshopId: string }) {
         icon={<PencilRuler className="h-5 w-5" aria-hidden />}
       />
 
-      <SketchTabs
-        tabs={TABS}
-        active={tab}
-        onChange={changeTab}
-        label="Sketches and prototypes"
-        idPrefix="sketches"
-      />
-
-      {tab === "upload" ? (
-        <SketchTabPanel idPrefix="sketches" tabKey="upload">
-          <UploadTabHost workshopId={workshopId} registry={registry} />
-        </SketchTabPanel>
-      ) : (
-        <SketchTabPanel idPrefix="sketches" tabKey="review">
-          {/*
-            THE TWO RATEABLE ENTITIES ARE A CHOICE, NOT TWO PAGES. `RATEABLE_ENTITIES` on the server
-            is exactly {sketch, prototype}; the child rows of a prototype are parts of one piece and
-            are refused by name. Prototypes lead because they are what the pool round is about and
-            what a workshop spends most of its second half on.
-          */}
-          <div role="group" aria-label="What to review" className="mb-4 flex flex-wrap gap-2">
-            {ENTITIES.map((entity) => {
-              const active = entity.key === entityKey;
-              return (
-                <button
-                  key={entity.key}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setEntityKey(entity.key)}
-                  className={
-                    active
-                      ? "rounded-md border border-purple-700 bg-purple-700 px-3 py-1.5 text-sm font-semibold text-white"
-                      : "rounded-md border border-line-200 bg-card px-3 py-1.5 text-sm font-medium text-ink-700 hover:border-purple-300 hover:bg-purple-50"
-                  }
-                >
-                  {entity.label}
-                </button>
-              );
-            })}
-          </div>
-          <ReviewPanel workshopId={workshopId} round="PEER" readsStageRows entityKey={entityKey} />
-        </SketchTabPanel>
-      )}
+      {/*
+        NO `key` HERE, deliberately, and the shared component's header says why one is needed on the
+        other route: `workshopId` comes out of the path, so it cannot change without a navigation
+        that remounts this page anyway. Adding one would be harmless but would imply this id moves.
+      */}
+      <SketchesWorkspace workshopId={workshopId} tab={tab} onTabChange={changeTab} idPrefix="sketches" />
     </div>
   );
 }

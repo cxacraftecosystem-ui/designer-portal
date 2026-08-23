@@ -54,7 +54,11 @@ import type { UserRole } from "@/lib/types";
  * other importer of it sits under `app/(protected)/`. `next build` (Next 16.2.9, Turbopack), then
  * reading the chunk list out of the prerendered `.next/server/app/index.html`: the page references 16
  * chunks, and one of them is the 20,177-byte chunk that holds this module — ROUTE_GUARDS' fifteen
- * user-facing refusal `message` strings included, none of which the ladder reads. So the module is
+ * user-facing refusal `message` strings included, none of which the ladder reads. (That figure
+ * counts `message:` keys, NOT routes — three of the eighteen guards share one message through the
+ * `RECORD_CREATOR_GUARD` spread. It said fifteen while there were fourteen until 2026-08-23, when
+ * the `/sketches-and-prototypes` guard made it true by accident. Nothing pins it, so read it as the
+ * order of magnitude the byte count rests on rather than as a current count.) So the module is
  * NOT tree-shaken down to the three consts used here. Against the 870,866 uncompressed bytes summed
  * over the 15 of those chunks present on disk when this was measured, it is about 2%.
  *
