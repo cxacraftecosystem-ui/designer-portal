@@ -96,10 +96,12 @@ on:
         default: true
 
 permissions:
-  # Read the tree; that is all. This workflow talks to the product's own API with a product
-  # credential, not to GitHub. It creates no release, no comment, no deployment, so it asks for
-  # nothing that could do any of those.
-  contents: read
+  # `contents: write`, and ONLY because this workflow now cuts a GitHub Release. It read
+  # `contents: read` with a comment saying "it creates no release, no comment, no deployment, so it
+  # asks for nothing that could do any of those" — that was correct and is the standard to come back
+  # to. Publishing a Release is the single reason it went up, and the write is used in exactly one
+  # step; nothing else here touches GitHub. If the Release step is ever removed, put this back.
+  contents: write
 
 concurrency:
   group: publish-android
@@ -1542,6 +1544,108 @@ jobs:
           echo "::error title=This run did not publish, and it is not a dry run::DRY_RUN='${DRY_RUN:-unset}', yet POST /api/app/release was '${publish}' and GUARD 6 was '${proof}'. Nothing above this step failed, so without this check the run would have concluded success and the summary would have called it a PUBLISH."
           echo "::error::NOTHING REACHED A HANDSET. Start at the mode step at the top of this job: DRY_RUN must be exactly 'true' or 'false', and every downstream 'if:' compares against those two literals. A skipped step is a green step, which is why the conclusion cannot be trusted to notice this on its own."
           exit 1
+
+      # ─── THE GITHUB RELEASE, AND WHY IT COMES LAST ───────────────────────────────────────────
+      #
+      # After GUARD 6, deliberately. A Release is the human-facing announcement, and announcing a
+      # release that did not reach the API would be worse than not announcing one: somebody would
+      # download the attached APK, install it by hand, and be on a build the fleet does not know
+      # about. So this runs only once the publish has been PROVEN — `/api/app/download` redirecting
+      # and `release/latest` naming this version — and never on a dry run.
+      #
+      # `if: env.DRY_RUN == 'false'` and a tag: a dispatch has no tag to hang a Release on, and
+      # `softprops` / `gh release create` would either fail or invent one.
+      #
+      # The body is the ANNOTATED TAG'S OWN MESSAGE plus the three facts a reader needs to identify
+      # the artefact: the version pair, the signing certificate, and the commit. The tag message is
+      # where the reason for a release is already written — GUARD 4 reads it for the [republish]
+      # marker — so restating it by hand would be a second copy free to disagree with the first.
+      #
+      # The APK is attached because the owner asked for it. Worth naming the consequence: this is now
+      # a SECOND distribution channel beside `/api/app/download`, and the two cannot drift for this
+      # tag (identical bytes, uploaded from the same file in the same job) but a Release is forever
+      # while `latest` moves. Anyone installing from an old Release gets an old build, by definition.
+      - name: Cut the GitHub Release for this tag
+        id: release
+        if: ${{ env.DRY_RUN == 'false' && startsWith(github.ref, 'refs/tags/') }}
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          APK: android/app/build/outputs/apk/release/app-release.apk
+          CERT_FINGERPRINT: ${{ secrets.ANDROID_RELEASE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "$APK" ]; then
+            echo "::error::The APK is not where this step expects it (${APK}), so there is nothing to attach. The release was already published to the API; only the GitHub Release is missing."
+            exit 1
+          fi
+
+          # The tag object is already local — GUARD 4 fetched it. Empty is survivable: the body just
+          # loses the annotation, and the three facts below are the part that identifies the build.
+          annotation="$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || true)"
+
+          # PLAIN `echo` LINES, and two things about them are deliberate.
+          #
+          # No `printf` with newline escapes: the first version used those and the escapes were
+          # consumed before they reached the file, leaving a literal newline inside a
+          # single-quoted YAML string and a workflow that would not parse. No heredoc either: its
+          # body has to sit at column 0 to avoid being indented into a markdown code block, and
+          # column 0 ENDS the YAML block scalar this whole step lives in.
+          #
+          # And no backticks anywhere in the body. Inside double quotes a backtick is command
+          # substitution, so markdown code ticks around a version number would try to RUN it.
+          # The table reads perfectly well without them.
+          notes="$(mktemp)"
+          {
+            echo "Published to the fleet and the website by ${GITHUB_WORKFLOW} (run ${GITHUB_RUN_ID})."
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| versionName | ${VERSION_NAME} |"
+            echo "| versionCode | ${VERSION_CODE} |"
+            echo "| commit | ${GITHUB_SHA} |"
+            echo "| signing certificate SHA-256 | ${CERT_FINGERPRINT} |"
+            echo
+            echo "Every device offers this build on its next launch or resume - the in-app updater"
+            echo "compares versionCode. The attached APK is the same bytes /api/app/download serves"
+            echo "for this version."
+          } > "$notes"
+
+          # Appended rather than interpolated above, so a tag message containing a backtick or a
+          # dollar sign cannot be re-expanded. `--` is not needed; `echo "$var"` is literal.
+          if [ -n "$annotation" ]; then
+            {
+              echo
+              echo "---"
+              echo
+              echo "$annotation"
+            } >> "$notes"
+          fi
+
+          # The certificate FINGERPRINT is not a secret — it is in every copy of the APK, and a
+          # reader needs it to confirm which key signed what they are installing. It is masked in
+          # logs by virtue of being a secret value, which is why it is written to the notes file
+          # rather than echoed.
+          named="design-prototype-workshop-${VERSION_NAME}.apk"
+          cp "$APK" "${RUNNER_TEMP}/${named}"
+
+          # `--clobber` so a re-cut tag (see GUARD 4's [republish] path) replaces the asset instead
+          # of failing on a name that already exists. `edit` when the Release exists for the same
+          # reason: a republished tag must update its Release, not refuse.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "A Release already exists for ${TAG} — updating it in place (this is the republish path)."
+            gh release edit "$TAG" --title "$TAG" --notes-file "$notes"
+            gh release upload "$TAG" "${RUNNER_TEMP}/${named}" --clobber
+          else
+            gh release create "$TAG" "${RUNNER_TEMP}/${named}"               --title "$TAG" --notes-file "$notes" --verify-tag
+          fi
+
+          url="$(gh release view "$TAG" --json url --jq .url)"
+          echo "Release: ${url}"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "- GitHub Release: ${url}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the published APK as a run artifact
         if: ${{ always() && steps.size.outcome == 'success' }}
