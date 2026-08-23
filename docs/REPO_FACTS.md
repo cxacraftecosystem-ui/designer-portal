@@ -131,8 +131,8 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 168 | 93,914 | 168 | 93,914 |
-| `frontend/app` | 65 | 28,868 | 65 | 28,868 |
+| `backend/app` | 168 | 93,935 | 168 | 93,935 |
+| `frontend/app` | 65 | 28,913 | 65 | 28,913 |
 | `frontend/components` | 213 | 72,972 | 213 | 72,972 |
 | `frontend/lib` | 101 | 53,005 | 101 | 53,005 |
 | `android/app/src/main/java` | 161 | 141,346 | 161 | 141,346 |
