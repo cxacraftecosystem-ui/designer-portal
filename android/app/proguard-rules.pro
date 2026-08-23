@@ -134,3 +134,33 @@
 # kept is a stack trace nobody can read.
 -printusage build/outputs/mapping/release/r8-removed.txt
 -printseeds build/outputs/mapping/release/r8-kept.txt
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# CREDENTIAL MANAGER — WITHOUT THIS, GOOGLE SIGN-IN FAILS ON EVERY RELEASE BUILD WITH
+# "no credentials available", AND NOTHING IN THE BUILD SAYS SO.
+#
+# Measured on the first published release (0.0.1, 2026-08-23): R8 removed 137 classes under
+# `androidx.credentials.playservices` outright, including
+# `CredentialProviderPlayServicesImpl` — and a raw string search of the shipped APK found neither
+# `credentials/playservices` nor that class name anywhere in it.
+#
+# That class is the whole failure. `CredentialManager.create(...)` does not link against its provider;
+# it resolves one AT RUNTIME BY NAME. R8 cannot see that reference, so with no keep rule the provider
+# is unreachable code and gets deleted. `getCredential` then finds no provider at all and throws
+# `NoCredentialException`, whose message is the string the owner reported: "no credentials available".
+#
+# It is invisible in every check this project runs. `assembleRelease` succeeds, `lintVital` is happy,
+# the JVM tests never touch Credential Manager, and the debug build works perfectly because
+# `isMinifyEnabled = false` there. The comment at the top of `buildTypes.release` predicted precisely
+# this class of defect — "R8's failure mode is not a compile error … verifying it requires a device"
+# — and this is the first instance of it to reach a published build.
+#
+# These are Google's documented rules for the library, not a guess. The `-if` form keeps them
+# conditional, so an app that stops using Credential Manager stops paying for them.
+-if class androidx.credentials.CredentialManager
+-keep class androidx.credentials.playservices.** { *; }
+
+# The Google ID option/credential types travel as Bundle keys and are built through reflection-adjacent
+# Builder chains. R8 kept the classes but stripped members from all fifteen of them; keeping them whole
+# costs a few kilobytes and removes a second way for this to fail silently at a sign-in screen.
+-keep class com.google.android.libraries.identity.googleid.** { *; }

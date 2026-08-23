@@ -184,6 +184,12 @@ jobs:
           # This workflow's default ref IS the thing being released — the tagged commit on a tag
           # push, the dispatched ref on a manual run — so overriding it could only make it wrong.
           fetch-depth: 1
+          # GUARD 4 reads the ANNOTATED TAG'S MESSAGE to decide whether an equal-version republish was
+          # asked for, and `git tag -l --format='%(contents)'` can only answer if the tag OBJECT is in
+          # the local repository — a shallow checkout of a ref does not guarantee it. Asked for
+          # explicitly rather than relied upon. If it is ever absent anyway the read yields an empty
+          # string, the marker is not found, and the guard refuses: the failure direction is safe.
+          fetch-tags: true
 
       - name: Resolve the run mode, and refuse to publish something no tag names
         id: mode
@@ -1112,7 +1118,42 @@ jobs:
 
           published_name="$(jq -r '.versionName // "?"' "$latest")"
           echo "Currently published: ${published_name} (code ${published})."
+          # ── REPUBLISHING THE SAME VERSION, DELIBERATELY AND ONLY WHEN THE TAG SAYS SO ──────────
+          #
+          # The first published release (0.0.1) could not sign anybody in, and the fix was a build
+          # change with no user-visible version to bump — the owner's instruction was to reissue it as
+          # 0.0.1. So an EQUAL code can be republished, and only when the tag's own annotation carries
+          # the marker [republish]. Not a repository variable and not a workflow input: a variable
+          # would silently weaken every later run, an input cannot reach a tag push, and the tag
+          # message is the one place where the reason travels WITH the artefact and expires with it.
+          #
+          # EQUAL ONLY, NEVER LOWER. A lower code is never defensible: it cannot win 'latest' and
+          # cannot install over what is out there. An equal one is defensible for exactly one reason —
+          # `_latest_release` orders by versionCode DESC then publishedAt DESC, so a newer row with the
+          # same code DOES win the tie and /api/app/download serves the new bytes.
+          #
+          # WHAT IT STILL CANNOT DO, said out loud because it is the thing that will surprise someone:
+          # the in-app updater compares CODES, so any handset already on code ${published} will never
+          # be offered this. It is a fix for everyone who downloads from now on, not an update push.
+          # If devices are already carrying the broken build, bump the version instead.
+          tag_message="$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" 2>/dev/null || true)"
+          republish=false
+          case "$tag_message" in *"[republish]"*) republish=true ;; esac
+
+          if [ "$VERSION_CODE" -eq "$published" ] && [ "$republish" = "true" ]; then
+            echo "::warning title=Republishing the same version::Tag ${GITHUB_REF_NAME} carries [republish], so version ${VERSION_NAME} (code ${VERSION_CODE}) is being published again over the identical code already live."
+            echo "A newer row with the same code wins the publishedAt tie, so /api/app/download will serve these bytes."
+            echo "Handsets ALREADY on code ${published} will NOT be offered this — the updater compares codes. This reissue reaches new downloads only."
+            echo "REPUBLISHED_SAME_CODE=${VERSION_CODE}" >> "$GITHUB_ENV"
+            echo "PUBLISHED_BEFORE=${published}" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
           if [ "$VERSION_CODE" -le "$published" ]; then
+            if [ "$VERSION_CODE" -eq "$published" ]; then
+              echo "::error::Version ${VERSION_NAME} is ALREADY published at this exact code (${published}). If you mean to reissue the same version over it — a build fix with nothing user-visible to bump — put the literal marker [republish] in the ANNOTATED tag's message and push that tag."
+              echo "::error::Be sure that is what you want: a handset already on code ${published} will never be offered it, because the updater compares codes."
+            fi
             echo "::error::Version ${VERSION_NAME} derives versionCode ${VERSION_CODE}, which is NOT ABOVE the published ${published} (${published_name}). Refusing to publish."
             echo "::error::This is the quiet failure: the API would ACCEPT this release and return 201, this run would go green, and not one device would ever be offered it — 'latest' is the highest versionCode, and that would still be ${published}."
             echo "::error::Bump 'val appVersionName' in android/app/build.gradle.kts above ${published_name} and tag that commit. Remember devices compare the CODE: major*1000000 + minor*1000 + patch."
