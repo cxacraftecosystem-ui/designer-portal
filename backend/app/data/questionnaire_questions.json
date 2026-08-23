@@ -46,6 +46,10 @@
             {
                 "sortOrder": 11,
                 "prompt": "Interviewer Name"
+            },
+            {
+                "sortOrder": 12,
+                "prompt": "Date of Interview"
             }
         ]
     },
