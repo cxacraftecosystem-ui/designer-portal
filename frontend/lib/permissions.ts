@@ -368,6 +368,36 @@ export const ROUTE_GUARDS: RouteGuard[] = [
       "Field-by-field provenance across the shared records reports one account's data beside another's, so it is an admin view. The per-field authorship on each stage is unaffected and stays open to every designer on the workshop."
   },
   {
+    /*
+      THE POOL REVIEW ROUND. A rule this table's own closing note predicted, in the exact words:
+      "a maintainer adding a page beside the design-workshop tree read this table, found nothing,
+      believed the closing sentence and shipped without a guard entry." That is what happened — the
+      page went out on 2026-08-22 with a header comment naming this missing row as a debt it could
+      not pay, because this file belonged to another unit that hour. Paid 2026-08-23.
+
+      IT DOES NOT RIDE ON `/design-workshops`. The route is `/design-review`, a sibling and not a
+      child, because the pool round deliberately reaches ACROSS workshops — a designer ranks work
+      from rounds they were never added to, which is the whole difference between the second review
+      level and the first. So no prefix rule covers it and, unlike `/admin/analytics` or
+      `/admin/designers`, there was no wider rule quietly refusing the wrong people in the meantime:
+      until this row existed the URL was open to every signed-in account.
+
+      Same SET as the workshop tree — Designer, Admin, Master Admin — so a **professor is refused**,
+      and that is not derivable from the rank ladder in §2. The server says it in
+      `load_ratable_workshop_or_404`, whose first line refuses anybody outside
+      `can_run_design_workshops`; the page repeats it in its own words for the case where a round id
+      is already in the URL. This rule is the first line, and the reason the other two are a second
+      and third: a page that defends itself still renders its shell first, and the shell of a review
+      round names the workshops in it.
+    */
+    path: "/design-review",
+    can: canRunDesignWorkshops,
+    gate: "can_run_design_workshops (load_ratable_workshop_or_404)",
+    title: "Designer access required",
+    message:
+      "A review round ranks named designers' sketches and prototypes against each other and records who said what, so it is read and rated by designers, admins and the master admin."
+  },
+  {
     path: "/design-workshops",
     can: canRunDesignWorkshops,
     gate: "can_run_design_workshops",

@@ -640,8 +640,17 @@ The client's half of gating is declared **once**, in `ROUTE_GUARDS` in `frontend
 and enforced by `AppShell` for the entire `(protected)` tree. A hidden nav entry is not a guard —
 every one of these routes is reachable by typing the URL.
 
-**All fourteen rules, in the order they are declared.** Every one of them, deliberately — see the
-note under the table about why a partial list here is worse than no list at all.
+**All seventeen rules, in the order they are declared, as fifteen rows.** Every one of them,
+deliberately — see the note under the table about why a partial list here is worse than no list at
+all.
+
+The two numbers differ for one reason and it is worth stating rather than leaving a reader to wonder
+whether something is missing: `/artisans/new`, `/products/new` and `/tools/new` are three separate
+`ROUTE_GUARDS` entries with identical gates, and they share the last row. Nothing else is collapsed.
+This sentence said "all fourteen rules" for as long as there were sixteen — it was counting rows and
+calling them rules — which is a small error to make in the one section of this document whose entire
+argument is that an incomplete list here is worse than no list at all. If you add a rule, the count
+to update is the number of `path:` values; `docs/tools/check-docs.mjs` reports it on every run.
 
 | Route | Client gate | Backend dependency it mirrors |
 |---|---|---|
@@ -655,6 +664,7 @@ note under the table about why a partial list here is worse than no list at all.
 | `/settings/tasks` | `canAssignTasks` | `require_admin` |
 | `/review` | `canReview` | `require_reviewer` |
 | `/data` | `canDownloadDataset` | `require_dataset_downloader` |
+| `/design-review` | `canRunDesignWorkshops` — the same **set**, so a **professor is refused**. A sibling of the workshop tree and not a child, because the pool round reaches ACROSS workshops: a designer ranks work from rounds they were never added to. No prefix rule covered it, so until this row existed the URL was open to every signed-in account | `can_run_design_workshops` (`load_ratable_workshop_or_404`) |
 | `/design-workshops` | `canRunDesignWorkshops` — a **set**, not a rank threshold: Designer, Admin, Master Admin, so a **professor is refused** | `can_run_design_workshops` |
 | `/questionnaires` (**plural** — see below) | `canRunDesignWorkshops` — the same set, so a **professor is refused** | `can_run_design_workshops` (`_require_designer`) |
 | `/designers/profile` | `canRunDesignWorkshops` | `require_designer` |

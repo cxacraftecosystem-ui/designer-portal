@@ -1,0 +1,56 @@
+# Vercel's CLI uploads the directory it is invoked from. Since the project's Root Directory is
+# `frontend`, a deploy MUST be launched from the repository root (from inside frontend/ Vercel looks
+# for frontend/frontend and fails with "No Next.js version detected") — and that means the upload
+# would otherwise carry the FastAPI backend, the Android application, the whole docs tree and the
+# CodeGraph index along with it. On 2026-08-23 that came back as:
+#
+#     Error: Request body too large. Limit: 10mb
+#
+# so the deploy did not fail on anything wrong with the build — it never reached one.
+#
+# DO NOT REWRITE THIS AS AN ALLOWLIST. The obvious `/*` followed by `!/frontend/` is the standard
+# gitignore recipe and it is what I wrote first; Vercel's matcher does not honour the re-include, and
+# the deploy died on "The specified Root Directory "frontend" does not exist" — the build never saw
+# the one directory the whole payload was for. A denylist does go stale when someone adds a heavy
+# top-level directory, so if a deploy starts failing on the 10 MB limit again, the fix is to name the
+# new directory here, not to reach for the negation form a second time.
+#
+# NOTE: the presence of this file means the CLI stops consulting .gitignore, so build and dev output
+# has to be named again below even though git already ignores it.
+#
+# Verified 2026-08-23: `next build` under Root Directory `frontend` reads nothing outside frontend/ —
+# frontend/vercel.json is the config Vercel picks up, and neither next.config.ts, tsconfig.json nor
+# frontend/package.json references a parent path. The root package.json only holds the two node
+# scripts (keep-alive, vercel-ci-setup), neither of which runs at build time.
+
+# The other three products in this repository. Nothing here is read by `next build`.
+/backend/
+/android/
+/docker/
+/infra/
+
+# Prose, tooling and agent configuration.
+/docs/
+/scripts/
+/.github/
+/.claude/
+/.agents/
+*.docx
+/SESSION_HANDOVER.md
+/README.md
+
+# Generated locally, never an input to a build.
+/.codegraph/
+/.ruff_cache/
+/test-results/
+/node_modules/
+/frontend/node_modules/
+/frontend/.next/
+/frontend/out/
+/frontend/coverage/
+/frontend/playwright-report/
+/frontend/test-results/
+
+# Secrets never travel in a deployment payload; Vercel supplies the environment itself.
+.env
+.env.*
