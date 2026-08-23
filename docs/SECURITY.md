@@ -16,7 +16,7 @@ whoever reviews changes to `backend/app/core/*` and the Android network configur
 flowchart LR
   web[Next.js web app<br/>Vercel, HTTPS]
   app[Android app<br/>OkHttp]
-  cf[CloudFront<br/>d2b34i3e92al6i.cloudfront.net]
+  cf[CloudFront<br/>d3ekigkotd1xa2.cloudfront.net]
   nginx[nginx :80<br/>EC2]
   api[uvicorn :8000<br/>127.0.0.1]
   s3[(S3 bucket)]
@@ -675,8 +675,8 @@ is removed and the entry stays. Both teach the reader to trust the wrong thing. 
 |---|---|
 | §1 transport | `infra/terraform/user_data.sh` (nginx), the CloudFront console (**UNVERIFIED from here**), `network_security_config.xml`. |
 | §1.1 database TLS | `Settings._harden_database_url` in `backend/app/core/config.py`. |
-| §1.2 response headers | `SecurityHeadersMiddleware` in `backend/app/main.py`. Check live: `curl -sI https://d2b34i3e92al6i.cloudfront.net/health`. |
-| §1.4 docs exposure | `curl -s -o /dev/null -w "%{http_code}" https://d2b34i3e92al6i.cloudfront.net/openapi.json`. **This entry closes when that returns 404**, not when the code changes. |
+| §1.2 response headers | `SecurityHeadersMiddleware` in `backend/app/main.py`. Check live: `curl -sI https://d3ekigkotd1xa2.cloudfront.net/health`. |
+| §1.4 docs exposure | `curl -s -o /dev/null -w "%{http_code}" https://d3ekigkotd1xa2.cloudfront.net/openapi.json`. **This entry closes when that returns 404**, not when the code changes. |
 | §3 tokens | `backend/app/core/security.py`; the startup guard is `verify_jwt_configuration`. |
 | §4 the ladder | [PERMISSIONS.md](PERMISSIONS.md), which is itself checked — `docs/tools/check-docs.mjs` fails if the backend and web role ladders diverge. |
 | §4.1 identity cache | `backend/app/core/deps.py`, and `backend/tests/test_user_identity_cache.py`. |

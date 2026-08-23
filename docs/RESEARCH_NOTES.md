@@ -1308,7 +1308,7 @@ Everything a paper might cite, with its instrument.
 All read-only. The only non-`GET` is the login that mints a token.
 
 ```bash
-BASE=https://d2b34i3e92al6i.cloudfront.net
+BASE=https://d3ekigkotd1xa2.cloudfront.net
 
 # 1. The floor, and the 404 that costs the same.
 curl -s -o /dev/null -w 'health      %{time_total}\n' $BASE/health

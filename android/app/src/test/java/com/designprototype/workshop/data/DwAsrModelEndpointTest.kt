@@ -111,17 +111,17 @@ class DwAsrModelEndpointTest {
     @Test
     fun `the base url gains exactly one slash, with or without a trailing one`() {
         val expected =
-            "https://d2b34i3e92al6i.cloudfront.net/api/asr-models/${pinned.modelId}/files/tokens.txt"
+            "https://d3ekigkotd1xa2.cloudfront.net/api/asr-models/${pinned.modelId}/files/tokens.txt"
         assertEquals(
             expected,
             dwAsrModelFileUrl(
-                "https://d2b34i3e92al6i.cloudfront.net/api/", pinned.modelId, "tokens.txt",
+                "https://d3ekigkotd1xa2.cloudfront.net/api/", pinned.modelId, "tokens.txt",
             ),
         )
         assertEquals(
             expected,
             dwAsrModelFileUrl(
-                "https://d2b34i3e92al6i.cloudfront.net/api", pinned.modelId, "tokens.txt",
+                "https://d3ekigkotd1xa2.cloudfront.net/api", pinned.modelId, "tokens.txt",
             ),
         )
         // The cleartext base a handset probe uses through `adb reverse`, which

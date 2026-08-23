@@ -76,7 +76,7 @@ The number above counts decorators in this checkout. The number that matters ope
 the running API actually serves, which you read from the deployed schema rather than from the source:
 
 ```bash
-curl -s https://d2b34i3e92al6i.cloudfront.net/openapi.json \
+curl -s https://d3ekigkotd1xa2.cloudfront.net/openapi.json \
   | python -c "import json,sys,collections; d=json.load(sys.stdin); \
       c=collections.Counter(m for p in d['paths'].values() for m in p if m in ('get','post','put','patch','delete')); \
       print(sum(c.values()), dict(c))"

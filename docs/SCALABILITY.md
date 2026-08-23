@@ -1027,29 +1027,29 @@ All read-only. The only non-GET is the login that mints a token.
 
 ```bash
 # 1. The round-trip constant. Compare an endpoint with no DB read against one with exactly one.
-curl -s -o /dev/null -w '%{time_total}\n' https://d2b34i3e92al6i.cloudfront.net/health
-curl -s -o /dev/null -w '%{time_total}\n' https://d2b34i3e92al6i.cloudfront.net/health/ready
+curl -s -o /dev/null -w '%{time_total}\n' https://d3ekigkotd1xa2.cloudfront.net/health
+curl -s -o /dev/null -w '%{time_total}\n' https://d3ekigkotd1xa2.cloudfront.net/health/ready
 
 # 2. A token.
-TOKEN=$(curl -s -X POST https://d2b34i3e92al6i.cloudfront.net/api/auth/login \
+TOKEN=$(curl -s -X POST https://d3ekigkotd1xa2.cloudfront.net/api/auth/login \
   -H 'content-type: application/json' \
   -d '{"email":"admin@example.com","password":"..."}' | python -c 'import json,sys;print(json.load(sys.stdin)["accessToken"])')
 
 # 3. The 7-round-trip endpoint that returns 22 bytes.
 curl -s -o /dev/null -w '%{time_total} %{size_download}\n' \
-  -H "authorization: Bearer $TOKEN" https://d2b34i3e92al6i.cloudfront.net/api/review/pending
+  -H "authorization: Bearer $TOKEN" https://d3ekigkotd1xa2.cloudfront.net/api/review/pending
 
 # 4. Relations, not rows: same one row, different relation counts.
 for p in crafts artisans products tools; do
   curl -s -o /dev/null -w "$p %{time_total}\n" \
-    -H "authorization: Bearer $TOKEN" "https://d2b34i3e92al6i.cloudfront.net/api/$p?pageSize=20"
+    -H "authorization: Bearer $TOKEN" "https://d3ekigkotd1xa2.cloudfront.net/api/$p?pageSize=20"
 done
 
 # 5. ILIKE costs nothing today: with and without a query term.
 curl -s -o /dev/null -w 'with-q    %{time_total}\n' -H "authorization: Bearer $TOKEN" \
-  'https://d2b34i3e92al6i.cloudfront.net/api/search?q=ram&types=artisans'
+  'https://d3ekigkotd1xa2.cloudfront.net/api/search?q=ram&types=artisans'
 curl -s -o /dev/null -w 'without-q %{time_total}\n' -H "authorization: Bearer $TOKEN" \
-  'https://d2b34i3e92al6i.cloudfront.net/api/search?types=artisans'
+  'https://d3ekigkotd1xa2.cloudfront.net/api/search?types=artisans'
 ```
 
 The openpyxl memory figure (§5.2) is `tracemalloc` around a 5,000 × 30 styled `Workbook`, saved to a

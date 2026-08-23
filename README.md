@@ -16,8 +16,8 @@ workshop held with no signal still ends with a finished report on the phone.
 Alongside the workshop record it keeps the supporting corpus — artisans, crafts, products, tools,
 media, GPS locations, structured interviews with transcription, and review decisions.
 
-> **Live:** the backend runs on AWS (EC2 at `15.207.145.174`) and is served over HTTPS through
-> CloudFront at **https://d2b34i3e92al6i.cloudfront.net/api/** (Terraform in `infra/terraform/`,
+> **Live:** the backend runs on AWS (EC2 at `13.206.216.18`) and is served over HTTPS through
+> CloudFront at **https://d3ekigkotd1xa2.cloudfront.net/api/** (Terraform in `infra/terraform/`,
 > auto-deployed by `.github/workflows/deploy-backend.yml`). CloudFront is dual-stack, so the API is
 > reachable on IPv6-only mobile networks where the IPv4-only origin is not.
 
@@ -201,7 +201,7 @@ The local admin account is seeded by `backend/scripts/seed_admin.py` from `backe
 
 The Kotlin Android app lives in `android/` and uses the same backend:
 
-- Default (production) base URL: `https://d2b34i3e92al6i.cloudfront.net/api/` — the API fronted by **CloudFront over HTTPS**. CloudFront is **dual-stack** (publishes a native IPv6 `AAAA` record), so the app connects on IPv6-only mobile networks (common with Jio/Airtel). The IPv4-only EC2 origin — whether addressed by its bare IP `15.207.145.174` or its AWS hostname `ec2-15-207-145-174.ap-south-1.compute.amazonaws.com` — works on Wi-Fi but fails on such cellular networks ("Failed to connect" for the IP, "No address associated with hostname" for the hostname, because `AI_ADDRCONFIG` drops an IPv4-only name when the phone has no IPv4 and there is no DNS64/NAT64). HTTPS also clears the web app's mixed-content block. Media uploads/reads use the **dual-stack S3 endpoint** (`s3.dualstack.ap-south-1.amazonaws.com`) for the same reason. A live device that still has IPv4 on cellular can be forced by setting the APN protocol to `IPv4/IPv6`.
+- Default (production) base URL: `https://d3ekigkotd1xa2.cloudfront.net/api/` — the API fronted by **CloudFront over HTTPS**. CloudFront is **dual-stack** (publishes a native IPv6 `AAAA` record), so the app connects on IPv6-only mobile networks (common with Jio/Airtel). The IPv4-only EC2 origin — whether addressed by its bare IP `13.206.216.18` or its AWS hostname `ec2-13-206-216-18.ap-south-1.compute.amazonaws.com` — works on Wi-Fi but fails on such cellular networks ("Failed to connect" for the IP, "No address associated with hostname" for the hostname, because `AI_ADDRCONFIG` drops an IPv4-only name when the phone has no IPv4 and there is no DNS64/NAT64). HTTPS also clears the web app's mixed-content block. Media uploads/reads use the **dual-stack S3 endpoint** (`s3.dualstack.ap-south-1.amazonaws.com`) for the same reason. A live device that still has IPv4 on cellular can be forced by setting the APN protocol to `IPv4/IPv6`.
 - Emulator base URL: set `apiBaseUrl=http://10.0.2.2:8000/api/` in `android/local.properties`.
 - Other physical device / LAN: set an ignored `apiBaseUrl` line in `android/local.properties`, for example `apiBaseUrl=http://192.168.1.20:8000/api/`, and run the backend with `--host 0.0.0.0`.
 - Package name: `com.designprototype.workshop`
@@ -526,7 +526,7 @@ Useful optional backend variables:
 Frontend variables — all four are `NEXT_PUBLIC_*`, so they are **inlined into the browser bundle at
 build time**: none can be a secret, and changing one on Vercel needs a redeploy to take effect.
 
-- `NEXT_PUBLIC_API_URL` (required) — backend **origin only**, e.g. `https://d2b34i3e92al6i.cloudfront.net`. `frontend/lib/api.ts` appends `/api`, so a trailing `/api` or `/` turns every call into a 404.
+- `NEXT_PUBLIC_API_URL` (required) — backend **origin only**, e.g. `https://d3ekigkotd1xa2.cloudfront.net`. `frontend/lib/api.ts` appends `/api`, so a trailing `/api` or `/` turns every call into a 404.
 - `NEXT_PUBLIC_APP_URL` (optional in the web build) — public origin of the web app itself. No code under `frontend/` reads it; it shares its name with the **backend** variable so one value can feed both. The origin that actually has to be configured is `BACKEND_CORS_ORIGINS` on the API.
 - `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (optional) — blank hides the Google button.
 - `NEXT_PUBLIC_MAPTILER_API_KEY` (optional) — blank falls back to manual latitude/longitude entry.

@@ -34,7 +34,7 @@ const isProduction = process.env.NODE_ENV === "production";
  * host here too.
  */
 const remotePatterns: NonNullable<NextConfig["images"]>["remotePatterns"] = [
-  // Any CloudFront distribution — currently d2b34i3e92al6i.cloudfront.net, which fronts the API
+  // Any CloudFront distribution — currently d3ekigkotd1xa2.cloudfront.net, which fronts the API
   // (and any media proxied through it) over HTTPS + IPv6.
   { protocol: "https", hostname: "**.cloudfront.net", pathname: "/**" },
   // Production media bucket: dual-stack host (what the backend mints today).

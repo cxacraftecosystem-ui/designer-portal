@@ -6,7 +6,7 @@ and the only one that has caused an outage.
 
 | Edge | Fronts | Configured where | Caches today |
 | --- | --- | --- | --- |
-| **CloudFront** `d2b34i3e92al6i.cloudfront.net` | the **API** — EC2 nginx → uvicorn | AWS console, by hand | **nothing, and must keep caching nothing** |
+| **CloudFront** `d3ekigkotd1xa2.cloudfront.net` | the **API** — EC2 nginx → uvicorn | AWS console, by hand | **nothing, and must keep caching nothing** |
 | **Vercel** | the Next.js frontend | `frontend/next.config.ts`, framework defaults | hashed assets, HTML/RSC |
 | **S3** (no CDN) | media objects, the Android APK | presigned URLs from `backend/app/services/s3.py` | nothing; every URL is signed and short-lived |
 
@@ -50,7 +50,7 @@ produce a duplicate record).
 
 **What is still not done.** Raising the origin response timeout is a console action:
 
-> CloudFront → Distributions → `d2b34i3e92al6i…` → **Origins** → edit the origin →
+> CloudFront → Distributions → `d3ekigkotd1xa2…` → **Origins** → edit the origin →
 > **Additional settings** → **Response timeout**: `30` → `60`.
 >
 > Also raise **Keep-alive timeout** (default 5 s) to ~30 s. The API is a single-origin distribution
@@ -185,7 +185,7 @@ DIST=<distribution-id>          # aws cloudfront list-distributions --query \
                                 #   "DistributionList.Items[].{id:Id,domain:DomainName}"
 
 # 1. CONFIRM SOMETHING IS ACTUALLY CACHED. Do this first — most "cache problems" are not.
-curl -sSI https://d2b34i3e92al6i.cloudfront.net/api/health \
+curl -sSI https://d3ekigkotd1xa2.cloudfront.net/api/health \
   | grep -iE 'x-cache|age|cache-control'
 #   X-Cache: Miss from cloudfront   -> nothing is cached; invalidating changes nothing.
 #   X-Cache: Hit from cloudfront    -> something is cached. On /api/* that is the bug.
@@ -202,7 +202,7 @@ aws cloudfront wait invalidation-completed \
 
 # 5. Confirm, from more than one place. An edge in Mumbai and an edge in Frankfurt purge
 #    independently, and "it works for me" usually means "my POP purged".
-curl -sSI https://d2b34i3e92al6i.cloudfront.net/api/settings | grep -iE 'x-cache|age'
+curl -sSI https://d3ekigkotd1xa2.cloudfront.net/api/settings | grep -iE 'x-cache|age'
 ```
 
 **Things worth knowing before you reach for this:**
@@ -225,17 +225,17 @@ curl -sSI https://d2b34i3e92al6i.cloudfront.net/api/settings | grep -iE 'x-cache
 
 ```bash
 # Which layer is answering, and is anything cached?
-curl -sSI https://d2b34i3e92al6i.cloudfront.net/api/health | grep -iE 'x-cache|age|via|x-amz-cf'
+curl -sSI https://d3ekigkotd1xa2.cloudfront.net/api/health | grep -iE 'x-cache|age|via|x-amz-cf'
 
 # Is the origin timeout the thing biting you? Compare edge and origin for the same endpoint.
 # A 504 from the first and a slow 200 from the second is the CloudFront timeout, conclusively.
 time curl -sS -o /dev/null -w '%{http_code} %{time_total}s\n' \
-  https://d2b34i3e92al6i.cloudfront.net/api/dashboard/stats
+  https://d3ekigkotd1xa2.cloudfront.net/api/dashboard/stats
 time curl -sS -o /dev/null -w '%{http_code} %{time_total}s\n' \
-  http://15.207.145.174/api/dashboard/stats
+  http://13.206.216.18/api/dashboard/stats
 
 # IPv6, which is half of why this distribution exists. CloudFront answers; EC2 has no AAAA.
-curl -sS -6 -o /dev/null -w '%{http_code}\n' https://d2b34i3e92al6i.cloudfront.net/health
+curl -sS -6 -o /dev/null -w '%{http_code}\n' https://d3ekigkotd1xa2.cloudfront.net/health
 ```
 
 | Header | Reading it |

@@ -464,7 +464,7 @@ node docs/tools/check-docs.mjs
 # The live surface claims in F2 and F8. READ-ONLY — safe against production.
 for u in /health /api/health /docs /redoc /openapi.json; do
   printf "%-16s " "$u"
-  curl -s -o /dev/null -w "%{http_code}  %{time_total}s\n" "https://d2b34i3e92al6i.cloudfront.net$u"
+  curl -s -o /dev/null -w "%{http_code}  %{time_total}s\n" "https://d3ekigkotd1xa2.cloudfront.net$u"
 done
 ```
 

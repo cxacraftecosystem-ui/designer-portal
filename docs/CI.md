@@ -36,16 +36,25 @@ every secret it needs. Sister documents:
 > | Vercel project | `designer-repository` · `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` | `field-repository` · `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` |
 > | Vercel production alias | `designer-repository.vercel.app` | `field-repository.vercel.app` |
 > | GitHub repository | `cxacraftecosystem-ui/designer-portal` | not established from this checkout |
-> | CloudFront | **UNRESOLVED — see below** | **UNRESOLVED — see below** |
+> | CloudFront | `d3ekigkotd1xa2.cloudfront.net` (origin id `designrepo-ec2-origin`) | `d2b34i3e92al6i.cloudfront.net` |
 >
-> **The CloudFront row is deliberately not filled in, and must stay that way until somebody opens
-> the AWS console.** Two distributions are named in this repository and nothing in a checkout says
-> which is this portal's: [ENVIRONMENT.md](ENVIRONMENT.md) §4 states the whole question under
-> "UNRESOLVED — WHICH CLOUDFRONT DISTRIBUTION IS THIS PORTAL'S?", with both answers and the one
-> command that settles it. `check-docs.mjs` holds the pair open in both directions
-> (`checkAndroidApiHost` ties the handset's compiled-in literal to that document; `checkSiblingIdentity`
-> refuses to let this row name a winner while the question stands, and refuses to let it go on
-> saying UNRESOLVED once the question is gone).
+> **The CloudFront row was blank until 2026-08-23, and the answer was the uncomfortable one.** Two
+> distributions were named in this repository; the one written into both clients was the field
+> repository's. `d2b34i3e92al6i` answers **404** for `/api/design-workshops` — the same status it
+> gives a path that was never defined — while `d3ekigkotd1xa2` answers 401, and `d3ekigkotd1xa2`'s
+> CORS allow-list changed the minute this repository's `deploy-backend.yml` ran against `EC2_HOST`.
+> The full evidence, and what it cost before it was found, is in
+> [ENVIRONMENT.md](ENVIRONMENT.md) §4 under the CloudFront row.
+>
+> That was not supposed to be answerable from a checkout — the old note here said it needed the AWS
+> console, because `infra/terraform/` creates no CloudFront resource. Both halves were true and the
+> conclusion still did not follow: the pipeline can be *made* to act and the result observed, which
+> is a measurement a checkout can reach. Worth keeping in mind the next time something is filed as
+> console-only.
+>
+> Filling this row arms the sweep on the sibling's distribution as well, which is the point of
+> putting it here rather than in prose: `d2b34i3e92al6i.cloudfront.net` is now a value
+> `checkSiblingIdentity` reports wherever it appears without saying whose it is.
 >
 > **What is open is the DISTRIBUTION, not the box.** Until 2026-08-22 the sweep read any mention of
 > the field repository's Elastic IP `15.207.145.174` near either distribution hostname as a

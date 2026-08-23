@@ -52,20 +52,34 @@ android {
         // mixed-content block. Emulator/local devs override this with
         // apiBaseUrl=http://10.0.2.2:8000/api/ in local.properties.
         //
-        // WHICH DISTRIBUTION THIS IS, IS AN OPEN QUESTION — READ IT BEFORE YOU CHANGE THE LITERAL.
-        // `docs/ENVIRONMENT.md` names a DIFFERENT distribution (d3ekigkotd1xa2, origin id
-        // `designrepo-ec2-origin`) as this portal's, while every corroborating file pairs the host
-        // below with the Elastic IP 15.207.145.174 — the field repository's box. It was left
-        // UNCHANGED on 2026-08-22 on purpose: the same literal is also the committed web production
-        // value, so handset and browser agree today, and flipping one of them alone breaks a working
-        // client. The full statement of the question, both answers and the one command that settles
-        // it are in `docs/ENVIRONMENT.md` under "UNRESOLVED — WHICH CLOUDFRONT DISTRIBUTION IS THIS
-        // PORTAL'S?". `docs/tools/check-docs.mjs` (`checkAndroidApiHost`) ties this literal to that
-        // document in both directions, so this line and the docs move together or the docs run
-        // goes red.
+        // THIS LITERAL WAS THE SIBLING PRODUCT'S API UNTIL 2026-08-23. It read
+        // `d2b34i3e92al6i.cloudfront.net`, which fronts the FIELD REPOSITORY's backend, and a native
+        // HTTP client does not do CORS — so unlike the browser, which was accidentally protected by
+        // that box refusing this portal's origin, the handset's calls were answered by the other
+        // product. Anything design-workshop-shaped 404'd; anything the two products share by name
+        // reached the wrong database.
+        //
+        // The comment that stood here argued for leaving it alone, and its argument was internally
+        // sound: `docs/ENVIRONMENT.md` named a different distribution, every corroborating file
+        // agreed with the literal below, and changing one client without the other breaks a working
+        // pair. What it missed is that BOTH clients were wrong together, which is exactly what a
+        // fork inherits — the value was copied out of the repository this one was split from, so the
+        // count of files agreeing measured how thoroughly it was copied and not whether it was true.
+        //
+        // Settled by measurement, not by a console: `d2b34i3e92al6i` answers **404** for
+        // `/api/design-workshops` — the same status as a route that was never defined — while
+        // `d3ekigkotd1xa2` answers 401, and `d3ekigkotd1xa2`'s CORS allow-list changed the minute
+        // this repository's own `deploy-backend.yml` ran. The full evidence is in
+        // `docs/ENVIRONMENT.md` under the CloudFront row's resolution note.
+        //
+        // EVERY APK ALREADY ON A PHONE STILL HAS THE OLD HOST COMPILED IN. This line fixes new
+        // builds only; existing installs need a re-issued APK.
+        //
+        // `docs/tools/check-docs.mjs` (`checkAndroidApiHost`) ties this literal to that document in
+        // both directions, so this line and the docs move together or the docs run goes red.
         val apiBaseUrl = localProperties.getProperty(
             "apiBaseUrl",
-            "https://d2b34i3e92al6i.cloudfront.net/api/"
+            "https://d3ekigkotd1xa2.cloudfront.net/api/"
         )
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"$apiBaseUrl\"")
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"614092441670-t718gqk8d00iihh3732t39ppm4tram5e.apps.googleusercontent.com\"")

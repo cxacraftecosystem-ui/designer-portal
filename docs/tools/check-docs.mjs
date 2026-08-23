@@ -345,7 +345,7 @@ The number above counts decorators in this checkout. The number that matters ope
 the running API actually serves, which you read from the deployed schema rather than from the source:
 
 \`\`\`bash
-curl -s https://d2b34i3e92al6i.cloudfront.net/openapi.json \\
+curl -s https://d3ekigkotd1xa2.cloudfront.net/openapi.json \\
   | python -c "import json,sys,collections; d=json.load(sys.stdin); \\
       c=collections.Counter(m for p in d['paths'].values() for m in p if m in ('get','post','put','patch','delete')); \\
       print(sum(c.values()), dict(c))"
@@ -1104,16 +1104,20 @@ function checkMermaid() {
  *  deploy target written as a string literal, and nothing anywhere checked it against the document
  *  that tells an operator which distribution belongs to this portal.
  *
- *  The two disagree today, and the disagreement is the reason this check exists rather than a
- *  reason to defer it. ENVIRONMENT.md's own §"Where each file lives" rule 4 table names
- *  `d3ekigkotd1xa2.cloudfront.net` (origin id `designrepo-ec2-origin`) as this portal's CloudFront;
- *  the gradle default, the committed web production value and a dozen other documents all name
- *  `d2b34i3e92al6i.cloudfront.net`, which README.md pairs with the Elastic IP `15.207.145.174` —
- *  the field repository's box, per the default Terraform workspace. Which is true cannot be settled
- *  from a checkout: no CloudFront resource exists in `infra/terraform/`, because the distributions
- *  are console state (CDN.md says so).
+ *  THEY AGREE NOW, AND THE CHECK IS WHAT MADE THE DISAGREEMENT COSTLY ENOUGH TO SETTLE. For a
+ *  fortnight ENVIRONMENT.md's rule 4 table named `d3ekigkotd1xa2.cloudfront.net` (origin id
+ *  `designrepo-ec2-origin`) as this portal's CloudFront while the gradle default, the committed web
+ *  production value and a dozen documents named `d2b34i3e92al6i.cloudfront.net` — the FIELD
+ *  REPOSITORY's distribution, as it turned out. Both clients were pointed at another product's API.
+ *  Resolved 2026-08-23 by measurement (`/api/design-workshops` is 404 on one and 401 on the other);
+ *  the evidence is under ENVIRONMENT.md's CloudFront row and in docs/CI.md §0.
  *
- *  SO THIS DOES NOT PICK A SIDE. It asserts the two things that can be checked, in both directions:
+ *  The old note here said the question could not be settled from a checkout, because no CloudFront
+ *  resource exists in `infra/terraform/` — true, and not the same as unanswerable. Running the
+ *  pipeline and watching which distribution's behaviour changed answered it from a checkout.
+ *
+ *  THIS STILL DOES NOT PICK A SIDE, and must not start. It asserts the two things that can be
+ *  checked, in both directions:
  *
  *    * the literal in the gradle file is the literal ENVIRONMENT.md documents for `apiBaseUrl`, so
  *      changing the handset's default without the document is a red run rather than a silent drift;
@@ -2048,7 +2052,7 @@ const isOwnLabel = (v) => { const m = v.match(SIBLING_LABEL); return !!m && m[0]
  *  "6 field-repository values … 37 labelled mention(s) across 16 file(s)" to "5 … 32 … 12", dropped
  *  the three findings in next.config.ts and variables.tf, and left the exit code where it was. The
  *  diff read as prose polish. A pinned count is the one thing a copy-edit cannot quietly remove. */
-const EXPECTED_SIBLING_VALUES = 6;
+const EXPECTED_SIBLING_VALUES = 7;
 
 /** Rows whose "field repository" cell legitimately holds no literal, and the words that say so.
  *  Every OTHER row must name a value in BOTH columns: a row that stops naming one stops being
@@ -2089,24 +2093,22 @@ const VERCEL_ID_SHAPE = /\b(?:prj|team)_(?=[A-Za-z0-9]{16,})(?=[A-Za-z0-9]*[A-Z]
  *  a SECOND copy of the same value in the same file is a new finding rather than a free pass.
  *
  *  Every one of these was invisible until 2026-08-22: five behind the deleted CloudFront escape,
- *  four behind the rule that only `docs/*.md` could fail. None of the files is this workstream's. */
+ *  four behind the rule that only `docs/*.md` could fail. None of the files is this workstream's.
+ *
+ *  SHRANK FROM NINE ENTRIES TO FOUR on 2026-08-23, which is the direction this list is supposed to
+ *  move. Four were fixed with the real value rather than a label: README.md's two mentions and
+ *  docs/CDN.md's worked example presented the sibling's Elastic IP as this portal's backend, and the
+ *  note here said the fix had to be a label because "which distribution sits in front of it is the
+ *  open question" — that question is now answered (docs/CI.md §0), so the honest fix became
+ *  available. The other two, `frontend/next.config.ts` and `infra/terraform/variables.tf`, had
+ *  already been corrected and their entries were stale: an allowlist nobody prunes stops describing
+ *  the code and starts excusing it. */
 const SIBLING_ALLOWLIST = new Map([
-  // The repository's front page presents the field repository's box as this portal's live backend,
-  // and its Android section repeats the pairing. ENVIRONMENT.md §4 already records that it is wrong
-  // — the IP is the sibling's; this portal's is 13.206.216.18 — but which distribution sits in
-  // front of it is the open question, so the fix is a label, not a new value picked here.
-  ["README.md 15.207.145.174", 2],
-  // A worked troubleshooting example that curls the sibling's origin directly.
-  ["docs/CDN.md 15.207.145.174", 1],
   // A handover note naming the other product's SSH key file.
   ["SESSION_HANDOVER.md fieldrepo-deploy", 1],
   // The handset's own source. A .kt cannot fail this run's owner's build, but it is a live client.
   ["android/app/src/main/java/com/designprototype/workshop/MainActivity.kt field-repository.vercel.app", 1],
   ["android/app/src/main/res/xml/network_security_config.xml 15.207.145.174", 1],
-  // The two that matter most: a Next.js image host and a Terraform default, both naming the other
-  // product's media bucket. These are configuration, not prose — they are what runs.
-  ["frontend/next.config.ts fieldrepo-media-626159998512", 2],
-  ["infra/terraform/variables.tf fieldrepo-media-626159998512", 1],
 ]);
 
 function registerFacts() {

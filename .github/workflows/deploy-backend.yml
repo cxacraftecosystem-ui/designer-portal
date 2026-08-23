@@ -312,6 +312,60 @@ jobs:
           curl -fsS http://127.0.0.1:8000/health
           REMOTE
 
+      # ─── THE CHECK THAT WOULD HAVE CAUGHT A THREE-DAY LOGIN OUTAGE ───────────────────────────
+      #
+      # On 2026-08-23 the live site could not log anybody in. `BACKEND_CORS_ORIGINS` on the box
+      # allowed `http://localhost:3000` and NEITHER Vercel host, so every browser request from
+      # designer-repository.vercel.app died on a preflight answering `400 Disallowed CORS origin`.
+      # Nothing in this pipeline noticed, and nothing could have:
+      #
+      #   - the step above polls `/health`, which is FORBIDDEN from touching the database and says
+      #     nothing whatsoever about who may call the API;
+      #   - the frontend workflow's smoke check fetches the production alias and gets a 200, because
+      #     the pages render fine — it is only the API calls inside them that fail;
+      #   - and the CORS list was pinned by a step whose own comment asserted the origins were right.
+      #
+      # A green pipeline over a site nobody can sign in to is the worst failure this repository has,
+      # so the two facts a deploy must actually establish are asserted here, on the box, before the
+      # window closes.
+      #
+      # WHY ON THE BOX AND NOT THROUGH CLOUDFRONT. The app's own decision is what went wrong, and
+      # testing it at 127.0.0.1:8000 needs no edge hostname — which matters, because the repository
+      # currently records two different CloudFront distributions for this API and has not settled
+      # which is live (see the infrastructure table). The cost is honest and worth naming: this does
+      # NOT prove the edge forwards the `Origin` header, so a CloudFront cache policy that strips it
+      # would still break the browser while this step passes. That is a smaller and much rarer
+      # failure than the one being closed, and closing it needs the hostname question answered first.
+      - name: Assert the API is ready AND answers CORS for the production origin
+        run: |
+          ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          # 1. READY, not merely up. `/health` deliberately avoids the database, so a wrong DSN
+          #    produces a green deploy and a dead site; `/health/ready` is the endpoint that connects.
+          ready="$(curl -fsS http://127.0.0.1:8000/health/ready)"
+          echo "readiness: ${ready}"
+          case "$ready" in
+            *'"database":true'*) ;;
+            *) echo "::error::the API is running but reports no database connection: ${ready}"; exit 1 ;;
+          esac
+
+          # 2. The production origin is allowed. This is a real preflight, answered by the same
+          #    middleware a browser talks to, so it cannot pass on a list that merely looks right.
+          origin="https://designer-repository.vercel.app"
+          hdr="$(curl -s -D - -o /dev/null --max-time 20 -X OPTIONS http://127.0.0.1:8000/api/auth/login -H "Origin: ${origin}" -H "Access-Control-Request-Method: POST")"
+          echo "${hdr}" | head -1
+          # No `$` anchor: curl prints headers with CRLF endings, so the line ends in a
+          # carriage return and an end-anchored pattern can never match it.
+          if ! echo "${hdr}" | grep -qi "^access-control-allow-origin: ${origin}"; then
+            echo "::error::the API refuses CORS for ${origin}, so no browser on the live site can call it. Every request fails the preflight with 'Disallowed CORS origin' and the user sees only 'failed to fetch'."
+            echo "::error::BACKEND_CORS_ORIGINS on the server is: $(grep -E "^BACKEND_CORS_ORIGINS=" /home/ubuntu/app/backend/.env 2>/dev/null || echo "<not found in backend/.env>")"
+            echo "::error::Fix the 'Pin the CORS origins' step in this workflow, not the box by hand: the step rewrites .env on every deploy and would overwrite a manual edit."
+            exit 1
+          fi
+          echo "CORS: ${origin} is allowed"
+          REMOTE
+
       # ─── CLOSE IT AGAIN, WHATEVER HAPPENED ───────────────────────────────────────────────────
       #
       # `if: always()` is the whole point: a deploy that fails at migrate, or is cancelled between

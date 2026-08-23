@@ -246,7 +246,7 @@ region works.
   certbot per §7) and use `https`. Developing against a LAN backend from a real phone: add your
   machine's private IP as an extra `<domain>` in the network security config **temporarily**, and do
   not commit it. Rationale in [docs/SECURITY.md](../docs/SECURITY.md) §1.4.
-- **Web**: set `NEXT_PUBLIC_API_URL` to the API **origin only** — `https://d2b34i3e92al6i.cloudfront.net`,
+- **Web**: set `NEXT_PUBLIC_API_URL` to the API **origin only** — `https://d3ekigkotd1xa2.cloudfront.net`,
   with no `/api` suffix and no trailing slash, because `frontend/lib/api.ts` appends `/api` itself.
   Then add the frontend origin to `BACKEND_CORS_ORIGINS` and to the bucket CORS. Full runbook:
   [docs/DEPLOYMENT_VERCEL.md](../docs/DEPLOYMENT_VERCEL.md).
@@ -332,7 +332,7 @@ The Vercel project is linked to this GitHub repo (same account), so each push to
 - **Root Directory:** `frontend` (this is a monorepo; `frontend/vercel.json` pins the Next.js
   framework, `npm ci` install and `next build`). Leaving it at the repo root fails the build with
   "No Next.js version detected".
-- **Environment variables:** `NEXT_PUBLIC_API_URL = https://d2b34i3e92al6i.cloudfront.net` — the
+- **Environment variables:** `NEXT_PUBLIC_API_URL = https://d3ekigkotd1xa2.cloudfront.net` — the
   **origin only, without** `/api` and without a trailing slash (the web client appends `/api`
   itself; `…/api` produces `…/api/api/…` and every screen 404s). Plus the optional
   `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and `NEXT_PUBLIC_MAPTILER_API_KEY`. Do **not** add
@@ -343,7 +343,7 @@ The Vercel project is linked to this GitHub repo (same account), so each push to
   time, so editing them in the dashboard changes nothing until a fresh build runs (redeploy with
   the build cache disabled).
 - **Mixed content:** an HTTPS Vercel page cannot call an HTTP API — browsers block it. The API is now
-  fronted by **CloudFront over HTTPS** (`https://d2b34i3e92al6i.cloudfront.net`, dual-stack), so use
+  fronted by **CloudFront over HTTPS** (`https://d3ekigkotd1xa2.cloudfront.net`, dual-stack), so use
   that `https://…` value above and the block is gone. (Hitting the raw EC2 origin over `http://…`
   would still be blocked.) The Android app talks to the same CloudFront URL.
 - **Google sign-in:** add the Vercel origin to the Google OAuth web client's *Authorized JavaScript

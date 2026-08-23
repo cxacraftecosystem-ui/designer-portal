@@ -34,7 +34,7 @@ Three design decisions shape everything you will experience:
    Section 6 is the whole story, and it is worth reading before your first field trip rather than
    after.
 
-Live web app and API: **`https://d2b34i3e92al6i.cloudfront.net/api/`** (AWS, over HTTPS, reachable on
+Live web app and API: **`https://d3ekigkotd1xa2.cloudfront.net/api/`** (AWS, over HTTPS, reachable on
 IPv6-only mobile data). The Android app and the web app talk to the same one, so a record made on a
 phone appears on the laptop and vice versa. Nothing has to run on your own machine.
 

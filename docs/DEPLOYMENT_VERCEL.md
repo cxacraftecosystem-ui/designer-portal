@@ -16,7 +16,7 @@ Vercel account. Sister documents:
 |---|---|---|
 | Next.js web app | **Vercel** | Deployed by `.github/workflows/deploy-frontend.yml`, **after** the backend deploy succeeds ([docs/CI.md](CI.md)) — not by Vercel's Git integration (§3). 30 of 33 routes prerender to static HTML; the three `[id]/edit` routes render on demand (§8). No route handlers, no server actions, no `fs` access — see §8. |
 | FastAPI API | **AWS EC2** `t3.micro`, behind nginx | Not deployed by Vercel. Auto-deployed by `.github/workflows/deploy-backend.yml`. |
-| HTTPS + IPv6 edge for the API | **CloudFront** `https://d2b34i3e92al6i.cloudfront.net` | The value the browser actually talks to. |
+| HTTPS + IPv6 edge for the API | **CloudFront** `https://d3ekigkotd1xa2.cloudfront.net` | The value the browser actually talks to. |
 | Database | **PostgreSQL**, managed | Reached only by the backend. Which provider hosts it is deliberately not restated here — it is recorded once, with its evidence, under "The database" in [ENVIRONMENT.md](ENVIRONMENT.md). |
 | Media | **S3** `designrepo-media-626159998512` (dual-stack endpoints) | Browsers upload straight to S3 with signed PUT URLs — the bytes never pass through Vercel. |
 
@@ -55,7 +55,7 @@ add the first one, because the wrong type here fails silently and takes the whol
 
 | Name | Value (production) | Required | Type | Environments |
 |---|---|---|---|---|
-| `NEXT_PUBLIC_API_URL` | `https://d2b34i3e92al6i.cloudfront.net` | **Yes** | Encrypted | Production, Preview, Development |
+| `NEXT_PUBLIC_API_URL` | `https://d3ekigkotd1xa2.cloudfront.net` | **Yes** | Encrypted | Production, Preview, Development |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | the Google **web** OAuth client ID | Only for Google sign-in | Encrypted | Production, Preview, Development |
 | `NEXT_PUBLIC_MAPTILER_API_KEY` | MapTiler key | No | Encrypted | Production, Preview, Development |
 | `NEXT_PUBLIC_APP_URL` | `https://<your-project>.vercel.app` (or the custom domain) | No — see below | Encrypted | Production, Preview, Development |
@@ -78,9 +78,9 @@ The client appends `/api` **itself**. So `NEXT_PUBLIC_API_URL` must be the **ori
 
 | Value you set | Request that goes out | Result |
 |---|---|---|
-| `https://d2b34i3e92al6i.cloudfront.net` | `https://d2b34i3e92al6i.cloudfront.net/api/artisans` | ✅ correct |
-| `https://d2b34i3e92al6i.cloudfront.net/api` | `https://…/api/api/artisans` | ❌ every screen 404s |
-| `https://d2b34i3e92al6i.cloudfront.net/` | `https://…//api/artisans` | ❌ every screen 404s |
+| `https://d3ekigkotd1xa2.cloudfront.net` | `https://d3ekigkotd1xa2.cloudfront.net/api/artisans` | ✅ correct |
+| `https://d3ekigkotd1xa2.cloudfront.net/api` | `https://…/api/api/artisans` | ❌ every screen 404s |
+| `https://d3ekigkotd1xa2.cloudfront.net/` | `https://…//api/artisans` | ❌ every screen 404s |
 | `http://15.207.145.174` | blocked before it leaves the browser | ❌ mixed content (§7.1) — and that IP is the **field repository's** box, per [ENVIRONMENT.md](ENVIRONMENT.md) §4; this portal's is `13.206.216.18` |
 
 This has broken the deployment more than once. If the app loads but every list is empty and login
@@ -186,7 +186,7 @@ A healthy production bundle prints both:
 
 ```
 614092441670-3e5k15srupq9mfpg3aktqfkjvkavu0g3.apps.googleusercontent.com
-https://d2b34i3e92al6i.cloudfront.net
+https://d3ekigkotd1xa2.cloudfront.net
 ```
 
 **Silence is the diagnosis.** If those strings are not in the shipped JavaScript then no browser can
@@ -275,7 +275,7 @@ almost nothing, because it renders just as happily from a bundle with no API URL
    browser, and it is the only check that catches a build compiled without its environment.
 2. Open the deployment URL — the landing page should render.
 3. Go to `/login`, open devtools → Network, and attempt a login.
-4. The request must be `POST https://d2b34i3e92al6i.cloudfront.net/api/auth/login` — HTTPS, single
+4. The request must be `POST https://d3ekigkotd1xa2.cloudfront.net/api/auth/login` — HTTPS, single
    `/api`, and a `200` (or a `401` for wrong credentials, which still proves connectivity).
 
 ---
@@ -373,7 +373,7 @@ Skipping any of the last three leaves the site loading but unable to log in or u
 
 An HTTPS page may not call an HTTP endpoint; the browser blocks the request before it is sent, so
 the server logs show nothing at all. This is why `NEXT_PUBLIC_API_URL` must point at CloudFront
-(`https://d2b34i3e92al6i.cloudfront.net`) and never at the raw EC2 origin
+(`https://d3ekigkotd1xa2.cloudfront.net`) and never at the raw EC2 origin
 (`http://15.207.145.174` — the **field repository's** box, per [ENVIRONMENT.md](ENVIRONMENT.md) §4,
 which is also where the unresolved question about the distribution in front of it is recorded).
 Symptom: every request fails instantly, devtools console shows

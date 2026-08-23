@@ -47,7 +47,7 @@ async function twoArtisans(page: Page): Promise<[ArtisanRow, ArtisanRow]> {
     const token = window.localStorage.getItem("field_repo_token");
     const response = await fetch(`${apiBase}/api/artisans?pageSize=100`, { headers: { Authorization: `Bearer ${token}` } });
     return (await response.json()).items as ArtisanRow[];
-  }, process.env.NEXT_PUBLIC_API_URL ?? "https://d2b34i3e92al6i.cloudfront.net");
+  }, process.env.NEXT_PUBLIC_API_URL ?? "https://d3ekigkotd1xa2.cloudfront.net");
   const byCraft = new Map<string, ArtisanRow[]>();
   for (const row of rows) {
     if (!row.craftId) continue;
@@ -212,7 +212,7 @@ async function aLinkedProduct(page: Page): Promise<{ product: ProductRow; artisa
       fetch(`${apiBase}/api/artisans?pageSize=100`, { headers })
     ]);
     return { products: (await productResponse.json()).items, artisans: (await artisanResponse.json()).items };
-  }, process.env.NEXT_PUBLIC_API_URL ?? "https://d2b34i3e92al6i.cloudfront.net");
+  }, process.env.NEXT_PUBLIC_API_URL ?? "https://d3ekigkotd1xa2.cloudfront.net");
 
   for (const product of products as ProductRow[]) {
     const artisan = (artisans as ArtisanRow[]).find((row) => row.id === product.artisanId);

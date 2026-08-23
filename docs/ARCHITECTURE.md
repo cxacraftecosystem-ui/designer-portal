@@ -86,7 +86,7 @@ flowchart TB
     B[Browser or Android app]
   end
   subgraph edge["AWS edge"]
-    CF["CloudFront distribution<br/>d2b34i3e92al6i.cloudfront.net<br/>TLS 1.2+ · IPv4 and IPv6"]
+    CF["CloudFront distribution<br/>d3ekigkotd1xa2.cloudfront.net<br/>TLS 1.2+ · IPv4 and IPv6"]
   end
   subgraph ec2["EC2 t3.micro · ap-south-1 · 2 burstable vCPU · 1 GiB"]
     NX["nginx :80<br/>client_max_body_size 200M<br/>proxy_read_timeout 300s"]
@@ -639,7 +639,7 @@ production concern.
 | Every path and file reference | `node docs/tools/check-docs.mjs` resolves them; the run fails on a path that no longer exists. |
 | Counts (models, endpoints, code volume) | Not stated here. Generated into [REPO_FACTS.md](REPO_FACTS.md). |
 | §5.1's "never writes the record" | Structural, and that is why it is stated as structural: the claim holds exactly as long as `PlaceHit` in `frontend/lib/placeSearch.ts` carries no address field. A `state`, `district` or `pincode` added to that type falsifies the section, and would do it silently — the type is the enforcement. |
-| §2.1 latency table | Re-measure, do not trust. `for u in /health /health/ready /api/artisans; do curl -s -o /dev/null -w "$u %{time_total}\n" https://d2b34i3e92al6i.cloudfront.net$u; done` — take a median of five and **re-date the table**. Numbers with no date are the ones that mislead. |
+| §2.1 latency table | Re-measure, do not trust. `for u in /health /health/ready /api/artisans; do curl -s -o /dev/null -w "$u %{time_total}\n" https://d3ekigkotd1xa2.cloudfront.net$u; done` — take a median of five and **re-date the table**. Numbers with no date are the ones that mislead. |
 | §2.2 the sequential-waves finding | [SCALABILITY.md](SCALABILITY.md) §1 and §3, and the long comment above `load_relations` in `backend/app/services/records.py`. Re-derive wave counts with the proxy method described in SCALABILITY.md §13. |
 | §2.3 one uvicorn worker | `infra/terraform/user_data.sh` — the `ExecStart` line and the comment above it. |
 | §4 authentication | `backend/app/core/deps.py` (`get_current_user`, `resolve_user`) and `backend/app/core/security.py`. |

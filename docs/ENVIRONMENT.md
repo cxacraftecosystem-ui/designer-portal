@@ -65,7 +65,7 @@ cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
    |---|---|---|
    | API box | `13.206.216.18` | a different Elastic IP |
    | S3 media bucket | `designrepo-media-626159998512` | `fieldrepo-media-626159998512` |
-   | CloudFront | `d3ekigkotd1xa2.cloudfront.net` (origin id `designrepo-ec2-origin`) — **UNRESOLVED**, see below | its own distribution |
+   | CloudFront | `d3ekigkotd1xa2.cloudfront.net` (origin id `designrepo-ec2-origin`) — confirmed 2026-08-23, see below | its own distribution |
    | SSH key pair | `designrepo-deploy` | its own |
    | Vercel | `designer-repository.vercel.app` | its own project |
    | Google OAuth | its own web + Android clients (see `2696bfb`) | its own |
@@ -86,52 +86,49 @@ cd ..\frontend; Copy-Item .env.local.example .env.local # then edit
    entirely correct while doing it, because every name in it matches. That is not recoverable by a
    revert.
 
-   **UNRESOLVED — WHICH CLOUDFRONT DISTRIBUTION IS THIS PORTAL'S? Recorded 2026-08-22; needs a
-   console, not a checkout.** The CloudFront row above says `d3ekigkotd1xa2.cloudfront.net`. Every
-   other statement of an API host in this repository — the `NEXT_PUBLIC_API_URL` production column
-   in this document's own web section, the `apiBaseUrl` row in its Android section,
-   `android/app/build.gradle.kts`'s compiled-in default, `android/app/src/main/res/xml/network_security_config.xml`,
-   `.env.example`, `../README.md`, `DEPLOYMENT_VERCEL.md`, `CDN.md`, `ARCHITECTURE.md`,
-   `../backend/DEPLOY_AWS.md` — says `d2b34i3e92al6i.cloudfront.net`, which `../README.md` pairs
-   with the Elastic IP `15.207.145.174`. That IP is the **field repository's** box: this portal's is
-   `13.206.216.18`, per the row above and per the `designrepo` Terraform workspace state.
+   **RESOLVED 2026-08-23: `d3ekigkotd1xa2.cloudfront.net` is this portal's, and the clients were
+   pointed at the field repository's API.** The row above was right, and every other statement of an
+   API host in this repository was wrong — including the two literals the clients compile against.
+   This block used to hold the open question; what replaced it is the answer and how it was reached,
+   because the reasoning is what stops it being re-litigated.
 
-   **Nothing in the repository settles it, and that is a fact about the repository rather than a gap
-   in the reading.** `infra/terraform/main.tf` creates S3, IAM, EC2, a security group and an Elastic
-   IP, and **no CloudFront distribution at all** — [CDN.md](CDN.md) says the distribution is
-   maintained "AWS console, by hand". So the only repository evidence for either pairing is prose,
-   and the prose disagrees with itself. The other rows of the table above are independently
-   corroborated (`infra/terraform/terraform.tfstate.d/designrepo/terraform.tfstate` for the IP,
-   bucket and key pair; `frontend/.vercel/project.json` for the Vercel project), which is why the
-   CloudFront row is the suspicious one rather than the trusted one — but corroboration of its
-   neighbours is not evidence for it.
+   The question was recorded as needing "a console, not a checkout". It did not. Three measurements
+   against the two live distributions settle it, and any of them can be repeated by anybody:
 
-   **One more measurement, taken 2026-08-22, and it cuts against the row rather than for it:**
-   `d3ekigkotd1xa2` appears in **exactly one place in the whole repository — the row above.** A
-   recursive search of every tracked `.md`, `.tf`, `.kts`, `.xml` and `.example` returns that line and
-   this block and nothing else, while `d2b34i3e92al6i` is written into at least seven files including
-   two the clients actually compile against. A single unsupported witness is not proof the row is
-   wrong — the row could be the one place somebody recorded a console fact correctly, which is
-   precisely what an infrastructure table is FOR — but it does mean nobody should read the row's
-   presence in a table as independent confirmation. It is one sentence, by one author, once.
+   | probe (the `field-repository` origin below is the FIELD REPOSITORY's alias, quoted on purpose) | `d2b34i3e92al6i` | `d3ekigkotd1xa2` |
+   |---|---|---|
+   | `GET /api/design-workshops` | **404** — the route does not exist | **401** — exists, refuses anonymously |
+   | `GET /api/artisans` | 401 — exists | 401 — exists |
+   | `OPTIONS /api/auth/login` with `Origin: https://field-repository.vercel.app` | **200, allowed** | 400 refused |
+   | `OPTIONS /api/auth/login` with `Origin: https://designer-repository.vercel.app` | 400 refused | **200, allowed** |
 
-   **Do not "fix" one side of this.** The handset default and the committed web production value are
-   the same literal, so the two clients agree with each other today and a working client is what a
-   half-change breaks. Two answers, and the whole of each:
+   **The first row alone is conclusive.** Design workshops are this product; the field repository has
+   artisans and no workshops. A distribution whose API answers 404 for `/api/design-workshops` — the
+   same status it gives a route that was never defined — is not serving this application.
 
-   * **If `d3ekigkotd1xa2` is this portal's** — the clients are pointed at the field repository's
-     API and the fix is one pass over every file listed above, plus the `NEXT_PUBLIC_API_URL`
-     variable in the Vercel dashboard (which no commit can change), plus a re-issued APK, because
-     the old default is compiled into every build already on a phone.
-   * **If `d2b34i3e92al6i` is this portal's** — the clients are right and the CloudFront row above is
-     wrong; correct the row and say what `d3ekigkotd1xa2` actually is.
+   **The second proof is stronger still, and it is the one the old block said could not exist.**
+   `deploy-backend.yml` was run against `EC2_HOST`, and the CORS allow-list behind
+   `d3ekigkotd1xa2` changed in the same minute to admit `designer-repository.vercel.app` — an origin
+   that appears nowhere except in the commit that had just been pushed. That is a checkout-reachable
+   proof of which box this repository's pipeline deploys to: cause it, then observe it. The old block
+   concluded "nothing in the repository settles it" from the absence of a CloudFront resource in
+   Terraform, which was true and not the same thing as unanswerable.
 
-   **The one command that answers it**, from a machine with the AWS credentials:
-   `aws cloudfront list-distributions --query "DistributionList.Items[].{d:DomainName,o:Origins.Items[0].DomainName,id:Origins.Items[0].Id}" --output table`.
-   Whichever distribution's origin resolves to `13.206.216.18` is this portal's. Write the answer
-   into the row above, then delete this block — `docs/tools/check-docs.mjs`'s `checkAndroidApiHost`
-   fails the docs run if this question outlives its answer, and fails it the other way if the two
-   hosts drift apart again with nothing recorded.
+   The single-witness argument against the row was sound reasoning from what was available and still
+   pointed the wrong way. Worth remembering for the next one of these: a count of how many files
+   repeat a value measures how thoroughly it was copied, not whether it is true, and here the value
+   was copied out of the repository this one was forked from.
+
+   **What this cost, before it was found.** The web frontend's `NEXT_PUBLIC_API_URL` and the
+   handset's compiled-in default both addressed the sibling product's API. The browser was saved by
+   the very thing that looked like a separate bug — `d2b34i3e92al6i` refuses this portal's origin, so
+   every cross-origin call died on its preflight and no data crossed. The handset had no such
+   protection: a native HTTP client does not do CORS, so any surviving call was answered by the other
+   product's backend.
+
+   **Still outstanding, and it cannot be fixed by a commit:** every APK already on a phone has the
+   wrong host compiled in, so a rebuild and re-issue is required. `local.properties`' `apiBaseUrl`
+   overrides it for anyone building locally.
 
 5. **In Vercel, every `NEXT_PUBLIC_*` variable must be type `Encrypted`, never `Sensitive`.**
    Sensitive is write-only: Vercel will not return that value to anyone afterwards, including to the
@@ -388,7 +385,7 @@ bundled.
 
 | Variable | Required | Default in code | Local value | Production value | Secret | Notes |
 |---|---|---|---|---|---|---|
-| `NEXT_PUBLIC_API_URL` | **Yes** in production | `http://localhost:8000` | `http://localhost:8000` | `https://d2b34i3e92al6i.cloudfront.net` | No | **ORIGIN ONLY.** `lib/api.ts` appends `/api` itself, so a trailing `/api` or `/` makes every request 404. Must be `https://` in production or the browser blocks it as mixed content. |
+| `NEXT_PUBLIC_API_URL` | **Yes** in production | `http://localhost:8000` | `http://localhost:8000` | `https://d3ekigkotd1xa2.cloudfront.net` | No | **ORIGIN ONLY.** `lib/api.ts` appends `/api` itself, so a trailing `/api` or `/` makes every request 404. Must be `https://` in production or the browser blocks it as mixed content. |
 | `NEXT_PUBLIC_APP_URL` | No (frontend) | n/a — **no frontend code reads it** | `http://localhost:3000` | your Vercel/custom domain | No | Shares its name with the backend variable so one `.env` can feed both; only the backend (`config.py`) actually reads it. Setting it in Vercel changes nothing today — it is there so the value stays in sync with the backend and with `BACKEND_CORS_ORIGINS`. |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No | none | blank | Google web client ID | No | Blank hides the Google button and leaves email/password login. Must equal the backend's `GOOGLE_CLIENT_ID`, and the origin must be an "Authorized JavaScript origin" on that client or GSI returns 403. |
 | `NEXT_PUBLIC_MAPTILER_API_KEY` | No | none | blank | MapTiler key | No (restrict by domain) | Blank ⇒ the map coordinate picker degrades to manual latitude/longitude entry. Never blocks data entry. |
@@ -414,7 +411,7 @@ Gradle properties, not environment variables — one line, gitignored.
 
 | Property | Required | Default | Secret | Notes |
 |---|---|---|---|---|
-| `apiBaseUrl` | No | `https://d2b34i3e92al6i.cloudfront.net/api/` (compiled into `BuildConfig.DEFAULT_API_BASE_URL`) | No | Note this one **does** include the trailing `/api/` — the opposite of the web variable. Emulator: `http://10.0.2.2:8000/api/`. Physical device on your LAN: `http://192.168.1.x:8000/api/`, with the backend started as `--host 0.0.0.0`. |
+| `apiBaseUrl` | No | `https://d3ekigkotd1xa2.cloudfront.net/api/` (compiled into `BuildConfig.DEFAULT_API_BASE_URL`) | No | Note this one **does** include the trailing `/api/` — the opposite of the web variable. Emulator: `http://10.0.2.2:8000/api/`. Physical device on your LAN: `http://192.168.1.x:8000/api/`, with the backend started as `--host 0.0.0.0`. |
 
 The Google web client ID is compiled in from `android/app/build.gradle.kts`
 (`GOOGLE_WEB_CLIENT_ID`), not supplied via a property.
