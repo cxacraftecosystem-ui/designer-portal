@@ -326,11 +326,33 @@ jobs:
             exit 1
           fi
 
+          # EVERY `NEXT_PUBLIC_*` THE PULL RETURNS, not a hand-written pair. The list used to be
+          # exactly those two, and on 2026-08-23 all FOUR of this project's public variables were
+          # stored Sensitive — so a gate that named two would have gone green the moment those two
+          # were fixed and published a bundle with `undefined` inlined for the MapTiler key, i.e. a
+          # site that logs in fine and shows no map. Discovering the keys from the pulled file means
+          # a variable added in the dashboard next month is covered without anyone remembering to
+          # come back here.
+          #
+          # NEXT_PUBLIC_APP_URL is exempt, and only because it is genuinely inert: nothing under
+          # `frontend/` reads it (backend/DEPLOY_AWS.md and .env.example both say so), so its value
+          # cannot reach a bundle and being withheld cannot break one. If anything ever starts
+          # reading it, delete it from this list in the same change.
           fail=0
-          for var in NEXT_PUBLIC_API_URL NEXT_PUBLIC_GOOGLE_CLIENT_ID; do
-            # Never echoed. These two are public by definition (they are compiled into the
-            # JavaScript every visitor downloads), but a workflow that prints env values is
-            # the template someone copies the day the variable is not public.
+          # No `tr` and no quoting below: `for var in $discovered` word-splits on IFS, which
+          # includes newline, so the pulled keys need no flattening.
+          discovered="$(grep -oE '^NEXT_PUBLIC_[A-Z0-9_]+' "$env_file" | sort -u | grep -v '^NEXT_PUBLIC_APP_URL$')"
+          if [ -z "$discovered" ]; then
+            echo "::error::the pulled production environment contains no NEXT_PUBLIC_* variables at all, so the build would inline undefined for every one of them."
+            exit 1
+          fi
+          echo "checking: ${discovered}"
+          for var in $discovered; do
+            # Never echoed. Every `NEXT_PUBLIC_*` is public by definition — they are compiled into
+            # the JavaScript every visitor downloads — but a workflow that prints env values is the
+            # template someone copies the day the variable is not public. Only the two whose shape
+            # is knowable get a format check below; the rest are presence-only, which is the part
+            # that actually fails.
             value="$(sed -n "s/^${var}=//p" "$env_file" | tail -n 1 | sed -e 's/^"//' -e 's/"$//')"
 
             # `[SENSITIVE]` IS THE SENTINEL THE CLI ACTUALLY WRITES, and not testing for it made
@@ -443,6 +465,29 @@ jobs:
           url="$(vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN")"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed $url" >> "$GITHUB_STEP_SUMMARY"
+
+      # ─── `--prod` IS NOT ENOUGH, AND THIS IS WHY THE SITE WENT STALE FOR A WEEK ──────────────
+      #
+      # A production alias that was ever assigned by hand — `vercel alias set`, or a click in the
+      # dashboard — stops tracking the newest production deployment. `vercel deploy --prod` and
+      # `vercel promote` both create one and neither moves it. That is what
+      # designer-repository.vercel.app was doing on 2026-08-23: bound to a deployment seven days old
+      # while every deploy "succeeded". The step below would not have caught it either, because the
+      # alias serves 200 whichever deployment it points at.
+      #
+      # So the alias is moved EXPLICITLY, at the artifact just uploaded. Idempotent: if `--prod`
+      # already landed it there this is a no-op, and if the alias was pinned this is the only thing
+      # that unpins it. `|| exit 1` rather than a warning — an alias that did not move means nothing
+      # was published, and that must not read as a green deploy.
+      - name: Move the production alias onto this deployment
+        env:
+          SITE: ${{ steps.alias.outputs.url }}
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          host="${SITE#https://}"
+          vercel alias set "${URL#https://}" "$host" --token="$VERCEL_TOKEN"
+          echo "Aliased $host -> $URL" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Smoke-check the production alias
         env:
