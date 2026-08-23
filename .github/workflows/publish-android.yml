@@ -184,12 +184,14 @@ jobs:
           # This workflow's default ref IS the thing being released — the tagged commit on a tag
           # push, the dispatched ref on a manual run — so overriding it could only make it wrong.
           fetch-depth: 1
-          # GUARD 4 reads the ANNOTATED TAG'S MESSAGE to decide whether an equal-version republish was
-          # asked for, and `git tag -l --format='%(contents)'` can only answer if the tag OBJECT is in
-          # the local repository — a shallow checkout of a ref does not guarantee it. Asked for
-          # explicitly rather than relied upon. If it is ever absent anyway the read yields an empty
-          # string, the marker is not found, and the guard refuses: the failure direction is safe.
-          fetch-tags: true
+          # NO `fetch-tags: true` HERE, AND IT MUST STAY THAT WAY. GUARD 4 needs the annotated tag's
+          # message, and asking checkout for tags looked like the obvious way to get it. On a TAG PUSH
+          # it makes checkout construct two refspecs that collide:
+          #
+          #   fatal: Cannot fetch both <sha> and refs/tags/v0.0.1 to refs/tags/v0.0.1
+          #
+          # which failed the very first step and skipped the entire publish. The tag object is fetched
+          # inside GUARD 4 instead, where a failure to get it is survivable.
 
       - name: Resolve the run mode, and refuse to publish something no tag names
         id: mode
@@ -1136,6 +1138,11 @@ jobs:
           # the in-app updater compares CODES, so any handset already on code ${published} will never
           # be offered this. It is a fix for everyone who downloads from now on, not an update push.
           # If devices are already carrying the broken build, bump the version instead.
+          # The tag-push checkout writes a LIGHTWEIGHT ref (`+<sha>:refs/tags/<name>`), so the local
+          # tag points straight at the commit and the annotation is not present to read. Fetch the real
+          # tag object now. Failure is tolerated on purpose: no message means no marker, which means
+          # the guard refuses an equal-code publish — the safe direction.
+          git fetch --force --no-recurse-submodules origin             "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" >/dev/null 2>&1 || true
           tag_message="$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" 2>/dev/null || true)"
           republish=false
           case "$tag_message" in *"[republish]"*) republish=true ;; esac
@@ -1572,6 +1579,12 @@ jobs:
 
       - name: Shred the credentials this job wrote to disk
         if: ${{ always() }}
+        # RUN FROM RUNNER_TEMP, NOT FROM `android/`. The job's default working directory is
+        # `android`, which does not exist when checkout itself failed — and on 2026-08-23 that turned
+        # this cleanup into "An error occurred trying to start process '/usr/bin/bash' … No such file
+        # or directory". A shred step that cannot start is a shred step that did not happen. The paths
+        # below are all absolute under RUNNER_TEMP, so it never needed the repository anyway.
+        working-directory: ${{ runner.temp }}
         # ALWAYS, INCLUDING ON FAILURE, which is the only version of this step worth having: a job
         # that dies between decoding the keystore and finishing is exactly when files get left
         # behind. The runner is ephemeral and $RUNNER_TEMP goes with it, so this is belt and
@@ -1599,6 +1612,9 @@ jobs:
 
       - name: Summarise
         if: ${{ always() }}
+        # Same reason as the shred step above: the default `android` working directory does not
+        # exist if checkout failed, and a summary that cannot start is the one a reader most needs.
+        working-directory: ${{ runner.temp }}
         # The step summary is not the guard — nobody reads a summary on a green run, which is why
         # every check above fails the job instead of writing a note. It is here for the person who
         # opens this run six months later and needs to know what it did.
