@@ -132,9 +132,9 @@ and this one asserted an absence it had never looked for.
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
 | `backend/app` | 168 | 93,914 | 168 | 93,914 |
-| `frontend/app` | 64 | 27,963 | 64 | 27,963 |
+| `frontend/app` | 64 | 27,977 | 64 | 27,977 |
 | `frontend/components` | 212 | 72,667 | 212 | 72,667 |
-| `frontend/lib` | 101 | 52,920 | 101 | 52,920 |
+| `frontend/lib` | 101 | 52,950 | 101 | 52,950 |
 | `android/app/src/main/java` | 161 | 141,346 | 161 | 141,346 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
