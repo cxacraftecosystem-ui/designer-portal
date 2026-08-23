@@ -401,12 +401,157 @@ STAGE_3 = StageSpec(
             # workshop viewer is a grantee — the exact hole `record_fields.py` records having
             # closed once already. A designer entitled to the full number can still type it over
             # the mask; only-fill-blanks then leaves their answer alone.
+            #
+            # NO `store_masked` HERE, WHICH IS A DECISION AND NOT AN OVERSIGHT — and it is stated at
+            # this field because `aadhaarNumber` below DOES declare it, so the two boxes on one row
+            # keep different amounts of what a designer types and a reader is entitled to know which
+            # is which. What is masked here is the CARRY: the value hydration copies in. What a
+            # designer types stays whole, because this is the field
+            # `IdentityCardCapture kind="PEHCHAN"` was built to fill — the never-stored camera route
+            # on both clients, whose whole purpose is to write the number off the card in the
+            # designer's hand. Masking it would un-ship that control. The Aadhaar's masking follows
+            # an explicit owner decision about the Aadhaar (2026-08-24, below); no such decision has
+            # been made about the Pehchan card number, and this line must not be read as one.
             fromref("artisanCardNo", "Artisan ID / card number", T, S, report_role=COL,
                     column_width_pct=16.0,
                     help="The Artisan Pehchan Card number. Shown masked to its last four digits "
                          "when it is filled in from the linked record."),
             fromref("pehchanCardAvailable", "Holds an Artisan Pehchan Card", BOOL, S,
                     help="Whether the artisan is enrolled under PM Vishwakarma."),
+            # ── THE AADHAAR, MASKED — A REVERSAL, RECORDED RATHER THAN A DELETION ───────
+            #
+            # DECIDED BY THE OWNER ON 2026-08-24, and this paragraph exists because the decision
+            # REVERSES one this repository had already argued out and written down. The note beside
+            # `pehchanCardNumber` in `REFERENCE_MODELS["Artisan"]` read, in full: "`aadhaarNumber`
+            # is NOT carried at any masking. It is the deduplication key, it is governed, and
+            # 'XXXX XXXX 9012' in a design report's participant table answers no question the
+            # report asks — the artisan is identified by name, Pehchan card and phone." THAT
+            # REASONING IS KEPT — at its own site and here — because a decision whose earlier
+            # argument has been deleted reads as though it was never in doubt, and the next reader
+            # cannot then tell a considered reversal from a widening nobody thought about.
+            #
+            # WHAT THE OWNER WAS SHOWN BEFORE DECIDING, written down so that "they were not told"
+            # is not available to anybody re-opening this:
+            #   * a design workshop's stage reads do NOT pass through `records._redact_sensitive`,
+            #     so nothing downstream re-masks this value on the way out;
+            #   * a `DesignWorkshopViewer` is a grantee, so the audience is wider than the designer
+            #     who typed the row;
+            #   * hydration copies at SAVE time and the report never re-resolves, so the entry is a
+            #     PERMANENT copy — clearing `Artisan.aadhaarNumber` afterwards does not retract it
+            #     from one `DwStageEntry.data` or one generated document.
+            # They chose to carry it anyway, masked to its last four digits. Both identity numbers
+            # now cross on the same terms, which is the one thing the previous split could not
+            # claim: one artisan's identity reads identically on every surface.
+            #
+            # WHAT WOULD REVERSE IT AGAIN, so a future owner has a procedure and not an argument:
+            # delete this FieldSpec, the `"aadhaarNumber"` key from
+            # `REFERENCE_MODELS["Artisan"].data`, the pair from
+            # `stage_schema.REFERENCE_HYDRATION["participant.artisanRef"]` and the same pair from
+            # `frontend/lib/designWorkshops.ts`'s `DW_REFERENCE_HYDRATION`, then regenerate the
+            # Android bundled asset. THAT DOES NOT RETRACT WHAT IS ALREADY WRITTEN: hydration
+            # copied at save time, so every entry saved while this field existed keeps its masked
+            # number and every report built from one still prints it. A reversal stops the next
+            # copy; it does not undo the copies already made.
+            #
+            # KEY_VALUE, EXPLICITLY, AND IT MUST NEVER BECOME A TABLE_COLUMN. The same hard rule as
+            # `craftStartDate` above and the address boxes below: the six TABLE_COLUMN widths on
+            # this entity already sum to exactly 100. Read the paragraph at `craftStartDate` for
+            # what a seventh actually does — `_table_columns` slices `columns[:6]` in DECLARATION
+            # order and the proportional fallback fires only when those six miss 100±0.5, so an
+            # appended seventh is DROPPED from the table while one declared before an existing
+            # column pushes the sixth out and re-lays-out a participant table that is already
+            # inside submitted documents. This field is declared before `specialisation`, so it is
+            # the second of the two. Pinned
+            # by `test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full`
+            # (which sums ALL of the entity's TABLE_COLUMNs and so catches either position), and
+            # named again AT THE FIELD by
+            # `test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column` — a generic width
+            # sweep would let a later reader think the role here was incidental.
+            #
+            # THE KEY IS `aadhaarNumber`, AND THAT SPELLING IS A SAFETY PROPERTY rather than
+            # symmetry for its own sake. `records._IDENTITY_KEYS` is `("aadhaarNumber",
+            # "pehchanCardNumber")` and `_redact_sensitive` walks nested dicts BY KEY NAME, so if a
+            # stage entry ever reaches `public_encode` the value is masked again. That second pass
+            # is a no-op and not a corruption because `mask_identity_number` is idempotent on its
+            # own output — `normalize_aadhaar` strips only separators, so "XXXX XXXX 9012" becomes
+            # "XXXXXXXX9012" becomes "XXXX XXXX 9012". Any other name sails straight through the
+            # walk, which is why the obvious-looking `aadhaarMasked` would have been worse.
+            #
+            # LABELLED SO THE TWO MASKED ROWS CANNOT BE CONFUSED, which the owner raised as the
+            # readability risk in the same breath as the decision: two rows reading
+            # "XXXX XXXX ####" told apart only by their labels is how the wrong one gets checked
+            # against the wrong card. This label shares NO WORD with `artisanCardNo`'s "Artisan ID
+            # / card number", the help text names that other box explicitly, and the two are not
+            # even in the same region of the printed page — the Pehchan is a TABLE_COLUMN in the
+            # roster table and this is a KEY_VALUE line in the per-row block beneath it. There is
+            # deliberately NO "(last four)" in the label: the mask says that itself, and the label
+            # would become a lie the moment a designer types the full number in over it.
+            #
+            # ADVANCED, NOT STANDARD, and it is the one tier decision here worth a sentence.
+            # `COMPACT_SUMMARY` is the one report template whose `max_tier` is not ADVANCED, so a
+            # national identity number stays out of the short review-meeting document — and
+            # `report_builder._omitted_by_tier` TELLS the designer it was left out, so nothing goes
+            # silently missing. Both clients still offer the box regardless of tier: the web's
+            # mirrored group is deliberately not tier-split, and Android puts it behind
+            # "More detail".
+            #
+            # max_length=20 AND NOT 14. The mask is 14 characters; a full number typed spaced or
+            # hyphenated is 14; bare digits are 12. The slack is chosen NOW, while nothing is
+            # stored, for the reason written out above `pincode`: `validate_entry` re-coerces EVERY
+            # field on EVERY save, so a bound that looks tight-and-tidy today becomes a refused
+            # answer on a box the designer never touched, the first time somebody types a spelling
+            # it did not expect.
+            #
+            # DECLARED AFTER `artisanCardNo`, AND THE ORDER IS LOAD-BEARING ON THE WEB.
+            # `stageFieldRoles.identityNumberField` returns the FIRST non-deprecated TEXT field
+            # whose key or label matches its identity pattern, and `FieldInput` mounts
+            # `IdentityCardCapture kind="PEHCHAN"` on exactly that one. Declaring this field BEFORE
+            # `artisanCardNo` would silently move the Pehchan card reader onto the Aadhaar box.
+            # ANDROID, BY CONTRAST, MATCHES PER FIELD: `DwIdentityOcr.isIdentityNumberField` will
+            # offer the camera on this box too and `identityKindFor` returns AADHAAR for it, so the
+            # handset's on-device Verhoeff-checked recogniser can offer a FULL twelve digits here in
+            # one tap. That is the registry-as-data design working as intended, and it is written
+            # down here rather than left to be discovered by whoever next reads an entry.
+            #
+            # `store_masked=True`, AND IT IS WHAT MAKES THE OWNER'S DECISION TRUE OF THE COLUMN
+            # RATHER THAN OF ONE CODE PATH. This paragraph used to end "it is not a new class of
+            # exposure — the box is hand-typeable by design", and that sentence was doing work it
+            # could not do. The decision was "both identity numbers cross MASKED"; what the code
+            # guaranteed was that the value the server's own hydration wrote was masked, while
+            # anything a client wrote afterwards was kept verbatim — a bare twelve digits from the
+            # handset's card reader, or from the help text's own invitation to type it in, landing
+            # permanently in `DwStageEntry.data` on a surface whose stage reads never pass through
+            # `records._redact_sensitive`, readable by every `DesignWorkshopViewer` grantee, in an
+            # entry nothing re-resolves. "It was already hand-typeable" is an argument about how the
+            # digits get there, not about whether they are kept. `coerce_value` now masks this
+            # field's value on every save (see `FieldSpec.store_masked`), so the four digits the
+            # report was ever going to print are the whole of what is stored — and the designer can
+            # still fill the box, which is the other half of the same instruction.
+            #
+            # `artisanCardNo` IS DELIBERATELY NOT DECLARED THIS WAY. The Pehchan card number has a
+            # capture control built for it on both clients (`IdentityCardCapture kind="PEHCHAN"`,
+            # and the same reader on Android) whose entire purpose is to write the full number off
+            # the card a designer is holding; masking it would un-ship that control rather than
+            # enforce a decision, and no decision has been made about it. So the two boxes on this
+            # row genuinely behave differently — the Pehchan keeps what is typed, the Aadhaar keeps
+            # four digits of it — and that asymmetry is stated at both fields rather than left to
+            # look like one of them was forgotten.
+            #
+            # REPOINTING `artisanRef` DISCARDS A TYPED NUMBER, and this is the one path that does.
+            # `hydrate_entries` fills blanks only, so a full number a designer typed survives every
+            # ordinary save — but when the REF is pointed at a DIFFERENT artisan every mapped target
+            # is cleared first, this one included, and refilled from the new record's mask. That is
+            # correct and identical for all 26 pairs (a name kept from the previous artisan would be
+            # far worse), and it is written down because this is the only field where the value being
+            # discarded may have been supplied by hand from a card rather than copied by the server.
+            fromref("aadhaarNumber", "Aadhaar number", T, A, report_role=KV, max_length=20,
+                    store_masked=True,
+                    help="The artisan’s Aadhaar number — NOT the Artisan Pehchan Card "
+                         "number, which is the “Artisan ID / card number” box above. "
+                         "Only the last four digits are ever stored here, as “XXXX XXXX 9012”: "
+                         "that is what is filled in from the linked record, and if you type the "
+                         "full number in yourself it is masked the same way when the stage is "
+                         "saved. The report prints those four digits, and nothing else of it."),
             fromref("specialisation", "Specialisation", T, S, report_role=COL,
                     column_width_pct=23.0),
             # ── EXPERIENCE, AND THE DATE IT IS NOW DERIVED FROM ───────────────────────────────
@@ -470,12 +615,23 @@ STAGE_3 = StageSpec(
             # for a roster row, one column over.
             #
             # KEY_VALUE, EXPLICITLY, AND IT MUST NEVER BECOME A TABLE_COLUMN. The six TABLE_COLUMN
-            # widths on this entity already sum to exactly 100; a seventh pushes
-            # `report_builder._table_columns` past its six-column cap onto the proportional fallback
-            # and silently re-lays-out a participant table that is already inside submitted
-            # documents. `report_builder` prints KEY_VALUE fields in the per-row block beneath the
-            # table, so nothing declared here is lost. Pinned by
-            # `test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full`.
+            # widths on this entity already sum to exactly 100.
+            #
+            # WHAT A SEVENTH ACTUALLY DOES, MEASURED IN `report_builder` RATHER THAN ASSUMED — this
+            # paragraph used to say "pushes past the six-column cap onto the proportional fallback",
+            # which describes only one of the two outcomes and not the one an appended field gets.
+            # `_table_columns` takes the FIRST SIX non-media TABLE_COLUMN fields in DECLARATION
+            # order (`columns[:6]`) and the fallback fires only when THOSE SIX fail to sum to
+            # 100±0.5. So where the seventh is declared decides which silent failure you get:
+            # declared AFTER `isMasterCraftsperson` it is sliced off and printed NOWHERE — captured,
+            # counted towards completeness, absent from the document — and declared BEFORE any of
+            # the existing six it pushes the sixth out of the slice, leaves the survivors summing to
+            # less than 100, and re-lays-out a participant table that is already inside submitted
+            # documents. This field is declared mid-list, so it is the second. `report_builder`
+            # prints KEY_VALUE fields in the per-row block beneath the table, so nothing declared
+            # here is lost either way. Pinned by
+            # `test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full`, which
+            # sums ALL of the entity's TABLE_COLUMNs and therefore catches both positions.
             #
             # A DATE AND SO NO `unit`, which is the fourth of this file's carry invariants rather
             # than a detail: a unit-less source column must not land in a box that declares one, and

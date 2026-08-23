@@ -51,12 +51,14 @@ from app.services import design_workshops as dw
 # record surface already prints, and `measurement_provenance.DIMENSION_FIELDS` is the closed set of
 # columns a method can be stamped on at all.
 from app.services import measurement_provenance, record_fields
-from app.services.records import derive_age, derive_experience_years
+from app.services.records import derive_age, derive_experience_years, mask_identity_number
 from app.services.stage_schema import (
     ENUMS,
     REFERENCE_HYDRATION,
     FieldType,
     all_entities,
+    coerce_value,
+    field_to_dict,
     validate_registry,
 )
 
@@ -168,7 +170,15 @@ def _enum_members(name: str) -> set[str]:
 #  * "provenance, not stated" — the `Location` model's own docstring: latitude/longitude/altitude/
 #    accuracy/capturedAt are a fix of the desk the record was typed at, 1,500 km from the village
 #    on the same row on every live record. Copying them would put a report's map pin on a desk.
-#  * "identity" — see `aadhaarNumber`, which is the one column here refused on policy grounds.
+#  * "identity" — THIS CATEGORY NOW HAS NO MEMBER, and the paragraph is kept rather than deleted
+#    because it is the record of a decision that was reversed. It read: "see `aadhaarNumber`, which
+#    is the one column here refused on policy grounds." The owner reversed that on 2026-08-24 —
+#    BOTH identity numbers cross now, BOTH masked to their last four digits by
+#    `records.mask_identity_number` — so `aadhaarNumber` moved to CARRIED and no column is refused
+#    on policy grounds any more. What the owner was shown before deciding, and what would reverse it
+#    again, is written out above `participant.aadhaarNumber` in `stage_definitions`. A category left
+#    standing with its argument intact is how the next reader can tell a considered reversal from a
+#    widening nobody weighed.
 #  * "a form default, not an answer" — a Prisma enum member that is ALSO the column's `@default`
 #    and has no blank alternative in any record form. `ProductType.OTHER`, `MarketDemand.UNKNOWN`
 #    and `MakerType.UNKNOWN` are the three, and the argument is written out above the translation
@@ -215,6 +225,20 @@ ARTISAN_CARRIED = {
     "place": "participant.village",            # the fallback when Location.village is empty
     "pehchanCardAvailable": "participant.pehchanCardAvailable",
     "pehchanCardNumber": "participant.artisanCardNo",   # MASKED — see the identity test
+    # MOVED HERE FROM NOT_CARRIED ON 2026-08-24, ON THE OWNER'S REVERSAL. Its entry there read:
+    # "identity. Masked on every exported surface by policy (records.mask_identity_number, and the
+    # scar in record_fields.py:270-283). It is the deduplication key; 'XXXX XXXX 9012' in a
+    # participant table answers no question a design report asks, and the artisan is already
+    # identified by name, Pehchan card and phone." The owner was shown the exposure in full — a
+    # workshop's stage reads do not pass through `records._redact_sensitive`, a DesignWorkshopViewer
+    # is a grantee, and the entry is a permanent copy — and chose to carry it anyway, masked.
+    #
+    # NO TEST FORCED THIS MOVE, which is exactly why it has to be done by hand and said out loud:
+    # `test_no_source_column_is_unaccounted_for` passes with the column in EITHER list and
+    # `test_no_column_is_both_carried_and_refused` only fires if it is in BOTH. This ledger is the
+    # evidence table for "nothing was missed", and a carried column sitting in the refused list
+    # would make it evidence for the opposite.
+    "aadhaarNumber": "participant.aadhaarNumber (MASKED — see the identity test)",
     "address": "participant.address",
     "notes": "participant.recordNotes",
     "dos": "participant.dos",
@@ -251,12 +275,6 @@ ARTISAN_CARRIED = {
     "workshopId": "participant.documentedAtWorkshop (Workshop.title, via the relation)",
 }
 ARTISAN_NOT_CARRIED = {
-    "aadhaarNumber": (
-        "identity. Masked on every exported surface by policy (records.mask_identity_number, and "
-        "the scar in record_fields.py:270-283). It is the deduplication key; 'XXXX XXXX 9012' in a "
-        "participant table answers no question a design report asks, and the artisan is already "
-        "identified by name, Pehchan card and phone."
-    ),
     "status": _MUTABLE_VERDICT,
     "reviewNotes": "bookkeeping — internal moderation",
     "reviewedById": "bookkeeping — internal moderation",
@@ -922,27 +940,221 @@ def test_an_unmapped_token_is_logged_and_not_raised(caplog):
 
 
 # --------------------------------------------------------------------------------------
-# LANDMINE 3 — a source that no longer writes, and an identity number that must be masked
+# LANDMINE 3 — a source that no longer writes, and two identity numbers that must be masked
 # --------------------------------------------------------------------------------------
 
 
-def test_the_pehchan_card_number_arrives_masked_and_the_aadhaar_does_not_arrive_at_all():
-    """THE DEFECT THIS REPOSITORY HAS ALREADY PAID FOR ONCE, ON A NEW SURFACE.
+def test_both_identity_numbers_arrive_masked_and_neither_arrives_bare():
+    """THE DEFECT THIS REPOSITORY HAS ALREADY PAID FOR ONCE, ON A NEW SURFACE — AND A REVERSAL.
 
     ``record_fields.py`` carries the note: "The card number used to print verbatim here while the
     Aadhaar beside it was masked, so a full PM Vishwakarma ID reached every grantee, dataset
     downloader and reviewer — a rule that held on the API responses and nowhere else." A design
     workshop is exactly such a surface: its stage reads do NOT pass through
     ``records._redact_sensitive``, and a ``DesignWorkshopViewer`` is a grantee. The copy is also
-    permanent by design, so an unmasked number could never be walked back.
+    permanent by design, so an unmasked number could never be walked back. THAT HALF IS UNCHANGED
+    AND IS WHY BOTH NUMBERS ARE MASKED HERE RATHER THAN ANYWHERE DOWNSTREAM.
+
+    THIS TEST WAS DELIBERATELY INVERTED ON 2026-08-24, AND IT IS NOT A LOOSENING. It was called
+    ``test_the_pehchan_card_number_arrives_masked_and_the_aadhaar_does_not_arrive_at_all`` and its
+    third assertion read::
+
+        assert "aadhaar" not in " ".join(data).lower(), "the Aadhaar number must not be carried
+        at all"
+
+    — which joined the carried dict's KEYS, so it was the assertion that failed the moment the new
+    lambda key landed. THE OWNER REVERSED THE UNDERLYING DECISION, having been shown the exposure in
+    full: that a design workshop's stage reads do not pass through ``records._redact_sensitive``,
+    that a ``DesignWorkshopViewer`` is a grantee, and that a hydrated entry is a PERMANENT copy
+    which clearing ``Artisan.aadhaarNumber`` afterwards does not retract from any entry or any
+    document already written. Both identity numbers cross, both masked to their last four digits, through the
+    same helper.
+
+    WHAT WOULD REVERSE IT AGAIN: delete the ``participant.aadhaarNumber`` FieldSpec, the
+    ``"aadhaarNumber"`` key from ``REFERENCE_MODELS["Artisan"].data``, the pair from
+    ``stage_schema.REFERENCE_HYDRATION["participant.artisanRef"]`` and the same pair from
+    ``frontend/lib/designWorkshops.ts``, then regenerate the Android bundled asset — and restore
+    this test's old name and third assertion. Entries already saved keep their masked number.
+
+    THE ASSERTION THAT DID NOT CHANGE IS THE ONE THAT MATTERS. The bare digits of neither number
+    have ever crossed and still do not: that is the last line, and it is the reason the reversal is
+    a masking decision rather than a disclosure.
     """
     row = _artisan_row()
     data = dw.REFERENCE_MODELS["Artisan"].data(row, None)
 
     assert data["pehchanCardNumber"] == "XXXX XXXX 5678"
+    # "234567890123" -> last four only. Written as the literal rather than computed from the row,
+    # because a mask asserted through the masker is a test of nothing.
+    assert data["aadhaarNumber"] == "XXXX XXXX 0123"
     assert row.pehchanCardNumber not in str(data), "the bare card number is in the carried data"
-    assert "aadhaar" not in " ".join(data).lower(), "the Aadhaar number must not be carried at all"
-    assert row.aadhaarNumber not in str(data)
+    assert row.aadhaarNumber not in str(data), "the bare Aadhaar digits are in the carried data"
+
+
+#: Words in an identity-number label that describe the SHAPE OF THE BOX rather than which card the
+#: artisan produced. Two labels may share these — "number" is in both of the registry's two identity
+#: labels and there is no honest way to write either without it — and may share nothing else. See
+#: :func:`test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column`, which explains at
+#: length why adding a card's NAME to this set would defeat the assertion it serves.
+_SHAPE_WORDS = frozenset({"number", "no", "id", "the", "a", "of", "s"})
+
+
+def test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column():
+    """The four properties the 2026-08-24 decision actually rests on, none of which the mask covers.
+
+    The inverted test above proves the VALUE is masked. It cannot see any of the following, and each
+    one is a way this carry could be broken later by somebody who read only that test:
+
+    1. THE REPORT ROLE. The owner's first hard constraint was that this field is KEY_VALUE and
+       never a TABLE_COLUMN. The width sweep
+       (``test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full``)
+       would catch a promotion — but as a width arithmetic failure three
+       entities wide, which reads as a rebalancing problem rather than as a decision being undone.
+       Named here at the field so the next reader knows the role was chosen.
+    2. THE SUM ITSELF, asserted as EXACTLY 100 rather than "not over". ``_table_columns`` falls back
+       to proportional widths when the declared ones do not reach 100, so a table at 99 is already
+       laid out by the fallback and the next column costs nothing — which would quietly make
+       constraint 1 unenforceable rather than violated.
+    3. IDEMPOTENCE OF THE MASK. The key is spelled ``aadhaarNumber`` precisely so that
+       ``records._IDENTITY_KEYS``, which walks nested dicts BY KEY NAME, re-masks the value if a
+       stage entry ever reaches ``public_encode``. That is only safe because a second pass is a
+       no-op: ``normalize_aadhaar`` strips separators, so "XXXX XXXX 0123" normalises to
+       "XXXXXXXX0123" and masks back to itself. If that ever stopped holding, the safety property
+       the key name buys would become a corruption instead.
+    4. THE LABELS, MECHANICALLY. The owner raised the readability risk themselves: two rows reading
+       "XXXX XXXX ####" told apart only by their labels is how the wrong one gets checked against
+       the wrong card. Whether two labels are distinguishable is exactly the judgement a reviewer's
+       eye stops making six months into a relabelling, so it is asserted rather than trusted.
+
+       WHAT IS ASSERTED IS NOT "NO SHARED WORD", AND THE FIRST DRAFT OF THIS TEST WAS WRONG ABOUT
+       THAT — it asserted the strict version and failed on the word "number", which "Aadhaar number"
+       and "Artisan ID / card number" both contain and always will. Recorded rather than quietly
+       relaxed, because the distinction is the whole point of the assertion: a word naming the SHAPE
+       of the box ("number", "no", "id") carries no identity and cannot cause the confusion the
+       owner described. The words that CAN are the ones naming which card is in the artisan's hand,
+       and those must be disjoint. Relabelling this box "Artisan Aadhaar number" still fails, on
+       "artisan", which is the case worth catching. Adding "aadhaar" or "pehchan" to
+       :data:`_SHAPE_WORDS` to make a failure go away would defeat the test, and is the one edit
+       nobody should make to it.
+    """
+    aadhaar = _field("participant", "aadhaarNumber")
+    pehchan = _field("participant", "artisanCardNo")
+
+    assert aadhaar.report_role.value == "KEY_VALUE", (
+        "participant.aadhaarNumber must print in the per-row key-value block, never as a seventh "
+        "column of a participant table that is already inside submitted documents"
+    )
+    assert aadhaar.column_width_pct in (None, 0, 0.0), (
+        "a KEY_VALUE field declaring a column width reads as a column waiting to be promoted"
+    )
+
+    widths = [f.column_width_pct for f in _entity("participant").fields
+              if f.report_role.value == "TABLE_COLUMN" and not f.deprecated]
+    assert abs(sum(widths) - 100.0) < 1e-6, (
+        f"participant's declared table widths now sum to {sum(widths)}; at anything but exactly "
+        "100 the proportional fallback is already governing and the no-seventh-column rule "
+        "protects nothing"
+    )
+
+    once = mask_identity_number("234567890123")
+    assert once == "XXXX XXXX 0123"
+    assert mask_identity_number(once) == once, (
+        "the mask is no longer idempotent, so records._IDENTITY_KEYS re-masking a stage entry by "
+        "key name would corrupt the value instead of leaving it alone"
+    )
+
+    def naming_words(label: str) -> set[str]:
+        return {
+            w for w in re.split(r"[^a-z]+", label.lower())
+            if w and w not in _SHAPE_WORDS
+        }
+
+    shared = naming_words(aadhaar.label) & naming_words(pehchan.label)
+    assert shared == set(), (
+        f"“{aadhaar.label}” and “{pehchan.label}” now share {sorted(shared)}, which is a word that "
+        "names WHICH card rather than the shape of the box. Two masked rows reading "
+        "“XXXX XXXX ####” must be told apart by their labels alone"
+    )
+    # Belt and braces on the half a stop-word list cannot check: each label must still say which
+    # card it is. A label reduced to nothing but shape words would pass the disjointness above.
+    assert "aadhaar" in aadhaar.label.lower()
+    assert naming_words(pehchan.label), f"“{pehchan.label}” no longer names a card at all"
+
+
+def test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask():
+    """The decision said MASKED. For one revision only the hydrated value was.
+
+    ── THE DEFECT THIS PINS ────────────────────────────────────────────────────────────────────────
+
+    ``test_both_identity_numbers_arrive_masked_and_neither_arrives_bare`` proves the value the SERVER
+    copies in is a mask, and ``test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column``
+    proves the four properties around it. Neither can see what happens to a value a CLIENT writes,
+    and that was the whole of the gap between the owner's decision and the code:
+
+      * the registry's own help text invited it — "If you hold the full number you can type it in
+        over the mask; your answer is kept";
+      * ``DwIdentityOcr.isIdentityNumberField`` matches identity fields PER FIELD and
+        ``identityKindFor`` answers AADHAAR for this key, so Android's bundled Verhoeff-checked
+        recogniser offered a bare twelve digits into this box in one tap;
+      * a design workshop's stage reads do NOT pass through ``records._redact_sensitive``, a
+        ``DesignWorkshopViewer`` is a grantee, and a hydrated entry is a permanent copy that nothing
+        re-resolves.
+
+    So the twelve digits landed, permanently, in a grantee-readable row, under a decision that said
+    they would not. ``FieldSpec.store_masked`` closes it in ``coerce_value``, which is the one door
+    every save goes through — ``validate_entry`` re-coerces EVERY field on EVERY save, so this also
+    re-masks anything written before the flag existed.
+
+    ── WHY MASK AND NOT REFUSE ─────────────────────────────────────────────────────────────────────
+
+    The other candidate was to refuse anything ``artisan_identity.aadhaar_error`` accepts as a full
+    number, which would have contradicted the second half of the same instruction: "the designer must
+    be able to fill it when it is absent … a designer entitled to the full number can type over the
+    mask". Masking honours both — the box takes what is typed, the column keeps what the report
+    prints. Asserted below so a later reader cannot mistake the choice for an accident.
+
+    Nothing here touches a database.
+    """
+    aadhaar = _field("participant", "aadhaarNumber")
+    pehchan = _field("participant", "artisanCardNo")
+
+    assert aadhaar.store_masked is True, (
+        "participant.aadhaarNumber no longer declares store_masked, so a full number typed or read "
+        "into it is stored verbatim on a permanent, grantee-readable stage entry — which is the "
+        "state the owner's 2026-08-24 decision was made against"
+    )
+
+    # THE BARE NUMBER, THE GROUPED NUMBER AND THE MASK ITSELF all arrive as the same stored value.
+    # The third is the idempotence that lets hydration and a save agree, and lets
+    # `records._IDENTITY_KEYS` re-mask a stage entry by key name without corrupting it.
+    for typed in ("234567890123", "2345 6789 0123", "2345-6789-0123", "XXXX XXXX 0123"):
+        stored, error = coerce_value(aadhaar, typed)
+        assert error is None, f"{typed!r} was refused: {error}"
+        assert stored == "XXXX XXXX 0123", f"{typed!r} was stored as {stored!r}"
+
+    # NOT A REFUSAL, because the designer must still be able to answer the box. A 422 here would be
+    # the reading of the decision this repository deliberately did not take.
+    assert coerce_value(aadhaar, "234567890123")[1] is None
+
+    # THE BOUND STILL BITES, AND BEFORE THE MASK. Masking first would make `max_length` unreachable
+    # on this field — every masked value is 14 characters — so an answer nobody could have meant
+    # would be silently accepted as a plausible mask of its own last four characters.
+    assert coerce_value(aadhaar, "x" * 21)[1] is not None
+
+    # THE PEHCHAN BOX IS DELIBERATELY NOT MASKED ON SAVE, and this assertion is the record of that
+    # being a decision. `IdentityCardCapture kind="PEHCHAN"` exists on both clients to write the full
+    # number off the card a designer is holding; masking it would un-ship that control rather than
+    # enforce anything, and no owner decision covers it. If one is ever made, this line is what has
+    # to be argued with.
+    assert pehchan.store_masked is False
+    assert coerce_value(pehchan, "DL/2024/0001234")[0] == "DL/2024/0001234"
+
+    # PUBLISHED TO THE CLIENTS, because both of them say something about it: the web prints what the
+    # save will keep, and Android masks at the point of capture and masks again in its port of
+    # `coerce_value`. A flag the server enforced silently would leave the handset showing twelve
+    # digits as the designer's saved answer.
+    assert field_to_dict(aadhaar, "participant")["storeMasked"] is True
+    assert "storeMasked" not in field_to_dict(pehchan, "participant")
 
 
 def test_experience_and_age_now_come_from_columns_with_the_legacy_metadata_behind_them():
@@ -2248,15 +2460,39 @@ async def test_re_pointing_at_a_thinly_documented_record_clears_all_of_the_new_f
 
 
 async def test_the_designers_own_answers_survive_the_widening(monkeypatch):
-    """Only-fill-blanks, across twenty-two pairs instead of eight.
+    """Only-fill-blanks, across TWENTY-SIX pairs instead of eight.
 
     A picker that reverted a correction on every save would be worse than retyping, because the
-    designer watches the value change back and has no way to make it stick. The widening triples
-    the number of boxes that rule protects.
+    designer watches the value change back and has no way to make it stick. The widening more than
+    triples the number of boxes that rule protects.
+
+    THE NUMBER IS MEASURED, NOT REMEMBERED, and this docstring had it wrong: it read "twenty-two"
+    after ``REFERENCE_HYDRATION["participant.artisanRef"]`` had reached 26 (``craftStartDate`` and
+    ``aadhaarNumber`` among the four added since). `StageRecordEmbed.tsx` was corrected 25→26 in the
+    same change that added the twenty-sixth and this line was not — the same drift
+    ``docs/DESIGN_WORKSHOP.md`` fixes ("81") three files away. A stale count in a test name is worse
+    than a stale count in prose: it is the number the next reader trusts when deciding whether the
+    fixture below still covers the mapping.
     """
     typed = {
         "artisanRef": "art_1", "name": "Latha (Ammaji)", "email": "ammaji@example.org",
         "district": "Bolangir", "dos": "1. Ask before recording",
+        # HARD CONSTRAINT 2 OF THE 2026-08-24 AADHAAR DECISION, PINNED BY THE TEST THAT ALREADY
+        # OWNS THE RULE IT DEPENDS ON. The designer here is entitled to the full number and typed
+        # it over the mask; only-fill-blanks must leave it exactly as typed. If hydration ever
+        # overwrote a designer's answer, THIS is the box where the failure is worst — the mask
+        # would silently replace the one thing an officer could check against the card, and the
+        # designer would watch their own correction disappear with no way to make it stick.
+        #
+        # AND IT IS THE FULL NUMBER ON PURPOSE, WHICH IS NOT WHAT A REAL SAVE ENDS UP STORING.
+        # `hydrate_entries` is what is under test here, and it never coerces a value it did not copy —
+        # so the shape of the designer's answer is irrelevant to only-fill-blanks and the strongest
+        # fixture is the one whose reversion would matter most. What DOES coerce it, one layer out, is
+        # `coerce_value`: `participant.aadhaarNumber` declares `store_masked`, so a real save of this
+        # row stores "XXXX XXXX 0123". Both facts are wanted and neither weakens the other — see
+        # `test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask`, which owns the
+        # second one.
+        "aadhaarNumber": "2345 6789 0123",
     }
     data = await _hydrate(
         monkeypatch, "participant", typed, rows={"artisan": [_artisan_row()]},
@@ -2974,11 +3210,14 @@ def test_the_hydration_table_grew_and_no_pair_was_lost():
     #   PYTHONUTF8=1 .venv/Scripts/python.exe -c "import app.services.stage_definitions; \
     #     from app.services.stage_schema import REFERENCE_HYDRATION; \
     #     print(sum(len(m) for m in REFERENCE_HYDRATION.values()))"
+    # RE-MEASURED 2026-08-24 with the same command, after `participant.aadhaarNumber` landed: 109.
+    # Raised rather than left at 107 for the reason the paragraph above gives — two pairs of slack
+    # is two pairs that could be deleted with the floor still green.
     pairs = sum(len(m) for m in REFERENCE_HYDRATION.values())
-    assert pairs >= 107, (
-        f"the carry is down to {pairs} field-pairs; it was 32 before this lane and 107 as measured "
-        "on 2026-08-22, and a drop means a mapping was removed rather than a source column "
-        "disappearing"
+    assert pairs >= 109, (
+        f"the carry is down to {pairs} field-pairs; it was 32 before this lane, 107 as measured on "
+        "2026-08-22 and 109 on 2026-08-24, and a drop means a mapping was removed rather than a "
+        "source column disappearing"
     )
 
 def test_no_reference_model_asks_prisma_for_a_media_relation_its_delegate_does_not_have():

@@ -291,7 +291,13 @@ that shipped tonight and that a security reader should see collected.
   `RecordRevision.changes` copying a retracted identity or contact value — a genuine improvement,
   and the right call for `phone`/`email`/`address`. The cost, which that comment states in full, is
   that the `RecordRevision` `old` was the *last copy anywhere* of a previous Aadhaar number
-  (Aadhaar crosses into no stage entry at any masking). After tonight an EDIT-tier grantee, or a
+  (~~Aadhaar crosses into no stage entry at any masking~~ — **no longer true as of 2026-08-24**:
+  the owner reversed that carry, so the masked last four now ride into `participant.aadhaarNumber` on
+  every stage entry that referenced the artisan. That is a residue, not a ledger — a `DwStageEntry`
+  is not indexed by identity number and exists only where the artisan was rostered — so the cost
+  below is softened where a workshop happens to exist and unchanged everywhere else. The *argument*
+  for declining the alternative, however, is spent: see the re-raised note in
+  `backend/app/services/access.py`). After tonight an EDIT-tier grantee, or a
   professor outranking the author, can repoint or clear one, the previous identifier is gone, and
   the freed `UNIQUE` dedup key admits a duplicate artisan with nothing to trace the collision back
   to. The comment offers `mask_identity_number(old_value)` as the alternative and correctly hands
@@ -313,13 +319,29 @@ that shipped tonight and that a security reader should see collected.
 Each of these was hunted specifically. A category checked and clean is a result.
 
 ### Identity data widening — CLEAN
-* **Aadhaar crosses nowhere.** Checked by AST walk rather than by grep, so a mention inside a
-  docstring cannot be mistaken for either a hit or a miss: parsing
-  `backend/app/services/{design_workshops,design_ratings,report_builder}.py` and collecting every
-  `Name`, `Attribute` and string constant containing `aadhaar` outside a docstring returns **`[]`
-  for all three files**. The single grep hit
-  (`design_workshops.py:4128`, "a photographed Aadhaar card") is inside `media_resolver`'s
-  docstring, describing the leak that function's `viewer` parameter closed.
+* ~~**Aadhaar crosses nowhere.**~~ **SUPERSEDED BY AN OWNER DECISION, 2026-08-24 — the
+  measurement was right on the night and the result no longer holds.** The finding read: "Checked by
+  AST walk rather than by grep, so a mention inside a docstring cannot be mistaken for either a hit
+  or a miss: parsing `backend/app/services/{design_workshops,design_ratings,report_builder}.py` and
+  collecting every `Name`, `Attribute` and string constant containing `aadhaar` outside a docstring
+  returns **`[]` for all three files**. The single grep hit (`design_workshops.py:4128`, "a
+  photographed Aadhaar card") is inside `media_resolver`'s docstring, describing the leak that
+  function's `viewer` parameter closed."
+
+  Re-run that same AST walk today and it returns a hit in `design_workshops.py`: `r.aadhaarNumber`
+  and the string key `"aadhaarNumber"`, in the Artisan reference `data` lambda. **The category is no
+  longer CLEAN; it is a disclosed and authorised widening.** The owner was shown the exposure in full
+  — that a design workshop's stage reads do not pass through `records._redact_sensitive`, that a
+  `DesignWorkshopViewer` is a grantee, and that a hydrated entry is a permanent copy — and chose to
+  carry the number **masked to its last four digits**, on the same terms as the Pehchan card
+  immediately below. The bare digits still cross nowhere, which is pinned by
+  `test_both_identity_numbers_arrive_masked_and_neither_arrives_bare`. The decision, what was shown,
+  and the procedure to reverse it are recorded above `participant.aadhaarNumber` in
+  `backend/app/services/stage_definitions.py`.
+
+  **This entry is amended and not deleted for the reason this document argues everywhere else:** a
+  clean result that quietly disappears cannot be told apart from one nobody re-checked, and the AST
+  walk is the exact measurement a later reader would otherwise repeat and be alarmed by.
 * **Pehchan crosses only through the helper.** The Artisan reference `data` lambda in
   `design_workshops.py:1265` is `"pehchanCardNumber": mask_identity_number(r.pehchanCardNumber)` —
   and it masks *unconditionally*, which is narrower than `/artisans/{id}`, where a professor gets it
@@ -549,6 +571,20 @@ anchor and widens nothing.
   `pehchanCardAvailable` **three times** — these are registry FIELD NAMES, which is what a bundled
   schema is for (house rule 7), and `grep -oi aadhaar` over that asset returns **nothing**. So no
   value widened; what widened was the field vocabulary the handset already fetches off the wire.
+
+  **That last measurement expired on 2026-08-24 and its conclusion did not.** The asset was
+  regenerated for the owner's Aadhaar-carry decision, so `grep -oi aadhaar` over it now answers
+  **5**. ~~"the field key `aadhaarNumber` (twice: the field itself and its `refHydration` pair) and
+  'Aadhaar' in that field's label and help text"~~ — that itemisation adds up to **four**, in the
+  document whose own house rule 1 is about exactly this. **Corrected, byte offsets read off the
+  regenerated asset:** `"aadhaarNumber"` appears **three** times, not twice — the field's `key`, and
+  BOTH HALVES of the `refHydration` pair `"aadhaarNumber":"aadhaarNumber"`, which is one pair and two
+  matches — plus "Aadhaar" in the field's `label` and once in its `help`. 3 + 2 = 5. Every one of the five is a registry field name or
+  the prose beside it, which is what a bundled schema is; **no value is in that file and no value
+  can be**, because the asset is the form and not an answer. This breaks under any honest naming —
+  the label ships in the asset even where the key does not — which is precisely why the key was
+  spelled `aadhaarNumber` rather than something that would slip past a grep: `records._IDENTITY_KEYS`
+  matches that name, so a stage entry reaching `public_encode` is re-masked.
 * The offline outbox persists no credential — `frontend/lib/offline.ts` only *reads* `getToken()`
   to decide whether to start a drain.
 
@@ -828,8 +864,14 @@ the regenerated `android/app/src/main/assets/design-workshop-schema.json` carrie
 
 **The conclusion survives; the measurement does not.** What that `Log.e` writes is two page counts
 and a sentence — no PII, no token, no id — and the asset's `pehchan*` keys are the registry field
-names, which is what a bundled schema is. `grep -oi aadhaar` over that asset returns nothing. So
-nothing widened. But `PdfWriter.kt`'s mtime is 21:27 and this document was last written at 23:41:
+names, which is what a bundled schema is. ~~`grep -oi aadhaar` over that asset returns nothing.~~
+**Re-measured 2026-08-24: it answers 5**, after the asset was regenerated for the owner's decision to
+carry the masked Aadhaar onto the participant roster. All five are field vocabulary, not values, and
+the asset holds no answers at all: `"aadhaarNumber"` **three** times — the field's `key` plus BOTH
+HALVES of the `refHydration` pair `"aadhaarNumber":"aadhaarNumber"` — and "Aadhaar" in the field's
+`label` and once in its `help`. (This itemisation was itself wrong first time round, reading "the
+field key, its `refHydration` pair, and the label and help text", which is four for a count of five.
+Corrected against byte offsets in the file.) So nothing widened. But `PdfWriter.kt`'s mtime is 21:27 and this document was last written at 23:41:
 the line was there to be found, and "zero" was reported for a grep that answers two. House rule 1 is
 about exactly this.
 

@@ -338,6 +338,22 @@ export type MediaFile = {
   checksum?: string | null;
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
+  /**
+   * The client-written Json column beside the file — read for exactly one key today.
+   *
+   * DECLARED BECAUSE A PROPERTY TYPESCRIPT CANNOT SEE IS A PROPERTY NOTHING READS. It has been on the
+   * wire all along (`MediaFile.extraMetadata` in `schema.prisma`; `records._redact_sensitive` scrubs
+   * password hashes, identity numbers and media URLs, and nothing else), and the web has only ever
+   * WRITTEN it — `ProductForm` and `ToolForm` stamp `{ purpose: MEASUREMENT_GRID_PURPOSE }` on a grid
+   * capture. `mediaNoteGrammar.isMeasurementGridRow` is the first reader, and without this line a
+   * `MediaFile` would still be assignable to its optional-property row shape while the value read
+   * `undefined` for ever: the filter would never fire, and the symptom is a count one too high on
+   * exactly the records somebody measured most carefully. Silent, plausible, and printed.
+   *
+   * `unknown` and not a shape: it is a free Json column several clients write different keys into, and
+   * a declared shape here would be a promise this type cannot keep. Narrow it at the reader.
+   */
+  extraMetadata?: unknown;
   recordedAt?: string | null;
   recordedTimezone?: string | null;
   status: RecordStatus;

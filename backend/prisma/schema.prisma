@@ -209,6 +209,16 @@ model User {
   /// pairing as the two viewer relations above. See DesignWorkshopAccessRequest.
   designWorkshopAccessRequested DesignWorkshopAccessRequest[] @relation("DwAccessRequestRequestedBy")
   designWorkshopAccessDecided   DesignWorkshopAccessRequest[] @relation("DwAccessRequestDecidedBy")
+  /// The join cards this account MINTED and the ones it REVOKED, plus the codes it has redeemed and
+  /// the provisional footholds those redemptions produced. SetNull on the two issuer/revoker sides
+  /// (the trail must outlive the account, exactly as `decidedBy` above does) and Cascade on the two
+  /// that name the REDEEMER (a redemption is not authorship, and RESTRICT would invent a new
+  /// permanently-unclearable reason an account cannot be deleted — see `_undeletable_detail` in
+  /// api/routes/users.py). See RecordAccessToken.
+  recordAccessTokensIssued      RecordAccessToken[]              @relation("RecordAccessTokenIssuedBy")
+  recordAccessTokensRevoked     RecordAccessToken[]              @relation("RecordAccessTokenRevokedBy")
+  recordAccessTokenRedemptions  RecordAccessTokenRedemption[]    @relation("RecordAccessTokenRedemptionUser")
+  designWorkshopsProvisional    DesignWorkshopProvisionalMember[] @relation("DwProvisionalMemberUser")
   // The platform allow-list, from the two sides an account can be on it: the admin who put an
   // address on the list, and the admin who approved or rejected a request. Both SetNull on the far
   // side — the record that somebody was admitted outlives the admin who admitted them.
@@ -1829,6 +1839,11 @@ model DesignWorkshop {
   /// deleted when it ends, an ask and its refusal are history and are kept. See
   /// `DesignWorkshopAccessRequest`.
   accessRequests DesignWorkshopAccessRequest[] @relation("DesignWorkshopAccessRequests")
+  /// The people who scanned a join card that had already been spent, were NOT refused, and are
+  /// holding a capture-only foothold until an admin or a second valid card upgrades them. A THIRD
+  /// table and deliberately not a column on `viewers` — see `DesignWorkshopProvisionalMember`,
+  /// where the reason is the whole docstring.
+  provisionalMembers DesignWorkshopProvisionalMember[] @relation("DesignWorkshopProvisionalMembers")
   /// Custom questionnaires attached to this workshop through the designer's dropdown. Nullable on
   /// the far side, so an unattached questionnaire is a first-class thing rather than an orphan.
   questionnaires Questionnaire[] @relation("DesignWorkshopQuestionnaires")
@@ -1905,8 +1920,29 @@ model DesignWorkshop {
 model DesignWorkshopViewer {
   designWorkshopId String
   userId           String
-  /// The admin who granted it. Nullable so the relation below can be SetNull.
+  /// WHO THIS ROW CAME FROM — requirement 4's provenance slot, and it now has TWO kinds of answer.
+  /// An admin ticking a box on the viewers screen: that admin. A JOIN CARD redeemed in a courtyard:
+  /// the account that MINTED the card, which `services/design_workshop_grants.redeem` passes to
+  /// `replace_viewers` as `granted_by_id`.
+  ///
+  /// BE HONEST ABOUT THE LIMIT, because this trail will be read as more than it is: a token names
+  /// its ISSUER, not necessarily the person who physically handed the card over. SINGLE-USE is what
+  /// collapses those two into one fact — one seat, one redemption, so issuing and inducting are the
+  /// same event. A multi-use card deliberately does NOT collapse them: it says "somebody holding one
+  /// of Rekha's cards let this person in", and no column here can say who. That is the honest reason
+  /// a multi-use card is admin-only and off by default.
+  ///
+  /// Nullable so the relation below can be SetNull.
   grantedById      String?
+  /// WHICH CARD PRODUCED THIS ROW. Write-once, set at induction, never overwritten, and NULL for
+  /// every row an admin made by hand. `grantedById` above answers WHOSE card; this answers WHICH
+  /// one, which is what makes "revoke everybody this batch let in" an answerable question.
+  ///
+  /// IT IS NOT A SECOND SOURCE OF ACCESS. `has_viewer_grant` reads the existence of this ROW and
+  /// nothing on it, so a NULL here and a token here are the same grant. Do not add a predicate that
+  /// reads it: that is the "two places to look when somebody has access they should not" that
+  /// `services/design_workshop_access.py`'s header refuses.
+  tokenId          String?
   createdAt        DateTime @default(now())
 
   designWorkshop DesignWorkshop @relation("DesignWorkshopViewers", fields: [designWorkshopId], references: [id], onDelete: Cascade)
@@ -1928,6 +1964,11 @@ model DesignWorkshopViewer {
   /// workshop they are halfway through, and "who let them in" is not worth an outage.
   grantedBy User? @relation("DesignWorkshopViewerGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
 
+  /// SetNull, matching `grantedById` beside it and for the same reason: losing the token row must
+  /// not lock a working co-designer out of the workshop they are halfway through. Tokens are
+  /// REVOKED and not deleted, so this fires only on a hand-run DELETE.
+  token RecordAccessToken? @relation("RecordAccessTokenViewers", fields: [tokenId], references: [id], onDelete: SetNull)
+
   /// The pair IS the identity — one grant per person per workshop — so a re-grant collides rather
   /// than stacking a second row, and the PK serves the "may this user open this workshop" lookup
   /// `load_workshop_or_404` makes on every read by a non-creator.
@@ -1939,6 +1980,9 @@ model DesignWorkshopViewer {
   /// The account pointer, indexed for the onDelete action it is on the wrong end of rather than
   /// for a read. See the long note on `DwStageEntry.createdById` for the decision this follows.
   @@index([grantedById])
+  /// The token pointer, for the same onDelete reason and for one read: "who did this batch of cards
+  /// let in", which is the only screen that can undo a leaked print run.
+  @@index([tokenId])
 }
 
 /// WHAT A REQUEST CAN BE — the three states one can be in, and there is no fourth.

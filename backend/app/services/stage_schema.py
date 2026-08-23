@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from app.services.artisan_identity import mask_aadhaar
 from app.services.report_model import clean_text
 from app.services.report_theme import ACCENT_PRESET_ENUM, FONT_PRESET_ENUM
 
@@ -199,6 +200,53 @@ class FieldSpec:
     #: the number a designer watches appear is the number that is stored. See ``derive_value``.
     derived_kind: str = ""       # DAYS_BETWEEN | PRODUCT | SUM
     derived_from: tuple[str, ...] = ()
+    #: THIS FIELD MAY ONLY EVER STORE THE MASK OF AN IDENTITY NUMBER, WHATEVER IS POSTED TO IT.
+    #:
+    #: ── THE DEFECT THIS ENDS, WHICH WAS A DECISION ENFORCED BY A HELP SENTENCE ──────────────────
+    #:
+    #: The owner decided on 2026-08-24 that both of an artisan's identity numbers cross into a
+    #: design report MASKED TO THEIR LAST FOUR DIGITS, and ``participant.aadhaarNumber`` was added
+    #: to carry the Aadhaar half. The carry itself was masked correctly — ``hydrate_entries`` copies
+    #: ``mask_identity_number(...)`` — but nothing anywhere refused an unmasked value in the box
+    #: AFTERWARDS, and one client actively produced one: Android's ``DwIdentityOcr`` matches
+    #: identity fields PER FIELD, ``identityKindFor`` answers AADHAAR for this key, and its bundled
+    #: Verhoeff-checked recogniser wrote a bare twelve-digit number into ``DwStageEntry.data`` in a
+    #: single tap. The registry's own help text INVITED the same by hand on every client ("If you
+    #: hold the full number you can type it in over the mask; your answer is kept"), and a design
+    #: workshop's stage reads do NOT pass through ``records._redact_sensitive``, so what landed was
+    #: a permanent unmasked copy of a national identifier — hydration copies at save time and the
+    #: report never re-resolves — readable by every ``DesignWorkshopViewer`` grantee. The decision
+    #: said "masked"; the code guaranteed it only for the value the SERVER wrote.
+    #:
+    #: ── WHY A MASK AND NOT A REFUSAL ────────────────────────────────────────────────────────────
+    #:
+    #: The other candidate was to refuse any value ``artisan_identity.aadhaar_error`` accepts as a
+    #: full number. That would contradict the second half of the same instruction — "the designer
+    #: must be able to fill it when it is absent … a designer entitled to the full number can type
+    #: over the mask" — by making the one entry route a 422. Masking honours both sentences at once:
+    #: the box takes what the designer types, and what is STORED is the four digits the report was
+    #: ever going to print. The box therefore visibly changes to ``XXXX XXXX 9012`` on the save, and
+    #: the help text says so before a digit is typed rather than after.
+    #:
+    #: ── WHERE IT IS APPLIED, AND WHERE IT DELIBERATELY IS NOT ───────────────────────────────────
+    #:
+    #: Applied in :func:`coerce_value`'s scalar-text branch, which is the one door every save goes
+    #: through (``validate_entry`` re-coerces EVERY field on EVERY save), AFTER the ``max_length``
+    #: check so an over-long answer still gets the field's own refusal rather than being silently
+    #: shortened into a mask. ``mask_identity_number`` is idempotent, so the mask hydration wrote
+    #: survives re-coercion unchanged.
+    #:
+    #: ``participant.artisanCardNo`` is deliberately NOT declared this way, and it is not an
+    #: oversight. The Pehchan card number has a capture control built for it on both clients
+    #: (``IdentityCardCapture kind="PEHCHAN"``) whose whole purpose is to write the full number a
+    #: designer is holding, and masking it would un-ship that control rather than enforce a
+    #: decision — no decision has been made about it. The asymmetry between the two boxes is
+    #: therefore real and is written down at both fields.
+    #:
+    #: PUBLISHED to the clients as ``storeMasked`` and PART OF :func:`registry_version`, because it
+    #: is behaviour rather than wording: a phone with no signal that did not know about the flag
+    #: would go on letting a designer type twelve digits believing they were kept.
+    store_masked: bool = False
     phase_note: str = ""         # a reviewer comment from the source document
     deprecated: bool = False
     replaced_by: str = ""
@@ -702,7 +750,14 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
     # (`age`, `experienceYears`) that have no column on `Artisan` at all and are therefore blank on
     # every record created since the artisan form stopped writing free metadata.
     #
-    # `aadhaarNumber` is the one column deliberately not here in any form. See that same note.
+    # `aadhaarNumber` USED TO BE THE ONE COLUMN DELIBERATELY NOT HERE IN ANY FORM, and that
+    # sentence stood on this line until 2026-08-24. The owner reversed it on that date, having been
+    # shown that a workshop's stage reads do not pass through `records._redact_sensitive`, that a
+    # DesignWorkshopViewer is a grantee, and that a hydrated entry is a permanent copy. BOTH
+    # identity numbers now cross, BOTH masked to their last four digits by the same helper. The
+    # earlier reasoning is kept rather than deleted — at `REFERENCE_MODELS["Artisan"].data` and in
+    # full above `participant.aadhaarNumber` in `stage_definitions` — because a decision whose
+    # argument has been erased reads as though nobody ever weighed it.
     "participant.artisanRef": {
         "name": "name",
         "localName": "localName",
@@ -726,6 +781,20 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "email": "email",
         "pehchanCardAvailable": "pehchanCardAvailable",
         "pehchanCardNumber": "artisanCardNo",
+        # THE SECOND MASKED NUMBER, added 2026-08-24 on the owner's reversal. Source key and
+        # target key are the SAME word on purpose: `records._IDENTITY_KEYS` recognises
+        # `aadhaarNumber` by name, so an entry that ever reached `public_encode` would be re-masked
+        # rather than passed through, and `mask_identity_number` is idempotent so that second pass
+        # costs nothing. The target is KEY_VALUE and can never be promoted to a column — the
+        # participant table's six widths already total exactly 100.
+        #
+        # AND THE TARGET DECLARES ``store_masked``, WHICH IS THE HALF THIS TABLE CANNOT GUARANTEE.
+        # A hydration mapping decides what the SERVER copies in; it says nothing about what a client
+        # writes over it afterwards, and only-fill-blanks means a client can. For one revision that
+        # was the whole gap between the decision and the code — Android's card reader supplying a bare
+        # twelve digits into the same box in one tap. ``coerce_value`` masks it on every save, so the
+        # mask now holds against both routes.
+        "aadhaarNumber": "aadhaarNumber",
         "village": "village",
         "state": "state",
         "district": "district",
@@ -1165,6 +1234,25 @@ def validate_registry() -> list[str]:
                             f"field {where} captions {f.caption_for!r}, which is not a media "
                             "field"
                         )
+                # A `store_masked` FLAG THAT NOTHING APPLIES IS THE SILENT FAILURE THIS WHOLE
+                # FEATURE EXISTS TO END, so the registry refuses to carry one.
+                #
+                # `coerce_value` applies the mask inside its scalar-text branch and nowhere else,
+                # because the mask is a string transform and there is no such thing as a masked
+                # INT, DATE or IMAGE_LIST. Declared on any other type the flag would serialise to
+                # the clients, be published in the digest, appear in the asset — and do absolutely
+                # nothing on the way in, which is a field whose help text promises a mask over a
+                # column holding a full identity number. RICH_TEXT is excluded for the same
+                # reason from the other side: it never reaches that branch at all.
+                if f.store_masked and f.type not in (
+                    FieldType.TEXT, FieldType.LONG_TEXT, FieldType.URL,
+                    FieldType.PHONE, FieldType.EMAIL,
+                ):
+                    problems.append(
+                        f"field {where} declares store_masked but is {f.type.value}; only a "
+                        "scalar text field passes through the branch that applies the mask, so "
+                        "the flag would be published and never enforced"
+                    )
                 if f.deprecated and not f.replaced_by:
                     # A deprecated field with no successor leaves a form with a dead input and
                     # no migration path for the data already stored under it.
@@ -1369,6 +1457,35 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
                 return None, None
             if spec.max_length and len(text) > spec.max_length:
                 return None, f"{spec.label} is longer than {spec.max_length} characters"
+            if spec.store_masked:
+                # THE ONE DOOR EVERY SAVE GOES THROUGH, WHICH IS WHY THE MASK IS APPLIED HERE.
+                #
+                # See ``FieldSpec.store_masked`` for the decision and the exposure it closes. In
+                # short: the owner decided a design report carries an artisan's Aadhaar number
+                # masked to its last four digits, and until this line the guarantee held only for
+                # the value the server's own hydration wrote. Android's card reader wrote a bare
+                # twelve digits into the same box in one tap, the help text invited the same by
+                # hand, and a design workshop's stage reads never pass through
+                # ``records._redact_sensitive`` — so the full number became a permanent copy on a
+                # grantee-readable row. ``validate_entry`` re-coerces every field on every save, so
+                # putting it here also masks numbers that landed BEFORE this line existed, the next
+                # time their stage is saved.
+                #
+                # AFTER the length check above, on purpose: an over-long answer keeps the field's
+                # own refusal rather than being quietly shortened into a plausible-looking mask.
+                #
+                # ``mask_aadhaar`` AND NOT ``records.mask_identity_number``, WHICH IS THE SAME
+                # FUNCTION. ``mask_identity_number`` is a one-line delegation to this, so the two
+                # spellings are the same rule and one artisan's number reads identically on every
+                # surface — but ``records`` imports ``app.core.db``, and this module is imported by
+                # the DB-free registry tests and by the on-device report path. Reaching for the pure
+                # module keeps that true.
+                masked = mask_aadhaar(text)
+                # ``mask_aadhaar`` answers None for a value that normalises to nothing, which
+                # ``text`` cannot be (it is non-empty and stripped) — but reading its None as a
+                # cleared field rather than as "unchanged" is the direction that loses data, so it
+                # is spelled out instead of assumed.
+                return (masked if masked else text), None
             return text, None
 
         if t is FieldType.ENUM:
@@ -1801,6 +1918,16 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
         out["refFilterBy"] = f.ref_filter_by
     if f.max_length:
         out["maxLength"] = f.max_length
+    # WHAT THE SERVER WILL ACTUALLY KEEP, SAID TO THE CLIENT THAT RENDERS THE BOX.
+    #
+    # ``coerce_value`` replaces this field's value with the mask of an identity number on every
+    # save, so a client that does not know about the flag shows a box, accepts twelve digits, and
+    # is silently overruled — which on Android is a card reader writing a Verhoeff-checked number
+    # into a draft that syncs as four digits, with nothing on screen having said so. Both clients
+    # read this to word the control and (on Android) to mask at the point of capture, so what the
+    # designer proofreads and what is stored cannot differ. See ``FieldSpec.store_masked``.
+    if f.store_masked:
+        out["storeMasked"] = True
     # Emitted on the same "only non-default keys" rule as everything around it, so no field in
     # today's registry emits it and neither the bundled Android asset nor `registry_version()`
     # moves for adding the line. It starts crossing the wire the day a field declares a bound,
@@ -1911,6 +2038,14 @@ def registry_version() -> str:
     that exists precisely to catch this reported agreement. A field that silently stops computing
     is indistinguishable, on the phone, from a field the designer forgot to fill in.
 
+    ``store_masked`` IS HERE FOR THE SAME REASON, ONE FEATURE LATER AGAIN. It decides what a save
+    actually STORES — the mask of an identity number rather than the digits posted — and both
+    clients read it to say so on the box before a designer types. A phone that has never reached the
+    network and does not know a field has gained the flag offers a full-number box under a promise
+    ("your answer is kept") the server will no longer keep, which is the same class of silent
+    disagreement as a derivation that stopped computing. Labels and help text stay out; behaviour
+    goes in.
+
     THE HYDRATION MAPPING IS HERE FOR THE SAME REASON, ONE FEATURE LATER. ``field_to_dict`` now
     publishes :data:`REFERENCE_HYDRATION` as ``refHydration`` so the clients fill a row in by the
     server's rule instead of by matching key names — matching names is what wrote an artisan's
@@ -1938,7 +2073,8 @@ def registry_version() -> str:
                 )
                 parts.append(f"{s.key}.{e.key}.{f.key}:{f.type.value}:{f.tier.value}:"
                              f"{int(f.required)}:{f.enum}:{int(f.deprecated)}:"
-                             f"{f.derived_kind}:{','.join(f.derived_from)}:{hydration}")
+                             f"{f.derived_kind}:{','.join(f.derived_from)}:{hydration}:"
+                             f"{int(f.store_masked)}")
     digest = hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()
     return digest[:16]
 

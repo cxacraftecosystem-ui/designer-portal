@@ -1278,7 +1278,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "gender": r.gender,
             "phone": r.phone,
             "email": r.email,
-            # ── IDENTITY: THE CARD YES, THE NUMBER MASKED, THE AADHAAR NOT AT ALL ────────────
+            # ── IDENTITY: BOTH NUMBERS, BOTH MASKED — REVERSED BY THE OWNER 2026-08-24 ──────
             #
             # `participant.artisanCardNo` is labelled "Artisan ID / card number", is a TABLE_COLUMN
             # in every participant table, and sat directly opposite `Artisan.pehchanCardNumber`
@@ -1294,14 +1294,47 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # re-open that hole through a new door, and the entry is then a permanent copy by
             # design. The last four are what a reader checks against the physical card anyway.
             #
-            # `aadhaarNumber` is NOT carried at any masking. It is the deduplication key, it is
-            # governed, and "XXXX XXXX 9012" in a design report's participant table answers no
-            # question the report asks — the artisan is identified by name, Pehchan card and phone.
-            # If policy ever grants this report the full card number, ONE line changes: drop the
-            # `mask_identity_number` call. That is the whole reason the masking happens here rather
-            # than being spread across three clients.
+            # THE AADHAAR NOW CROSSES TOO, ON THE SAME TERMS, AND THIS IS A REVERSAL. What stood
+            # here until 2026-08-24 is kept verbatim, because a decision whose earlier argument has
+            # been deleted reads as though it was never in doubt:
+            #
+            #   "`aadhaarNumber` is NOT carried at any masking. It is the deduplication key, it is
+            #    governed, and "XXXX XXXX 9012" in a design report's participant table answers no
+            #    question the report asks — the artisan is identified by name, Pehchan card and
+            #    phone. If policy ever grants this report the full card number, ONE line changes:
+            #    drop the `mask_identity_number` call. That is the whole reason the masking happens
+            #    here rather than being spread across three clients."
+            #
+            # THE OWNER DECIDED OTHERWISE ON 2026-08-24, having been shown the exposure in full:
+            # that a design workshop's stage reads do NOT pass through `records._redact_sensitive`,
+            # that a `DesignWorkshopViewer` is a grantee, and that the entry is a PERMANENT copy
+            # (hydration copies at SAVE time; the report never re-resolves, so clearing
+            # `Artisan.aadhaarNumber` afterwards retracts it from no entry and no document already
+            # written). BOTH identity numbers cross, BOTH masked to their last four digits, through
+            # the SAME helper — which is the property the old split could not claim: one artisan's
+            # identity now reads identically on every surface instead of being absent on one of
+            # them and masked on the rest.
+            #
+            # The sentence above about "ONE line changes" is still true of the CARD and is now true
+            # of both: dropping a `mask_identity_number` call is all it would take, which is exactly
+            # why the masking lives here and is not spread across three clients.
+            #
+            # TO REVERSE THE REVERSAL: delete the `"aadhaarNumber"` line below, the pair in
+            # `stage_schema.REFERENCE_HYDRATION["participant.artisanRef"]`, the same pair in
+            # `frontend/lib/designWorkshops.ts`, the `participant.aadhaarNumber` FieldSpec in
+            # `stage_definitions` (which carries the long form of this decision), and regenerate the
+            # Android bundled asset. Entries already saved KEEP their masked number — a reversal
+            # stops the next copy, it does not undo the ones already made.
             "pehchanCardAvailable": r.pehchanCardAvailable,
             "pehchanCardNumber": mask_identity_number(r.pehchanCardNumber),
+            # THE SAME HELPER, DELIBERATELY, and not a second spelling of the rule beside it.
+            # `mask_identity_number` IS `mask_aadhaar`: None in, None out; anything shorter than
+            # four characters is masked entirely rather than partially revealed. It is also
+            # idempotent on its own output, which is what makes the key name `aadhaarNumber` safe
+            # rather than destructive — `records._IDENTITY_KEYS` walks nested dicts by key name, so
+            # a stage entry that ever reached `public_encode` would be masked a second time and the
+            # second pass is a no-op.
+            "aadhaarNumber": mask_identity_number(r.aadhaarNumber),
             # The STATED village, never the provenance placeName: see the long note above the
             # Location model for why the two are not the same answer. `place` is the free-text
             # fallback the researchers were using before the stated-address columns existed.

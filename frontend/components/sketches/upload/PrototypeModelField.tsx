@@ -62,6 +62,9 @@
 import { useId, useState } from "react";
 import { AlertTriangle, Box, Camera, Check, FileBox } from "lucide-react";
 
+// TYPE-ONLY, so the panel that composes this one can own the contract without a runtime cycle.
+import type { AttachAnswer } from "@/components/sketches/upload/UploadTabPanel";
+
 /**
  * The model formats worth naming, and the one that travels best.
  *
@@ -114,7 +117,19 @@ export interface PrototypeModelFieldProps {
   turntableCount?: number;
   disabled?: boolean;
   /** Hands the model file to the host — the ordinary door, exactly as the tracing panel does. */
-  onAttachModel: (file: File) => void;
+  onAttachModel: (file: File) => AttachAnswer;
+  /**
+   * Hands a turn of photographs to the host. Absent means this host has nowhere to put them.
+   *
+   * A LIST, because a turn is one act of capture: a designer selects twelve frames in one dialog and
+   * expects one confirmation, not twelve. The host writes them all into one draft save — see
+   * `UploadTabHost.attach`.
+   *
+   * WITHOUT IT THIS PANEL STILL SAYS WHAT THE FIELD IS FOR and says plainly that it has to be filled
+   * on the prototype's own stage form. It does not go quiet: the advice is the reason this panel
+   * exists, and a host that cannot take the frames does not make the advice untrue.
+   */
+  onAttachTurntable?: (files: File[]) => AttachAnswer;
 }
 
 export function PrototypeModelField({
@@ -122,7 +137,8 @@ export function PrototypeModelField({
   turntableLabel,
   turntableCount,
   disabled,
-  onAttachModel
+  onAttachModel,
+  onAttachTurntable
 }: PrototypeModelFieldProps) {
   /**
    * The prefix every DOM id on this panel is built from.
@@ -137,6 +153,9 @@ export function PrototypeModelField({
   const [chosen, setChosen] = useState<File | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  /** What was said about the last turn handed over, kept apart from the model file's own sentence. */
+  const [turntableDone, setTurntableDone] = useState<string | null>(null);
+  const [turntableProblem, setTurntableProblem] = useState<string | null>(null);
 
   function choose(file: File) {
     setDone(null);
@@ -161,12 +180,83 @@ export function PrototypeModelField({
     setWarning(notes.length > 0 ? notes.join(" ") : null);
   }
 
-  function attach() {
+  /**
+   * Hand the model file over, and say it was added ONLY IF THE HOST DID NOT REFUSE IT.
+   *
+   * THE DEFECT. This used to call `onAttachModel` and then set the green sentence unconditionally, so
+   * a host that refused synchronously — no prototype row chosen, or a stage whose repository copy
+   * could not be read — rendered its own red "This file has not been attached: …" directly above a
+   * tick claiming it had been. The same was true of an IndexedDB write that failed a moment later.
+   * See {@link AttachAnswer} for why the host answers `false` rather than throwing.
+   *
+   * `!== false` AND NOT TRUTHINESS: a host with nothing to report returns `undefined`, which is the
+   * unchanged "no answer, assume it landed" behaviour of every record form that mounts this panel.
+   *
+   * THE CHOSEN FILE AND ITS WARNINGS SURVIVE A REFUSAL. Clearing them would leave the designer with
+   * the host's refusal, no file staged, and a picker to re-open — for a 200 MB model chosen off a
+   * shared hotspot that is a re-pick nobody should have to make. On a refusal the panel keeps exactly
+   * what it had, which is the same discipline `StageMediaNoteField` applies to an over-length
+   * selection.
+   */
+  async function attach() {
     if (chosen === null) return;
-    onAttachModel(chosen);
+    const handed = await onAttachModel(chosen);
+    if (handed === false) return;
     setDone(`${chosen.name} was added to “${modelLabel}”.`);
     setChosen(null);
     setWarning(null);
+  }
+
+  /**
+   * Hand a turn of photographs over, having first refused what is demonstrably not one.
+   *
+   * NON-IMAGES ARE REFUSED HERE, BY NAME, AND NOT LEFT TO THE SERVER. The field is an IMAGE_LIST, so
+   * a .mov of the prototype rotating — which is the single likeliest wrong file for this box, because
+   * it is what a phone produces when somebody films instead of photographing — would be staged into
+   * the draft, uploaded, and refused by `coerce_value` on the stage save with the frames already
+   * gone from the picker. The `accept` attribute is a filter and not a rule (a designer can always
+   * choose "all files"), so the check is made on the files that actually arrived.
+   *
+   * THE ONES THAT ARE IMAGES STILL GO. Refusing the whole selection because one file in it was a
+   * video would throw away eleven good frames to punish the twelfth, and the sentence names both
+   * halves so nothing is silently dropped — the rule §1.10 of the frontend guide states.
+   */
+  async function chooseFrames(files: File[]) {
+    setTurntableProblem(null);
+    setTurntableDone(null);
+    if (!onAttachTurntable || files.length === 0) return;
+    const frames = files.filter((file) => file.type.startsWith("image/"));
+    const rejected = files.filter((file) => !file.type.startsWith("image/"));
+    if (frames.length === 0) {
+      setTurntableProblem(
+        `“${turntableLabel}” holds photographs, and nothing chosen here is one. A video of the piece turning ` +
+          "cannot go in it — the report places image fields as pictures and would have nothing to draw for a film. " +
+          "Take the frames as still photographs, or attach the video to “Process video” on the prototype's stage."
+      );
+      return;
+    }
+    /*
+      REFUSED BY THE HOST MEANS NOT ADDED, AND THE TICK MUST NOT SAY OTHERWISE.
+
+      `onAttachTurntable` was called and the green "N photographs were added to …" set on the very
+      next line, unconditionally. The host can refuse it synchronously (`refuse("prototype")` when no
+      row is chosen or the stage's repository copy could not be read) and can fail its device write a
+      moment after that, and on either path the host's red sentence and this green one rendered
+      together — the exact contradiction the panel's own copy is supposed to prevent. See
+      {@link AttachAnswer}.
+
+      THE TICKS AND THE REFUSAL LIST ARE LEFT ALONE on a refusal for `attach`'s reason above: the
+      designer keeps their selection and the host has already said what to do about it.
+    */
+    const handed = await onAttachTurntable(frames);
+    if (handed === false) return;
+    setTurntableDone(
+      `${frames.length === 1 ? "1 photograph was" : `${frames.length} photographs were`} added to “${turntableLabel}”.` +
+        (rejected.length > 0
+          ? ` ${rejected.length === 1 ? "One other file was" : `${rejected.length} other files were`} left out because ` +
+            `${rejected.length === 1 ? "it is" : "they are"} not photographs: ${rejected.map((file) => file.name).join(", ")}.`
+          : "")
+    );
   }
 
   const frames = turntableCount ?? 0;
@@ -220,6 +310,65 @@ export function PrototypeModelField({
                     : ` — ${TURNTABLE_MINIMUM} is the fewest that reads as a turn`}
               </p>
             ) : null}
+
+            {/*
+              ── THE PICKER, WHICH THIS PANEL SPENT TWO PARAGRAPHS ASKING FOR AND DID NOT HAVE ─────
+
+              Everything above this input is advice: that the report places image fields as pictures,
+              that a 3D model prints as a count, that twelve frames is the fewest that reads as a
+              turn. All of it true, and until this control existed the designer's only way to act on
+              it was to leave the page for the prototype's stage form — which the panel never said.
+              A screen that advises a field it cannot write teaches a reader to ignore its advice.
+
+              MULTIPLE, because the field is an IMAGE_LIST and a turn is twelve to twenty-four files.
+              `accept` narrows the dialog to photographs; `chooseFrames` is what actually refuses a
+              video, because `accept` is a filter a designer can switch off in the file dialog.
+            */}
+            {onAttachTurntable ? (
+              <div className="mt-3">
+                <label className="field-label" htmlFor={`${fieldId}-turntable`}>
+                  Add photographs to “{turntableLabel}”
+                </label>
+                <input
+                  id={`${fieldId}-turntable`}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="field-input mt-1 file:mr-3 file:rounded-md file:border-0 file:bg-purple-700 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white"
+                  disabled={disabled}
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    // The input is CLEARED, so choosing the same twelve frames again is a second
+                    // attach rather than a no-op: `onChange` does not fire for an unchanged value,
+                    // and a designer whose first attempt was refused would press the same button
+                    // and get nothing at all.
+                    event.target.value = "";
+                    chooseFrames(files);
+                  }}
+                />
+                <p className="mt-1 text-xs leading-4 text-ink-500">
+                  Choose the whole turn at once. They are added to this prototype in the order the file dialog
+                  hands them over, kept on this device straight away, and uploaded with everything else.
+                </p>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs leading-5 text-ink-500">
+                Frames are added to “{turntableLabel}” on the prototype&apos;s own stage form — this panel
+                cannot take them.
+              </p>
+            )}
+            {turntableProblem ? (
+              <p className="mt-2 flex items-start gap-2 rounded-md border border-red-200 bg-error-100 px-2 py-1.5 text-xs leading-4 text-error-600">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span>{turntableProblem}</span>
+              </p>
+            ) : null}
+            {turntableDone ? (
+              <p className="mt-2 flex items-start gap-2 text-xs text-ink-500">
+                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success-600" aria-hidden />
+                <span>{turntableDone}</span>
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
@@ -243,7 +392,18 @@ export function PrototypeModelField({
                 Model file
               </label>
               <input
-                id="prototype-model-file"
+                /*
+                  THE ID THE LABEL ABOVE POINTS AT, WHICH FOR A WHILE IT DID NOT.
+
+                  This was a hardcoded `id="prototype-model-file"` under a
+                  `htmlFor={`${fieldId}-model-file`}` label — so the label named no element at all,
+                  in either the single-panel case or the two-panel case. A `<label>` whose `for` does
+                  not resolve gives the input no accessible name and stops being a click target for
+                  it: exactly the two things a label is for. That is the collision `fieldId` above was
+                  introduced to prevent, re-opened from the other side by writing one of the pair as
+                  a constant.
+                */
+                id={`${fieldId}-model-file`}
                 type="file"
                 accept={MODEL_ACCEPT}
                 className="field-input mt-1 file:mr-3 file:rounded-md file:border-0 file:bg-purple-700 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white"

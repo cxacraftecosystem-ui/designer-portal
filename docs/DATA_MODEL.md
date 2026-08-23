@@ -375,6 +375,15 @@ originals are **not** reconstructable from the ledger. Clearing a contact column
 would make that request a lie. The reasoning, and what it costs on the two unique identity columns,
 is argued out above the set in `backend/app/services/access.py`.
 
+That argument **rested in part on a premise that no longer holds**, and the comment now says so:
+it reasoned that the ledger's `old` was the last copy of a previous Aadhaar number anywhere in the
+system, because the Aadhaar crossed into no design-workshop stage entry at any masking. The owner
+reversed that carry on 2026-08-24 — both identity numbers now ride into a workshop's participant
+roster masked to their last four digits — so the alternative that was declined there (store
+`mask_identity_number(old_value)` instead of a flat placeholder) is **re-raised, not settled**.
+Nothing about `REVISION_REDACTED_FIELDS` itself changed; what changed is that the reason for
+refusing to widen it is spent.
+
 ---
 
 ## 6. Operations

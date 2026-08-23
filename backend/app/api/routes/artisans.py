@@ -128,7 +128,20 @@ INCLUDE = include_of(RELATIONS)
 #      and every generated report that already referenced her. That is the settled architecture
 #      working as intended — a document handed to a ministry officer must not change because a
 #      record was edited afterwards — which is exactly why erasing it is an owner decision and not a
-#      bug fix. The Aadhaar is not in this residue: it is carried into no stage entry at any masking.
+#      bug fix. THE AADHAAR IS NOW IN THIS RESIDUE, and that sentence used to say the opposite: it
+#      read "The Aadhaar is not in this residue: it is carried into no stage entry at any masking."
+#      The owner reversed that on 2026-08-24 (``stage_definitions``' ``participant.aadhaarNumber``,
+#      which carries the decision, what they were shown, and what would reverse it again), so the
+#      masked last four ride into ``participant.aadhaarNumber`` on every stage entry that referenced
+#      her, exactly as the Pehchan card already did. WHAT THAT CHANGES FOR THIS ROUTE IS WHAT IT CAN
+#      HONESTLY PROMISE: clearing ``Artisan.aadhaarNumber`` here removes the twelve digits from the
+#      record and from nothing else -- "XXXX XXXX 9012" survives in every ``DwStageEntry.data`` that
+#      referenced her and in every report already generated from one, because hydration copied at
+#      save time and the report never re-resolves. That is the same settled architecture the two
+#      paragraphs above describe, now applying to one more column; it is NOT a new decision made
+#      here, and it is not a bug in this handler. It does mean a "delete my details" request
+#      touching this column leaves four digits behind wherever a design workshop rostered her, and
+#      whoever answers such a request has to be able to say so.
 #   3. STILL OPEN, AND BY DESIGN RATHER THAN BY OVERSIGHT — an attribution outliving the value it
 #      attributes is the price of "an untouched field keeps the contributor it already had".
 #      ``merge_field_provenance`` skips a cleared field entirely (its loop reads

@@ -1,10 +1,10 @@
 /**
  * Which registry fields play a role the generic renderer cannot read off `field.type` alone.
  *
- * There are eight, and all are kept here rather than inline so that the day the registry grows an
+ * There are nine, and all are kept here rather than inline so that the day the registry grows an
  * explicit descriptor for any of them, ONE file changes and the guessing stops.
  *
- * FIVE OF THE EIGHT GUESS, AND SAY SO. `stage_definitions.py` declares no "this image is an identity
+ * FIVE OF THE NINE GUESS, AND SAY SO. `stage_definitions.py` declares no "this image is an identity
  * card" flag, no "this text box holds a national identity number", no "these two dates are the ends
  * of one range", no "this image is a signature" and no "this file is where a plate belongs", so those
  * five are inferred from the field key. An inference that is wrong there costs an offered button that
@@ -23,9 +23,22 @@
  * not because of anything in their names. A registry that adds a `unit="mm"` field gets the
  * behaviour with no change here, and one that adds `spanInHands` gets nothing, which is the correct
  * answer in both directions.
+ *
+ * THE NINTH IS THE SECOND ONE THAT READS A DECLARATION, and it reads a different one.
+ * {@link recordMediaNoteRole} never looks at a field key either: it asks the HYDRATION TABLE which
+ * REF field on this entity fills this box, and which source key it fills it from. `participant`'s
+ * "Media on the artisan record" qualifies because `DW_REFERENCE_HYDRATION["participant.artisanRef"]`
+ * maps `recordMediaNote -> recordMediaNote`; `participant.notes` does not, because the pair that
+ * lands there is `notes -> recordNotes` and `notes` is not a media-note source. That is why it can
+ * also answer the question the other roles cannot: WHICH RECORD's files to list, which is a fact
+ * about the mapping and not about the field's name.
+ *
+ * It is nevertheless the only one of the nine that carries a NAME LIST, and the list is small and
+ * argued: the four lambda keys `_media_note` produces, plus a refusal for the fifth media-note field
+ * whose sentence a different function composes. Both are stated at the function.
  */
 
-import type { DwEntity, DwField } from "@/lib/designWorkshops";
+import { referenceHydrationFor, type DwEntity, type DwField } from "@/lib/designWorkshops";
 import { type LengthUnit, LENGTH_UNITS } from "@/lib/photoMeasure";
 
 /** Keys and labels folded to letters, so `artisanCardNo` and "Artisan ID / card number" both match. */
@@ -423,4 +436,111 @@ const WORKSHOP_TITLE_FIELD_KEYS = new Set(["documentedAtWorkshop", "craftDocumen
 export function workshopTitleRole(field: DwField): boolean {
   if (field.type !== "TEXT" || field.deprecated) return false;
   return WORKSHOP_TITLE_FIELD_KEYS.has(field.key);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The sentence counting a referenced record's attached files
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The source keys in the hydration table whose value is a `_media_note` sentence.
+ *
+ * TWO, AND THEY ARE THE LAMBDA KEYS RATHER THAN THE FIELD KEYS. `design_workshops.py` produces
+ * `recordMediaNote` on the Artisan, ToolDocumentation, ProductDocumentation and Process lambdas and
+ * `craftMediaNote` on the Craft one; the hydration table maps each onto a target of the same name.
+ * Matching the SOURCE side is what makes this a read of the declared mapping rather than a guess
+ * about a field's name — and it is what would keep working if a future entity received the sentence
+ * into a box called something else.
+ */
+const MEDIA_NOTE_SOURCE_KEYS = new Set(["recordMediaNote", "craftMediaNote"]);
+
+/**
+ * What the sentence for one reference model says, and which files the chooser may list.
+ *
+ * `subject` IS THE WORD IN THE SENTENCE and `linkedRecordType` IS THE `/media` TAG. They are the same
+ * five strings today, and they are kept as two fields because they are two different contracts:
+ * `subject` has to match the literal `design_workshops.py` passes to `_media_note` or the composed
+ * value is not the value hydration wrote, and `linkedRecordType` has to match what
+ * `records.media_relation_data` and the record forms write on upload or the fetch returns nothing.
+ * One of them changing is not a reason to change the other.
+ *
+ * `numberedPrefix` IS EMPTY FOR FOUR OF THE FIVE, and that asymmetry is the server's, not a
+ * simplification: only the tool's call passes `numbered_prefix="STAGE_STEP_"`, so only the tool's
+ * sentence can grow the "of which N document the making in order" clause. Passing it everywhere would
+ * make the artisan's composed sentence differ from the artisan's hydrated one on any record whose
+ * files happen to be named that way.
+ *
+ * `Process` IS DELIBERATELY ABSENT, AND THIS IS THE REFUSAL. `traditionalProcess.recordMediaNote`
+ * looks like the other four on screen — same label shape, same type, same 200-character bound — and
+ * is filled by `_process_media_note`, a different function with a different grammar ("N on the
+ * process itself, N across N step(s)"). This control composes `_media_note`'s grammar and nothing
+ * else, so offering it there would let a designer replace one grammar with another inside a box the
+ * report prints verbatim, and the two spellings of the same fact would then coexist in one archive
+ * with nothing recording which was meant. That function is also DORMANT — it returns null for every
+ * process, because `MediaFile` has no `processId` and a process's files reach it only through the
+ * string tags — so the box there is blank today and a chooser over a fetched process file list would
+ * be composing a value hydration has never written and cannot check. The honest control for that
+ * field is the plain text box it already has, until the registry or the lambda settles which sentence
+ * that box holds.
+ *
+ * A MODEL THAT IS NOT IN THIS TABLE GETS NOTHING, which is the fail-closed direction: the field stays
+ * the text box it is today and the designer loses a chooser, rather than gaining one that lists the
+ * wrong record's files.
+ */
+const MEDIA_NOTE_MODELS: Record<string, { linkedRecordType: string; subject: string; numberedPrefix: string }> = {
+  Artisan: { linkedRecordType: "artisan", subject: "artisan", numberedPrefix: "" },
+  Craft: { linkedRecordType: "craft", subject: "craft", numberedPrefix: "" },
+  ProductDocumentation: { linkedRecordType: "product", subject: "product", numberedPrefix: "" },
+  ToolDocumentation: { linkedRecordType: "tool", subject: "tool", numberedPrefix: "STAGE_STEP_" }
+};
+
+export type MediaNoteFieldRole = {
+  /** The REF field on this entity whose chosen record's files the sentence counts. */
+  refField: DwField;
+  /** The `/media` `linkedRecordType` tag those files carry. */
+  linkedRecordType: string;
+  /** The word `_media_note` puts in "Attached to the … record". */
+  subject: string;
+  /** The filename prefix that marks an ordered making sequence — "" for everything but the tool. */
+  numberedPrefix: string;
+};
+
+/**
+ * Is this TEXT field a `_media_note` sentence, and if so which record's files does it count?
+ *
+ * FOUR CONDITIONS, AND EVERY ONE OF THEM IS A READ RATHER THAN A MATCH ON THIS FIELD'S NAME:
+ *
+ *  1. the field is TEXT and not deprecated — a chooser that wrote into a retired box would put a new
+ *     value in a field the registry has stopped asking for, and it would still print;
+ *  2. some REF field on the SAME entity hydrates this exact field key from a media-note source key,
+ *     read out of {@link referenceHydrationFor} so this file never has to know the table's key shape;
+ *  3. that match is UNIQUE — two ref fields claiming one box means nothing here can be confident
+ *     which record's files the sentence is about, and the same rule and reason as
+ *     {@link dateRangePartner}: a wrong answer would list a different person's photographs;
+ *  4. the ref field's `refModel` is in {@link MEDIA_NOTE_MODELS}, which is where the Process refusal
+ *     lives and where the sentence's own subject word comes from.
+ *
+ * A WRONG ANSWER HERE IS NOT CHEAP, which is why none of it guesses. This is the third role that can
+ * change what is STORED — the other two are {@link addressListRole} and {@link workshopTitleRole} —
+ * and unlike those two it can also put a list of somebody's private photographs on screen. Listing
+ * the wrong record's files would be both, at once, on a roster row that prints.
+ */
+export function recordMediaNoteRole(entity: DwEntity, field: DwField): MediaNoteFieldRole | null {
+  if (field.type !== "TEXT" || field.deprecated) return null;
+  const matches: MediaNoteFieldRole[] = [];
+  for (const candidate of entity.fields) {
+    if (candidate.type !== "REF" || candidate.deprecated) continue;
+    const mapping = referenceHydrationFor(entity, candidate);
+    const fills = Object.entries(mapping).some(
+      ([sourceKey, targetKey]) => targetKey === field.key && MEDIA_NOTE_SOURCE_KEYS.has(sourceKey)
+    );
+    if (!fills) continue;
+    const model = candidate.refModel ? MEDIA_NOTE_MODELS[candidate.refModel] : undefined;
+    // A ref field that fills the box but names a model this table refuses still COUNTS as a match,
+    // so it cannot be silently replaced by a second, wronger one. It just contributes no role — the
+    // Process refusal has to mean "no control here", not "look for another candidate".
+    if (!model) return null;
+    matches.push({ refField: candidate, ...model });
+  }
+  return matches.length === 1 ? matches[0] : null;
 }

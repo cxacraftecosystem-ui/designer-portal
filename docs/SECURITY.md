@@ -438,7 +438,7 @@ across two workshops. Handling, in `backend/app/services/artisan_identity.py`:
 |---|---|
 | `normalize_aadhaar` | strips the spacing people type (`"1234 5678 9012"`) to the 12 stored digits |
 | `verhoeff_ok` | validates the UIDAI check digit — catches every single-digit error and every adjacent transposition, the two ways a 12-digit number is misread |
-| `mask_aadhaar` | renders `XXXX XXXX 9012` for **every shared surface**: the Data Browser, the `.xlsx` report, CSV exports |
+| `mask_aadhaar` | renders `XXXX XXXX 9012` for **every shared surface**: the Data Browser, the `.xlsx` report, CSV exports, and — since 2026-08-24 — a design workshop's participant roster and the ministry report built from it (see §4A.1) |
 | `is_masked_aadhaar` | recognises a mask posted back unchanged from an edit form, so saving without touching the field is a no-op rather than a validation error |
 
 **The exact threshold, because this paragraph used to overstate it (corrected 2026-08-22).** It read
@@ -506,7 +506,42 @@ encoder rule as Aadhaar, on the same three surfaces:
 |---|---|
 | The record encoder | `mask_identity_number` in `backend/app/services/records.py`, which reuses `mask_aadhaar` verbatim — the rule is "keep the last four", and the card it is applied to does not change it |
 | The record field registry | `backend/app/services/record_fields.py` declares the Pehchan field as `mask_aadhaar(a.pehchanCardNumber)`, beside the Aadhaar field, so every surface built from the registry is masked by construction |
-| The design-workshop stage hydration | `backend/app/services/design_workshops.py` fills the mirrored participant field with `mask_identity_number(r.pehchanCardNumber)`, which is why an unmasked PM Vishwakarma ID never reaches a grantee's view of a workshop stage |
+| The design-workshop stage hydration | `backend/app/services/design_workshops.py` fills the mirrored participant fields with `mask_identity_number(r.pehchanCardNumber)` **and, since 2026-08-24, `mask_identity_number(r.aadhaarNumber)`**, which is why neither an unmasked PM Vishwakarma ID nor an unmasked Aadhaar reaches a grantee's view of a workshop stage |
+
+**THE AADHAAR NOW CROSSES ONTO THAT THIRD SURFACE TOO, MASKED — owner decision, 2026-08-24.**
+Until that date the Aadhaar was carried into no design-workshop stage entry at any masking, and
+several documents in this folder said so. The owner reversed it, having been shown that a
+workshop's stage reads do not pass through `records._redact_sensitive`, that a
+`DesignWorkshopViewer` is a grantee, and that a hydrated stage entry is a **permanent copy** —
+hydration copies at save time and the report never re-resolves, so clearing `Artisan.aadhaarNumber`
+afterwards retracts it from no entry and no already-generated document. Both numbers now cross on
+identical terms, through the same helper, so one artisan's identity reads the same everywhere.
+The decision, what the owner was shown, and the exact procedure to reverse it are recorded above
+`participant.aadhaarNumber` in `backend/app/services/stage_definitions.py`.
+
+Two consequences a security reader should have in front of them, neither of them hidden:
+
+* the field is **typeable**, deliberately — hydration only fills blanks, so a designer entitled to
+  the full number can supply one the record does not hold. ~~Android's `DwIdentityOcr` matches
+  identity fields per field, so its on-device recogniser can write a **full twelve digits** into a
+  stage entry in one tap. The box was hand-typeable by design either way; what changed is the
+  effort;~~ **CORRECTED 2026-08-24, same day, after review: what is TYPED is not what is KEPT.** The
+  paragraph above was true of the code and wrong about the decision. The owner decided both numbers
+  cross *masked*, and the guarantee held only for the value hydration wrote: anything a client
+  supplied afterwards — Android's Verhoeff-checked reader in one tap, or the registry help text's own
+  invitation to type it in — was stored verbatim, permanently, on a surface whose stage reads never
+  pass through `records._redact_sensitive`. `participant.aadhaarNumber` now declares
+  `FieldSpec.store_masked`, so `coerce_value` masks the value **on every save** (and therefore also
+  re-masks anything written before the flag existed, the next time that stage is saved). The box
+  still takes a full number — that is the other half of the same instruction — and what is stored is
+  `XXXX XXXX 9012`. Both clients say so on the control: the web prints what the save will keep while
+  the digits are still on screen, and Android's card reader prints the full number on its button for
+  proofreading and commits the mask. `participant.artisanCardNo` is deliberately **not** masked this
+  way — its whole capture control exists to write the full Pehchan number off the card — so the two
+  boxes on one roster row keep different amounts of what is typed, argued at both fields;
+* clearing the column through `DELETE`-style redaction on `/artisans` no longer removes every
+  copy. Four digits survive in every `DwStageEntry.data` that referenced the artisan. See the
+  residue paragraph in `backend/app/api/routes/artisans.py`.
 
 **One consequence of reusing the Aadhaar masker is worth knowing before anybody "improves" it:**
 `mask_aadhaar` normalises through `normalize_aadhaar`, whose `_SEPARATORS` pattern removes
@@ -680,7 +715,7 @@ is removed and the entry stays. Both teach the reader to trust the wrong thing. 
 | §3 tokens | `backend/app/core/security.py`; the startup guard is `verify_jwt_configuration`. |
 | §4 the ladder | [PERMISSIONS.md](PERMISSIONS.md), which is itself checked — `docs/tools/check-docs.mjs` fails if the backend and web role ladders diverge. |
 | §4.1 identity cache | `backend/app/core/deps.py`, and `backend/tests/test_user_identity_cache.py`. |
-| §4A Aadhaar | `backend/app/services/artisan_identity.py`. The encoder-level masking is the property to re-check after any new export surface: add one, then confirm the number arrives masked. |
+| §4A Aadhaar | `backend/app/services/artisan_identity.py`. The encoder-level masking is the property to re-check after any new export surface: add one, then confirm the number arrives masked. **Exercised 2026-08-24** on the design-workshop participant roster, which is the newest such surface: `mask_identity_number` is applied in the hydration lambda, and `test_both_identity_numbers_arrive_masked_and_neither_arrives_bare` pins that the bare digits of neither number cross. |
 | §5 risk register | Each entry names a console screen. None can be confirmed from this repository. |
 | §6 variables | `backend/app/core/config.py` is the only source; [ENVIRONMENT.md](ENVIRONMENT.md) is the full table. |
 

@@ -229,9 +229,40 @@ internal enum class DwIdentityKind {
  * card next to an unrelated field invites a designer to photograph one that nobody needed — which,
  * for this class of data, is a privacy incident caused by a regular expression.
  *
- * `artisanCardNo` is the registry's one identity-number field today (stage 3, the participant
- * roster). The other tokens are matched so that a field added on the server starts working with no
- * client change, which is this feature's whole premise.
+ * THE REGISTRY HAS TWO SUCH FIELDS AS OF 2026-08-24, AND THAT IS THE PREMISE WORKING RATHER THAN
+ * FAILING. This KDoc read "`artisanCardNo` is the registry's one identity-number field today
+ * (stage 3, the participant roster)", and it stopped being true when the owner had
+ * `participant.aadhaarNumber` added beside it — masked to its last four digits, KEY_VALUE in the
+ * report, and typeable so a designer entitled to the full number can supply one the record does not
+ * hold. The MASK IS NOW APPLIED TO WHAT IS SUPPLIED AS WELL AS TO WHAT IS CARRIED: the field
+ * declares `storeMasked`, so the four digits are the whole of what is kept whichever route the
+ * number arrives by. The long form of that decision, including what would reverse it, is above the
+ * field in the server's `services/stage_definitions.py`.
+ *
+ * SO THIS FUNCTION NOW ANSWERS TRUE FOR BOTH BOXES ON A PARTICIPANT ROW, AND THE CONSEQUENCE IS
+ * BEHAVIOURAL RATHER THAN COSMETIC. [identityKindFor] returns [DwIdentityKind.AADHAAR] for the new
+ * field, so this handset mounts the card reader on it — the only client that can produce a full
+ * twelve-digit Verhoeff-checked number for that box in a single tap.
+ *
+ * FOR ONE REVISION THAT NUMBER WAS THEN KEPT WHOLE, AND THIS KDOC ARGUED IT WAS FINE. It read: "not
+ * a NEW class of exposure: the box is hand-typeable by design … what changed is 'a designer could
+ * type it' becoming 'one tap'." That is an argument about how the digits arrive and not about
+ * whether they are kept, and what they were kept in is `DwStageEntry.data` — a surface whose stage
+ * reads never pass through the API's identity masking, permanently, in front of every
+ * `DesignWorkshopViewer` grantee. The owner's decision was that both identity numbers cross MASKED.
+ * `participant.aadhaarNumber` therefore declares `storeMasked` (see `FieldDto.storeMasked`), the
+ * server masks it in `coerce_value`, [StageSchemaStore] masks it in the same branch of the same port,
+ * and [DwIdentityCardControl] hands the MASKED value to its `onUse` while still printing the full
+ * number on the button for proofreading. The camera stays on both boxes; what differs is what the
+ * two boxes keep. It is written down here, at the function that decides which boxes get a camera,
+ * because a per-field match is exactly the kind of behaviour that arrives with a server change and
+ * no client change — which is this feature's whole premise, and also the reason nothing on this side
+ * would have announced it. The browser does NOT behave this way:
+ * `stageFieldRoles.identityNumberField` picks the FIRST matching field, so the web mounts its
+ * (Pehchan-only) capture on `artisanCardNo` and offers nothing on the Aadhaar box.
+ *
+ * The other tokens are matched so that a field added on the server starts working with no client
+ * change, which is this feature's whole premise.
  */
 internal fun isIdentityNumberField(field: FieldDto): Boolean {
     val haystack = (field.key + " " + field.label).lowercase()
@@ -437,6 +468,20 @@ internal fun DwIdentityCardControl(
     kind: DwIdentityKind,
     repository: WorkshopRepository,
     enabled: Boolean,
+    /**
+     * THE TARGET BOX KEEPS ONLY THE MASK, SO THIS PANEL HAS TO SAY SO AND [onUse] GETS THE MASK.
+     *
+     * Read off `FieldDto.storeMasked` by the caller, not guessed from [kind]. The registry is the
+     * authority on what a field stores, and a control that inferred it from "this looks like an
+     * Aadhaar box" would be wrong on the very next field the server adds.
+     *
+     * WHAT IT CHANGES HERE, AND WHAT IT DELIBERATELY DOES NOT. The candidate buttons still print the
+     * FULL number, grouped 4-4-4: proofreading twelve digits against the card in the designer's hand
+     * is the entire purpose of this panel and a masked button would make it impossible. What changes
+     * is the value handed to [onUse] and the sentence above the buttons — so the designer checks the
+     * whole number, and what lands in the box is what the repository will hold.
+     */
+    storeMasked: Boolean = false,
     onUse: (String) -> Unit,
     onError: (String) -> Unit,
     /**
@@ -926,6 +971,22 @@ internal fun DwIdentityCardControl(
                 color = MaterialTheme.field.muted,
                 fontSize = 11.sp
             )
+            if (storeMasked) {
+                // WHAT THE BOX WILL ACTUALLY HOLD, SAID WHERE THE FULL NUMBER IS ON SCREEN.
+                //
+                // The buttons below print twelve digits because proofreading them is the point; the
+                // field keeps four (`FieldDto.storeMasked`). Without this sentence the designer taps
+                // "Use 2345 6789 0123", watches four digits appear in the box, and has no way to
+                // tell a masking rule from a bug that ate their answer — on the one control whose
+                // whole subject is a number they were asked to check digit by digit.
+                Text(
+                    "$targetLabel keeps only the last four digits. Check the whole number here — " +
+                        "what is written into the box is “XXXX XXXX ####”, which is also all the " +
+                        "report prints.",
+                    color = MaterialTheme.field.muted,
+                    fontSize = 11.sp
+                )
+            }
             if (unconfirmedByServer) {
                 Text(
                     "The server marked this reading as not needing confirmation. This app confirms " +
@@ -939,7 +1000,13 @@ internal fun DwIdentityCardControl(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Button(
                             onClick = {
-                                onUse(choice.value)
+                                // MASKED ON THE WAY INTO THE FIELD WHERE THE FIELD SAYS SO, so what
+                                // the designer sees in the box afterwards is what the repository will
+                                // hold. `StageSchemaStore` would mask it at the next coercion and the
+                                // server at the next save, so doing it here changes nothing about
+                                // what is stored — it changes only whether the designer is shown a
+                                // value that was about to be rewritten under them.
+                                onUse(if (storeMasked) ArtisanIdentity.mask(choice.value) ?: choice.value else choice.value)
                                 choices = emptyList()
                                 discardPhoto()
                             },

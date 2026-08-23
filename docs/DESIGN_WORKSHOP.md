@@ -350,9 +350,12 @@ none: rows written before this column exist in every archive, and attributing th
 next would manufacture an audit trail on a document submitted to a ministry.
 
 **The boundary with `REFERENCE_HYDRATION` is the value/authorship line, and both policies are right.**
-Hydration deliberately COPIES 81 field-pairs onto a stage entry so that a report — a dated observation,
+Hydration deliberately COPIES field-pairs onto a stage entry so that a report — a dated observation,
 generated months later and kept by an office — is not rewritten by a later correction to a live
-record. The requirement behind `fieldProvenance` is "do not duplicate the record per designer". They
+record. (This sentence used to say **81** field-pairs. It was 109 when somebody next counted, which
+is a third of the way wrong and is exactly what the note below the maintenance table forbids: the
+count is the sum of `REFERENCE_HYDRATION`'s mappings and belongs in the registry, not in prose here.)
+The requirement behind `fieldProvenance` is "do not duplicate the record per designer". They
 meet like this: **the value is copied and stays copied; only authorship is attributed.** Nothing
 resolves a hydrated field through its `refId` at render time, and making it do so would reintroduce
 exactly the defect hydration exists to prevent. The full argument is the module docstring of
@@ -369,6 +372,70 @@ The shared record tables need none of this. `records.viewable_where` returns `{}
 account already reads one canonical `Artisan` row, there is no per-designer duplicate of one, and
 `records.merge_field_provenance` has moved per-field authorship on edit for all six record types
 since long before this feature.
+
+### Identity numbers on the roster: both, masked — and the reversal that put one there
+
+The participant roster carries **two** identity numbers off the linked `Artisan` record, and both
+arrive masked to their last four digits by `records.mask_identity_number` (which *is* `mask_aadhaar`,
+reused verbatim so one artisan's identity reads identically on every surface):
+
+| Registry field | Source column | Report role |
+| --- | --- | --- |
+| `participant.artisanCardNo` "Artisan ID / card number" | `Artisan.pehchanCardNumber` | `TABLE_COLUMN` in the participant table |
+| `participant.aadhaarNumber` "Aadhaar number" | `Artisan.aadhaarNumber` | `KEY_VALUE`, in the per-row block beneath the table |
+
+**The second one is a reversal, decided by the owner on 2026-08-24, and it is written down here
+because a design workshop is the surface it affects.** Until that date the Aadhaar was carried into no
+stage entry at any masking, and the argument for refusing it was recorded in three places. The owner
+reversed it having been shown the exposure in full:
+
+* a workshop's stage reads do **not** pass through `records._redact_sensitive`, so nothing downstream
+  re-masks the value on the way out;
+* a `DesignWorkshopViewer` is a grantee, so the audience is wider than the designer who typed the row;
+* a hydrated entry is a **permanent copy** — §5's whole argument — so clearing
+  `Artisan.aadhaarNumber` afterwards retracts it from no entry and no report already generated.
+
+Four properties of the field follow from the decision rather than from convenience, and each is
+pinned by a test:
+
+1. **`KEY_VALUE`, never `TABLE_COLUMN`.** The participant table's six declared widths already total
+   exactly 100, and a seventh column fails silently in one of two ways depending on where it is
+   declared. `_table_columns` slices the **first six** non-media `TABLE_COLUMN` fields in declaration
+   order and the proportional fallback fires only when *those six* miss 100±0.5: so a seventh
+   appended after `isMasterCraftsperson` is **dropped from the table altogether** — captured,
+   counted towards completeness, printed nowhere — while one declared before an existing column
+   pushes the sixth out of the slice and re-lays-out participant tables inside documents that have
+   already been filed. (This entry previously described only the second, as though it were general.)
+   `test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full` sums *all* of the
+   entity's `TABLE_COLUMN`s and so catches either position.
+2. **The bare digits still cross nowhere.** Only the mask is copied, and
+   `test_both_identity_numbers_arrive_masked_and_neither_arrives_bare` asserts the twelve digits
+   appear nowhere in the carried data.
+3. **The box is typeable, and what it stores is the mask either way.** Hydration only fills blanks,
+   so a designer entitled to the full number can supply one the record does not hold, and their
+   answer survives every later save. ~~"…and can write a full twelve digits in one tap"~~ — that was
+   true for one revision and was the gap between the decision and the code: the mask was guaranteed
+   only for the value the server wrote, while a client-supplied number was kept verbatim in a
+   permanent, grantee-readable entry. The field now declares `FieldSpec.store_masked`, so
+   `coerce_value` masks it on **every** save; the only thing that survives is the last four digits,
+   which is all the report was ever going to print. Android's `DwIdentityOcr` still matches identity
+   fields per field and still offers its Verhoeff-checked reader here — it prints the full number on
+   the button so it can be proofread against the card and commits `XXXX XXXX ####`, and
+   `StageSchemaStore` applies the same mask in the same branch of its port so the phone's own draft
+   and on-device report agree with the server. The web mounts its (Pehchan-only) capture on the FIRST
+   matching field and so offers no camera here; it prints what the save will keep instead. Note the
+   asymmetry: `participant.artisanCardNo` is deliberately **not** masked on save, because its capture
+   control exists to write the full Pehchan number off the card.
+4. **The two labels share no word that names a card.** Two rows reading "XXXX XXXX ####" told apart
+   only by their labels is how the wrong one gets checked against the wrong card, so the label and
+   help text name the other box explicitly and a test asserts the naming words stay disjoint.
+
+The decision, what the owner was shown, and the exact procedure to reverse it (four deletions plus a
+regenerated Android asset — and the note that a reversal does **not** retract entries already
+written) are recorded above `participant.aadhaarNumber` in
+`backend/app/services/stage_definitions.py`. The earlier reasoning is kept rather than deleted at
+every site that carried it, so a later reader can tell a considered reversal from a widening nobody
+weighed.
 
 ### Nothing is hard-deleted
 
@@ -841,6 +908,7 @@ them:
 | The endpoint table | `backend/app/api/routes/design_workshops.py` **and** `backend/app/api/routes/design_workshop_viewers.py` | Compare against the `@router` decorators in **both** files. The viewer routes live in their own module and are registered first in `backend/app/api/router.py`, because `GET /design-workshops/{workshop_id}` would otherwise swallow `/design-workshops/eligible-viewers` |
 | §10's limitations | Nothing. **This is the section that rots**, and it has now rotted three times — the two client entries retracted on 2026-08-08, and the template entry on 2026-08-19. Each entry names a file or a symbol, so each is one grep. List `frontend/app/(protected)/design-workshops/` and grep `WorkshopRepositoryApi.kt` for the client entries; grep `android/…/report/ReportTemplates.kt` for `applyReportSettings` and `ui/designworkshop/ReportPlan.kt` for its call before repeating anything about the handset and templates; grep `android/app/src/main` for `DwCostIntegrity`/`DwMarketAnalysis` before repeating anything about the ports being unsurfaced. **A grep that comes back NON-empty is the alarm here** — every one of these entries asserts an absence, which is the class of claim a reader cannot falsify by reading the document |
 | The offline story | `WorkshopDraftStore.kt`, `Offline.kt`, `ReportExport.kt` under `android/app/src/main/java/com/designprototype/workshop/` | Read the KDoc on each |
+| The two masked identity numbers on the roster, and the 2026-08-24 reversal that put the second one there | `REFERENCE_MODELS["Artisan"].data` in `backend/app/services/design_workshops.py` (the two `mask_identity_number` calls), and `participant.artisanCardNo` / `participant.aadhaarNumber` in `stage_definitions.py` | `backend/tests/test_reference_carry.py`: `test_both_identity_numbers_arrive_masked_and_neither_arrives_bare` (the values), `test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column` (the role, the width sum, mask idempotence and the labels), `test_the_designers_own_answers_survive_the_widening` (a typed number is not reverted). **If either `mask_identity_number` call is gone, this subsection is false and something leaked** |
 
 No count appears in this document's prose. The stage and template tables are enumerations — the rows
 *are* the data, so they cannot state a number that drifts independently of it. Repository counts

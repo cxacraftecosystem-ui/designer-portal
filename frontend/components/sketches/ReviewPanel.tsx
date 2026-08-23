@@ -81,6 +81,7 @@ import {
 
 import { fetchRoundRanking, refusalText } from "./ratingsApi";
 import { readRegistry, readStageRows } from "./stageRows";
+import { syncPassNote } from "./syncNote";
 import { RankableList } from "./RankableList";
 import { ReviewCard } from "./ReviewCard";
 import {
@@ -106,30 +107,16 @@ const UNREACHABLE =
 const QUIET_MS = 1200;
 
 /**
- * What to say about a sync pass that has just returned — WHICH IS NOT ALWAYS "sent".
+ * What to say about a sync pass this panel's arrangement save has just run.
  *
- * `failed === 0 && !stoppedOffline` was read as success, and it is the shape of two passes that
- * carried nothing of ours. `declinedResult()` in `lib/designWorkshopStore.ts` is returned whenever
- * another tab holds the `SYNC_LOCK` — `failed: 0`, `stoppedOffline: false`, and a deliberately honest
- * `pending` count — and `syncDesignWorkshopDrafts()` also hands back an already-running pass that may
- * have begun before this stage was even written. Announcing "sent to the repository" for either one
- * tells a designer their arrangement is safe in the ministry's database when it is sitting in
- * IndexedDB. `stagesSent` and `pending` are on the result and say which happened, so they are read.
+ * THE FOUR OUTCOMES AND THE REASONING BEHIND THEM NOW LIVE IN `./syncNote`, because the UPLOAD tab
+ * needed the identical answer for a file it had just staged — see that file's header for why
+ * `failed === 0 && !stoppedOffline` is the shape of two passes that carried nothing of ours. This
+ * wrapper is kept so the subject of the sentence is decided where the fact is known: only this panel
+ * knows whether it just fixed an order or returned to the default one.
  */
 function sendNote(result: DwSyncResult, fixed: boolean): string {
-  const what = fixed ? "this arrangement is" : "the return to score order is";
-  if (result.stoppedOffline) {
-    return "Saved on this device. There is no connection, so it sends itself when one returns.";
-  }
-  if (result.failed > 0) {
-    return "Saved on this device, but the repository refused something in this workshop — the sync banner names what.";
-  }
-  if (result.pending > 0) {
-    return result.stagesSent === 0
-      ? `Saved on this device. Another sync is already running, so ${what} going up with that pass rather than this one — the sync banner follows it.`
-      : "Saved on this device and a sync ran, but this device still has work outstanding, which the sync banner names.";
-  }
-  return "Saved, and sent to the repository.";
+  return syncPassNote(result, fixed ? "this arrangement is" : "the return to score order is");
 }
 
 type Props = {

@@ -324,7 +324,15 @@ test("the outbox's own create never navigates the researcher away", async () => 
   // throw the researcher off whatever they were doing, mid-edit, with the outbox never getting to
   // say what happened. Pinned on the source because the alternative is a real 401 against a real
   // API — which `outbox-schema-skew-drain.spec.ts` does, with a stack running.
-  const create = OFFLINE_SOURCE.slice(OFFLINE_SOURCE.indexOf("const saved = await apiFetch<"));
+  //
+  // THE ANCHOR IS THE `apiFetch` CALL AND NOT THE NAME OF WHAT IT IS ASSIGNED TO. It used to be
+  // `"const saved = await apiFetch<"`, and the day the drain learned to read a saved row out of a
+  // NESTED key (see `savedIdIn`, which is what lets a design rating be queued at all) that binding
+  // was renamed to `answer` — `indexOf` returned -1, `slice(-1)` handed this assertion the file's
+  // last character, and a test about a 401 failed for a reason that has nothing to do with 401s.
+  // `await apiFetch<ReplayAnswer>(` names the call itself, which is the thing being pinned.
+  const create = OFFLINE_SOURCE.slice(OFFLINE_SOURCE.indexOf("await apiFetch<ReplayAnswer>("));
+  expect(create, "the create leg's apiFetch call was renamed or removed").not.toHaveLength(1);
   expect(create.slice(0, 1200), "the drain must not navigate on a 401").toContain("redirectOn401: false");
 });
 

@@ -216,6 +216,27 @@ data class FieldDto(
      */
     val refHydration: Map<String, String> = emptyMap(),
     val maxLength: Int = 0,
+    /**
+     * THE SERVER WILL KEEP ONLY THE MASK OF AN IDENTITY NUMBER IN THIS FIELD, WHATEVER IS SENT.
+     *
+     * `coerce_value` on the server replaces this field's value with `mask_aadhaar(...)` —
+     * "XXXX XXXX 9012" — on every save, under an owner decision of 2026-08-24 that both of an
+     * artisan's identity numbers cross into a design report masked to their last four digits.
+     * Declared on `participant.aadhaarNumber` and nothing else in today's registry.
+     *
+     * DECODING IT IS NOT OPTIONAL ON THIS CLIENT, AND THE REASON IS THIS CLIENT SPECIFICALLY.
+     * `DwIdentityOcr.isIdentityNumberField` matches PER FIELD rather than picking one, and
+     * `identityKindFor` answers AADHAAR for that key, so this handset mounts a Verhoeff-checked
+     * on-device card reader on the box — the only client that can produce a full twelve-digit number
+     * there in a single tap. A phone that did not know about this flag would write those twelve
+     * digits into a draft, print them on the on-device report, show them to the designer as their
+     * saved answer, and be silently overruled on the next sync. So [StageSchemaStore] masks at the
+     * same point the server does (see `lengthChecked`) and `FieldRenderer` says so on the box.
+     *
+     * It is part of `registry_version()` for the same reason: a field GAINING the flag has to
+     * invalidate cached drafts, or a phone with no signal goes on promising to keep what it cannot.
+     */
+    val storeMasked: Boolean = false,
     val minValue: Double? = null,
     val maxValue: Double? = null,
     /** NARRATIVE | KEY_VALUE | TABLE_COLUMN | CAPTION | GALLERY | COVER_FIELD | METRIC | BULLETS | HIDDEN. */
@@ -634,7 +655,19 @@ object DwValues {
         if (field.maxLength > 0 && text.length > field.maxLength) {
             Coerced(null, "${field.label} is longer than ${field.maxLength} characters")
         } else {
-            Coerced(JsonPrimitive(text), null)
+            // THE MASK IS APPLIED HERE BECAUSE THE SERVER APPLIES IT HERE — same branch, same order,
+            // after the length check and not before it. See [FieldDto.storeMasked]: this is a port of
+            // `coerce_value`'s scalar-text arm, and a port that skipped the transform would leave the
+            // phone showing twelve digits as the designer's saved answer while the repository held
+            // four. `ArtisanIdentity.mask` is character-for-character the server's `mask_aadhaar`
+            // (both keep the last four, X out the rest, and mask anything shorter than four whole),
+            // and it is idempotent, so re-coercing a value hydration already masked changes nothing.
+            //
+            // A null answer means the value normalised to nothing, which `text` cannot be — it is
+            // non-blank and trimmed by the caller — but reading a null as "clear the field" rather
+            // than "leave it alone" is the direction that loses data, so it is spelled out.
+            val stored = if (field.storeMasked) ArtisanIdentity.mask(text) ?: text else text
+            Coerced(JsonPrimitive(stored), null)
         }
 
     private fun rangeChecked(field: FieldDto, value: Double): String? {

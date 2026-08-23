@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { addressListRole, workshopTitleRole } from "@/components/designworkshop/stageFieldRoles";
+import { addressListRole, identityNumberField, workshopTitleRole } from "@/components/designworkshop/stageFieldRoles";
 import { joinNumbered, splitNumbered } from "@/components/forms/NumberedListInput";
 import type { DwEntity, DwField } from "@/lib/designWorkshops";
 
@@ -286,10 +286,76 @@ test("the card reader is offered on the number box itself, and the media reader 
   expect(source).toContain('kind="PEHCHAN"');
   // ONE checksum on this client. `aadhaarValidationError` is injected rather than reimplemented, which
   // is the same contract `IdentityCardCapture` states for its own caller.
-  expect(source).toContain('import { aadhaarValidationError } from "@/components/forms/AadhaarField";');
+  expect(source).toContain(
+    'import { aadhaarValidationError, isMaskedIdentityNumber } from "@/components/forms/AadhaarField";'
+  );
   // And the media-side reader stays: it is the right control for a card a designer really did attach,
   // and it is the only one of the two that can offer a real delete.
   expect(source).toContain("<IdentityCardReader");
+});
+
+test("STANDING TRIPWIRE: the Pehchan capture resolves to the card box and not to the Aadhaar box", () => {
+  /*
+   * DECLARATION ORDER IS LOAD-BEARING ON THIS CLIENT AND NOTHING PINNED IT.
+   *
+   * `identityNumberField` returns the FIRST non-deprecated TEXT field of the entity whose key or
+   * label matches its identity pattern, and `FieldInput` mounts `IdentityCardCapture kind="PEHCHAN"`
+   * on exactly that one. Until 2026-08-24 `participant.artisanCardNo` was the only field in the
+   * registry that matched, so "first" and "only" were the same fact. The owner then had
+   * `participant.aadhaarNumber` added to the same entity, AFTER it — and from that moment the web's
+   * Pehchan card reader stayed on the right box because of the ORDER OF TWO LINES in
+   * `stage_definitions.py` and nothing else. `FieldInput` and `stage_definitions` both say so in
+   * prose, and neither file can enforce it; swapping the two lines would silently point a
+   * Pehchan-only recogniser (no checksum, no fixed shape) at a box that now stores only the mask of
+   * an Aadhaar number, with no change and no failure on this side.
+   *
+   * ASKED OF THE REAL FUNCTION AGAINST THE REAL REGISTRY — the bundled dump, no database — because
+   * a hand-written list of matching keys would pass for ever while the registry moved underneath it.
+   * The assertion is on the KEY the function picks, so a third identity field added anywhere before
+   * the card box fails here, named.
+   */
+  const dump = JSON.parse(readFileSync(SCHEMA, "utf8")) as {
+    stages: { entities: { key: string; fields: DwField[] }[] }[];
+  };
+  const participant = dump.stages
+    .flatMap((stage) => stage.entities)
+    .find((declared) => declared.key === "participant");
+  expect(participant, "the registry no longer declares a participant entity").toBeTruthy();
+
+  const entity = { key: "participant", fields: participant!.fields } as unknown as DwEntity;
+  expect(identityNumberField(entity)?.key).toBe("artisanCardNo");
+
+  // And the Aadhaar box IS one of the candidates — this test would pass vacuously if it were not, so
+  // the thing that makes the order matter is asserted rather than assumed.
+  const candidates = participant!.fields.filter(
+    (spec) => !spec.deprecated && spec.type === "TEXT" && identityNumberField({ key: "x", fields: [spec] } as unknown as DwEntity)
+  );
+  expect(candidates.map((spec) => spec.key)).toEqual(["artisanCardNo", "aadhaarNumber"]);
+});
+
+test("dictation cannot write past the bound the box itself enforces on typing", () => {
+  const source = read(FIELD_INPUT);
+  /*
+   * THE DEFECT. `maxLength` on an `<input>`/`<textarea>` constrains TYPING ONLY — a programmatic
+   * value ignores it — and `appendDictated` writes programmatically into every TEXT and LONG_TEXT
+   * box on the form. So a designer dictating two sentences into `participant.recordMediaNote`
+   * (`max_length=200`, and it arrives ALREADY holding a hydrated count) produced a value
+   * `coerce_value` refuses; `save_stage` then restores the refused key from `previous`, leaving an
+   * error against a box that had silently reverted. `StageMediaNoteField` refuses an over-length
+   * SELECTION on screen for exactly that reason while the microphone beside it wrote one anyway.
+   *
+   * REFUSED, NOT TRUNCATED, for the reason the chooser gives: a sentence cut to fit is a count
+   * nobody can tell is wrong, and this one goes into a submitted document.
+   */
+  const append = source.slice(source.indexOf("const appendDictated"), source.indexOf("const dictationNotice"));
+  expect(append, "the composed value is measured against the declared bound").toContain(
+    "field.maxLength && composed.length > field.maxLength"
+  );
+  expect(append, "and nothing is written when it does not fit").toContain("setDictationRefusal({");
+  expect(append, "never shorten a dictated phrase to make it fit").not.toContain(".slice(0, field.maxLength");
+  // Said on screen, in both wrappers, or a reduced-motion-style silent failure is all the designer
+  // gets: the box simply does not change when they speak.
+  expect(source.match(/\{dictationNotice\}/g), "the notice renders under a labelled AND an unlabelled control").toHaveLength(2);
 });
 
 test("the roles file still says how many roles there are, and which of them guess", () => {
@@ -297,8 +363,8 @@ test("the roles file still says how many roles there are, and which of them gues
   // answer costs. It has been wrong about the count once already (it said five while six were
   // declared), and a stale count is how the next reader concludes the file is not maintained.
   const source = read(ROLES);
-  expect(source).toContain("There are eight");
-  expect(source).toContain("FIVE OF THE EIGHT GUESS, AND SAY SO");
+  expect(source).toContain("There are nine");
+  expect(source).toContain("FIVE OF THE NINE GUESS, AND SAY SO");
   // TWO roles can refuse an answer now, not one — `workshopTitleRole` joined `addressListRole` when
   // "Documented at workshop" became a dropdown, and the paragraph naming the exact-key rule has to
   // name both or the next reader adds a third by pattern.
@@ -309,6 +375,16 @@ test("the roles file still says how many roles there are, and which of them gues
   // so raising the count cannot silently leave a paragraph counting to an older total.
   expect(source).toContain("THE EIGHTH DOES NOT GUESS EITHER");
   expect(source).toContain("other five would like to be");
+  /*
+    THE NINTH, ADDED 2026-08-24 WITH "Media on the artisan record", and this test earning its lines
+    for the second time: the count moved to nine and the two assertions above failed on the same run,
+    which is exactly the drift the block was written to catch. `recordMediaNoteRole` is the SECOND
+    role that reads a declaration rather than a key — it reads the hydration table, not `unit` — and
+    it is the third that can change what is STORED, so the header has to place it against both
+    groups or the next reader files it with the five inferences whose wrong answers are cheap.
+  */
+  expect(source).toContain("THE NINTH IS THE SECOND ONE THAT READS A DECLARATION");
+  expect(source).toContain("{@link recordMediaNoteRole}");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

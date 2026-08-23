@@ -23,8 +23,25 @@
  * rather than merely a cheap one:
  *   - the registry declares `sketch.lineArtFile` as "An SVG or vector export", so SVG is the target
  *     the field was written for;
- *   - and the ministry `.docx` gathers IMAGE fields, so a raster is the only form of this drawing
- *     that can be printed in a report at all.
+ *   - and PNG is the form anybody can open, drop into a slide or print without a vector tool.
+ *
+ * ── WHAT NEITHER OF THEM DOES, AND THIS FILE USED TO CLAIM ONE OF THEM DID ──────────────────────
+ *
+ * The paragraph above used to end "the ministry `.docx` gathers IMAGE fields, so a raster is the
+ * only form of this drawing that can be printed in a report at all", and the PNG hint below said the
+ * same thing to the designer at the moment of choosing. It is true of the report and false of this
+ * tab, which is the worst combination: BOTH exports are attached to `sketch.lineArtFile`, which is a
+ * FILE field, and `report_builder.format_value` prints a FILE as "1 document attached" whatever is
+ * inside it. Stage 11 declares exactly ONE image slot — `sketch.image` — and `UploadTabPanel`
+ * reserves it for the source photograph so a derived plate cannot displace the original
+ * (`docs/MEDIA_PIPELINE.md` §5). So choosing PNG here changed nothing about what the officer sees,
+ * while the copy said it changed everything.
+ *
+ * The fix is the copy, not the export: making a traced plate print as a picture needs a SECOND image
+ * slot on the sketch entity, which is a registry change in all four places plus the Android bundled
+ * asset, and an owner decision about whether a machine-traced drawing belongs in the photographic
+ * record beside the photographs. `backend/tests/test_report_sketch_prototype_mapping.py` pins what
+ * happens today so the sentence cannot drift back.
  *
  * If somebody adds PDF later, add it here behind its own `await import()` and measure what it costs.
  */
@@ -63,7 +80,7 @@ export const EXPORT_FORMATS = [
   {
     id: "png",
     label: "PNG",
-    hint: "Raster, transparent where the drawing is not. This is the form that can be printed in a report — the ministry document gathers image fields only."
+    hint: "Raster, transparent where the drawing is not. Opens anywhere, and drops straight into a letter or a slide. Both forms are filed as attachments on the sketch: the ministry report names the file and draws only the photograph, whichever you choose."
   }
 ] as const;
 

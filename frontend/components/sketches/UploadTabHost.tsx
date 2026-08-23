@@ -18,7 +18,31 @@
  *   * writes each file into the draft with `stageLocalMedia` + `putDraftStage`, which is the same
  *     path a photograph attached on a stage form takes and the same one the bulk photo importer
  *     uses — so it inherits retries, resumption, the orphan sweep and offline durability without a
- *     line of upload code here.
+ *     line of upload code here;
+ *   * and then ASKS THE SYNC PASS TO CARRY IT UP, which for a long time it did not — see below.
+ *
+ * ── THE DEVICE WRITE IS NOT THE END OF THE HOP, AND THIS TAB USED TO STOP THERE ─────────────────
+ *
+ * `attach` wrote the blob and the reference into IndexedDB and returned, under a notice reading "It
+ * uploads itself when this device next has a connection." Nothing on this page called
+ * `syncDesignWorkshopDrafts`, and the two things that do are elsewhere: the draft banner in the
+ * protected layout drains on mount and on the `online` event ONLY, and the REVIEW tab syncs its own
+ * arrangement save. So a designer who traced a sketch on an already-online laptop and closed the tab
+ * had a file that existed nowhere but this browser — no S3 object, no `MediaFile` row, no stage
+ * entry — while the sentence they had just read said the opposite. The `online` event never fires
+ * for a tab that was never offline, which is the ordinary office case rather than an exotic one.
+ *
+ * One call closes it, and it is the same call the REVIEW tab makes for the same reason: there is no
+ * upload endpoint to reach for here, because the bytes and the row that points at them have to move
+ * together, and `runSync` is the one pass that does both in the right order (media first, then the
+ * stages that reference them). See `lib/designWorkshopStore.ts`.
+ *
+ * TWO PHASES, TWO SENTENCES, NEVER ONE. "It is on this device" and "the repository has it" are
+ * different facts with different remedies, and the second is the only one that can fail after the
+ * first has succeeded. The device write owns its own message and its own `catch`; the sending owns
+ * the one after it. `ReviewPanel.persist` documents the bug that rule came from — a throw from the
+ * sync pass printing "this could not be saved on this device" over a write that had already
+ * landed.
  *
  * ── WHY THE PHOTOGRAPH AND THE TRACED DRAWING GO TO DIFFERENT FIELDS ────────────────────────────
  *
@@ -47,12 +71,19 @@ import Link from "next/link";
 import { ArrowRight, CloudOff } from "lucide-react";
 
 import { Dropdown } from "@/components/ui/Dropdown";
+import { isUnreachable } from "@/lib/failureTriage";
 import { appendMediaRef } from "@/lib/photoIntake";
-import { loadDraft, putDraftStage, stageLocalMedia } from "@/lib/designWorkshopStore";
+import {
+  loadDraft,
+  putDraftStage,
+  stageLocalMedia,
+  syncDesignWorkshopDrafts
+} from "@/lib/designWorkshopStore";
 import type { DwEntity, DwRegistry, DwRow } from "@/lib/designWorkshops";
 
 import { UploadTabPanel } from "./upload/UploadTabPanel";
 import { readStageRows, rowKeyOf, rowLabel, type StageRows } from "./stageRows";
+import { syncPassLanded, syncPassNote } from "./syncNote";
 
 /**
  * The four registry fields this tab writes into.
@@ -123,11 +154,26 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
     };
   }, [reload]);
 
+  /**
+   * Put files on this device, then send them — and report the two facts separately.
+   *
+   * TAKES A LIST rather than a file, because one of the four destinations is an IMAGE_LIST: a turn of
+   * twelve photographs is one action a designer takes, and staging it as twelve actions would write
+   * the stage twelve times, reload the pickers twelve times and print twelve notices for one choice.
+   * The single-file callers pass a list of one and nothing about their path changes.
+   *
+   * ALL OF THE FILES GO INTO ONE `putDraftStage`, and that matters for more than tidiness. Each write
+   * replaces the stage's entities wholesale, so a loop that wrote per file would be reading the
+   * collection it had just written back through React state — and any row the designer changed in
+   * another tab between two of those writes would be resurrected from the copy this loop is holding.
+   */
   const attach = useCallback(
-    async (target: Target, file: File, what: string) => {
+    async (target: Target, files: File[], what: string): Promise<boolean> => {
+      if (files.length === 0) return false;
       setBusy(true);
       setProblem(null);
       setNotice(null);
+      let landed: string | null = null;
       try {
         const draft = await loadDraft(workshopId);
         const stage = draft?.stages[target.stageKey];
@@ -135,7 +181,7 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
           setProblem(
             "This file has not been attached: this browser holds no copy of the stage it belongs to. Open that stage once with a connection, then try again."
           );
-          return;
+          return false;
         }
         const rows = [...(stage.collections[target.entityKey] ?? [])];
         const index = rows.findIndex((row) => rowKeyOf(row) === target.rowKey);
@@ -145,33 +191,79 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
           setProblem(
             "This file has not been attached: the row it was headed for is no longer in this workshop. Reload the tab and choose another."
           );
-          return;
+          return false;
         }
-        const { ref } = await stageLocalMedia(workshopId, file, {
-          stageKey: target.stageKey,
-          entityKey: target.entityKey,
-          fieldKey: target.fieldKey,
-          clientKey: target.rowKey
-        });
         const row = { ...rows[index] };
-        row[target.fieldKey] = appendMediaRef(row[target.fieldKey], ref, target.multiple);
+        for (const file of files) {
+          const { ref } = await stageLocalMedia(workshopId, file, {
+            stageKey: target.stageKey,
+            entityKey: target.entityKey,
+            fieldKey: target.fieldKey,
+            clientKey: target.rowKey
+          });
+          row[target.fieldKey] = appendMediaRef(row[target.fieldKey], ref, target.multiple);
+        }
         rows[index] = row;
         await putDraftStage(workshopId, target.stageKey, {
           singletons: stage.singletons,
           collections: { ...stage.collections, [target.entityKey]: rows },
           removedFrom: stage.removedFrom
         });
+        landed = rowLabel(row, index);
         await reload();
-        setNotice(
-          `${what} attached to “${rowLabel(row, index)}” on this device. It uploads itself when this device next has a connection, and the copy here is kept until the repository confirms it.`
-        );
+        setNotice(`${what} attached to “${landed}” on this device. Sending it to the repository…`);
       } catch {
         setProblem(
           "Nothing could be written to this device's storage. If the browser is in private mode or its storage is full, the file cannot be kept here — free some space and try again."
         );
+        return false;
       } finally {
+        /*
+          THE PANEL IS RELEASED BEFORE THE UPLOAD, NOT AFTER IT, AND THAT IS DELIBERATE.
+
+          `busy` disables both halves of the panel, and the send below is an S3 transfer that can be
+          a 200 MB model on a shared hotspot. Holding the whole tab for the duration would look like
+          the feature had hung, and would stop a designer staging the next photograph while the first
+          is still going up — which is precisely what the local draft exists to allow. Two attaches
+          overlapping is safe: `syncDesignWorkshopDrafts` shares one pass between concurrent callers
+          and is held under a Web Lock across tabs, so the second call joins the first rather than
+          starting a rival upload of the same bytes.
+        */
         setBusy(false);
       }
+
+      /* ── Phase two: the repository. Its own try, its own sentence. ────────────────────────── */
+      try {
+        const result = await syncDesignWorkshopDrafts();
+        await reload();
+        setNotice(
+          `${what} attached to “${landed}”. ${syncPassNote(result, files.length === 1 ? "this file is" : "these files are")}` +
+            // The bytes are the half a designer cannot re-make: a traced plate can be traced again,
+            // a courtyard photograph cannot be re-taken. So on every outcome except a confirmed
+            // landing, say that the copy here is kept — that is what makes the wait safe rather than
+            // merely long.
+            (syncPassLanded(result) ? "" : " The copy on this device is kept until the repository confirms it.")
+        );
+      } catch (error) {
+        // The file IS on this device — that happened above and is not in doubt here. Only the sending
+        // is, so only the sending is what this sentence is about.
+        setNotice(
+          isUnreachable(error)
+            ? `${what} is saved on this device. There is no connection, so it uploads itself when one returns, and the copy here is kept until the repository confirms it.`
+            : `${what} is saved on this device, but sending it did not complete. It goes up with the next sync — the banner above the page follows it — and the copy here is kept until the repository confirms it.`
+        );
+      }
+      /*
+        TRUE MEANS "IT IS ON THIS DEVICE", NOT "THE REPOSITORY HAS IT" — the two-phase rule this
+        file's header states, in the return value. Phase two failing is not a failed attach: the
+        bytes are durable, the sync pass owns its own sentence above, and the banner follows it.
+
+        WHAT THE CALLER NEEDS IT FOR. `PrototypeModelField` printed a green "N photographs were added
+        to …" unconditionally, the moment it handed the files over — so a synchronous `refuse()` or a
+        failed IndexedDB write rendered its red sentence and the green tick side by side, one of them
+        a lie. A void callback gave the panel no way to know; this is that way.
+      */
+      return true;
     },
     [reload, workshopId]
   );
@@ -317,12 +409,18 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
           turntableLabel={turntable.label}
           turntableCount={turntableHeld}
           disabled={busy || !anythingReady}
-          onAttachSketch={(file) => {
+          /*
+            THE HANDLERS ANSWER THE PANEL, and the answer is what stops a green tick appearing over a
+            red refusal. `attach` resolves true once the file is on this device (phase two owns its
+            own sentence); a synchronous `refuse` resolves false, because `refuse` has already said
+            why in words the panel could not improve on. See `upload/UploadTabPanel.AttachAnswer`.
+          */
+          onAttachSketch={async (file) => {
             if (!sketches?.stageKey || !sketchReady) {
               refuse("sketch");
-              return;
+              return false;
             }
-            void attach(
+            return attach(
               {
                 stageKey: sketches.stageKey,
                 entityKey: "sketch",
@@ -330,16 +428,16 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
                 rowKey: sketchRow,
                 multiple: false
               },
-              file,
+              [file],
               lineArt.label
             );
           }}
-          onAttachSketchSource={(file) => {
+          onAttachSketchSource={async (file) => {
             if (!sketches?.stageKey || !sketchReady || !sketchImage) {
               refuse("sketch");
-              return;
+              return false;
             }
-            void attach(
+            return attach(
               {
                 stageKey: sketches.stageKey,
                 entityKey: "sketch",
@@ -347,16 +445,16 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
                 rowKey: sketchRow,
                 multiple: sketchImage.type === "IMAGE_LIST"
               },
-              file,
+              [file],
               sketchImage.label
             );
           }}
-          onAttachModel={(file) => {
+          onAttachModel={async (file) => {
             if (!prototypes?.stageKey || !prototypeReady) {
               refuse("prototype");
-              return;
+              return false;
             }
-            void attach(
+            return attach(
               {
                 stageKey: prototypes.stageKey,
                 entityKey: "prototype",
@@ -364,8 +462,41 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
                 rowKey: prototypeRow,
                 multiple: false
               },
-              file,
+              [file],
               model.label
+            );
+          }}
+          /*
+            THE FIELD THE PANEL SPENDS MOST OF ITS SCREEN ADVISING, WHICH IT COULD NOT WRITE.
+
+            `prototype.turntablePhotos` is the ONE field on this whole surface that reaches the
+            printed report as pictures — `report_builder._images` filters on IMAGE and IMAGE_LIST,
+            and everything else here is a FILE that prints as "1 document attached". The panel read it
+            off the registry for its label, counted what the row already held, and told the designer
+            in two paragraphs why it mattered — and then offered no way to add one, sending them to
+            the stage form without saying so. Advising a field it cannot write is worse than being
+            silent about it: the designer follows the advice on the screen they are on.
+
+            `multiple` IS READ OFF THE REGISTRY rather than hardcoded true, exactly as the sketch
+            image's is. If this field is ever narrowed to a single IMAGE, `appendMediaRef` must
+            REPLACE rather than append, or every frame after the first would be dropped by
+            `coerce_value` and the designer told nothing.
+          */
+          onAttachTurntable={async (files) => {
+            if (!prototypes?.stageKey || !prototypeReady) {
+              refuse("prototype");
+              return false;
+            }
+            return attach(
+              {
+                stageKey: prototypes.stageKey,
+                entityKey: "prototype",
+                fieldKey: PROTOTYPE_TURNTABLE,
+                rowKey: prototypeRow,
+                multiple: turntable.type === "IMAGE_LIST"
+              },
+              files,
+              files.length === 1 ? `1 frame of “${turntable.label}”` : `${files.length} frames of “${turntable.label}”`
             );
           }}
         />

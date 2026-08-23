@@ -976,6 +976,12 @@ private fun ScalarInput(
                 kind = identityKindFor(field),
                 repository = services!!.repository,
                 enabled = enabled,
+                // READ OFF THE REGISTRY, never inferred from the field's name. The server masks this
+                // field's value on every save when it declares the flag, so the control both SAYS so
+                // above the candidate buttons and hands the masked form to `commit` — otherwise the
+                // designer taps a twelve-digit number, watches four digits land in the box, and
+                // cannot tell a masking rule from a bug that ate the answer they just proofread.
+                storeMasked = field.storeMasked,
                 // The ONLY route from the reader to the field, and it is reached from a tap on a
                 // button that spells the number out. Nothing above ever calls this.
                 onUse = { number -> commit(number) },

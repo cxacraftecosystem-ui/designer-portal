@@ -103,6 +103,8 @@ import { Dropdown } from "@/components/ui/Dropdown";
 
 import { EXPORT_FORMATS, exportPngFile, exportSvgFile, isExported, paintGeometry, type ExportFormatId } from "./traceExport";
 import type { SvgInput } from "./geometryToSvg";
+// TYPE-ONLY, so the panel that composes this one can own the contract without a runtime cycle.
+import type { AttachAnswer } from "./UploadTabPanel";
 import {
   loadTracePresets,
   loadTraceRuntime,
@@ -139,7 +141,7 @@ export interface SketchTraceFieldProps {
   targetLabel: string;
   disabled?: boolean;
   /** Hands the derived file to the host — the same door a camera photograph goes in by. */
-  onAttach: (file: File) => void;
+  onAttach: (file: File) => AttachAnswer;
   /**
    * Offered the ORIGINAL photograph the designer chose in this panel, when the host wants it too.
    *
@@ -153,7 +155,7 @@ export interface SketchTraceFieldProps {
    * CALLED AT MOST ONCE PER CHOSEN PHOTOGRAPH. See `sourceFiledRef` below: attaching as SVG, then
    * reopening and attaching the same photograph as PNG, must not hand the host the same bytes twice.
    */
-  onAttachSource?: (file: File) => void;
+  onAttachSource?: (file: File) => AttachAnswer;
 }
 
 type Phase =
@@ -606,15 +608,35 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
         setProblem(outcome.reason);
         return;
       }
-      onAttach(outcome.file);
-      const source = fileSourceOnce(file);
+      /*
+        THE HOST'S ANSWER DECIDES WHETHER A SUCCESS SENTENCE IS PRINTED AT ALL.
+
+        This used to call `onAttach` and then set the green sentence unconditionally, so a host that
+        refused the file — no row chosen on the UPLOAD tab, a stage this browser has no copy of, a
+        failed device write — printed its own red refusal above a tick claiming the line art had been
+        added. See {@link AttachAnswer}: `false` means "I have already told them, do not claim this
+        worked", and `undefined` is every other host, unchanged.
+
+        THE PANEL STAYS OPEN ON A REFUSAL, with the traced geometry and the chosen photograph intact,
+        because re-tracing a plate to recover from somebody else's refusal is work nobody should have
+        to redo. The photograph is deliberately NOT filed either — `fileSourceOnce` is below this
+        return, so a refused trace does not silently leave the source attached on its own.
+      */
+      if ((await onAttach(outcome.file)) === false) return;
+      const source = await fileSourceOnce(file);
       setDone(
         `${outcome.file.name} was added to “${targetLabel}”.` +
           (source === "filed"
             ? ` The photograph ${file.name} was filed alongside it, exactly as it is.`
             : source === "already"
               ? ` The photograph ${file.name} was already filed and is untouched.`
-              : " The photograph itself is untouched.") +
+              : source === "refused"
+                // THE ONE OUTCOME WHERE THE TWO HALVES DISAGREE: the line art was taken and the
+                // photograph was not. Naming it is the only honest answer — the host has printed
+                // WHY beside the picker, and " The photograph itself is untouched." would read as a
+                // deliberate choice rather than as a file that did not land.
+                ? ` The photograph ${file.name} was NOT filed — see the message beside the picker.`
+                : " The photograph itself is untouched.") +
           (outcome.note ? ` ${outcome.note}` : "")
       );
       setOpen(false);
@@ -640,12 +662,18 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    *
    * Returns which of the three things happened, so the sentence the designer reads is the true one.
    */
-  function fileSourceOnce(chosen: File): "filed" | "already" | "not-wanted" {
+  async function fileSourceOnce(chosen: File): Promise<"filed" | "already" | "not-wanted" | "refused"> {
     if (!onAttachSource) return "not-wanted";
     if (sourceFiledRef.current === chosen) return "already";
+    // MARKED BEFORE THE CALL, and left marked even on a refusal. The ref exists so one chosen
+    // photograph is offered to the host AT MOST ONCE; a refused offer is still an offer, and
+    // re-offering it on the next press would be the duplicate this ref was written to stop. The
+    // designer's route back is to pick the photograph again, which resets the ref in `chooseFile`.
     sourceFiledRef.current = chosen;
-    onAttachSource(chosen);
-    return "filed";
+    // A REFUSAL IS ITS OWN ANSWER rather than being folded into "filed": the sentence the designer
+    // reads names which of the things happened, and "was filed alongside it" over a file the host
+    // rejected is the class of contradiction this whole change is about.
+    return (await onAttachSource(chosen)) === false ? "refused" : "filed";
   }
 
   /**
@@ -659,9 +687,13 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    * therefore has to be able to file the photograph on its own — the owner's brief for the tab is
    * "upload image files of various kinds", and the photograph of the sheet is the first of them.
    */
-  function attachSourceOnly() {
+  async function attachSourceOnly() {
     if (file === null || !onAttachSource) return;
-    const source = fileSourceOnce(file);
+    const source = await fileSourceOnce(file);
+    // REFUSED BY THE HOST: it has printed its own reason beside the picker, and this panel must not
+    // print "was filed" over it. The panel is left open with the photograph still chosen, so the
+    // designer can act on the refusal (choose a row, reload the stage) and press again.
+    if (source === "refused") return;
     setProblem(null);
     setDone(
       source === "filed"

@@ -181,6 +181,36 @@ export type OutboxEntry = {
    */
   skewRun?: string | null;
   /**
+   * The key of the object in the RESPONSE that carries the saved row, when it is not the response.
+   *
+   * ── WHY THIS EXISTS: A QUEUE THAT REFUSED ITS OWN SUCCESSES ──────────────────────────────────
+   *
+   * The drain reads `saved.id` off the replay's answer and treats a 2xx carrying no readable id as
+   * a captive portal — a PERMANENT failure with a sentence telling the researcher their work is
+   * still on the device and may or may not have arrived. That test is right for every endpoint this
+   * queue was written for, all of which answer with the created record at the top level.
+   *
+   * `POST /design-ratings` does not. It answers `{ "rating": {…}, "replayed": bool }`, because the
+   * client cannot know whether it is creating, amending or replaying and the route is deliberately
+   * one route for all three (see its docstring). So EVERY SUCCESSFUL REPLAY of a queued rating would
+   * have been marked as a permanent captive-portal failure and shown to the designer as work that
+   * never landed — which is exactly why `components/sketches/ratingsApi.ts` refused to queue a
+   * rating at all, in a comment naming this field's absence as the thing that had to change first.
+   * The cost of that refusal was the only value on the sketches surface with NO persistence path:
+   * a score, an assessment and a suggested change, typed in a courtyard with no signal, refused out
+   * loud and gone when the tab closed.
+   *
+   * NAMED BY THE QUEUEING CALLER RATHER THAN SNIFFED FROM THE ANSWER. The alternative — "if there
+   * is no top-level id, look one level down" — would turn a captive portal's own 200 page into a
+   * success the moment it happened to contain one nested `id`, on a queue whose whole discipline is
+   * that an answer it cannot read is not a save. The caller knows the shape of the route it is
+   * queueing; a guess made a fortnight later on a different network does not.
+   *
+   * ABSENT MEANS THE TOP LEVEL, so every entry written before this existed — and every entry from
+   * the six forms that queue records — replays byte-for-byte as it always has.
+   */
+  savedIdIn?: string;
+  /**
    * Replay progress. All optional: entries written before this existed simply have none, and start
    * their replay from the top exactly as they used to.
    *
@@ -792,6 +822,35 @@ export function refusedFileNames(error: unknown, attempted: File[]): Array<{ nam
   return attempted.map((file) => ({ name: file.name }));
 }
 
+/**
+ * What a replayed POST/PATCH is allowed to answer, as far as this pass is concerned.
+ *
+ * Deliberately as loose as it is: the drain reads exactly two things off it — an `id` and, for the
+ * process form, a list of created children — and every other field belongs to whichever route was
+ * replayed. Typing it any tighter would be this module claiming to know six response shapes it
+ * never reads, and the one shape it does have to reach into is nested (see
+ * {@link OutboxEntry.savedIdIn}), which no single literal type can express.
+ */
+type ReplayAnswer = {
+  id?: unknown;
+  steps?: Array<{ id: string }>;
+} & Record<string, unknown>;
+
+/**
+ * The saved row inside a replay's answer: the answer itself, or the one key the entry named.
+ *
+ * A `savedIdIn` naming a key that is absent, null or not an object answers `undefined` — NOT the
+ * top-level answer. Falling back would mean a route that changed its response shape, or a captive
+ * portal's 200 page, got read as a save because the fallback happened to find an `id` somewhere
+ * else; the caller's whole point in naming the key is that it knows where the row lives.
+ */
+function savedRow(answer: ReplayAnswer | null | undefined, savedIdIn: string | undefined): ReplayAnswer | undefined {
+  if (!answer) return undefined;
+  if (!savedIdIn) return answer;
+  const nested = answer[savedIdIn];
+  return nested && typeof nested === "object" ? (nested as ReplayAnswer) : undefined;
+}
+
 export type SyncResult = {
   synced: number;
   failed: number;
@@ -910,7 +969,7 @@ async function runSync(): Promise<SyncResult> {
     try {
       if (!progress.created) {
         try {
-          const saved = await apiFetch<{ id: string; steps?: Array<{ id: string }> }>(
+          const answer = await apiFetch<ReplayAnswer>(
             progress.endpoint,
             { method: progress.method, body: progress.body },
             // A BACKGROUND PASS MUST NOT NAVIGATE. This runs on an `online` event and on mount, with
@@ -921,12 +980,15 @@ async function runSync(): Promise<SyncResult> {
             // protected route when `AuthProvider` next notices. The pass stops and the banner asks.
             { redirectOn401: false }
           );
-          // Every endpoint the outbox replays answers with the saved record, so a 2xx carrying no id
-          // did not come from one — a captive portal answering the POST with its own 200 page is the
-          // field case, and this app already knows they exist (see the "Sync now" note in
-          // OutboxBanner). Taking it as success set `createdId` to null, which skipped the media loop
-          // in silence and then discarded the entry: no record written, the photographs deleted, and
-          // "sent" reported. An answer we cannot read is not a save — keep the entry and say so.
+          // Every endpoint the outbox replays answers with the saved record — at the top level, or
+          // under the one key the entry named when it was queued ({@link OutboxEntry.savedIdIn}) —
+          // so a 2xx carrying no id there did not come from one. A captive portal answering the POST
+          // with its own 200 page is the field case, and this app already knows they exist (see the
+          // "Sync now" note in OutboxBanner). Taking it as success set `createdId` to null, which
+          // skipped the media loop in silence and then discarded the entry: no record written, the
+          // photographs deleted, and "sent" reported. An answer we cannot read is not a save — keep
+          // the entry and say so.
+          const saved = savedRow(answer, progress.savedIdIn);
           const createdId = typeof saved?.id === "string" && saved.id ? saved.id : null;
           if (!createdId) {
             const files = pendingFileCount(progress);

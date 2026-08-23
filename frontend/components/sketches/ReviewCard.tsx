@@ -20,6 +20,19 @@
  * every one of those, and the number is what the ranking is actually computed from — so the
  * control a designer uses should be the number they are choosing.
  *
+ * ── A JUDGEMENT MADE WITH NO SIGNAL IS KEPT, NOT REFUSED ────────────────────────────────────────
+ *
+ * Submitting goes through `submitOrQueueDesignRating`, so a request that never reaches the server
+ * becomes a durable entry in the offline outbox and delivers itself later. That is new: this form
+ * used to be the one surface in the sketches and prototypes feature whose value had no persistence
+ * path at all — the network was tried, the refusal was stated honestly, and the paragraph of
+ * qualitative feedback lived only in these two textareas until the tab closed. The score, the
+ * comment and the suggestion are now as durable as the sketch they are about.
+ *
+ * WHAT IS DELIBERATELY NOT DONE with a queued rating is anything to the numbers on screen; see the
+ * comment in `submit`. The ranking is the repository's, and a card must not show a score it holds
+ * against a piece the repository has never been told about.
+ *
  * ── WHAT THIS CARD MAY SHOW IS DECIDED BY THE SERVER, NOT HERE ──────────────────────────────────
  *
  * The ledger disclosure renders `ratings[]` exactly as `GET /design-ratings/subjects/{id}` returns
@@ -37,12 +50,12 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Loader2, MessageSquareQuote, Star } from "lucide-react";
+import { ChevronDown, CloudOff, Loader2, MessageSquareQuote, Star } from "lucide-react";
 
 import { isUnreachable } from "@/lib/failureTriage";
 import { formatDate, formatDateTime } from "@/lib/format";
 
-import { fetchSubjectLedger, refusalText, submitDesignRating } from "./ratingsApi";
+import { fetchSubjectLedger, refusalText, submitOrQueueDesignRating } from "./ratingsApi";
 import type { DesignRating, RankedItem, RatingRound, SubjectLedger } from "./reviewRanking";
 
 const SCORES = [1, 2, 3, 4, 5] as const;
@@ -91,7 +104,16 @@ export function ReviewCard({ item, subtitle, round, openHref, fixedOrder, showPl
   */
   const savingRef = useRef(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
+  /*
+    THE OUTCOME SENTENCE, AND WHETHER IT IS A LANDING OR A PROMISE.
+
+    One state and not two, because the two facts are never both true and a card holding "sent" and
+    "queued" at once would have to decide which to draw. `queued` is what keeps the styling honest:
+    a rating sitting in IndexedDB must not appear in the same green box as one the repository has
+    acknowledged — that box is this card's only affirmative signal, and spending it on work that has
+    not moved is exactly the false all-clear this repository keeps having to un-ship.
+  */
+  const [saved, setSaved] = useState<{ text: string; queued: boolean } | null>(null);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [ledger, setLedger] = useState<SubjectLedger | null>(null);
   const [ledgerProblem, setLedgerProblem] = useState<string | null>(null);
@@ -161,28 +183,86 @@ export function ReviewCard({ item, subtitle, round, openHref, fixedOrder, showPl
     setProblem(null);
     setSaved(null);
     try {
-      const result = await submitDesignRating({
-        subjectId: item.subjectId,
-        round,
-        score,
-        comment: comment.trim() || null,
-        suggestion: suggestion.trim() || null
-      });
-      onRated(result.rating);
-      setSaved(
-        result.replayed
-          ? "The server already held this rating, unchanged."
-          : mine
-            ? "Your rating has been amended."
-            : "Your rating has been recorded."
+      const outcome = await submitOrQueueDesignRating(
+        {
+          subjectId: item.subjectId,
+          round,
+          score,
+          comment: comment.trim() || null,
+          suggestion: suggestion.trim() || null
+        },
+        // The banner's label for a queued entry: what a designer can recognise a week later on the
+        // list of things this device is still holding. An endpoint is not that; the piece's own name
+        // is. "Untitled piece" is the same fallback the heading above uses, so the two agree.
+        `Rating · ${item.label || "Untitled piece"}`
       );
-      // Re-read rather than patched in place: the ledger carries other people's rows, and this
-      // caller's amendment may be one of several that landed since it was opened.
-      if (ledgerOpen) void loadLedger();
+      /*
+        ── A QUEUED RATING IS NOT PASSED TO `onRated`, AND THAT IS NOT AN OVERSIGHT ────────────────
+
+        `onRated` hands the list a `DesignRating` — a stored row, with its id, its reviewer and the
+        aggregate recomputed around it — and there is no such row yet. Manufacturing one from what
+        is in these boxes would put a score into the ranking, and into the average printed on every
+        card of this round, that the repository has never seen and might yet refuse. The boxes keep
+        the text (the effect above only resets them when `mine` itself changes, and it has not), so
+        nothing the designer typed is lost from the screen either.
+
+        WHAT IT COSTS, SAID PLAINLY RATHER THAN HIDDEN: until the queue drains, this card still shows
+        the round as it stood before, and the sentence below is the only thing that says a judgement
+        is on its way. That is the same bargain the arrangement above makes — "saved on this device,
+        going up later" — and it is why the sentence names the banner that follows it.
+      */
+      if (outcome.queued) {
+        /*
+          TWO SENTENCES, BECAUSE THERE ARE TWO OUTCOMES AND ONE OF THEM USED TO BE MIS-STATED.
+
+          A queued rating is now handed straight to the outbox drain unless the browser already knows
+          it is offline (`submitOrQueueDesignRating`), so "it sends itself when this device next has a
+          connection" is the wrong sentence for the ordinary case: the connection is fine, the send
+          has ALREADY been attempted, and this tab is not waiting on an `online` event that will
+          never fire for it. `outcome.sent` is what that pass reported.
+
+          NEITHER BRANCH CLAIMS THE RANKING MOVED, and that is the same bargain as the paragraph
+          above: `onRated` needs a stored row with its id and its recomputed aggregate, and the drain
+          does not hand one back. So a rating that HAS landed still is not in the averages on these
+          cards until the page is read again — which is said out loud rather than left for a designer
+          to discover by comparing two numbers.
+        */
+        setSaved({
+          queued: true,
+          text: outcome.sent
+            ? "This rating was saved on this device and has now been sent to the repository. The scores on these " +
+              "cards do not include it until this page is opened again — reload to see the round with it in."
+            : "This rating is saved on this device and has NOT reached the repository yet. This browser has already " +
+              "tried once and will keep trying — the sync banner above the page lists it until it lands, and can " +
+              "send it on demand. The scores on these cards will not move until it does."
+        });
+      } else {
+        onRated(outcome.saved.rating);
+        setSaved({
+          queued: false,
+          text: outcome.saved.replayed
+            ? "The server already held this rating, unchanged."
+            : mine
+              ? "Your rating has been amended."
+              : "Your rating has been recorded."
+        });
+        // Re-read rather than patched in place: the ledger carries other people's rows, and this
+        // caller's amendment may be one of several that landed since it was opened.
+        if (ledgerOpen) void loadLedger();
+      }
     } catch (error) {
       setProblem(
+        /*
+          A CONNECTION FAILURE NO LONGER REACHES THIS BRANCH: `submitOrQueueDesignRating` turns one
+          into a queued entry, which is the `outcome.queued` arm above. What reaches it now is a
+          device that could not keep the rating either — `queueOffline`'s IndexedDB write threw,
+          which on a field laptop means private mode or a full disk — and `triageFailure` files a
+          bare storage error under "unreachable", so this is where it lands. The sentence therefore
+          no longer claims anything about the network, which it cannot know: what it claims is that
+          nothing was stored and that the text is still on screen, which is what a designer acts on.
+        */
         isUnreachable(error)
-          ? "There is no connection, so this rating has NOT been sent. What you have written is still in the boxes — try again once you have signal."
+          ? "This rating has NOT been sent, and this device could not keep it either: its storage refused the write, which usually means the browser is in private mode or the disk is full. What you have written is still in the boxes."
           : refusalText(error, "This rating was not accepted.")
       );
     } finally {
@@ -296,11 +376,48 @@ export function ReviewCard({ item, subtitle, round, openHref, fixedOrder, showPl
           />
         </label>
 
+        {/*
+          WHERE THESE THREE ANSWERS GO, AND WHERE THEY DO NOT — said once, under the boxes.
+
+          The score, the assessment and the suggestion are stored in `DwReviewRating` and NO report
+          section reads that table: `report_builder`, `report_templates` and `report_model` have no
+          reference to it and `SpecialSection` has no member for it (measured, and stated in
+          `backend/tests/test_report_sketch_prototype_mapping.py`, which deliberately pins the gap in
+          neither direction because closing it is an owner call — a new `SpecialSection` has to be
+          ported to Kotlin and moves a pinned template fixture). What the printed document DOES carry
+          out of this tab is the ARRANGEMENT these ratings settle, and the stamp saying who settled it.
+
+          A designer writing four hundred words of assessment into a box on a page whose other half
+          feeds a ministry report will reasonably assume the words go there too. Rule 10 of this
+          repository's frontend contract is about a list that quietly stops; this is the same rule
+          read one step further — work that is captured and printed nowhere has to say so on the
+          screen that captures it, or the only person who ever finds out is the one who reads the
+          finished document looking for their own paragraph.
+        */}
+        <p className="text-xs leading-5 text-ink-500">
+          Scores, assessments and suggestions stay in this workshop&apos;s review ledger — they are read here and in the
+          ranking, and the printed report does not carry them. What the report takes from this tab is the ORDER the
+          pieces end up in, and a line saying who settled it. Anything that has to appear in the document belongs on the
+          piece&apos;s own stage form.
+        </p>
+
         {problem ? (
           <p className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600">{problem}</p>
         ) : null}
         {saved ? (
-          <p className="rounded-md border border-line-200 bg-success-100 px-3 py-2 text-sm text-success-600">{saved}</p>
+          <p
+            className={
+              saved.queued
+                ? "flex items-start gap-2 rounded-md border border-line-200 bg-amber-100 px-3 py-2 text-sm text-amber-800"
+                : "rounded-md border border-line-200 bg-success-100 px-3 py-2 text-sm text-success-600"
+            }
+          >
+            {/* A STATIC MARK, NOT A COLOUR ALONE. The amber box and the green box are one hue apart
+                for a reader who can compare them; the icon is what tells a colour-blind reader, and a
+                reduced-motion reader, that this one is still outstanding. */}
+            {saved.queued ? <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> : null}
+            <span>{saved.text}</span>
+          </p>
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3">

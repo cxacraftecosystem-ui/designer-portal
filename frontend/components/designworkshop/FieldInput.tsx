@@ -62,6 +62,7 @@ import {
   offersPhotoMeasure,
   offersSignaturePad,
   offersSketchRectify,
+  recordMediaNoteRole,
   sketchSourceFields,
   workshopTitleRole
 } from "@/components/designworkshop/stageFieldRoles";
@@ -70,6 +71,7 @@ import { SketchRectifyField, type SketchSource } from "@/components/designworksh
 import { SignaturePad } from "@/components/SignaturePad";
 import { StageAddressField } from "@/components/designworkshop/StageAddressField";
 import { StageGeoField } from "@/components/designworkshop/StageGeoField";
+import { StageMediaNoteField } from "@/components/designworkshop/StageMediaNoteField";
 import { StageWorkshopField } from "@/components/designworkshop/StageWorkshopField";
 import { StageReferenceSelect } from "@/components/designworkshop/StageReferenceField";
 /*
@@ -81,7 +83,7 @@ import { StageReferenceSelect } from "@/components/designworkshop/StageReference
  * any of the three would be a second answer that drifts, and the drift would be invisible: the DATA
  * carries fine either way, so nothing would report it — only the person typing pays.
  */
-import { aadhaarValidationError } from "@/components/forms/AadhaarField";
+import { aadhaarValidationError, isMaskedIdentityNumber } from "@/components/forms/AadhaarField";
 import { DateField, TimeField } from "@/components/forms/DateTimeField";
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
@@ -533,20 +535,61 @@ export function FieldInput({
   const invalid = error ? true : undefined;
 
   /**
+   * A dictated phrase this box could not take, and the value it was refused over.
+   *
+   * THE VALUE IS PART OF THE STATE so the notice clears itself. It is a fact about an ACT — "the
+   * phrase you just spoke was not added" — and it stops being true the moment the box changes by
+   * any route: a hand edit, a shorter dictated phrase, a chooser writing a sentence. Keying it to
+   * the value it was refused over gets that for free and needs no `setState` wired into the
+   * `onChange` of six separate branches, three of which are inside child controls this file only
+   * passes a `dictation` node to.
+   */
+  const [dictationRefusal, setDictationRefusal] = useState<{ dropped: number; over: string } | null>(null);
+  const dictationDropped =
+    dictationRefusal && dictationRefusal.over === inputValue(value) ? dictationRefusal.dropped : 0;
+
+  /**
    * Append a dictated phrase to whatever the box already holds.
    *
    * APPEND, never replace. The recogniser is stopped and started many times across a long answer,
    * and a commit that overwrote the field would delete the previous three sentences the moment
    * somebody paused for breath. The separator is a space unless the box already ends in one, so a
    * paragraph dictated in five goes does not come out as "…the warpis sized…".
+   *
+   * ── AND IT IS BOUNDED BY `maxLength`, WHICH IT WAS NOT ──────────────────────────────────────────
+   *
+   * Every box this commits into carries `maxLength={field.maxLength || undefined}` on the element,
+   * and that attribute constrains TYPING ONLY — it has no effect on a value written
+   * programmatically, which is exactly what this function writes. So dictation was the one way past
+   * the bound on every field in the registry that declares one, and the failure it produced is the
+   * one this whole surface keeps arguing against: `coerce_value` refuses the over-length string,
+   * `save_stage` then restores the refused key from `previous`, and the designer is left with an
+   * error against a box whose value silently reverted. The narrowest case is the worst — the media
+   * note is `max_length=200` and arrives ALREADY HOLDING a hydrated sentence of sixty-odd
+   * characters, so two dictated sentences about the footage overrun it — and `StageMediaNoteField`
+   * refuses an over-length SELECTION on screen for precisely that reason while the microphone beside
+   * it wrote one anyway.
+   *
+   * REFUSED, NOT TRUNCATED, and the same argument the chooser makes: a sentence cut to fit is a
+   * claim nobody can tell is wrong, and this box may hold a count that goes into a ministry
+   * document. The phrase is dropped whole, the box keeps exactly what it had, and the notice below
+   * the field says how far over it was — which is also the only thing that tells the designer to
+   * shorten the box before speaking again rather than to blame the microphone.
    */
   const appendDictated = useCallback(
     (text: string) => {
       const existing = inputValue(value);
       const joiner = !existing || /\s$/.test(existing) ? "" : " ";
-      onChange(`${existing}${joiner}${text}`);
+      const composed = `${existing}${joiner}${text}`;
+      // An absent bound means unbounded, not zero — `field_to_dict` emits only non-default keys.
+      if (field.maxLength && composed.length > field.maxLength) {
+        setDictationRefusal({ dropped: composed.length - field.maxLength, over: existing });
+        return;
+      }
+      setDictationRefusal(null);
+      onChange(composed);
     },
-    [value, onChange]
+    [value, onChange, field.maxLength]
   );
 
   /**
@@ -557,6 +600,27 @@ export function FieldInput({
    * enum label) widens its column and spills over the field beside it. `truncate` cannot save it —
    * truncation clips inside a box that has already grown.
    */
+  /**
+   * The refused-dictation sentence, in BOTH wrappers so it cannot depend on which control drew.
+   *
+   * Placed after `FieldHint` — below the instruction and below the server's own error, which is the
+   * reading order the describedby above already sets. NOT folded into `FieldHint`'s `error` slot:
+   * that slot is the SERVER's answer about the stored value, and this is the client refusing to
+   * write one. Two different facts, and a designer who has just been told the stage failed to save
+   * must not have that sentence replaced by one about a microphone.
+   *
+   * `error-600` is one of the two literal status colours in the palette and deliberately does not
+   * invert — "this was not written" has to read identically in both themes.
+   */
+  const dictationNotice =
+    dictationDropped > 0 ? (
+      <p className="text-xs font-medium leading-5 text-error-600">
+        What you just dictated was not added: it would make this answer {dictationDropped} character
+        {dictationDropped === 1 ? "" : "s"} longer than the {field.maxLength} this field stores, and a sentence cut to
+        fit is worse than one not written. The box is unchanged — shorten what is in it, then dictate again.
+      </p>
+    ) : null;
+
   const labelled = (control: React.ReactNode) => (
     <div className="grid min-w-0 gap-1">
       <label className="field-label" htmlFor={controlId}>
@@ -564,6 +628,7 @@ export function FieldInput({
       </label>
       {control}
       <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} stamp={stamp} />
+      {dictationNotice}
     </div>
   );
 
@@ -575,6 +640,7 @@ export function FieldInput({
       </span>
       {control}
       <FieldHint field={field} error={error} hintId={hintId} errorId={errorId} stamp={stamp} />
+      {dictationNotice}
     </div>
   );
 
@@ -671,6 +737,58 @@ export function FieldInput({
         );
       }
       /*
+       * "MEDIA ON THE ARTISAN RECORD" GETS A CHOOSER OVER THE FILES ITS SENTENCE COUNTS.
+       *
+       * The owner asked for that box to be a multi-select. It is `participant.recordMediaNote` —
+       * TEXT, `max_length=200`, a hydration target — and what lands in it is a SENTENCE `_media_note`
+       * composes by counting the linked record's attached files. So unlike "Documented at workshop"
+       * above there is no lossless one-to-one between a thing picked and the string stored: the string
+       * is a count, and nothing a designer can tick produces one.
+       *
+       * WHAT THIS MOUNT THEREFORE DOES, AND WHAT IT REFUSES TO DO. `StageMediaNoteField` keeps the
+       * hydrated sentence in an ordinary editable box — the value must stay readable and editable, and
+       * a value that matches no option must never be stranded — and puts a searchable multi-select
+       * over the record's files beneath it. Ticking files APPENDS a second sentence ("See in
+       * particular: …") and never rewrites the record's own count into a smaller one: a subset count
+       * presented as the record's total is a false claim in a document that goes to a ministry, and
+       * this field exists so a reader knows what to ask for. An over-length result is refused on
+       * screen rather than truncated, because `coerce_value` would refuse it on save and `save_stage`
+       * would restore the old value under the error.
+       *
+       * `recordMediaNoteRole` reads the HYDRATION TABLE rather than this field's name, which is what
+       * lets it answer the question the other roles cannot — which record's files to list — and where
+       * the refusal for `traditionalProcess.recordMediaNote` lives (a different function, a different
+       * grammar, dormant today). Four fields qualify; the process's box stays the plain input below.
+       *
+       * `unlabelled`, because the control contains a dropdown and two buttons: a wrapping `<label>`
+       * forwards a stray click into the menu and slams it shut after one pick. Same reason as PHONE
+       * and "Documented at workshop" above.
+       */
+      const mediaNote = field.type === "TEXT" ? recordMediaNoteRole(entity, field) : null;
+      if (mediaNote) {
+        return unlabelled(
+          <StageMediaNoteField
+            field={field}
+            role={mediaNote}
+            row={row}
+            value={value}
+            onChange={onChange}
+            labelId={labelId}
+            describedBy={describedBy}
+            invalid={invalid}
+            disabled={disabled}
+            dictation={
+              <DictationButton
+                onCommit={appendDictated}
+                disabled={disabled}
+                fieldLabel={field.label}
+                workshopId={workshopId}
+              />
+            }
+          />
+        );
+      }
+      /*
        * READ THE NUMBER OFF THE CARD, ON THE BOX THE NUMBER GOES IN.
        *
        * `IdentityCardReader` — the workshop's own OCR control — is mounted only under a MEDIA field,
@@ -690,13 +808,41 @@ export function FieldInput({
        *
        * `kind="PEHCHAN"` and not "AADHAAR", deliberately: the in-browser recogniser offers Aadhaar
        * numbers only, and `IdentityCardCapture` already declines to offer it for PEHCHAN because a PM
-       * Vishwakarma artisan ID has no checksum and no fixed shape. `participant.artisanCardNo` is the
-       * only field in the registry this resolves to today (measured against the schema dump), and it
-       * carries a MASKED value from `mask_identity_number` when it was hydrated — which is why
-       * `currentValue` is passed: the control says what confirming would replace before it happens.
+       * Vishwakarma artisan ID has no checksum and no fixed shape. It carries a MASKED value from
+       * `mask_identity_number` when it was hydrated — which is why `currentValue` is passed: the
+       * control says what confirming would replace before it happens.
+       *
+       * `participant.artisanCardNo` IS STILL WHERE THIS LANDS, BUT IT IS NO LONGER THE ONLY
+       * CANDIDATE, AND THE THING THAT KEEPS IT HERE IS DECLARATION ORDER. This paragraph used to
+       * read "`participant.artisanCardNo` is the only field in the registry this resolves to today
+       * (measured against the schema dump)", which stopped being true on 2026-08-24 when the owner
+       * had `participant.aadhaarNumber` added to the same entity (see the note above that field in
+       * the server's `stage_definitions.py`). `identityNumberField` returns the FIRST
+       * non-deprecated TEXT field matching its pattern and the Aadhaar box is declared AFTER the
+       * card box, so this mount is unmoved — but that is now a property of one registry line's
+       * position rather than of there being nothing else to match. Reordering the two silently
+       * moves the PEHCHAN capture onto the Aadhaar box, with no change on this side and nothing to
+       * notice it.
+       * `stage_definitions` says the same thing from its end; both sites have to, because neither
+       * file can enforce it.
+       *
+       * THE HANDSET DOES NOT WORK THIS WAY, and the asymmetry is worth knowing while reading this.
+       * `DwIdentityOcr.isIdentityNumberField` matches PER FIELD rather than picking one, so Android
+       * offers the camera on BOTH boxes and `identityKindFor` returns AADHAAR for the new one, where
+       * this client offers nothing at all. What the handset WRITES into the Aadhaar box is the mask,
+       * not the digits: that field declares `storeMasked`, so its OCR control prints the full number
+       * on the button to be proofread and commits "XXXX XXXX ####". Neither behaviour is wrong; they
+       * are different answers to "which box gets the camera", and only one of them is decided in
+       * this file.
        *
        * WHAT THIS MOUNT DOES NOT DO IS TEST WHETHER THAT VALUE IS STILL THE MASK, and it is written
        * down rather than left to be inferred because the code cannot say which way it was decided.
+       * READ IT AS BEING ABOUT THE PEHCHAN CARD NUMBER ALONE. The Aadhaar box beside it settled the
+       * same question the other way on 2026-08-24 — it declares `storeMasked`, so the server keeps
+       * four digits of whatever is typed there — and this control is not mounted on it. That the two
+       * boxes now answer differently is deliberate and is argued at both fields in
+       * `stage_definitions.py`: this one has a capture control built to write the full number off
+       * the card, and masking it would un-ship the control rather than enforce a decision.
        * Confirming a candidate calls `onChange(next)` unconditionally, so the full PM Vishwakarma
        * number can replace the masked copy hydration wrote — into a row nothing re-resolves
        * (invariant 1), on a surface whose stage reads do not pass through
@@ -746,6 +892,33 @@ export function FieldInput({
               onUse={(next) => onChange(next)}
               disabled={disabled}
             />
+          ) : null}
+          {field.storeMasked && inputValue(value).trim() && !isMaskedIdentityNumber(inputValue(value)) ? (
+            /*
+              WHAT THE SAVE WILL ACTUALLY KEEP, SAID WHILE THE DIGITS ARE STILL ON SCREEN.
+
+              `storeMasked` means `coerce_value` replaces this value with `mask_aadhaar(...)` on the
+              way in, so a designer who types a full Aadhaar number sees twelve digits, presses
+              Save, gets a 200 with no error against this field, and finds four digits in the box
+              afterwards with nothing having said why. That is rule 10 of this repository's frontend
+              contract read the other way round: a value quietly rewritten is indistinguishable from
+              a value quietly lost, and this one goes into a submitted document.
+
+              WHY IT IS NOT ALSO MASKED HERE. The box is where a designer PROOFREADS the number
+              against the card in their hand — that is the whole reason the field is typeable, and
+              masking on blur would leave a typo uncorrectable without retyping all twelve. So the
+              client says what will happen and the server is the single place it happens.
+
+              SHOWN ONLY OVER AN UNMASKED VALUE. `isMaskedIdentityNumber` is the same "contains an
+              X" rule as the server's `is_masked_aadhaar`, so the sentence disappears once the box
+              holds the mask — over a hydrated row it would be a warning about nothing, and a
+              warning that is always on is a warning nobody reads.
+            */
+            <p className="text-xs leading-5 text-ink-500">
+              Only the last four digits of this number are stored. Saving this stage replaces what is in the box with
+              “XXXX XXXX {inputValue(value).replace(/\D/g, "").slice(-4) || "####"}”, which is also all the report
+              prints — so check the number against the card now, not afterwards.
+            </p>
           ) : null}
         </>
       );

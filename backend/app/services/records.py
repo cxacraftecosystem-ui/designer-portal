@@ -281,8 +281,22 @@ def _mask_identity_node(node: Any) -> Any:
       is the exact failure ``_redacted_change``'s four distinct wordings exist to prevent.
       Serving the last four instead (what every other surface shows) is a one-line change and an
       OWNER's call: it is the difference between an admin being able to trace a duplicate artisan
-      back to the number that freed the unique key, and not. House rule 5 has no "but only a little"
-      clause, so the default here is nothing.
+      back to the number that freed the unique key, and not. THE DEFAULT HERE IS STILL NOTHING, AND
+      THE REASON IT IS NO LONGER THE REASON IT WAS. This read "House rule 5 has no 'but only a
+      little' clause, so the default here is nothing" -- and on 2026-08-24 the owner decided that
+      for the Aadhaar this repository does precisely "but only a little": the masked last four now
+      cross into a design workshop's participant roster and into the ministry document built from it
+      (``stage_definitions``' ``participant.aadhaarNumber``, where the decision is written out in
+      full). An appeal to the rule therefore no longer settles this, and leaving the old sentence
+      standing would have let it go on appearing to.
+
+      WHAT STILL SETTLES IT IS NARROWER AND IS ABOUT THIS BLOB RATHER THAN ABOUT THE NUMBER. A
+      historical ledger row is the ONLY surviving copy of a value somebody retracted; four digits of
+      it is a disclosure with no consent behind it, on a surface no form ever displayed it on, to an
+      audience nobody named -- where the workshop carry is a copy the owner authorised, for a stated
+      audience, of a record that was not retracted. Same number, two surfaces, two decisions; this
+      one has not been made. ``access.REVISION_REDACTED_FIELDS`` records the same question as
+      re-raised, for the same reason.
     * A ``fieldProvenance`` STAMP (:data:`_PROVENANCE_STAMP_KEYS`) is returned untouched. It holds
       who/when, never the value, and it is the one of the three shapes that is NOT client-writable:
       ``merge_field_provenance`` drops ``fieldProvenance`` from the incoming body and from the stored

@@ -198,6 +198,23 @@ export type DwField = {
    */
   refFilterBy?: string;
   maxLength?: number;
+  /**
+   * THE SERVER WILL KEEP ONLY THE MASK OF AN IDENTITY NUMBER HERE, WHATEVER THIS FORM POSTS.
+   *
+   * `coerce_value` replaces this field's value with `mask_aadhaar(...)` on every save — "XXXX XXXX
+   * 9012" — so a box that says nothing about it is a box that takes twelve digits, tells the
+   * designer they were kept, and comes back four. Declared on `participant.aadhaarNumber` and
+   * nothing else today: the owner decided on 2026-08-24 that both of an artisan's identity numbers
+   * cross into a design report masked to their last four digits, and this flag is what makes that
+   * true of the COLUMN rather than only of the value hydration wrote. The long form is above the
+   * field in the server's `services/stage_definitions.py`.
+   *
+   * READ, NOT INFERRED FROM THE KEY. `FieldInput` says it on the box (see the TEXT branch) and
+   * Android masks at the point of capture, both off this one flag, so a field that gains or loses
+   * it needs no client change — which is why it is also part of `registry_version()` and therefore
+   * invalidates cached drafts when it moves.
+   */
+  storeMasked?: boolean;
   minValue?: number;
   maxValue?: number;
   reportRole?: DwReportRole;
@@ -1279,9 +1296,17 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     photo: "photo",
     // The widening. `notes -> recordNotes` and `pehchanCardNumber -> artisanCardNo` are the two whose
     // names differ on purpose: the workshop already owns a `notes` of its own, and the card box was
-    // called `artisanCardNo` long before anything filled it. The number arrives MASKED — the server's
-    // data lambda applies `mask_identity_number` before it is ever on the wire, and `aadhaarNumber`
-    // is refused outright rather than masked, so nothing here can widen that.
+    // called `artisanCardNo` long before anything filled it. Both numbers arrive MASKED — the
+    // server's data lambda applies `mask_identity_number` before either is ever on the wire.
+    //
+    // THIS COMMENT USED TO END "`aadhaarNumber` is refused outright rather than masked, so nothing
+    // here can widen that", and it is worth keeping the sentence visible rather than replacing it
+    // silently: the owner REVERSED that on 2026-08-24, and this table is one of the four places the
+    // reversal had to land. The reasoning for both halves — why it was refused, what the owner was
+    // shown, and what would reverse it again — is written out above `participant.aadhaarNumber` in
+    // the server's `stage_definitions.py`. Nothing on this side masks anything: this table only
+    // says which server key lands in which registry box, and the value is already masked when it
+    // arrives.
     email: "email",
     address: "address",
     notes: "recordNotes",
@@ -1289,6 +1314,12 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     donts: "donts",
     pehchanCardAvailable: "pehchanCardAvailable",
     pehchanCardNumber: "artisanCardNo",
+    // Added 2026-08-24 with the reversal above. Source and target are the same word deliberately:
+    // the server's `records._IDENTITY_KEYS` recognises `aadhaarNumber` BY KEY NAME, so a stage
+    // entry that ever reached `public_encode` would be re-masked rather than passed through.
+    // `test_the_web_carries_the_same_hydration_table` asserts this table EQUALS the server's, so a
+    // pair missing here is a failing build and not a silent drift.
+    aadhaarNumber: "aadhaarNumber",
     documentedOn: "documentedOn",
     // THE OTHER HALF OF `documentedOn`'S OWN JOB. This is the one artisan picker declared ALL_SCOPE
     // — a roster legitimately holds artisans documented at other workshops — so a printed roster

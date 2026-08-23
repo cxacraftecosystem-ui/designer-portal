@@ -145,22 +145,49 @@ REVISION_SKIP_FIELDS = {
 # why", not "read the old number back out of the log". For ``aadhaarNumber`` and
 # ``pehchanCardNumber`` it is NOT small. Both are UNIQUE deduplication columns
 # (``routes/artisans._IDENTITY_CONSTRAINTS``, with a 409 "you already have this artisan" path built
-# on them) and both are globally clearable. The Aadhaar is carried into NO stage entry at any
-# masking, by design, so the RecordRevision ``old`` was the last copy of a previous Aadhaar number
-# anywhere in the system: after this change an EDIT-tier grantee, or a professor outranking the
-# author, can repoint or clear one, the previous identifier is UNRECOVERABLE, and the freed unique
-# key admits a duplicate artisan with nothing left to trace the collision back to.
-# (``pehchanCardNumber`` is one degree better only where a workshop exists: its masked last four
-# already rides into ``participant.artisanCardNo`` on every stage entry that referenced her.)
+# on them) and both are globally clearable. After this change an EDIT-tier grantee, or a professor
+# outranking the author, can repoint or clear one, the previous identifier is UNRECOVERABLE FROM
+# THIS LEDGER, and the freed unique key admits a duplicate artisan with nothing left in the audit
+# trail to trace the collision back to.
 #
-# THE ALTERNATIVE IS A LIVE OWNER DECISION, NOT AN OVERSIGHT. Storing
+# THE PREMISE THAT USED TO STAND HERE DIED ON 2026-08-24, AND SO DID THE ARGUMENT BUILT ON IT. This
+# paragraph read: "The Aadhaar is carried into NO stage entry at any masking, by design, so the
+# RecordRevision ``old`` was the last copy of a previous Aadhaar number anywhere in the system",
+# followed by the parenthetical that ``pehchanCardNumber`` was "one degree better only where a
+# workshop exists: its masked last four already rides into ``participant.artisanCardNo`` on every
+# stage entry that referenced her." The owner reversed the Aadhaar carry on 2026-08-24 -- see the
+# long note above ``participant.aadhaarNumber`` in ``services/stage_definitions.py`` -- so the
+# masked last four of BOTH numbers now ride into every stage entry that references the artisan. The
+# two columns are one degree better in exactly the same way and to exactly the same extent, and the
+# sentence that made the Aadhaar the worse of the two is no longer true of it.
+#
+# WHAT THAT DOES AND DOES NOT CHANGE ABOUT THE COST, stated precisely, because "it survives on a
+# workshop entry somewhere" is not a recovery path: a ``DwStageEntry`` is not indexed by identity
+# number, is not what an admin opens when tracing a duplicate, and exists only where the artisan was
+# actually rostered into a design workshop. It is a RESIDUE, not a ledger. So the cost of the flat
+# placeholder is unchanged for an artisan who was never in a workshop, and slightly softened for one
+# who was -- now for both columns equally rather than for one of them.
+#
+# THE ALTERNATIVE IS A LIVE OWNER DECISION, IT WAS DECLINED ON A PREMISE THAT NO LONGER HOLDS, AND
+# IT IS RE-RAISED HERE RATHER THAN LEFT STANDING. Storing
 # ``records.mask_identity_number(old_value)`` for those two columns instead of the flat placeholder
-# would keep the last four for recovery and collision tracing while dropping the full identifier.
-# It is not done here because house rule 5 is unconditional about the Aadhaar -- it crosses at NO
+# would keep the last four for recovery and collision tracing while dropping the full identifier. It
+# was refused, in these words: "house rule 5 is unconditional about the Aadhaar -- it crosses at NO
 # masking, which is exactly why ``design_workshops`` refuses to carry it while carrying the masked
 # Pehchan card -- and giving the two identity columns different treatment inside one set is worse
-# than one rule that holds everywhere. Widening to the masked form is a small edit if the owner
-# decides the recovery path outweighs that; it must be their decision, not a drive-by.
+# than one rule that holds everywhere." EVERY CLAUSE OF THAT IS NOW SPENT. The rule is not
+# unconditional (the owner made it conditional on 2026-08-24), ``design_workshops`` does not refuse,
+# and the two columns no longer HAVE different treatment to preserve -- so what used to be the
+# objection now points the other way: storing the masked form here is what would make this set match
+# the treatment those same two columns already get on the workshop surface. It is still not done in
+# this change, because a retraction ledger is not a design workshop and the owner has not been
+# asked about THIS surface. What is recorded is that the objection is spent, so whoever raises it
+# next does not have to rediscover that.
+#
+# HOUSE RULE 5 IS NOT DEFINED ANYWHERE IN THIS TREE. It lives in owner-supplied instructions, and
+# three files cite it -- this one, ``records._mask_identity_node`` and ``routes/artisans``. That is
+# the other reason the reversal is written out at each of them: nothing else in the repository
+# records what the rule now says.
 #
 # WHY THESE FIVE AND NOT MORE. Every column here is a direct identifier of, or a route to, a living
 # person -- the columns a "delete my details" request actually names. All five exist on ``Artisan``

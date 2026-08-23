@@ -865,9 +865,17 @@ than partially revealed, so a malformed legacy value cannot leak more than a wel
 companion `is_masked_aadhaar` recognises a mask posted back by a form that displayed it, so an
 untouched field is dropped rather than overwriting a real number with X-strings.
 
-Masking is applied at `backend/app/api/routes/artisans.py`, `services/records.py` and
-`services/record_fields.py` — covering the API list and detail surfaces, the data browser, the XLSX
-report and CSV export. The same function is reused verbatim for the Pehchan (PM Vishwakarma) card.
+Masking is applied at `backend/app/api/routes/artisans.py`, `services/records.py`,
+`services/record_fields.py` and — since 2026-08-24 — `services/design_workshops.py`, covering the
+API list and detail surfaces, the data browser, the XLSX report, CSV export, and a design workshop's
+participant roster together with the ministry report built from it. The same function is reused
+verbatim for the Pehchan (PM Vishwakarma) card.
+
+The workshop surface is worth one extra sentence because it is the one that is **not** an export.
+A hydrated stage entry is a permanent copy written at save time, which the report never re-resolves,
+so the masked value is not a rendering of a live column but a stored fact that outlives edits to the
+record it came from. That is why carrying it at all was an owner decision rather than a plumbing
+change, and why clearing the source column afterwards does not retract it.
 
 **The honest caveat, which must not be omitted:** **MEASURED**, 2026-07-27 — **all 16 production
 artisans have `aadhaarNumber = null` and `pehchanCardNumber = null`.** Every one predates the field.

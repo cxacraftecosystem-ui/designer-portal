@@ -1187,6 +1187,19 @@ that file's header before changing anything; the highlights:
 - `Artisan.aadhaarNumber` arrives **full** from `GET /artisans/{id}` and **masked** from the data
   browser, the .xlsx and the CSVs — one field name, two shapes. **Never render it in a list, card or
   export view.**
+  - **ONE AUTHORISED EXCEPTION, owner decision 2026-08-24, and it is not a licence to add more.**
+    The design-workshop participant roster carries the **masked** number as
+    `participant.aadhaarNumber` (KEY_VALUE), and the generated report prints it. That is a registry
+    field hydrated server-side by `mask_identity_number` — the value is already masked before it
+    reaches any client, and no web code decides anything about it. **Nor can a client un-mask it by
+    writing to that box:** the field declares `storeMasked`, so `coerce_value` masks whatever is
+    posted on every save. `FieldInput` says so under the box while the digits are still on screen
+    (read `field.storeMasked`, never the field's key), and that sentence is the only web behaviour
+    the flag has. Do NOT mask on blur — the box is where a designer proofreads the number against the
+    card in their hand. The rule above is unchanged for
+    everything a client renders from `Artisan` itself: the exception is one server-masked registry
+    field on one stage, not a general permission, and the reasoning behind both halves lives above
+    that field in `backend/app/services/stage_definitions.py`.
 - `sanitizeCarryContext` is an **allowlist** with deliberately no field an Aadhaar or Pehchan could
   occupy: field laptops are shared, and regulated PII must never be copied between records or parked in
   localStorage.
