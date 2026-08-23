@@ -161,16 +161,36 @@ async def download_latest_apk() -> RedirectResponse:
     because every phone in the field fetches exactly that URL with no credentials at all when it
     self-updates.
 
-    **Uncacheable, on purpose.** This response is the only moving part in the whole arrangement: the
-    link is fixed and the bytes are immutable, so an intermediary that cached *this* redirect for a
-    day would pin every new visitor to yesterday's build and reintroduce the exact staleness the
-    fixed address exists to prevent.
+    **Uncacheable, on purpose — and that has to include the failures.** This response is the
+    only moving part in the whole arrangement: the link is fixed and the bytes are immutable, so an
+    intermediary that cached *this* redirect for a day would pin every new visitor to yesterday's
+    build and reintroduce the exact staleness the fixed address exists to prevent.
+
+    Until 2026-08-23 only the *success* path said so in a header, and the 404 and 503 below said
+    nothing at all — which got it backwards, because those two are the responses whose staleness
+    actually costs something. There is a CloudFront distribution in front of this API, and the
+    404 IS THE ENTIRE PRE-RELEASE STATE OF THIS ENDPOINT: it is what every visitor and every
+    release-pipeline poll receives for as long as nothing has been published, i.e. exactly the
+    window in which a caching intermediary has every opportunity to pick it up. Cache it and the
+    first real release is invisible to the world for the whole TTL, while
+    ``.github/workflows/publish-android.yml``'s GUARD 6 — which polls this address to prove the
+    release reached the public — sees 404 for two minutes and then announces that the download
+    button on the website is broken, over a release that is perfectly fine. A guard that cries wolf
+    on a correct publish is a guard somebody deletes.
+    The 503 is the same shape of problem one step further on: it means a release row exists whose
+    object cannot be located, which is a transient operational state that must not be pinned either.
     """
+    # Both refusals below carry the same no-store the redirect does. See the docstring: the 404 is
+    # the pre-release state of this endpoint, so it is the one response an intermediary has hours to
+    # cache, and pinning it hides the first release from everybody who asks.
+    _NO_STORE = {"Cache-Control": "no-store, max-age=0"}
+
     release = await _latest_release()
     if release is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No Android build has been published yet, so there is nothing to download.",
+            headers=_NO_STORE,
         )
 
     key = getattr(release, "objectKey", None)
@@ -190,6 +210,7 @@ async def download_latest_apk() -> RedirectResponse:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The published Android build cannot be located in object storage right now.",
+            headers=_NO_STORE,
         )
 
     response = RedirectResponse(target, status_code=status.HTTP_307_TEMPORARY_REDIRECT)

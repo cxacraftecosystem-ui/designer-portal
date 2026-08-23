@@ -1413,12 +1413,50 @@ guard stays the only race protection needed.
 Visual language = the tokens above. **Wording and structure = Android.**
 
 **Dashboard heading:** "What would you like to do?"
-**Tiles, in this order** (label / action): Artisan/Record artisan · Product/Record product ·
-Process/Document process · Tool/Record tool · Questionnaire/Take interview · Miscellaneous Media/Upload
-media · View Data/Browse records · Sharing/Share data access · Users/Manage users (admin) · Craft/Add
-craft · Workshop/Record workshop.
-**Menu extras:** My Activity · Tasks · Assign tools to artisans · Give app feedback · Settings (master
-admin) · Admin view toggle. **Never invent a label for these.**
+**Tiles, in this order** (tile label / primary button word), all twenty, from the `tiles` array in
+`app/(protected)/dashboard/page.tsx` — read it, do not trust this list to have stayed current:
+Design workshop/New workshop · Sketches & prototypes/Open · Design review/Open · Artisan/New ·
+Product/New · Process/New · Tool/New · Questionnaire/New interview · Miscellaneous Media/Upload ·
+View Data/Open · Map/Open · Consolidated questionnaire/Open · Tasks/Open · Sharing/New · Workshop
+access/Open · My designer profile/Open · Users/Manage (admin) · Settings/Open (admin) · Craft/New ·
+Workshop/New.
+**Menu extras** (in `NAV_ITEMS`, no tile): Walkthrough · My questionnaires · My Activity · Browse
+records · Assign tools to artisans · Review · Cross-workshop analytics (admin) · Settings — the
+account's own preferences at `/settings`, which is **not** the Settings TILE, that one opens the
+admin hub at `/admin` · Give app feedback · Admin view toggle. A menu row and a tile for one
+destination are worded differently on purpose, and the rule is **not** singular-versus-plural: the
+tile is Android's `EntryMode.label` and the row is its `EntryMode.actionTitle`, which is usually a
+noun against a verb phrase — Artisan/"Record artisan", Process/"Document process",
+Questionnaire/"Take interview", Users/"Manage users". Where the two strings coincide (Map, Tasks,
+View Data, Workshop access, Consolidated questionnaire, My designer profile) the tile and the row
+read identically, and that is correct. **Design workshop / Design workshops is the only
+singular/plural pair in the grid** — a one-off, because that destination is not an `EntryMode` at
+all but Android's bespoke `DesignWorkshopCard`, which asserts the pairing by hand in
+`DesignWorkshopCardTest`. Nothing checks this on the web side, so do not generalise it: pluralising
+the other eleven nav rows to match would put the web out of step with Android everywhere at once.
+**Never invent a label for these** — the tile label and the button word are two separate strings, the
+button word comes from Android's `EntryMode.createButtonLabel()`, and `DashboardCard` branches on
+"Open"/"Manage" to draw an arrow instead of a plus.
+
+This list was stale for a long time and that is worth knowing about, because it is the failure mode
+of writing a register down twice. It carried eleven tiles under "never invent a label", omitting six
+that already existed, so the honest reading of a missing tile was "this tile is not expected" — and
+a page whose tile was never added reads to its owner as a page that was never built. Four of the
+twenty are **web-only, with no Android counterpart to agree with**: Design workshop (Android draws a
+bespoke `DesignWorkshopCard`, not an `EntryMode`), My designer profile (Android has the nav
+destination and no card), and Sketches & prototypes and Design review. Be exact about those last
+two, because this line used to say "the feature does not exist on the handset at all" and that is
+false of one of them. **Design review** really is web-only: there is no ratings code anywhere under
+`android/app/src/main`. **Sketches & prototypes** is only the top-level ENTRY POINT that is web-only
+— the feature itself is on the handset inside the workshop stage flow (`DwSketchRectifyField.kt`,
+`DwSketchPlate.kt`, `DwSketchRectify.kt`, `FieldRenderer.kt`'s `dwOffersSketchRectify`,
+`ReportFigures.kt`'s `"Sketches"` count over `SKETCH_DEVELOPMENT`), reachable only by opening a
+workshop and walking to stage 11. What Android has no member for is `EntryMode`/`NavDestination`,
+i.e. the chooser. Say "no entry point", not "no feature": this document is loaded before any
+frontend UI work here, so the over-claim sent every reader of it looking for the wrong gap and
+stopped them matching Android's existing stage-11 wording. The array's own comment names all four;
+do not "restore parity" by deleting one.
+`e2e/dashboard-tile-parity-unit.spec.ts` is what holds the last two in place.
 
 Grid: `grid-cols-2 md:grid-cols-3` — 2 per row on phones, 3 on tablets and laptops.
 Card anatomy (Android `DashboardActionCard`): white `rounded-2xl` card, small dark-purple icon tile

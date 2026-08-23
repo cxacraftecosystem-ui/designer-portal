@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
-  BadgeCheck,
   Boxes,
   Brush,
   Camera,
@@ -20,8 +19,10 @@ import {
   LockOpen,
   MapPinned,
   Package,
+  PencilRuler,
   Settings,
   Share2,
+  Star,
   User as UserIcon,
   UserCog,
   Users,
@@ -42,7 +43,6 @@ import {
   canCreateRecords,
   canDownloadDataset,
   canManageCrafts,
-  canManageDesignerRoster,
   canManageUsers,
   canManageWorkshops,
   canReview,
@@ -165,7 +165,87 @@ function DashboardView() {
    */
   const adminSurface = (allowed: boolean) => allowed && (!isAdmin(user) || adminMode);
 
-  // Android EntryMode parity: same tiles, same order, same labels.
+  /**
+   * ANDROID `EntryMode` PARITY, STATED HONESTLY AND PER TILE.
+   *
+   * This comment used to be one line — "same tiles, same order, same labels" — and nothing
+   * mechanical has ever checked any of it: `docs/tools/check-docs.mjs` has no opinion about this
+   * array, and until this change no spec read it. So the line was a promise on trust, and it was
+   * already false in three places before this change. What parity actually requires, tile by tile
+   * and by hand:
+   *
+   *   1. `Tile.label` == Android `EntryMode.label` — the TILE word, which is why the media tile here
+   *      says "Miscellaneous Media" and not "Media".
+   *   2. `Tile.newLabel` == `EntryMode.createButtonLabel()` — MEDIA "Upload", QUESTIONNAIRE
+   *      "New interview", USERS "Manage", every reading surface "Open", otherwise "New".
+   *   3. Where one destination has BOTH a tile and a nav row, the tile is Android's
+   *      `EntryMode.label` and the nav row is its `EntryMode.actionTitle`. That is usually a noun
+   *      against a VERB PHRASE, not a singular against a plural: Artisan/"Record artisan",
+   *      Product/"Record product", Process/"Document process", Tool/"Record tool",
+   *      Questionnaire/"Take interview", Miscellaneous Media/"Upload media", Craft/"Add craft",
+   *      Workshop/"Record workshop", Sharing/"Share data access", Users/"Manage users",
+   *      Settings/"Settings hub". Where the `actionTitle` IS the label, the two are identical and
+   *      that is correct too: Map, Tasks, View Data, Workshop access, Consolidated questionnaire,
+   *      My designer profile.
+   *
+   *      THE SINGULAR/PLURAL PAIRING IS ONE TILE, NOT THE RULE, and this comment said the opposite
+   *      until 2026-08-23. "Design workshop" / "Design workshops" is the only instance of it in the
+   *      whole grid, and it is an instance precisely because that destination is NOT an
+   *      `EntryMode`: Android draws a bespoke `DesignWorkshopCard` and asserts the pairing by hand
+   *      in Kotlin (`DesignWorkshopCardTest`, "the card is singular and the menu row is plural, on
+   *      purpose"). Nothing mechanical checks rule 3 on the web side, so the earlier wording was
+   *      not merely inert: a reader applying it would have gone and pluralised eleven working nav
+   *      rows, or singularised eleven working tiles, against Android.
+   *   4. The relative order of the tiles Android DOES have is not reshuffled. Android builds its
+   *      grid as `DesignWorkshopCard`, then `EntryMode.entries` in declaration order, then Settings.
+   *
+   * AND FOUR OF THESE TILES ARE WEB-ONLY, which is the part a bare "parity" claim hides and the
+   * reason a future reader must not "restore parity" by deleting one of them. There is no
+   * `EntryMode`, no `NavDestination` and no screen at all on the handset for:
+   *
+   *   • Design workshop — Android draws a bespoke `DesignWorkshopCard`, which is not an `EntryMode`;
+   *   • My designer profile — Android has `NavDestination.DESIGNER_PROFILE` and no dashboard card;
+   *   • Sketches & prototypes — the TOP-LEVEL ENTRY POINT is web-only. Read the next paragraph
+   *     before acting on this line: the FEATURE is on the handset;
+   *   • Design review — web-only outright. There is no ratings code anywhere under
+   *     `android/app/src/main` (`design-ratings`, `designRatings`, `ratable` all return nothing).
+   *
+   * The ORDER already diverges too: Android appends its Settings card AFTER Workshop, while Settings
+   * sits between Users and Craft here.
+   *
+   * ─── WHAT ANDROID IS ACTUALLY MISSING FOR SKETCHES, STATED PRECISELY ──────────────────────
+   * This comment used to say "the feature does not exist on Android in any form", and that was
+   * wrong — wrong in a way this same file contradicts sixty lines further down, where the new
+   * tiles' own comment concedes that "uploading a sketch is stage 11 of a workshop". Sketch and
+   * prototype work is BUILT on the handset, inside the workshop stage flow:
+   * `ui/designworkshop/DwSketchRectifyField.kt` ("Stage 11's `sketch.image` is required…", with its
+   * panel on `sketch.lineArtFile`), `data/DwSketchPlate.kt`, `data/DwSketchRectify.kt`,
+   * `FieldRenderer.kt`'s `dwOffersSketchRectify`, `ReportFigures.kt:205` counting
+   * `"Sketches" to outputCount("SKETCH_DEVELOPMENT", …)`, and `StageSchema.kt:1594` naming
+   * "sketch development, prototype iteration" among the stages with no singleton entity.
+   *
+   * WHAT THE HANDSET LACKS IS THE CHOOSER: no `EntryMode`, no `NavDestination`, hence no dashboard
+   * card and no menu row — the only way to a sketch there is to open a workshop first and walk to
+   * stage 11. That is exactly what `/sketches-and-prototypes` adds on the web, and it is why each
+   * of these pages opens by asking WHICH workshop.
+   *
+   * The distinction is load-bearing rather than pedantic, because the old sentence was being used to
+   * justify the one below it. A maintainer told the handset has no sketches at all will not go
+   * looking for Android's existing stage-11 wording to match, and will not recognise the real gap on
+   * the handset when it is described to them as "there is no entry point". Both mistakes cost the
+   * same thing: two clients that describe one feature in two vocabularies.
+   *
+   * NO ANDROID-SIDE CHANGE IS IMPLIED BY EITHER TILE, which is a narrower claim than the one this
+   * comment used to make and is the one that is true. `EntryMode` and `FIELD_NAV_ITEMS` in the
+   * Android tree have no member for either route, so there is no tile, no label and no
+   * `createButtonLabel()` on that side for these two to agree WITH — nothing to copy and nothing to
+   * check. If Android ever grows the chooser, rules 1 and 2 above start applying to these two tiles
+   * like any other, and the strings to match will be that new `EntryMode`'s.
+   * Android missing a top-level entry point the web has built is a product gap on the handset, not
+   * parity debt this array created, and the repository's own new-page checklist reads
+   * one-directionally for exactly this case: "a dashboard tile IF ANDROID HAS ONE"
+   * (.claude/skills/field-repo-frontend/SKILL.md, "New page").
+   */
   const tiles: Tile[] = [
     // FIRST, and deliberately. This is the product: a designer opens the app to run a design and
     // prototype workshop, and everything below it — artisans, products, tools, the questionnaire —
@@ -198,6 +278,86 @@ function DashboardView() {
       // have widened nothing but the browser; narrow the API and narrow this line with it.
       visible: canRunDesignWorkshops(user),
       newLabel: "New workshop"
+    },
+    // ── THE OTHER TWO FACES OF THE FORTNIGHT ABOVE ───────────────────────────────────────────────
+    //
+    // BOTH OF THESE PAGES WERE FINISHED, GUARDED, LINKED IN THE NAV SHEET AND LIVE, AND THE OWNER
+    // REPORTED THE FEATURE AS "STILL NOT THERE". Nothing was broken, which is why it is worth
+    // naming exactly: `/sketches-and-prototypes` and `/design-review` each had a `NAV_ITEMS` entry,
+    // a `ROUTE_GUARDS` row and its twin row in docs/PERMISSIONS.md §5, and both rendered for
+    // the accounts entitled to them. What neither had was a tile. This grid is where this product's
+    // users look — it is the whole of what Android's dashboard is, and it is the screen the app
+    // opens on — whereas the nav sheet is a SHEET: behind a tap, one scrolling column of every
+    // destination the account qualifies for, and a designer who does not already know a feature
+    // exists has no reason to open it hunting for something they have never heard of. `Map` and
+    // `Consolidated questionnaire` further down arrived by precisely this route, and
+    // e2e/feature-entry-points.spec.ts opens with the sentence this comment is the second instance
+    // of: a feature a researcher cannot find is a feature that was not built.
+    //
+    // SECOND AND THIRD, DIRECTLY BEHIND "Design workshop", and not merely because new tiles land at
+    // the top. Three reasons:
+    //
+    //   • They are the same work. Uploading a sketch is stage 11 of a workshop and ranking it in the
+    //     pool is the round that follows; these two routes are those two things reached with NO
+    //     workshop id in hand, which is why each page's first question is which workshop. They are
+    //     not reference data like Artisan / Product / Process / Tool below, and they are not one of
+    //     the three "show me what is already in the repository" reading surfaces that View Data, Map
+    //     and Consolidated questionnaire form.
+    //   • They carry the IDENTICAL predicate to the tile above, so all three appear and disappear
+    //     together and a reader verifies that by reading three adjacent lines rather than scanning
+    //     sixty. Whoever next widens or narrows `canRunDesignWorkshops` sees every call site at once.
+    //   • The grid row they cost is charged only to the accounts that can see them at all, which is
+    //     the same trade Android's own `DesignWorkshopCard` comment makes for going first.
+    //
+    // `canRunDesignWorkshops` AND NOTHING ELSE. The tile above spells out why at length; the short
+    // version is that it is a SET, {DESIGNER, ADMIN, MASTER_ADMIN}, and not a rank threshold, so a
+    // PROFESSOR sits outside it while outranking a designer everywhere else in the app. Both of
+    // these paths answer a professor with `ROUTE_GUARDS`' "Designer access required" panel, so
+    // `creator` here — the mistake this very array has already shipped once, on the tile above —
+    // would offer a researcher and a professor a tile whose only destination is a refusal.
+    //
+    // NOT `adminSurface` EITHER, deliberately. Neither nav entry is flagged as admin chrome and
+    // neither path is in `ADMIN_CHROME_ROUTES`, so wrapping these would hide, from an admin who has
+    // admin view switched OFF, a page that admin may still open — a link removed from a working
+    // route, which is the defect the /review nav entry's comment records having already caused.
+    //
+    // "Open" AND NOT "New", which is a correctness check twice over rather than a matter of taste.
+    // `DashboardCard` picks `ArrowRight` over `Plus` off this exact word, and arriving at either
+    // page creates nothing — both open a chooser. And a plus would be wrong a second time: bringing
+    // a workshop into existence is `canCreateDesignWorkshops`, a STRICT SUBSET that REFUSES a
+    // DESIGNER, i.e. most of the accounts these two tiles exist for.
+    //
+    // THE LABELS ARE COPIED CHARACTER FOR CHARACTER OUT OF `NAV_ITEMS` — ampersand, lower-case "p"
+    // and all — and that is load-bearing rather than tidy. This destination already answers to three
+    // spellings in the tree: the nav label "Sketches & prototypes", the page title "Sketches and
+    // Prototypes", and the guard panel's "Designer access required". A fourth invented here would be
+    // found by nobody's grep. AND THAT IS RULE 3 OF THE PARITY NOTE ABOVE BEING FOLLOWED, not
+    // waived, which is what this comment claimed before 2026-08-23. Rule 3 pairs a tile with its nav
+    // row through Android's `EntryMode.label` and `EntryMode.actionTitle`; neither of these two
+    // destinations is an `EntryMode` at all, so there is no second string to differ from and the
+    // tile takes the nav row's own label verbatim. The one place in this grid where the tile and the
+    // row genuinely differ by number is Design workshop / Design workshops, which is a one-off
+    // Android asserts in Kotlin for its bespoke card and is not a pattern to imitate here.
+    //
+    // The icons are each destination's own nav glyph, and neither `PencilRuler` nor `Star` appears
+    // anywhere else in this grid, so the one-glyph-per-meaning-per-client rule the Design workshop
+    // tile states still holds. `Star` and not `Globe2`: the design-review PAGE header draws `Globe2`
+    // while its nav entry draws `Star`, and where a page and its menu row disagree the TILE FOLLOWS
+    // THE MENU — the invariant this file keeps is that the dashboard and the menu never disagree
+    // about a destination, and the page header is not part of that pair.
+    {
+      label: "Sketches & prototypes",
+      icon: PencilRuler,
+      newHref: "/sketches-and-prototypes",
+      newLabel: "Open",
+      visible: canRunDesignWorkshops(user)
+    },
+    {
+      label: "Design review",
+      icon: Star,
+      newHref: "/design-review",
+      newLabel: "Open",
+      visible: canRunDesignWorkshops(user)
     },
     { label: "Artisan", icon: UserIcon, newHref: "/artisans/new", updateHref: "/artisans", visible: creator },
     { label: "Product", icon: Package, newHref: "/products/new", updateHref: "/products", visible: creator },
