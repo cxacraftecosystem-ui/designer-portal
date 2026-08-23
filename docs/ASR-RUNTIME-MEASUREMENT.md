@@ -146,7 +146,9 @@ tests) — about +963/−78 lines across eight tracked files plus six untracked 
 
 > **`AND A VERSION BUMP` WAS HERE AND WAS FALSE.** An earlier draft of this paragraph named one, and
 > there was none: `appVersionName` is `1.1.19` at `979d205` — the commit that recorded 26,211,648 —
-> and `1.1.19` at HEAD, with `appVersionCode` derived from it, and
+> and was still `1.1.19` when this correction was written, with `appVersionCode` derived from it, and
+> (the version has since been set to `0.0.1` for the first published release, which is a renumbering
+> and not a bump — see `android/app/build.gradle.kts`), and
 > `git log 979d205..HEAD -- android/app/build.gradle.kts` shows no change to the version at all. It is
 > corrected in place rather than quietly deleted because of where it sat: **this is the one document in
 > this repository whose entire subject is not inventing figures**, and it had invented a cause. The

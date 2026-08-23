@@ -108,3 +108,8 @@ TRANSCRIPTION_SERVICE.md
 # Scoped to the directory rather than to `*.aar` everywhere, so a future AAR that genuinely SHOULD be
 # vendored has to be an explicit decision rather than something this rule silently swallows.
 android/app/libs/
+
+# Signing keys. These must never be committed — see android/app/build.gradle.kts.
+*.jks
+*.keystore
+*.p12

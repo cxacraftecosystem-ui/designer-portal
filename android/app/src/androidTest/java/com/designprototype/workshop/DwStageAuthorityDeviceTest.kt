@@ -51,9 +51,17 @@ import java.io.File
  * The desktop suite pins the decode; it cannot pin the LOAD, which is what actually happens to a
  * designer's draft. That path runs the version ladder, the quarantine-on-damage branch, the atomic
  * temp → `fd.sync()` → `renameTo` write and the store's own `Json` settings against a real filesDir —
- * and the thing being asserted here is precisely that a document written by the SHIPPED build (1.1.19,
- * versionCode 1001019, which is what is installed on this handset) survives the rename with its
- * fieldwork intact and its authority withdrawn. A fake filesystem would answer a different question.
+ * and the thing being asserted here is precisely that a document written by the build that was on the
+ * handset survives the rename with its fieldwork intact and its authority withdrawn. A fake
+ * filesystem would answer a different question.
+ *
+ * WHICH BUILD THAT IS CHANGED ON 2026-08-23, and the change is worth knowing before you run this.
+ * The handset carried a locally built 1.1.19 (versionCode 1,001,019). Nothing had ever been
+ * published, so the first published release was numbered 0.0.1 — versionCode 1. That is a
+ * renumbering, not a downgrade in the field, but it IS a downgrade as far as the package manager is
+ * concerned: **this handset must uninstall before it can install 0.0.1**, and uninstalling is
+ * precisely what clears the filesDir this test reads. So run it against whichever build is actually
+ * installed, and do not read the old version out of this comment as if it were still true.
  *
  * Run:
  *   ANDROID_SERIAL=<serial> ./gradlew :app:connectedDebugAndroidTest \

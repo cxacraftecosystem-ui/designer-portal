@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -6,6 +7,34 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+/**
+ * THE RELEASE SIGNING KEY, AND WHY IT IS NOT IN THIS REPOSITORY.
+ *
+ * Until 2026-08-23 there was no release key at all: `buildTypes.release` could only borrow the DEBUG
+ * keystore behind an opt-in flag, and the block there says why that is not distributable — the debug
+ * key ships with every Android SDK on earth, so anybody can produce an update this app would accept
+ * as genuine. With nothing published yet that cost nothing; the moment a build goes on the website
+ * and into the update check it costs everything, and it is not undoable, because moving to a real key
+ * afterwards makes every installed copy refuse the next update.
+ *
+ * So the key is real, it lives OUTSIDE the working tree, and its location and password arrive
+ * through `local.properties` (gitignored) or through the environment for CI. Four properties:
+ *
+ *     releaseKeystore=C:/path/to/designrepo-release.jks
+ *     releaseKeystorePassword=...
+ *     releaseKeyAlias=designrepo
+ *     releaseKeyPassword=...            # optional; defaults to the store password
+ *
+ * or ANDROID_RELEASE_KEYSTORE / _PASSWORD / _KEY_ALIAS / _KEY_PASSWORD in the environment.
+ *
+ * ABSENT IS A VALID STATE AND MUST STAY ONE. A clean checkout and CI have none of this, and the
+ * release build there stays unsigned exactly as before — which fails loudly at install time instead
+ * of quietly producing something that looks shippable. A missing key must never silently fall back
+ * to the debug one.
+ */
+private fun signingProperty(props: Properties, propertyName: String, environmentName: String): String? =
+    (props.getProperty(propertyName) ?: System.getenv(environmentName))?.trim()?.takeIf { it.isNotEmpty() }
 
 val localProperties = Properties().apply {
     val file = rootProject.file("local.properties")
@@ -19,13 +48,62 @@ val localProperties = Properties().apply {
 // 2.0.0. versionCode is DERIVED from the name so it always increases monotonically with the version
 // — that is exactly what the over-the-air updater compares (a higher published versionCode triggers
 // the in-app update). To cut a release, bump `appVersionName` only; the code follows automatically.
-val appVersionName = "1.1.19"
+// 2026-08-23: set to the FIRST PUBLISHED version. Nothing had ever been published — the API's own
+// answer was "No Android build has been published yet, so there is nothing to download" — so there
+// was no versionCode to beat and the counter starts here rather than continuing a number that only
+// ever existed in this file. 0.0.1 derives versionCode 1, which is the lowest possible value and
+// therefore leaves the entire range above it free; the failure mode this scheme guards against is a
+// version published too HIGH, which blocks every later one.
+//
+// CONSEQUENCE, because it is a downgrade in this file even though it is not one in the field: a
+// handset carrying a locally built 1.1.19 (versionCode 1,001,019) cannot install this over the top —
+// Android refuses a downgrade — and the in-app updater will not offer it either. Uninstall first on
+// any such device. No FIELD device is affected, because no build was ever published to one.
+val appVersionName = "0.0.1"
 val appVersionCode = appVersionName.split(".").let { parts ->
     val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
     val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
     val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
     // minor and patch are each capped at 100 by the scheme, so the 1_000-wide buckets never collide.
     major * 1_000_000 + minor * 1_000 + patch
+}
+
+val releaseKeystorePath = signingProperty(localProperties, "releaseKeystore", "ANDROID_RELEASE_KEYSTORE")
+val releaseKeystorePassword = signingProperty(localProperties, "releaseKeystorePassword", "ANDROID_RELEASE_KEYSTORE_PASSWORD")
+val releaseKeyAlias = signingProperty(localProperties, "releaseKeyAlias", "ANDROID_RELEASE_KEY_ALIAS")
+// Defaults to the store password, which is how `keytool` is almost always driven and what this
+// project's key actually uses. Kept separately settable because a keystore CAN hold a key under a
+// different password, and discovering that at the signing step is a confusing place to find out.
+val releaseKeyPassword = signingProperty(localProperties, "releaseKeyPassword", "ANDROID_RELEASE_KEY_PASSWORD")
+    ?: releaseKeystorePassword
+
+// Resolved here rather than inside the signing config so that "the key is configured" and "the file
+// is actually there" are one question with one answer. A property pointing at a keystore that does
+// not exist used to be indistinguishable from no property at all, and the build simply produced an
+// unsigned APK — the failure this whole arrangement exists to make loud.
+val releaseKeystoreFile = releaseKeystorePath?.let { path ->
+    // An absolute path is what a key kept outside the repository needs; a relative one is resolved
+    // against the `android/` directory, which is what `../designrepo-release.jks` in a developer's
+    // local.properties means to the person who wrote it.
+    // `File`, IMPORTED, not `java.io.File` written out. In the Gradle Kotlin DSL `java` is already
+    // taken — it is the JavaPluginExtension accessor on Project — so the fully qualified form parses
+    // as that extension followed by a `.io` property and fails with "Unresolved reference: io".
+    File(path).let { candidate -> if (candidate.isAbsolute) candidate else rootProject.file(path) }
+}
+val hasReleaseSigningKey =
+    releaseKeystoreFile != null &&
+        releaseKeystoreFile.isFile &&
+        releaseKeystorePassword != null &&
+        releaseKeyAlias != null
+if (releaseKeystorePath != null && !hasReleaseSigningKey) {
+    // Named loudly rather than left as a silent unsigned build: somebody set the property, so they
+    // intended a signed release and would otherwise get an APK that cannot be installed at all.
+    logger.warn(
+        "release signing: `releaseKeystore` is set to '${releaseKeystorePath}' but the key is not " +
+            "usable (file present: ${releaseKeystoreFile?.isFile == true}, password set: " +
+            "${releaseKeystorePassword != null}, alias set: ${releaseKeyAlias != null}). " +
+            "The release build will be UNSIGNED."
+    )
 }
 
 android {
@@ -159,6 +237,33 @@ android {
      * `isShrinkResources` needs `isMinifyEnabled`; enabling it alone is an error rather than a
      * smaller APK.
      */
+    /**
+     * Declared before `buildTypes` on purpose: the release build type below looks this config up by
+     * name, and a config created afterwards is not there to be found.
+     *
+     * Created ONLY when a real key resolved. An empty-but-present "release" signing config is worse
+     * than none — Gradle accepts it and produces an APK signed with nothing, which is the exact
+     * outcome the block in `buildTypes.release` spends twenty lines warning about.
+     */
+    signingConfigs {
+        if (hasReleaseSigningKey) {
+            create("release") {
+                storeFile = releaseKeystoreFile
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                // Both signature schemes. v1 (the JAR signature) is what API 26–23 era installers
+                // read; v2/v3 are what everything since Nougat prefers and what allows key rotation
+                // later. minSdk here is 26, so v1 is not strictly required — it is left on because
+                // dropping it buys nothing and an APK that a sideloader refuses to install is a
+                // support conversation nobody wants to have in a field workshop.
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
             /**
@@ -184,14 +289,35 @@ android {
              * With the flag absent — the state of a clean checkout and of CI — the release build is
              * unsigned, which fails loudly at install time rather than quietly at publish time.
              *
-             * Before this app is published, add a real keystore whose credentials come from
-             * `local.properties` or the CI secret store, never from a file in the repository.
+             * THAT KEYSTORE NOW EXISTS (2026-08-23) and is read from outside the repository — see
+             * `hasReleaseSigningKey` near the top of this file. What remains below is the fallback
+             * for a machine that does not have it.
              */
-            if (localProperties.getProperty("debugSignRelease", "false").toBoolean()) {
+            if (hasReleaseSigningKey) {
+                signingConfig = signingConfigs.getByName("release")
+                logger.lifecycle(
+                    "release: signing with the RELEASE key (${releaseKeystoreFile?.name}, " +
+                        "alias ${releaseKeyAlias}). This APK is distributable."
+                )
+            } else if (localProperties.getProperty("debugSignRelease", "false").toBoolean()) {
+                /*
+                  THE ORDER OF THESE TWO BRANCHES IS LOAD-BEARING, and it is the reverse of the order
+                  they were written in. `debugSignRelease=true` is a flag a developer sets once in
+                  their gitignored local.properties and then forgets for months — it was already set
+                  on the machine that cut the first release. If debug signing were checked first, the
+                  presence of a real key would be silently ignored and the build that went to the
+                  website and to every handset would be the undistributable one, with a cheerful log
+                  line saying so among four hundred others. The real key wins, always.
+                */
                 signingConfig = signingConfigs.getByName("debug")
                 logger.lifecycle(
-                    "release: signing with the DEBUG keystore (debugSignRelease=true). " +
-                        "For on-device testing only — this APK is not distributable."
+                    "release: signing with the DEBUG keystore (debugSignRelease=true, and no release " +
+                        "key is configured). For on-device testing only — this APK is not distributable."
+                )
+            } else {
+                logger.lifecycle(
+                    "release: UNSIGNED — no release key configured and debugSignRelease is off. " +
+                        "The APK will build and will not install."
                 )
             }
             /**

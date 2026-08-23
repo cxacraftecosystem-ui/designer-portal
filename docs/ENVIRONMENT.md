@@ -413,6 +413,24 @@ Gradle properties, not environment variables — one line, gitignored.
 |---|---|---|---|---|
 | `apiBaseUrl` | No | `https://d3ekigkotd1xa2.cloudfront.net/api/` (compiled into `BuildConfig.DEFAULT_API_BASE_URL`) | No | Note this one **does** include the trailing `/api/` — the opposite of the web variable. Emulator: `http://10.0.2.2:8000/api/`. Physical device on your LAN: `http://192.168.1.x:8000/api/`, with the backend started as `--host 0.0.0.0`. |
 
+| `releaseKeystore` | For a **distributable** release | none | No (the path) | Absolute path to the release keystore, which lives **outside this repository**. A relative path is resolved against `android/`. With this absent the release build is unsigned, which is the correct behaviour for a clean checkout and for CI — an unsigned APK fails loudly at install time instead of quietly looking shippable. |
+| `releaseKeystorePassword` | With the above | none | **Yes** | Store password. Also the key password unless `releaseKeyPassword` is set. |
+| `releaseKeyAlias` | With the above | none | No | `designrepo` for this project's key. |
+| `releaseKeyPassword` | No | the store password | **Yes** | Only needed for a keystore whose key uses a different password from the store. |
+| `debugSignRelease` | No | `false` | No | Signs a release build with the **debug** keystore for on-device testing. That keystore ships with every Android SDK, so the result is not distributable. **A configured `releaseKeystore` always wins over this flag** — see the ordering comment in `buildTypes.release`, because this flag is the kind a developer sets once and forgets. |
+
+Each also reads from the environment for CI: `ANDROID_RELEASE_KEYSTORE`,
+`ANDROID_RELEASE_KEYSTORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS`, `ANDROID_RELEASE_KEY_PASSWORD`.
+
+**The signing key is the one secret in this project that cannot be rotated.** Everything else here can
+be reissued: a token, a database password, an API key. An Android signing key cannot — Android
+identifies an app by its signature, so an update signed with a different key is refused by every
+device that has the old one, and the only recovery is for each user to uninstall and reinstall, losing
+whatever the outbox had not yet synced. Created 2026-08-23, RSA 4096, valid to 2054, certificate
+SHA-256 `c372b4b6275aa2accbcb098af198bae3027eca9a90c08c5df54a4143343bfb49` (a fingerprint is public
+information — it is in every copy of the APK). Back up the keystore file and its password somewhere
+that survives this laptop.
+
 The Google web client ID is compiled in from `android/app/build.gradle.kts`
 (`GOOGLE_WEB_CLIENT_ID`), not supplied via a property.
 
