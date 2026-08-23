@@ -41,7 +41,7 @@ from fastapi import HTTPException
 
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.api.routes import design_workshops as routes
-from app.services import design_workshops as dw, entry_provenance as ep
+from app.services import design_ratings as dr, design_workshops as dw, entry_provenance as ep
 
 ASHA = SimpleNamespace(id="usr_asha", name="Asha Patel", role="DESIGNER")
 MEENA = SimpleNamespace(id="usr_meena", name="Meena Iyer", role="RESEARCHER")
@@ -346,6 +346,211 @@ async def test_the_wire_shape_the_handset_syncs_is_the_one_it_parses(reader):
 
 
 # --------------------------------------------------------------------------------------
+# Reader 7: the rating ledger — the one entry on the classified list that is EXEMPT
+# --------------------------------------------------------------------------------------
+#
+# ``services/design_ratings`` reads ``DwStageEntry`` twice and resolves nothing, and the tripwire
+# below lists it for that reason. THE EXEMPTION IS NOT AN OMISSION AND IT IS ALSO NOT FREE, so it
+# gets tests of its own — not tests that it resolves the overlay, but tests of the BOUNDARY the
+# exemption was granted inside. The full argument is above ``design_ratings.load_subject``; the two
+# halves that matter here are:
+#
+#   * WHAT IT TAKES OFF A ROW IS A LABEL AND A GATE. The label is the same object the intra-workshop
+#     REF picker is already exempt for — one display string off ``label_field``, attributing nothing
+#     — and the gate (``peerRoundClosedAt``) is read to decide whether a round is open and then
+#     never served to anybody. A THIRD field off ``data`` is the change that makes all of that false,
+#     so that is what these tests fail on.
+#   * RESOLVING PROVENANCE HERE WOULD BE THE WORSE OPTION, not merely the more expensive one. The
+#     POOL round is read by designers ``load_workshop_or_404`` turns away, and this module withholds
+#     identities from them on purpose (``POOL_RATINGS_NAME_THEIR_RATER`` is False). A stamp carries
+#     ``by`` and ``byName``, so serving one here would export the researcher who recorded a value,
+#     and the designer who typed over it, to accounts with no grant on the workshop.
+#
+# Nothing here needs a database either: both loaders are run against a recorded stub, exactly as
+# ``_Users`` above stands in for the one name lookup.
+
+#: The sketch both loaders are run over. REAL stage-11 ``sketch`` keys, so a rename in the registry
+#: fails these tests instead of letting them pass against a fiction — checked mechanically by
+#: :func:`test_the_keys_this_fence_is_built_on_are_real_registry_fields`.
+#:
+#: NO ``stageKey``, deliberately: neither loader looks at one. They scope by ``entityKey``, and that
+#: scoping is itself asserted below.
+SKETCH_DATA = {
+    "sketchNo": "SK-07",
+    "name": "Kalamkari tote",
+    "targetMarket": "Urban gifting",
+    "materials": ["Indigo cotton"],
+    dr.POOL_OPENS_WHEN_FIELD: "2026-05-04",
+}
+
+#: The values in ``SKETCH_DATA`` that are neither the label nor the gate. One of these reaching a
+#: caller is the widening this whole section exists to catch.
+#:
+#: ``sketchNo`` is NOT in here even though it is not the label today: ``_entry_label`` names it as
+#: the fallback for a sketch saved in a hurry with a number and no name, so it is a label candidate
+#: by declaration and pinning its absence would fail on a legitimate edit to that chain.
+NOT_THE_LABEL = ("Urban gifting", "Indigo cotton")
+
+#: The workshop row ``load_subject`` re-reads and ``load_subjects`` is handed. Its creator is a
+#: DIFFERENT account from the row's, because ``RatingSubject`` keeps the two apart and a fixture
+#: where they coincide cannot show that it does.
+RATED_WORKSHOP = SimpleNamespace(id="dw_1", createdById=MEENA.id, deletedAt=None)
+
+
+def _sketch_row(entry_id, *, ordinal=0):
+    """One rateable row, STAMPED — which is the whole point of the fixture.
+
+    A row with an empty ``fieldProvenance`` could not tell "this reader dropped the stamps" from
+    "there were no stamps to carry", and it is the first of those two that these tests are about.
+    """
+    return SimpleNamespace(
+        id=entry_id, entityKey="sketch", designWorkshopId="dw_1", ordinal=ordinal,
+        data=dict(SKETCH_DATA), clientKey=None, createdById=ASHA.id, deletedAt=None,
+        fieldProvenance={
+            "name": STAMPS["name"], dr.POOL_OPENS_WHEN_FIELD: STAMPS["phone"],
+        },
+    )
+
+
+class _Entries:
+    """The stage-entry delegate, recording every where-clause so the SCOPE can be asserted too.
+
+    Canned answers rather than a re-implementation of Prisma's filtering, for ``_Users``' reason:
+    what is under test is the call this module makes and what it does with the row it gets back,
+    and a hand-written query engine in a fixture is a second thing that can be wrong.
+    """
+
+    def __init__(self, rows):
+        self.rows = list(rows)
+        self.unique_calls: list[dict] = []
+        self.many_calls: list[tuple[dict, dict]] = []
+
+    async def find_unique(self, where=None):
+        self.unique_calls.append(dict(where or {}))
+        wanted = (where or {}).get("id")
+        return next((row for row in self.rows if row.id == wanted), None)
+
+    async def find_many(self, where=None, order=None):
+        self.many_calls.append((dict(where or {}), dict(order or {})))
+        return list(self.rows)
+
+
+@pytest.fixture
+def ratings_db(monkeypatch):
+    """``design_ratings.db``, stubbed. Returns the recorder so the calls can be read back."""
+    entries = _Entries([_sketch_row("ent_sk1"), _sketch_row("ent_sk2", ordinal=1)])
+
+    async def _workshop(where=None):
+        return RATED_WORKSHOP if (where or {}).get("id") == RATED_WORKSHOP.id else None
+
+    monkeypatch.setattr(dr, "db", SimpleNamespace(
+        dwstageentry=entries, designworkshop=SimpleNamespace(find_unique=_workshop),
+    ))
+    return entries
+
+
+def _assert_only_a_label_and_a_gate(subject, *, where):
+    """The fence itself, in the shape ``_assert_resolved`` has for the readers that do resolve.
+
+    Everything at once, because the exemption needs all of it to stay true: the label is the label
+    field, the gate was read, ``RatingSubject`` has not grown an attribute, and NOTHING ELSE off the
+    row came along — no third answer, and no stamp carried half-way. A stamp arriving here
+    unresolved would be the "set by (unknown)" panel ``_assert_resolved`` describes, on a payload
+    that goes to strangers.
+
+    The attribute-set assertion is the one that catches the widening most likely to actually happen
+    — a fourth fact read off ``data`` and hung on the dataclass — and the value scan behind it is
+    for the sneakier version, where an attribute that already exists starts carrying an answer.
+    """
+    assert subject.label == SKETCH_DATA["name"], f"{where}: the label is not the label field"
+    assert subject.pool_open is True, f"{where}: the pool gate was not read"
+    assert set(type(subject).__dataclass_fields__) == {
+        "entry_id", "entity_key", "workshop_id", "pool_open", "label", "ordinal",
+        "author_id", "workshop_author_id",
+    }, f"{where}: RatingSubject grew an attribute — is it a stage-entry field?"
+    served = repr(subject)
+    for value in NOT_THE_LABEL:
+        assert value not in served, (
+            f"{where}: {value!r} came off the stage row with no provenance. This reader is exempt "
+            "for carrying a label and a gate only — see above design_ratings.load_subject."
+        )
+    assert "fieldProvenance" not in served and "byName" not in served, (
+        f"{where}: a stamp was carried without being resolved"
+    )
+
+
+async def test_the_rating_ledger_takes_a_label_and_a_gate_and_no_third_field(ratings_db):
+    """``design_ratings.load_subject`` — the read behind every single-subject rating route."""
+    subject = await dr.load_subject("ent_sk1")
+    assert subject is not None
+    _assert_only_a_label_and_a_gate(subject, where="load_subject")
+    # THE ROW-LEVEL FACTS IT DOES KEEP, and they are not field provenance: ``createdById`` says who
+    # started the row, which is what the self-rating refusal and "their own record" read. Both are
+    # kept apart on purpose — see the RatingSubject docstring — and neither reaches the wire, which
+    # is what the payload test below asserts.
+    assert subject.author_id == ASHA.id
+    assert subject.workshop_author_id == MEENA.id
+    assert ratings_db.unique_calls[0] == {"id": "ent_sk1"}
+
+
+async def test_the_ranked_list_loader_takes_a_label_and_a_gate_and_no_third_field(ratings_db):
+    """``design_ratings.load_subjects`` — the read behind the ranked list, its own entry point.
+
+    Asserted separately from ``load_subject`` for this file's stated reason: a generic test over
+    whichever helper they happen to share today would pass on the day one of them stopped sharing
+    it. It also pins the SCOPE, because "not soft-deleted" and "this entity" are the two clauses
+    that decide which rows a pool reader can reach at all.
+    """
+    subjects = await dr.load_subjects("dw_1", "sketch", RATED_WORKSHOP)
+    assert [s.entry_id for s in subjects] == ["ent_sk1", "ent_sk2"]
+    for subject in subjects:
+        _assert_only_a_label_and_a_gate(subject, where="load_subjects")
+    where, order = ratings_db.many_calls[0]
+    assert where == {"designWorkshopId": "dw_1", "entityKey": "sketch", "deletedAt": None}
+    assert order == {"ordinal": "asc"}
+
+
+def test_no_stage_entry_field_and_no_identity_reaches_the_ranked_payload():
+    """``ranked_payload`` — the wire shape, fenced at its WIDEST.
+
+    ``show_ordinal=True`` is the disclosure the payload only makes to the workshop's own party and
+    admins, so it is the version to pin: if the biggest payload carries no stage-entry answer and
+    names nobody, no narrower one can.
+    """
+    subject = dr.RatingSubject(
+        entry_id="ent_sk1", entity_key="sketch", workshop_id="dw_1", pool_open=True,
+        label=SKETCH_DATA["name"], ordinal=3, author_id=ASHA.id, workshop_author_id=MEENA.id,
+    )
+    payload = dr.ranked_payload(dr.rank([subject], [])[0], mine=None, show_ordinal=True)
+    assert set(payload) == {
+        "subjectId", "entityKey", "label", "workshopId", "score", "ratingCount",
+        "defaultPosition", "placedPosition", "myRating", "ordinal",
+    }
+    served = repr(payload)
+    for value in NOT_THE_LABEL:
+        assert value not in served, f"{value!r} reached a pool reader with no provenance"
+    # NOBODY IS NAMED. The row's author is a permission input, not a disclosure — and a provenance
+    # stamp would be a disclosure, to accounts holding no grant on this workshop.
+    assert ASHA.id not in served and MEENA.id not in served
+    assert "provenance" not in served and "byName" not in served
+
+
+def test_the_keys_this_fence_is_built_on_are_real_registry_fields():
+    """``SKETCH_DATA`` is stage 11's ``sketch``, not a plausible-looking invention.
+
+    Without this, a registry rename would leave the three tests above passing over a fixture whose
+    keys no longer exist anywhere — green, and measuring nothing.
+    """
+    from app.services.stage_schema import all_entities
+
+    sketch = next(entity for _stage, entity in all_entities() if entity.key == "sketch")
+    keys = {f.key for f in sketch.fields}
+    assert set(SKETCH_DATA) <= keys, f"not registry fields: {sorted(set(SKETCH_DATA) - keys)}"
+    assert sketch.label_field == "name", "the label this reader prints is no longer the label field"
+    assert dr.POOL_OPENS_WHEN_FIELD in keys, "the pool gate is not declared on a sketch"
+
+
+# --------------------------------------------------------------------------------------
 # The other half of the inventory: the record tables, which have no overlay
 # --------------------------------------------------------------------------------------
 
@@ -425,6 +630,14 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
     ``api/routes/analytics``         cross-workshop counts and ratios. It never shows one field to
                                      one person, so there is nothing to attribute.
     ``services/dictation_consent``   collects media ids off the entries; reads no field value.
+    ``services/design_ratings``      the review ledger's two subject loaders. EXEMPT on the REF
+                                     picker's grounds AND on one of its own: it takes a display
+                                     label, a pool gate it never serves, and ``createdById`` — and
+                                     a stamp's ``byName`` would cross to the pool readers this
+                                     module deliberately shows no names to. Argued in full above
+                                     ``design_ratings.load_subject``; the exemption's boundary is
+                                     fenced by the four tests under "Reader 7" above, which fail if
+                                     either loader ever takes a third field off ``data``.
 
     A module not on this list that starts reading the table is a reader nobody has classified, and
     the failure it produces is silent. Failing here — in the same commit, next to this docstring —
@@ -445,6 +658,7 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         "app/api/routes/analytics.py",
         "app/services/design_workshops.py",
         "app/services/dictation_consent.py",
+        "app/services/design_ratings.py",
     }
     root = Path(__file__).resolve().parents[1] / "app"
     found = set()

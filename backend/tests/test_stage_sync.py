@@ -11,6 +11,7 @@ Run the local stack first:
     cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
 """
 
+import functools
 import os
 import uuid
 from typing import Any
@@ -1127,13 +1128,63 @@ def _brief(client, workshop_id, concept):
     )
 
 
-async def _brief_rows(workshop_id):
-    return await db.dwstageentry.find_many(
-        where={"designWorkshopId": workshop_id, "entityKey": "designBrief"}
-    )
+# ── READING AND WRITING A ROW WITHOUT SMUGGLING IN A SECOND EVENT LOOP ─────────────────────────
+#
+# The five tests below are the only ones in this module that must look at the stored ROW rather
+# than at a response, and they have no choice about it. `_stages_payload` injects `_entryId` and
+# `_clientKey` on the COLLECTION arm only; the SINGLETON arm assigns `row.data` straight through,
+# so the wire carries neither the reserved client key, nor the row id, nor how many rows there
+# are — two rows of one singleton collapse to whichever the grouping saw last. That omission is
+# deliberate and argued at length above `SINGLETON_CLIENT_KEY` in `services/design_workshops.py`
+# ("IT NEVER LEAVES THE SERVER", and the day it does has to be re-argued rather than assumed), so
+# these assertions cannot be moved onto an endpoint without weakening the property they check.
+#
+# THEY WERE WRITTEN AS ``async def`` BODIES AWAITING ``db`` DIRECTLY, AND ALL FIVE FAILED with
+# ``RuntimeError: <asyncio.locks.Event ...> is bound to a different event loop`` — the same failure,
+# from the same cause, that :func:`designer_client` spends a docstring on. ``client`` hands the app
+# to ``TestClient``, which runs the lifespan — and therefore ``db.connect()`` — inside its OWN anyio
+# portal, while an async test body runs in the loop this module's ``anyio_backend`` provides, and
+# Prisma's HTTP session belongs to the loop that opened it. Nothing about the tests was wrong; the
+# loop they ran in was.
+#
+# SO THE QUERY GOES WHERE THE REQUESTS GO. ``TestClient.__enter__`` keeps the portal it started on
+# ``.portal``, and every request made inside the ``with`` block is dispatched through that same
+# portal, so ``client.portal.call(...)`` runs the query on the connection's own loop — one client,
+# one portal, one loop, one Prisma connection, exactly as the fixture above requires. Standing up a
+# second ``Prisma()`` in the test's own loop would be the wrong answer twice over: a second
+# connection to the same database, and a second reader able to block the suite on lock contention.
+#
+# The five tests are therefore ``def`` rather than ``async def``, for the same reason
+# :func:`designer_client` is synchronous: nothing in them needs a loop of their own.
 
 
-async def test_a_singleton_row_carries_the_reserved_client_key(client, workshop):
+def _entry_rows(client, workshop_id, entity_key):
+    """Every stored row for one entity of one workshop — LIVE AND SOFT-DELETED.
+
+    The ``deletedAt`` filter is deliberately absent. What these tests are about is the unique index,
+    which does not carry ``deletedAt``, so a soft-deleted row still occupies its client key and is
+    still one of the rows an assertion reading "one row" is counting.
+    """
+    return client.portal.call(functools.partial(
+        db.dwstageentry.find_many,
+        where={"designWorkshopId": workshop_id, "entityKey": entity_key},
+    ))
+
+
+def _brief_rows(client, workshop_id):
+    return _entry_rows(client, workshop_id, "designBrief")
+
+
+def _write_entry_row(client, data):
+    """Insert one stage entry row directly, on the client's loop — see the note above.
+
+    Only for shapes no writer produces any more: the pre-migration singleton with a null client key,
+    and the competing row of the race. Anything a client can send is sent, through ``client``.
+    """
+    return client.portal.call(functools.partial(db.dwstageentry.create, data=data))
+
+
+def test_a_singleton_row_carries_the_reserved_client_key(client, workshop):
     """The key is what makes the index able to refuse a second row at all.
 
     Asserted on the stored row rather than on the response, because the response never carried it
@@ -1146,7 +1197,7 @@ async def test_a_singleton_row_carries_the_reserved_client_key(client, workshop)
     from app.services.design_workshops import singleton_client_key
 
     assert _brief(client, workshop, "First concept").status_code == 200
-    rows = await _brief_rows(workshop)
+    rows = _brief_rows(client, workshop)
     assert len(rows) == 1
     assert rows[0].clientKey == singleton_client_key("DESIGN_BRIEF"), (
         "without a non-null clientKey the unique index cannot see this row, and two designers "
@@ -1154,7 +1205,7 @@ async def test_a_singleton_row_carries_the_reserved_client_key(client, workshop)
     )
 
 
-async def test_the_prefill_seeded_singleton_carries_the_reserved_key_too(client):
+def test_the_prefill_seeded_singleton_carries_the_reserved_key_too(client):
     """THE OTHER WRITER, AND THE ONE THAT ACTUALLY RUNS ON EVERY WORKSHOP.
 
     `seed_designer_prefill` creates singleton rows straight from `POST /design-workshops`, and it
@@ -1177,9 +1228,7 @@ async def test_the_prefill_seeded_singleton_carries_the_reserved_key_too(client)
     assert response.status_code == 201, response.text
     workshop_id = response.json()["id"]
 
-    rows = await db.dwstageentry.find_many(
-        where={"designWorkshopId": workshop_id, "entityKey": "workshopSetup"}
-    )
+    rows = _entry_rows(client, workshop_id, "workshopSetup")
     assert len(rows) == 1, (
         f"the create seeded {len(rows)} workshopSetup rows; this test's premise is that it seeds one"
     )
@@ -1190,7 +1239,7 @@ async def test_the_prefill_seeded_singleton_carries_the_reserved_key_too(client)
     )
 
 
-async def test_a_singleton_written_before_the_reserved_key_adopts_it_on_the_next_save(
+def test_a_singleton_written_before_the_reserved_key_adopts_it_on_the_next_save(
     client, workshop
 ):
     """THE ROWS THE BACKFILL DID NOT SEE, which is every row written after it ran.
@@ -1207,19 +1256,20 @@ async def test_a_singleton_written_before_the_reserved_key_adopts_it_on_the_next
     """
     from app.services import design_workshops as dw
 
-    legacy = await db.dwstageentry.create(data={
+    legacy = _write_entry_row(client, {
         "designWorkshopId": workshop,
         "stageKey": "DESIGN_BRIEF",
         "entityKey": "designBrief",
         "ordinal": 0,
         "data": dw._json({"concept": "Written before the key existed"}),
-        # No clientKey: this is exactly the shape every pre-migration singleton has.
+        # No clientKey: this is exactly the shape every pre-migration singleton has. No endpoint
+        # writes it any more — that is the whole point of the change — so it is written directly.
     })
     assert legacy.clientKey is None, "this test's premise is a row with no client key"
 
     assert _brief(client, workshop, "Edited today").status_code == 200
 
-    rows = await _brief_rows(workshop)
+    rows = _brief_rows(client, workshop)
     assert len(rows) == 1, f"the save split the singleton into {len(rows)} rows"
     assert rows[0].id == legacy.id, "the existing row must be updated, not replaced"
     assert rows[0].clientKey == dw.singleton_client_key("DESIGN_BRIEF"), (
@@ -1228,7 +1278,7 @@ async def test_a_singleton_written_before_the_reserved_key_adopts_it_on_the_next
     )
 
 
-async def test_two_concurrent_saves_of_one_singleton_leave_one_row(
+def test_two_concurrent_saves_of_one_singleton_leave_one_row(
     client, workshop, monkeypatch
 ):
     """THE RACE, MADE DETERMINISTIC RATHER THAN HOPED FOR.
@@ -1250,6 +1300,9 @@ async def test_two_concurrent_saves_of_one_singleton_leave_one_row(
     original = dw.hydrate_entries
     injected: list[str] = []
 
+    # STILL ``async def``, AND STILL AWAITING ``db`` — the loop rule above is not violated here.
+    # This body is the injected competitor, called by `save_stage` from INSIDE the request, which
+    # runs in the portal loop that owns the connection. It is the test body that must not await.
     async def hydrate_then_lose_the_race(entries):
         await original(entries)
         if injected:
@@ -1276,7 +1329,7 @@ async def test_two_concurrent_saves_of_one_singleton_leave_one_row(
     assert body["created"] == 0, "the INSERT should have been absorbed into an UPDATE"
     assert body["updated"] == 1
 
-    rows = await _brief_rows(workshop)
+    rows = _brief_rows(client, workshop)
     assert len(rows) == 1, (
         f"the singleton split into {len(rows)} rows; the unique index did not refuse the second "
         "INSERT, which is the entire defect the reserved client key exists to close"
@@ -1289,7 +1342,7 @@ async def test_two_concurrent_saves_of_one_singleton_leave_one_row(
     )
 
 
-async def test_two_entries_for_one_singleton_in_one_payload_make_one_row(client, workshop):
+def test_two_entries_for_one_singleton_in_one_payload_make_one_row(client, workshop):
     """The same duplicate, arriving from inside a single request instead of from two.
 
     `_clientKey` and `_entryId` have both been guarded against a duplicate-in-payload since the
@@ -1311,7 +1364,7 @@ async def test_two_entries_for_one_singleton_in_one_payload_make_one_row(client,
     )
     assert response.status_code == 200, response.text
 
-    rows = await _brief_rows(workshop)
+    rows = _brief_rows(client, workshop)
     assert len(rows) == 1, f"one singleton, {len(rows)} rows"
     assert to_plain(rows[0].data["concept"]) == "Second half", "the later entry wins its own keys"
     assert rows[0].data["targetCategories"] == ["TABLE_LINEN"], (

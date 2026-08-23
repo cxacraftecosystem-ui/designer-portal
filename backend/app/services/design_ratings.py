@@ -466,6 +466,47 @@ def pool_is_open(data: Any) -> bool:
     return value is not None
 
 
+# ======================================================================================
+# THE TWO READS OF ``DwStageEntry``, AND WHY THEY DO NOT RESOLVE FIELD PROVENANCE
+# ======================================================================================
+#
+# ``DwStageEntry`` rows carry per-field authorship in ``fieldProvenance``, and
+# ``tests/test_entry_provenance_readers.py`` asserts once per reader that every surface serving a
+# stage-entry field serves the stamp beside it — with a tripwire that fails when a module starts
+# reading that table without having been classified. This module is on that list as EXEMPT, and the
+# argument is here rather than only in the test, because this is where somebody will be standing
+# when they widen one of the two ``load_*`` helpers below.
+#
+# WHAT THESE TWO READS TAKE OFF A STAGE ROW IS THREE THINGS, AND NONE OF THEM IS AN ANSWER:
+#
+#   * ``label`` — one display string, via :func:`_entry_label`. It is the same object as the
+#     intra-workshop REF picker's (``design_workshops._in_record_options``), which is exempt on the
+#     stated grounds that it "returns dropdown LABELS and attributes nothing to anybody" and which
+#     sends ``"data": {}`` beside every option for exactly that reason. A ranking list has to print
+#     something a designer recognises; it prints the row's ``label_field`` and stops.
+#   * ``pool_open`` — :data:`POOL_OPENS_WHEN_FIELD` read as a GATE. The value decides whether a
+#     round is open and then never leaves the server. There is no reader to mislead about who set
+#     it, because nothing is served.
+#   * ``author_id`` / ``workshop_author_id`` — ``createdById``, a ROW-level fact and not a
+#     field-level one, consulted by :func:`is_row_author` and :func:`is_own_record` and absent from
+#     every payload this feature emits. The only authorship on the wire here is a RATING's, which
+#     comes from ``DwReviewRating.reviewerId`` and has its own provenance in its own table.
+#
+# AND THE REASON THE EXEMPTION IS THE SAFE DIRECTION RATHER THAN MERELY THE CHEAP ONE — this is the
+# half that is NOT true of the REF picker, so it is worth stating plainly. That picker is
+# intra-workshop by construction; this surface is not. The POOL round is read by designers the
+# workshop loader turns away (see ``load_ratable_workshop_or_404``), and this module deliberately
+# withholds identities from them: :data:`POOL_RATINGS_NAME_THEIR_RATER` is ``False``, so a pool
+# reader is shown scores without the names of the people who gave them. A provenance stamp carries
+# ``by`` and ``byName``. Resolving provenance onto this payload would therefore export the name of
+# the researcher who recorded a value, and of the designer who typed over it, to accounts holding
+# no grant on the workshop — widening identity disclosure on the one surface built to narrow it.
+#
+# SO THE FENCE, NOT THE RESOLUTION, IS WHAT THIS READER OWES: it may carry a label and a gate, and
+# a THIRD field off ``data`` is the change that makes the exemption false. That is asserted, against
+# these two functions, in ``test_entry_provenance_readers.py`` beside the readers that do resolve.
+
+
 async def load_subject(entry_id: str) -> RatingSubject | None:
     """The sketch or prototype behind an id, or None — which every caller must turn into a 404.
 

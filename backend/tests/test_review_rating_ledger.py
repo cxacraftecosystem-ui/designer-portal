@@ -107,21 +107,35 @@ def _code_mentions(path: pathlib.Path, needle: str) -> bool:
         if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         first = node.body[0] if node.body else None
-        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
-            if isinstance(first.value.value, str):
-                prose.add(id(first.value))
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            prose.add(id(first.value))
 
+    # WHICH TEXT THIS NODE COULD BE MENTIONING THE KEY IN, one AST surface per branch, and then a
+    # single test against it. The branches are an ENUMERATION and not a coincidence — every kind of
+    # node keeps the name it mentions in a differently-named attribute, which is exactly why they
+    # cannot become one `isinstance` tuple — so the text is selected first and matched once, rather
+    # than five branches each repeating the same `needle in ...` and inviting a linter to merge
+    # arms whose conditions have nothing in common. `ast.arg` and `ast.keyword` share a branch
+    # because they genuinely share the attribute, not because a parameter and a keyword argument
+    # are the same surface.
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if id(node) not in prose and needle in node.value:
-                return True
-        elif isinstance(node, ast.Attribute) and needle in node.attr:
-            return True
-        elif isinstance(node, ast.Name) and needle in node.id:
-            return True
-        elif isinstance(node, ast.arg) and needle in node.arg:
-            return True
-        elif isinstance(node, ast.keyword) and node.arg and needle in node.arg:
+            text = None if id(node) in prose else node.value
+        elif isinstance(node, ast.Attribute):
+            text = node.attr                       # `ratings.reviewRound`
+        elif isinstance(node, ast.Name):
+            text = node.id                         # a bare `reviewRound`
+        elif isinstance(node, (ast.arg, ast.keyword)):
+            # `def f(reviewRound=...)` and `f(reviewRound=...)`. `.arg` is None on `**kwargs`,
+            # which is why the match below tests the text for truth before searching it.
+            text = node.arg
+        else:
+            text = None
+        if text and needle in text:
             return True
     return False
 
