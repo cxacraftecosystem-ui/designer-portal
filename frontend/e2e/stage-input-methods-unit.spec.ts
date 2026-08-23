@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { addressListRole } from "@/components/designworkshop/stageFieldRoles";
+import { addressListRole, workshopTitleRole } from "@/components/designworkshop/stageFieldRoles";
 import { joinNumbered, splitNumbered } from "@/components/forms/NumberedListInput";
 import type { DwEntity, DwField } from "@/lib/designWorkshops";
 
@@ -297,13 +297,192 @@ test("the roles file still says how many roles there are, and which of them gues
   // answer costs. It has been wrong about the count once already (it said five while six were
   // declared), and a stale count is how the next reader concludes the file is not maintained.
   const source = read(ROLES);
-  expect(source).toContain("There are seven");
-  expect(source).toContain("FIVE OF THE SEVEN GUESS, AND SAY SO");
-  expect(source).toContain("{@link addressListRole} IS THE ONE THAT COULD REFUSE AN ANSWER");
+  expect(source).toContain("There are eight");
+  expect(source).toContain("FIVE OF THE EIGHT GUESS, AND SAY SO");
+  // TWO roles can refuse an answer now, not one — `workshopTitleRole` joined `addressListRole` when
+  // "Documented at workshop" became a dropdown, and the paragraph naming the exact-key rule has to
+  // name both or the next reader adds a third by pattern.
+  expect(source).toContain("{@link addressListRole} AND {@link workshopTitleRole} ARE THE TWO THAT COULD REFUSE AN ANSWER");
   // The ORDINAL as well as the count, because the count moving is what made the ordinal stale the
   // last time: the header went to seven roles and five guessers while this paragraph still called
   // `measurableLengthFields` "THE FIFTH" and the guessers "the other four". Both halves are pinned
   // so raising the count cannot silently leave a paragraph counting to an older total.
-  expect(source).toContain("THE SEVENTH DOES NOT GUESS EITHER");
+  expect(source).toContain("THE EIGHTH DOES NOT GUESS EITHER");
   expect(source).toContain("other five would like to be");
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * "Documented at workshop" — the second role that can refuse an answer
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const WORKSHOP_FIELD = "components/designworkshop/StageWorkshopField.tsx";
+const WORKSHOP_SELECT = "components/forms/WorkshopSelect.tsx";
+const SKETCHES_HUB = "app/(protected)/sketches-and-prototypes/page.tsx";
+const DW_LIST = "app/(protected)/design-workshops/page.tsx";
+/*
+  THE HANDSET'S HALF, READ AS TEXT FOR WANT OF ANYTHING BETTER.
+
+  The first version of the guard below read `WorkshopSelect.tsx` and the sketches hub and concluded
+  that EVERY workshop picker asked for the scoped list. It could not have known: the six Android
+  record forms mount one picker of their own, that picker loaded the unscoped list, and nothing
+  anywhere asked the picker question of BOTH clients. The two client-parity tests this repository
+  does have are about carried DATA — one reads this browser's copy of the hydration table, the other
+  reads the handset's copy of the registry — and a permission asked for per request appears in
+  neither table. The web was narrowed, the handset was not, and the parity comment in `MainActivity`
+  claimed both until somebody read the Kotlin.
+
+  Kotlin cannot be imported here, so these are substring assertions over source, which is the same
+  weakness (and the same justification) as the mount assertions this file's header describes: what is
+  being guarded against is a call site quietly reverting to the wide list, and that is visible in the
+  text. A Gradle test cannot replace it either — it would pin the Kotlin against itself, and the
+  thing that has to hold is that the two clients ask the same question of the same endpoint.
+*/
+const ANDROID = (relative: string) => join("..", "android", "app", "src", "main", "java", "com", "designprototype", "workshop", relative);
+const ANDROID_API = ANDROID("data/WorkshopRepositoryApi.kt");
+const ANDROID_REPO = ANDROID("data/WorkshopRepository.kt");
+const ANDROID_FORMS = ANDROID("MainActivity.kt");
+
+test("the two boxes that hold a workshop's TITLE get the list, and the one that holds a title does not", () => {
+  // The two hydration targets: `participant.documentedAtWorkshop` ("Documented at workshop") and
+  // `workshopSetup.craftDocumentedAtWorkshop` ("Workshop the craft was documented at"). Both are
+  // filled from `Workshop.title`, so what a designer types over them is a title nothing can match.
+  expect(workshopTitleRole(field("documentedAtWorkshop", "TEXT"))).toBe(true);
+  expect(workshopTitleRole(field("craftDocumentedAtWorkshop", "TEXT"))).toBe(true);
+
+  // THE TRAP, PINNED. `workshopSetup.workshopTitle` is the DESIGN workshop's own title — a required
+  // cover field a designer types, and not a reference to a `Workshop` row at all. A dropdown there
+  // would refuse a workshop that has no `Workshop` record yet, which is most of them on day one.
+  expect(workshopTitleRole(field("workshopTitle", "TEXT"))).toBe(false);
+  expect(workshopTitleRole(field("workshopCode", "TEXT"))).toBe(false);
+
+  // Exact keys and no pattern, for the reason `addressListRole` is: this role can refuse an answer.
+  expect(workshopTitleRole(field("documentedAtWorkshopNotes", "TEXT"))).toBe(false);
+  expect(workshopTitleRole(field("workshopDocumentedAt", "TEXT"))).toBe(false);
+  // A deprecated field keeps whatever it had, and a non-TEXT field is somebody else's branch.
+  expect(workshopTitleRole(field("documentedAtWorkshop", "TEXT", { deprecated: true }))).toBe(false);
+  expect(workshopTitleRole(field("documentedAtWorkshop", "LONG_TEXT"))).toBe(false);
+});
+
+test("STANDING TRIPWIRE: the registry declares exactly those two workshop-title fields, both TEXT", () => {
+  /*
+   * The exact-key list is only safe while it is complete, and completeness is a fact about the
+   * registry. Read off the bundled dump, so a THIRD field that carries a referenced record's workshop
+   * title fails HERE with its key named, instead of silently staying a prose box while its two
+   * siblings became lists.
+   *
+   * The TYPE is pinned here, unlike the address tripwire, and the difference is deliberate: this role
+   * exists only because the field is TEXT holding a title. The honest end state is a registry that
+   * declares the vocabulary — at which point the role dies rather than being retargeted — so a type
+   * change is exactly the event that should stop this test.
+   */
+  const dump = JSON.parse(readFileSync(SCHEMA, "utf8")) as {
+    stages: { key: string; entities: { key: string; fields: { key: string; type: string; label: string }[] }[] }[];
+  };
+  const found: string[] = [];
+  for (const stage of dump.stages) {
+    for (const declared of stage.entities) {
+      for (const spec of declared.fields) {
+        if (/documentedatworkshop$/i.test(spec.key)) found.push(`${declared.key}.${spec.key}:${spec.type}`);
+      }
+    }
+  }
+  expect(found.sort()).toEqual([
+    "participant.documentedAtWorkshop:TEXT",
+    "workshopSetup.craftDocumentedAtWorkshop:TEXT"
+  ]);
+});
+
+test("the workshop-title box mounts the dropdown, keeps the dictation button on the free-text half", () => {
+  const source = read(FIELD_INPUT);
+  // The role decides, and the control is the one file that knows about workshops — not a second
+  // dropdown assembled inline in the TEXT branch.
+  expect(source).toContain("if (workshopTitleRole(field))");
+  expect(source).toContain("<StageWorkshopField");
+  // `unlabelled`, because the control contains a button: a wrapping <label> forwards a stray click
+  // into the menu and slams it shut after one pick.
+  expect(source.replace(/\s+/g, " ")).toContain("return unlabelled( <StageWorkshopField");
+
+  const control = read(WORKSHOP_FIELD);
+  // ONE list, not a second copy of the request: the shared, memoised loader the record page's own
+  // picker owns. A second fetch here would be a second answer to "which workshops may I use".
+  expect(control).toContain("loadAccessibleWorkshops");
+  expect(control).not.toContain('listResource');
+  // The escape hatch. The registry says TEXT and a designer cannot create a `Workshop` row, so a
+  // closed list would refuse an answer the registry accepts and the designer knows.
+  expect(control).toContain("Type a title instead");
+  // And the dictation button follows the box rather than the field: dictating a workshop title is
+  // the mistyped-title failure this control exists to remove.
+  expect(control).toContain("{dictation}");
+});
+
+test("(e) EVERY WORKSHOP PICKER ASKS THE SERVER FOR THE SCOPED LIST, AND NOTHING FALLS BACK TO A CACHE", () => {
+  /*
+   * The owner's requirement is that a designer only ever SEES the workshops they have access to, and
+   * `viewable_where` returns `{}` for every signed-in account — reading the repository is open on
+   * purpose — so the narrowing has to be asked for, per request, by every control that offers a
+   * workshop to save against. A picker that forgets the parameter is indistinguishable from one that
+   * has it: it just quietly offers 196 workshops instead of four, and the refusal arrives after the
+   * researcher has typed a record.
+   */
+  const picker = read(WORKSHOP_SELECT);
+  expect(picker).toContain('accessibleOnly: "true"');
+  // The literal string and not a boolean, because `buildQuery` takes no booleans — it stringifies,
+  // and it drops "" as if it were null.
+  expect(picker).not.toContain("accessibleOnly: true");
+
+  /*
+   * AND THE OFFLINE CACHE IS NOT AN ACCESS LIST. The sketches chooser used to fall back to this
+   * browser's IndexedDB copies when the repository could not be reached, which is stale in the
+   * PERMISSIVE direction — `draftSummary` keys on `remoteId ?? localId` and hardcodes
+   * `deletedAt: null`, so a revoked grant and a soft-deleted workshop both survive in it, with no
+   * bound on how old the evidence is. It now renders a panel and no chooser.
+   */
+  const hub = read(SKETCHES_HUB);
+  // The IMPORT and the CALLS, not the words: the header still names both functions, because a
+  // reversal explained is worth more than a reversal that left no trace. What must not come back is
+  // the wiring.
+  expect(hub).not.toContain('from "@/lib/designWorkshopStore"');
+  expect(hub).not.toContain("listDrafts()");
+  expect(hub).not.toContain("draftSummary)");
+  expect(hub).toContain("The repository could not be reached");
+
+  /*
+   * AND THE SAME RULE ON THE WORKSHOP LIST, WHICH IS THE BIGGER SURFACE OF THE TWO. It is the primary
+   * list and the route INTO a workshop, and it prepended every cached draft in this browser whenever
+   * the repository could not be reached — `draft.remoteId === null || offline`. What may still be
+   * prepended is this device's own unsent work (a workshop started here, or a row holding edits that
+   * have not been sent), which is a claim about the outbox rather than about anybody's access.
+   */
+  // THE STATEMENT AND NOT THE WORDS: the page's own note quotes the condition it used to have (a
+  // reversal explained is worth more than a reversal that left no trace), so a bare substring match
+  // finds the explanation and passes for ever. The trailing `extras.push` is what pins the branch.
+  const list = read(DW_LIST);
+  expect(list).not.toContain("|| offline) extras.push");
+  expect(list).toContain("|| (offline && unsent)) extras.push");
+});
+
+test("(e2) THE ANDROID RECORD FORMS ASK FOR THE SAME SCOPED LIST AS THE WEB", () => {
+  /*
+   * Trap 6 of this repository's carry invariants, applied to a permission rather than to a field: a
+   * change that lands on one client and not the other fails silently, and this one fails in the
+   * permissive direction — the handset offering 196 workshops while the browser offers four, with the
+   * 403 arriving after a record has been typed in a courtyard.
+   */
+  const api = read(ANDROID_API);
+  // The parameter has to EXIST in the client before any call site can send it. It did not.
+  expect(api).toContain('@Query("accessibleOnly")');
+
+  const repo = read(ANDROID_REPO);
+  // Two named lists, because the wide one is right for a read surface and wrong for a picker. A
+  // single flagged function is what makes a call site's choice invisible at the call site.
+  expect(repo).toContain("suspend fun workshopsIMaySubmitTo()");
+  expect(repo).toContain("accessibleOnly = true");
+
+  const forms = read(ANDROID_FORMS);
+  // The record forms' one picker. `rememberWorkshopPicker` is mounted by all six of them, so this is
+  // the single line that decides what a designer is offered on the handset.
+  expect(forms).toContain("repository.workshopsIMaySubmitTo()");
+  // And nothing in the picker falls back to the wide list "just in case" the scoped one is empty —
+  // an empty dropdown is the honest answer and is what the web control does.
+  expect(forms).not.toContain("workshopsByOccurrence() }.onSuccess");
 });

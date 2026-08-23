@@ -1,0 +1,191 @@
+{
+  "on": "2026-08-23",
+  "cases": [
+    {
+      "name": "a01-bare-date",
+      "kind": "age",
+      "value": "1971-01-08",
+      "expected": 55
+    },
+    {
+      "name": "a02-stored-datetime-utc",
+      "kind": "age",
+      "value": "1971-01-08T00:00:00Z",
+      "expected": 55
+    },
+    {
+      "name": "a03-stored-datetime-ist",
+      "kind": "age",
+      "value": "1971-01-08T00:00:00+05:30",
+      "expected": 55
+    },
+    {
+      "name": "a04-space-separator",
+      "kind": "age",
+      "value": "1971-01-08 09:15:00",
+      "expected": 55
+    },
+    {
+      "name": "a05-basic-form",
+      "kind": "age",
+      "value": "19710108",
+      "expected": 55
+    },
+    {
+      "name": "a06-day-before-birthday",
+      "kind": "age",
+      "value": "1980-08-24",
+      "expected": 45
+    },
+    {
+      "name": "a07-on-the-birthday",
+      "kind": "age",
+      "value": "1980-08-23",
+      "expected": 46
+    },
+    {
+      "name": "a08-day-after-birthday",
+      "kind": "age",
+      "value": "1980-08-22",
+      "expected": 46
+    },
+    {
+      "name": "a09-born-today",
+      "kind": "age",
+      "value": "2026-08-23",
+      "expected": 0
+    },
+    {
+      "name": "a10-future-date",
+      "kind": "age",
+      "value": "2030-01-01",
+      "expected": null
+    },
+    {
+      "name": "a11-impossible-day",
+      "kind": "age",
+      "value": "1971-02-30",
+      "expected": null
+    },
+    {
+      "name": "a12-impossible-month",
+      "kind": "age",
+      "value": "1971-13-01",
+      "expected": null
+    },
+    {
+      "name": "a13-out-of-band",
+      "kind": "age",
+      "value": "1800-01-01",
+      "expected": null
+    },
+    {
+      "name": "a14-empty",
+      "kind": "age",
+      "value": "",
+      "expected": null
+    },
+    {
+      "name": "a15-null",
+      "kind": "age",
+      "value": null,
+      "expected": null
+    },
+    {
+      "name": "a16-prose",
+      "kind": "age",
+      "value": "about 30",
+      "expected": null
+    },
+    {
+      "name": "a17-trailing-junk",
+      "kind": "age",
+      "value": "1971-01-08nonsense",
+      "expected": null
+    },
+    {
+      "name": "a18-legacy-plus",
+      "kind": "age",
+      "value": "30+",
+      "expected": null
+    },
+    {
+      "name": "e01-thirty-two-years",
+      "kind": "experience",
+      "value": "1994-03-12",
+      "expected": 32
+    },
+    {
+      "name": "e02-stored-datetime-ist",
+      "kind": "experience",
+      "value": "1994-03-12T00:00:00+05:30",
+      "expected": 32
+    },
+    {
+      "name": "e03-started-this-year",
+      "kind": "experience",
+      "value": "2026-01-15",
+      "expected": 0
+    },
+    {
+      "name": "e04-started-today",
+      "kind": "experience",
+      "value": "2026-08-23",
+      "expected": 0
+    },
+    {
+      "name": "e05-day-before-anniversary",
+      "kind": "experience",
+      "value": "1994-08-24",
+      "expected": 31
+    },
+    {
+      "name": "e06-on-the-anniversary",
+      "kind": "experience",
+      "value": "1994-08-23",
+      "expected": 32
+    },
+    {
+      "name": "e07-ninety-years",
+      "kind": "experience",
+      "value": "1936-08-23",
+      "expected": 90
+    },
+    {
+      "name": "e08-ninety-one-years",
+      "kind": "experience",
+      "value": "1935-08-23",
+      "expected": null
+    },
+    {
+      "name": "e09-future-date",
+      "kind": "experience",
+      "value": "2030-01-01",
+      "expected": null
+    },
+    {
+      "name": "e10-impossible-day",
+      "kind": "experience",
+      "value": "1994-02-30",
+      "expected": null
+    },
+    {
+      "name": "e11-empty",
+      "kind": "experience",
+      "value": "",
+      "expected": null
+    },
+    {
+      "name": "e12-null",
+      "kind": "experience",
+      "value": null,
+      "expected": null
+    },
+    {
+      "name": "e13-prose",
+      "kind": "experience",
+      "value": "about 30",
+      "expected": null
+    }
+  ]
+}

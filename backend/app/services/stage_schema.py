@@ -707,6 +707,18 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "name": "name",
         "localName": "localName",
         "specialisation": "specialisation",
+        # THE FEEDER AND THE FIGURE, IN THAT ORDER. `craftStartDate` is the date the artisan began
+        # practising, `experienceYears` is the whole years since it — derived in the Artisan data
+        # lambda, not here, and not by `derive_value` either: this derivation reads a column on
+        # another model, and `save_stage` runs sibling-field derivation BEFORE hydration, so a
+        # registry derivation would print a blank for anybody who submitted on the same save that
+        # picked the artisan. See the precedence written out at that key.
+        #
+        # Both cross, deliberately, and this is where `age` differs: the workshop asks for an age
+        # and there is no birthday box on the participant entry, so `dateOfBirth` reaches the report
+        # only as the derived number. Here there IS a box for the date, because a derived figure in
+        # a submitted report whose basis is stated nowhere is worse than one that names it.
+        "craftStartDate": "craftStartDate",
         "experienceYears": "experienceYears",
         "age": "age",
         "gender": "gender",

@@ -671,7 +671,22 @@ data class ArtisanCreateRequest(
      * Sent as `yyyy-MM-dd`; the API accepts a bare date.
      */
     val dateOfBirth: String? = null,
-    /** Years practising the craft. 0..90, matching the stage registry's own bounds exactly. */
+    /**
+     * The day the artisan began practising the craft, and the feeder [experienceYears] is derived
+     * from — the same argument [dateOfBirth] makes, one answer later. A stated NUMBER of years is
+     * right on the day it is typed and silently wrong from then on; `participant.experienceYears`
+     * is a table column in every submitted report, so that decay prints. Sent as `yyyy-MM-dd`.
+     *
+     * Null on every row written before 2026-08-23: the migration that added the column deliberately
+     * refuses to guess one from the number, so an empty box on an old record is the expected state.
+     */
+    val craftStartDate: String? = null,
+    /**
+     * Years practising the craft AS SOMEBODY STATED IT. 0..90, matching the stage registry's own
+     * bounds exactly. Second of the three answers the server reads, behind the value derived from
+     * [craftStartDate] and ahead of the legacy `extraMetadata` spellings — and still collected,
+     * because an artisan who says "about thirty years" and cannot name a year is the ordinary case.
+     */
     val experienceYears: Int? = null,
     val pehchanCardAvailable: Boolean? = null,
     val pehchanCardNumber: String? = null,
@@ -1051,6 +1066,8 @@ data class ArtisanDetailDto(
     // researcher what is stored before they change it.
     val aadhaarNumber: String? = null,
     val dateOfBirth: String? = null,
+    // The joining date the experience is derived from; see [ArtisanCreateRequest.craftStartDate].
+    val craftStartDate: String? = null,
     val experienceYears: Int? = null,
     val pehchanCardAvailable: Boolean = true,
     val pehchanCardNumber: String? = null,

@@ -1,21 +1,21 @@
 /**
  * Which registry fields play a role the generic renderer cannot read off `field.type` alone.
  *
- * There are seven, and all are kept here rather than inline so that the day the registry grows an
+ * There are eight, and all are kept here rather than inline so that the day the registry grows an
  * explicit descriptor for any of them, ONE file changes and the guessing stops.
  *
- * FIVE OF THE SEVEN GUESS, AND SAY SO. `stage_definitions.py` declares no "this image is an identity
+ * FIVE OF THE EIGHT GUESS, AND SAY SO. `stage_definitions.py` declares no "this image is an identity
  * card" flag, no "this text box holds a national identity number", no "these two dates are the ends
  * of one range", no "this image is a signature" and no "this file is where a plate belongs", so those
  * five are inferred from the field key. An inference that is wrong there costs an offered button that
  * finds nothing, which a designer ignores. An inference that WROTE something would be a different
  * matter entirely, which is why nothing in the OCR path commits without a human pressing Confirm.
  *
- * {@link addressListRole} IS THE ONE THAT COULD REFUSE AN ANSWER, so it does not guess at all: it
- * matches six exact keys and no pattern. Its own doc block carries the reasoning and the measurement
- * behind that list.
+ * {@link addressListRole} AND {@link workshopTitleRole} ARE THE TWO THAT COULD REFUSE AN ANSWER, so
+ * neither guesses at all: between them they match eight exact keys and no pattern. Their own doc
+ * blocks carry the reasoning and the measurement behind those lists.
  *
- * THE SEVENTH DOES NOT GUESS EITHER, and the difference is worth naming because it is the shape the
+ * THE EIGHTH DOES NOT GUESS EITHER, and the difference is worth naming because it is the shape the
  * other five would like to be. {@link measurableLengthFields} never looks at a key: it asks whether
  * the registry DECLARED the field numeric and DECLARED its unit to be a length. `lengthCm`,
  * `finalWidthCm` and `diameterCm` qualify because they carry `unit="cm"`; `weightG`,
@@ -375,4 +375,52 @@ export function addressListRole(entity: DwEntity, field: DwField): AddressFieldR
   if (role === "district" && !stateField) return null;
   const districtField = role === "state" ? addressSibling(entity, field, "district") : null;
   return { role, stateField, districtField };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The workshop a referenced record was documented at
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A TEXT field that holds the TITLE of a `Workshop` record, rather than free prose.
+ *
+ * WHY THIS EXISTS. The owner asked for "documented at workshop" to be a dropdown, and the exact
+ * label they quoted belongs to a registry field, not to the record page: `participant`'s
+ * "Documented at workshop" and `workshopSetup`'s "Workshop the craft was documented at" are both
+ * TEXT boxes with a dictation button, while the fact they hold is picked from a searchable list of
+ * `Workshop` rows two clicks away on the artisan and craft record pages. Both are also
+ * hydration targets — `documentedAtWorkshop` is filled from `_rel(r, "workshop", "title")` and
+ * `craftDocumentedAtWorkshop` from the craft's — so what lands in them is a title the repository
+ * chose, and what a designer types over it is a title the repository has never heard of.
+ *
+ * A STAGE ENTRY IS A FROZEN COPY THAT NOTHING RE-RESOLVES (invariant 1), which is what makes a
+ * mistyped title permanent: "Bagru Block Print Workshop 2025" and "Bagru block-printing workshop,
+ * 2025" are the same fortnight to a reader and two different strings to every group-by, and the one
+ * in the ministry's document is whichever was typed. This is the same argument
+ * {@link addressListRole} makes for the state and district boxes, made about the field beside them.
+ *
+ * MATCHED BY EXACT KEY, FOR THE SAME REASON THAT ONE IS. A closed list REFUSES input, so a loose
+ * pattern here would eventually put a list of workshops on a field about something else. Note in
+ * particular that `workshopSetup.workshopTitle` — the design workshop's OWN title, a required cover
+ * field a designer types — is NOT in the list and must never be: it is not a reference to a
+ * `Workshop` row at all, and a dropdown there would refuse a workshop that has no `Workshop` record
+ * yet, which is most of them on the day they start. Measured against the bundled schema dump
+ * (`registry_to_dict()`), the two keys below are the only fields in the registry that carry a
+ * referenced record's workshop TITLE.
+ *
+ * THE CONTROL IS NOT ACTUALLY CLOSED, and that is the other half of the answer: `StageWorkshopField`
+ * offers the list first and keeps a "type a title that is not in the list" escape hatch, because the
+ * registry says TEXT and a stage may legitimately record a sitting that was never filed as a
+ * `Workshop` row. The dropdown is the default path, not a gate.
+ *
+ * THE HONEST END STATE IS A DECLARATION, exactly as this file's header says of the others: a
+ * `vocabulary="WORKSHOP_TITLE"` on `FieldSpec` would make this a read rather than a match and would
+ * reach Android from the same asset. Until then this is one key list in one file, so that the day it
+ * lands, one function dies.
+ */
+const WORKSHOP_TITLE_FIELD_KEYS = new Set(["documentedAtWorkshop", "craftDocumentedAtWorkshop"]);
+
+export function workshopTitleRole(field: DwField): boolean {
+  if (field.type !== "TEXT" || field.deprecated) return false;
+  return WORKSHOP_TITLE_FIELD_KEYS.has(field.key);
 }

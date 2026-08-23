@@ -94,9 +94,26 @@ class ArtisanCreate(APIModel):
     # A DATE, NOT AN AGE, and the workshop's own `age` field is derived from it. See the column
     # comment in schema.prisma: an age written down is wrong within a year and nothing notices.
     dateOfBirth: datetime | None = None
+    # THE FEEDER `experienceYears` IS DERIVED FROM, and the same argument one column further on: a
+    # stated NUMBER of years is right on the day it is typed and silently wrong from then on, while
+    # a stated DATE is right every time it is printed. See `derive_experience_years` in
+    # services/records, and the precedence written out where the derivation happens in
+    # `REFERENCE_MODELS["Artisan"].data`.
+    #
+    # NO BOUND, deliberately, unlike `experienceYears` below. A date is not a count, so there is no
+    # ceiling to mirror; a date that derives to something outside 0..90 (a typo'd century, a date in
+    # the future) is dropped by the derivation rather than refused here, which leaves the stated
+    # number and the legacy metadata behind it still readable. Refusing the whole PATCH would lose
+    # an edit to the phone number that happened to travel beside a mistyped year.
+    craftStartDate: datetime | None = None
     # 0..90 matches `fromref("experienceYears", …, min_value=0, max_value=90)` in the stage
     # registry EXACTLY. Two different ceilings would mean a number the artisan form accepts and the
     # workshop then refuses on a row it filled in itself.
+    #
+    # STILL COLLECTED, AND STILL THE ANSWER FOR MOST ROWS. `craftStartDate` above outranks it where
+    # both exist, but an artisan who says "about thirty years" and cannot name a year has to stay
+    # recordable — see the column comment in schema.prisma, which keeps that half of the original
+    # argument verbatim.
     experienceYears: int | None = Field(default=None, ge=0, le=90)
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None
@@ -154,6 +171,10 @@ class ArtisanUpdate(APIModel):
     pehchanCardAvailable: bool | None = None
     pehchanCardNumber: str | None = None
     dateOfBirth: datetime | None = None
+    # See `ArtisanCreate` for both of these, and `_CLEARABLE_COLUMNS` in api/routes/artisans for why
+    # an explicit null on either one clears the stored value rather than being ignored: a join date
+    # entered by mistake has to be retractable from the form that entered it.
+    craftStartDate: datetime | None = None
     experienceYears: int | None = Field(default=None, ge=0, le=90)
     dos: str | None = None
     donts: str | None = None

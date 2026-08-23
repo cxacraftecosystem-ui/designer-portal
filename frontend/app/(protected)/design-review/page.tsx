@@ -363,10 +363,18 @@ function DesignReview() {
     void (async () => {
       try {
         /*
-          NOT MERGED WITH THIS DEVICE'S LOCAL DRAFTS, and no offline fallback to them either — a real
-          difference from `/sketches-and-prototypes` rather than an omission. That page can fall back
-          to `listDrafts` because the screen underneath reads and writes a LOCAL draft and is useful
-          with no signal. Nothing on this page is: `fetchRoundRanking` is a live read of another
+          NOT MERGED WITH THIS DEVICE'S LOCAL DRAFTS, and no offline fallback to them either.
+
+          This used to read as "a real difference from `/sketches-and-prototypes`", on the grounds
+          that that page could fall back to `listDrafts` because the screen underneath reads and
+          writes a LOCAL draft and is useful with no signal. IT NO LONGER CAN: that fallback was
+          withdrawn (its header carries the argument — a cached list is stale in the PERMISSIVE
+          direction and a chooser is the one control that must not be wired to one), and
+          `/design-workshops` now prepends only this device's own unsent work. So the two pages agree
+          and this is no longer the exception.
+
+          The reason it was never wired here in the first place is unchanged and is stronger:
+          nothing on this page works offline at all. `fetchRoundRanking` is a live read of another
           workshop's round, no pool round is cached anywhere, and `ReviewPanel` says exactly that
           when it cannot be reached. A device list here would be rows that all lead to one sentence
           about a connection.

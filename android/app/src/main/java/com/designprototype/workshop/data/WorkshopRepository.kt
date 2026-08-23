@@ -31,6 +31,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -454,6 +455,28 @@ class WorkshopRepository(
         .build()
 
     private val offlineJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    /**
+     * The artisan columns this app may hand back as NULL on a PATCH — the server's
+     * `api/routes/artisans._CLEARABLE_COLUMNS` intersected with the boxes the artisan form owns and
+     * seeds from the record it is editing. See [artisanPatchBody] for why sending a null for anything
+     * else would be worse than the bug this fixes.
+     */
+    private val ARTISAN_CLEARABLE_COLUMNS = listOf(
+        "localName",
+        "gender",
+        "phone",
+        "email",
+        "address",
+        "notes",
+        "dateOfBirth",
+        // The reason this whole mechanism was written: the column arrived on 2026-08-23 with a clear
+        // button beside it and two new comments in the API promising that "a date typed into the
+        // wrong box has to be retractable from the form that typed it". It was not, from this form.
+        "craftStartDate",
+        "experienceYears",
+        "dos",
+        "donts"
+    )
     // Mirrors the Retrofit converter's config (ApiClient.kt:42) so a body re-encoded here to carry the
     // checksum is byte-identical to the one the plain call would have sent — same omitted nulls, same
     // omitted defaults. A `processingRequests: []` that should have been absent changes what the
@@ -2872,22 +2895,58 @@ class WorkshopRepository(
 
     suspend fun unassignToolArtisan(toolId: String, artisanId: String) = api.unassignToolArtisan(toolId, artisanId)
 
-    suspend fun workshops(createdBy: String? = null): List<WorkshopDetailDto> =
-        api.workshops(pageSize = 100, createdBy = createdBy?.blankToNull()).items
+    suspend fun workshops(createdBy: String? = null, accessibleOnly: Boolean = false): List<WorkshopDetailDto> =
+        api.workshops(
+            pageSize = 100,
+            createdBy = createdBy?.blankToNull(),
+            // Sent only when asked for, so every existing read keeps making the request it made
+            // before this parameter existed. See the KDoc on the API declaration.
+            accessibleOnly = true.takeIf { accessibleOnly }
+        ).items
 
     /**
-     * The workshops this user can SEE — `GET /workshops` is scoped by row visibility — ordered by
-     * date of occurrence, most recent first. This is the single source of truth for every record
-     * form's workshop dropdown: the list order is what the picker shows, and its first entry is the
-     * one pre-selected when creating a new record.
+     * Every workshop this user can SEE, ordered by date of occurrence, most recent first.
+     *
+     * READING IS OPEN IN THIS REPOSITORY AND THIS LIST IS THE WHOLE TABLE. `GET /workshops` applies
+     * no visibility narrowing to a signed-in account (the server's `viewable_where` returns `{}` on
+     * purpose), so this is the right list for a READ surface — the workshop scope filters, the admin
+     * roster panel, the access-request screen, the browse and re-link pickers — and it is the WRONG
+     * list for a control that offers a workshop to save a record into.
      *
      * Visible is NOT the same as submittable. The API separately 403s a submission into a workshop
      * that has assignments the user is not part of, and flags a submission made outside the
      * workshop's [startDate, endDate] window as needing admin approval — neither of which this list
-     * filters out. `GET /workshops/{id}/submission-check` is the pre-flight for both.
+     * filters out. `GET /workshops/{id}/submission-check` is the pre-flight for both, and
+     * [workshopsIMaySubmitTo] is the list a picker has to use instead.
      */
     suspend fun workshopsByOccurrence(): List<WorkshopDetailDto> =
         workshops().sortedByDescending { it.occurrenceDate() }
+
+    /**
+     * The workshops this user may actually FILE A RECORD AGAINST, most recent occurrence first — the
+     * single source of truth for every record form's workshop dropdown. The list order is what the
+     * picker shows and its first entry is the one pre-selected when creating a new record.
+     *
+     * WHY THIS IS A SECOND FUNCTION AND NOT A FLAG ON THE ONE ABOVE: the two answer different
+     * questions and the wrong answer is invisible in both directions. Handed to a picker, the wide
+     * list offers rosters the designer is not on and the 403 lands after the record is typed. Handed
+     * to a filter or a roster panel, the narrow list silently hides rows the account is entitled to
+     * READ, which reads as an empty repository rather than as a scope. Two names, so a call site has
+     * to say which of the two it means.
+     *
+     * The narrowing is the SERVER'S — `accessibleOnly=true`, resolved from `WorkshopAssignment` rows
+     * this client never sees, at the same CONTRIBUTE level the save demands. There is deliberately no
+     * cached, bundled or last-known fallback behind it: a stale access list is wrong in the
+     * PERMISSIVE direction (a revoked grant still reads as a grant), and a picker is the one control
+     * that must not offer what it cannot honour. A failure leaves the dropdown EMPTY — see
+     * `rememberWorkshopPicker`, which is the same choice the web control makes.
+     *
+     * The pre-flight is still called on the selection, and is now what it should always have been:
+     * not the access gate, but the answer to the two questions a scoped list cannot give — has this
+     * workshop ENDED, and did access change since the list was fetched.
+     */
+    suspend fun workshopsIMaySubmitTo(): List<WorkshopDetailDto> =
+        workshops(accessibleOnly = true).sortedByDescending { it.occurrenceDate() }
 
     /**
      * The pre-flight above: what submitting a record into [workshopId] would mean for this user.
@@ -2933,7 +2992,59 @@ class WorkshopRepository(
     suspend fun lookupArtisanByAadhaar(number: String): AadhaarLookupDto =
         api.lookupArtisanByAadhaar(number.trim())
 
-    suspend fun updateArtisan(id: String, body: ArtisanCreateRequest): ArtisanDetailDto = api.updateArtisan(id, body)
+    suspend fun updateArtisan(id: String, body: ArtisanCreateRequest): ArtisanDetailDto =
+        api.updateArtisan(id, artisanPatchBody(body))
+
+    /**
+     * The artisan PATCH body: the form's request, plus an EXPLICIT `null` for every column the server
+     * allows a client to clear and this form has left empty.
+     *
+     * ── WHY THIS EXISTS AT ALL ──────────────────────────────────────────────────────────────────
+     *
+     * `ApiClient.json` is built with `explicitNulls = false` — correct for a create, where a null is
+     * a box nobody filled in — and the artisan update is a PATCH read with
+     * `model_dump(exclude_unset=True)`, where an ABSENT KEY MEANS "LEAVE THIS COLUMN ALONE". The two
+     * together made every clearable column unclearable from the handset: emptying "Practising since"
+     * (or the birthday, the phone, the experience number, the address, the do's and don'ts) put a
+     * null in the request object, the encoder dropped it, the server left the stored value standing,
+     * and the form went back to the record showing the value it had just been told to remove.
+     * `FieldDateField(clearable = true)` was drawing a clear button that saved nothing.
+     *
+     * The web client has always had this right, by an accident of HTML rather than by insight: a
+     * hidden input plus `|| null` means its payload carries the key with a null in it. This is that
+     * behaviour, ported deliberately.
+     *
+     * ── WHY IT IS SAFE TO SEND THESE NULLS, WHICH IS THE ONLY DANGEROUS PART ────────────────────
+     *
+     * An explicit null DESTROYS data, so sending one for a column the form does not own would be a
+     * worse bug than the one being fixed — the retraction working in reverse. Two properties make it
+     * safe here and BOTH have to keep holding:
+     *
+     *   1. Every column below is seeded from the record being edited when the form opens
+     *      (`editing?.phone`, `editing?.craftStartDate?.take(10)`, and so on for all eleven), so an
+     *      empty box means "the person editing this record emptied it", never "this screen never
+     *      knew".
+     *   2. Every column below is in the server's own `_CLEARABLE_COLUMNS`
+     *      (`api/routes/artisans`), which is the list of nullable scalars that route will accept a
+     *      null for. A column NOT on that list is dropped by `clean_data` regardless of what is sent,
+     *      so adding one here would be silently ineffective rather than destructive — but the list is
+     *      still kept in step by hand, and a name added on the server does not arrive here for free.
+     *
+     * DELIBERATELY NOT THE WHOLE SET. `name` and `place` are not nullable, and `aadhaarNumber` /
+     * `pehchanCardNumber` are handled by the form itself: the Aadhaar is sent as a trimmed string
+     * (the API normalises "" to null, which is how a mistyped number is retracted) and the Pehchan
+     * pair is reconciled server-side from `pehchanCardAvailable`. Sending nulls for those would
+     * fight rules that already work.
+     *
+     * The encoding goes through `ApiClient.json` — the very encoder Retrofit's converter uses — so
+     * everything except the added nulls is byte-identical to the body the typed call would have sent.
+     */
+    private fun artisanPatchBody(body: ArtisanCreateRequest): JsonObject {
+        val encoded = ApiClient.json.encodeToJsonElement(ArtisanCreateRequest.serializer(), body).jsonObject
+        val out = encoded.toMutableMap()
+        for (column in ARTISAN_CLEARABLE_COLUMNS) if (column !in out) out[column] = JsonNull
+        return JsonObject(out)
+    }
 
     suspend fun artisanQuestionnaire(id: String): ArtisanQuestionnaireDto = api.artisanQuestionnaire(id)
 

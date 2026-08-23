@@ -99,8 +99,11 @@ INCLUDE = include_of(RELATIONS)
 #      direction, and drops the value. THE REST OF THIS LIST IS NOT CLOSED, and the set is wider than
 #      just the free text: ``notes``, ``dos``, ``donts`` and ``localName`` are excluded deliberately
 #      (the old text is the only way to see what a malicious edit quietly removed), and so are
-#      ``gender``, ``dateOfBirth`` and ``experienceYears`` — ``dateOfBirth`` is named above that set
-#      as the closest call, being personal but load-bearing derived data (``participant.age``).
+#      ``gender``, ``dateOfBirth``, ``craftStartDate`` and ``experienceYears`` — ``dateOfBirth`` is
+#      named above that set as the closest call, being personal but load-bearing derived data
+#      (``participant.age``). ``craftStartDate`` is the same shape one column later and is excluded
+#      for the same reason: it is the feeder ``participant.experienceYears`` derives from, and it is
+#      a fact about a trade rather than a route to a person.
 #      Widening the set is a one-line edit and an owner's call; read the argument first.
 #      The closure only holds because the READER end was fixed with it. Every response goes through
 #      ``records.public_encode``, which masks ``aadhaarNumber``/``pehchanCardNumber`` BY KEY NAME —
@@ -142,6 +145,12 @@ _CLEARABLE_COLUMNS = (
     "address",
     "notes",
     "dateOfBirth",
+    # CLEARABLE for the same reason ``dateOfBirth`` is: a date typed into the wrong box has to be
+    # retractable from the form that typed it, and an omitted key on a PATCH means "leave it alone".
+    # Clearing it does not blank the artisan's experience — it hands the answer back to the stated
+    # ``experienceYears`` number, then to the legacy metadata, which is what the precedence in
+    # ``REFERENCE_MODELS["Artisan"].data`` is for.
+    "craftStartDate",
     "experienceYears",
     "dos",
     "donts",

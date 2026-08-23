@@ -75,7 +75,13 @@ from app.services.report_questionnaires import attach_questionnaires, questionna
 # strip nor the LIKE escape ran for it — a designer who typed `_` into the picker got every row of
 # the model back, and a pasted NUL was a 500. `test_record_filters.test_no_route_still_hand_rolls_a
 # _contains_filter` is the sweep that now holds all six of them to the funnel.
-from app.services.records import contains, derive_age, mask_identity_number, viewable_where
+from app.services.records import (
+    contains,
+    derive_age,
+    derive_experience_years,
+    mask_identity_number,
+    viewable_where,
+)
 # THE MEASUREMENT-METHOD VOCABULARY, IMPORTED AND NOT RESTATED. `METHOD_CLAUSES` is the two phrases
 # the record sheet, every .xlsx sheet and both CSV exports already print for a machine-produced
 # dimension; `field_method` is the one reader of the stamp `records.merge_field_provenance` writes.
@@ -1230,8 +1236,37 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             # could not parse — "30+", "about 30" — and those artisans are exactly the oldest and
             # most thoroughly documented rows. Dropping the fallback would blank a value that is
             # currently right for them in order to tidy up a line of code.
-            "experienceYears": r.experienceYears if r.experienceYears is not None else _meta_value(
-                _meta(r), "experienceYears", "experience", "yearsOfExperience"
+            #
+            # ── EXPERIENCE: THREE SOURCES, IN THIS ORDER, AND WHAT EACH BRANCH IS FOR ─────────
+            #
+            # 1. `derive_experience_years(r.craftStartDate)` — A DATE A HUMAN TYPED. Added
+            #    2026-08-23 with the column, at the owner's request that experience become a
+            #    derived field fed by a date of joining the craft. It wins because "years since a
+            #    stated start" has exactly one reading and it is right on the day it is printed and
+            #    right again next year, where a stated number is right on `recordedAt` and decays
+            #    silently from then on — the failure `derive_age`'s own docstring names ("a record
+            #    entered as '42' reads 42 for the rest of its life"). Where both exist, the date is
+            #    the better fact, so it goes first.
+            # 2. `r.experienceYears` — THE STATED NUMBER, and still the answer for almost every row
+            #    in the table. It is shadowed ONLY on a row that also carries a `craftStartDate`,
+            #    and after 20260823093000 a `craftStartDate` can only arrive one way: somebody typed
+            #    it. A human typing a join date onto a record that already holds a number is
+            #    correcting that number, which is the same rule that already lets a real date of
+            #    birth overwrite the 1-July guess 20260816170000 wrote. THE MIGRATION DOES NOT
+            #    BACKFILL, so every row that exists today reaches this branch and prints, character
+            #    for character, what it printed before the column existed. That is what makes
+            #    "nothing currently right is blanked" structural rather than an argument.
+            # 3. The legacy `extraMetadata` spellings — the paragraph above. Untouched, and last.
+            #
+            # `is not None` at every step and NEVER `or`, for the reason spelled out on `age` below:
+            # zero years is a real answer (an apprentice in their first month) and `or` would read it
+            # as absent and fall through to a staler value.
+            "craftStartDate": _iso_date(r.craftStartDate),
+            "experienceYears": (
+                derived
+                if (derived := derive_experience_years(r.craftStartDate)) is not None
+                else r.experienceYears if r.experienceYears is not None
+                else _meta_value(_meta(r), "experienceYears", "experience", "yearsOfExperience")
             ),
             # `is not None` and NOT `or`: a derived age of 0 is a real answer (an infant), and
             # `or` would read it as absent and fall through to a stale metadata value. Nobody

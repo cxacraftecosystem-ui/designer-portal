@@ -12,6 +12,7 @@ import { Field, Select, TextInput } from "@/components/FormControls";
 import { AadhaarField, aadhaarValidationError, isMaskedIdentityNumber } from "@/components/forms/AadhaarField";
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { CarryContextBanner, carryScope, useCarryContext, type CarryScopeState } from "@/components/forms/CarryContextBanner";
+import { DateField } from "@/components/forms/DateTimeField";
 import { DosDontsField } from "@/components/forms/DosDontsField";
 import { DuplicateArtisanDialog } from "@/components/forms/DuplicateArtisanDialog";
 import type { InlineHostSeed, InlineRecordSurfaceProps, UseExistingArtisan } from "@/components/forms/inlineRecordHost";
@@ -36,6 +37,7 @@ import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
+import { deriveAge, deriveExperienceYears } from "@/lib/recordDerivations";
 import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
 
 // Android parity (MainActivity.kt genderOptions).
@@ -369,6 +371,22 @@ export function ArtisanForm({
   const { user } = useAuth();
   const canSetStatus = hasRank(user, "PROFESSOR");
   const identityLabelId = `${useId()}-identity`;
+  /*
+   * Ids for the two date fields and the three hint paragraphs beneath them. Explicit rather than
+   * left to `Field`, because neither date may be wrapped in one: `Field` is a `<label>`, a
+   * `<DateField>` carries a "Open calendar" button, and a wrapping label folds that button's own
+   * name into the input's — the box then announces itself as "Date of birth Open calendar". The
+   * hints have to be OUTSIDE the label for the same reason, pointed at by `aria-describedby`: text
+   * inside a `<label>` becomes part of the accessible name, so a two-sentence explanation would be
+   * read out every time the field took focus.
+   */
+  const derivedFieldsId = useId();
+  const dobId = `${derivedFieldsId}-dob`;
+  const dobHintId = `${derivedFieldsId}-dob-hint`;
+  const craftStartId = `${derivedFieldsId}-craft-start`;
+  const craftStartHintId = `${derivedFieldsId}-craft-start-hint`;
+  const experienceId = `${derivedFieldsId}-experience`;
+  const experienceHintId = `${derivedFieldsId}-experience-hint`;
   const formRef = useRef<HTMLFormElement>(null);
   const [crafts, setCrafts] = useState<Craft[]>([]);
   // Controlled so the carried craft can land in it after the list arrives; a defaultValue is fixed
@@ -389,6 +407,26 @@ export function ArtisanForm({
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);
   const [savedRecord, setSavedRecord] = useState<Artisan | null>(null);
   const [email, setEmail] = useState(initial?.email ?? "");
+  /*
+   * ── THE TWO DATES, IN REACT STATE RATHER THAN LEFT UNCONTROLLED ─────────────────────────────
+   *
+   * Every other date on this form used to be a `defaultValue` on an uncontrolled box, and these two
+   * cannot be, because something on screen is computed from each of them: the age beside the
+   * birthday and the years of experience beside the joining date. A `<DateField>` sets React state
+   * when a day is picked out of the calendar grid and dispatches no input event at all, so a
+   * readout reading the DOM would be one pick behind — and worse, would be right often enough that
+   * nobody would notice it was ever wrong.
+   *
+   * Seeded from `initial` at mount, exactly as `email` above is: the edit routes fetch the record
+   * before they mount this component, so a first-render seed is the whole of what is needed. Both
+   * are reset in `discardEntry`, for the same reason `email` is.
+   */
+  const [dateOfBirth, setDateOfBirth] = useState(
+    initial?.dateOfBirth ? String(initial.dateOfBirth).slice(0, 10) : ""
+  );
+  const [craftStartDate, setCraftStartDate] = useState(
+    initial?.craftStartDate ? String(initial.craftStartDate).slice(0, 10) : ""
+  );
   // Bumped to throw the form away and rebuild it ("Discard this entry"). Remounting is what clears
   // the state living inside the field components — the Aadhaar digits, the Pehchan pair, the notes
   // rows, the Do's/Don'ts lists — which no amount of `form.reset()` can reach.
@@ -467,6 +505,24 @@ export function ArtisanForm({
   const emailError =
     email.trim() && !EMAIL_RE.test(email.trim()) ? "Enter a valid email address (name@example.com)." : null;
   const emailErrorId = `${identityLabelId}-email-error`;
+
+  /*
+   * ── WHAT THE TWO DATES COME TO TODAY, BY THE SERVER'S OWN RULE ──────────────────────────────
+   *
+   * `lib/recordDerivations` is a PORT of `records.derive_age` and `records.derive_experience_years`,
+   * not a second opinion about either — read its header before changing anything here. The rule is
+   * declared once, on the server, because the server is what the workshop and the report read; this
+   * form shows the same answer so a researcher can check the number they are about to cause before
+   * they cause it. A form that computed its own age would be a figure the save then disagreed with,
+   * which is worse than showing none, because the researcher has already read it.
+   *
+   * `todayIso` is the UTC calendar date, which is what the derivations use as their reference day
+   * and what the previous `<input type="date">` used as its `max`. Nobody is born tomorrow, and
+   * nobody took up a craft tomorrow either.
+   */
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const derivedAge = deriveAge(dateOfBirth);
+  const derivedExperience = deriveExperienceYears(craftStartDate);
 
   /**
    * The craft dropdown, and what it is NOT showing — see `components/data/cappedList`.
@@ -591,6 +647,10 @@ export function ArtisanForm({
     setError(null);
     setMediaFiles([]);
     setEmail(initial?.email ?? "");
+    // The two dates live in React state, so the remount below cannot clear them — the same reason
+    // `email` is on this list. Back to what the record said, which for a new artisan is blank.
+    setDateOfBirth(initial?.dateOfBirth ? String(initial.dateOfBirth).slice(0, 10) : "");
+    setCraftStartDate(initial?.craftStartDate ? String(initial.craftStartDate).slice(0, 10) : "");
     resetDirty();
     setFormKey((key) => key + 1);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -654,6 +714,16 @@ export function ArtisanForm({
         // `null` and not `undefined` when blank: on a PATCH an omitted key means "leave it alone",
         // so clearing a date somebody entered by mistake would silently do nothing.
         dateOfBirth: textValue(form, "dateOfBirth") || null,
+        // Both dates arrive through `DateField`'s hidden input, so they read exactly as the native
+        // date inputs they replaced did. `null` and not `undefined` when blank, for the reason
+        // above: an omitted key on a PATCH means "leave it alone", so clearing a joining date
+        // somebody entered by mistake would silently do nothing — and `craftStartDate` is in the
+        // API's `_CLEARABLE_COLUMNS` precisely so that retraction works.
+        craftStartDate: textValue(form, "craftStartDate") || null,
+        // THE STATED NUMBER, STILL SENT. It is the second of the three answers the server reads (the
+        // derived value from `craftStartDate` first, this column next, the legacy `extraMetadata`
+        // spellings last), so sending it is what keeps a value that is currently right from being
+        // blanked by a form that has learnt about dates. See the box itself for why it is typeable.
         experienceYears: textValue(form, "experienceYears")
           ? Number(textValue(form, "experienceYears"))
           : null,
@@ -983,21 +1053,122 @@ export function ArtisanForm({
               inside one had nowhere to record them, and the designer typed them in from a printout
               beside a row that already named this record.
 
-              A DATE OF BIRTH AND NOT AN AGE. The workshop asks for an age; storing one would be
-              wrong within a year with nothing to say so, so the server derives it from this date
-              every time it is read. That is also why the helper text says what it says: somebody
-              filling this in is answering a question they were not asked, and needs to know why. */}
-          <Field label="Date of birth">
-            <TextInput
+              A DATE AND NOT A NUMBER, TWICE OVER, and that is the shape of both answers. The
+              workshop asks for an AGE and for YEARS OF EXPERIENCE; storing either would be wrong
+              within a year with nothing anywhere to say so, so what is stored is the DATE and the
+              number is derived from it every time it is read — on this page, in the workshop's
+              participant table, and in the report. That is also why each box carries the sentence
+              it carries: somebody filling one in is answering a question they were not asked, and
+              needs to know why.
+
+              THERE IS NO AGE BOX ON THIS FORM AND THERE NEVER WAS ONE, and the absence is the
+              feature rather than an omission. A typed age is the defect `dateOfBirth` exists to
+              prevent, so the age below is a READOUT — text, with no `name`, submitted nowhere and
+              stored nowhere. The experience box that remains is a different thing: it is the STATED
+              number, second in the server's precedence, and it is still typeable for the reason
+              written out on it. */}
+          {/* Not `Field`: see `derivedFieldsId` above for why a `<DateField>` may not be wrapped in
+              a `<label>`, and why the hint sits outside it. */}
+          <div className="grid min-w-0 gap-1">
+            <label className="field-label" htmlFor={dobId}>
+              Date of birth
+            </label>
+            {/*
+              `DateField` and NOT `<TextInput type="date">`, and this was the last native date input
+              left in the app. A native date input formats itself from the BROWSER's locale rather
+              than this app's, so a birthday recorded as 02/03/1971 is February to a researcher on
+              en-IN and March to the administrator checking it on en-US — and since both readings
+              are valid dates, nothing anywhere reports a problem. `DesignerProfileForm` and
+              `FieldInput` both carry the same argument in full, and there is no field season in
+              which that error is recoverable, because the two readings are equally plausible dates.
+
+              The wire format is unchanged: this renders a hidden input under the same name carrying
+              the same `yyyy-mm-dd`, so `submit` below reads it exactly as it did.
+
+              `onChange` is load-bearing rather than decoration, and it does two jobs. The form
+              raises its dirty flag from `onInput`, and picking a day out of the calendar grid sets
+              React state without dispatching an input event — the same trap the themed dropdowns on
+              this form document — so without this, choosing a birthday by calendar and then
+              navigating away would be discarded with no unsaved-changes prompt at all. It is also
+              what moves the age readout below, in the same frame.
+
+              The typed `dd/mm/yyyy` box is the fast path for a birthday and the calendar is the slow
+              one: the grid opens on the current month and a 1971 date is a long way back from there.
+              That is why this control keeps a text input rather than being a button that only opens
+              a picker.
+            */}
+            <DateField
+              id={dobId}
               name="dateOfBirth"
-              type="date"
-              defaultValue={initial?.dateOfBirth ? String(initial.dateOfBirth).slice(0, 10) : ""}
-              max={new Date().toISOString().slice(0, 10)}
-              onChange={markDirty}
+              value={dateOfBirth}
+              onChange={(iso) => {
+                setDateOfBirth(iso);
+                markDirty();
+              }}
+              max={todayIso}
+              describedBy={dobHintId}
             />
-          </Field>
-          <Field label="Experience (years)">
+            <p id={dobHintId} className="text-xs leading-5 text-ink-muted">
+              {derivedAge === null
+                ? "The workshop's participant table shows an age, worked out from this."
+                : `Age ${derivedAge}. The workshop's participant table shows an age, worked out from this.`}
+            </p>
+          </div>
+          {/* THE FEEDER THE EXPERIENCE BELOW IS DERIVED FROM, at the owner's request that experience
+              become a derived field with a date of joining the craft behind it.
+              `Artisan.craftStartDate` is NULL on every row written before 2026-08-23 and the
+              migration deliberately refuses to guess one, so an old record showing this box empty is
+              the expected state — not a gap for somebody to fill in from a printout. */}
+          <div className="grid min-w-0 gap-1">
+            <label className="field-label" htmlFor={craftStartId}>
+              Practising since
+            </label>
+            <DateField
+              id={craftStartId}
+              name="craftStartDate"
+              value={craftStartDate}
+              onChange={(iso) => {
+                setCraftStartDate(iso);
+                markDirty();
+              }}
+              max={todayIso}
+              describedBy={craftStartHintId}
+            />
+            <p id={craftStartHintId} className="text-xs leading-5 text-ink-muted">
+              {derivedExperience === null
+                ? "The date the artisan took up the craft. The years of experience are worked out from it."
+                : `${derivedExperience} years of experience, worked out from this — the figure the workshop and the report use.`}
+            </p>
+          </div>
+          {/* Not `Field`, so the sentence underneath can be an `aria-describedby` paragraph instead
+              of two more clauses folded into the box's accessible name. */}
+          <div className="grid min-w-0 gap-1">
+            <label className="field-label" htmlFor={experienceId}>
+              Experience (years)
+            </label>
+            {/*
+              ── WHY A TYPED NUMBER SURVIVES ON A FORM WHOSE EXPERIENCE IS NOW DERIVED ──────────
+              The date above outranks this box everywhere the value is read, so the obvious tidy-up
+              is to delete it, or to disable it whenever a date is present. Both would destroy data
+              that is currently right, which is the one thing this change may not do.
+
+              An artisan who says "about thirty years" and cannot name a year is the ordinary case
+              rather than the exception — `Artisan.experienceYears`' own column comment is an
+              argument for exactly that, and it is kept — and every row written before the join-date
+              column existed answers this question through this number, or through a legacy "30+"
+              sitting behind it. `participant.experienceYears` is a TABLE_COLUMN in a submitted
+              report, so a form that refused to hold their answer would print a blank in the
+              participant table for the oldest and best-documented artisans in the repository.
+
+              DISABLING IT WHILE A DATE IS SET WOULD BE WORSE THAN LEAVING IT ALONE, and not for a
+              style reason: a disabled input is omitted from FormData, `submit` reads the absence as
+              an explicit null, and the API clears the column. The stated number would be gone — so
+              clearing the joining date a week later, on a record whose number nobody re-typed, would
+              leave that artisan with no experience at all. Kept enabled, both answers stand on the
+              row and the precedence decides between them on every read.
+            */}
             <TextInput
+              id={experienceId}
               name="experienceYears"
               type="number"
               inputMode="numeric"
@@ -1009,8 +1180,14 @@ export function ArtisanForm({
               step={1}
               defaultValue={initial?.experienceYears ?? ""}
               onChange={markDirty}
+              aria-describedby={experienceHintId}
             />
-          </Field>
+            <p id={experienceHintId} className="text-xs leading-5 text-ink-muted">
+              {derivedExperience === null
+                ? "Used when there is no “practising since” date: a stated number, which does not change as the years pass."
+                : `The date above answers this — ${derivedExperience} years is what the workshop and the report print. A number here stays on the record and is read only while that date is empty.`}
+            </p>
+          </div>
           {/* FieldBlock, not Field: PhoneField contains a themed dropdown, and `Field` is a
               `<label>` — so the visible word "Phone" bound itself to the dial-code trigger (the
               first labelable descendant) rather than to the number box, and clicking the label

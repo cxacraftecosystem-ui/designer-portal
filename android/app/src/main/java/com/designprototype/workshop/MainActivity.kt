@@ -70,6 +70,10 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Timeline
 import com.designprototype.workshop.ui.FieldDateField
 import com.designprototype.workshop.ui.parseFieldDate
+// The handset's ports of `records.derive_age` and `records.derive_experience_years` — the two
+// numbers the artisan form SHOWS and never stores. See DateTimeFields.kt for why they are ports.
+import com.designprototype.workshop.ui.deriveAgeYears
+import com.designprototype.workshop.ui.deriveExperienceYears
 import com.designprototype.workshop.ui.FieldIslandNav
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.NavGroup
@@ -4799,6 +4803,14 @@ private class WorkshopPickerState(private val repository: WorkshopRepository, in
  * Loads the workshops this user may submit to, most recent date of occurrence first, and — on
  * CREATE only — pre-selects the most recent one.
  *
+ * THE LIST IS THE SERVER'S SCOPED ONE ([WorkshopRepository.workshopsIMaySubmitTo],
+ * `GET /workshops?accessibleOnly=true`) AND NOTHING MAY WIDEN IT. This used to load
+ * `workshopsByOccurrence()`, which is the whole table — reading is open to every signed-in account —
+ * so all 196 workshops were offered on the handset, curated rosters included, and the only defence
+ * was the red sentence below the dropdown, which is silent for the common case: on an uncurated
+ * workshop everybody holds CONTRIBUTE, so there is nothing to warn about. The web picker was
+ * narrowed in the same change and this one was not.
+ *
  * [initialId] is the workshop already stored on the record being edited; it is never overwritten,
  * so opening an existing record leaves its linkage exactly as saved (and a record deliberately left
  * unlinked stays unlinked, because [isEdit] blocks the default outright). [resetKey] should be the
@@ -4814,8 +4826,11 @@ private fun rememberWorkshopPicker(
     val state = remember(resetKey) { WorkshopPickerState(repository, initialId.orEmpty()) }
     LaunchedEffect(resetKey) {
         // A failure here is non-fatal: the dropdown simply stays empty and the record saves unlinked,
-        // which is better than blocking a field capture on a list request.
-        runCatching { repository.workshopsByOccurrence() }.onSuccess { list ->
+        // which is better than blocking a field capture on a list request. EMPTY and never a cached
+        // list: this device keeps no copy of the workshop table, and if it did, a stale access list
+        // would be wrong in the permissive direction in the one control that must not offer what the
+        // save will then refuse.
+        runCatching { repository.workshopsIMaySubmitTo() }.onSuccess { list ->
             state.workshops = list
             // The list is ordered most-recent-occurrence-first; the default is the most recent one
             // this user may actually submit to (see applyMostRecentSubmittable).
@@ -4833,7 +4848,10 @@ private fun rememberWorkshopPicker(
 /**
  * The workshop field every record form mounts as its FIRST field: the picker itself, plus whatever
  * the submission pre-flight has to say about the current pick, plus the late-submission confirmation
- * that [WorkshopPickerState.confirmSubmission] opens. Web parity with `<WorkshopSelect>`.
+ * that [WorkshopPickerState.confirmSubmission] opens. Web parity with `<WorkshopSelect>`, and that
+ * now includes the LIST: both sides ask for `accessibleOnly=true` and neither falls back to a cache.
+ * The claim was false for as long as this loaded the unscoped list — the two clients agreed about
+ * every warning and disagreed about which workshops were on offer at all.
  *
  * The two warnings are mutually exclusive by design: "you are not assigned" is the harder problem
  * and stating both at once would only bury it.
@@ -6534,6 +6552,19 @@ private fun ArtisanForm(
             editing?.dateOfBirth?.take(10)?.let { parseFieldDate(it) }
         )
     }
+    // THE FEEDER THE EXPERIENCE IS NOW DERIVED FROM (2026-08-23), on the owner's instruction that
+    // experience become a derived field with a date of joining the craft behind it. Same shape as
+    // the birthday above, and the same explicit type argument for the same reason.
+    var craftStartDate by remember(editing) {
+        mutableStateOf<java.time.LocalDate?>(
+            editing?.craftStartDate?.take(10)?.let { parseFieldDate(it) }
+        )
+    }
+    // STILL TYPED, AND STILL SENT. The date above outranks it wherever the value is read, but every
+    // row written before that column existed answers this question through this number (or a legacy
+    // "30+" behind it), and `participant.experienceYears` is a table column in a submitted report —
+    // so a form that stopped collecting it would print a blank in the participant table for the
+    // oldest and best-documented artisans in the repository.
     var experienceYears by remember(editing) {
         mutableStateOf(editing?.experienceYears?.toString().orEmpty())
     }
@@ -6706,7 +6737,15 @@ private fun ArtisanForm(
                 // false, and only an explicit true can move a record back off "No".
                 pehchanCardAvailable = pehchanAvailable,
                 pehchanCardNumber = if (pehchanAvailable) pehchanNumber.blankToNull() else null,
+                // EMPTYING ONE OF THESE REALLY DOES CLEAR THE COLUMN, and it does not happen here.
+                // A null in this object would be dropped by the encoder (`explicitNulls = false`)
+                // and an absent key means "leave it alone" to the PATCH, so the clear buttons on
+                // these three boxes used to report success and change nothing.
+                // `WorkshopRepository.artisanPatchBody` puts the explicit nulls back for exactly the
+                // columns the server allows a client to clear; its KDoc explains why sending one for
+                // any other column would be a worse bug than the one it fixes.
                 dateOfBirth = dateOfBirth?.toString(),
+                craftStartDate = craftStartDate?.toString(),
                 experienceYears = experienceYears.toIntOrNull(),
                 dos = dosText,
                 donts = dontsText,
@@ -6820,14 +6859,50 @@ private fun ArtisanForm(
             selectedValue = gender,
             includeNone = false
         ) { gender = it }
+        /*
+         * ── TWO DATES, AND NO BOX FOR EITHER NUMBER THEY PRODUCE ─────────────────────────────
+         *
+         * There is no age field on this screen and there never was one, and the absence is the
+         * feature: an age written down is wrong within a year with nothing anywhere to say so, so
+         * what is stored is the birthday and the age is a READOUT — the supporting line under the
+         * box, computed by the server's own rule (`deriveAgeYears`, the port). Web parity: the
+         * record page shows the same sentence under the same control.
+         */
         FieldDateField(
             label = "Date of birth",
             value = dateOfBirth,
             onValueChange = { dateOfBirth = it },
-            // Nobody is born tomorrow, and a future date would derive a negative age.
-            maximum = java.time.LocalDate.now(),
+            // Nobody is born tomorrow, and a future date derives nothing at all.
+            //
+            // THE UTC DAY, AND NOT `LocalDate.now()`, WHICH IS THE DEVICE'S. `deriveAgeYears` below
+            // resolves "today" as `LocalDate.now(ZoneOffset.UTC)` because that is the day the server
+            // derives against and agreeing with the filed report matters more than agreeing with the
+            // handset's clock. Two different "today" on one screen is a real state in IST, not a
+            // theoretical one: between 00:00 and 05:30 the device day is a day ahead, so the picker
+            // offered a day the derivation then treated as the future and printed no age for.
+            maximum = java.time.LocalDate.now(java.time.ZoneOffset.UTC),
             clearable = true,
-            supportingText = "The workshop's participant table shows an age, worked out from this."
+            supportingText = deriveAgeYears(dateOfBirth).let { age ->
+                if (age == null) "The workshop's participant table shows an age, worked out from this."
+                else "Age $age. The workshop's participant table shows an age, worked out from this."
+            }
+        )
+        FieldDateField(
+            label = "Practising since",
+            value = craftStartDate,
+            onValueChange = { craftStartDate = it },
+            // Nobody took up a craft tomorrow either. The UTC day for the same reason as the
+            // birthday above — `deriveExperienceYears` derives against the UTC day, and a ceiling
+            // taken from the device clock hands an IST early morning a day the derivation refuses.
+            maximum = java.time.LocalDate.now(java.time.ZoneOffset.UTC),
+            clearable = true,
+            supportingText = deriveExperienceYears(craftStartDate).let { years ->
+                if (years == null) {
+                    "The date the artisan took up the craft. The years of experience are worked out from it."
+                } else {
+                    "$years years of experience, worked out from this - the figure the workshop and the report use."
+                }
+            }
         )
         OutlinedTextField(
             value = experienceYears,
@@ -6836,6 +6911,22 @@ private fun ArtisanForm(
             // would then refuse on a row it filled in from this very record.
             onValueChange = { typed -> experienceYears = typed.filter { it.isDigit() }.take(2) },
             label = { Text("Experience (years)") },
+            // WHY THIS BOX IS STILL HERE on a form whose experience is derived, and why it is not
+            // merely disabled while a date is set: see the state declaration above, and the web
+            // form's own note. A disabled field would drop out of the payload, the API would read
+            // the absence as a clear, and clearing the joining date a week later would leave the
+            // artisan with no experience at all.
+            supportingText = {
+                Text(
+                    deriveExperienceYears(craftStartDate).let { years ->
+                        if (years == null) {
+                            "Used when there is no \"practising since\" date: a stated number, which does not change as the years pass."
+                        } else {
+                            "The date above answers this - $years years is what the workshop and the report print. A number here stays on the record and is read only while that date is empty."
+                        }
+                    }
+                )
+            },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
             modifier = Modifier.fillMaxWidth()

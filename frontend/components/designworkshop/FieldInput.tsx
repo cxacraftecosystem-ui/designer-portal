@@ -62,13 +62,15 @@ import {
   offersPhotoMeasure,
   offersSignaturePad,
   offersSketchRectify,
-  sketchSourceFields
+  sketchSourceFields,
+  workshopTitleRole
 } from "@/components/designworkshop/stageFieldRoles";
 import { PhotoMeasureField } from "@/components/designworkshop/PhotoMeasureField";
 import { SketchRectifyField, type SketchSource } from "@/components/designworkshop/SketchRectifyField";
 import { SignaturePad } from "@/components/SignaturePad";
 import { StageAddressField } from "@/components/designworkshop/StageAddressField";
 import { StageGeoField } from "@/components/designworkshop/StageGeoField";
+import { StageWorkshopField } from "@/components/designworkshop/StageWorkshopField";
 import { StageReferenceSelect } from "@/components/designworkshop/StageReferenceField";
 /*
  * THREE RECORD-FORM CONTROLS, MOUNTED WHOLE RATHER THAN REIMPLEMENTED.
@@ -630,6 +632,41 @@ export function FieldInput({
             describedBy={describedBy}
             invalid={invalid}
             disabled={disabled}
+          />
+        );
+      }
+      /*
+       * "DOCUMENTED AT WORKSHOP" GETS THE RECORD PAGE'S DROPDOWN, NOT A PROSE BOX.
+       *
+       * Two TEXT fields in the registry hold a `Workshop` row's TITLE — `participant`'s and
+       * `workshopSetup`'s — and both are hydration targets, so the value that arrives is a title the
+       * repository chose while anything typed over it is a title nothing can match. The artisan and
+       * craft record pages have asked this question through a searchable list of workshops all along;
+       * this is the same question, two clicks away, answered by a text box. See `workshopTitleRole`
+       * for why the two keys are matched exactly, and `StageWorkshopField` for the scoped list, the
+       * escape hatch, and where the dictation button goes.
+       *
+       * `unlabelled`, because the control contains a button: a wrapping `<label>` forwards a stray
+       * click into the menu and slams it shut after one pick. Same reason as PHONE above.
+       */
+      if (workshopTitleRole(field)) {
+        return unlabelled(
+          <StageWorkshopField
+            field={field}
+            value={value}
+            onChange={onChange}
+            labelId={labelId}
+            describedBy={describedBy}
+            invalid={invalid}
+            disabled={disabled}
+            dictation={
+              <DictationButton
+                onCommit={appendDictated}
+                disabled={disabled}
+                fieldLabel={field.label}
+                workshopId={workshopId}
+              />
+            }
           />
         );
       }

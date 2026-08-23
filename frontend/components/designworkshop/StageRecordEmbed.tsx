@@ -230,7 +230,7 @@ export const MIRROR_POINTS: readonly MirrorPoint[] = [
     entityKey: "participant",
     refFieldKey: "artisanRef",
     why:
-      "Stage 3 IS the roster: a row of it is an artisan, and `participant.artisanRef` carries 24 " +
+      "Stage 3 IS the roster: a row of it is an artisan, and `participant.artisanRef` carries 25 " +
       "pairs — the third widest mapping in the table, behind `tool.toolRef` at 32 and " +
       "`existingProduct.productRef` at 29. It is also the likeliest place in the whole " +
       "workshop to discover that the person in front of you has no record yet, which is the moment " +

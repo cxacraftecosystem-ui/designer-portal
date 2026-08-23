@@ -409,8 +409,92 @@ STAGE_3 = StageSpec(
                     help="Whether the artisan is enrolled under PM Vishwakarma."),
             fromref("specialisation", "Specialisation", T, S, report_role=COL,
                     column_width_pct=23.0),
+            # ── EXPERIENCE, AND THE DATE IT IS NOW DERIVED FROM ───────────────────────────────
+            #
+            # THE SAME MOVE AS `age` ABOVE, ONE ANSWER LATER, and made for the same reason on the
+            # owner's own instruction: "experience should also be a derived field, with a field to
+            # enter the date of joining the craft serving as the feeder." `Artisan.craftStartDate`
+            # exists as of 2026-08-23 and `REFERENCE_MODELS["Artisan"].data` derives this number
+            # from it in preference to the stated `Artisan.experienceYears` column — see the
+            # three-step precedence written out at that key, and `derive_experience_years`.
+            #
+            # THE NUMBER IS STILL AN INT AND STILL TYPEABLE, and that is not an oversight in a field
+            # the owner asked to have derived. Two facts decide it. The first is that this box is a
+            # TABLE_COLUMN in a submitted report: every row written before the column existed
+            # carries a stated number or a legacy "30+" and no date at all, and a box that refused
+            # to hold their answer would print blank in the participant table for exactly the oldest
+            # and best-documented artisans — the regression 20260816170000 was written to end. The
+            # second is that the derivation is not a registry derivation and cannot be one — and the
+            # reason for THAT changed with this very change, so it is restated rather than left as it
+            # stood. It used to read "this value comes from a COLUMN ON ANOTHER MODEL, not from a
+            # sibling field on this entry", which was true while `age` was the only derived carry.
+            # `craftStartDate` IS a sibling field on this entry as of 2026-08-23 (declared below), so
+            # that sentence no longer decides anything. Two facts that do:
+            #   * ORDERING. `save_stage` evaluates `derived_kind`/`derived_from` BEFORE it hydrates,
+            #     so on the save where the designer first picks the artisan the sibling date is not in
+            #     the entry yet, the derivation computes None, and anybody who submitted immediately
+            #     prints a blank in the participant table. The reference hydration has no such
+            #     ordering problem, which is why `age` has worked this way since 20260816170000.
+            #   * THERE IS NO SUCH DERIVATION KIND. `stage_schema` offers DAYS_BETWEEN, PRODUCT and
+            #     SUM; whole years between a date and today is none of them, and inventing YEARS_SINCE
+            #     means a new kind in the server, in `lib/derivedFields`, in the handset's `DwDerived`
+            #     and in the bundled asset — four ports of a rule whose answer changes with the
+            #     calendar, to describe a value the hydration already copies correctly.
+            #
+            # WHAT THAT LEAVES, STATED BECAUSE IT IS A REAL HAZARD AND NOT A THEORETICAL ONE: this
+            # entity now carries TWO EDITABLE BOXES over one fact — the number here and the date
+            # below — and nothing keeps them consistent. Both are ordinary mirrored inputs
+            # (`splitMirroredFields`), hydration only ever fills BLANKS, and `validate_entry` coerces
+            # field by field with no cross-field rule, so a designer who corrects one box leaves the
+            # other standing and the report prints "Experience 32" above "Practising since 12 March
+            # 1994". `age`/`dateOfBirth` cannot fail this way for one reason only — there is no
+            # birthday box on `participant` — so the asymmetry that made carrying the date right here
+            # is the same asymmetry that makes this possible. The help text on both boxes says which
+            # number is worked out from what, which is the only defence a form can offer against it
+            # short of a cross-field validator neither client has.
+            #
+            # THE BOUNDS ARE UNCHANGED AND ARE MIRRORED IN THREE PLACES ON PURPOSE — here,
+            # `ArtisanCreate.experienceYears` (ge=0, le=90) and the artisan form's number box.
+            # `derive_experience_years` returns None outside the same 0..90 rather than a number,
+            # because `validate_entry` re-coerces EVERY field on EVERY save and an out-of-range
+            # hydrated value would become a refused answer on a box nobody typed in.
             fromref("experienceYears", "Experience", INT, S, unit="years", min_value=0,
-                    max_value=90, report_role=COL, column_width_pct=12.0),
+                    max_value=90, report_role=COL, column_width_pct=12.0,
+                    help="Worked out from the artisan record's “practising since” date when it has "
+                         "one, and read from the number stated on that record when it does not. "
+                         "Both are printed in this report, so if you change this by hand, correct "
+                         "the date beside it too."),
+            # THE FEEDER, CARRIED SO THE REPORT CAN SAY WHAT THE NUMBER BESIDE IT IS DERIVED FROM.
+            # A derived figure in a document a ministry officer reads whose basis is stated nowhere
+            # is the shape this repository keeps arguing against — the same job `documentedOn` does
+            # for a roster row, one column over.
+            #
+            # KEY_VALUE, EXPLICITLY, AND IT MUST NEVER BECOME A TABLE_COLUMN. The six TABLE_COLUMN
+            # widths on this entity already sum to exactly 100; a seventh pushes
+            # `report_builder._table_columns` past its six-column cap onto the proportional fallback
+            # and silently re-lays-out a participant table that is already inside submitted
+            # documents. `report_builder` prints KEY_VALUE fields in the per-row block beneath the
+            # table, so nothing declared here is lost. Pinned by
+            # `test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full`.
+            #
+            # A DATE AND SO NO `unit`, which is the fourth of this file's carry invariants rather
+            # than a detail: a unit-less source column must not land in a box that declares one, and
+            # the reverse — "1994-03-12 years" — is the same error read aloud.
+            # AND THE HELP TEXT DOES NOT PROMISE A SELF-UPDATING REPORT, because this one did and
+            # the architecture two lines above forbids it. It read "so it stays right in next year's
+            # reading of this report", which is true of the RECORD pages — `record_fields` re-derives
+            # on every draw — and false of the document: hydration copies at SAVE time and the report
+            # never re-resolves (`report_builder`, `ReferencedRecord`), so `participant.experienceYears`
+            # is frozen on the day the artisan was picked. A workshop saved in 2026 and read in 2030
+            # prints "Experience 32" beside "Practising since 12 March 1994", which is 36 years — a
+            # self-contradicting row this table could not produce before the date crossed at all.
+            # The real gain is narrower and is worth stating exactly: the frozen number is now correct
+            # as of the SAVE, where before it was whatever was typed on the artisan's `recordedAt`.
+            fromref("craftStartDate", "Practising since", DATE, S, report_role=KV,
+                    help="The date the artisan began practising the craft. The experience above is "
+                         "worked out from it: on the artisan's own record every time it is read, and "
+                         "here on the day the artisan was picked — a report already handed in never "
+                         "changes afterwards."),
             f("isMasterCraftsperson", "Master craftsperson", BOOL, S, report_role=COL,
               column_width_pct=18.0, help="MCP status as recognised by the implementing agency."),
             fromref("village", "Village", T, S),

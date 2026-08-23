@@ -158,6 +158,53 @@ def derive_age(date_of_birth: Any, *, on: datetime | None = None) -> int | None:
     return years if 0 <= years <= 130 else None
 
 
+def derive_experience_years(craft_start: Any, *, on: datetime | None = None) -> int | None:
+    """Whole years between ``craft_start`` and today. None when there is no usable date.
+
+    THE SIBLING OF :func:`derive_age`, DELIBERATELY IDENTICAL IN SHAPE. ``Artisan.craftStartDate``
+    is the date an artisan began practising the craft, and ``Artisan.experienceYears`` is the older
+    column that holds a number somebody stated instead. The number is right on the day it is
+    written and wrong from then on -- the schema comment on ``experienceYears`` says so in terms,
+    "an artisan documented in 2024 with 30 years reads 30 in 2030" -- and it is a TABLE_COLUMN in
+    the participant table of every workshop report, so that decay prints. A date does not decay.
+
+    WHY IT IS A SEPARATE FUNCTION AND NOT ``derive_age`` WITH A WIDER BAND. The band is the whole
+    difference and it is load-bearing: ``participant.experienceYears`` declares
+    ``min_value=0, max_value=90`` and ``ArtisanCreate.experienceYears`` declares ``ge=0, le=90``, so
+    a number outside that range is not a value this system can carry. ``stage_schema.coerce_value``
+    returns an ERROR for an out-of-range answer and ``validate_entry`` re-coerces EVERY field on
+    EVERY save, not only the ones a designer touched -- so a hydrated 91 would become a refused
+    answer counted in ``refusedAnswers`` on a box nobody typed in. Returning None instead means the
+    box stays blank and the legacy fallback behind it still gets its turn. (``participant.age`` has
+    exactly this defect today with its own ``min_value=10``: a derived age of 8 is refused rather
+    than dropped. It is pre-existing, it is not repaired here, and it is reported to the owner
+    rather than copied.)
+
+    Returns None rather than 0 for a missing, unparseable, future or out-of-band date, on
+    :func:`derive_age`'s reasoning: a blank box and "practising for zero years" are different
+    statements. Note the difference from the age band, which starts at 0 for a real reason -- a
+    newborn has an age and nobody has negative experience. Zero years here IS reachable and IS
+    kept: an apprentice who started this month is a real answer, which is why every reader of this
+    value tests ``is not None`` rather than truthiness.
+
+    ``on`` exists for the reason it exists on :func:`derive_age` -- a derivation tested against
+    ``now()`` passes in March and fails in September.
+    """
+    if not craft_start:
+        return None
+    if isinstance(craft_start, str):
+        try:
+            craft_start = datetime.fromisoformat(craft_start.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    started = getattr(craft_start, "date", lambda: craft_start)()
+    today = (on or datetime.now(UTC)).date()
+    # The anniversary-not-yet-reached correction, spelled out rather than divided, for the reason
+    # written out in `derive_age`: `(today - started).days // 365` drifts a day every four years.
+    years = today.year - started.year - ((today.month, today.day) < (started.month, started.day))
+    return years if 0 <= years <= 90 else None
+
+
 def mask_identity_number(value: Any) -> Any:
     """The masked form of an artisan identity number.
 

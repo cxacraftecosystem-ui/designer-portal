@@ -142,6 +142,71 @@ fun parseFieldDate(text: String): LocalDate? {
 }
 
 /**
+ * Whole years between [from] and [on], or null when [from] is missing or lands outside [band].
+ *
+ * THE HANDSET'S PORT OF `records.derive_age` AND `records.derive_experience_years`, which are one
+ * function apart on the server for one reason: the band. Ages are 0..130 and experience is 0..90,
+ * because `participant.experienceYears` declares `min_value=0, max_value=90` and a value outside
+ * that is not one the workshop can carry — `validate_entry` re-coerces every field on every save,
+ * so an out-of-range number becomes a refused answer on a box nobody typed in.
+ *
+ * IT IS A PORT AND NOT A SECOND OPINION. Neither number is stored anywhere: the artisan record
+ * holds `dateOfBirth` and `craftStartDate`, and the server derives from them on every read, so a
+ * figure this screen computed by some other rule would be a figure the save then disagreed with —
+ * worse than showing none, because the researcher has already read it. `Period.between` is what
+ * gives the anniversary correction the server writes out by hand (a `ChronoUnit.DAYS / 365` would
+ * drift a day every four years and report somebody a year older than they are for a few days
+ * around their birthday, "exactly the kind of wrongness nobody checks").
+ *
+ * NULL AND NEVER 0 for a missing, future or out-of-band date: a blank box and "zero years" are
+ * different statements and the second is one this app would be making up. Zero experience, on the
+ * other hand, is a real answer — an apprentice in their first month — so callers must test for null
+ * rather than for zero.
+ *
+ * THAT SENTENCE WAS FALSE FOR THE FUTURE HALF OF IT, AND `Period` IS WHY. `Period.between` reports
+ * whole years and reports them as a SIGNED period: for a date up to 364 days ahead the `years`
+ * component is 0, not -1 — `Period.between(2027-08-22, 2026-08-23)` is `P-11M-30D`, whose `.years`
+ * is 0 — so the band test `0..90` PASSED and this returned 0 for a date the server drops. The server
+ * computes the components by hand (`today.year - started.year - ((today.month, today.day) <
+ * (started.month, started.day))`, `records.derive_experience_years`), which gives -1, falls outside
+ * the band, and answers None; the web port agrees with the server. So the handset printed "0 years
+ * of experience, worked out from this — the figure the workshop and the report use" for an artisan
+ * every other surface in the system reported as having no derivable experience at all.
+ *
+ * It needed no clock trickery to reach. `ArtisanCreate.craftStartDate` carries NO upper bound by
+ * deliberate design (a mistyped century must not refuse an edit to the phone number travelling beside
+ * it), a stored future date is seeded straight into form state, and `FieldDateField`'s `maximum`
+ * gates what is TYPED and never what is seeded. The explicit guard below is therefore the fix rather
+ * than a tighter bound on the input: whatever reaches this function, a start date after the reference
+ * day is not an answer.
+ *
+ * (The band alone cannot be relied on to catch it: `0..130` and `0..90` both contain 0, and any band
+ * that begins at 0 always will. A band is about plausibility, and this is about sign.)
+ *
+ * [on] defaults to the UTC day because that is the day the server derives against
+ * (`datetime.now(UTC).date()`), and agreeing with the report matters more than agreeing with the
+ * handset's own clock: the report is the document that gets filed. The window in which the two
+ * differ is a birthday falling between midnight and 05:30 IST.
+ */
+private fun wholeYearsBetween(from: LocalDate?, on: LocalDate, band: IntRange): Int? {
+    val start = from ?: return null
+    // BEFORE `Period`, NOT AFTER IT, and not left to the band. See the note above: a date less than
+    // a year ahead has a `years` component of 0, which the band accepts, so the only way to keep the
+    // documented "null and never 0 for a future date" is to answer the question about sign here.
+    if (start.isAfter(on)) return null
+    val years = java.time.Period.between(start, on).years
+    return if (years in band) years else null
+}
+
+/** The artisan's age in whole years, by the server's rule. Null when there is no usable date. */
+fun deriveAgeYears(dateOfBirth: LocalDate?, on: LocalDate = LocalDate.now(ZoneOffset.UTC)): Int? =
+    wholeYearsBetween(dateOfBirth, on, 0..130)
+
+/** Whole years practising, from the date the artisan took up the craft. Null when unusable. */
+fun deriveExperienceYears(craftStartDate: LocalDate?, on: LocalDate = LocalDate.now(ZoneOffset.UTC)): Int? =
+    wholeYearsBetween(craftStartDate, on, 0..90)
+
+/**
  * A day as the UTC epoch millis every Material 3 picker state speaks, and back.
  *
  * UTC on BOTH legs, never the device zone. The web file carries a long note about the same trap:

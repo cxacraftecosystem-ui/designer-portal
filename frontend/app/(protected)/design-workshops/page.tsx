@@ -373,7 +373,20 @@ function DesignWorkshopsPageBody() {
 
   useEffect(() => {
     let cancelled = false;
-    listResource<Workshop>("/workshops", { pageSize: 100, workshopType: "DESIGN_PROTOTYPE" })
+    /*
+      `accessibleOnly` — this picker LINKS the workshop it offers (`workshopId: sourceWorkshopId` in
+      the payload below), so an option this account cannot file against is an option that produces a
+      design workshop pointing at somebody else's roster. The narrowing excludes exactly the curated
+      rosters the caller is not on; an admin — which today is the only tier that can reach this form
+      at all — is never narrowed, so this changes nothing for the people using it and cannot become
+      wrong the day a designer is allowed to start one. See `WorkshopSelect`'s header for which list
+      is authoritative and why there is no fallback.
+    */
+    listResource<Workshop>("/workshops", {
+      pageSize: 100,
+      workshopType: "DESIGN_PROTOTYPE",
+      accessibleOnly: "true"
+    })
       .then((result) => {
         if (!cancelled) setSourceWorkshops(sortWorkshopsByOccurrence(result.items ?? []));
       })
@@ -521,6 +534,38 @@ function DesignWorkshopsPageBody() {
    * Drafts with nothing local about them at all (a row this browser merely cached on a previous
    * visit) are NOT prepended when the server answered — they would resurrect rows that another
    * filter, another page or another admin's deletion has legitimately removed from this view.
+   *
+   * ── AND THEY ARE NOT PREPENDED WHEN IT COULD NOT BE ASKED EITHER, WHICH IS A REVERSAL ───────────
+   *
+   * This branch used to read `draft.remoteId === null || offline`, so an unreachable repository
+   * prepended EVERY cached draft in this browser. `/sketches-and-prototypes` withdrew the same
+   * fallback and its header records the reason at length; the reason applies here unchanged, and this
+   * page is the LARGER surface of the two — it is the primary workshop list and the route into a
+   * workshop, not one chooser inside one screen.
+   *
+   * THE DEVICE'S LIST IS THE SERVER'S ANSWER AS OF THE LAST SYNC AND IT IS STALE IN THE PERMISSIVE
+   * DIRECTION. `draftSummary` keys rows on `remoteId ?? localId` and hardcodes `deletedAt: null`, so
+   * a `DesignWorkshopViewer` grant revoked in March is still offered in September, as is a workshop
+   * that has since been soft-deleted, and offline there is nobody to ask — the staleness cannot be
+   * detected here at all and it has no bound. A list that is also the route in is a control whose job
+   * is offering, and the requirement this app is now held to is that a designer is only ever OFFERED
+   * a workshop they currently have access to.
+   *
+   * WHAT IS STILL PREPENDED, AND WHY IT IS A DIFFERENT CLAIM. Two kinds of row, both of them THIS
+   * DEVICE'S OWN UNSENT WORK rather than evidence about anybody's access:
+   *
+   *   * `remoteId === null` — a workshop STARTED here that the server has never seen. It exists
+   *     nowhere else; omitting it is how a designer who opened a workshop in a courtyard on Monday
+   *     concludes on Tuesday that it is gone and starts a second one. Nothing about access is being
+   *     asserted, because there is no server row to have access to.
+   *   * `offline && unsent` — a server row this device holds edits for that have not been sent. The
+   *     row is on screen because the WORK is at risk of being invisible, which is a fact about this
+   *     browser's outbox and not a claim that the grant still stands; the sync is still the authority
+   *     and still refuses the queued `PUT` if it does not.
+   *
+   * A row this browser merely cached and has not touched is neither of those, so offline it is now
+   * absent — and the banner above the list says so in words rather than letting a short list read as
+   * a small repository.
    */
   const rows = useMemo(() => {
     const serverRows = data?.items ?? [];
@@ -535,8 +580,9 @@ function DesignWorkshopsPageBody() {
         if (unsent) byId.set(known.id, draftSummary(draft));
         continue;
       }
-      // Never synced, or the server could not be asked. Both belong on screen.
-      if (draft.remoteId === null || offline) extras.push(draftSummary(draft));
+      // Never synced, or holding work this device has not sent. See the note above for why an
+      // untouched cached row is NOT the third case here any more.
+      if (draft.remoteId === null || (offline && unsent)) extras.push(draftSummary(draft));
     }
     return [...extras, ...serverRows.map((row) => byId.get(row.id) ?? row)];
   }, [data, drafts, offline]);
@@ -659,8 +705,10 @@ function DesignWorkshopsPageBody() {
         // Says what is on screen and what is not. A list that silently shows only the local subset
         // is indistinguishable from a repository with three workshops in it.
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          There is no connection, so this shows only the design workshops saved in this browser. Others in the repository are
-          not listed and searching cannot reach them. Everything here is fully editable.
+          There is no connection, so this shows only the design workshops started on this device and the ones holding changes
+          that have not been sent yet. Everything else in the repository — including workshops you have opened here before — is
+          not listed, and searching cannot reach it. What is here is fully editable, and the list fills in again the moment the
+          repository can be reached.
         </div>
       ) : null}
 
@@ -704,8 +752,8 @@ function DesignWorkshopsPageBody() {
             />
             <p className="text-xs leading-5 text-ink-500">
               {sourceWorkshops.length
-                ? "Only workshops filed as a Design & Prototype Development Workshop appear here."
-                : "No design & prototype workshops are recorded yet. Mark one on the Workshops page to use it here."}
+                ? "Only workshops filed as a Design & Prototype Development Workshop, and only ones you have access to, appear here."
+                : "No design & prototype workshops are open to this account. Mark one on the Workshops page — or ask an admin for access to it — to use it here."}
             </p>
           </FieldBlock>
 

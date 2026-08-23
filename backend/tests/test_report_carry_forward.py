@@ -402,6 +402,17 @@ def _source_rows() -> dict[str, _SourceRow]:
             # January means the age is the same all year, where a September date would make this
             # fixture's assertion depend on the month the test happened to run in.
             dateOfBirth="1971-01-08T00:00:00+05:30",
+            # THE JOINING DATE, WHICH OUTRANKS THE NUMBER BELOW IT (2026-08-23). Set here rather
+            # than left None because `_SourceRow` raises on a column no fixture supplies precisely
+            # so a widened lambda cannot carry a value nothing asserts on: with a date present, the
+            # Experience column of the participant table is a DERIVED figure and this document is
+            # what proves it prints. January again, and for the reason stated just above: a date
+            # whose anniversary falls in January derives to the same number all year, where a
+            # September one would make the assertion depend on the month the suite ran in.
+            craftStartDate="1994-01-15T00:00:00+05:30",
+            # Deliberately DISAGREEING with the date above (a 1994 start is 32 years by 2026, not
+            # 31), on the same reasoning as the legacy keys below: matching values would let a reader
+            # believe either source was being used.
             experienceYears=31,
             craft=_SourceRow(name="Sambalpuri Ikat"),
             location=_SourceRow(

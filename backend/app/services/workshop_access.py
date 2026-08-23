@@ -194,6 +194,116 @@ async def workshop_assignee_ids(workshop_id: str) -> set[str]:
     return {r.userId for r in rows}
 
 
+async def unreachable_workshop_ids(user: Any, minimum: str = DEFAULT_GRANT_LEVEL) -> list[str]:
+    """The workshops ``user`` cannot reach AT ``minimum`` — curated rosters they are not on, or are
+    on at a level below ``minimum``.
+
+    THE SET IS AN EXCLUSION LIST AND NOT AN INCLUSION LIST, and that is the whole design of this
+    function. "Which workshops may I use" cannot be answered by listing assignment rows, because on
+    an UNCURATED workshop every signed-in account already holds CONTRIBUTE and there is no row to
+    find (see the module docstring, and ``OPEN_WORKSHOP_LEVEL``). Almost every workshop in this
+    repository is uncurated, so an inclusion list would be a list of nearly the whole table
+    assembled row by row, and — far worse — a workshop nobody has ever assigned anybody to would be
+    ABSENT from it and therefore excluded. The only rows that actually narrow anything are the
+    curated ones the caller is not on, and that is what this returns.
+
+    THE CURATION RULE IS NOT RESTATED IN SQL. ``GET /workshops/requestable`` records at length why:
+    "a workshop is curated only once it has a GRANTED row with an ``assignedById``" is a rule with
+    six documented exceptions, and a second copy of it expressed as a Prisma predicate is a copy that
+    drifts silently — people locked out of workshops that were always open to them. So the GRANTED
+    rows are fetched and :func:`workshop_is_curated` — the one implementation — decides, in Python,
+    per workshop.
+
+    ONE QUERY, over GRANTED rows only. That is every row that can matter: curation is decided by
+    GRANTED rows and access is conferred by GRANTED rows, so PENDING, DENIED and REVOKED rows cannot
+    change either answer and are not fetched. The volume is the number of grants that exist across
+    the whole repository, not the number of workshops — grants are made by an admin, one roster at a
+    time, so this is tens of rows on this deployment. If a deployment ever curates everything, this
+    becomes a large ``not_in`` and the query to write instead is a join; there is nothing subtle to
+    preserve at that point beyond keeping ``workshop_is_curated`` as the only copy of the rule.
+
+    Admins get an EMPTY list, never a narrowing: :func:`resolve_workshop_access` resolves them to
+    EDIT on every workshop because they are the approval authority, and a list route that hid a
+    workshop from the person who grants access to it would make it un-administrable.
+
+    ── THE LEVEL IS PART OF THE QUESTION, AND LEAVING IT OUT SHIPPED THE BUG THIS SET EXISTS TO STOP
+
+    This used to test MEMBERSHIP ONLY: a workshop was excluded when the caller held no GRANTED row on
+    it, and ANY GRANTED row was enough to keep it in. ``accessLevel`` was never read. So a designer
+    holding ``WorkshopAssignment(status="GRANTED", accessLevel="VIEW")`` on a curated workshop was
+    still OFFERED that workshop by every picker composed from this set, and
+    :func:`enforce_workshop_submission` — which needs CONTRIBUTE — then refused the save with "your
+    access to this workshop is view-only, which does not allow this". That is precisely the failure
+    the narrowing was written to remove, arriving in precisely the place it was written to remove it
+    from: after a researcher has filled in a whole record. Three comments asserted the opposite in
+    writing ("the narrowing removes exactly the rows that would 403" — here, in
+    ``routes/workshops`` and in the web ``WorkshopSelect``), and the sentence was true of somebody
+    holding no row and false of everybody holding a VIEW row.
+
+    So the caller states the level it needs and this answers THAT question. ``minimum`` defaults to
+    :data:`DEFAULT_GRANT_LEVEL` (CONTRIBUTE) because the caller that exists is a picker offering a
+    workshop to SAVE into, and CONTRIBUTE is what ``enforce_workshop_submission`` demands on create —
+    the two have to name the same level or the list and the save disagree again, one level along. A
+    route that genuinely only needs read access passes ``minimum="VIEW"`` and gets the old
+    membership behaviour, which is the honest answer to a different question.
+
+    THE LEVEL IS ONLY EVER CONSULTED ON A CURATED WORKSHOP, and that ordering is the safety of it. On
+    an UNCURATED workshop every signed-in account implicitly holds :data:`OPEN_WORKSHOP_LEVEL` and an
+    explicit grant can only RAISE that (see :func:`resolve_workshop_access`), so somebody sitting at
+    VIEW on an open workshop is not demoted by their own row and must not be excluded — excluding
+    them would be the "locked out of a workshop that was always open to them" failure this module's
+    docstring is written against, reintroduced through the level instead of through the roster.
+    ``workshop_is_curated`` decides first and the level is read second, over the rows of curated
+    workshops only, which is the same order the resolver applies.
+    """
+    if is_admin(user):
+        return []
+    uid = get_value(user, "id")
+    rows = await db.workshopassignment.find_many(where={"status": "GRANTED"})
+    by_workshop: dict[str, list[Any]] = {}
+    for row in rows:
+        by_workshop.setdefault(get_value(row, "workshopId"), []).append(row)
+    return sorted(
+        workshop_id
+        for workshop_id, workshop_rows in by_workshop.items()
+        # ``workshop_rows`` are GRANTED rows only — that is the one query above — so the status needs
+        # no second test here. The LEVEL does, and it is the level on THIS caller's own row: a
+        # workshop somebody else may edit is no more reachable for them than one nobody is on.
+        if workshop_is_curated(workshop_rows)
+        and not any(
+            get_value(r, "userId") == uid and level_at_least(get_value(r, "accessLevel"), minimum)
+            for r in workshop_rows
+        )
+    )
+
+
+async def accessible_workshops_where(user: Any, minimum: str = DEFAULT_GRANT_LEVEL) -> dict[str, Any] | None:
+    """A Prisma ``where`` fragment narrowing a workshop list to the ones ``user`` may actually use at
+    ``minimum`` — CONTRIBUTE by default, the level a save into a workshop demands.
+
+    ``None`` — not ``{}`` — when nothing is excluded, so a caller composes with ``if clause:`` and an
+    admin's query is byte-for-byte the query it was before this existed. (``records.viewable_where``
+    returns ``{}`` for the same purpose; both are falsy, and both callers test for falsiness.)
+
+    THIS IS OPT-IN PER ROUTE AND MUST STAY THAT WAY. It is deliberately NOT folded into
+    ``records.viewable_where``, whose docstring invites exactly that: that function is applied to
+    every list route at once, so putting this there would narrow the data browser, the map, the
+    search page and the export at the same time. READING the repository is open on purpose
+    (``services/records`` documents the policy), and what this narrows is the set a client may OFFER
+    TO FILE AGAINST — a picker whose options are workshops the API will 403 on save. Those are two
+    different questions and this answers only the second.
+
+    "A PICKER WHOSE OPTIONS ARE WORKSHOPS THE API WILL 403 ON SAVE" IS ONLY TRUE OF THIS SET BECAUSE
+    ``minimum`` NAMES THE LEVEL THE WRITE GATE ASKS FOR. It was not true while this read membership
+    and ignored ``accessLevel`` — a VIEW-only grantee on a curated workshop survived the narrowing
+    and was refused after typing a record. :func:`unreachable_workshop_ids` carries the whole
+    argument. A caller passing a LOWER ``minimum`` makes the sentence false for its own list and owes
+    its own comment saying what that list is for.
+    """
+    blocked = await unreachable_workshop_ids(user, minimum)
+    return {"id": {"not_in": blocked}} if blocked else None
+
+
 async def workshop_edit_privilege(user: Any, workshop_id: str | None) -> bool:
     """True when ``user`` may change OTHER people's records in this workshop (EDIT level or admin).
 

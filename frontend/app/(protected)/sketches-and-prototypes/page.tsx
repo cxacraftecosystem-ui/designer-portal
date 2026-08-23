@@ -72,30 +72,37 @@
  *     (`assert_can_create_design_workshops` is admin-only), so both branches of `visible_to_clause`
  *     are empty until an admin creates one and grants them access. The copy therefore says who to
  *     ask, not "nothing found".
- *   * An UNREACHABLE failure falls back to this device's own cached workshops (`listDrafts` +
- *     `draftSummary`, owner-filtered), which is the same store `/design-workshops` draws from when
- *     it is offline, and the copy says the chooser is showing this device's list. Without that, a
- *     designer in a courtyard with eight synced workshops on the laptop would be told they have
- *     none and to go and ask an admin.
+ *   * AN UNREACHABLE REPOSITORY OFFERS NO CHOOSER AT ALL. It gets a panel of its own that says the
+ *     repository could not be reached, and a Try again. It does NOT fall back to this device's
+ *     cached workshops, and that is a reversal — this page used to list `listDrafts` +
+ *     `draftSummary` here — so the reason is recorded rather than left as an absence.
  *
- *     THAT LIST IS THE SERVER'S ANSWER AS OF THE LAST SYNC, AND IT CAN BE STALE IN THE PERMISSIVE
- *     DIRECTION — say it out loud, because the sentence beside the chooser used to concede only
- *     that it may be too NARROW. Every row in it was adopted from a list the server served to this
- *     account, so nothing appears here that was never granted; but `draftSummary` keys rows on
- *     `remoteId ?? localId` and hardcodes `deletedAt: null`, so a workshop whose viewer grant has
- *     since been REVOKED, or which has since been soft-deleted, is still on this device and still
- *     matches a bookmarked `?workshop=`. Offline there is no way to learn either fact: the whole
- *     reason this branch exists is that nobody can be asked.
+ *     THE DEVICE'S LIST IS THE SERVER'S ANSWER AS OF THE LAST SYNC, AND IT IS STALE IN THE
+ *     PERMISSIVE DIRECTION. Every row in it was once served to this account, so no stranger's
+ *     workshop can appear; but `draftSummary` keys rows on `remoteId ?? localId` and hardcodes
+ *     `deletedAt: null`, so a workshop whose viewer grant has since been REVOKED — or which has
+ *     since been soft-deleted — is still in this browser and still matches a bookmarked
+ *     `?workshop=`. Offline there is nobody to ask, which is the whole premise of the branch, so
+ *     that staleness cannot be detected here at all and it has no bound: a laptop that synced in
+ *     March offers March's grants in September.
  *
- *     THE PAGE PROCEEDS ANYWAY, DELIBERATELY, and the bound on that decision is worth stating
- *     because the alternative was considered and rejected. Refusing to mount offline would make
- *     this page useless in the one place it is most wanted — a courtyard with no signal and a
- *     drawing in hand — to defend against a grant that changed while the laptop was away. What
- *     stops it being the shipped bug in `stageRows.ts`'s header is that the id must ALREADY be in
- *     this device's list, so no stranger's workshop can be minted here at all; the residual case is
- *     a workshop that was this account's the last time this browser heard, and the repository still
- *     has the last word — the queued `PUT .../stages/…` is refused on sync. The offline sentence
- *     below therefore says so in both directions rather than promising the work will land.
+ *     WHICH LIST IS AUTHORITATIVE: the server's, and only the server's. Access is decided by
+ *     `visible_to_clause` over `DesignWorkshopViewer` rows this client never sees, and it changes
+ *     without the client hearing. A cache of a past answer is therefore evidence about the past, and
+ *     the requirement this page is now held to is that a designer may only ever be OFFERED a
+ *     workshop they currently have access to. A control whose whole job is offering is the one place
+ *     a permissive stale list must not be wired into, so the offer is withheld rather than qualified
+ *     with a sentence.
+ *
+ *     WHAT THAT COSTS, STATED HONESTLY, because it is a real loss and the previous decision went the
+ *     other way: a designer in a courtyard with no signal and a drawing in hand can no longer reach
+ *     this screen through this route. Two things bound it. The per-workshop URL
+ *     (`/design-workshops/[id]/sketches-and-prototypes`) is unchanged, so somebody who is already
+ *     inside a workshop keeps working exactly as before; and the repository always had the last word
+ *     anyway — the queued `PUT .../stages/…` is refused on sync — so what the old branch really
+ *     bought was work that might be thrown away, offered against a workshop that might not be
+ *     theirs. Bringing it back honestly needs a dated, server-issued grant cached beside the row so
+ *     the client can say how old its evidence is; presence in an IndexedDB store cannot say that.
  *   * A server that SPOKE and refused gets its own sentence shown, and no fallback. `isUnreachable`
  *     and not `isTransient` for the reason the workshops list page states at length: the latter
  *     counts every 5xx as worth retrying, so a repository that answered and then failed would be
@@ -129,8 +136,8 @@
  * a refusal, because 404 is the whole of what `load_workshop_or_404` says and it says it for every
  * cause the refusal panel lists. An unreachable repository, or one that answers the read with a 500
  * or an expired session, gets a panel that says the check could not be made — with the server's own
- * words when there were any — and a Try again. Offline (`source === "device"`) there is no read to
- * make at all and the device list decides, with the caveat above stated in the copy.
+ * words when there were any — and a Try again. An unreachable repository never gets as far as this
+ * question: with no list there is no chooser and no mounted screen, only the offline panel above.
  *
  * WHY THE PAGE STILL DECIDES BEFORE MOUNTING THE SCREEN, rather than mounting it and letting the
  * workspace's own requests answer, which is what `/design-review` does with its pasted id: because
@@ -189,7 +196,6 @@ import {
 } from "@/components/sketches/SketchesWorkspace";
 import { Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { ApiError } from "@/lib/api";
-import { draftSummary, listDrafts } from "@/lib/designWorkshopStore";
 import { getDesignWorkshop, listDesignWorkshops, type DwSummary } from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
@@ -214,8 +220,18 @@ import { canRunDesignWorkshops, roleLabel } from "@/lib/permissions";
  */
 const CHOOSER_PAGE = 100;
 
-/** Where the rows on screen came from. Governs the copy, and the offline caveat on it. */
-type ListSource = "server" | "device";
+/**
+ * WHY THERE IS NO `ListSource` HERE ANY MORE.
+ *
+ * There used to be one — `"server" | "device"` — because the rows on screen could come from this
+ * browser's IndexedDB copies when the repository could not be reached, and every sentence and every
+ * verdict on the page had to know which. They cannot any more: the only list allowed to fill the
+ * chooser is `GET /design-workshops`, for the reason the header sets out at length (a cached access
+ * list is stale in the permissive direction and has no bound). So "where did these rows come from"
+ * has one answer, and a state variable holding a constant is a state variable somebody will branch
+ * on again. `offline` below is the fact that replaced it, and it is about the REQUEST rather than
+ * about the rows: it is only ever true when there are no rows at all.
+ */
 
 /**
  * The answer to "may this account open the id in the URL", which is FOUR-VALUED and not a boolean.
@@ -268,7 +284,14 @@ function ChooseWorkshopThenSketches() {
    */
   const [workshops, setWorkshops] = useState<DwSummary[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [source, setSource] = useState<ListSource>("server");
+  /**
+   * The repository could not be REACHED (as against answered-and-refused, which is `problem`).
+   *
+   * A separate flag rather than a sentence hung off `problem`, because the two have different next
+   * moves and different panels: one is the signal in this courtyard, the other is somebody else's to
+   * fix. Both leave `workshops` null, so neither can be mistaken for "you have none".
+   */
+  const [offline, setOffline] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   /** Bumped by the Try again button. A load that failed with no way out is a dead page. */
   const [attempt, setAttempt] = useState(0);
@@ -307,47 +330,39 @@ function ChooseWorkshopThenSketches() {
     void (async () => {
       try {
         /*
-          THE SERVER'S LIST AS IT STANDS, AND IT IS NOT MERGED WITH THIS DEVICE'S LOCAL DRAFTS the
-          way `/design-workshops` merges them — which is a deliberate difference and not an omission,
-          because that page LISTS workshops and this one hands one to a screen that writes.
+          THE SERVER'S LIST AS IT STANDS, AND IT IS THE ONLY LIST THIS PAGE WILL DRAW. It is not
+          merged with this device's local drafts the way `/design-workshops` merges them — which is a
+          deliberate difference and not an omission, because that page LISTS workshops and this one
+          hands one to a screen that writes.
 
-          A workshop created offline has no server row, so it appears on that list and cannot appear
-          here. Offering it would be offering a dead end: the upload tab refuses to attach anything
-          until `readStageRows` has folded the repository's copy of the stage in (`reconciled`), and
-          on a workshop the repository has never heard of there is no copy to fold, so the designer
-          would arrive at a panel saying the stage could not be read and be unable to do the one
-          thing they came for. Only admins can create a workshop offline at all
-          (`mayMintLocalWorkshop`), so the population this excludes is small and has the workshops
-          list to work from. The offline branch below is different on purpose: there the whole screen
-          is degraded and says so, so a local-only row is the best answer available rather than a
-          promise that cannot be kept.
+          Two independent reasons, and each is sufficient on its own. (1) ACCESS. A cached row proves
+          this account could open that workshop when this browser last synced, which is not the same
+          claim as "can open it now" and is wrong in the permissive direction — see the header. (2) A
+          DEAD END. A workshop created offline has no server row, and the upload tab refuses to attach
+          anything until `readStageRows` has folded the repository's copy of the stage in
+          (`reconciled`); on a workshop the repository has never heard of there is no copy to fold, so
+          the designer would arrive at a panel saying the stage could not be read and be unable to do
+          the one thing they came for.
         */
         const result = await listDesignWorkshops({ page: 1, pageSize: CHOOSER_PAGE });
         if (cancelled) return;
         setWorkshops(result.items);
         setTotal(result.total);
-        setSource("server");
+        setOffline(false);
         setProblem(null);
       } catch (error) {
         if (cancelled) return;
         if (isUnreachable(error)) {
           /*
-            THE DEVICE'S OWN COPIES, which is a real and usable list rather than a consolation. Every
-            row the workshops list has ever seen was written into IndexedDB by `adoptServerSummaries`,
-            and `listDrafts` is owner-filtered, so this is "the workshops this account has opened on
-            this browser" — including any created offline, which have no server row at all and so
-            can never appear in the list above.
+            NO LIST, AND THEREFORE NO CHOOSER. `workshops` is left NULL and `offline` carries the
+            reason to the panel below.
 
-            A failure to read the store is answered with an empty array rather than a throw, and the
-            copy underneath still says the repository could not be reached; the alternative is an
-            error box on top of an offline banner, which says nothing the first sentence did not.
+            This is where `listDrafts` + `draftSummary` used to be. The header records the reversal in
+            full; the short version is that presence in this browser's store is evidence about a past
+            grant with no bound on its age, and the one control that must never be permissive about
+            access is the one that offers it.
           */
-          const drafts = await listDrafts().catch(() => []);
-          if (cancelled) return;
-          const rows = drafts.map(draftSummary);
-          setWorkshops(rows);
-          setTotal(rows.length);
-          setSource("device");
+          setOffline(true);
           setProblem(null);
           return;
         }
@@ -356,7 +371,7 @@ function ChooseWorkshopThenSketches() {
           design workshops" empty state win a race with its own error message, which is the same
           collapse the header is about — from the other side.
         */
-        setSource("server");
+        setOffline(false);
         setProblem(
           error instanceof Error && error.message
             ? error.message
@@ -385,18 +400,13 @@ function ChooseWorkshopThenSketches() {
     setProblem(null);
     setWorkshops(null);
     /*
-      `source` IS RESET TOO, AND LEAVING IT BEHIND WAS A BUG WITH TWO SENTENCES ON SCREEN AT ONCE.
-      Reached from the offline-and-nothing-cached panel: the fetch failed `isUnreachable`, `listDrafts`
-      returned nothing, so `source` is "device" and `workshops` is `[]`. Try again empties `workshops`,
-      which is what takes that panel down — and the main render underneath then met a stale "device",
-      printing "the repository could not be reached, so this chooser is showing the 0 workshops saved
-      in this browser" directly beside "looking for the design workshops you can open…". Two
-      contradictory claims, one of them a COUNT asserted about a list that has not answered, and the
-      Try again gone for the length of an offline request timeout. `source` describes the rows on
-      screen, so when there are no rows on screen the honest value is the one a fresh load starts
-      from.
+      `offline` IS CLEARED TOO, and its predecessor `source` was the same trap: a flag describing the
+      LAST attempt, left standing over a fresh one, prints a claim about a list that has not answered
+      yet — "the repository could not be reached" directly beside "looking for the design workshops
+      you can open…", with the Try again gone for the length of an offline request timeout. A retry
+      returns every one of these to the state a first load starts from.
     */
-    setSource("server");
+    setOffline(false);
     /*
       And the single-id verdict, so a "could not check" is genuinely re-asked. The probe below skips
       any id it has already answered for, which is what stops it looping; without this line that
@@ -411,8 +421,8 @@ function ChooseWorkshopThenSketches() {
    * Is the chosen id one of the rows currently on screen?
    *
    * The cheap half of the gate and the only half that can say YES on its own: these rows came from
-   * `visible_to_clause` (or, offline, from this device's own adopted copies) moments ago. `false`
-   * here is NOT a refusal — see `ChosenVerdict` and the header.
+   * `visible_to_clause` moments ago, over the network, for this account. `false` here is NOT a
+   * refusal — see `ChosenVerdict` and the header.
    */
   const listed = useMemo(
     () => workshops !== null && workshops.some((summary) => summary.id === chosen),
@@ -437,13 +447,15 @@ function ChooseWorkshopThenSketches() {
 
       Not made when: the account is refused outright (nothing below renders anyway); no id has been
       chosen; the list has not answered, because an id absent from a list that has not arrived is not
-      absent from anything yet; the id IS in the list, which already answers yes; `source` is
-      "device", where there is no connection to ask over and the device list is the whole of what can
-      be known; or this id has already been answered for, which is also what stops the state this
-      effect sets from re-triggering it.
+      absent from anything yet; the id IS in the list, which already answers yes; or this id has
+      already been answered for, which is also what stops the state this effect sets from
+      re-triggering it.
+
+      There is no longer an offline case to skip: an unreachable repository leaves `workshops` null
+      and renders its own panel, so the `workshops === null` guard already covers it.
     */
     if (!allowed) return;
-    if (!chosen || workshops === null || listed || source === "device") return;
+    if (!chosen || workshops === null || listed) return;
     if (checked?.id === chosen) return;
     let cancelled = false;
     void (async () => {
@@ -494,7 +506,7 @@ function ChooseWorkshopThenSketches() {
     return () => {
       cancelled = true;
     };
-  }, [allowed, chosen, workshops, listed, source, checked]);
+  }, [allowed, chosen, workshops, listed, checked]);
 
   const options = useMemo<DropdownOption[]>(
     () => (workshops ?? []).map((summary) => ({ value: summary.id, label: workshopLabel(summary) })),
@@ -504,24 +516,25 @@ function ChooseWorkshopThenSketches() {
   /**
    * May this account open the id in the URL?
    *
-   * THE TWO SOURCES OF A YES ARE NOT INTERCHANGEABLE AND THE ORDER BELOW IS THE WHOLE POINT.
+   * EVERY YES IS THE SERVER'S, WHICH IS THE CHANGE. There used to be a second source — offline, the
+   * chooser WAS this device's cached list, so being on it counted as permission — and that is exactly
+   * the permissive stale answer this page no longer gives. Now:
    *
    *   1. The id is on screen in the chooser. `visible_to_clause` just returned it, so nothing more
    *      is asked — this is the ordinary path and it costs no request.
-   *   2. Offline, the chooser IS this device's list and there is nobody to ask, so absence from it is
-   *      the only answer available. Documented as stale-in-the-permissive-direction in the header,
-   *      and the copy says so.
-   *   3. Otherwise the single-id read decides, and until it lands this is `unknown` rather than
+   *   2. Otherwise the single-id read decides, and until it lands this is `unknown` rather than
    *      `refused` — which is not cosmetic. See the mount guard below: rendering the workspace for a
    *      moment and taking it away is a WRITE, and rendering the refusal for a moment tells a
    *      designer their own workshop is not theirs.
+   *
+   * With no connection there is no yes at all: `workshops` is null, so this is `unknown` and the
+   * offline panel is what renders.
    */
   const verdict = useMemo<ChosenVerdict>(() => {
     if (!chosen || workshops === null) return "unknown";
     if (listed) return "allowed";
-    if (source === "device") return "refused";
     return checked?.id === chosen ? checked.verdict : "unknown";
-  }, [chosen, workshops, listed, source, checked]);
+  }, [chosen, workshops, listed, checked]);
 
   /**
    * What the repository said, when the reason the check failed is that it said something.
@@ -610,6 +623,49 @@ function ChooseWorkshopThenSketches() {
   }
 
   /*
+    THE REPOSITORY COULD NOT BE REACHED — NO CHOOSER, AND NOTHING MOUNTED UNDERNEATH IT.
+
+    This branch is the whole of the offline behaviour now, and the header carries the argument. In one
+    line: the only list that may fill the chooser is the server's, because access is decided by rows
+    this client never sees and can be withdrawn without it hearing, so a cache of a past answer may
+    not be turned into an offer. It says what happened, it says where the work CAN still be done, and
+    it offers the retry — it does not apologise for an empty archive, because it does not know of one.
+
+    `offline` is checked before `problem`: they are mutually exclusive by construction (each clears
+    the other) and the order is only about which fact is the more specific if that ever stops being
+    true.
+  */
+  if (offline) {
+    return (
+      <div>
+        {header}
+        <section className="panel px-4 py-6" aria-live="polite">
+          <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-field-200 text-field-600">
+            <CloudOff className="h-5 w-5" aria-hidden />
+          </div>
+          <h2 className="text-base font-medium text-ink">The repository could not be reached</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
+            This is not an empty archive — it is a list that could not be loaded. Which workshops you can open is
+            decided by the repository and can change while a browser is away, so this chooser is not offered from a
+            saved copy: an old list would offer a workshop that may no longer be yours, and anything filed against it
+            would be refused when the connection returns.
+          </p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
+            A workshop you are already inside is unaffected — open it from{" "}
+            <Link href="/design-workshops" className="underline">
+              Design workshops
+            </Link>{" "}
+            and work on its Sketches &amp; prototypes page there.
+          </p>
+          <button type="button" className="field-button-secondary mt-4" onClick={retry}>
+            Try again
+          </button>
+        </section>
+      </div>
+    );
+  }
+
+  /*
     A SERVER THAT SPOKE AND REFUSED gets its own words, and no chooser — there is no list to offer,
     and a disabled dropdown above an error is furniture. The retry is the way out; `apiFetch` has
     already unpacked FastAPI's 422 list into a readable sentence if that is what came back.
@@ -632,34 +688,21 @@ function ChooseWorkshopThenSketches() {
   /*
     ANSWERED, AND THE ANSWER IS NONE. The default state of a newly onboarded designer rather than an
     edge case, so the copy is the whole explanation: why there is no way to start one here, who to
-    ask, and what happens after they have asked. The offline variant is a different sentence because
-    it is a different fact — this device has nothing cached, which says nothing about the archive.
+    ask, and what happens after they have asked.
+
+    ONE BRANCH, WHERE THERE USED TO BE TWO. The other was "offline and this browser has nothing
+    cached" — unreachable now goes no further than the panel above, so an empty list here can only
+    mean the repository answered and said none, which is the one thing this state is entitled to
+    claim.
   */
   if (workshops !== null && workshops.length === 0) {
     return (
       <div>
         {header}
-        {source === "device" ? (
-          <section className="panel px-4 py-6" aria-live="polite">
-            <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-field-200 text-field-600">
-              <CloudOff className="h-5 w-5" aria-hidden />
-            </div>
-            <h2 className="text-base font-medium text-ink">The repository could not be reached</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
-              This is not an empty archive — it is a list that could not be loaded, and this browser holds no design
-              workshop of its own to offer instead. Open a workshop once with a connection and it will be here
-              afterwards, signal or no signal.
-            </p>
-            <button type="button" className="field-button-secondary mt-4" onClick={retry}>
-              Try again
-            </button>
-          </section>
-        ) : (
-          <EmptyState
-            title="No design workshops to open yet"
-            body="Sketches and prototypes belong to a workshop, and the workshops you have access to will appear in the chooser here. Starting a new one is done by an admin or the master admin — ask them to create it for your cluster and give you access, and it will show up ready for all 22 stages."
-          />
-        )}
+        <EmptyState
+          title="No design workshops to open yet"
+          body="Sketches and prototypes belong to a workshop, and the workshops you have access to will appear in the chooser here. Starting a new one is done by an admin or the master admin — ask them to create it for your cluster and give you access, and it will show up ready for all 22 stages."
+        />
       </div>
     );
   }
@@ -724,19 +767,6 @@ function ChooseWorkshopThenSketches() {
             Looking for the design workshops you can open…
           </p>
         ) : null}
-        {source === "device" ? (
-          // BOTH DIRECTIONS OF STALE, not just the flattering one. This list is what the repository
-          // told this browser the last time it could be reached, so it can be short of a workshop
-          // that is genuinely this account's AND it can still hold one whose access has since been
-          // withdrawn. The second half is the sentence that was missing: work is queued, and the
-          // repository has the last word on it when the connection returns.
-          <p className="text-xs text-ink-500">
-            The repository could not be reached, so this chooser is showing the {workshops?.length ?? 0} workshop
-            {(workshops?.length ?? 0) === 1 ? "" : "s"} saved in this browser. Anything you do here is kept on this
-            device and sent when a connection returns — and if access to one of them has been changed since this
-            browser last synced, the repository will refuse that workshop&apos;s work then rather than now.
-          </p>
-        ) : null}
         {truncated ? (
           // Said rather than left as an absence: the reader has to be able to tell "not in this
           // dropdown" from "not yours". It no longer means a refusal — an id outside these rows is
@@ -778,10 +808,10 @@ function ChooseWorkshopThenSketches() {
       ) : verdict === "uncheckable" ? (
         /*
           THE WORKSHOP IS NOT IN THE CHOOSER AND THE CHECK ON IT DID NOT COMPLETE. Note what this
-          state is NOT: it is not the offline branch, which has its own list and its own sentence
-          above. It is a list that arrived and a single-id read that then did not — a signal lost
-          between the two, a shared link opened as the connection went, or a repository that answered
-          the read with something other than a verdict.
+          state is NOT: it is not the unreachable-repository branch, which renders its own panel above
+          instead of a chooser. It is a list that arrived and a single-id read that then did not — a
+          signal lost between the two, a shared link opened as the connection went, or a repository
+          that answered the read with something other than a verdict.
 
           It says nothing about the workshop, deliberately, because nothing is known about it. Try
           again is the whole point of the panel: without it the reader is left with copy claiming a
@@ -817,9 +847,10 @@ function ChooseWorkshopThenSketches() {
           repository answers all four the same way and so does this page" was printed by a page that
           had not asked the repository at all — it had checked one capped page of a list, so a fifth
           cause the sentence does not admit, "your workshop is newer than the hundred rows I am
-          holding", reached an admin as a refusal. This branch is now only ever reached because the
-          rows on screen are this device's own and the id is absent from them (offline), or because
-          `load_workshop_or_404` itself answered 404 — and nothing else counts, see the catch above.
+          holding", reached an admin as a refusal. This branch is now only ever reached because
+          `load_workshop_or_404` itself answered 404 — nothing else counts, see the catch above, and
+          the offline reading that used to reach it here (absent from this device's cached list) is
+          gone with the cached list.
         */
         <section className="panel px-4 py-6" aria-live="polite">
           <h2 className="text-base font-medium text-ink">That workshop is not one this account can open</h2>
@@ -827,9 +858,6 @@ function ChooseWorkshopThenSketches() {
             The link may be old, the id may be mistyped, the workshop may have been deleted, or it may belong to
             designers who have not given this account access — the repository answers all four the same way and so does
             this page. Choose one of your own workshops above.
-            {source === "device"
-              ? " This browser is also working from its saved list because the repository could not be reached, so a workshop that is yours but has never been opened here will not be in the chooser until a connection returns."
-              : ""}
           </p>
           <Link href="/design-workshops" className="field-button-secondary mt-4 inline-flex">
             Open the workshops list

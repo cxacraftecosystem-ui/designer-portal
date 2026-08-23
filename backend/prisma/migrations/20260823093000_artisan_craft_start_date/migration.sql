@@ -1,0 +1,108 @@
+-- The day an artisan began practising their craft, so the years of experience can be DERIVED from
+-- it instead of stored as a number that decays.
+--
+-- =============================================================================================
+-- WHAT THIS CHANGES, AND WHY A DATE IS A DIFFERENT KIND OF ANSWER FROM A NUMBER
+-- =============================================================================================
+--
+-- "Artisan"."experienceYears" has held a stated number since 20260816170000 added it, and that
+-- column's own comment records the cost of the choice rather than hiding it: the value "ages with
+-- the record rather than with the artisan ... an artisan documented in 2024 with 30 years reads 30
+-- in 2030". `participant.experienceYears` is a TABLE_COLUMN in the participant table of every
+-- workshop report, and hydration copies at SAVE time while the report never re-resolves, so that
+-- decay is not an abstraction. It prints, in a document a ministry officer reads, years later.
+--
+-- A DATE does not decay. `derive_experience_years` (services/records, the sibling of `derive_age`
+-- that the same file has computed birthdays with since 20260816170000) turns this column into a
+-- number, with nobody editing anything. That is the whole of the change, and it is the owner's
+-- request: "experience should also be a derived field, with a field to enter the date of joining the
+-- craft serving as the feeder."
+--
+-- WHERE THAT NUMBER IS RE-COMPUTED, AND WHERE IT IS NOT, because this file contradicted itself two
+-- lines above on exactly the point it was written about. On the RECORD surfaces -- the artisan page,
+-- the data browser, every `record_fields` draw -- it is derived on every read, so next year's
+-- reading of the record is next year's number. INSIDE A WORKSHOP IT IS NOT: hydration copies at SAVE
+-- time and the report never re-resolves (see immediately below, and `report_builder`), so
+-- `participant.experienceYears` freezes on the day the designer picked the artisan and a report read
+-- in 2030 prints the 2026 figure. That is the settled architecture rather than a gap -- a document
+-- handed to a ministry officer must not change because a record was edited afterwards -- and the
+-- honest statement of what this migration buys the report is narrower than "it stays right": the
+-- frozen number is now correct as of the SAVE, where before it was whatever somebody typed on the
+-- artisan's `recordedAt`, which could be years earlier. The date column crossing into the entry
+-- beside it (`participant.craftStartDate`, KEY_VALUE) is what lets a reader see which day the
+-- frozen figure belongs to.
+--
+-- =============================================================================================
+-- WHY THERE IS NO BACKFILL, WHICH IS THE POINT OF THIS FILE
+-- =============================================================================================
+--
+-- The migration this one is modelled on -- 20260816170000_artisan_dob_and_experience -- opens with
+-- "WHY THE BACKFILL IS THE POINT OF THIS MIGRATION", and it was right to. It computed a
+-- "dateOfBirth" out of a legacy age and a known "recordedAt", using 1 July as a deliberate mid-year
+-- signature, BECAUSE THE COLUMNS IT ADDED WERE THE ONLY PLACE THAT DATA COULD LIVE: the values
+-- existed nowhere but an unstructured `extraMetadata` blob no form had written in years, and adding
+-- an empty column beside them would have left the oldest and best-documented artisans reading blank.
+--
+-- The situation here is the exact inverse, and the same arithmetic that was right there is wrong
+-- here. It would be `recordedAt - experienceYears`, and it is refused for two reasons.
+--
+-- 1. IT ADDS NO INFORMATION. Any date it could compute must be computed FROM "experienceYears", or
+--    from the legacy `extraMetadata` spelling behind it -- and both of those are already read, by
+--    steps 2 and 3 of the precedence in `REFERENCE_MODELS["Artisan"].data`. On a row that has the
+--    column, a backfilled date evaluated on "recordedAt" derives to exactly the number already
+--    stored, so step 1 would return what step 2 already returns. On a row where the column is NULL
+--    because the legacy value was "30+" or "about 30", no date is computable at all -- which is
+--    precisely why 20260816170000 left those rows alone and told the readers to keep the JSON
+--    fallback. Net new information: zero, on every row in the table.
+--
+-- 2. IT WOULD COST THE STATED/GUESSED DISTINCTION FOR EVER, AND THAT DISTINCTION IS THE SAFETY.
+--    The instant such an UPDATE runs, "a number an artisan stated on a known day" and "a date a
+--    script inferred" are indistinguishable, and `derive_experience_years` starts advancing the
+--    inference with the calendar. "She said 30 years in 2024" becomes "she has practised since
+--    ~1994 and therefore has 32 now" -- a claim nobody made, on the oldest and most thoroughly
+--    documented rows in the repository. The "experienceYears" comment refuses exactly this in
+--    writing, and the refusal is not squeamishness: an age advances unconditionally, whereas
+--    experience is conditional on continued practice, and this schema models neither retirement nor
+--    death. THERE IS NO DOWN-MIGRATION IN THIS PROJECT, so the only walk-back would be a second
+--    migration NULLing rows chosen by a signature date -- guesswork stacked on guesswork, over a
+--    column a submitted report has already printed from.
+--
+-- So every row that exists on the day this runs keeps "craftStartDate" NULL and therefore prints,
+-- character for character, what it printed yesterday. THAT GUARANTEE IS STRUCTURAL RATHER THAN
+-- ARGUMENTATIVE, which is the only kind worth having over data that is already in filed documents:
+-- step 1 of the precedence can only fire on a date a human typed, because after this migration a
+-- human typing one is the only way a "craftStartDate" can come to exist.
+--
+-- IF THE OWNER LATER WANTS COVERAGE ANYWAY, the only safe shape is a "craftStartDateSource" (or
+-- "craftStartDatePrecision") column shipped IN THE SAME MIGRATION as the backfill, so a guessed
+-- date can never be mistaken for a stated one, with the precedence becoming human date -> column ->
+-- guessed date -> legacy. Note that it still buys nothing: see reason 1.
+--
+-- =============================================================================================
+-- ADDITIVE, IDEMPOTENT, AND ROLLING BACK
+-- =============================================================================================
+--
+-- One nullable column. No existing column is added to, dropped, retyped or re-defaulted, no
+-- constraint is relaxed, no index is added, and every existing query plans exactly as it did --
+-- which is deliberate rather than lucky: nothing filters or sorts on this column. It is read by
+-- id, on a row the reader already has, by a derivation that runs in Python.
+--
+-- Rolling back is:
+--
+--   ALTER TABLE "Artisan" DROP COLUMN "craftStartDate";
+--
+-- and nothing else references it. That is worth stating plainly because this repository's deploy
+-- shape gives it teeth: pushing `main` deploys with no test gate, and migrations have no automatic
+-- rollback -- so a migration whose whole content is one reversible DDL statement is a deliberate
+-- property of this change and not a coincidence of it being small.
+--
+-- IF NOT EXISTS for 20260822120000's stated reason, which still holds: this lands in a wave where
+-- several agents apply migrations against one local Postgres, so a half-applied run followed by a
+-- re-run is a realistic Tuesday.
+
+-- AlterTable
+-- TIMESTAMP(3) and not DATE, matching "dateOfBirth" beside it. Prisma maps `DateTime?` to
+-- TIMESTAMP(3), the clients send a bare `yyyy-mm-dd` which Pydantic reads as midnight, and every
+-- reader goes through `_iso_date`/`derive_experience_years`, both of which take the first ten
+-- characters. A DATE column here would be the one column in this table Prisma did not expect.
+ALTER TABLE "Artisan" ADD COLUMN IF NOT EXISTS "craftStartDate" TIMESTAMP(3);

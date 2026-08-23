@@ -63,6 +63,7 @@ from app.services.workshop_access import (
     WORKSHOP_LEVEL_DESCRIPTIONS,
     WORKSHOP_LEVELS,
     access_denied_detail,
+    accessible_workshops_where,
     describe_workshop_submission,
     enum_str,
     resolve_workshop_access,
@@ -196,6 +197,32 @@ async def list_workshops(
     # My Activity page had to fetch page 1 of the WHOLE repository and sift it client-side, which
     # silently under-reported the moment the repository outgrew one page.
     createdBy: str | None = None,
+    # WHICH WORKSHOPS THIS ACCOUNT MAY ACTUALLY FILE AGAINST — off by default, and the default is
+    # not laziness. Reading the repository is open to every signed-in account on purpose
+    # (``records.viewable_where``), so narrowing this list for everybody would empty the data
+    # browser's workshop column, the map's scope and the funnel filters of rows the caller is
+    # entitled to READ — the "a scoped column matched nothing so a full corpus rendered empty"
+    # failure this repository has already shipped once, from ``workshopId`` being NULL.
+    #
+    # What asks for it is a PICKER: a control that offers a workshop to save a record against. There,
+    # an option the API will 403 is not a convenience, it is a form that cannot be submitted and
+    # whose refusal arrives after the researcher has typed everything. ``accessible_workshops_where``
+    # excludes the curated rosters this caller is not on AT CONTRIBUTE — an admin is never narrowed,
+    # and an uncurated workshop is nobody's to withhold because every account already holds
+    # CONTRIBUTE on it (``services/workshop_access``, ``OPEN_WORKSHOP_LEVEL``).
+    #
+    # AT CONTRIBUTE, AND THE LEVEL IS THE HALF THAT WAS MISSING. This comment used to say "exactly
+    # the curated rosters this caller is not on", and the predicate behind it tested membership and
+    # never read ``accessLevel`` — so a designer holding a GRANTED row at VIEW on a curated workshop
+    # was still offered it here and still 403'd by ``enforce_workshop_submission`` on save, with the
+    # detail "your access to this workshop is view-only". The narrowing now asks for the same level
+    # the write gate asks for, which is what makes the sentence above true; the argument is written
+    # out in ``unreachable_workshop_ids``.
+    #
+    # It composes with ``search``: the narrowing is AND-ed, so typing into a server-backed search box
+    # searches the accessible set rather than reopening the whole table. That is what lets a scoped
+    # picker keep a real search box over a truncated page.
+    accessibleOnly: bool = False,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -205,6 +232,13 @@ async def list_workshops(
     vis = await viewable_where(current_user)
     if vis:
         where["AND"] = [vis]
+    if accessibleOnly:
+        # Appended to the same AND list rather than written as a top-level key, for the reason the
+        # line above states: ``where["OR"]`` below is the search, and a narrowing that shared the
+        # top level with it would be satisfied by any row the search matched.
+        scope = await accessible_workshops_where(current_user)
+        if scope:
+            where.setdefault("AND", []).append(scope)
     if search:
         where["OR"] = [{"title": contains(search)}, {"place": contains(search)}, {"description": contains(search)}]
     if place:

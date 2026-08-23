@@ -166,7 +166,7 @@ REVISION_SKIP_FIELDS = {
 # person -- the columns a "delete my details" request actually names. All five exist on ``Artisan``
 # and, among the record types that reach ``record_revision`` (artisan, craft, product, tool,
 # process, workshop, questionnaire), on no other model, so the match-by-column-name this function
-# does is artisan-scoped in practice rather than by luck. Two near misses are deliberately OUT:
+# does is artisan-scoped in practice rather than by luck. Three near misses are deliberately OUT:
 #   * ``notes``, ``dos``, ``donts``, ``localName``. Free text that may happen to contain something
 #     personal, but it is not what a retraction targets, and it is exactly where a malicious edit
 #     hides meaning -- the old text is the only way to see what was quietly taken out of a record.
@@ -174,6 +174,13 @@ REVISION_SKIP_FIELDS = {
 #     (``participant.age`` on a workshop report comes from it) rather than a way to reach or single
 #     out the person on its own. Adding it here is a one-line change if the owner wants the wider
 #     line drawn.
+#   * ``craftStartDate``. Named here rather than left undecided, because it arrived (2026-08-23) in
+#     exactly the shape of the near miss above and would otherwise be a column nobody had ruled on.
+#     It is the feeder ``participant.experienceYears`` is derived from, so it is load-bearing derived
+#     data by the same argument -- and it is weaker than ``dateOfBirth`` on the personal side: the
+#     year somebody took up weaving is a fact about a trade, not a date that singles out a person.
+#     If the owner draws the wider line, these two move together or the set says two different things
+#     about one pair of columns on one row.
 #
 # THIS SET DOES NOT REACH BACKWARDS, AND THAT IS AN OWNER DECISION SITTING IN THE TABLE RIGHT NOW.
 # Every ``RecordRevision`` written BEFORE this set existed still holds the real old value for these

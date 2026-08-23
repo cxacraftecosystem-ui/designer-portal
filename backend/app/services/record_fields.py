@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services.artisan_identity import mask_aadhaar
-from app.services.records import derive_age
+from app.services.records import derive_age, derive_experience_years
 from app.services.rich_text import plain_from_stored
 
 # ---------------------------------------------------------------------------
@@ -435,14 +435,29 @@ ARTISAN = RecordSpec(
             meta_val(meta_of(a), "age"),
         )),
         _f("Gender", lambda a: a.gender),
+        # THE JOIN DATE IS PRINTED AND THE EXPERIENCE IS DERIVED BESIDE IT, in that order, for the
+        # same reason the date of birth and the age are printed that way six lines up: they are two
+        # different kinds of statement. The date is what the artisan told a researcher and does not
+        # change; the number is a fact about today that this sheet works out each time it is drawn.
+        _f("Practising since", lambda a: getattr(a, "craftStartDate", None)),
         _f(
             "Experience (years)",
-            # The column first, the legacy metadata behind it: the migration copied every clean
-            # number across and deliberately left the ones it could not parse ("30+", "about 30")
-            # in the JSON rather than guessing, and those rows are the oldest and best documented.
-            lambda a: getattr(a, "experienceYears", None)
-            if getattr(a, "experienceYears", None) is not None
-            else meta_val(meta_of(a), "experienceYears", "experience", "yearsOfExperience"),
+            # THREE SOURCES, THE SAME THREE THE WORKSHOP READS, IN THE SAME ORDER — the derived
+            # value from the join date, then the stated column, then the legacy metadata. Written
+            # here through `_first_answer` because this one lambda feeds the data browser's info
+            # card, the /data/report workbook, `details.txt` inside the dataset zip and the
+            # /export CSVs: four surfaces that would otherwise disagree with the participant table
+            # about one artisan's experience, and disagree only for the rows that have a join date.
+            #
+            # `_first_answer` and NOT `or`: zero years is a real answer (a first-month apprentice)
+            # and `or` would read it as absent and print a staler value instead. The legacy branch
+            # is the migration's deliberate refusal to guess at "30+" and "about 30", and those
+            # rows are the oldest and best documented — it must not be dropped.
+            lambda a: _first_answer(
+                derive_experience_years(getattr(a, "craftStartDate", None)),
+                getattr(a, "experienceYears", None),
+                meta_val(meta_of(a), "experienceYears", "experience", "yearsOfExperience"),
+            ),
         ),
         _f("Do's", lambda a: a.dos),
         _f("Don'ts", lambda a: a.donts),

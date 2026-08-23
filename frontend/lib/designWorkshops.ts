@@ -377,7 +377,7 @@ export type DwStageData = {
    * WHO LAST SET EACH FIELD of the three buckets above — `_stages_payload`'s fourth sibling key.
    *
    * A stage entry holds two kinds of value that are indistinguishable once stored: what a designer
-   * typed, and what the reference picker COPIED off a shared record. `hydrate_entries` copies 107
+   * typed, and what the reference picker COPIED off a shared record. `hydrate_entries` copies 108
    * field-pairs — an artisan's name, village, phone, do's and don'ts — the moment the artisan is
    * chosen, so a participant row on screen mixes one researcher's fieldwork with two designers'
    * corrections and says nothing about which is which. This is the answer.
@@ -1221,16 +1221,20 @@ export function listStageReferences(workshopId: string, query: DwReferenceQuery)
   nobody can see is wrong. Hence equality.
 
   WIDENED 2026-08-16 with the carry-fidelity work: 32 field-pairs became 107 across these eight
-  mappings, and `traditionalProcess.processRef` is new. **When the server table moves, this moves in
+  mappings, and `traditionalProcess.processRef` is new. 108 as of 2026-08-23, when
+  `participant.artisanRef` gained `craftStartDate` — the feeder the experience number is derived
+  from. **When the server table moves, this moves in
   the same change** — the parity test failed exactly once during that work, for exactly this reason,
   which is the test doing its job rather than an argument for deleting it.
 
   (The three prose copies of that number said 81 until 2026-08-22, which was the count at some
-  earlier point in the same lane; the two tables had already grown past it and equality is asserted,
-  so nothing was broken by it — but a stale number in a comment is what a reader trusts instead of
-  counting. Measured with
+  earlier point in the same lane, and 107 for the day on which the 108th pair was added; the two
+  tables had already grown past each of those and equality is asserted, so nothing was broken by
+  either — but a stale number in a comment is what a reader trusts instead of counting, and this one
+  has now been stale twice. Measured with
   `python -c "import app.services.stage_definitions; from app.services.stage_schema import
-  REFERENCE_HYDRATION; print(sum(len(m) for m in REFERENCE_HYDRATION.values()))"` → 107.)
+  REFERENCE_HYDRATION; print(sum(len(m) for m in REFERENCE_HYDRATION.values()))"` → 108, of which
+  `participant.artisanRef` is 25.)
 */
 const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
   // The craft record in full. Two of the five things the crafts page collects used to cross; the
@@ -1260,6 +1264,14 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     name: "name",
     localName: "localName",
     specialisation: "specialisation",
+    // THE FEEDER AND THE FIGURE. `craftStartDate` is the date the artisan began practising and
+    // `experienceYears` is the whole years since it, derived in the server's Artisan data lambda
+    // (NOT by `lib/derivedFields`, which is the port of the registry's sibling-field derivations —
+    // this one reads a column on another model). Both cross, which is where this differs from
+    // `age`: the participant entity has no birthday box, so `dateOfBirth` reaches the report only
+    // as the derived number, while a derived experience whose basis is stated nowhere is worse than
+    // one that names it.
+    craftStartDate: "craftStartDate",
     experienceYears: "experienceYears",
     gender: "gender",
     phone: "phone",

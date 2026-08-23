@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
@@ -31,10 +31,101 @@ import type { Workshop, WorkshopSubmissionCheck } from "@/lib/types";
  *
  * The selected id lives in React state and is read from `state.workshopId` at submit time — there is
  * deliberately no `name`/FormData mirror, so there is exactly one source of truth for it.
+ *
+ * ── WHICH LIST IS AUTHORITATIVE, AND WHY IT IS THE SERVER'S ─────────────────────────────────────
+ *
+ * THE OPTIONS ARE `GET /workshops?accessibleOnly=true`, AND NOTHING ELSE IS ALLOWED TO WIDEN THEM.
+ * The server is the only party that can answer "may this account file against this workshop": the
+ * rule is `resolve_workshop_access`, it reads `WorkshopAssignment` rows this client never sees, and
+ * a workshop's curation can change between two page loads. So the request is the authority, this
+ * component holds no list of its own, and there is deliberately no cached, bundled or last-known
+ * fallback anywhere in this file — a stale copy of an access list is wrong in the PERMISSIVE
+ * direction (a revoked grant still reads as a grant) and would put the one thing a picker must never
+ * offer into the one control whose whole job is offering.
+ *
+ * That parameter is what turned this from a warning into a scope. It used to fetch the whole table:
+ * `viewable_where` returns `{}` for every signed-in account by design (reading the repository is
+ * open), so a DESIGNER was offered all 196 workshops and learned which of them were somebody else's
+ * only from the red sentence below, AFTER picking one. Worse, the sentence stayed silent for the
+ * common case — on an UNCURATED workshop everybody implicitly holds CONTRIBUTE, so `canSubmit` is
+ * true and there is nothing to warn about. The narrowing removes exactly the rows that would 403:
+ * curated rosters this account cannot write to. An admin is never narrowed.
+ *
+ * "CANNOT WRITE TO" AND NOT "IS NOT ON", because the first version of the server predicate tested
+ * membership and never read `accessLevel` — so a designer holding a GRANTED row at VIEW on a curated
+ * workshop was still offered it here and still refused by `enforce_workshop_submission` on save
+ * ("your access to this workshop is view-only"), which is this sentence being false in the one case
+ * it most needed to be true. The narrowing now asks for CONTRIBUTE, the level the save demands; see
+ * `unreachable_workshop_ids`, whose docstring carries the whole argument, and
+ * `backend/tests/test_workshop_access_scope.py`, which pins both directions.
+ *
+ * The pre-flight check below is kept, and is now what it always should have been: not the access
+ * gate, but the answer to the two questions a scoped list still cannot answer — has this workshop
+ * ENDED, and did access change since the list was fetched.
+ *
+ * THE ONE OPTION THAT IS NOT FROM THAT LIST is the record's own stored workshop, merged by
+ * `useRecordOffPage` — see the note on `offPageWorkshop` for why removing it would be worse than
+ * showing it.
  */
 
 /** How far down the list the auto-default walks looking for a workshop the user may submit to. */
 const DEFAULT_PROBE_LIMIT = 5;
+
+/**
+ * The workshops this account may file against, as ONE request shared by every control on the page.
+ *
+ * `accessibleOnly=true` is the whole point and the header explains it; what this adds is memoisation,
+ * for a caller `useWorkshopSelection` does not have: a design-workshop stage can mount the same
+ * workshop-title field once per row of a collection table, and twenty participant rows issuing twenty
+ * identical requests is a stage that takes a second to appear on a field connection. Same arrangement
+ * and same reason as `loadAddressReference` in `components/forms/LocationFields` — including that a
+ * FAILURE IS NOT CACHED, so the next control to mount asks again rather than inheriting a bad minute.
+ *
+ * DELIBERATELY NOT USED BY `useWorkshopSelection` BELOW. That hook fetches per mount, and it must:
+ * a record form is opened, left, and opened again after an admin has granted access, and a promise
+ * memoised for the life of the tab would answer the second open with the first open's refusal. The
+ * stage field can afford the memo because a stage form is mounted once around a whole session of
+ * typing; a record form is mounted per record.
+ *
+ * AND THE MEMO IS TIME-BOUNDED, WHICH IT WAS NOT. It used to hold a SUCCESS for the life of the tab,
+ * so this was the one permissive cache left in the scoped path: an access change mid-session — a
+ * grant revoked, a workshop curated around a designer who is not on the roster — stayed invisible to
+ * `StageWorkshopField` for as long as the tab stayed open, which on this app is a whole day of
+ * typing in a courtyard. That is the same "a stale copy of an access list is wrong in the PERMISSIVE
+ * direction" the header refuses, differing from a cache only in where it is stored. The window is
+ * now {@link ACCESSIBLE_WORKSHOPS_TTL_MS}, which still collapses the burst this memo exists for —
+ * twenty participant rows mounting the same field within one render — while making the staleness
+ * bounded and stateable instead of unbounded. A FAILURE IS STILL NOT CACHED AT ALL.
+ */
+/**
+ * How long a fetched accessible-workshop list may keep answering. One minute: long enough that a
+ * collection table's twenty rows share one request, short enough that "your access changed" reaches
+ * the picker inside the same sitting rather than at the next reload.
+ */
+const ACCESSIBLE_WORKSHOPS_TTL_MS = 60_000;
+let accessibleWorkshopsRequest: Promise<Workshop[]> | null = null;
+let accessibleWorkshopsAskedAt = 0;
+
+export function loadAccessibleWorkshops(): Promise<Workshop[]> {
+  if (accessibleWorkshopsRequest && Date.now() - accessibleWorkshopsAskedAt > ACCESSIBLE_WORKSHOPS_TTL_MS) {
+    accessibleWorkshopsRequest = null;
+  }
+  if (!accessibleWorkshopsRequest) {
+    // Stamped when the request GOES OUT, not when it resolves: a slow answer must not extend its own
+    // freshness, and the whole point of the window is how old the evidence is.
+    accessibleWorkshopsAskedAt = Date.now();
+    accessibleWorkshopsRequest = listResource<Workshop>("/workshops", {
+      pageSize: LIST_PAGE_CEILING,
+      accessibleOnly: "true"
+    })
+      .then((result) => sortWorkshopsByOccurrence(result.items ?? []))
+      .catch((error) => {
+        accessibleWorkshopsRequest = null;
+        throw error;
+      });
+  }
+  return accessibleWorkshopsRequest;
+}
 
 const NO_WORKSHOP_LABEL = "Not linked to a workshop";
 
@@ -89,10 +180,14 @@ export type WorkshopSelection = {
    * `components/data/cappedList`.
    *
    * `/workshops` clamps `pageSize` to 100 and this database holds 196 workshop rows (counted
-   * 2026-08-15), so the list below is one page ordered `createdAt desc` and re-sorted here by
-   * occurrence date. **The re-sort cannot recover what the server already cut**: it reorders the
-   * hundred that arrived. Rendered by <WorkshopSelect>; exposed on the selection so a form that
-   * draws its own workshop control cannot silently drop the sentence.
+   * 2026-08-15), so the list below is ONE PAGE, and the page is ordered by the date the workshop
+   * HAPPENED — `startDate desc, date desc, createdAt desc` (`routes/workshops`, where the ordering
+   * carries a long note about why it is not `createdAt`). This comment said `createdAt desc` and was
+   * wrong about which row falls off the end: the cut drops the oldest-OCCURRING accessible workshop,
+   * not the oldest-entered one. The client re-sort below is by the same occurrence key and therefore
+   * agrees with the server rather than reordering it; **it still cannot recover what the server
+   * already cut**. Rendered by <WorkshopSelect>; exposed on the selection so a form that draws its
+   * own workshop control cannot silently drop the sentence.
    */
   cut: ListCut | null;
   /** Pre-flight answer for the current selection; null while loading or when unavailable. */
@@ -141,7 +236,12 @@ export function useWorkshopSelection({
 
   useEffect(() => {
     let cancelled = false;
-    listResource<Workshop>("/workshops", { pageSize: LIST_PAGE_CEILING })
+    /*
+      `accessibleOnly` — see the header. Sent as the literal string "true" and omitted when off,
+      because `buildQuery` takes no booleans (it stringifies, and it drops "" as if it were null).
+      There is no "off" here: this control exists to be saved from.
+    */
+    listResource<Workshop>("/workshops", { pageSize: LIST_PAGE_CEILING, accessibleOnly: "true" })
       .then((result) => {
         if (cancelled) return;
         setWorkshops(sortWorkshopsByOccurrence(result.items));
@@ -257,6 +357,17 @@ export function useWorkshopSelection({
    * the recovered row sits in occurrence order rather than at the end. See `useRecordOffPage`.
    *
    * Create forms never reach this: `workshopId` is "" until the default probe or the user picks.
+   *
+   * AND IT IS THE ONE OPTION THE ACCESS SCOPE DOES NOT GOVERN, which is a deliberate exception and
+   * not a hole. `GET /workshops/{id}` is open to every signed-in account, so this can recover a
+   * workshop `accessibleOnly=true` has just excluded — a record filed months ago against a roster
+   * this designer has since been taken off. Withholding it does not withhold anything: the record is
+   * ALREADY filed there, the id is already in `workshopId`, and all that changes is that the control
+   * renders blank. The documented consequence of a blank workshop box is that somebody repairs it by
+   * picking a different one, which re-files the record against the wrong fortnight — so hiding the
+   * row would convert a read-only fact into a wrong write. It is also not an OFFER: it is the answer
+   * already on the record, and the red sentence below says out loud that saving against it will be
+   * refused. Nothing here can reach a workshop the account was never given.
    */
   const offPageWorkshop = useRecordOffPage<Workshop>("/workshops", workshopId, workshops);
   const allWorkshops = useMemo(
@@ -307,6 +418,10 @@ export function WorkshopSelect({
   saving?: boolean;
 }) {
   const { workshopId, workshops, loading, cut, check, setWorkshopId, dialog } = state;
+  // Named so the sentence explaining WHAT THE LIST IS reaches the control itself. A scoped list that
+  // explains itself only to a reader who happens to look under the field is a list that reads, to
+  // everybody else, as a repository with four workshops in it.
+  const scopeNoteId = `${useId()}-scope`;
 
   const options = useMemo(
     () => [
@@ -335,12 +450,29 @@ export function WorkshopSelect({
             onDirty?.();
           }}
           placeholder={loading ? "Loading workshops…" : "Select or type to search"}
+          describedBy={scopeNoteId}
         />
       </Field>
       {/* The ComboBox's own search filters the array it was handed (see ui/SearchableSelect), so on a
           cut list "type to search" reaches only the rows already loaded — which is exactly when a
           researcher concludes the workshop was never recorded. Say so instead. */}
       <CappedListNotice cuts={[cut]} />
+      {/*
+        WHAT THE LIST IS, SAID ON SCREEN. The scope is invisible from the outside — a designer cannot
+        tell "the workshops I may use" from "every workshop there is" by looking at a dropdown — and a
+        narrowing nobody announced is this repository's most repeated bug class wearing a filter:
+        absence reading as non-existence. The empty case gets its own sentence because it is a
+        different fact and needs a different next move; it is reachable only where every workshop has
+        a curated roster and this account is on none of them, which is an admin's job to fix and not a
+        thing to sit and retry.
+      */}
+      <p id={scopeNoteId} className="text-xs text-ink-500">
+        {loading
+          ? "Loading the workshops you have access to…"
+          : workshops.length
+            ? "Only workshops you have access to are listed. Ask an admin if one you worked at is missing."
+            : "No workshops are open to this account yet. A record can be saved without one, or an admin can give you access to the workshop you worked at."}
+      </p>
       {blocked ? (
         <p className="text-xs font-medium text-error-600">
           You are not assigned to this workshop, so saving will be refused. Ask an admin to assign you to it, or pick

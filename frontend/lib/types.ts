@@ -184,7 +184,20 @@ export type Artisan = {
    * and adding one had nowhere to put them.
    */
   dateOfBirth?: string | null;
-  /** Years practising the craft. 0..90, matching the stage registry's own bounds. */
+  /**
+   * The date the artisan began practising the craft, ISO — the feeder `experienceYears` is derived
+   * from, and the same argument `dateOfBirth` above makes one answer later: a stated NUMBER of years
+   * is right on the day it is typed and silently wrong from then on, while a stated DATE is right
+   * every time it is read. Null on every row written before 2026-08-23; the migration that added the
+   * column deliberately refuses to guess one from the number.
+   */
+  craftStartDate?: string | null;
+  /**
+   * Years practising the craft AS SOMEBODY STATED IT. 0..90, matching the stage registry's own
+   * bounds. It is the second of three answers, not the only one: the derived value from
+   * `craftStartDate` outranks it wherever a row has one, and the legacy `extraMetadata` spellings
+   * sit behind it. See `lib/recordDerivations` for the client's port of that rule.
+   */
   experienceYears?: number | null;
   /** Does the artisan hold a PM Vishwakarma Pehchan card? Defaults to true on create. */
   pehchanCardAvailable?: boolean;

@@ -153,8 +153,25 @@ interface WorkshopRepositoryApi {
     @GET("artisans/{id}")
     suspend fun artisan(@Path("id") id: String): ArtisanDetailDto
 
+    /**
+     * A JSON BODY AND NOT [ArtisanCreateRequest], SO THAT A CLEARED BOX CAN BE SENT AS `null`.
+     *
+     * `ApiClient.json` sets `explicitNulls = false`, which is right for a create and silently wrong
+     * for a PATCH: a null property is DROPPED from the payload, an absent key means "leave this
+     * column alone" to `payload.model_dump(exclude_unset=True)`, and so the server's
+     * `_CLEARABLE_COLUMNS` — the columns it deliberately allows a client to NULL — were unreachable
+     * from this app. The form offered a clear button on "Practising since" (and on the birthday, the
+     * phone, the experience number, the address …), the save reported success, and the old value was
+     * still in the database. `services/records.clean_data` names that failure exactly: "A FIELD THAT
+     * CANNOT BE CLEARED IS A 200 THAT DOES NOTHING, which is the worst answer an API can give."
+     *
+     * The body is still DERIVED from [ArtisanCreateRequest] rather than hand-assembled — see
+     * `WorkshopRepository.artisanPatchBody`, which encodes the request with the wire encoder and then
+     * puts the explicit nulls back — so a field added to the request class is still sent from here,
+     * which is the same rule `completeMediaChecksummed` follows one screen over.
+     */
     @PATCH("artisans/{id}")
-    suspend fun updateArtisan(@Path("id") id: String, @Body body: ArtisanCreateRequest): ArtisanDetailDto
+    suspend fun updateArtisan(@Path("id") id: String, @Body body: JsonObject): ArtisanDetailDto
 
     @GET("artisans/{id}/questionnaire")
     suspend fun artisanQuestionnaire(@Path("id") id: String): ArtisanQuestionnaireDto
@@ -212,7 +229,33 @@ interface WorkshopRepositoryApi {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 100,
         // Server-side ownership filter — see the note on [artisans].
-        @Query("createdBy") createdBy: String? = null
+        @Query("createdBy") createdBy: String? = null,
+        /**
+         * WHICH WORKSHOPS THIS ACCOUNT MAY ACTUALLY FILE AGAINST — the narrowing every PICKER must
+         * ask for, and the parameter this client did not have.
+         *
+         * Reading the repository is open to every signed-in account on purpose (the server's
+         * `records.viewable_where` returns `{}`), so `GET /workshops` serves the WHOLE table — 196
+         * rows on this deployment — and until this existed every record form's workshop dropdown on
+         * the handset offered all of them, including curated rosters the designer is not on. The
+         * refusal then arrived from `enforce_workshop_submission` as a 403 AFTER a whole artisan
+         * record had been typed in a courtyard, and for the ordinary case the pre-flight red
+         * sentence could not warn either: on an uncurated workshop everybody implicitly holds
+         * CONTRIBUTE, so `canSubmit` is true and there is nothing to say. The web picker was scoped
+         * (`accessibleOnly: "true"` in `components/forms/WorkshopSelect`) and this half was not,
+         * which left the handset with the pre-change behaviour under a parity comment.
+         *
+         * NULL AND NOT `false` WHEN OFF, so a read surface's request is byte-for-byte the request it
+         * always was: Retrofit drops a null `@Query`. The server's default is `False` either way.
+         *
+         * ONLY A PICKER SENDS IT. The roster panel, the access-request screen (you request access to
+         * what you cannot reach), the workshop scope filters and the browse/re-link lists are READS,
+         * and narrowing those would empty a data view of rows this account is entitled to read — the
+         * "a scoped column matched nothing so a full corpus rendered empty" failure this app has
+         * already shipped once. See [WorkshopRepository.workshopsIMaySubmitTo] versus
+         * [WorkshopRepository.workshopsByOccurrence].
+         */
+        @Query("accessibleOnly") accessibleOnly: Boolean? = null
     ): PageResponse<WorkshopDetailDto>
 
     @GET("workshops/{id}")

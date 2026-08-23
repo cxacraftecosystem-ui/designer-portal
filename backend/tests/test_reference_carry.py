@@ -51,7 +51,7 @@ from app.services import design_workshops as dw
 # record surface already prints, and `measurement_provenance.DIMENSION_FIELDS` is the closed set of
 # columns a method can be stamped on at all.
 from app.services import measurement_provenance, record_fields
-from app.services.records import derive_age
+from app.services.records import derive_age, derive_experience_years
 from app.services.stage_schema import (
     ENUMS,
     REFERENCE_HYDRATION,
@@ -224,7 +224,18 @@ ARTISAN_CARRIED = {
     # a date field, because the workshop asks for an age and the age is DERIVED here — see
     # `records.derive_age` and the note on the column: an age stored is wrong within a year.
     "dateOfBirth": "participant.age (derived, never stored)",
-    "experienceYears": "participant.experienceYears",
+    # Added 2026-08-23 with the column, on the owner's instruction that experience become a derived
+    # field with a date of joining the craft behind it. TWO TARGETS, and the pair is the point: the
+    # DERIVED number is what the participant table's Experience column prints, and the DATE crosses
+    # as well — unlike `dateOfBirth` above, which reaches the report only as its derived number
+    # because the participant entity has no birthday box. A derived figure in a document a ministry
+    # officer reads whose basis is stated nowhere is worse than one that names it.
+    "craftStartDate": "participant.craftStartDate + participant.experienceYears (derived)",
+    # STILL CARRIED, and now the SECOND of three answers rather than the only one. The derived value
+    # from `craftStartDate` outranks it where a row has one; every row written before 2026-08-23 has
+    # none — the migration deliberately refuses to guess — so this column is what they all still
+    # print. See the precedence written out in `REFERENCE_MODELS["Artisan"].data`.
+    "experienceYears": "participant.experienceYears (the stated number, behind the derivation)",
     # Still carried, and now only as the FALLBACK for records written before the two columns above
     # existed. The migration copied every clean numeric value across and deliberately left the ones
     # it could not parse ("30+", "about 30") in the JSON rather than guessing at them.
@@ -957,10 +968,22 @@ def test_experience_and_age_now_come_from_columns_with_the_legacy_metadata_behin
        metadata is still read, so the oldest and best-documented artisans do not go blank;
     4. AGE IS DERIVED FROM THE DATE and not stored, which is why the column is a birthday. An age
        written down is wrong within a year and nothing in this system would ever say so.
+
+    THREE MORE LANDED 2026-08-23 WITH ``Artisan.craftStartDate``, which puts a THIRD source in front
+    of the two above for experience and makes the order itself the thing worth pinning:
+
+    5. a row with a joining date derives its experience FROM THE DATE, outranking the stated column;
+    6. A ROW WITH THE COLUMN AND NO DATE STILL PRINTS THE COLUMN — which is the assertion that says
+       nothing currently right was blanked in order to make room for the derivation, and it is the
+       one this change could most plausibly have broken. Every row in the live table is this shape;
+    7. an unusable joining date (in the future, or deriving outside the 0..90 the workshop's own
+       field declares) falls THROUGH to the column rather than refusing the row or printing a
+       number the participant table would then reject on a box nobody typed in.
     """
     columns = _columns("Artisan")
     assert "experienceYears" in columns, "the migration is the point of this test"
     assert "dateOfBirth" in columns
+    assert "craftStartDate" in columns, "the 20260823093000 migration is the point of 5-7 below"
     assert "age" not in columns, (
         "an age COLUMN is the mistake this design exists to avoid: it is wrong within a year of "
         "being written and nothing would ever notice. Store the date, derive the age."
@@ -987,6 +1010,42 @@ def test_experience_and_age_now_come_from_columns_with_the_legacy_metadata_behin
     )
     assert silent["experienceYears"] is None
     assert silent["age"] is None
+
+    # 5. THE DATE OUTRANKS THE NUMBER. All three sources are present and all three disagree, so this
+    #    can only pass on the derivation: "years since a stated start" is right on the day it is
+    #    printed, where a stated number is right on `recordedAt` and decays from then on.
+    joined = _artisan_row(
+        craftStartDate=datetime(1994, 3, 12), experienceYears=31,
+        extraMetadata={"experienceYears": 22, "age": 44},
+    )
+    from_date = dw.REFERENCE_MODELS["Artisan"].data(joined, None)
+    assert from_date["experienceYears"] == derive_experience_years(datetime(1994, 3, 12))
+    assert from_date["experienceYears"] not in (31, 22), (
+        "the joining date must outrank both the stated column and the legacy metadata"
+    )
+    # And the date itself crosses, so the report can say what that number is worked out from.
+    assert from_date["craftStartDate"] == "1994-03-12"
+
+    # 6. NOTHING CURRENTLY RIGHT IS BLANKED. Every row in the live table has no joining date — the
+    #    migration adds the column and deliberately refuses to backfill one — so every one of them
+    #    reaches this branch and prints exactly what it printed before the column existed.
+    stated_only = dw.REFERENCE_MODELS["Artisan"].data(
+        _artisan_row(experienceYears=31, extraMetadata={"experienceYears": 22}), None
+    )
+    assert stated_only["experienceYears"] == 31
+    assert stated_only["craftStartDate"] is None
+
+    # 7. AN UNUSABLE DATE FALLS THROUGH RATHER THAN WINNING OR REFUSING. A future date derives to a
+    #    negative number and a 1900 date derives past 90, which is outside the bounds
+    #    `participant.experienceYears` declares — and `validate_entry` re-coerces every field on
+    #    every save, so a hydrated out-of-range number becomes a refused answer on a box the
+    #    designer never touched. Dropping it leaves the stated column readable instead.
+    for unusable in (datetime(2099, 1, 1), datetime(1900, 1, 1)):
+        fell_through = dw.REFERENCE_MODELS["Artisan"].data(
+            _artisan_row(craftStartDate=unusable, experienceYears=31), None
+        )
+        assert derive_experience_years(unusable) is None
+        assert fell_through["experienceYears"] == 31, unusable
 
 
 def test_the_device_fix_never_reaches_the_workshop_and_the_subject_pin_does():
@@ -1106,7 +1165,10 @@ def _artisan_row(**overrides):
         # assertions that the fallback still works for the old records, which is the half of the
         # old behaviour that had to survive. A row WITH the columns is built explicitly by the test
         # that covers precedence.
-        dateOfBirth=None, experienceYears=None,
+        # `craftStartDate` joins them on the same terms and for the same reason: NULL is the state
+        # of every row that existed before it was added, so this fixture is the legacy case and the
+        # derived branch is built explicitly by the test that covers the precedence.
+        dateOfBirth=None, experienceYears=None, craftStartDate=None,
         recordedAt=datetime(2025, 3, 12, 9, 0), recordedTimezone="Asia/Kolkata",
         craft=SimpleNamespace(name="Sambalpuri Ikat"), location=_location_row(),
         # WHERE the record was made, which `documentedOn` cannot say. `participant.artisanRef` is
@@ -1327,10 +1389,19 @@ async def test_a_fully_documented_artisan_arrives_whole(monkeypatch):
     Written as "no target is missing" rather than as twenty-two individual assertions so that a
     pair added to the mapping is covered the moment it is added, without anybody remembering to
     extend this test.
+
+    THE JOINING DATE IS SUPPLIED HERE AND NOWHERE ELSE IN THIS FILE, and the asymmetry is worth a
+    sentence. ``_artisan_row`` defaults ``dateOfBirth``/``experienceYears``/``craftStartDate`` to
+    None so that it stands for a row written before those columns existed — which is every row in
+    the live table — and the first two still fill their boxes from the legacy ``extraMetadata``
+    spellings behind them. ``craftStartDate`` has no such fallback and cannot have one: no legacy
+    key ever held a joining date, which is exactly why the migration refuses to invent one. So a
+    "fully documented" artisan has to be told the date, and this test is what says the box is wired
+    rather than merely declared.
     """
     data = await _hydrate(
         monkeypatch, "participant", {"artisanRef": "art_1"},
-        rows={"artisan": [_artisan_row()]},
+        rows={"artisan": [_artisan_row(craftStartDate=datetime(1994, 3, 12))]},
         photos={"art_1": ("med_1", "At her loom, Barpali")},
     )
     blank = sorted(t for t in _targets("participant.artisanRef") if not data.get(t))

@@ -577,14 +577,47 @@ model Artisan {
   /// the rest of its life. Age is derived from this at read time — see `derive_age` in
   /// services/records — so it is right on the day it is printed and right again next year.
   dateOfBirth   DateTime?
-  /// Years this artisan has practised the craft. A number and not a date, because the thing a
-  /// designer knows is "about thirty years" and the year they started is a harder question that
-  /// gets a rounder, less honest answer.
+  /// THE DAY THIS ARTISAN BEGAN PRACTISING THE CRAFT, and the feeder `experienceYears` is derived
+  /// from. Added 2026-08-23 at the owner's request: "experience should also be a derived field,
+  /// with a field to enter the date of joining the craft serving as the feeder."
   ///
-  /// Ages with the record rather than with the artisan, which is a real limitation and an accepted
-  /// one: an artisan documented in 2024 with 30 years reads 30 in 2030. `recordedAt` is on the same
-  /// row, so a reader can always tell how old the statement is, and inflating it automatically
-  /// would be inventing a fact nobody stated.
+  /// It is the same argument `dateOfBirth` above makes, applied to the same table one column
+  /// later. A stated NUMBER of years is right on the day it is written and silently wrong from
+  /// then on; a stated DATE is right on the day it is printed and right again next year, with
+  /// nobody editing anything. `participant.experienceYears` is a TABLE_COLUMN in the participant
+  /// table of every workshop report, so the decay is not theoretical — it prints, in a document a
+  /// ministry officer reads, years after the workshop.
+  ///
+  /// NULL ON EVERY ROW THAT EXISTS TODAY, deliberately, and the migration that adds this column
+  /// (20260823093000) refuses to backfill it. Read that file before adding one: a date computed
+  /// from `experienceYears` and `recordedAt` would carry no information those two columns do not
+  /// already carry, and it would permanently destroy the difference between a date a human stated
+  /// and a date a script guessed — at which point `derive_experience_years` would start inflating
+  /// the guess with the calendar, which is exactly the thing the paragraph below refuses.
+  craftStartDate DateTime?
+  /// Years this artisan has practised the craft, AS SOMEBODY STATED IT. It is no longer the only
+  /// answer to that question: `craftStartDate` above is, when a row has one, and the readers
+  /// derive from the date in preference to this number. See `derive_experience_years` in
+  /// services/records for the derivation and `REFERENCE_MODELS["Artisan"].data` in
+  /// services/design_workshops for the three-step precedence, written out where it happens.
+  ///
+  /// IT IS STILL COLLECTED AND STILL READ, and this paragraph used to be the argument for it being
+  /// the ONLY thing collected: "A number and not a date, because the thing a designer knows is
+  /// 'about thirty years' and the year they started is a harder question that gets a rounder, less
+  /// honest answer." That half is still true and is why the number box did not go away — an artisan
+  /// who says "about thirty years" and cannot name a year still has to be recordable, and on every
+  /// row written before 2026-08-23 this column (or the legacy `extraMetadata` spelling behind it)
+  /// is the only answer that exists. What changed is that a designer who CAN name the year is no
+  /// longer forced to convert it into a number that starts decaying the moment they type it.
+  ///
+  /// The rest of that paragraph was a statement of the cost of storing a number, and it stands
+  /// unaltered for every row that has no `craftStartDate`: this value ages with the RECORD rather
+  /// than with the artisan, so an artisan documented in 2024 with 30 years reads 30 in 2030.
+  /// `recordedAt` is on the same row, so a reader can always tell how old the statement is, and
+  /// inflating it automatically would be inventing a fact nobody stated. That refusal is why the
+  /// migration does not manufacture a `craftStartDate` for these rows: experience is conditional on
+  /// continued practice in a way an age is not, and this schema models neither retirement nor
+  /// death, so "she said 30 years in 2024" must not silently become "she has 32 now".
   experienceYears Int?
   // Newline-separated, numbered guidance for working with this artisan: dos = positive prompt (what to
   // do / emphasise), donts = negative prompt (what to avoid). Required on new records; nullable so the

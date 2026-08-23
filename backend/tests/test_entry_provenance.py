@@ -106,7 +106,9 @@ def _artisan_row(**overrides):
         notes="Prefers morning sessions.", dos="1. Speak in Odia\n2. Show samples",
         donts="1. Do not photograph the loom shed",
         extraMetadata={"experienceYears": 22, "age": 44},
-        dateOfBirth=None, experienceYears=None,
+        # `craftStartDate` on the same terms: NULL is what every pre-2026-08-23 row holds, and
+        # this fixture mirrors the real column set — see the docstring above.
+        dateOfBirth=None, experienceYears=None, craftStartDate=None,
         recordedAt=datetime(2025, 3, 12, 9, 0), recordedTimezone="Asia/Kolkata",
         craft=SimpleNamespace(name="Sambalpuri Ikat"), location=_location_row(),
         createdById=MEENA.id,
