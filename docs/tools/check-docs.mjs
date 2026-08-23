@@ -670,6 +670,10 @@ const CREATED_BY_THE_DEVELOPER = [
   ["backend/.venv", "gitignored — the virtualenv a developer builds, named in setup instructions"],
   ["frontend/.env.local", "gitignored — DEPLOYMENT_VERCEL.md and ENVIRONMENT.md tell the reader to create it"],
   ["frontend/node_modules", "gitignored — produced by npm install"],
+  // `next dev` and `next build` write here, and TESTING-E2E-LOCAL.md cites the dev server's own
+  // log to explain a measurement. Absent from a fresh checkout, which is exactly how this check
+  // caught it: the doc passed locally only because the author had a dev server running.
+  ["frontend/.next", "gitignored — Next's build and dev output, including the dev server log TESTING-E2E-LOCAL.md quotes"],
   ["android/local.properties", "gitignored — written by Android Studio on first open"],
   ["android/app/libs/", "gitignored — the sherpa-onnx AAR the CI workflow fetches at build time"],
   // Both deploy keys are named in CI.md on purpose, and the PAIRING is the point: one opens this
