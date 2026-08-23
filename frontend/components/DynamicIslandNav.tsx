@@ -231,14 +231,14 @@ export const NAV_ITEMS: NavItem[] = [
   // `if not can_run_design_workshops(user): raise not_found` — this is a mirror of the API's own
   // predicate, not a narrowing, so nobody is hidden from a page the server would serve them.
   //
-  // NO `ROUTE_GUARDS` ROW GOES WITH IT YET, and that is stated rather than forgotten:
-  // `lib/permissions.ts` is outside this change's files, so `AppShell` — which applies that table
-  // above every page — has nothing to apply here and `canAccessRoute` answers true for any signed-in
-  // account. The gap is covered in the second of the two places it has to be: the page refuses for
-  // itself, with the same `canRunDesignWorkshops` predicate and a lock panel, rather than letting an
-  // unentitled reader reach the API's 404 and see it rendered as "this round could not be read". A
-  // page defending itself is this repository's second line and not its first, so the row in
-  // `lib/permissions.ts` and its twin in `docs/PERMISSIONS.md` §5 are still owed.
+  // THE `ROUTE_GUARDS` ROW NOW EXISTS — added 2026-08-23, with its twin in `docs/PERMISSIONS.md` §5.
+  // This comment used to say the row was owed, which was honest and also meant that for a day
+  // `canAccessRoute` answered true for any signed-in account and `AppShell` had nothing to apply
+  // here. All three lines now agree on `canRunDesignWorkshops`: this entry decides whether the
+  // destination is offered, the table decides whether the URL opens, and the page refuses for itself
+  // if somebody arrives with a round id already in hand. Keep them in step — a hidden nav entry has
+  // never been a guard, and the table is the one of the three that `docs/tools/check-docs.mjs`
+  // checks in both directions.
   {
     href: "/design-review",
     label: "Design review",

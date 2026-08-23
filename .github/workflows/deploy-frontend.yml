@@ -27,13 +27,13 @@ name: Deploy frontend to Vercel
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   VERCEL_TOKEN       Vercel → Account Settings → Tokens → Create (scope: the team)
 #   VERCEL_ORG_ID      team_pcTf4Alb2DCIwq2IZcdu00dS
-#   VERCEL_PROJECT_ID  prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc   ← THIS portal's project, `design-repository`
+#   VERCEL_PROJECT_ID  prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc   ← THIS portal's project, `designer-repository`
 #
 # 2026-08-22: the line above used to read `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0`, which docs/CI.md §2
 # pairs with the Vercel project `field-repository` — a DIFFERENT product in the same Vercel team.
 # `frontend/.vercel/project.json`, written by `vercel link` in this checkout, says this repository's
-# project is `design-repository` / `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc`, and deploy-backend.yml pins
-# `BACKEND_CORS_ORIGINS` to `design-repository.vercel.app` (never `field-repository`), so the API
+# project is `designer-repository` / `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc`, and deploy-backend.yml pins
+# `BACKEND_CORS_ORIGINS` to `designer-repository.vercel.app` (never `field-repository`), so the API
 # would reject the browser origin the old id publishes to. A project id is a deploy TARGET: the
 # wrong one does not fail, it publishes this portal's build over somebody else's live site. What
 # the repository's secret actually holds cannot be read from a checkout — see docs/CI.md §2.
@@ -278,7 +278,7 @@ jobs:
         # already taken the project gets a suffixed one and the plain `<name>.vercel.app` belongs
         # to somebody else's account — and then the two checks below would poll a stranger's
         # healthy page, exactly the false green this step was added to remove, arrived at by
-        # derivation instead of by a literal. It is right for `design-repository` today, which
+        # derivation instead of by a literal. It is right for `designer-repository` today, which
         # `deploy-backend.yml`'s CORS pin corroborates independently, and the guard below refuses
         # the one wrong name we know by name. The assertion that would need no such argument is
         # `vercel inspect "$url" --token=… | grep` for the alias in the deployment's own Aliases
@@ -303,7 +303,7 @@ jobs:
           # project, every check below would grade that product's live site AND this job would be
           # about to publish over it — so stop before the build, not after the upload.
           if [ "$name" = "field-repository" ]; then
-            echo "::error::vercel pull resolved the project 'field-repository', which is a DIFFERENT product in the same Vercel team. This repository publishes to 'design-repository'."
+            echo "::error::vercel pull resolved the project 'field-repository', which is a DIFFERENT product in the same Vercel team. This repository publishes to 'designer-repository'."
             echo "::error::VERCEL_PROJECT_ID is almost certainly prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0; it must be prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc. Nothing has been deployed. See docs/CI.md section 2."
             exit 1
           fi
@@ -333,10 +333,21 @@ jobs:
             # the template someone copies the day the variable is not public.
             value="$(sed -n "s/^${var}=//p" "$env_file" | tail -n 1 | sed -e 's/^"//' -e 's/"$//')"
 
-            if [ -z "$value" ] || [ "$value" = "undefined" ]; then
-              echo "::error::${var} is missing or empty in the pulled production environment."
+            # `[SENSITIVE]` IS THE SENTINEL THE CLI ACTUALLY WRITES, and not testing for it made
+            # this step lie. The comment above predicted a Sensitive variable would arrive empty;
+            # CLI 57 instead writes the literal placeholder `"[SENSITIVE]"`, which is neither empty
+            # nor `undefined`, so on 2026-08-23 the first run that ever had a token fell straight
+            # through to the shape checks and reported "NEXT_PUBLIC_API_URL is set but is not an
+            # absolute http(s) origin" — sending the reader after a malformed URL that does not
+            # exist. Both variables failing shape at once was the only clue that the values were
+            # never really read. A guard whose diagnosis is wrong is worse than no guard: it spends
+            # someone's afternoon in the wrong file.
+            if [ -z "$value" ] || [ "$value" = "undefined" ] || [ "$value" = "[SENSITIVE]" ]; then
+              echo "::error::${var} is missing, empty, or withheld as Sensitive in the pulled production environment (value read: '${value:-<empty>}')."
               echo "::error::Almost always this means it is stored as Sensitive in Vercel. A Sensitive variable is withheld from 'vercel pull' by design, this pipeline builds on the GitHub runner, and Next.js therefore inlines undefined - the build and the deploy both still succeed and the live site is broken."
               echo "::error::Fix: Vercel -> Project -> Settings -> Environment Variables, delete ${var} and re-add it as Encrypted (not Sensitive) for Production, Preview and Development, then re-run this workflow."
+              echo "::error::Marking these two Sensitive protects nothing, which is why this is safe to do: NEXT_PUBLIC_* values are compiled into the JavaScript every visitor downloads, so both are already public in the bundle. What Sensitive does buy is that nothing can read them back - including this build."
+              echo "::error::A deploy launched with 'vercel deploy' (no --prebuilt) builds ON Vercel, where the real values are available, which is why the live site works while this pipeline cannot reproduce it."
               fail=1
               continue
             fi

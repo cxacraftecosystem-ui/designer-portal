@@ -243,14 +243,29 @@ jobs:
           # replaced the correct list with the wrong one and broke login on the live site. A fix and
           # a regression in one push, which is what an untested step does the moment it starts running.
           #
-          # BOTH VERCEL HOSTS ARE LISTED because both answer 200 today: `designer-repository` is the
-          # one a designer is actually on, `design-repository` is the alias named in the provisioning
-          # environment and in `BACKEND_CORS_ORIGINS` as `BACKEND_ENV` writes it. Dropping either is
-          # how this breaks again — the failure is silent from the server's side, because a rejected
-          # preflight is a 400 the API considers correct and the browser reports only "failed to
-          # fetch". Add a new domain here in the same change that adds it in Vercel, and keep the old
-          # one until its alias is actually retired.
-          printf 'BACKEND_CORS_ORIGINS=%s\n' 'https://designer-repository.vercel.app,https://design-repository.vercel.app,http://localhost:3000' >> .env
+          # ONE VERCEL HOST, and the second one that used to be here was never this application.
+          #
+          # This list read `designer-repository.vercel.app,design-repository.vercel.app` and the
+          # comment above it said "both answer 200 today" — which was measured at the ROOT PATH, and
+          # Vercel answers 200 at `/` for a subdomain serving nothing at all. Probed properly on
+          # 2026-08-23: `design-repository.vercel.app/login` is a **404**, and `vercel alias ls` does
+          # not list that host against any project in this team. It was a plausible misspelling of
+          # this portal's own alias that got written down, and then defended by a check too weak to
+          # notice — the same misspelling reached docs/CI.md, both deploy workflows, and the Android
+          # handset's "open the web portal" button, which had already been repointed once.
+          #
+          # Dropping a live origin IS how this breaks again, so the rule the old comment stated still
+          # stands and is worth keeping: the failure is silent from the server's side, because a
+          # rejected preflight is a 400 the API considers correct and the browser reports only
+          # "failed to fetch". Add a new domain here in the same change that adds it in Vercel, and
+          # keep an old one until its alias is actually retired. What changed is only that this
+          # particular host had no alias to retire.
+          #
+          # NOT LISTED, deliberately: `design-repository-kappa.vercel.app`, Vercel's auto-generated
+          # URL for this project, which DOES serve an older deployment of this app. It is not a
+          # destination anyone is given, and listing it would put a stale build's origin on the
+          # allow-list for as long as the deployment behind it exists.
+          printf 'BACKEND_CORS_ORIGINS=%s\n' 'https://designer-repository.vercel.app,http://localhost:3000' >> .env
           # Assert the key landed on a line of its own. `grep -q` rather than `grep -c`: a count of
           # zero exits 1, which under `set -e` fails the step with no explanation of what was wrong.
           grep -q '^BACKEND_CORS_ORIGINS=' .env || { echo "CORS origins did not land on their own line"; exit 1; }

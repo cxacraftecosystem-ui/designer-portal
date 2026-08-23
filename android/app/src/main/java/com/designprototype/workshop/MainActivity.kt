@@ -2678,12 +2678,12 @@ private fun launchApkInstaller(context: Context, apk: File) {
  * THIS SENT EVERY HANDSET USER TO field-repository.vercel.app UNTIL 2026-08-22 — the SIBLING
  * PRODUCT'S live site, inherited when this portal was split out of it. A designer tapping "open
  * the web portal" landed in another product and, if signed in there, saw another product's data.
- * This portal is design-repository.vercel.app (frontend/.vercel/project.json, docs/CI.md).
+ * This portal is designer-repository.vercel.app (frontend/.vercel/project.json, docs/CI.md).
  */
 private fun openWebPortal(context: Context) {
     runCatching {
         context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse("https://design-repository.vercel.app"))
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://designer-repository.vercel.app"))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }.onFailure {

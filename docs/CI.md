@@ -33,7 +33,7 @@ every secret it needs. Sister documents:
 > | EC2 instance | `i-0e091ca8e6b417b52` | `i-06f177db5c4e3b0af` |
 > | SSH key pair / file | `designrepo-deploy` · `infra/terraform/designrepo-deploy.pem` | `fieldrepo-deploy` · `infra/terraform/fieldrepo-deploy.pem` |
 > | S3 media bucket | `designrepo-media-626159998512` | `fieldrepo-media-626159998512` |
-> | Vercel project | `design-repository` · `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` | `field-repository` · `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` |
+> | Vercel project | `designer-repository` · `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` | `field-repository` · `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` |
 > | Vercel production alias | `designer-repository.vercel.app` | `field-repository.vercel.app` |
 > | GitHub repository | `cxacraftecosystem-ui/designer-portal` | not established from this checkout |
 > | CloudFront | **UNRESOLVED — see below** | **UNRESOLVED — see below** |
@@ -188,7 +188,7 @@ later into a red run in five minutes.
 it. `.vercel.app` subdomains are globally unique across all of Vercel, so a project whose
 conventional domain was already taken gets a suffixed one while the plain name answers for a
 stranger's account; the checks would then grade a page nobody here publishes, which is the same
-false green as before by a different route. It is right for `design-repository` today —
+false green as before by a different route. It is right for `designer-repository` today —
 `deploy-backend.yml`'s `BACKEND_CORS_ORIGINS` pin corroborates that hostname from a second,
 independent place — and the step refuses outright if `vercel pull` ever resolves the project
 `field-repository`. The assertion that would need no such argument is `vercel inspect <deployment
@@ -208,9 +208,9 @@ one it closes. Promote it the next time somebody has the token in hand.
 | `EC2_HOST` | backend | Elastic IP of **this portal's** API box: `13.206.216.18` (instance `i-0e091ca8e6b417b52`, tagged `designrepo-api`). From the repository: `cd infra/terraform && terraform workspace show` — it must print `designrepo` — then `terraform output api_public_ip`. In the EC2 console pick the instance tagged **`designrepo-api`**, never `fieldrepo-api`: both exist in the same account and region. `15.207.145.174` is the field repository and must never appear here. |
 | `EC2_SSH_KEY` | backend | The **entire** private key file for that instance's key pair `designrepo-deploy`, `-----BEGIN…` through `-----END…` inclusive, with the trailing newline: `infra/terraform/designrepo-deploy.pem`. Paste the file contents, not the path. `*.pem` is gitignored — never commit it. The sibling `infra/terraform/fieldrepo-deploy.pem` opens the *other* product's box; pasting it together with the IP above is the pair that deploys successfully onto the wrong machine. |
 | `BACKEND_ENV` | backend | The full contents of the production `backend/.env`: `DATABASE_URL`, `JWT_SECRET`, `AWS_*`, `OPENAI_API_KEY`, `GEMINI_API_KEYS`, `ELEVENLABS_*`, `DEEPGRAM_*`, `BACKEND_CORS_ORIGINS`, … Every key and its meaning is in [ENVIRONMENT.md](ENVIRONMENT.md). Easiest source of truth: `ssh ubuntu@$EC2_HOST cat /home/ubuntu/app/backend/.env`. The workflow pipes it over the SSH tunnel; it is never on a command line. |
-| `VERCEL_TOKEN` | frontend | <https://vercel.com/account/tokens> → **Create Token**. Scope it to the **team that owns `design-repository`**, not "Personal Account", or the CLI 403s. Set an expiry you will actually remember — the deploy starts failing with `Error: Not authorized` the day it lapses. This is the only genuinely sensitive value of the three Vercel ones. |
+| `VERCEL_TOKEN` | frontend | <https://vercel.com/account/tokens> → **Create Token**. Scope it to the **team that owns `designer-repository`**, not "Personal Account", or the CLI 403s. Set an expiry you will actually remember — the deploy starts failing with `Error: Not authorized` the day it lapses. This is the only genuinely sensitive value of the three Vercel ones. |
 | `VERCEL_ORG_ID` | frontend | `team_pcTf4Alb2DCIwq2IZcdu00dS`. Also at Vercel → Team Settings → General → **Team ID**, or in the `.vercel/project.json` that a local `vercel link` writes inside `frontend/` (`orgId`). An identifier, not a credential. Both products live in this one team, so it is the one Vercel value that is the same either way — and therefore the one that cannot warn you. |
-| `VERCEL_PROJECT_ID` | frontend | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel → Project **`designer-repository`** → Settings → General → **Project ID**. CORRECTED 2026-08-23: this row said `design-repository`, and the owner has confirmed the production target is **`designer-repository`** — measured, `designer-repository.vercel.app/login` answers 200 and `design-repository.vercel.app/login` answers 404. A root-path probe returns 200 for both and proves nothing. WHETHER THE ID BELOW IS STILL THE RIGHT ONE IS UNVERIFIED: it was written by `vercel link`, whose `.vercel/project.json` records `projectName: design-repository`. Read it off the `designer-repository` project before trusting it, or the same `.vercel/project.json` (`projectId`), which is what `vercel link` wrote in this checkout. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the field repository's project, and publishing there succeeds — it replaces another product's live site with this one's build. `deploy-backend.yml` pins `BACKEND_CORS_ORIGINS` to `design-repository.vercel.app`, so the correct target is also the only one the API will answer. |
+| `VERCEL_PROJECT_ID` | frontend | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel → Project **`designer-repository`** → Settings → General → **Project ID**. CORRECTED 2026-08-23: this row said `designer-repository`, and the owner has confirmed the production target is **`designer-repository`** — measured, `designer-repository.vercel.app/login` answers 200 and `designer-repository.vercel.app/login` answers 404. A root-path probe returns 200 for both and proves nothing. WHETHER THE ID BELOW IS STILL THE RIGHT ONE IS UNVERIFIED: it was written by `vercel link`, whose `.vercel/project.json` records `projectName: designer-repository`. Read it off the `designer-repository` project before trusting it, or the same `.vercel/project.json` (`projectId`), which is what `vercel link` wrote in this checkout. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the field repository's project, and publishing there succeeds — it replaces another product's live site with this one's build. `deploy-backend.yml` pins `BACKEND_CORS_ORIGINS` to `designer-repository.vercel.app`, so the correct target is also the only one the API will answer. |
 | `SUPABASE_DATABASE_URL` *or* `DATABASE_URL` | keep-alive cron — **dormant since 2026-08-22** | A PostgreSQL connection string for the keep-alive ping. **Do not add it.** The cron no longer runs on a schedule and the current provider wakes idle compute on connection, so the secret would buy nothing; the script also rewrites `:5432 → :6543` only for a `.pooler.supabase.com` host, so on anything else it pings whatever the URL names. Unrelated to deploys either way. |
 
 > `.vercel/` is gitignored and is created by `vercel link`, so it is absent from a fresh clone —
@@ -222,8 +222,8 @@ one it closes. Promote it the next time somebody has the token in hand.
 > either here would describe a project that does not exist. `deploy-backend.yml` pins the same host
 > in `BACKEND_CORS_ORIGINS` for the same reason, with the full argument next to it.~~
 > **STRUCK 2026-08-22 — the argument was sound and the premise was false.** This repository's
-> project is `design-repository` (`frontend/.vercel/project.json`), and `deploy-backend.yml` pins
-> `BACKEND_CORS_ORIGINS` to `https://designer-repository.vercel.app,https://design-repository.vercel.app,http://localhost:3000`
+> project is `designer-repository` (`frontend/.vercel/project.json`), and `deploy-backend.yml` pins
+> `BACKEND_CORS_ORIGINS` to `https://designer-repository.vercel.app,https://designer-repository.vercel.app,http://localhost:3000`
 > — it does **not** name `field-repository` anywhere. So the paragraph was defending a
 > not-rebranded name that was never this project's name in the first place, and it is what kept the
 > wrong project id in the table above and the wrong hostname in three checks in
@@ -482,7 +482,7 @@ unattended without `--yes`.
 
 1. **Revoke it** — Vercel → Account Settings → Tokens → the token used → Delete. Do this first;
    everything else can wait, this cannot.
-2. **Issue a replacement**, scoped to the team that owns `design-repository`, and set it as
+2. **Issue a replacement**, scoped to the team that owns `designer-repository`, and set it as
    `VERCEL_TOKEN` in **this** repository's Actions secrets. Confirm `VERCEL_PROJECT_ID` is
    `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` while you are there (§2).
 3. **Audit the other repository.** `cxacraftecosystem-ui/documentation-portal` → Settings → Secrets

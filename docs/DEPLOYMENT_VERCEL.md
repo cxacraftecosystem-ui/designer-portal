@@ -62,7 +62,7 @@ add the first one, because the wrong type here fails silently and takes the whol
 
 Those first three are what the project actually holds today; `NEXT_PUBLIC_APP_URL` is not set there
 at all, which is correct and explained below. The live production alias is
-<https://design-repository.vercel.app>.
+<https://designer-repository.vercel.app>.
 
 ### 2.1 The trailing `/api` trap — read this before anything else
 
@@ -174,9 +174,9 @@ One command settles it. Fetch the live JavaScript and grep it for the two values
 there; both are public by definition, so nothing here leaks:
 
 ```bash
-curl -s https://design-repository.vercel.app/login \
+curl -s https://designer-repository.vercel.app/login \
   | grep -o '/_next/static/chunks/[^"]*\.js' | sort -u \
-  | while read -r c; do curl -s "https://design-repository.vercel.app$c"; done \
+  | while read -r c; do curl -s "https://designer-repository.vercel.app$c"; done \
   | grep -o -e 'https://[a-z0-9]*\.cloudfront\.net' \
             -e '[0-9]\{8,\}-[a-z0-9]*\.apps\.googleusercontent\.com' \
   | sort -u
