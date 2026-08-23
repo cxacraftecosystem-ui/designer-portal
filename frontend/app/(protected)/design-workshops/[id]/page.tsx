@@ -419,6 +419,20 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
               <QrCode className="h-4 w-4" aria-hidden />
               Cards &amp; tags
             </Link>
+            {/* THE PAGE EXISTED FOR A DAY WITH NOTHING POINTING AT IT. It shipped with its own route
+                and a nav entry for the POOL round (`/design-review`), but the per-workshop half was
+                reachable only by typing the URL with a workshop id in it — the wave that built it
+                could not add this link because this file belonged to another unit, and the gap went
+                straight past a green deploy. Added 2026-08-23, after the owner went looking for it.
+
+                Belongs to the WORKSHOP rather than to a stage even though sketches live in stage 11
+                and prototypes in stage 13: the review round spans both, and ranking one against the
+                other is the whole point. Hanging it off either stage would ask a designer to pick a
+                stage before they could compare across them. */}
+            <Link href={`/design-workshops/${id}/sketches-and-prototypes`} className="field-button-secondary">
+              <DraftingCompass className="h-4 w-4" aria-hidden />
+              Sketches &amp; prototypes
+            </Link>
             {/* Belongs to the WORKSHOP, not to any one stage: a camera dump spans the whole
                 fortnight and the whole point of the intake is that it decides which stage each
                 photograph goes to. Hanging it off a stage would ask the designer for the answer the
