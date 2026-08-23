@@ -129,14 +129,28 @@ jobs:
             exit 0
           fi
 
-          # ── Not configured yet is a skip, not a failure ──────────────────────────────
-          # Until VERCEL_TOKEN exists the Vercel CLI cannot authenticate, and letting the
-          # deploy job start anyway paints the whole pipeline red for a setup step nobody
-          # has done yet — which trains people to ignore a red X on the release pipeline.
-          # Skip with the instructions instead, so the backend stage's green tick still
-          # means what it says and stage 3 still runs.
+          # ── NOT CONFIGURED IS A FAILURE. IT USED TO BE A SILENT SKIP. ────────────────
+          # The reasoning it replaces was sound when it was written: a red X for a setup
+          # step nobody had done yet is permanent noise, and permanent noise trains people
+          # to ignore a release pipeline. What changed is the cost on the other side.
+          #
+          # ON 2026-08-23 THIS SKIP TOLD A LIE THAT COST A DAY. Run 32632590460 published
+          # NOTHING and the workflow concluded `success`, because the gate exited 0 and the
+          # deploy job was skipped. Read from the runs list — "Deploy frontend to Vercel:
+          # success" — that is indistinguishable from a real deploy. The owner went looking
+          # for their UI changes on the live site and found the old build; nobody had
+          # noticed that CI has never once published this frontend.
+          #
+          # A step summary cannot fix that, and this one was already there and already
+          # correct: nobody reads a summary on a green run. The conclusion is the only part
+          # of a run that gets read at a glance, so the conclusion has to be honest.
+          #
+          # This path is not reachable from a fork or a PR — the triggers are
+          # `workflow_run` on the backend deploy (main only) and `workflow_dispatch` — so a
+          # missing token here is never an outside contributor, it is always this
+          # repository being misconfigured on its own release path.
           if [ "${HAVE_VERCEL_TOKEN}" != "true" ]; then
-            echo "VERCEL_TOKEN is not set — skipping the frontend publish."
+            echo "::error title=Frontend publish is not configured::VERCEL_TOKEN is not set, so nothing was published. This job now FAILS rather than reporting success over a skipped deploy."
             {
               echo "### Frontend deploy skipped — not configured"
               echo ""
@@ -152,9 +166,13 @@ jobs:
               echo ""
               echo "Also turn Vercel's own Git auto-deploy for \`main\` off first, or it"
               echo "will publish ahead of the backend — see \`docs/CI.md\`."
+              echo ""
+              echo "**This job fails on purpose.** It used to exit 0 here, which made the"
+              echo "run conclude \`success\` while publishing nothing — see the comment above"
+              echo "this branch in the workflow for what that cost on 2026-08-23."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            exit 1
           fi
 
           # Default to deploying. A missing or unreadable summary must never silently skip

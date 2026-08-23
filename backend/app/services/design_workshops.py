@@ -442,9 +442,13 @@ def _process_media_note(process: Any) -> str | None:
     entitled to fetch, or quietly bypass the gate that decides. So the carry is the FACT that the
     footage exists, which is what a reader of the printed process needs in order to ask for it.
 
-    Counted from the relation rather than from a media query: ``REFERENCE_MODELS["Process"]``
-    includes ``steps``, and each step's own media are counted through it, so this costs no extra
-    read beyond the include the sub-steps already pay for.
+    DORMANT SINCE 2026-08-23, AND IT RETURNS ``None`` FOR EVERY PROCESS. It counts off a ``media``
+    relation, and ``Process``/``ProcessStep`` are the two reference models that have none —
+    ``MediaFile`` reaches them only through ``linkedRecordType``/``linkedRecordId``. The include that
+    used to claim otherwise made Prisma refuse the whole picker query; see the comment above
+    ``REFERENCE_MODELS["Process"]``'s ``include`` for what it broke and what restoring the note
+    costs. The ``getattr(..., None) or []`` reads below are what make that degradation safe rather
+    than another exception, so keep them even though the attribute cannot currently exist.
     """
     own = len(getattr(process, "media", None) or [])
     steps = getattr(process, "steps", None) or []
@@ -1618,10 +1622,29 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # Prisma issues the relation as one extra `WHERE processId IN (…)` for the whole page, not
         # one per row, and the picker is bounded at `REFERENCE_LIMIT_MAX`, so this is a second
         # indexed read (`@@index([processId])`) and not an N+1.
-        # `media` on both sides so `_process_media_note` can count what is attached without a
-        # second query — the process's own pre-process clips, and each step's captures.
-        include={"product": True, "media": True,
-                 "steps": {"include": {"media": True}}},
+        # NO `media` INCLUDE ON EITHER SIDE, AND THE COMMENT AT THE TOP OF THIS BLOCK IS WHY.
+        # It says `MediaFile` has no `processId` — correct — and then this include asked Prisma for
+        # the very relation that foreign key would have created. There is none on `Process` and none
+        # on `ProcessStep`, so Prisma refused the whole query before reading a row:
+        #     UnknownRelationalFieldError: Field "media" either does not exist or is not a
+        #     relational field on the Process model
+        # That 500'd BOTH process pickers — `traditionalProcess.processRef` and
+        # `processStep.processRef`, i.e. the whole of stage 5's process linkage — for every designer
+        # on every save, and two tests had been failing on it. The comment was right and the include
+        # was wrong. Fixed 2026-08-23.
+        #
+        # `steps` still travels, as a plain relation include: `_step_lines` reads only `sortOrder`,
+        # `name`, `stepType` and `notes`, every one a scalar column, so nesting a media include
+        # under it never bought anything.
+        #
+        # `_process_media_note` consequently returns None until `MediaFile` gains a `processId`, and
+        # that is NOT a silent loss of a working feature — the note could never be computed, because
+        # the query meant to feed it could not run. The price of restoring it is set out at the top
+        # of this block. It cannot be done with a media QUERY instead: see the "TRIED AND REFUSED"
+        # section of `_reference_media_note`, where `entry_provenance.canonical_divergence` calls
+        # `spec.data(rec, photo)` with exactly two arguments, so a key that path cannot recompute is
+        # reported to an admin as `diverged` on every audit, for ever.
+        include={"product": True, "steps": True},
         order={"name": "asc"},
         search_fields=("name",),
         workshop_where=lambda wid: {"workshopId": wid},

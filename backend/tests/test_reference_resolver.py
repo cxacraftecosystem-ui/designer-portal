@@ -32,7 +32,7 @@ from app.core.security import create_access_token, hash_password
 
 # The service itself, for the database-free section at the foot of this file: those tests call
 # `reference_options` directly with `dw.db` swapped out, rather than going through the HTTP client.
-from app.services import design_workshops as dw
+from app.services import design_workshops as dw, rich_text
 
 _URL = os.environ.get("DATABASE_URL", "")
 _LOCAL = any(host in _URL for host in ("localhost", "127.0.0.1"))
@@ -597,8 +597,20 @@ async def test_choosing_a_product_fills_the_baseline_row_in(client, linked, worl
 
     assert row["name"] == saree.productName
     assert row["price"] == "4500.00", "money is stored two-place, never as a float"
-    assert row["material"] == "Cotton yarn"
-    assert row["use"] == "Daily wear"
+    # `material` READS BACK AS A RICH-TEXT DOCUMENT, NOT A STRING, and this assertion said otherwise
+    # until 2026-08-23. `existingProduct.material` is declared RICH in `stage_definitions.py`, so
+    # hydration stores `{"blocks": [{"kind": "PARAGRAPH", "spans": [{"text": "Cotton yarn"}]}]}`.
+    # Asserted through `to_plain` rather than against that literal, so the test stays about what a
+    # reader SEES and does not have to be rewritten the next time the document shape gains a key.
+    # BOTH OF THESE READ BACK AS RICH-TEXT DOCUMENTS, NOT STRINGS, and both assertions compared
+    # against a bare string until 2026-08-23. `existingProduct.material` and `existingProduct.use`
+    # are declared RICH in `stage_definitions.py` (so is `mainToolsUsed`, if a later assertion is
+    # ever added for it), so hydration stores
+    # `{"blocks": [{"kind": "PARAGRAPH", "spans": [{"text": "Daily wear"}]}]}`.
+    # Asserted through `to_plain` rather than against that literal, so these stay about what a
+    # reader SEES and do not need rewriting the next time the document shape gains a key.
+    assert rich_text.to_plain(row["material"]) == "Cotton yarn"
+    assert rich_text.to_plain(row["use"]) == "Daily wear"
     assert row["artisanName"] == world["latha"].name
 
 

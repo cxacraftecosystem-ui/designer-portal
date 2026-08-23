@@ -2430,7 +2430,15 @@ def test_no_reference_model_joins_a_relation_none_of_its_lambdas_reads():
         "Process": {
             "product": "processStep.documentedFor / traditionalProcess.documentedFor",
             "steps": "traditionalProcess.documentedSteps, via _step_lines",
-            "media": "traditionalProcess.recordMediaNote, via _process_media_note",
+            # NO `media` ROW, AND ITS ABSENCE IS THE POINT. `_process_media_note` is still called by
+            # the data lambda — dropping the key would break the promise
+            # `test_a_field_that_promises_to_fill_itself_in_actually_does` checks — but it now returns
+            # None for every process, because `MediaFile` has no `processId` and so `Process` has no
+            # `media` relation to join. The include that claimed otherwise made Prisma refuse the
+            # whole query and 500'd both process pickers until 2026-08-23. THIS TEST IS WHAT CAUGHT
+            # THE HALF-FIX: removing the include without removing this row left a reader named for a
+            # join that no longer happens. Restore both together, or neither — the price of the
+            # `processId` foreign key is written out above that include.
         },
         "Craft": {
             "media": "workshopSetup.craftMediaNote",
@@ -2901,3 +2909,64 @@ def test_the_hydration_table_grew_and_no_pair_was_lost():
         "on 2026-08-22, and a drop means a mapping was removed rather than a source column "
         "disappearing"
     )
+
+def test_no_reference_model_asks_prisma_for_a_media_relation_its_delegate_does_not_have():
+    """A ``media`` include is only legal on a delegate whose model really declares the relation.
+
+    THIS IS THE CLASS BEHIND A LIVE 500, and the instance is worth stating because the comment that
+    should have prevented it was already there and already correct. ``REFERENCE_MODELS["Process"]``
+    opened with "``MediaFile`` has no ``processId``" — true — and then asked for
+    ``include={"media": True}`` on both ``Process`` and ``ProcessStep``. Prisma refuses that query
+    outright (``UnknownRelationalFieldError``), so BOTH process pickers 500'd for every designer on
+    every save of stage 5 until 2026-08-23.
+
+    ``MediaFile`` reaches a record two different ways and only one of them is a relation: typed
+    foreign keys (``artisanId``, ``craftId``, ``workshopId``, ``productId``, ``toolId``) which give
+    the model a ``media MediaFile[]`` back-relation, and the polymorphic
+    ``linkedRecordType``/``linkedRecordId`` pair, which gives it nothing Prisma can include. A
+    process's footage exists — ``ProcessForm`` writes it as ``linkedRecordType: "process"`` and
+    ``"processstep"`` — it simply cannot be reached by an include.
+
+    So this reads the schema rather than a hand-kept list: every delegate that declares
+    ``media MediaFile[]`` may ask for it, and nothing else may. Adding a sixth model with a media
+    include and no back-relation fails here instead of in production.
+    """
+    schema = SCHEMA.read_text(encoding="utf-8")
+
+    # Models whose Prisma block declares the back-relation, keyed the way `delegate` spells them.
+    with_relation = {
+        name.lower()
+        for name, body in re.findall(r"^model\s+(\w+)\s*\{(.*?)^\}", schema, re.DOTALL | re.MULTILINE)
+        if re.search(r"^\s+media\s+MediaFile\[\]", body, re.MULTILINE)
+    }
+    assert "artisan" in with_relation, (
+        "sanity check failed: Artisan should declare `media MediaFile[]`, so either the regex or "
+        f"the schema changed shape. Parsed: {sorted(with_relation)}"
+    )
+
+    offenders = []
+    for model_name, spec in dw.REFERENCE_MODELS.items():
+        include = getattr(spec, "include", None) or {}
+        if not _asks_for_media(include):
+            continue
+        if spec.delegate.lower() not in with_relation:
+            offenders.append(f"{model_name} (delegate={spec.delegate!r})")
+
+    assert not offenders, (
+        "these reference models ask Prisma for a `media` relation their delegate does not declare, "
+        f"which makes the whole picker query raise UnknownRelationalFieldError: {offenders}. Either "
+        "give the model a real foreign key on MediaFile (a migration plus a backfill from the "
+        "existing linkedRecordType tags — the cost is written out above REFERENCE_MODELS['Process']"
+        "'s include) or drop the include. It cannot be replaced by a media QUERY: see the TRIED AND "
+        "REFUSED section of _reference_media_note."
+    )
+
+
+def _asks_for_media(include: dict) -> bool:
+    """True when ``include`` asks for ``media`` at the top level or nested under a relation."""
+    for key, value in include.items():
+        if key == "media" and value:
+            return True
+        if isinstance(value, dict) and _asks_for_media(value.get("include") or {}):
+            return True
+    return False
