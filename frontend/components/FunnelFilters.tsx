@@ -233,13 +233,22 @@ export function FunnelFilters({
     {/* advanceOnSelect={false} on all three: these NARROW THE LIST BELOW rather than fill in a form
         field, so the auto-advance the Dropdown does by default is wrong here — it threw focus onto the
         next filter (workshop -> craft), which then swallowed the arrow keys of anyone still adjusting
-        the filter they had just changed. See the prop's own documentation in ui/Dropdown. */}
+        the filter they had just changed. See the prop's own documentation in ui/Dropdown.
+
+        `searchable` on all three for the other reason in that documentation: every one of these
+        lists is assembled out of records — the workshops filed, the crafts recorded, the artisans
+        interviewed — so the option count is a fact about this deployment's corpus and not about the
+        control. Left to the count these boxes appear and disappear as the repository fills, and the
+        three filters would not even agree with each other: nine crafts is a filter box, seven is
+        not. They are also the controls this screen's caps are reported against just below, which is
+        the definition of a list you hunt through rather than read. */}
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       <Dropdown
         ariaLabel="Filter by workshop"
         value={value.workshopId}
         onChange={selectWorkshop}
         advanceOnSelect={false}
+        searchable
         options={[
           { value: "", label: "All workshops" },
           ...workshops.map((workshop) => ({ value: workshop.id, label: workshop.title }))
@@ -250,6 +259,7 @@ export function FunnelFilters({
         value={value.craftId}
         onChange={selectCraft}
         advanceOnSelect={false}
+        searchable
         options={[{ value: "", label: "All crafts" }, ...craftOptions.map((craft) => ({ value: craft.id, label: craft.name }))]}
       />
       {showArtisan ? (
@@ -258,6 +268,7 @@ export function FunnelFilters({
           value={value.artisanId}
           onChange={selectArtisan}
           advanceOnSelect={false}
+          searchable
           options={[
             { value: "", label: "All artisans" },
             ...artisanOptions.map((artisan) => ({ value: artisan.id, label: `${artisan.name} · ${artisan.place}` }))

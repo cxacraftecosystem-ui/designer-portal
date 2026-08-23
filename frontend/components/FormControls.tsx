@@ -1,9 +1,36 @@
 "use client";
 
-import { Children, isValidElement, useMemo, useState, type ReactNode, type SelectHTMLAttributes } from "react";
+import { Children, isValidElement, useId, useMemo, useState, type ReactNode, type SelectHTMLAttributes } from "react";
 
 import { Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
+import { FieldLabelProvider } from "@/components/ui/fieldLabel";
 
+/**
+ * A labelled slot for an INPUT — a real `<label>`, which is what an input deserves.
+ *
+ * ── AND WHAT IT PUBLISHES FOR THE CONTROLS A `<label>` CANNOT NAME ───────────────────────────────
+ *
+ * A `<label>` names an input, a textarea and a select. It does NOT name a `<button>`: HTML-AAM
+ * computes a button's accessible name from its own contents and the label association plays no part
+ * in that algorithm. Every themed dropdown in this app is a button, so `Field label="Craft"` around
+ * one announced "Bamboo, combobox" — the answer, twice, and the question never — and a reader who
+ * tabbed back to check what they had entered was told the value with no idea which field it was in.
+ * Live at forty-four call sites across twenty files, counted rather than guessed.
+ *
+ * `FieldBlock` (components/tasks/TaskPrimitives) is the right wrapper for those: a `<div>` with a
+ * `role="group"`, which is how a composite widget gets named. But converting forty-four sites is
+ * forty-four chances to miss one and a rule to remember on every dropdown added afterwards — the
+ * failure mode of a register written down twice. So this component also PUBLISHES the id of the
+ * `<span>` it is already rendering, and `SearchableSelect` reads it out of context and composes its
+ * own name from it. A `Field`-wrapped dropdown is named correctly with no edit at the call site, and
+ * a new one is named correctly without anybody being told. See `ui/fieldLabel.tsx`.
+ *
+ * That does NOT make `Field` the right wrapper for a widget — `FieldBlock` still is, and a
+ * multi-select in particular wants it — it makes the sites that already use it announce their
+ * question. The stray-click half of the old trap is separately dead: `AnchoredPopover` portals the
+ * panel to `<body>`, so an option row is not a DOM descendant of this label and clicking it cannot
+ * be forwarded to the trigger.
+ */
 export function Field({
   label,
   children,
@@ -13,17 +40,18 @@ export function Field({
   children: React.ReactNode;
   required?: boolean;
 }) {
+  const labelId = useId();
   return (
     // `min-w-0`: a grid item will not shrink below its content's intrinsic width unless told to, so
     // without this any wide child — a dropdown holding a long workshop name, a long placeholder, an
     // unbroken URL — widens the column and spills over the field beside it. Applied here rather
     // than per control so the whole form inherits it.
     <label className="grid min-w-0 gap-1">
-      <span className="field-label">
+      <span id={labelId} className="field-label">
         {label}
         {required ? " *" : ""}
       </span>
-      {children}
+      <FieldLabelProvider value={labelId}>{children}</FieldLabelProvider>
     </label>
   );
 }
@@ -150,6 +178,27 @@ type SelectProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "
   defaultValue?: SelectHTMLAttributes<HTMLSelectElement>["value"];
   onChange?: React.ChangeEventHandler<HTMLSelectElement>;
   children?: ReactNode;
+  /**
+   * ── THE FOUR PROPS BELOW EXIST BECAUSE THIS COMPONENT COULD NOT REACH THEM ──
+   * `Select` renders a `Dropdown`, but it forwarded only six things down, so the ~28 call sites that
+   * use it — every status, craft, artisan and state picker in the record forms — had no way to say
+   * any of this. Each omission had a consequence, and none of them were visible from the call site:
+   *
+   * - `searchable`: a craft or artisan list assembled from records could not be told to search
+   *   regardless of how few rows this deployment holds, which is precisely the case the rule on
+   *   `SearchableSelectProps.searchable` exists for. `ProcessForm` bypassed `Select` and called
+   *   `Dropdown` directly rather than accept that, and said so in a comment.
+   * - `advanceOnSelect`: a `Select` used to FILTER a list therefore always threw focus at the next
+   *   field, which §17 of the frontend guide names as a trap in so many words.
+   * - `emptyLabel`: "No options" was the only sentence available for "nothing to choose from",
+   *   however much better the caller could have put it.
+   * - `placeholder`: it was accepted by the type and spread onto the mirror `<input>` — which is
+   *   `aria-hidden`, zero-sized and often not rendered at all — so it reached nothing. That is the
+   *   same black hole the note below describes for `aria-describedby`.
+   */
+  searchable?: boolean;
+  advanceOnSelect?: boolean;
+  emptyLabel?: string;
 };
 
 /**
@@ -185,6 +234,10 @@ export function Select({
   required,
   className,
   children,
+  placeholder,
+  emptyLabel,
+  searchable,
+  advanceOnSelect,
   "aria-label": ariaLabel,
   "aria-describedby": ariaDescribedBy,
   ...rest
@@ -209,6 +262,13 @@ export function Select({
         value={current}
         onChange={handleChange}
         options={options}
+        // `placeholder` is passed through only when the caller set one: `Dropdown`'s own default is
+        // the word "Select", and spelling that out here would turn every unset placeholder into an
+        // explicit one and take the default away from the primitive that owns it.
+        {...(placeholder === undefined ? {} : { placeholder })}
+        emptyLabel={emptyLabel}
+        searchable={searchable}
+        {...(advanceOnSelect === undefined ? {} : { advanceOnSelect })}
         disabled={disabled}
         className={className}
         ariaLabel={typeof ariaLabel === "string" ? ariaLabel : undefined}

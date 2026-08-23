@@ -660,8 +660,14 @@ export function ToolForm({
             <TitleCasedInput name="englishName" defaultValue={initial?.englishName ?? ""} />
           </Field>
           <Field label="Linked craft (fills craft name)">
+            {/* `searchable` on both link pickers: crafts and artisans are records, both lists are
+                capped (notices below), and the label is the only thing that tells two artisans of
+                one craft apart. Status / product type / market demand / maker / tradition on this
+                same form stay plain — they are fixed vocabularies of four to seven, where a filter
+                box costs a tab stop and saves nothing. */}
             <Select
               name="craftId"
+              searchable
               value={craftId}
               onChange={(event) => {
                 const next = event.target.value;
@@ -695,6 +701,7 @@ export function ToolForm({
           <Field label="Linked artisan (fills artisan + place)">
             <Select
               name="artisanId"
+              searchable
               value={artisanId}
               onChange={(event) => {
                 const next = event.target.value;

@@ -241,7 +241,11 @@ export default function MyActivityPage() {
       {user && visibleOthers.length > 0 ? (
         <div className="panel mb-4 max-w-md p-4">
           <Field label="Whose activity?">
-            <Select value={activeUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
+            {/* `searchable`: the options are accounts — records — so the count says how many
+                colleagues rank below the reader and nothing about this control. An admin sees the
+                whole roster here and a professor sees three, and the same control should behave the
+                same way for both. */}
+            <Select value={activeUserId} searchable onChange={(event) => setSelectedUserId(event.target.value)}>
               <option value={user.id}>Me — {user.name}</option>
               {visibleOthers.map((entry) => (
                 <option key={entry.id} value={entry.id}>

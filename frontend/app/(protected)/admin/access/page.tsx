@@ -767,6 +767,11 @@ function QueueRow({
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {/* Native, and no filter box, for the same reasons as the invite form's picker above: the
+            grantable tiers are the role ladder — at most seven rows, a fixed vocabulary — and this
+            control is rendered once for every entry in the queue, which is where a portalled panel
+            per row stops being free. `aria-label` carries the name because there is no visible label
+            beside it. */}
         <select
           value={role}
           onChange={(event) => setRole(event.target.value as UserRole | "")}

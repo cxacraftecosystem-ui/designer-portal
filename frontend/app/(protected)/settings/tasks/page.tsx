@@ -282,12 +282,17 @@ export default function TaskAssignmentBoardPage() {
           </div>
           <div className="pl-9">
             <FieldBlock label="Scope everything below to">
-              {/* Filters the whole page in place, so it must not jump focus into the builder. */}
+              {/* Filters the whole page in place, so it must not jump focus into the builder.
+                  `searchable` because the options are workshops, i.e. records: the list is capped at
+                  200 just below this comment, which is not a length anybody scrolls to find one
+                  title, and leaving the filter box to the option count would withdraw it on a
+                  deployment that has filed seven workshops so far. */}
               <Dropdown
                 value={workshopId}
                 onChange={setWorkshopId}
                 options={workshopOptions}
                 advanceOnSelect={false}
+                searchable
                 ariaLabel="Workshop scope"
                 placeholder={optionsLoading ? "Loading workshops..." : "All workshops"}
               />

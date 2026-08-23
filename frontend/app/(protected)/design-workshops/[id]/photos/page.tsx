@@ -44,6 +44,7 @@ import Link from "next/link";
 import { Images } from "lucide-react";
 
 import { PageHeader } from "@/components/PageHeader";
+import { Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { readCaptureStamp } from "@/lib/media";
 import {
   DEFAULT_TIMEZONE,
@@ -89,6 +90,42 @@ type Destination = {
   label: string;
   multiple: boolean;
 };
+
+/** The two group headings, named once so the picker and this file's prose cannot drift apart. */
+const PROPOSED_GROUP = "Proposed from the capture date";
+const EVERYWHERE_GROUP = "Every other place a photograph can go";
+
+/**
+ * One row's destination list: leave-out first, then the proposals, then everywhere else.
+ *
+ * THE PROPOSED DESTINATIONS ARE EXCLUDED FROM THE SECOND GROUP RATHER THAN REPEATED IN IT. Two rows
+ * carrying the same value is a control that cannot say which one is selected — the old `<select>`
+ * matched the first, so the highlight could sit in one group while the value belonged to the other,
+ * and `selectOption` became ambiguous for anything driving this page. The themed picker is no better
+ * off: `key` is the React key as well as the value, and a duplicate would collide.
+ *
+ * "Leave out" carries NO group, which `groupRows` draws first and ungrouped. It belongs to neither
+ * heading — it is the row that declines both — and filing it under "Proposed" would make the
+ * commonest answer look like a proposal the intake made.
+ */
+function destinationOptions(destinations: Destination[], proposed: Destination[]): DropdownOption[] {
+  const proposedKeys = new Set(proposed.map((destination) => destination.key));
+  return [
+    { value: "", label: "Leave out — I will attach this one myself" },
+    ...proposed.map((destination) => ({
+      value: destination.key,
+      label: destination.label,
+      group: PROPOSED_GROUP
+    })),
+    ...destinations
+      .filter((destination) => !proposedKeys.has(destination.key))
+      .map((destination) => ({
+        value: destination.key,
+        label: destination.label,
+        group: EVERYWHERE_GROUP
+      }))
+  ];
+}
 
 /** One line of the table: the file, what the intake made of it, and where it is currently headed. */
 type IntakeLine = {
@@ -529,6 +566,15 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
               </thead>
               <tbody>
                 {lines.map((line, index) => {
+                  /**
+                   * A STABLE HANDLE ON ONE ROW'S PICKER, on the wrapper rather than the control.
+                   *
+                   * `Dropdown` takes no `id` — deliberately, and the frontend guide says why: a
+                   * control whose `<label htmlFor>` and `aria-describedby` are bound by id cannot
+                   * become a themed dropdown without losing both. So the id goes on the cell's
+                   * wrapper, which is what `e2e/photo-intake-confirm.spec.ts` addresses to read one
+                   * row's answer out of a table of two hundred identical ones.
+                   */
                   const selectId = `photo-intake-destination-${index}`;
                   const chosenDestination = line.choice ? destinationsByKey.get(line.choice) : null;
                   /**
@@ -566,51 +612,49 @@ export default function PhotoIntakePage({ params }: { params: Promise<{ id: stri
                         {line.row.stamp ? formatStamp(line.row.stamp) : <span className="text-ink-500">No date</span>}
                       </td>
                       <td className="min-w-0 px-4 py-3">
-                        {/* A plain <select> rather than the app's themed dropdown: this page holds no
-                            FormData, has no dirty tracking and needs no mirror input, and two hundred
-                            portalled popovers on one page is a great deal of machinery for a control
-                            whose whole job is to pick one of a long list. */}
-                        <label htmlFor={selectId} className="sr-only">
-                          Where {line.file.name} is attached
-                        </label>
-                        <select
-                          id={selectId}
-                          className="field-input"
-                          value={line.choice}
-                          disabled={confirming}
-                          onChange={(event) =>
-                            setLines((current) =>
-                              current.map((item, position) =>
-                                position === index ? { ...item, choice: event.target.value } : item
+                        {/*
+                          ── THE THEMED PICKER, WITH GROUPS, AND WHY THAT TOOK A CHANGE TO THE
+                             PRIMITIVE RATHER THAN A PROP ─────────────────────────────────────────
+
+                          This was the one long list in the application with no filter box, and the
+                          comment that used to sit here said so honestly and named what blocked the
+                          swap: `SelectOption` had no group field, and the grouping is not decoration
+                          — "Proposed from the capture date" against every other place in the
+                          workshop IS the argument this control makes. Flattening that into every
+                          label repeats one long prefix on every row of a list that is already long.
+
+                          `SelectOption.group` now exists (see `ui/selectFilter.ts`), so the panel
+                          draws the two runs under their own headings, each a `role="group"` whose
+                          label is read before the options inside it. The second worry in that
+                          comment — one panel per file on a page that accepts hundreds — turns out to
+                          be the wrong way round: `AnchoredPopover` mounts nothing until the panel is
+                          opened, so a row costs one `<button>`, whereas the native `<select>` it
+                          replaces materialised every one of its several hundred `<option>` elements
+                          for every row of the table. This is fewer DOM nodes, not more.
+
+                          `advanceOnSelect={false}`: picking a destination adjusts THIS row, and this
+                          is not a form being walked top to bottom. There is no `<form>` here either,
+                          so `focusNextField`'s `closest("form")` would be null and the walker would
+                          fall back to the whole document — throwing focus at whatever came next in
+                          the page. The trap is named in §17 of the frontend guide.
+                        */}
+                        <div id={selectId}>
+                          <Dropdown
+                            value={line.choice}
+                            onChange={(next) =>
+                              setLines((current) =>
+                                current.map((item, position) =>
+                                  position === index ? { ...item, choice: next } : item
+                                )
                               )
-                            )
-                          }
-                        >
-                          <option value="">Leave out — I will attach this one myself</option>
-                          {proposed.length ? (
-                            <optgroup label="Proposed from the capture date">
-                              {proposed.map((destination) => (
-                                <option key={destination.key} value={destination.key}>
-                                  {destination.label}
-                                </option>
-                              ))}
-                            </optgroup>
-                          ) : null}
-                          {/* The proposed destinations are EXCLUDED from this group rather than
-                              repeated in it. Two <option>s carrying the same value is a control that
-                              cannot say which one is selected — the browser matches the first, so the
-                              highlight can sit in the wrong group while the value is right, and
-                              `selectOption` becomes ambiguous for anything driving the page. */}
-                          <optgroup label="Every other place a photograph can go">
-                            {destinations
-                              .filter((destination) => !proposed.some((item) => item.key === destination.key))
-                              .map((destination) => (
-                                <option key={destination.key} value={destination.key}>
-                                  {destination.label}
-                                </option>
-                              ))}
-                          </optgroup>
-                        </select>
+                            }
+                            options={destinationOptions(destinations, proposed)}
+                            ariaLabel={`Where ${line.file.name} is attached`}
+                            disabled={confirming}
+                            searchable
+                            advanceOnSelect={false}
+                          />
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-ink-muted">
                         {matching ? (

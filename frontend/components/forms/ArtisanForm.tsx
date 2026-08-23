@@ -930,8 +930,13 @@ export function ArtisanForm({
             <TextInput name="localName" defaultValue={initial?.localName ?? ""} />
           </Field>
           <Field label="Craft" required>
+            {/* `searchable`: crafts are records and this list is capped (see the notice below it).
+                Nine crafts today is one either side of the option-count threshold, so without this
+                the same required field would have a filter box on one deployment and not on the
+                next — see `SearchableSelectProps.searchable` for the rule. */}
             <Select
               name="craftId"
+              searchable
               value={craftId}
               onChange={(event) => {
                 setCraftId(event.target.value);
@@ -958,6 +963,12 @@ export function ArtisanForm({
             <TitleCasedInput name="place" required defaultValue={initial?.place ?? ""} />
           </Field>
           <Field label="Gender">
+            {/* NO `searchable` here, on Status, or on the Pehchan Yes/No — deliberately, and it is
+                the same decision every fixed vocabulary in this app makes. Four options are read at
+                a glance, a filter box over them is one more tab stop and a "No matches" state, and
+                the plain list keeps the native type-ahead the e2e suite pins: focus Gender, press
+                "f", get Female. `SEARCH_THRESHOLD` reaches this on its own; the comment is here so
+                the next reader sees the asymmetry with Craft above was chosen. */}
             <Select name="gender" defaultValue={initial?.gender?.trim() ? initial.gender : "Male"} onChange={markDirty}>
               {genderOptions.map((option) => (
                 <option key={option}>{option}</option>

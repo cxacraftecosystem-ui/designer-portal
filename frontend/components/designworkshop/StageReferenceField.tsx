@@ -1642,7 +1642,13 @@ export function StageReferenceSelect({
                       <button
                         type="button"
                         className={`flex w-full items-start gap-2 px-3 py-2 text-left transition ${
-                          index === safeHighlight ? "bg-purple-50" : "hover:bg-surface-50"
+                          /* purple-50 is near-white in BOTH themes — the brand ramp does not
+                             invert — so the highlight needs its dark counterpart or it paints a
+                             white bar across a dark menu. `purple-950` is the rung
+                             `ui/SearchableSelect` and `ui/calendar` use for this exact job. */
+                          index === safeHighlight
+                            ? "bg-purple-50 dark:bg-purple-950"
+                            : "hover:bg-surface-50"
                         }`}
                         onMouseEnter={() => setHighlight(index)}
                         onClick={() => choose(option)}
@@ -2064,9 +2070,33 @@ export function StageReferenceMultiPicker({
   triggerLabel: string;
 }) {
   const baseId = useId();
+  const listboxId = `${baseId}-listbox`;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<DwReferenceOption[]>([]);
+  /**
+   * THE KEYBOARD THIS PANEL DID NOT HAVE.
+   *
+   * Its single-select sibling {@link StageReferenceSelect} has had all of this from the start — a
+   * highlight, arrow keys, Enter to take the highlighted row, `role="combobox"` on the box with
+   * `aria-controls` and `aria-activedescendant` pointing at the row. This one had a search input
+   * carrying `autoFocus`, `aria-label`, `value` and `onChange` and nothing else, and a
+   * `<ul role="listbox" aria-multiselectable>` with no combobox owning it.
+   *
+   * It was not unusable — every row is a real `<button>`, so Tab reaches them and Enter or Space
+   * activates one — but Tab is the WRONG instrument here and that is the point: this is the ROSTER,
+   * the control a designer opens to tick thirty participants, so walking to the thirtieth row means
+   * thirty tab stops, and the reader is told nothing about where they are in the list because no
+   * combobox is announcing a highlight. A screen-reader user got a listbox with no owner, which is
+   * a set of options belonging to nothing.
+   *
+   * So: arrows move a highlight, Enter ticks the highlighted row and STAYS OPEN (ticking one is
+   * rarely the end of a roster), and the box says what it is. Exactly the shared primitive's
+   * contract in `ui/SearchableSelect`, and deliberately not that primitive — this panel searches the
+   * SERVER on every keystroke and offers an inline create at its foot, neither of which
+   * `SearchableMultiSelect` can express.
+   */
+  const [highlight, setHighlight] = useState(0);
   /** Open while the designer is creating a record that is missing from the roster. */
   const [creating, setCreating] = useState(false);
   /** The label of a record just created, while the server is being asked to describe it. */
@@ -2133,6 +2163,28 @@ export function StageReferenceMultiPicker({
   }, [open]);
 
   /**
+   * The highlight, DERIVED — never the stored number straight.
+   *
+   * The stored index goes stale the instant the server answers a new query: `options` is replaced
+   * wholesale on every keystroke, so a number that pointed at row 20 of the previous answer would
+   * commit a row nobody looked at. Same rule, same reason, as `SearchableSelect`'s `safeHighlight`.
+   */
+  const safeHighlight = highlight >= 0 && highlight < options.length ? highlight : 0;
+
+  /** Tick or untick one row, from the pointer or from Enter. Rows already on the list are inert. */
+  const toggleOption = useCallback(
+    (option: DwReferenceOption) => {
+      if (existing.has(option.id)) return;
+      setPicked((current) =>
+        current.some((item) => item.id === option.id)
+          ? current.filter((item) => item.id !== option.id)
+          : [...current, option]
+      );
+    },
+    [existing]
+  );
+
+  /**
    * A record created from inside the roster: described by the server, THEN ticked.
    *
    * The same defect and the same fix as `adoptCreated` on the single picker — see
@@ -2174,6 +2226,9 @@ export function StageReferenceMultiPicker({
         onClick={() => {
           setOpen((current) => !current);
           setPicked([]);
+          // The keyboard starts at the top of whatever list this open produces, not wherever the
+          // last one was left.
+          setHighlight(0);
           // Cleared with the selection it belongs to. Left standing, "the record was saved but has
           // not been ticked" would greet the next designer to open this roster, about a record they
           // did not create and can now see in the list.
@@ -2191,34 +2246,84 @@ export function StageReferenceMultiPicker({
               className="min-w-0 flex-1 bg-transparent text-sm text-ink-900 outline-none placeholder:text-ink-300"
               type="text"
               autoFocus
+              role="combobox"
+              aria-expanded
+              aria-controls={listboxId}
+              aria-autocomplete="list"
+              aria-activedescendant={options.length ? `${baseId}-opt-${safeHighlight}` : undefined}
               aria-label={`Search ${field.label.toLowerCase()}`}
               placeholder={`Search ${field.label.toLowerCase()}`}
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                // A new query is a new list, so the highlight goes back to its top row. Left where
+                // it was, the number would point into the answer that has just been replaced.
+                setHighlight(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setHighlight((current) => Math.min(current + 1, Math.max(0, options.length - 1)));
+                } else if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setHighlight((current) => Math.max(current - 1, 0));
+                } else if (event.key === "Enter") {
+                  /*
+                    TICKS AND STAYS OPEN, and the `preventDefault` is not optional. A stage form is
+                    rendered inside the record page's `<form onKeyDown={handleFormEnter}>`, so an
+                    Enter allowed to escape this box reaches `focusNextField` and throws the keyboard
+                    at another field mid-roster — which on a half-ticked list of thirty participants
+                    is the moment the panel closes and the selection is gone. The shared primitive
+                    cuts the same class of problem off with `containEvents`; this panel is not
+                    portalled, so it stops its own key here.
+                  */
+                  event.preventDefault();
+                  const option = options[safeHighlight];
+                  if (option) toggleOption(option);
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setOpen(false);
+                }
+              }}
             />
             {loading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-ink-500" aria-hidden /> : null}
           </div>
 
-          <ul role="listbox" aria-multiselectable className="max-h-72 overflow-y-auto">
+          <ul id={listboxId} role="listbox" aria-multiselectable className="max-h-72 overflow-y-auto">
             {options.length ? (
-              options.map((option) => {
+              options.map((option, index) => {
                 const used = existing.has(option.id);
                 const ticked = pickedIds.has(option.id);
                 return (
-                  <li key={option.id} role="option" aria-selected={ticked || used}>
+                  <li key={option.id} id={`${baseId}-opt-${index}`} role="option" aria-selected={ticked || used}>
                     <button
                       type="button"
+                      /*
+                        THREE STATES, AND EVERY PURPLE WASH CARRIES ITS DARK COUNTERPART. The brand
+                        ramp does not invert — purple-50 is near-white in both themes — so a bare
+                        `bg-purple-50` painted a white bar across a dark menu. `purple-950` is what
+                        `ui/SearchableSelect` and `ui/calendar` use for the same job, so a row under
+                        the cursor here looks like a row under the cursor anywhere else in the app.
+                        The keyboard highlight and a tick are told apart by the ring, because on a
+                        multi-select they are genuinely different facts: one is where the keyboard is,
+                        the other is what has been chosen.
+                      */
                       className={`flex w-full items-start gap-2 px-3 py-2 text-left transition ${
-                        used ? "cursor-not-allowed opacity-60" : ticked ? "bg-purple-50" : "hover:bg-surface-50"
+                        used
+                          ? "cursor-not-allowed opacity-60"
+                          : ticked
+                            ? "bg-purple-50 dark:bg-purple-950"
+                            : "hover:bg-surface-50"
+                      } ${
+                        index === safeHighlight && !used
+                          ? "ring-1 ring-inset ring-purple-600/40 dark:ring-purple-400/40"
+                          : ""
                       }`}
                       disabled={used}
-                      onClick={() =>
-                        setPicked((current) =>
-                          current.some((item) => item.id === option.id)
-                            ? current.filter((item) => item.id !== option.id)
-                            : [...current, option]
-                        )
-                      }
+                      onMouseEnter={() => {
+                        if (!used) setHighlight(index);
+                      }}
+                      onClick={() => toggleOption(option)}
                     >
                       <span
                         aria-hidden

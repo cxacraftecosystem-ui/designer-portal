@@ -827,6 +827,11 @@ export function CustomSectionsEditor({ workshopId }: { workshopId: string }) {
 
                       <div className="grid min-w-0 gap-1">
                         <span className="field-label">Tier</span>
+                        {/* No `searchable`: TIERS is Basic / Standard / Advanced — three words,
+                            fixed by the schema. The two pickers above it are 22 stages and 12
+                            answer kinds and are over the eight-option threshold, so they have filter
+                            boxes already; this one does not, and the difference is the list, not an
+                            oversight. */}
                         <Dropdown
                           value={field.tier}
                           onChange={(next) =>

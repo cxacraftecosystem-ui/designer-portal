@@ -170,12 +170,17 @@ export function WorkshopAccessRequestPanel() {
                 onChange={setSelected}
                 options={options}
                 placeholder={workshops === null ? "Loading workshops…" : "Select one or more workshops"}
+                // `searchable`: workshops are records, so their count describes the repository and
+                // not this control. A designer asking for access is looking for one workshop by
+                // name, which is what typing answers.
+                searchable
                 values={selected}
               />
             </Field>
             {standingNote ? <p className="text-xs leading-5 text-ink-500">{standingNote}</p> : null}
           </div>
           <Field label="Access level you need">
+            {/* NO `searchable`: three rungs, declared by the server, and the same three forever. */}
             <Dropdown
               ariaLabel="Access level you need"
               onChange={(next) => setLevel(next as WorkshopAccessLevel)}

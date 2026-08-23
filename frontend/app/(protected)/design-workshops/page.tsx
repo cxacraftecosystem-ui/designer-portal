@@ -725,6 +725,10 @@ function DesignWorkshopsPageBody() {
                     : [{ value: templateId, label: "DCH standard workshop report" }]
                 }
                 ariaLabel="Report template"
+                // Templates are fetched rows, not a vocabulary in this file: there is one today and
+                // there will be a set per cluster. A picker that grows a filter box on its own at
+                // eight templates is a picker whose behaviour is decided by somebody else's upload.
+                searchable
               />
             </FieldBlock>
             <Field label="Craft">

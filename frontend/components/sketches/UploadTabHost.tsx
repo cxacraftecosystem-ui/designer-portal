@@ -46,6 +46,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, CloudOff } from "lucide-react";
 
+import { Dropdown } from "@/components/ui/Dropdown";
 import { appendMediaRef } from "@/lib/photoIntake";
 import { loadDraft, putDraftStage, stageLocalMedia } from "@/lib/designWorkshopStore";
 import type { DwEntity, DwRegistry, DwRow } from "@/lib/designWorkshops";
@@ -379,7 +380,7 @@ export function UploadTabHost({ workshopId, registry }: { workshopId: string; re
   );
 }
 
-/** Which row of a collection a file is going to. A real labelled `<select>`, not a themed dropdown. */
+/** Which row of a collection a file is going to — the app's themed picker, searched by provenance. */
 function RowPicker({
   label,
   rows,
@@ -409,22 +410,39 @@ function RowPicker({
     );
   }
   return (
-    <label className="grid gap-1">
+    /*
+      ── THIS WAS A NATIVE `<select>` AND THE REASON GIVEN FOR IT WAS WRONG ─────────────────────────
+
+      The old comment called this "a short closed list with no search". It is neither. `rows` is a
+      design workshop collection's rows — sketches on stage 11, prototypes on stage 12 — read off a
+      record and unbounded: a workshop that documented forty sketches has forty rows here, and the
+      count is a property of the fieldwork, not of this file. That is exactly the category every
+      other picker in the app was switched for, and the rule on `SearchableSelectProps.searchable`
+      is about where the options CAME FROM precisely because a count measured on today's data cannot
+      answer for tomorrow's. So this one was reasoned about wrongly rather than deliberately skipped,
+      and it is now the same control as its neighbours, searching by provenance.
+
+      A `<div>` AND NOT A `<label>`, which the old markup could legitimately use. A `<label>` may
+      wrap a `<select>`; it cannot name a `<button>`, and the themed picker's trigger is one. The
+      name is carried by `ariaLabel` instead — see `ui/fieldLabel.tsx` on why the label id route is
+      for the `Field`/`FieldBlock` wrappers and not for a hand-rolled slot like this.
+    */
+    <div className="grid min-w-0 gap-1">
       <span className="field-label">{label}</span>
-      {/*
-        A NATIVE `<select>` RATHER THAN THE APP'S THEMED PICKER, and it is a considered choice: this
-        is a short closed list with no search, the themed control's whole value is filtering long
-        lists, and `Field`/`Select` would need a mirror input and a manual dirty call for nothing.
-        A `<label>` may wrap a `<select>` — the trap in the forms guide is about wrapping a control
-        that contains a BUTTON, which this does not.
-      */}
-      <select className="field-input" value={value} onChange={(event) => onChange(event.target.value)}>
-        {rows.map((row, index) => (
-          <option key={rowKeyOf(row) ?? index} value={rowKeyOf(row) ?? ""}>
-            {rowLabel(row, index)}
-          </option>
-        ))}
-      </select>
-    </label>
+      <Dropdown
+        value={value}
+        onChange={onChange}
+        options={rows.map((row, index) => ({
+          value: rowKeyOf(row) ?? "",
+          label: rowLabel(row, index)
+        }))}
+        ariaLabel={label}
+        searchable
+        /* This control picks WHICH ROW the panel beside it is about, so it changes the screen it
+           sits on. Advancing focus away from it on select is the trap §17 of the frontend guide
+           names: the reader is adjusting this control and would be thrown off it mid-adjustment. */
+        advanceOnSelect={false}
+      />
+    </div>
   );
 }

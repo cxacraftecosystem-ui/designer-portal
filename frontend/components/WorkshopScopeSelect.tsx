@@ -222,10 +222,18 @@ export function WorkshopScopeSelect({
         </div>
       </div>
 
+      {/*
+        `searchable` because the options are workshops — records, not a vocabulary — so their number
+        says how much work has been filed and nothing about this control. This is the shared scoping
+        picker: it appears on several screens, and with the filter box left to the option count it
+        would be a searchable control on a mature deployment and a plain menu on a fresh one, which
+        is the one difference a reader cannot learn from either.
+      */}
       <MultiSelectDropdown
         values={workshopIds}
         onChange={setWorkshopIds}
         options={options}
+        searchable
         ariaLabel="Choose which workshops to include"
         placeholder={loading ? "Loading workshops…" : all ? "All workshops" : "Select workshops"}
         emptyLabel="No workshops recorded yet"

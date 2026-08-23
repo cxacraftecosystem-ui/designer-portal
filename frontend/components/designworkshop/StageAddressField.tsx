@@ -227,6 +227,11 @@ export function StageAddressField({
           }}
           options={options.map((entry) => ({ value: entry, label: entry }))}
           placeholder="Select state"
+          /* `searchable` by provenance: reference data, not a vocabulary written in this file. The
+             state list never falls under the threshold, so this changes nothing today — it is here
+             so both halves of the state/district pair are governed by one rule. See the district
+             below, where the same rule IS a behaviour change. */
+          searchable
           disabled={disabled}
           ariaLabel={field.label}
           describedBy={describedBy}
@@ -298,6 +303,13 @@ export function StageAddressField({
         onChange={(next) => onChange(next || null)}
         options={options.map((entry) => ({ value: entry, label: entry }))}
         placeholder="Select district"
+        /* ── `searchable` HERE IS A FIX ─────────────────────────────────────────────────────────
+           795 names, and PER STATE the list straddles `SEARCH_THRESHOLD` in both directions: Goa
+           2, Sikkim 6, Uttar Pradesh 75. Left to the count, this box grew a filter box for one
+           state and lost it for the next one on the same stage form — the defect `ProcessForm`
+           names in so many words, and the reason the rule on `SearchableSelectProps.searchable` is
+           about where the options CAME FROM and not how many there are today. */
+        searchable
         disabled={disabled}
         ariaLabel={field.label}
         describedBy={describedBy}

@@ -170,8 +170,11 @@ async function openArtisanForm(page: Page) {
   await page.goto("/artisans/new");
   await expect(fieldSelect(page, "Craft")).toBeVisible({ timeout: 30_000 });
   // Prime the craft list once, here, rather than sprinkling waits through the assertions: until it
-  // lands the select holds only its placeholder, which is one option — below the search threshold —
-  // so a test that opened too early would be measuring the plain-list behaviour by accident.
+  // lands the select holds only its placeholder, so a test that opened too early would be asserting
+  // against a one-row list. (It would no longer be asserting against the PLAIN-list behaviour: the
+  // craft picker now passes `searchable` explicitly, because its options are records and the count
+  // of them is a fact about the deployment rather than about the control. The filter box is there
+  // from the first row.)
   await openSelect(page, "Craft", 2);
   await page.keyboard.press("Escape");
   await expect(panel(page)).toBeHidden();
@@ -281,7 +284,8 @@ test.describe("Searchable select", () => {
     await page.keyboard.press("t");
     await expect(fieldSelect(page, "Gender")).toContainText("Transgender");
 
-    // Craft is nine-plus and backed by records, so it does get one.
+    // Craft is backed by records, and says so with an explicit `searchable` rather than relying on
+    // there being nine of them, so it gets one however few crafts this deployment has recorded.
     await fieldSelect(page, "Craft").click();
     await expect(filterBox(page), "the craft list should be searchable").toHaveCount(1);
   });
@@ -299,6 +303,86 @@ test.describe("Searchable select", () => {
     await expect(panel(page)).toBeHidden();
     await expect(trigger).toBeFocused();
     expect((await trigger.innerText()).trim()).toBe(before);
+  });
+
+  test("a short list's highlight is actually announced — the trigger is a combobox", async ({ page }) => {
+    await openArtisanForm(page);
+
+    /*
+      THE BUG THIS PINS. On a short list the trigger keeps the keyboard, and it set
+      `aria-activedescendant` on a `<button>` — an attribute the `button` role does not support, so
+      every screen reader ignored it. Arrowing through Gender moved a purple bar on screen and said
+      nothing at all, while the source read as though the row were being announced. The trigger now
+      carries `role="combobox"` on that branch, which is the ARIA select-only combobox and the one
+      shape where the attribute means something.
+
+      Written as the ARIA contract rather than as "does it speak", because a spec cannot hear: the
+      role and the resolved id are exactly what a reader's browser hands to the screen reader.
+    */
+    const gender = fieldSelect(page, "Gender");
+    await expect(gender).toHaveAttribute("role", "combobox");
+    await gender.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(panel(page)).toBeVisible();
+    await page.keyboard.press("ArrowDown");
+
+    await expect(gender).toHaveAttribute("aria-expanded", "true");
+    const highlight = await readHighlight(page);
+    expect(highlight, "nothing owns aria-activedescendant on a short list").not.toBeNull();
+    expect(highlight!.exists, "aria-activedescendant points at no element").toBe(true);
+    expect(highlight!.index).toBeGreaterThanOrEqual(0);
+    // The id has to be resolved FROM the trigger, not from anything in the panel: a short list has
+    // no filter box, so if the trigger is not the owner then nothing is.
+    const owned = await gender.getAttribute("aria-activedescendant");
+    expect(owned).toBe(highlight!.id);
+
+    await page.keyboard.press("Escape");
+
+    // And the other side of the conditional: with a filter box the trigger is honestly just a
+    // button, because the combobox is the box inside the panel. Two nested comboboxes for one
+    // question would describe a control that does not exist.
+    const craft = fieldSelect(page, "Craft");
+    await expect(craft).not.toHaveAttribute("role", "combobox");
+    await openSelect(page, "Craft", 2);
+    await expect(filterBox(page)).toHaveAttribute("aria-activedescendant", /.+/);
+    await expect(craft).not.toHaveAttribute("aria-activedescendant", /.+/);
+  });
+
+  test("a letter on a searchable trigger opens the panel and starts filtering", async ({ page }) => {
+    await openArtisanForm(page);
+
+    /*
+      The gap this closes. A printable key on a SEARCHABLE trigger used to do nothing whatsoever —
+      the type-ahead branch was guarded on `!withSearch` — so the fastest keyboard route into a list
+      existed on the four-option enums and was missing from the 252 dial codes. Native <select> and
+      the ARIA combobox pattern both open and start narrowing on the first letter, and a reader who
+      has learnt that on Gender tries it on Craft.
+    */
+    const craft = fieldSelect(page, "Craft");
+    // Prime the list, then take a letter from a real row so the assertion cannot depend on the
+    // corpus this deployment happens to hold.
+    await openSelect(page, "Craft", 2);
+    const labels = await rows(page).allInnerTexts();
+    await page.keyboard.press("Escape");
+    await expect(panel(page)).toBeHidden();
+
+    const letter = (labels.find((label) => /[a-z]/i.test(label)) ?? "a").trim().match(/[a-z]/i)![0].toLowerCase();
+
+    await craft.focus();
+    await page.keyboard.press(letter);
+
+    await expect(panel(page), "a letter on a searchable trigger left the panel closed").toBeVisible();
+    await expect(filterBox(page)).toBeFocused();
+    await expect(filterBox(page), "the letter that opened the panel was swallowed").toHaveValue(letter);
+    // Really filtering, not merely holding the character: every remaining row contains it.
+    const shown = await rows(page).allInnerTexts();
+    expect(shown.length).toBeGreaterThan(0);
+    for (const label of shown) {
+      expect(label.toLowerCase(), `"${label}" does not contain "${letter}"`).toContain(letter);
+    }
+    // And the next keystroke keeps typing into the box rather than starting again.
+    await page.keyboard.press("Backspace");
+    await expect(filterBox(page)).toHaveValue("");
   });
 
   test("keyboard alone: arrows move the highlight and Enter commits", async ({ page }) => {

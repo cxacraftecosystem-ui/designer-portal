@@ -306,6 +306,11 @@ export function StageRecordingPlaceCard({
                   onChange={(next) => setStated({ state: next, district: "" })}
                   options={stateOptions}
                   placeholder="Select"
+                  /* Reference data, so `searchable` is passed by provenance rather than left to the
+                     option count — the rule on `SearchableSelectProps.searchable`. No behaviour
+                     change here (the state list is always past eight); it keeps this box and the
+                     district beside it under one rule, and the district's is a real fix. */
+                  searchable
                   ariaLabel="State or union territory"
                   disabled={disabled}
                 />
@@ -317,6 +322,11 @@ export function StageRecordingPlaceCard({
                   onChange={(next) => setStated({ district: next })}
                   options={districtOptions}
                   placeholder={stateName ? "Select" : "Choose a state first"}
+                  /* ── `searchable` HERE IS A FIX ───────────────────────────────────────────────
+                     795 district names, and per state the list straddles `SEARCH_THRESHOLD` both
+                     ways: Goa 2, Sikkim 6, Uttar Pradesh 75. Left to the count, this box grew a
+                     filter box for one state and lost it for the next on the same card. */
+                  searchable
                   ariaLabel="District"
                   disabled={disabled || !districtOptions.length}
                 />

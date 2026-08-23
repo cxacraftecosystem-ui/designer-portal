@@ -1000,6 +1000,16 @@ export function FieldInput({
         />
       );
 
+    /*
+      ── ENUM AND MULTI_ENUM DELIBERATELY LEAVE `searchable` ALONE ──
+      `field.options` is the option list the STAGE DEFINITION declares — a vocabulary written by
+      whoever authored the workshop template, not a list of records — so the option-count rule is
+      the right judge here and not the call site: four options ("Cotton / Silk / Jute / Other") get
+      the plain list they deserve, and an authored list that runs to thirty grows a filter box on its
+      own. Forcing it on would put a filter box over every three-option question in all 22 stages;
+      forcing it off would take one away from the long ones. This is the case `SEARCH_THRESHOLD` was
+      measured for.
+    */
     case "ENUM":
       return unlabelled(
         <Dropdown

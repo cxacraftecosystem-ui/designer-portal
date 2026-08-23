@@ -1820,6 +1820,16 @@ export function LocationFields({
           <Field label="State" required={stateRequired}>
             <Select
               name="state"
+              /*
+               * `searchable` BY PROVENANCE, NOT BY COUNT. These options are server reference data
+               * (`GET /reference/address`, with the 36 bundled names standing in offline), and the
+               * rule on `SearchableSelectProps.searchable` is that a list assembled out of rows says
+               * so rather than letting `SEARCH_THRESHOLD` decide for the deployment it was measured
+               * on. The state list happens never to fall under eight, so nothing about this screen
+               * changes today — it is here so the two boxes in this pair are governed by the same
+               * sentence, and so nobody reads the district's prop as the special case.
+               */
+              searchable
               value={stateName}
               required={stateRequired}
               onInvalid={() => setAddressProblemShown(true)}
@@ -1852,6 +1862,18 @@ export function LocationFields({
           <Field label="District" required={districtRequired}>
             <Select
               name="district"
+              /*
+               * ── `searchable` HERE IS A FIX, NOT A FLOURISH ───────────────────────────────────
+               * `districtOptions` is per-state reference data — 795 names across the country — and
+               * PER STATE it straddles the threshold of eight in both directions: Goa has 2 and
+               * Sikkim 6, Uttar Pradesh has 75. Left to the count, the same required field on the
+               * same form grew a filter box for one state and lost it for the next, which is
+               * verbatim the defect `ProcessForm` names one file over: "the SAME control on the SAME
+               * screen would grow a filter box for the artisan with nine products and lose it for
+               * the next one". A reader cannot learn a control that changes shape with the answer
+               * above it.
+               */
+              searchable
               value={district}
               required={districtRequired}
               disabled={!stateName}

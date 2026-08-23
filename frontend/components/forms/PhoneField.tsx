@@ -87,8 +87,37 @@ export function PhoneField({
         ? "Enter a valid phone number (4–14 digits)."
         : null;
 
+  /**
+   * THE NAME IS ON THE ROW AND IT IS WHAT THE FILTER BOX SEARCHES.
+   *
+   * ── WHAT THIS FIXED ─────────────────────────────────────────────────────────────────────────────
+   * The label used to be the flag and the dial code and nothing else, while `lib/countries.ts`
+   * carries `name` for all ~246 rows. This is the longest list in the application, so it is well
+   * past `SEARCH_THRESHOLD` and DID get a filter box — over text that contained no country name. So
+   * typing "india", "uruguay" or "nepal" into the country picker answered "No matches", and the only
+   * thing that matched was the dial code, which the reader is opening this control to look up. Dial
+   * codes are not unique either: "+1" is shared by the United States and Canada and prefixes about
+   * twenty more territories, so a dozen rows read identically apart from an emoji nobody can search.
+   * `RENDER_CAP` compounds it — 80 of 246 rows are drawn, so scrolling does not reach the rest and
+   * the notice says "keep typing", which was the one thing that did not work.
+   *
+   * ── WHY THE NAME IS THE `hint` AND NOT THE `label`, WHICH IS THE OTHER WAY ROUND FROM ANDROID ───
+   * `SearchableSelect` renders the option's LABEL in the closed trigger, and this trigger is a 9rem
+   * column beside the number box — the dial code is the whole of what it has room to say, and the
+   * dial code is what the composed value `+91 9876543210` is built from. Android does not have that
+   * constraint: `PhoneField.kt` keeps a separate read-only "Code" box always showing the prefix, so
+   * its rows are free to lead with the name (`SelectOption(value = dialCode, label = it.name, hint =
+   * it.dialCode)`). Same two columns on both clients, same searchability on both clients, opposite
+   * order — because on one of them the row's first column is also the collapsed control's only text.
+   * Stated here rather than left to look like a divergence nobody noticed.
+   */
   const options = useMemo(
-    () => COUNTRIES.map((entry) => ({ value: entry.iso2, label: `${flagEmoji(entry.iso2)} ${entry.dialCode}` })),
+    () =>
+      COUNTRIES.map((entry) => ({
+        value: entry.iso2,
+        label: `${flagEmoji(entry.iso2)} ${entry.dialCode}`,
+        hint: entry.name
+      })),
     []
   );
 

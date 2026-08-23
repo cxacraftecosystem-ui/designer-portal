@@ -358,6 +358,19 @@ export default function UsersPage() {
                     <td className="px-4 py-3 font-medium text-ink-900">{user.name}</td>
                     <td className="px-4 py-3 text-ink-700">{user.email}</td>
                     <td className="px-4 py-3">
+                      {/* A native <select>, and no filter box: `assignableRoles` is the role ladder
+                          from `lib/permissions` — seven rungs at most, fewer for anybody below master
+                          admin — which is a fixed vocabulary of the kind the option-count rule
+                          deliberately leaves plain. It is also rendered once per table row, and a
+                          themed popover per row on a twenty-row page is twenty portalled panels for
+                          a list of five words.
+
+                          WHAT IS *NOT* SETTLED HERE, so the next reader does not read this comment as
+                          a defence of everything about the control: this is a PERMISSION surface
+                          rendered outside the themed register while the same page's "role for new
+                          user" picker at the top uses `Select`. One page, one question, two controls.
+                          That inconsistency is worth closing, on those grounds and not on
+                          searchability — which is why it is named rather than quietly left. */}
                       {canManageUser(currentUser, user) && user.role !== "MASTER_ADMIN" ? (
                         <select className="field-input max-w-44" value={user.role} onChange={(event) => updateRole(user, event.target.value)}>
                           {assignableRoles(currentUser)

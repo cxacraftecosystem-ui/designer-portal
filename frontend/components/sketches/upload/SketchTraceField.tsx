@@ -99,6 +99,8 @@ import {
   isDecoded,
   type DecodedPixels
 } from "./decodeToPixels";
+import { Dropdown } from "@/components/ui/Dropdown";
+
 import { EXPORT_FORMATS, exportPngFile, exportSvgFile, isExported, paintGeometry, type ExportFormatId } from "./traceExport";
 import type { SvgInput } from "./geometryToSvg";
 import {
@@ -182,6 +184,16 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
    */
   const [presetParams, setPresetParams] = useState<TraceParams | null>(null);
   const [styleId, setStyleId] = useState<string>("");
+  /**
+   * Which subject adjustment was last applied.
+   *
+   * The native `<select>` this replaced was uncontrolled (`defaultValue=""`) and kept its own state,
+   * which is not something a themed dropdown does — it is a `<button>` and has no value of its own.
+   * Holding it here also makes the panel honest about a thing it was already doing: an applied
+   * subject is a decision the designer can see on the control that made it, rather than a select
+   * that happens to still be showing the last row clicked.
+   */
+  const [subjectId, setSubjectId] = useState<string>("");
 
   const [result, setResult] = useState<SerializedTraceResult | null>(null);
   const [tracing, setTracing] = useState(false);
@@ -826,56 +838,96 @@ export function SketchTraceField({ targetLabel, disabled, onAttach, onAttachSour
           {styles.length > 0 ? (
             <div className="mb-3 grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1">
-                <label className="field-label" htmlFor={`${panelId}-style`}>
+                {/*
+                  ── WHY THIS IS THE THEMED DROPDOWN NOW, AND WHAT THE `<optgroup>` WAS TRADED FOR ──
+                  Twenty style presets in a native `<select>` was the longest list in this
+                  application with no way to type into it. The owner's rule is that a list you hunt
+                  through gets a filter box, and `SEARCH_THRESHOLD` is eight; this list is twenty and
+                  fixed at twenty, so it is the clearest case there is.
+
+                  `SelectOption` carries no group field, so the grouping could not come across as
+                  `<optgroup>` markup. It comes across in the LABEL instead — "Line · Ink line" —
+                  and that is better here rather than merely equivalent: an `<optgroup>` heading is
+                  chrome a reader can only scroll to, while a group name inside the label is
+                  something they can TYPE. Filtering on "line" now returns that whole family, which
+                  the native control could not do at all. `filterOptions` treats "·" as a word
+                  boundary (it is in the separator class), so the style name still ranks as a
+                  word-prefix match and Enter takes the obvious one.
+
+                  Group ORDER is `styleGroups`, exactly as the `<optgroup>`s were emitted, so the
+                  list reads down the page in the order the engine declares — the filter re-ranks
+                  only while a query is being typed.
+
+                  A `<span className="field-label">` beside the control rather than a
+                  `<label htmlFor>`: `Dropdown` renders a button and takes no id, so a `for` would
+                  name an element that does not exist. Same arrangement as the workshop chooser on
+                  /sketches-and-prototypes and the design-workshop viewers panel.
+                */}
+                <span className="field-label" id={`${panelId}-style-label`}>
                   Style
-                </label>
-                <select
-                  id={`${panelId}-style`}
-                  className="field-input"
+                </span>
+                <Dropdown
                   value={styleId}
+                  onChange={pickStyle}
                   disabled={disabled}
-                  onChange={(event) => pickStyle(event.target.value)}
-                >
-                  <option value="">Engine defaults</option>
-                  {styleGroups.map((group) => (
-                    <optgroup key={group} label={group}>
-                      {styles
+                  ariaLabel="Style"
+                  describedBy={`${panelId}-style-hint`}
+                  searchable
+                  options={[
+                    { value: "", label: "Engine defaults" },
+                    ...styleGroups.flatMap((group) =>
+                      styles
                         .filter((style) => style.group === group)
-                        .map((style) => (
-                          <option key={style.id} value={style.id}>
-                            {style.name}
-                          </option>
-                        ))}
-                    </optgroup>
-                  ))}
-                </select>
-                <p className="text-xs text-ink-500">
+                        .map((style) => ({ value: style.id, label: `${group} · ${style.name}` }))
+                    )
+                  ]}
+                />
+                <p id={`${panelId}-style-hint`} className="text-xs text-ink-500">
                   {styles.find((s) => s.id === styleId)?.description ??
                     "A style sets every control at once. Pick one, then adjust."}
                 </p>
               </div>
 
               <div className="grid gap-1">
-                <label className="field-label" htmlFor={`${panelId}-subject`}>
+                {/*
+                  Ten subject presets, flat, and until now a native `<select>` with nothing to type
+                  into and no comment defending it — a straight miss rather than a decision. Ten is
+                  over the eight-option threshold, so this list would have grown a filter box for
+                  free had it ever been a `Dropdown`.
+
+                  `searchable` explicitly all the same: the count is the engine's, not this panel's,
+                  and a preset list that gains and loses its filter box as the engine's table is
+                  edited is the behaviour the rule in `SearchableSelectProps` exists to stop.
+
+                  The value is held in React state now — see `subjectId`. Re-picking the same
+                  subject re-applies it, which is safe by construction: `engine/subjects.ts` declares
+                  `adjust` as idempotent over the current tree, which is the property the hint below
+                  promises the designer in words.
+                */}
+                <span className="field-label" id={`${panelId}-subject-label`}>
                   Subject
-                </label>
-                <select
-                  id={`${panelId}-subject`}
-                  className="field-input"
-                  defaultValue=""
-                  disabled={disabled || subjects.length === 0}
-                  onChange={(event) => {
-                    if (event.target.value) applySubject(event.target.value);
+                </span>
+                <Dropdown
+                  value={subjectId}
+                  onChange={(next) => {
+                    setSubjectId(next);
+                    if (next) applySubject(next);
                   }}
-                >
-                  <option value="">What is in the photograph?</option>
-                  {subjects.map((subject) => (
-                    <option key={subject.id} value={subject.id}>
-                      {subject.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-ink-500">
+                  disabled={disabled || subjects.length === 0}
+                  ariaLabel="Subject"
+                  describedBy={`${panelId}-subject-hint`}
+                  // No emptyLabel: the list always carries the "What is in the photograph?" row, so
+                  // the empty state is unreachable here and a sentence that cannot render is a
+                  // sentence the next reader has to disprove. The panel says so at the top instead,
+                  // in the notice that fires when the preset fetch fails.
+                  placeholder="What is in the photograph?"
+                  searchable
+                  options={[
+                    { value: "", label: "What is in the photograph?" },
+                    ...subjects.map((subject) => ({ value: subject.id, label: subject.name }))
+                  ]}
+                />
+                <p id={`${panelId}-subject-hint`} className="text-xs text-ink-500">
                   A subject nudges the settings for the material in front of the camera. It leaves the style alone
                   and can be applied more than once without compounding.
                 </p>
@@ -1188,6 +1240,19 @@ function ChoiceRow({
   const value = spec.read(params);
   return (
     <div className={modified ? `${MODIFIED_RING} p-1` : "p-1"}>
+      {/*
+        ── DELIBERATELY A NATIVE <select>, UNLIKE THE STYLE AND SUBJECT PICKERS ABOVE ──
+        Two reasons, and neither is inertia. First, every one of these lists is a per-parameter enum
+        of two to four values declared in `traceParamTable` — "Light / Dark", "Off / Low / High" —
+        which is exactly the fixed vocabulary a filter box makes worse: an extra tab stop and a "No
+        matches" state over a list read at a glance.
+
+        Second, and this is the part that would not be recoverable: a `<label htmlFor>` and an
+        `aria-describedby` are wired to this control by id, and the themed dropdown renders a
+        `<button>` and accepts no id or ref (`e2e/process-refusal-a11y-unit.spec.ts` records that
+        gap). Converting would trade a correctly named and described field for a filter box nobody
+        needs, on a panel that renders up to `PARAM_COUNT` of these at once.
+      */}
       <label className="text-xs font-medium text-ink-900" htmlFor={id}>
         {spec.label}
         {modified ? <span className="ml-1 text-purple-700">·</span> : null}

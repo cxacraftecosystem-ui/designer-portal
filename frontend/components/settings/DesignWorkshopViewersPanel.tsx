@@ -712,6 +712,19 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
                       // merely sorts late — the defect this panel is being fixed for, wearing a search
                       // box. Two boxes over two different scopes would also be two boxes.
                       searchable={false}
+                      /*
+                        ── AND THEREFORE THIS SENTENCE, WHICH THE PANEL USED TO GET WRONG ──────────
+                        `searchable={false}` does not switch the RENDER CAP off: the endpoint answers
+                        up to 2000 accounts and the panel draws 80, so the cap notice fires here on
+                        any real repository. Its last clause used to be the hardcoded "Keep typing to
+                        narrow the list" — an instruction to type into a filter box this panel
+                        deliberately does not have. So an admin looking for designer 81 was told to
+                        use a control that is not on screen, and the box that DOES reach them, three
+                        inches above and wired to the server, went unmentioned. The notice is the one
+                        sentence whose whole job is to describe this list; pointing it at the wrong
+                        control is worse than leaving it blank.
+                      */
+                      capHint="Use the search box above to reach the rest — it asks the repository, so it sees every eligible account."
                       values={selected}
                     />
                   </div>

@@ -227,6 +227,12 @@ function ProviderRow({
       <label className="mt-3 block text-xs font-medium text-ink-700" htmlFor={`model-${provider.provider}`}>
         Model
       </label>
+      {/* A native <select>, and left that way on purpose. `provider.models` is the server's declared
+          catalogue for ONE provider — a handful of rows, and a vocabulary rather than a corpus: it
+          changes when Anthropic or OpenAI publish a model, not as this repository fills up. The
+          `htmlFor` above and the price/task sentence below are both bound to this control by id, and
+          the themed dropdown renders a <button> that accepts neither an id nor a ref, so converting
+          would trade a properly named and described field for a filter box over five rows. */}
       <select
         id={`model-${provider.provider}`}
         value={model}

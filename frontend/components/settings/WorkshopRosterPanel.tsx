@@ -302,7 +302,14 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
                   </td>
                   <td className="px-4 py-3">
                     <div className="w-40">
-                      {/* Changes the row in place — focus must stay on the control being adjusted. */}
+                      {/* Changes the row in place — focus must stay on the control being adjusted.
+
+                          NO `searchable`, here or on the "Level" picker in the grant form below.
+                          `levels` is the access ladder the server declares — three rungs — and it is
+                          the same three on every row of the table. A filter box on each row of a
+                          roster is a control per row that nobody would type into, and this one is
+                          rendered once per person. The option-count rule leaves all of them plain,
+                          which is right. */}
                       <Dropdown
                         advanceOnSelect={false}
                         ariaLabel={`Access level for ${personName(row.user)}`}
@@ -378,10 +385,17 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
           <h3 className="font-display text-sm font-bold text-ink-900">Grant access to somebody new</h3>
           <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,1.2fr)]">
             <Field label="Person">
+              {/*
+                `searchable`: `grantableUsers` is an account list — records — and the whole task here
+                is finding one named colleague among them. Left to the option count this panel would
+                have a filter box on a deployment with twenty accounts and none on a cluster with
+                six, and a search box that comes and goes is worse than either.
+              */}
               <MultiSelectDropdown
                 onChange={setGrantUserIds}
                 options={grantableUsers}
                 placeholder="Select one or more people"
+                searchable
                 values={grantUserIds}
                 confirmOnSelect
                 confirmLabel="Done"

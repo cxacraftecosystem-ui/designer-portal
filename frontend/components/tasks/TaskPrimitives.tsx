@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { progressGap } from "@/components/tasks/scope";
+import { FieldLabelProvider } from "@/components/ui/fieldLabel";
 import type { TaskArtisanRef, TaskSectionRef, TaskStatus, TaskUserBrief } from "@/components/tasks/types";
 import { formatDate } from "@/lib/format";
 import { roleLabel } from "@/lib/permissions";
@@ -60,8 +61,15 @@ export function FieldBlock({
         {label}
         {required ? " *" : ""}
       </span>
+      {/*
+        The `role="group"` names the SLOT; the provider names the CONTROL. Both, because they are
+        announced at different moments: a group label is spoken on entering the group, and a reader
+        who tabs straight onto the trigger — or comes back to it later to check an answer — hears only
+        the control's own name. A themed dropdown is a `<button>`, whose name comes from its contents,
+        so without this it announced its value and never its question. See `ui/fieldLabel.tsx`.
+      */}
       <div role="group" aria-labelledby={id}>
-        {children}
+        <FieldLabelProvider value={id}>{children}</FieldLabelProvider>
       </div>
       {hint}
     </div>

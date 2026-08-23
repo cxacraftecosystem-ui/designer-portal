@@ -212,7 +212,15 @@ export function AssignmentBuilder({
       >
         <div className="grid gap-3 md:grid-cols-2">
           <FieldBlock label="Filter by tier">
-            {/* Filters the list beside it rather than filling a field, so it must not steal focus. */}
+            {/* Filters the list beside it rather than filling a field, so it must not steal focus.
+
+                NO `searchable`, and that is a decision rather than the pass missing it. `roleOptions`
+                is the seven-rung role ladder from `lib/permissions`, narrowed to the tiers actually
+                below the signed-in user — a closed vocabulary that cannot exceed seven rows however
+                many accounts exist, and the shortest of them all for a field contributor. A filter
+                box over "Everyone below me / Researcher / Field contributor" is a tab stop between
+                this control and the assignee picker it exists to narrow. The count rule already
+                reaches this answer on its own. */}
             <Dropdown
               value={roleFilter}
               onChange={setRoleFilter}
@@ -230,6 +238,7 @@ export function AssignmentBuilder({
                 value: user.id,
                 label: `${user.name} — ${user.roleLabel ?? roleLabel(user.role)}`
               }))}
+              searchable
               placeholder={loading ? "Loading people..." : "Select people"}
               emptyLabel={loading ? "Loading people..." : "Nobody ranked below you"}
               confirmLabel="Confirm people"
@@ -310,6 +319,9 @@ export function AssignmentBuilder({
                 value: kind.value,
                 label: kind.pluralLabel.charAt(0).toUpperCase() + kind.pluralLabel.slice(1)
               }))}
+              // NO `searchable`: `options.recordTypes` is the backend's closed list of record kinds
+              // (artisans, products, processes, tools, questionnaires, media) and there will not be
+              // a seventh this year. The count rule leaves it a plain list, correctly.
               placeholder="Artisans, products, tools..."
               confirmLabel="Confirm record types"
             />
@@ -327,6 +339,10 @@ export function AssignmentBuilder({
               values={sectionIds}
               onChange={setSectionIds}
               options={allSections.map((section) => ({ value: section.id, label: `${section.code} — ${section.title}` }))}
+              // `searchable`: sections are authored rows, and the label is `code — title`, so
+              // "3.2" or a word from the title is how anybody finds one. Left to the count, a
+              // questionnaire with seven active sections would offer no way to type either.
+              searchable
               placeholder="Sections to cover"
               emptyLabel="No active questionnaire sections"
               confirmLabel="Confirm sections"
@@ -350,6 +366,8 @@ export function AssignmentBuilder({
                 value: artisan.id,
                 label: artisan.place ? `${artisan.name} · ${artisan.place}` : artisan.name
               }))}
+              // `searchable`: the artisan corpus, and capped — see the notice under this control.
+              searchable
               placeholder={workshopId ? "All artisans at this workshop" : "All artisans"}
               emptyLabel={workshopId ? "No artisans linked to this workshop" : "No artisans yet"}
               confirmLabel="Confirm artisans"

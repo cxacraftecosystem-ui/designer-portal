@@ -552,6 +552,12 @@ export function SketchRectifyField({
               Extract line art
             </label>
             <label className="flex items-center gap-2 text-xs text-ink-700">
+              {/* A native <select>, deliberately. ASPECTS is four sheet ratios declared in this file
+                  and it will not grow — the fixed-vocabulary side of the rule in
+                  `SearchableSelectProps.searchable`, where a filter box is a tab stop and a "No
+                  matches" state over a list read at a glance. It also sits inside a <label>, which
+                  a themed dropdown may not do (a <label> forwards a stray click into the menu and
+                  slams it shut), and it takes no id from `Dropdown` to bind that label to. */}
               Sheet
               <select
                 className="field-input !w-auto !py-1 text-xs"

@@ -694,6 +694,21 @@ function ChooseWorkshopThenSketches() {
             // jumping away from the control you are adjusting is wrong when the control IS the
             // adjustment. Same reason the workshops list page passes it.
             advanceOnSelect={false}
+            /*
+              FORCED ON, not left to the option count, and this chooser is the reason the rule got
+              written down. `SearchableSelect` grows a filter box at eight options, which for a list
+              of workshops means the control has a filter box on a mature deployment and none on a
+              fresh one — the same screen behaving two ways depending on how much work has been
+              filed. It reads as a bug on whichever deployment you meet second.
+
+              This list is `CHOOSER_PAGE = 100` rows deep and reports its own truncation, so it is a
+              corpus to hunt through by definition. Every other workshop picker in the app already
+              says so explicitly — the workshops list page, the viewers panel, all four
+              questionnaire pickers, the upload dialog, the adopt-draft dialog — and `ComboBox`'s own
+              doc names this exact control while explaining why: "the workshop picker is one row on
+              this deployment and will be forty on the next".
+            */
+            searchable
           />
         </div>
         <p id="sketches-workshop-why" className="max-w-3xl text-sm leading-6 text-ink-muted">

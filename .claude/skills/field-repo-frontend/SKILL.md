@@ -859,7 +859,8 @@ default offset 6, `CLOSE_ON_SCROLL_GRACE_MS 600`. Data attributes: `data-anchore
 
 ### 11.5 `SearchableSelect` / `SearchableMultiSelect`
 
-`SEARCH_THRESHOLD 8`, `RENDER_CAP 80`, `SUMMARY_NAMES 6`, `PANEL_MAX_WIDTH 520`,
+`SEARCH_THRESHOLD 8` and `RENDER_CAP 80` (both in `components/ui/selectFilter.ts`, exported),
+`SUMMARY_NAMES 6`, `PANEL_MAX_WIDTH 520`,
 `PANEL_CLASS "!overflow-hidden !p-0 flex flex-col"` (the `!`s beat `AnchoredPopover`'s own
 `overflow-y-auto p-3` — see the `cn` note), list `max-h-72`, typeahead window 700ms.
 
@@ -880,7 +881,91 @@ default offset 6, `CLOSE_ON_SCROLL_GRACE_MS 600`. Data attributes: `data-anchore
 - **Neither this nor `AnchoredPopover` traps focus, on purpose.** `useEdgeTab` intercepts only the two
   ends. A picker that swallows the keyboard is worse than the `<select>` it replaces.
 - Single-select typeahead **changes the value** when closed; multi-select typeahead only **moves the
-  highlight** — a multi-select must never tick a box from a keystroke aimed at finding one.
+  highlight** — a multi-select must never tick a box from a keystroke aimed at finding one. On a
+  **searchable** trigger a printable key instead **opens the panel and seeds the filter box** with
+  that character (`seedFilter`) — until 2026-08-23 it did nothing at all there, so the fastest
+  keyboard route existed on the four-option enums and was missing from the 252 dial codes.
+- **`searchable` IS THE CALL SITE'S JOB WHEREVER THE OPTIONS ARE RECORDS.** `SEARCH_THRESHOLD`
+  answers "long enough to hunt through" correctly for a vocabulary written in the repo (status,
+  gender, tier, units) and only accidentally for a list of rows: crafts are nine here, three on a new
+  pilot, forty next year, so with the count in charge the same control gains and loses its filter box
+  as the repository fills. **Options from a fetched list → pass `searchable`. Options from a constant
+  → leave it alone** (and say so in a comment when the asymmetry is visible on one screen).
+  `searchable={false}` overrules a long list on purpose — **and a call site that does MUST pass a
+  `capHint`**, because the render cap still bites: the footer's default last clause is "Keep typing to
+  narrow the list", which on a panel with no filter box instructs the reader to use a control that is
+  not on screen. `DesignWorkshopViewersPanel` and `/design-review` are the two places that overrule,
+  and both now name the server-backed search box above the picker instead.
+- **A CLIENT-SIDE FILTER OVER A SERVER-TRUNCATED LIST IS THE WRONG SEARCH BOX**, and it looks exactly
+  like the right one. `searchable` filters the options ALREADY IN THE BROWSER, so where the caller
+  fetched one page of a bigger table, typing a real record's name answers "No matches" — absence
+  reading as non-existence, which is rule 10 wearing a search box. If the endpoint takes a `search`
+  parameter, put the box **above** the picker, wire it to the server, and pass `searchable={false}`:
+  one box, over the whole table. `DesignWorkshopViewersPanel` (2000-account ceiling) and
+  `/design-review` (an admin's list is the whole archive) are both this shape. And ask the endpoint
+  for **`RENDER_CAP` rows, not the server's ceiling** — 100 rows into a control that draws 80 printed
+  two truncation sentences with two different totals, one above the other, and said nothing at all
+  between 81 and 100.
+- **`SelectOption` carries `hint` and `group`, and `hint` is SEARCHED as well as shown.** `hint` is
+  secondary text drawn after the label (Android has had it since the start, stacked instead of inline
+  because a 48dp row can afford two lines); it ranks below every label match so a second column
+  cannot outvote the first. `group` draws a heading over a run of rows — the `<optgroup>` the themed
+  dropdown could not express, and the reason the photo-intake picker stayed a raw `<select>`. **The
+  option `value` is deliberately NOT searched** (Android's is): a web value is usually a CUID, and a
+  25-character random string matches a great many two-letter queries. Anything a caller wants
+  searched goes in `label` or `hint`, both of which the reader can see.
+- **The pure half lives in `components/ui/selectFilter.ts`** — `fold`, `filterOptions`,
+  `typeaheadIndex`, `groupRows`, `capNoticeSentence`, `SEARCH_THRESHOLD`, `RENDER_CAP`. There is no
+  React renderer in devDependencies, so a judgement inside JSX is only ever exercised by somebody
+  looking at a screen; `e2e/dropdown-sweep-unit.spec.ts` calls these instead. Same split, same
+  reason, as `components/data/cappedList.ts`.
+- **`highlight` INDEXES `rendered`, ALWAYS — `options` and `rendered` are different lists past the
+  cap.** Type-ahead in both components searched `options` and wrote the answer into the highlight, so
+  on a non-searchable list past 80 rows a letter highlighted an unrelated row and the next Space
+  ticked it. That call site is a permissions picker. Every index computation must name the array it is
+  against.
+- **The pinned-selection set is a SNAPSHOT taken when the panel opens and when the query changes**, not
+  the live selection. Read live, ticking changed the LENGTH of `rendered` under a stationary
+  `highlight`: unticking a pinned row (or "Select all matching") shifted every row by one and the next
+  Enter toggled the neighbour.
+- **Tab out of the filter box commits only a highlight the reader MOVED** (arrow, Home, End, hover).
+  It used to commit row 0 of the query, so opening a filled field, typing three letters to check
+  something, and Tabbing on silently replaced the answer. Enter still takes the top match in one key.
+- **Home and End move the CARET inside the filter box**, and the list everywhere else
+  (`navigate(event, textEntry)`). They used to `preventDefault()` whenever the panel was open — which,
+  in the box, is always — so the one key a reader reaches for to fix the front of a typo did nothing.
+- **The trigger is `role="combobox"` only on the non-searchable branch**, and that is what makes
+  `aria-activedescendant` mean anything: the attribute is not supported on `button`, so arrowing
+  through Gender/Status/Yes-No announced nothing at all. With a filter box the trigger stays a plain
+  button — the combobox is the box inside the panel, and two nested comboboxes describe a control
+  that does not exist. Still **no `aria-invalid`**: it would be honoured on one branch and dropped on
+  the other, and the call site cannot see which kind of list it has.
+- `CapNotice` counts the window and the **pinned** selections separately ("Showing the first 80 of
+  246, plus 1 already selected"): `rendered.length` is 80 first-rows plus rows dragged forward from
+  deeper in the corpus, so the sum is not "the first 81" of anything.
+- `fold()` collapses runs of whitespace as well as folding diacritics, on **both** sides of the
+  comparison — a label built as `` `${a.name} · ${a.place}` `` with an empty place carries two spaces,
+  and typing what the row visibly reads as matched nothing.
+- **A `<label>` CANNOT NAME A THEMED DROPDOWN, and `Field`/`FieldBlock` now hand the name down
+  through context.** HTML-AAM computes a `<button>`'s accessible name from its own contents, so
+  `Field label="Craft"` around a `Select` announced "Bamboo, combobox" — the value, and the question
+  never — at 44 measured call sites. Both wrappers publish their label's id
+  (`components/ui/fieldLabel.tsx`) and `SearchableSelect` composes `aria-labelledby="<label> <self>"`,
+  giving "Craft Bamboo". **Both ids, in that order**: `aria-labelledby` replaces name-from-content, so
+  naming only the label would drop the value. An explicit `ariaLabel` still wins. `FieldBlock` remains
+  the right wrapper for a widget; the context is what makes the sites already on `Field` announce
+  their question, and what makes the next dropdown correct without anybody being told.
+- **`Dropdown` forwards `emptyLabel`; `ComboBox` takes `emptyLabel` and `describedBy`;
+  `FormControls.Select` forwards `searchable` / `advanceOnSelect` / `emptyLabel` / `placeholder`.**
+  None of them did before 2026-08-23, which is why `ProcessForm` calls `Dropdown` directly and why
+  every single-select in the app was stuck with the literal "No options". `Select` still passes no
+  **id** or **ref** (see `e2e/process-refusal-a11y-unit.spec.ts`), which is what keeps a handful of
+  native `<select>`s honest: a control whose `<label htmlFor>` and `aria-describedby` are bound by id
+  cannot become a themed dropdown without losing both.
+- **Android has no override.** `android/.../ui/SearchableSelect.kt` is
+  `val searchable = options.size >= SEARCH_THRESHOLD` with the same threshold of 8, so on a small
+  corpus the web offers a filter box where the handset still opens its plain anchored menu. A
+  divergence to close, not a difference to design around.
 
 ### 11.6 `Toast`
 
@@ -1544,6 +1629,20 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
 - `subregion` is the district; `county` is the trap.
 - Aadhaar mask posts back verbatim; Pehchan mask must be **omitted**.
 - `advanceOnSelect={false}` on any dropdown that filters the screen it sits on.
+- `searchable` on any dropdown whose options are **records**; leave it off a constant vocabulary. The
+  option count is not the rule — see §11.5. **Per-state district lists straddle the threshold both
+  ways** (Goa 2, Uttar Pradesh 75), which is why all three district pickers pass it explicitly.
+- `searchable` over a list the SERVER truncated is a filter box that answers "No matches" about
+  records that exist. Server search box above + `searchable={false}` + `capHint`, and fetch
+  `RENDER_CAP` rows.
+- `highlight` indexes `rendered`, never `options` — they differ past `RENDER_CAP`.
+- Pinned rows are a snapshot per open/query, not the live selection, or ticking renumbers the list.
+- Tab out of a filter box must not commit an untouched highlight; Home/End belong to the caret there.
+- A `<label>` (`Field`) cannot name a dropdown's `<button>` — the name arrives by context from
+  `Field`/`FieldBlock`, composed with the trigger's own text.
+- `SelectOption.hint` is searched; `SelectOption.value` is not (a CUID matches everything).
+- The dropdown trigger's `role="combobox"` is **conditional on there being no filter box**, and
+  deleting it silently un-announces every short list.
 - Empty means everything (`filters.types`) / all (`workshopIds`).
 - `FunnelFilters` fires once after load — wait for it.
 - Date parsing: local for `parseDateInput`, **UTC** for `DateRangeField`.

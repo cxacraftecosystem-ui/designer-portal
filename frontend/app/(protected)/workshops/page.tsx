@@ -550,7 +550,13 @@ function WorkshopsPageBody() {
           </Field>
           <MultiNoteField defaultValue={editing?.notes ?? ""} />
           {/* Both link pickers use the same themed multi-select as every other one in the app; the
-              selections are React state, not FormData (see the note on `artisanIds` above). */}
+              selections are React state, not FormData (see the note on `artisanIds` above).
+
+              Both pass `searchable` rather than leaving it to the option count, because both lists
+              are records: the artisans interviewed and the crafts recorded. The count rule would
+              give this one form a filter box on the artisan picker and none on the craft picker for
+              most of this repository's life (16 against 9, either side of a threshold of 8), which
+              is one form asking the same question two ways. */}
           <Field label="Linked artisans">
             <MultiSelectDropdown
               values={artisanIds}
@@ -559,6 +565,7 @@ function WorkshopsPageBody() {
                 setDirty(true);
               }}
               options={artisanOptions}
+              searchable
               placeholder="Link the artisans who took part"
               emptyLabel="No artisans recorded yet"
               confirmLabel="Link artisans"
@@ -577,6 +584,7 @@ function WorkshopsPageBody() {
                   setDirty(true);
                 }}
                 options={craftOptions}
+                searchable
                 placeholder="Pick the crafts this workshop covered"
                 emptyLabel="No crafts available yet"
                 confirmLabel="Add crafts"

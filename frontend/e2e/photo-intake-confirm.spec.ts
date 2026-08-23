@@ -332,9 +332,18 @@ test("a dated photograph is proposed with its evidence, and NOTHING is written u
   // The evidence names the row it matched — the narrow stage 13 log, not the whole-workshop window.
   await expect(page.getByText(/stage 13's Stage logs row “Warping the loom”, date 14 Feb 2026/)).toBeVisible();
 
-  // The destination defaulted to that same stage 13 row.
-  const destination = page.locator("#photo-intake-destination-0");
-  await expect(destination).toHaveValue("PROTOTYPE_DEVELOPMENT|prototypeStageLog|log-14-feb|logPhotos");
+  /*
+    The destination defaulted to that same stage 13 row.
+
+    READ OFF THE TRIGGER'S TEXT, NOT A `value`, because this control is no longer a native
+    `<select>`: it is the app's themed picker, which the photo page moved to once `SelectOption`
+    grew a `group` field and the two `<optgroup>`s could be expressed (it was the last long list in
+    the application with no filter box). A themed trigger is a `<button>` whose text is the chosen
+    option's label, so what is asserted is what a designer reads — and the id now belongs to the
+    cell's wrapper, since `Dropdown` deliberately takes none.
+  */
+  const destination = page.locator("#photo-intake-destination-0 [data-searchable-select]");
+  await expect(destination).toContainText("Warping the loom");
 
   // PROPOSE, NEVER COMMIT: the proposal is on screen and the device holds nothing.
   expect(await storedMediaRefs(page, workshopId), "nothing is written before Confirm").toEqual([]);
@@ -385,7 +394,11 @@ test("a photograph with no capture date is offered for manual assignment, never 
   await expect(page.getByText(/1\s*need you/)).toBeVisible();
 
   // The undated one is NOT pre-selected, and the filename saying "2026-02-14" did not become a date.
-  await expect(page.locator("#photo-intake-destination-1")).toHaveValue("");
+  // "Leave out" IS the empty choice's own row — it is a real option with a real sentence, not a
+  // placeholder — so the honest assertion is that the trigger reads it.
+  await expect(page.locator("#photo-intake-destination-1 [data-searchable-select]")).toContainText(
+    "Leave out"
+  );
 
   // Only the dated one is offered for attachment.
   await expect(page.getByRole("button", { name: /^Confirm 1 photograph$/ })).toBeVisible();
@@ -417,13 +430,25 @@ test("a photograph on an unlogged day is NOT auto-pointed at a single-valued fie
 
   // …but nothing is auto-selected, because writing two hundred photographs one at a time into a box
   // that holds one would attach exactly one and destroy the rest without a word.
-  await expect(page.locator("#photo-intake-destination-0")).toHaveValue("");
+  await expect(page.locator("#photo-intake-destination-0 [data-searchable-select]")).toContainText(
+    "Leave out"
+  );
   await expect(page.getByText(/1\s*need you/)).toBeVisible();
 
   // Confirm is therefore not offered for it.
   await expect(page.getByRole("button", { name: /^Confirm 0 photographs$/ })).toBeDisabled();
 
-  // The designer can still choose the cover deliberately — the refusal is only about the default.
-  await page.locator("#photo-intake-destination-0").selectOption("WORKSHOP_SETUP|workshopSetup||coverPhoto");
+  /*
+    The designer can still choose the cover deliberately — the refusal is only about the default.
+
+    Driven the way every other themed picker is driven in this suite: open the trigger, narrow with
+    the panel's filter box, click the row. The filter step is not decoration — this list is every
+    place in the workshop a photograph can go, which is past `RENDER_CAP`, so the row wanted is not
+    necessarily drawn until it is searched for. That is the whole reason this control gained a filter
+    box.
+  */
+  await page.locator("#photo-intake-destination-0 [data-searchable-select]").click();
+  await page.getByRole("combobox", { name: /^Filter Where / }).fill("Workshop details");
+  await page.getByRole("option", { name: /Workshop details/ }).first().click();
   await expect(page.getByRole("button", { name: /^Confirm 1 photograph$/ })).toBeEnabled();
 });

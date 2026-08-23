@@ -820,6 +820,11 @@ export default function SharingPage() {
                 values={reqOwnerIds}
                 onChange={setReqOwnerIds}
                 options={requestOptions}
+                // `searchable` on both people pickers on this page. They are account lists, so the
+                // number of rows is a fact about the deployment; and this is a PERMISSIONS form,
+                // where picking the wrong name is the mistake that costs something. Typing a name is
+                // the only way to be sure, and it must not depend on how many colleagues exist.
+                searchable
                 placeholder="Select…"
                 ariaLabel="Researchers to request access from"
                 disabled={busy}
@@ -833,7 +838,9 @@ export default function SharingPage() {
               <TextInput value={reqOwnerText} onChange={(e) => setReqOwnerText(e.target.value)} placeholder="Researcher user id" />
             )}
           </Field>
-          {/* Single-select on purpose: the tiers are a ladder, not a set. See TIER_RANK. */}
+          {/* Single-select on purpose: the tiers are a ladder, not a set. See TIER_RANK. And no
+              `searchable` on any of the three tier pickers on this page: three rungs, spelled out in
+              TIER_LABEL, which is a list you read rather than search. */}
           <Field label="Tier">
             <Select value={reqTier} onChange={(e) => setReqTier(e.target.value as DataAccessTier)}>
               <option value="DOWNLOAD">{TIER_LABEL.DOWNLOAD}</option>
@@ -871,6 +878,7 @@ export default function SharingPage() {
               values={grantGranteeIds}
               onChange={setGrantGranteeIds}
               options={grantOptions}
+              searchable
               placeholder="Select…"
               ariaLabel="Colleagues to grant access to"
               disabled={busy}

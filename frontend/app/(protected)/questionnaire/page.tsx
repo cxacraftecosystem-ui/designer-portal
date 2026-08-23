@@ -891,8 +891,16 @@ function QuestionnairePageBody() {
             )}
           </Field>
           <Field label="Primary artisan">
+            {/*
+              `searchable`, and this is the picker in the app where it matters most: the artisan
+              chosen here is what decides `artisanSetKey` — WHICH INTERVIEW this submission folds
+              into — and the labels are `name - craft - place` triples that differ by one word.
+              Reaching the right one by scrolling past near-identical rows is how the wrong set gets
+              picked. `Select` could not pass this prop at all until this pass; it can now.
+            */}
             <Select
               name="primaryArtisanId"
+              searchable
               value={selectedArtisanId}
               onChange={(event) => {
                 setSelectedArtisanId(event.target.value);
@@ -926,6 +934,7 @@ function QuestionnairePageBody() {
               values={additionalArtisanIds}
               onChange={setAdditionalArtisanIds}
               options={additionalArtisanOptions}
+              searchable
               placeholder="Add more artisans to this set"
               emptyLabel="No other artisans"
             />
@@ -2151,7 +2160,17 @@ function QuestionTile({
                 <label className="flex items-center gap-1.5 text-xs text-ink-muted">
                   <span>Move to</span>
                   <span className="w-32">
-                    <Select value="" onChange={(event) => onMoveToSection(event.target.value)} aria-label={`Move question ${question.sortOrder} to another section`}>
+                    {/* `searchable`: sections are authored rows, so how many there are is a fact
+                        about this questionnaire rather than about the control, and a questionnaire
+                        that grows past eight sections would otherwise gain a filter box here on its
+                        own. The anchor is narrow (`w-32`) and the panel matches it, which is enough
+                        for a list of section codes. */}
+                    <Select
+                      value=""
+                      searchable
+                      onChange={(event) => onMoveToSection(event.target.value)}
+                      aria-label={`Move question ${question.sortOrder} to another section`}
+                    >
                       <option value="">Section...</option>
                       {otherSections.map((section) => (
                         <option key={section.id} value={section.id}>

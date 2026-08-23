@@ -812,6 +812,11 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               // This dropdown reconfigures the screen it sits on, so focus must stay on it rather
               // than jumping to whatever control happens to follow.
               advanceOnSelect={false}
+              // Templates are rows fetched from the server, so their number is a fact about the
+              // deployment. Left to the option count this control would grow a filter box on the
+              // cluster that has uploaded eight templates and not on the one that has uploaded
+              // seven, for the same designer moving between the two.
+              searchable
             />
           </FieldBlock>
           <p className="text-sm leading-6 text-ink-muted">
@@ -828,6 +833,12 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               options={TRANSCRIPT_OPTIONS}
               ariaLabel="Transcripts in this file"
               advanceOnSelect={false}
+              // NO `searchable`, deliberately, and it is not an oversight next to the template
+              // picker above. TRANSCRIPT_OPTIONS is three constants declared in this file and will
+              // not grow: a filter box over it is an extra tab stop, a "No matches" state and a
+              // thing to read, in exchange for saving nobody a scroll. The option-count rule in
+              // SearchableSelect gets this right on its own — this comment exists so the next
+              // reader knows the asymmetry with the control above it was a decision.
             />
           </FieldBlock>
           <p className="text-sm leading-6 text-ink-muted">

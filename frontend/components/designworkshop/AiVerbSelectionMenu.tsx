@@ -273,6 +273,12 @@ export function AiVerbSelectionMenu({ workshopId, disabled, selectionChars, read
             // is for — moving focus to the next field after choosing "Proofread this passage" would
             // take the caret out of the very document the verb is about to run over.
             advanceOnSelect={false}
+            // AND FOR THE SAME REASON, NO `searchable` — not now and not if MENU_OPTIONS grows past
+            // eight. Everything else in this app that passes `searchable` is a field whose options
+            // are records; this is a command menu, and nobody types to find a command in a list of
+            // three they can read. If the verbs ever do reach the option-count threshold, the answer
+            // is `searchable={false}` here, not a filter box: the reason is what this control IS,
+            // not how long its list happens to be.
             options={MENU_OPTIONS}
             placeholder="Ask AI about this passage"
             ariaLabel="Ask AI about the selected passage"

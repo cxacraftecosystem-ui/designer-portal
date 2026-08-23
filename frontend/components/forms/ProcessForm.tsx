@@ -1110,6 +1110,16 @@ export function ProcessForm({
           <Dropdown
             value={artisanId}
             describedBy={artisanError ? artisanErrorId : undefined}
+            /*
+              `searchable` because this list is the artisan CORPUS — it is capped, and the cap is
+              reported right below the control by `CappedListNotice`, which is as plain a statement
+              as there is that this is a list to hunt through rather than read. The option-count rule
+              would leave it up to how many artisans this deployment has interviewed so far, and the
+              stakes here are the highest of any picker in the app: on /questionnaire the artisan
+              picked is what decides `artisanSetKey`, i.e. which interview a submission folds into,
+              and the labels are `name · place` pairs that differ by a word.
+            */
+            searchable
             options={[
               { value: "", label: "Select the artisan" },
               ...artisanOptions.map((artisan) => ({ value: artisan.id, label: `${artisan.name} · ${artisan.place}` }))
@@ -1142,6 +1152,14 @@ export function ProcessForm({
           <Dropdown
             value={productId}
             describedBy={productError ? productErrorId : undefined}
+            /*
+              `searchable` here too, even though one artisan usually has a handful of products. This
+              list is re-fetched per artisan, so with the count in charge the SAME control on the
+              SAME screen would grow a filter box for the artisan with nine products and lose it for
+              the next one — a control changing shape mid-session, which is harder to learn than
+              either behaviour on its own.
+            */
+            searchable
             options={[
               { value: "", label: productPlaceholder },
               ...artisanProducts.map((product) => ({ value: product.id, label: product.productName }))

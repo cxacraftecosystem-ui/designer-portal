@@ -197,6 +197,16 @@ export function ToolAssignmentSection() {
               });
             }}
             placeholder="Select a tool"
+            /*
+              All three pickers in this section pass `searchable`, and none of them may be left to
+              the option count: tools, crafts and artisans are all records, all three are capped
+              (see the `CappedListNotice` under each), and the tool list is the longest in the app
+              after the dial codes at 74 rows of `toolkitName — craftName · artisanName`. Reading
+              that by scrolling is not a thing anybody does twice. Leaving it to the count would also
+              make the three disagree with one another on a young deployment — 74 tools searchable,
+              6 crafts not — for one task done in one glance.
+            */
+            searchable
             options={tools.map((tool) => ({ value: tool.id, label: `${tool.toolkitName} — ${tool.craftName} · ${tool.artisanName}` }))}
           />
           <CappedListNotice cuts={[cuts.tools]} />
@@ -206,6 +216,7 @@ export function ToolAssignmentSection() {
             values={craftIds}
             onChange={setCraftIds}
             placeholder="Select crafts"
+            searchable
             options={crafts.map((craft) => ({ value: craft.id, label: craft.name }))}
           />
           <CappedListNotice cuts={[cuts.crafts]} />
@@ -227,6 +238,7 @@ export function ToolAssignmentSection() {
             placeholder={craftIds.length ? "Select artisans" : "Select crafts first"}
             emptyLabel={craftIds.length ? "No artisans for these crafts" : "Select crafts first"}
             disabled={craftIds.length === 0}
+            searchable
             options={artisansForCrafts.map((artisan) => ({ value: artisan.id, label: `${artisan.name} · ${artisan.place}` }))}
           />
           {/* Rendered only once crafts are ticked: with none ticked the control says "Select crafts

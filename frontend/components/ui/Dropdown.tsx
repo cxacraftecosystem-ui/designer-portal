@@ -30,25 +30,51 @@ export function Dropdown({
   onChange,
   options,
   placeholder = "Select",
+  emptyLabel,
   disabled,
   className,
   ariaLabel,
   describedBy,
   searchable,
+  capHint,
   advanceOnSelect = true
 }: {
   value: string;
   onChange: (value: string) => void;
   options: DropdownOption[];
   placeholder?: string;
+  /**
+   * What the panel says when there is nothing to choose from at all — as against "No matches",
+   * which is what it says when a query excluded everything. The two are different sentences on
+   * purpose and `SearchableSelect` has always drawn the distinction.
+   *
+   * It is forwarded here because it was NOT, and the omission was invisible from either side: the
+   * primitive accepted it, `MultiSelectDropdown` passed it, and every single-select in the app was
+   * silently stuck with the literal "No options". So a district picker with no state chosen yet, and
+   * a designer picker for a workshop that has no eligible designers, both answered with the one
+   * sentence that cannot say which — while their multi-select twins could.
+   */
+  emptyLabel?: string;
   disabled?: boolean;
   className?: string;
   ariaLabel?: string;
   /** Ids of the paragraphs describing this control — a field's hint and its refusal message. See
    *  SearchableSelect for why there is no `invalid` companion. */
   describedBy?: string;
-  /** Override the option-count rule in SearchableSelect. Almost nothing should need to. */
+  /**
+   * Override the option-count rule in SearchableSelect. **Pass `true` when the options come from
+   * fetched records**, and leave it alone for a vocabulary written as a constant — the full rule,
+   * and the Android divergence it opens, are on `SearchableSelectProps.searchable`.
+   */
   searchable?: boolean;
+  /**
+   * The last clause of the panel's "Showing the first 80 of N" footer.
+   *
+   * Only needed where `searchable={false}` overrules a long list: with a filter box the default
+   * sentence ("Keep typing to narrow the list") is always true, and without one it is an instruction
+   * to use a control that is not on screen. Name the control that DOES reach the rest.
+   */
+  capHint?: string;
   /**
    * After a value is picked, close and move focus to the next field. On by default: these forms are
    * filled top-to-bottom in one pass, and leaving focus parked on the trigger makes the next Tab
@@ -64,11 +90,13 @@ export function Dropdown({
       onChange={onChange}
       options={options}
       placeholder={placeholder}
+      emptyLabel={emptyLabel}
       disabled={disabled}
       className={className}
       ariaLabel={ariaLabel}
       describedBy={describedBy}
       searchable={searchable}
+      capHint={capHint}
       advanceOnSelect={advanceOnSelect}
     />
   );
@@ -86,6 +114,7 @@ export function MultiSelectDropdown({
   ariaLabel,
   describedBy,
   searchable,
+  capHint,
   confirmOnSelect = true,
   confirmLabel = "Confirm"
 }: {
@@ -101,6 +130,14 @@ export function MultiSelectDropdown({
    *  SearchableSelect for why there is no `invalid` companion. */
   describedBy?: string;
   searchable?: boolean;
+  /**
+   * The last clause of the panel's "Showing the first 80 of N" footer.
+   *
+   * Only needed where `searchable={false}` overrules a long list: with a filter box the default
+   * sentence ("Keep typing to narrow the list") is always true, and without one it is an instruction
+   * to use a control that is not on screen. Name the control that DOES reach the rest.
+   */
+  capHint?: string;
   /**
    * Show a Confirm button in the panel once at least one option is ticked; confirming closes the
    * panel and moves to the next field.
@@ -125,6 +162,7 @@ export function MultiSelectDropdown({
       ariaLabel={ariaLabel}
       describedBy={describedBy}
       searchable={searchable}
+      capHint={capHint}
       confirmOnSelect={confirmOnSelect}
       confirmLabel={confirmLabel}
     />
@@ -144,8 +182,10 @@ export function ComboBox({
   value,
   onChange,
   placeholder = "Select or type to search",
+  emptyLabel,
   name,
   ariaLabel,
+  describedBy,
   className,
   disabled,
   advanceOnSelect = true
@@ -154,8 +194,18 @@ export function ComboBox({
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  /** See `Dropdown`'s — "there is nothing here" is not "your query matched nothing". */
+  emptyLabel?: string;
   name?: string;
   ariaLabel?: string;
+  /**
+   * Ids of the paragraphs describing this control. Added because this export could not carry one:
+   * of the three shapes, the one whose stated purpose is "this list is meant to be searched" was
+   * the only one with no way to attach a hint or a refusal to the control it belongs to — and a
+   * ComboBox is what the record and workshop pickers use, i.e. the fields most likely to come back
+   * refused. See `SearchableSelect` for why there is no `invalid` companion.
+   */
+  describedBy?: string;
   className?: string;
   disabled?: boolean;
   advanceOnSelect?: boolean;
@@ -168,9 +218,11 @@ export function ComboBox({
         onChange={onChange}
         options={options}
         placeholder={placeholder}
+        emptyLabel={emptyLabel}
         disabled={disabled}
         className={className}
         ariaLabel={ariaLabel}
+        describedBy={describedBy}
         searchable
         advanceOnSelect={advanceOnSelect}
       />

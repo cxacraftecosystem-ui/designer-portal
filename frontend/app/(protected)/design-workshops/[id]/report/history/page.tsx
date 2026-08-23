@@ -538,7 +538,14 @@ function DiffPanel({
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {/* `advanceOnSelect={false}` on both: these filter the screen they sit on rather than
                 filling in a form field, and moving focus away from a control the designer is still
-                adjusting is wrong. */}
+                adjusting is wrong.
+
+                `searchable` on both because this list grows one row per export, forever: it is the
+                clearest case in the app of a list whose length is nobody's design decision. A
+                workshop that has generated seven files would have no filter box and the same
+                workshop next week would have one, and the thing a designer wants to do here — find
+                the file from the 14th among thirty stamped with dates and names — is exactly what
+                typing answers and scrolling does not. */}
             <FieldBlock label="Compare">
               <Dropdown
                 value={leftId}
@@ -546,6 +553,7 @@ function DiffPanel({
                 options={exportOptions}
                 ariaLabel="Earlier report"
                 advanceOnSelect={false}
+                searchable
               />
             </FieldBlock>
             <FieldBlock label="With">
@@ -555,6 +563,7 @@ function DiffPanel({
                 options={exportOptions}
                 ariaLabel="Later report"
                 advanceOnSelect={false}
+                searchable
               />
             </FieldBlock>
           </div>
