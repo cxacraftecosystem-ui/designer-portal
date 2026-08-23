@@ -52,5 +52,13 @@
 /frontend/test-results/
 
 # Secrets never travel in a deployment payload; Vercel supplies the environment itself.
-.env
-.env.*
+#
+# ANCHORED AND NARROW ON PURPOSE. This read `.env` + `.env.*`, and a bare `.env.*` matches a BASENAME
+# at any depth — so it also excluded `frontend/.env.example`, a committed template with no secret in
+# it. The CLI deploy did not mind; `vercel deploy --prebuilt`, which is what CI runs, failed on
+# Vercel's side with `ENOENT: no such file or directory, lstat '/vercel/path0/frontend/.env.example'`
+# after uploading the whole build. Excluding a tracked file that the deployment's own file list still
+# names is not the same as not having it.
+/.env
+.env.local
+.env.*.local
