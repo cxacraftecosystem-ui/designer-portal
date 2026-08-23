@@ -112,7 +112,7 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 130 | 2778 `def test_` | `python -m pytest -q` from `backend/` |
+| Backend unit (`backend/tests/`) | 130 | 2782 `def test_` | `python -m pytest -q` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 125 | 1093 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 137 | 1660 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 8 | 24 `@Test` | needs a device; not run in CI |
@@ -131,7 +131,7 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 168 | 93,850 | 168 | 93,850 |
+| `backend/app` | 168 | 93,891 | 168 | 93,891 |
 | `frontend/app` | 64 | 27,963 | 64 | 27,963 |
 | `frontend/components` | 212 | 72,667 | 212 | 72,667 |
 | `frontend/lib` | 101 | 52,920 | 101 | 52,920 |
