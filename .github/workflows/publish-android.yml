@@ -1023,9 +1023,16 @@ jobs:
             exit 1
           fi
 
-          token="$(jq -r '.access_token // empty' "$body")"
+          # `.accessToken`, camelCase, AND `.access_token` as a fallback. The field is camelCase —
+          # `backend/app/api/routes/auth.py:450` returns {"accessToken", "tokenType", "user"} — and
+          # this read `.access_token` only, so the first real run of this workflow authenticated
+          # successfully, found nothing where it looked, and failed AFTER a 7-minute signed build with
+          # a message blaming the API for returning an empty token. The API was correct; the reader
+          # was not. Both spellings are accepted so that this cannot break again in either direction
+          # if the response is ever normalised.
+          token="$(jq -r '.accessToken // .access_token // empty' "$body")"
           if [ -z "$token" ]; then
-            echo "::error::The login returned 200 but no access_token. A 200 with an empty token is exactly the 'cheerful false pass' that would make every later call anonymous and every guard below meaningless."
+            echo "::error::The login returned 200 but no token under .accessToken or .access_token. A 200 with an empty token is exactly the 'cheerful false pass' that would make every later call anonymous and every guard below meaningless."
             exit 1
           fi
           role="$(jq -r '.user.role // "unknown"' "$body")"
