@@ -31,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,6 +40,7 @@ import com.designprototype.workshop.data.CustomQuestionDto
 import com.designprototype.workshop.data.CustomQuestionnaireDto
 import com.designprototype.workshop.data.CustomSectionDto
 import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.cachedQuestionnaireNotice
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
@@ -68,6 +70,16 @@ import kotlinx.coroutines.launch
  * be either refused later — losing the sitting the designer believed was recorded — or re-attached to
  * whatever wording replaced it, which fabricates evidence. Being told there is no signal, in the
  * room, while the answers are still on screen to be re-sent, is the honest failure.
+ *
+ * ── BUT THE FORM NOW OPENS WITH NO SIGNAL, AND THAT WAS A SEPARATE BUG ───────────────────────────
+ *
+ * The paragraph above is about WRITING, and it was silently doing duty for the read as well. This
+ * screen used to hit the network to load the form, full stop — so a designer with no bars was shown
+ * `loadError` where a 24-section instrument should be, and could not read the question they were
+ * about to ask out loud, nor review what a colleague recorded that morning. None of that writes
+ * anything. It is served from [DwQuestionnaireFormCache] now, the screen SAYS it is a copy and when
+ * it was taken, and saving is refused up front rather than by letting the designer fill in a section
+ * and then failing — see [cachedQuestionnaireNotice] and `offlineRefusal` below.
  */
 @Composable
 fun QuestionnaireAnswerScreen(
@@ -78,6 +90,8 @@ fun QuestionnaireAnswerScreen(
     onError: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    // The application context, so a cache read/write cannot outlive an Activity it holds.
+    val appContext = LocalContext.current.applicationContext
 
     var form by remember(questionnaireId) { mutableStateOf<CustomQuestionnaireDto?>(null) }
     var loading by remember(questionnaireId) { mutableStateOf(true) }
@@ -114,13 +128,32 @@ fun QuestionnaireAnswerScreen(
     val me = remember { signedInUserId(repository) }
     val admin = remember { isAdminAccount(repository) }
 
+    /**
+     * Set when the form on screen came off this device's disk rather than off the network.
+     *
+     * The sentence is [cachedQuestionnaireNotice]'s, and it is drawn ABOVE the questions rather than
+     * beside the save button — a designer has to know they cannot record before they start asking,
+     * not after forty answers are typed.
+     */
+    var cachedNotice by remember(questionnaireId) { mutableStateOf<String?>(null) }
+
     LaunchedEffect(questionnaireId, entryId) {
         loading = true
         loadError = null
+        cachedNotice = null
         runCatching {
             // includeRetired = false. See the note in the KDoc above; this is the one caller that
             // must never be handed a retired question.
-            repository.customQuestionnaire(questionnaireId, includeRetired = false)
+            repository.customQuestionnaireCached(
+                context = appContext,
+                id = questionnaireId,
+                includeRetired = false,
+            )
+        }.map { read ->
+            if (read.fromCache) {
+                cachedNotice = cachedQuestionnaireNotice(read.cachedAt, read.form.version)
+            }
+            read.form
         }.onSuccess { loaded ->
             form = loaded
             val entry = loaded.entries.firstOrNull { it.id == entryId }
@@ -193,6 +226,19 @@ fun QuestionnaireAnswerScreen(
 
     fun save(questions: List<CustomQuestionDto>, thenAdvance: Boolean) {
         if (saving) return
+        // REFUSED BEFORE THE BATCH IS EVEN BUILT, and refused in words rather than by a network
+        // error. The form on screen is a copy this device kept; whether these questions may still be
+        // answered is a fact only the server holds. Letting the request go would produce an OkHttp
+        // sentence that reads as a fault in the app, and would leave the designer wondering whether
+        // some of it got through.
+        if (cachedNotice != null) {
+            onError(
+                "These answers cannot be saved: the questionnaire on screen is the copy this phone " +
+                    "kept, and this app will not record an answer against wording it cannot confirm " +
+                    "is still in use. Your typing is still here — save when you have a signal."
+            )
+            return
+        }
         val batch = batchFor(questions)
         if (batch.isEmpty()) {
             onMessage("Nothing new to save here.")
@@ -243,6 +289,16 @@ fun QuestionnaireAnswerScreen(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // ABOVE THE QUESTIONS, not beside the save button. A designer who is going to be refused a
+        // save has to know it before they start asking, not after a section is typed.
+        cachedNotice?.let { notice ->
+            Text(
+                notice,
+                color = MaterialTheme.field.warning,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+            )
+        }
         when {
             loading -> Row(
                 verticalAlignment = Alignment.CenterVertically,

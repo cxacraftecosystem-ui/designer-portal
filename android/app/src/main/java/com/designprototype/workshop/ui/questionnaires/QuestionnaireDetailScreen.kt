@@ -42,6 +42,7 @@ import com.designprototype.workshop.data.DwQuestionnaireArtefact
 import com.designprototype.workshop.data.DwQuestionnaireStore
 import com.designprototype.workshop.data.QFormChangeReportDto
 import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.cachedQuestionnaireNotice
 import com.designprototype.workshop.data.apiErrorMessage
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectOption
@@ -111,6 +112,18 @@ fun QuestionnaireDetailScreen(
     var savedQuestionSetTo by remember(questionnaireId) { mutableStateOf<String?>(null) }
     var savedWorkbookTo by remember(questionnaireId) { mutableStateOf<String?>(null) }
     var uploadReport by remember(questionnaireId) { mutableStateOf<QFormChangeReportDto?>(null) }
+
+    /**
+     * Set when the questionnaire on screen came off this device's disk.
+     *
+     * Every write on this screen goes through `mutate`, which will fail with a network error while
+     * this is set — and that is left as it is deliberately. This screen's writes are edits to the
+     * INSTRUMENT (rename a section, retire a question), and those genuinely cannot be composed
+     * offline: `guard_question_edit` decides between "updated" and "superseded" from whether the
+     * question already has answers, which is a fact this copy cannot know. Saying so up front is
+     * this notice's job; refusing per-button would be four more places to keep the same sentence.
+     */
+    var cachedNotice by remember(questionnaireId) { mutableStateOf<String?>(null) }
 
     fun download(artefact: DwQuestionnaireArtefact) {
         if (interchangeBusy) return
@@ -186,7 +199,27 @@ fun QuestionnaireDetailScreen(
     LaunchedEffect(questionnaireId, reload) {
         loading = true
         loadError = null
-        runCatching { repository.customQuestionnaire(questionnaireId, includeRetired = true) }
+        cachedNotice = null
+        // CACHE-BACKED, so this screen opens in a courtyard. It is the screen a designer reads a
+        // questionnaire's sittings on, and the one that warms `DwQuestionnaireStore` for the report —
+        // being unable to open it with no signal meant being unable to review what a colleague
+        // recorded that morning, which writes nothing at all. See
+        // `WorkshopRepository.customQuestionnaireCached`; a 403/404 still reaches `onFailure`, so a
+        // questionnaire this account may no longer read is never served out of the device's memory
+        // of when they could.
+        runCatching {
+            repository.customQuestionnaireCached(
+                context = appContext,
+                id = questionnaireId,
+                includeRetired = true,
+            )
+        }
+            .map { read ->
+                if (read.fromCache) {
+                    cachedNotice = cachedQuestionnaireNotice(read.cachedAt, read.form.version)
+                }
+                read.form
+            }
             .onSuccess {
                 form = it
                 // THE ANSWERS ARE IN HAND HERE, SO THE DEVICE WRITES THEM DOWN. This screen is where
@@ -252,6 +285,9 @@ fun QuestionnaireDetailScreen(
             loaded == null -> EmptyNote("This questionnaire could not be opened.")
 
             else -> {
+                cachedNotice?.let { notice ->
+                    Text(notice, color = MaterialTheme.field.warning, fontSize = 12.sp, lineHeight = 17.sp)
+                }
                 HeaderCard(
                     form = loaded,
                     mayEdit = mayEdit,
@@ -295,6 +331,20 @@ fun QuestionnaireDetailScreen(
                     savedWorkbookTo = savedWorkbookTo,
                     onDownload = ::download,
                     onPickWorkbook = pickWorkbook,
+                )
+
+                // THE OFFLINE HANDOFF, directly beneath the two .xlsx controls and sharing their one
+                // busy flag on purpose: all three end in `persistFileToDownloads`, writing into the
+                // same folder, and two of those racing is how one file ends up truncated with no
+                // error anywhere. The neighbouring card is the SERVER interchange — it needs a
+                // connection at both ends; this one is built on the handset and needs none, which is
+                // the whole distinction a designer standing in a courtyard is choosing between.
+                QuestionnaireHandoffCard(
+                    repository = repository,
+                    questionnaireId = questionnaireId,
+                    busy = interchangeBusy,
+                    onBusyChange = { interchangeBusy = it },
+                    onError = onError,
                 )
 
                 uploadReport?.let { report ->

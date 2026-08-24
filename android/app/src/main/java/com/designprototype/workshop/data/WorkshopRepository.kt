@@ -91,6 +91,43 @@ internal const val DESIGN_WORKSHOP_MEDIA_TAG = "designWorkshop"
  */
 internal const val OFFLINE_EXPORT_RECORD = "designWorkshopExport"
 
+/**
+ * [PendingEntry.type] for an entry that CREATES NOTHING and only carries files to a record that is
+ * already on the server. [PendingEntry.targetId] holds that record's id and [PendingEntry.label]
+ * names it for the tray.
+ *
+ * ── THE LOSS THIS EXISTS FOR, WHICH NEEDED NO OFFLINE AT ALL ──────────────────────────────────
+ *
+ * `uploadAttachments` (MainActivity.kt) runs strictly AFTER the record POST has landed. Signal dying
+ * in between produced a record saved on the server, photographs held nowhere but as content Uris in
+ * a Compose `remember` block pointing at `cacheDir/field-captures/`, and this instruction:
+ *
+ *     "The record was saved — check your connection and re-open it from "Update existing" to
+ *      re-attach the media."
+ *
+ * The designer could not carry that out. The Uris die with the screen, `cacheDir` is emptied by
+ * Android without asking, and re-opening the record to re-attach was itself an edit — which the
+ * outbox refused. So the sharpest media-loss path in the app was the one that happened on a GOOD
+ * connection that faltered for ten seconds, and it was silent about it afterwards.
+ *
+ * An entry of this type is queued at the moment those uploads fail, with the bytes copied out of
+ * `cacheDir` into `filesDir/outbox/media/` first, so the promise the sentence makes is one the app
+ * can keep. `linkTargetFor` sends them to [PendingEntry.targetId]; `createFromEntry` performs no
+ * request for this type at all, so a replay cannot mint a second record.
+ */
+internal const val OFFLINE_MEDIA_ONLY = "recordMediaOnly"
+
+/**
+ * The ceiling on a `.dpwq` file as it sits on disk, checked before a byte of it is read into memory.
+ *
+ * The measured questionnaire is 8,501 bytes gzipped. 4 MB is 490 times that, so nothing real is near
+ * it, and it stops [WorkshopRepository.receiveQuestionnaireHandoff] pulling a 4 GB file off an SD card
+ * into the heap because somebody picked the wrong thing in the document picker. The separate ceiling
+ * on the INFLATED size — the decompression bomb, which this one does nothing about — is
+ * [QUESTIONNAIRE_BUNDLE_MAX_INFLATED].
+ */
+internal const val QUESTIONNAIRE_HANDOFF_MAX_FILE = 4 * 1024 * 1024
+
 /** MIME type for the .xlsx report workbook (OOXML spreadsheet). */
 private const val XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -1788,6 +1825,441 @@ class WorkshopRepository(
         includeRetired: Boolean = false
     ): CustomQuestionnaireDto = api.customQuestionnaire(id, includeRetired)
 
+    /**
+     * One questionnaire, WITH A FALLBACK TO THE COPY THIS DEVICE ALREADY HOLDS.
+     *
+     * ── WHAT THIS CHANGES AND WHAT IT DELIBERATELY DOES NOT ───────────────────────────────────
+     *
+     * The paragraph above this block explains why nothing here queues a WRITE, and that stands
+     * untouched. What it was also doing, unintentionally, was making the custom questionnaire the
+     * one capture surface in this app that could not be OPENED without a connection — 24 sections
+     * and hundreds of questions, and a designer with no bars saw an error message where the
+     * instrument should be. That is not a consequence of the answer rule; it is a consequence of
+     * never having written the read down.
+     *
+     * NETWORK FIRST, DISK SECOND. The opposite order to [DwReferenceStore], and the difference is
+     * deliberate: a reference list is a picker whose staleness costs a missing option, whereas a
+     * questionnaire's staleness can mean a retired question offered for a new answer. So a live copy
+     * is always preferred and the cache is a fallback, never a shortcut. A live read also refreshes
+     * the copy, which is what makes the fallback worth having at all.
+     *
+     * THE FALLBACK IS ONLY FOR A FAILURE THAT MEANS "NO ANSWER". A 403 or a 404 must reach the
+     * caller: a questionnaire the designer may no longer read, or that has been deleted, must not be
+     * served out of this device's memory of when they could. That would be showing somebody a
+     * document whose access was revoked, from the app's own pocket.
+     *
+     * @return the form plus whether it came off the disk, so the screen can say so. It must say so;
+     *   see [cachedQuestionnaireNotice].
+     */
+    /**
+     * @param acceptEitherCachedView when the network cannot be reached, accept the copy stored under
+     *   the OTHER `includeRetired` key rather than only this one. FOR CALLERS THAT DO NOT RENDER THE
+     *   FORM. The two keys exist because one screen must never be handed a retired question and the
+     *   other must never be denied one, so a screen that turns this on gets a silent, invisible
+     *   defect. [buildQuestionnaireHandoffFile] is the only caller that may, and the reason it may is
+     *   structural: see [DwQuestionnaireFormCache.getEither].
+     */
+    suspend fun customQuestionnaireCached(
+        context: Context,
+        id: String,
+        includeRetired: Boolean = false,
+        acceptEitherCachedView: Boolean = false,
+    ): QuestionnaireFormRead {
+        val live = runCatching { api.customQuestionnaire(id, includeRetired) }
+        live.getOrNull()?.let { form ->
+            DwQuestionnaireFormCache.put(context, form, includeRetired)
+            return QuestionnaireFormRead(form = form, fromCache = false)
+        }
+        val error = live.exceptionOrNull() ?: IllegalStateException("This questionnaire could not be opened.")
+        // The server ANSWERED, and its answer was no. Not a connectivity problem, so the cache is not
+        // consulted: see the paragraph above.
+        if (error is HttpException && error.code() !in setOf(408, 429) && error.code() < 500) throw error
+        val cached = if (acceptEitherCachedView) {
+            DwQuestionnaireFormCache.getEither(context, id, preferred = includeRetired)
+        } else {
+            DwQuestionnaireFormCache.get(context, id, includeRetired)
+        } ?: throw error
+        return QuestionnaireFormRead(
+            form = cached.form,
+            fromCache = true,
+            cachedAt = cached.fetchedAt.takeIf { it.isNotBlank() },
+        )
+    }
+
+    // ── The peer handoff: a questionnaire as a file this device builds and reads ────────────────
+    //
+    // WHAT THIS IS AND IS NOT, because the honest name matters: a FILE FORMAT plus Android's own
+    // share sheet. Not a bespoke peer channel — no socket, no pairing, no discovery, no Bluetooth
+    // code, no dependency, no new permission. See the header of `data/QuestionnaireBundle.kt` for the
+    // whole argument, including why the QR carries a fingerprint and not the questionnaire.
+    //
+    // THE ONE THING THAT MADE IT NECESSARY: every other file-based share path in this app is
+    // server-dependent. `question-set.xlsx` is produced by an endpoint and read back by an endpoint;
+    // the dataset zips stream a server manifest and fetch media by URL. So there was no artefact this
+    // handset could BUILD offline that another handset could READ offline.
+
+    /** A built bundle, ready to be handed over: where it landed, how to share it, what is in it. */
+    data class QuestionnaireHandoffFile(
+        /** What [persistFileToDownloads] returned — a display location, shown to the designer. */
+        val savedTo: String,
+        /**
+         * The share-sheet Uri, or null when the file could not be published for sharing.
+         *
+         * Nullable and NOT assumed: `shareUriForSavedFile` re-derives a MediaStore row and a query can
+         * come back empty. A screen must gate its Share control on this rather than crash
+         * `FileProvider` at the moment the designer taps it.
+         */
+        val shareUri: Uri?,
+        val bundle: QuestionnaireBundle,
+        /** The 23-character code to show beside it, for the recipient to scan and check. */
+        val handoffCode: String,
+    )
+
+    /**
+     * Build a questionnaire's question set as a `.dpwq` file on this device.
+     *
+     * WORKS WITH NO SIGNAL, which is the entire point, and it works because it reads through
+     * [customQuestionnaireCached]. A designer in a courtyard who opened this questionnaire at any
+     * point earlier in the fortnight — on EITHER of the two screens that open it — can hand it to the
+     * colleague beside them now. `includeRetired = false`: a retired wording must not be reborn as a
+     * live question on somebody else's phone.
+     *
+     * `acceptEitherCachedView` IS WHAT MAKES THE SENTENCE ABOVE TRUE, and without it that sentence was
+     * a lie in the field. The cache is one file per (id, includeRetired) pair and the only writer of
+     * the `-active` file is the ANSWER screen, whereas this card lives on the DETAIL screen, which
+     * warms `-all`. So the ordinary case — open the questionnaire, walk out of signal, tap "Make the
+     * file" — found no cache at all and rethrew, and the designer was told the questionnaire could not
+     * be made into a file having done exactly what they were told was enough. Accepting either copy is
+     * safe HERE and nowhere else, because [questionnaireBundleOf] filters to
+     * `isActive && supersededById == null` itself, so a retired wording in an `-all` copy cannot reach
+     * the bundle no matter which file it came out of.
+     *
+     * Published through [persistFileToDownloads] rather than a new file-writing path of its own, for
+     * the reason stated on that function — the `IS_PENDING` handshake, the pre-Q permission check and
+     * the `filesDir` fallback were all learned from field failures, and a second copy is a second copy
+     * to get wrong.
+     */
+    suspend fun buildQuestionnaireHandoffFile(
+        context: Context,
+        questionnaireId: String,
+    ): QuestionnaireHandoffFile = withContext(Dispatchers.IO) {
+        val read = customQuestionnaireCached(
+            context = context,
+            id = questionnaireId,
+            includeRetired = false,
+            acceptEitherCachedView = true,
+        )
+        val bundle = questionnaireBundleOf(read.form)
+        if (bundle.sections.none { it.questions.isNotEmpty() }) {
+            throw IllegalStateException(
+                "This questionnaire has no questions in it yet, so there is nothing to hand over."
+            )
+        }
+        val bytes = encodeQuestionnaireBundle(bundle)
+        val handoffCode = questionnaireHandoffCode(bundle)
+        // The digest goes in the NAME as well as in the code. The version alone cannot separate two
+        // editions — the server does not bump it when questions are added — so without this, two
+        // exports of the same questionnaire either side of an edit are two indistinguishable files in
+        // the designer's Downloads folder, and nearby share is a file picker.
+        val name = questionnaireBundleFilename(
+            title = bundle.title,
+            version = bundle.sourceVersion,
+            digest = handoffCode.split(":").getOrNull(2).orEmpty(),
+        )
+        // cacheDir is right for this one: the bytes live here only until the copy into Downloads (or
+        // the filesDir fallback) has been made, which happens on the next line.
+        val staging = File(context.cacheDir, name)
+        FileOutputStream(staging).use { it.write(bytes) }
+        val savedTo = try {
+            persistFileToDownloads(context, staging, name, QUESTIONNAIRE_BUNDLE_MIME)
+        } finally {
+            runCatching { staging.delete() }
+        }
+        QuestionnaireHandoffFile(
+            savedTo = savedTo,
+            shareUri = shareUriForSavedFile(context, savedTo),
+            bundle = bundle,
+            handoffCode = handoffCode,
+        )
+    }
+
+    /**
+     * Read a `.dpwq` that arrived from another phone and keep it on this one.
+     *
+     * ── EVERY BYTE HERE IS UNTRUSTED ──────────────────────────────────────────────────────────
+     *
+     * It came over Bluetooth from a device this app knows nothing about, and whoever sent it can edit
+     * the JSON. Three defences, in this order:
+     *
+     *  1. THE RAW FILE IS CAPPED BEFORE IT IS READ. A questionnaire measures 8,501 bytes gzipped; a
+     *     ceiling of 4 MB on the compressed side is 490 times that and stops this function reading a
+     *     4 GB file off an SD card into memory.
+     *  2. THE INFLATION IS CAPPED WHILE IT RUNS, inside [readQuestionnaireBundle] — the decompression
+     *     bomb, which the raw cap above does nothing about.
+     *  3. THE FORMAT HAS NOTHING TO ATTACK. No id, no owner, no author, no status, no answers. That is
+     *     the real defence and it is structural rather than a check; see `QuestionnaireBundle.kt`.
+     *
+     * @return the stored row, or a refusal carrying the sentence to put on screen.
+     */
+    suspend fun receiveQuestionnaireHandoff(
+        context: Context,
+        uri: Uri,
+    ): Result<ReceivedQuestionnaire> = withContext(Dispatchers.IO) {
+        val bytes = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n <= 0) break
+                    if (out.size() + n > QUESTIONNAIRE_HANDOFF_MAX_FILE) {
+                        throw IllegalStateException(
+                            "That file is far too big to be a questionnaire. It has not been opened."
+                        )
+                    }
+                    out.write(buffer, 0, n)
+                }
+                out.toByteArray()
+            }
+        }.getOrElse { error ->
+            return@withContext Result.failure(
+                IllegalStateException(
+                    error.message ?: "That file could not be opened from where it is stored."
+                )
+            )
+        } ?: return@withContext Result.failure(
+            IllegalStateException(
+                "That file could not be opened. If it came from a chat app, save it to the phone first " +
+                    "and pick it from there."
+            )
+        )
+        when (val read = readQuestionnaireBundle(bytes)) {
+            is QuestionnaireBundleRead.Refused -> Result.failure(IllegalStateException(read.message))
+            is QuestionnaireBundleRead.Ok -> Result.success(
+                QuestionnaireBundleInbox.put(
+                    context = context,
+                    filename = displayNameForUri(context, uri) ?: "questionnaire.$QUESTIONNAIRE_BUNDLE_EXTENSION",
+                    bytes = bytes,
+                    bundle = read.bundle,
+                )
+            )
+        }
+    }
+
+    /** The name a provider gives a Uri, for display only. Never used as a path. */
+    private fun displayNameForUri(context: Context, uri: Uri): String? = runCatching {
+        context.contentResolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null, null, null,
+        )?.use { cursor ->
+            val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment
+
+    /** Received questionnaires waiting on this device. */
+    suspend fun receivedQuestionnaires(context: Context): List<ReceivedQuestionnaire> =
+        QuestionnaireBundleInbox.all(context)
+
+    /** Throw one away, with its bytes. A person's explicit act. */
+    suspend fun discardReceivedQuestionnaire(context: Context, id: String): Boolean =
+        QuestionnaireBundleInbox.remove(context, id)
+
+    /**
+     * Turn a received file into a questionnaire ON THIS ACCOUNT, resuming wherever a previous attempt
+     * stopped.
+     *
+     * ── WHERE THE UNTRUSTED-INPUT RULES ARE ACTUALLY ENFORCED, IN ONE PLACE ───────────────────
+     *
+     * Every write below is a CREATE — `createCustomQuestionnaire`, `addCustomSection`,
+     * `addCustomQuestion`. There is no update, no id from the file is ever sent, and the three create
+     * bodies ([CustomQuestionnaireCreateBody], [CustomSectionCreateBody], [CustomQuestionCreateBody])
+     * have no field for an owner, an author or a status — so:
+     *
+     *  * OWNERSHIP is set by the server from the bearer token (`createdById` / `ownerId`), which is why
+     *    the adopting designer owns the result and why nothing in the file can change that. The screen
+     *    says so before the designer accepts; see [QUESTIONNAIRE_BUNDLE_ADOPT_NOTICE].
+     *  * IDS cannot be dictated. The file has none to dictate, and every row here is minted by the
+     *    server, so a received bundle cannot address — let alone overwrite — an existing questionnaire,
+     *    section or question.
+     *  * REVIEW STATUS is untouched. None of the three bodies carries one, so there is no cross-device
+     *    approval to launder.
+     *  * ANSWERS AND RESPONDENTS do not exist in the format at all, so there is nothing here that
+     *    could write somebody else's answer about a named artisan onto this account.
+     *
+     * ── WHY IT IS 310 REQUESTS AND WHY THAT IS WRITTEN DOWN AFTER EACH ONE ────────────────────
+     *
+     * There is no bulk JSON create route — the only bulk import the API has takes an .xlsx, which this
+     * handset cannot build. So the 24-section instrument costs one POST for the questionnaire, one per
+     * section and one per question. On a field connection the chance of all 310 landing is not one, so
+     * progress is persisted after each step and this function resumes from it. Without that, a drop at
+     * question two hundred left a half-built questionnaire on the server and no way to finish it: the
+     * only move was to start again, producing a second half-built one.
+     *
+     * @return the row as it now stands. [ReceivedQuestionnaire.adoptedAt] non-null means it finished.
+     */
+    suspend fun adoptReceivedQuestionnaire(
+        context: Context,
+        row: ReceivedQuestionnaire,
+        /** Called after each section, so a screen can show progress through a 285-question form. */
+        onProgress: (sectionsDone: Int, sectionCount: Int) -> Unit = { _, _ -> },
+    ): Result<ReceivedQuestionnaire> {
+        val bytes = QuestionnaireBundleInbox.bytes(context, row)
+            ?: return Result.failure(
+                IllegalStateException(
+                    "The copy of that file this app kept has gone. Ask for it again."
+                )
+            )
+        val bundle = when (val read = readQuestionnaireBundle(bytes)) {
+            is QuestionnaireBundleRead.Refused -> return Result.failure(IllegalStateException(read.message))
+            is QuestionnaireBundleRead.Ok -> read.bundle
+        }
+        // Only sections that have questions. An empty section adopted would be a heading with nothing
+        // under it, and `sectionCount` on the row was computed the same way, so the two agree.
+        val sections = bundle.sections.filter { it.questions.isNotEmpty() }
+        var state = row.copy(failure = null)
+        QuestionnaireBundleInbox.update(context, state)
+
+        suspend fun persist(next: ReceivedQuestionnaire) {
+            state = next
+            QuestionnaireBundleInbox.update(context, next)
+        }
+
+        try {
+            if (state.remoteId == null) {
+                val created = createCustomQuestionnaire(
+                    title = bundle.title.ifBlank { "Questionnaire" },
+                    description = bundle.description,
+                    // NOT attached to a design workshop. The bundle carries no workshop id — it could
+                    // only be the SENDER's, which means nothing on this account — and attaching it to
+                    // one is a decision the designer makes afterwards on the questionnaire's own
+                    // screen, where the dropdown lists workshops they actually work on.
+                    designWorkshopId = null,
+                )
+                persist(state.copy(remoteId = created.id))
+            }
+            val remoteId = state.remoteId ?: error("unreachable: the questionnaire was just created")
+
+            var sectionIndex = state.sectionsDone
+            while (sectionIndex < sections.size) {
+                val section = sections[sectionIndex]
+                var sectionRemoteId = state.currentSectionRemoteId
+                if (sectionRemoteId == null) {
+                    // ── LOOK BEFORE CREATING, WHEN A CREATE WAS ALREADY ATTEMPTED ──────────────
+                    //
+                    // `sectionCreateStarted` means a POST went out and its answer was never written
+                    // down, so the section may already be on the server. Creating a second one leaves
+                    // a permanent empty duplicate in somebody's instrument. Matched EXACTLY — code or
+                    // title, never the sort-order fallback — because the fallback would bind to
+                    // whatever empty section happens to be last, and here we would then fill it.
+                    val alreadyThere = if (state.sectionCreateStarted) {
+                        runCatching { customQuestionnaire(remoteId, includeRetired = true) }
+                            .getOrNull()
+                            ?.let { matchAdoptedSection(it, section, exactOnly = true) }
+                    } else {
+                        null
+                    }
+                    if (alreadyThere != null) {
+                        sectionRemoteId = alreadyThere
+                    } else {
+                        // WRITTEN DOWN BEFORE THE REQUEST, not after. This is the whole fix: the file
+                        // has to say "a create is in flight" while it is in flight, or a kill between
+                        // the POST and the persist below is indistinguishable from a POST that never
+                        // happened. Same discipline as `PendingEntry.createdId`.
+                        persist(state.copy(sectionCreateStarted = true))
+                        val afterSection = addCustomSection(
+                            id = remoteId,
+                            title = section.title.ifBlank { section.code.ifBlank { "Section" } },
+                            // The bundle's own code, never a derived one: the code is what the report
+                            // prints beside an answer and what a designer says out loud. Deriving one
+                            // here would renumber somebody's instrument.
+                            code = section.code.takeIf { it.isNotBlank() },
+                        )
+                        sectionRemoteId = matchAdoptedSection(afterSection, section)
+                            ?: return Result.failure(
+                                IllegalStateException(
+                                    "Section “${section.title}” was created but could not be found " +
+                                        "again to put its questions in. Nothing has been lost — try " +
+                                        "again."
+                                )
+                            )
+                    }
+                    persist(
+                        state.copy(
+                            currentSectionRemoteId = sectionRemoteId,
+                            questionsDone = 0,
+                            sectionCreateStarted = false,
+                        )
+                    )
+                }
+
+                var questionIndex = state.questionsDone
+                while (questionIndex < section.questions.size) {
+                    val question = section.questions[questionIndex]
+                    addCustomQuestion(
+                        id = remoteId,
+                        sectionId = sectionRemoteId,
+                        prompt = question.prompt,
+                        helpText = question.helpText,
+                        isRequired = question.isRequired,
+                    )
+                    questionIndex++
+                    // AFTER EACH ONE. A pass that dies at question two hundred must resume at two
+                    // hundred and one, not at one — see PendingEntry's `uploadedMedia` for the same
+                    // discipline applied to files.
+                    persist(state.copy(questionsDone = questionIndex))
+                }
+
+                sectionIndex++
+                persist(state.copy(sectionsDone = sectionIndex, currentSectionRemoteId = null, questionsDone = 0))
+                onProgress(sectionIndex, sections.size)
+            }
+            persist(state.copy(adoptedAt = Instant.now().toString()))
+            return Result.success(state)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // The reason is recorded on the row so the list can show it, and progress stays exactly
+            // where it reached. A refusal is NOT a reason to delete the file or the partial
+            // questionnaire — the same policy the outbox keeps.
+            val reason = e.apiErrorMessage("The questionnaire could not be added.")
+            persist(state.copy(failure = reason))
+            return Result.failure(IllegalStateException(reason))
+        }
+    }
+
+    /**
+     * Find the section that was just created, in the questionnaire the create returned.
+     *
+     * MATCHED ON THE CODE FIRST, then on the title, and only among sections that have no questions
+     * yet. Matching on "the last one" would work today and break the moment the server orders
+     * `sections` by anything other than creation; matching on the title alone breaks on a
+     * questionnaire with two sections called "Tools", which is an ordinary thing for a questionnaire
+     * to have. The no-questions-yet filter is what separates a section just created from an older one
+     * that happens to share a title.
+     *
+     * @param exactOnly drop the "last empty section wins" fallback. Set by the RESUME path, which is
+     *   asking a different question: not "which of these did my POST just make" — it knows one was
+     *   made — but "is the section I may have created already here". A wrong answer there does not
+     *   merely misattribute, it FILLS somebody else's empty section with two hundred questions, so the
+     *   resume would rather create a section it can name than adopt one it is guessing at.
+     */
+    private fun matchAdoptedSection(
+        form: CustomQuestionnaireDto,
+        wanted: QuestionnaireBundleSection,
+        exactOnly: Boolean = false,
+    ): String? {
+        val fresh = form.sections.filter { it.questions.isEmpty() }
+        if (wanted.code.isNotBlank()) {
+            fresh.firstOrNull { it.code.equals(wanted.code, ignoreCase = true) }?.let { return it.id }
+        }
+        fresh.firstOrNull { it.title.trim().equals(wanted.title.trim(), ignoreCase = true) }
+            ?.let { return it.id }
+        if (exactOnly) return null
+        return fresh.maxByOrNull { it.sortOrder }?.id
+    }
+
     suspend fun createCustomQuestionnaire(
         title: String,
         description: String? = null,
@@ -2142,8 +2614,30 @@ class WorkshopRepository(
         return response.user
     }
 
-    fun logout() {
+    /**
+     * End the session AND forget what this device remembered on that person's behalf.
+     *
+     * ── WHY THIS TAKES A CONTEXT NOW, AND WHAT IT USED TO LEAVE BEHIND ────────────────────────
+     *
+     * It cleared the token and nothing else. [customQuestionnaireCached]'s KDoc claims a questionnaire
+     * this account may no longer read is never "served out of this device's memory of when they
+     * could", and that is earned against a REVOKED GRANT — a 403 is the server answering, so the cache
+     * is not consulted — but it was not earned against a CHANGE OF PERSON. Sign out, hand the handset
+     * to the second designer in the cluster, sign in as them, and they were served the first
+     * designer's cached form: [CustomQuestionnaireDto.entries] and therefore `respondentName` and the
+     * answers given. `DwQuestionnaireFormCache.forget` existed for exactly this and was never called
+     * from anywhere except its own file.
+     *
+     * THE TOKEN GOES FIRST and the deletion is best-effort, because those two are not equally
+     * important: a designer handing the phone over must end up signed out even if a file will not
+     * delete. `DwQuestionnaireStore` is deliberately NOT cleared here — it holds the report annexure's
+     * evidence, it is unscoped by existing design, and emptying it on sign-out would silently destroy
+     * a courtyard export somebody is relying on. That one is a decision for its owner, stated in
+     * `DwQuestionnaireFormCache`'s header, not a side effect of this change.
+     */
+    suspend fun logout(context: Context) {
         tokenStore.clear()
+        runCatching { DwQuestionnaireFormCache.forgetAll(context) }
     }
 
     suspend fun currentUser(): UserDto = api.me()
@@ -3442,7 +3936,36 @@ class WorkshopRepository(
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            return "Downloads/$name"
+            // ── THE NAME MEDIAPROVIDER ACTUALLY USED, WHICH IS NOT ALWAYS THE ONE WE ASKED FOR ────
+            //
+            // A colliding DISPLAY_NAME is silently uniquified to `name (1).ext`. This function used to
+            // return the REQUESTED name, and two things downstream then lied in the same breath:
+            // `shareUriForSavedFile` → `mediaStoreDownloadUri` matches `DISPLAY_NAME = ?` exactly, so
+            // it resolved the OLDER row and every Share control in the app handed over the PREVIOUS
+            // export; and the location shown to the designer named a file that is not on disk.
+            //
+            // It is worst on the questionnaire handoff, because that one has a fingerprint. The
+            // filename cannot distinguish two editions on its own — the server bumps a
+            // questionnaire's `version` only on supersede and retire, never when a question is added
+            // (`backend/app/api/routes/questionnaire_forms.py`) — so "export, add three questions,
+            // export again" produced the identical name. The new bytes landed as `… (1).dpwq`, "Send
+            // it" shared the old file, and the recipient's scan of a code computed from the NEW
+            // bundle printed "this is NOT the file that code was made for. Ask them to send it
+            // again" — the false alarm `questionnaireHandoffCode`'s KDoc calls worse than not
+            // checking, raised over a transfer fault that never happened.
+            //
+            // Read back rather than guessed: the uniquifying rule is MediaProvider's, it has changed
+            // between releases, and a second implementation of it here would be a second thing to be
+            // wrong. Falls back to the requested name if the query comes back empty, which is no
+            // worse than what this returned unconditionally before.
+            val storedName = runCatching {
+                resolver.query(uri, arrayOf(MediaStore.Downloads.DISPLAY_NAME), null, null, null)
+                    ?.use { cursor ->
+                        if (!cursor.moveToFirst()) null
+                        else cursor.getString(0)?.takeIf { it.isNotBlank() }
+                    }
+            }.getOrNull() ?: name
+            return "Downloads/$storedName"
         }
         // ── Pre-Q (API 26/27/28) ─────────────────────────────────────────────────────────────────
         // There is no MediaStore.Downloads collection below Q, so the public Downloads folder is a
@@ -3495,9 +4018,59 @@ class WorkshopRepository(
      */
     fun shareUriForSavedFile(context: Context, absolutePath: String): Uri? {
         val file = File(absolutePath)
-        if (!file.absolutePath.startsWith(context.filesDir.absolutePath)) return null
+        if (file.absolutePath.startsWith(context.filesDir.absolutePath)) {
+            return runCatching {
+                androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            }.getOrNull()
+        }
+        return mediaStoreDownloadUri(context, absolutePath)
+    }
+
+    /**
+     * The MediaStore Uri for a file [persistFileToDownloads] wrote through the Q+ branch.
+     *
+     * ── THE DEFECT THIS CLOSES, WHICH MADE EVERY SHARE BUTTON IN THE APP INVISIBLE ────────────
+     *
+     * [persistFileToDownloads] returns the STRING `"Downloads/<name>"` on Q and above, and
+     * [shareUriForSavedFile] used to answer null for anything outside `filesDir`. Every Share control
+     * in this app is gated on that Uri being non-null — `ui/RecordCodeCard.kt`,
+     * `ui/designworkshop/WorkshopCodesScreen.kt`, `ui/designworkshop/ReportScreen.kt` — so on every
+     * Android 10+ handset the button DID NOT RENDER AT ALL, and the designer was shown "open it from
+     * the Downloads folder" instead. The in-app Share button existed only on Android 8 and 9 devices
+     * that had REFUSED `WRITE_EXTERNAL_STORAGE`: the narrowest possible slice of the fleet, and the
+     * exact inverse of where it is needed.
+     *
+     * The comments defending that behaviour ("every app can already open it from there") are right
+     * about OPENING and wrong about SHARING. A designer who wants to hand a file to the colleague
+     * standing beside them was being sent out to a file manager to find it — and "nearby share, or
+     * bluetooth" is reached through the share sheet, so this one null was the difference between the
+     * transport the owner asked for and a button that is not there.
+     *
+     * The insert Uri is thrown away inside the MediaStore branch above, and it is re-derived here
+     * rather than plumbed out of it, deliberately: that function's return type is a display string
+     * used by five screens and by `report/ReportExport.kt`, and widening it would be a change to all
+     * of them for a value only this function wants.
+     *
+     * `_display_name` and nothing else is matched on. `RELATIVE_PATH` is not queried, because
+     * `MediaStore.Downloads.EXTERNAL_CONTENT_URI` is already scoped to Downloads and — on Q — the app
+     * can only see rows it wrote itself, which is exactly the set we want. The newest matching row
+     * wins, so a second export of the same name shares the copy that was just written.
+     */
+    private fun mediaStoreDownloadUri(context: Context, location: String): Uri? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        val name = location.substringAfterLast('/').takeIf { it.isNotBlank() } ?: return null
         return runCatching {
-            androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            context.contentResolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Downloads._ID),
+                "${MediaStore.Downloads.DISPLAY_NAME} = ?",
+                arrayOf(name),
+                "${MediaStore.Downloads._ID} DESC",
+            )?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
+                val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))
+                android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
+            }
         }.getOrNull()
     }
 
@@ -4122,8 +4695,84 @@ class WorkshopRepository(
     /** True when the device currently has validated internet. */
     fun isOnline(context: Context): Boolean = ConnectivityObserver.isOnline(context)
 
-    /** How many records are waiting in the local outbox to be uploaded. */
+    /** How many records are waiting in the local outbox to be uploaded — refusals excluded. */
     suspend fun pendingUploads(context: Context): Int = OfflineOutbox.count(context)
+
+    /** Both halves of the queue, for the banner that must not describe one as the other. */
+    suspend fun outboxCounts(context: Context): OutboxCounts = OfflineOutbox.counts(context)
+
+    /**
+     * Try a refused entry again, at a person's request, and drain the queue while we are here.
+     *
+     * The missing inverse of `markFailure` reaching the UI. Everything else in this app that can be
+     * permanently refused already has this — `retryDesignWorkshopSync` for a workshop,
+     * `DraftMedia.uploadFailure` for one file — and the records queue did not, so a refusal was a
+     * dead end with no surface and no tap. See [OfflineOutbox.clearFailure].
+     *
+     * ── WHY THIS ANSWERS ABOUT ONE ENTRY AND NOT WITH A COUNT ─────────────────────────────────
+     *
+     * It used to return [syncOutbox]'s number, which counts every entry the WHOLE pass moved. With
+     * entry A refused and entry B merely waiting behind it, retrying A drained B, the count came back
+     * 1, and the tray said "“A” was sent." while A was still listed underneath with its refusal
+     * printed under it. That is the one thing this queue's whole design forbids — nothing may claim to
+     * have sent something before it did — and it is worse than a missing message, because the next act
+     * it invites is throwing the entry away.
+     *
+     * The entry's own fate is read from the queue rather than inferred from the count: an id that is
+     * gone was removed by [syncOutbox] on a successful replay, and nothing else in the app removes one
+     * except a person's explicit discard, which cannot happen inside this call.
+     */
+    suspend fun retryOutboxEntry(context: Context, entryId: String): OutboxRetryResult {
+        // READ BEFORE THE PASS, because `syncOutbox` returns 0 both for "no signal, nothing attempted"
+        // and for "attempted and refused again", and those need different sentences. The failure is
+        // cleared either way: an entry a person has asked to retry should be waiting rather than
+        // parked, so the next automatic pass picks it up when the signal returns.
+        val online = isOnline(context)
+        OfflineOutbox.clearFailure(context, entryId)
+        val moved = syncOutbox(context)
+        val stillQueued = OfflineOutbox.all(context).any { it.id == entryId }
+        return OutboxRetryResult(
+            requestedSent = !stillQueued,
+            refusedSent = if (stillQueued) 0 else 1,
+            refusedTried = 1,
+            othersSent = (moved - if (stillQueued) 0 else 1).coerceAtLeast(0),
+            attempted = online,
+        )
+    }
+
+    /**
+     * Try every refused entry again — after signing in again, or after an app update.
+     *
+     * @return how many of the entries that WERE REFUSED went. Not [syncOutbox]'s number, for the
+     *   reason given on [retryOutboxEntry]: that number includes entries which were only ever waiting
+     *   on a signal, so "tried all of them again; 4 went" was said over a tray in which four refusals
+     *   were all still listed.
+     */
+    suspend fun retryAllOutboxFailures(context: Context): OutboxRetryResult {
+        val online = isOnline(context)
+        val wereRefused = OfflineOutbox.failed(context).map { it.id }.toSet()
+        OfflineOutbox.clearAllFailures(context)
+        val moved = syncOutbox(context)
+        val remaining = OfflineOutbox.all(context).map { it.id }.toSet()
+        val refusedThatWent = wereRefused.count { it !in remaining }
+        return OutboxRetryResult(
+            requestedSent = refusedThatWent > 0,
+            refusedSent = refusedThatWent,
+            refusedTried = wereRefused.size,
+            othersSent = (moved - refusedThatWent).coerceAtLeast(0),
+            attempted = online,
+        )
+    }
+
+    /**
+     * Throw away one refused entry and its copied bytes, because a person said so.
+     *
+     * Reachable from the tray and from nowhere else. Nothing automatic in this app may call it: the
+     * whole policy of [OfflineOutbox] is that a refusal is a reason to stop retrying and tell
+     * somebody, never a reason to destroy the only copy of a day's fieldwork.
+     */
+    suspend fun discardOutboxEntry(context: Context, entryId: String): Boolean =
+        OfflineOutbox.discard(context, entryId)
 
     /**
      * Save a new record to the local outbox (no network). Copies the attached media into app storage so
@@ -4148,8 +4797,10 @@ class WorkshopRepository(
         mediaUris: List<Uri>,
         recordName: String?,
         caption: String?,
-        purposes: Map<Uri, String> = emptyMap()
-    ) = queueOfflineEntry(
+        purposes: Map<Uri, String> = emptyMap(),
+        /** Non-null queues a CORRECTION to that record rather than a new one. See [PendingEntry.targetId]. */
+        targetId: String? = null,
+    ): OfflineQueueResult = queueOfflineEntry(
         context, type, payloadJson, label,
         mediaUris.mapIndexed { index, uri ->
             OfflineMediaSpec(
@@ -4159,44 +4810,118 @@ class WorkshopRepository(
                 batchIndex = index + 1,
                 purpose = purposes[uri],
             )
-        }
+        },
+        targetId = targetId,
     )
 
-    /** Queue an offline entry with a fully specified media list (e.g. attachments + stage captures). */
+    /**
+     * Queue files against a record that is ALREADY on the server, because the connection died after
+     * the record landed and before its photographs did.
+     *
+     * Called by `uploadAttachments` at the moment it would otherwise have thrown the instruction the
+     * designer could not follow. The bytes are copied out of `cacheDir` here, which is the last
+     * moment they exist: see [OFFLINE_MEDIA_ONLY].
+     */
+    suspend fun queueMediaForSavedRecord(
+        context: Context,
+        recordType: String,
+        recordId: String,
+        label: String,
+        items: List<OfflineMediaSpec>,
+    ): OfflineQueueResult = queueOfflineEntry(
+        context = context,
+        type = OFFLINE_MEDIA_ONLY,
+        // Empty, and read by nothing: `createFromEntry` performs no request for this type. An entry
+        // that carried a body could be replayed into a second record by a future edit to that `when`.
+        payloadJson = "",
+        label = label,
+        items = items.map { it.copy(linkedType = it.linkedType ?: recordType) },
+        targetId = recordId,
+    )
+
+    /**
+     * Queue an offline entry with a fully specified media list (e.g. attachments + stage captures).
+     *
+     * ── WHY THIS RETURNS SOMETHING NOW, AND WHY IT NEVER THROWS ON A BAD FILE ─────────────────
+     *
+     * `OfflineOutbox.stageMedia` throws on a Uri it cannot open, and this used to stage every file
+     * and THEN enqueue. One bad file out of eight therefore cost three separate things at once:
+     *
+     *  1. THE TYPED RECORD. The throw escaped to the form, which evaluates
+     *     `runCatching { trySaveOffline(...) }.getOrElse { false }` — read as "we are online" — and
+     *     went down the ONLINE path, which failed with a network error on a phone with no signal.
+     *     The record the designer had just spent twenty minutes typing was gone.
+     *  2. THE SEVEN GOOD FILES. Already copied into `filesDir/outbox/media/` with nothing pointing
+     *     at them, permanently orphaned, and until [OfflineOutbox.reclaimOrphanMedia] there was no
+     *     sweeper for that directory anywhere in the app.
+     *  3. ANY IDEA OF WHAT HAPPENED. "Couldn't save offline" was the whole message.
+     *
+     * So a file that cannot be read no longer stops the save. The record and every readable file are
+     * queued, the unreadable ones are NAMED in the returned [OfflineQueueResult], and the caller
+     * tells the designer — which is the honest half of a whole this app cannot deliver: those bytes
+     * were never obtainable, and pretending the record is complete would be worse than saying so
+     * while the designer is still standing where the photograph could be taken again.
+     *
+     * A failure of the ENQUEUE itself — a full disk, an unwritable queue file — is still thrown, and
+     * every file staged for this entry is deleted on the way out, so a failed save leaks nothing.
+     */
     suspend fun queueOfflineEntry(
         context: Context,
         type: String,
         payloadJson: String,
         label: String,
-        items: List<OfflineMediaSpec>
-    ) = withContext(Dispatchers.IO) {
-        val media = items.map { spec ->
-            OfflineOutbox.stageMedia(
-                context = context,
-                uri = spec.uri,
-                caption = spec.caption,
-                recordName = spec.recordName,
-                customSegment = spec.customSegment,
-                overrideBaseName = spec.overrideBaseName,
-                batchIndex = spec.batchIndex,
-                processing = spec.processing,
-                stageStep = spec.stageStep,
-                linkedType = spec.linkedType,
-                stepIndex = spec.stepIndex,
-                purpose = spec.purpose
-            )
+        items: List<OfflineMediaSpec>,
+        targetId: String? = null,
+    ): OfflineQueueResult = withContext(Dispatchers.IO) {
+        val media = mutableListOf<PendingMedia>()
+        val unreadable = mutableListOf<String>()
+        for ((position, spec) in items.withIndex()) {
+            val staged = runCatching {
+                OfflineOutbox.stageMedia(
+                    context = context,
+                    uri = spec.uri,
+                    caption = spec.caption,
+                    recordName = spec.recordName,
+                    customSegment = spec.customSegment,
+                    overrideBaseName = spec.overrideBaseName,
+                    batchIndex = spec.batchIndex,
+                    processing = spec.processing,
+                    stageStep = spec.stageStep,
+                    linkedType = spec.linkedType,
+                    stepIndex = spec.stepIndex,
+                    purpose = spec.purpose
+                )
+            }
+            staged.getOrNull()?.let { media.add(it) }
+                // `withIndex` and not `items.indexOf(spec)`: two captures of the same file in one
+                // sitting are equal specs, so `indexOf` answers with the FIRST one's position and the
+                // designer is sent to look at the wrong photograph — or at two entries both calling
+                // themselves "file 3". The position is the only thing here that identifies a capture
+                // whose provider gave up no name at all.
+                ?: unreadable.add(spec.uri.lastPathSegment ?: "file ${position + 1}")
         }
-        OfflineOutbox.enqueue(
-            context,
-            PendingEntry(
-                id = java.util.UUID.randomUUID().toString(),
-                type = type,
-                payloadJson = payloadJson,
-                label = label,
-                media = media,
-                createdAt = Instant.now().toString()
+        val entryId = java.util.UUID.randomUUID().toString()
+        try {
+            OfflineOutbox.enqueue(
+                context,
+                PendingEntry(
+                    id = entryId,
+                    type = type,
+                    payloadJson = payloadJson,
+                    label = label,
+                    media = media,
+                    createdAt = Instant.now().toString(),
+                    targetId = targetId,
+                )
             )
-        )
+        } catch (e: Throwable) {
+            // ROLLED BACK, so a save that could not be recorded leaves no bytes behind it. The entry
+            // is what makes those files findable; without one they are unreachable by every path in
+            // the app including the reclaim sweep's 24-hour grace.
+            media.forEach { runCatching { File(it.localPath).delete() } }
+            throw e
+        }
+        OfflineQueueResult(entryId = entryId, queuedFiles = media.size, unreadableFiles = unreadable)
     }
 
     /**
@@ -4228,6 +4953,13 @@ class WorkshopRepository(
         // never delays the queued records — those are the data the researcher is waiting on.
         if (sweptStagedObjects.compareAndSet(false, true)) {
             AppScope.io.launch { runCatching { sweepStagedObjects(context) } }
+            // AND THE LOCAL COPIES NOBODY OWNS, on the same once-per-process hook and for the same
+            // reason: this is the app's only "we are alive and something might need reclaiming"
+            // moment that carries a Context. Earlier builds staged every file and then enqueued, so a
+            // save that failed part-way left bytes in `filesDir/outbox/media/` with nothing pointing
+            // at them and no sweeper anywhere in the app. Detached and swallowing everything — a
+            // reclaim must never delay the queued records, which are the data somebody is waiting on.
+            AppScope.io.launch { runCatching { OfflineOutbox.reclaimOrphanMedia(context) } }
         }
         // THE DICTATION CEILING, LEARNED BEFORE IT IS SPENT — on the same hook and for the same
         // reason. This runs on app open and whenever the network comes back, which is exactly when a
@@ -4344,7 +5076,7 @@ class WorkshopRepository(
         var entry = queued
         if (entry.createdId == null) {
             val created = try {
-                createFromEntry(entry)
+                writeFromEntry(entry)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -4472,8 +5204,28 @@ class WorkshopRepository(
                     )
                     return@launch
                 }
+                // THE BYTES, BEFORE ANYTHING IS CLAIMED ABOUT THEM. `uploadLocalFile` used to open
+                // with `if (!file.exists()) return` — it returned NORMALLY, so this loop posted
+                // `Uploaded(index)`, the index was ticked off, the entry reached Synced and
+                // `OfflineOutbox.remove` deleted it. The photograph was gone and nothing anywhere
+                // said so. The design-workshop path handles the identical case correctly 2,600 lines
+                // away (`WorkshopSync.kt`, `noteMediaFailure`) and uses `isFile` rather than
+                // `exists()` for a stated reason: a blank or damaged `relativePath` resolves to the
+                // DIRECTORY, which exists, so `exists()` answers true for a file that is not one.
+                val staged = File(pm.localPath)
+                if (!staged.isFile) {
+                    landed.add(
+                        FileOutcome.Refused(
+                            index,
+                            "\"${pm.originalFilename}\" is no longer on this device — the copy this app " +
+                                "made of it has gone. Nothing can send it now. If the original is still " +
+                                "in the gallery, attach it to the record again."
+                        )
+                    )
+                    return@launch
+                }
                 try {
-                    uploadLocalFile(context, pm, target.first, target.second)
+                    uploadLocalFile(context, pm, target.first, target.second, capturedAt = entry.createdAt)
                     landed.add(FileOutcome.Uploaded(index))
                 } catch (e: CancellationException) {
                     throw e
@@ -4499,6 +5251,14 @@ class WorkshopRepository(
         if (entry.type == "process" && stepIndex != null) {
             val stepId = entry.createdStepIds.getOrNull(stepIndex) ?: return null
             return "processstep" to stepId
+        }
+        // A MEDIA-ONLY ENTRY HAS NO RECORD TYPE OF ITS OWN, so `entry.type` is not a fallback here —
+        // it is the string "recordMediaOnly", which no route knows. `queueMediaForSavedRecord` fills
+        // `linkedType` on every spec it stages; refusing rather than guessing means a future caller
+        // that forgets is told so by one file failing, not by every file being filed under a type the
+        // API will reject one at a time.
+        if (entry.type == OFFLINE_MEDIA_ONLY) {
+            return (pm.linkedType ?: return null) to recordId
         }
         // Media attaches to the created record, or to an overridden link type (e.g. a clip).
         return (pm.linkedType ?: entry.type) to recordId
@@ -4576,6 +5336,94 @@ class WorkshopRepository(
 
     /** What a replayed create produced: the record's server id, plus a process's step ids in order. */
     private data class CreatedRecord(val id: String, val stepIds: List<String> = emptyList())
+
+    /**
+     * Replay one entry's WRITE: a create, a correction to a record the server already holds, or —
+     * for [OFFLINE_MEDIA_ONLY] — no request at all.
+     *
+     * ── WHY THE UPDATE BRANCH IS A SEPARATE `when` AND NOT A FLAG INSIDE THE ONE BELOW ────────
+     *
+     * Because the two are not the same request with a different verb. `updateQuestionnaireInterview`
+     * takes a different BODY type from its create, `updateProcess` answers with the whole detail
+     * while `createProcess` also mints the step ids, and three of the routes answer with a different
+     * DTO. A single `when` trying to hold both would have to spell every type twice anyway, and the
+     * one thing that must never happen — an entry meant as a correction being replayed as a create,
+     * putting a second copy of an artisan into the register — is easiest to prevent by making the
+     * dispatch on [PendingEntry.targetId] the very first decision.
+     *
+     * ── ⚠ WHAT AN OFFLINE CORRECTION HAS NO PRECONDITION ON: ANYBODY ELSE'S EDIT ──────────────
+     *
+     * The update branch below sends a WHOLE create-shaped body with no version and no `If-Match`. So a
+     * correction composed in a courtyard and drained six hours later overwrites, field for field,
+     * every change anyone made to that record in between — and neither person is told.
+     *
+     * THIS IS A TRADE AND NOT AN OVERSIGHT, and the trade is different for these six types than it is
+     * for an interview. `QuestionnaireForm` refuses to queue an edit at all, and its reasoning holds
+     * for it: `responses` is a DIFF against what the server held when the form opened, so replaying it
+     * late does not overwrite a second interviewer's answers, it DROPS them while appearing to succeed.
+     * An artisan or a product is not a diff. It is the whole record as the designer in front of it
+     * last saw it, the register is kept by a small team, and refusing the queue would mean losing a
+     * day's fieldwork to a bad signal — which is the failure this queue exists to prevent.
+     *
+     * WHAT MUST NOT HAPPEN IS THE TRADE BEING SILENT, and it was. `offlineSavedMessage` now tells the
+     * designer, at the moment they queue it, that their version replaces the whole record and that a
+     * colleague's later edit will be lost — which is the only thing available until the queued write
+     * can carry the record's version as its precondition, the same precondition the custom
+     * questionnaire's write is waiting on. Do not add "last write wins" to any more types without
+     * saying so in a sentence a person reads.
+     *
+     * ── WHAT AN OFFLINE CORRECTION DELIBERATELY DOES NOT CARRY ────────────────────────────────
+     *
+     * A review status. The bodies these routes take are the same create-request shapes the forms
+     * build, and `ApiModels.kt` records that the API "refuses `status`" on an edit and leaves the
+     * record's status alone unless `approve` is set — "an edit is not an approval". A queued
+     * correction is therefore incapable of moving a record through review, which is the correct and
+     * only safe answer for a write that was composed on a device hours or days before it lands.
+     */
+    private suspend fun writeFromEntry(entry: PendingEntry): CreatedRecord {
+        val target = entry.targetId
+        // No request, no record, no possibility of one: the files are for a record that already
+        // exists. Answered before anything else so no future edit to the dispatch below can reach it.
+        if (entry.type == OFFLINE_MEDIA_ONLY) {
+            return CreatedRecord(
+                target ?: throw IllegalStateException("A media-only outbox entry has no record to attach to")
+            )
+        }
+        if (target == null) return createFromEntry(entry)
+        return when (entry.type) {
+            // THE REPOSITORY'S OWN METHODS AND NOT `api.` DIRECTLY, for one of them specifically:
+            // `updateArtisan` wraps the body in `artisanPatchBody`, which adds the EXPLICIT nulls
+            // that make a cleared column actually clear. Posting the raw request to `api` would
+            // reintroduce, on the offline path only, the defect that block of KDoc documents —
+            // emptying a birthday or a phone number on the bus home and finding it still there.
+            //
+            // `withIdentityAnswer` is deliberately NOT applied here. It exists so a create queued by
+            // a build that predated the identity questions is not refused for a question it never
+            // asked; on a PATCH the same substitution would send a DERIVED `pehchanCardAvailable`
+            // over whatever is stored, which on an old entry would answer a question about a card
+            // nobody asked about. An edit form seeds the field from the record, so it is already set.
+            "artisan" -> CreatedRecord(
+                updateArtisan(target, offlineJson.decodeFromString<ArtisanCreateRequest>(entry.payloadJson)).id
+            )
+            "product" -> CreatedRecord(updateProduct(target, offlineJson.decodeFromString<ProductCreateRequest>(entry.payloadJson)).id)
+            "tool" -> CreatedRecord(updateTool(target, offlineJson.decodeFromString<ToolCreateRequest>(entry.payloadJson)).id)
+            "workshop" -> CreatedRecord(updateWorkshop(target, offlineJson.decodeFromString<WorkshopCreateRequest>(entry.payloadJson)).id)
+            "craft" -> CreatedRecord(updateCraft(target, offlineJson.decodeFromString<CraftCreateRequest>(entry.payloadJson)).id)
+            // The step ids come back from the UPDATE too, and they have to be read: a queued
+            // correction can carry step media, and `linkTargetFor` resolves `stepIndex` against this
+            // list. Reading only the id would attach a step photograph to nothing.
+            "process" -> updateProcess(target, offlineJson.decodeFromString<ProcessCreateRequest>(entry.payloadJson))
+                .let { detail -> CreatedRecord(detail.id, detail.steps.map { it.id }) }
+            // DELIBERATELY ABSENT: "questionnaire". A questionnaire interview's edit route takes
+            // `QuestionnaireInterviewUpdateRequest`, whose `responses` and `artisanIds` fields mean
+            // "leave alone" when null and "replace" when present — a diff computed against what the
+            // server held at the moment the form was opened. Replaying that diff hours later against
+            // a record another interviewer may have added answers to would silently drop theirs. The
+            // form therefore still refuses to queue an interview edit, and says so; see the note in
+            // MainActivity's questionnaire save handler.
+            else -> throw IllegalStateException("Unknown offline correction type: ${entry.type}")
+        }
+    }
 
     private suspend fun createFromEntry(entry: PendingEntry): CreatedRecord = when (entry.type) {
         "artisan" -> CreatedRecord(
@@ -4695,14 +5543,36 @@ class WorkshopRepository(
         return media
     }
 
+    /**
+     * Upload one queued attachment from the copy the outbox owns.
+     *
+     * @param capturedAt WHEN THE SITTING HAPPENED, not when the signal came back. Pass
+     *   [PendingEntry.createdAt]. This used to be `Instant.now()`, computed inside this function, so
+     *   every photograph on every record queued offline — the primary field path — was dated the
+     *   moment it finally uploaded. Forty lines above, [uploadDesignWorkshopMedia] gets this right
+     *   and states why: "A photograph taken on day two of a fortnight and uploaded on the bus home on
+     *   day fourteen must be dated day two, or the report's chronology becomes the chronology of when
+     *   the signal came back." The same rule is restated in `WorkshopSync.kt`. There was never a
+     *   reason for the two paths to disagree — the entry's own timestamp was already in scope at the
+     *   only call site.
+     *
+     *   Nullable so an entry written by a build with no such stamp still uploads rather than being
+     *   refused; the fallback is the old behaviour, which is wrong but is not a lost file.
+     */
     private suspend fun uploadLocalFile(
         context: Context,
         pm: PendingMedia,
         linkedRecordType: String,
-        linkedRecordId: String
+        linkedRecordId: String,
+        capturedAt: String? = null,
     ) {
         val file = File(pm.localPath)
-        if (!file.exists()) return
+        // A HARD FAILURE, and no longer a silent success. The caller checks `isFile` first and
+        // reports a named refusal; reaching here means the file vanished between that check and this
+        // line, and throwing is what keeps the index from being ticked off as uploaded.
+        if (!file.isFile) {
+            throw IllegalStateException("The stored copy of \"${pm.originalFilename}\" is missing.")
+        }
         val filename = mediaFilename(
             recordType = linkedRecordType,
             recordName = pm.recordName,
@@ -4735,7 +5605,7 @@ class WorkshopRepository(
                 bucket = target.bucket,
                 publicUrl = target.publicUrl,
                 sizeBytes = file.length(),
-                recordedAt = Instant.now().toString(),
+                recordedAt = capturedAt ?: Instant.now().toString(),
             ),
             target.checksum
         )

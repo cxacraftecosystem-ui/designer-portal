@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- `xmlns:tools` is declared for the two `tools:ignore="AppLinkUrlError"` attributes on the
+     questionnaire-receiving VIEW filters near the bottom of this file. It is a build-time namespace:
+     the tools attributes are stripped from the merged manifest and reach no device. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Reading whether there is a usable network, which this app has always done and has never
@@ -80,13 +84,120 @@
             android:authorities="${applicationId}.inductionflush"
             android:enabled="true"
             android:exported="false" />
+        <!--
+          singleTop below IS LOAD-BEARING for the SEND/VIEW filters this activity now carries. This is
+          a single-activity Compose app: every screen, the signed-in user and the whole navigation
+          stack live in one Activity's composition. Under the default "standard" mode a questionnaire
+          arriving from another phone while the app was already open would build a SECOND MainActivity
+          on top of the first — a second copy of that state, with `onNewIntent` never called, so the
+          delivery would be read by an instance the designer then backs out of. singleTop routes it
+          into the running instance instead, which is what makes `onNewIntent` the place the file is
+          picked up.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density|fontScale">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+              RECEIVING A QUESTIONNAIRE FROM ANOTHER PHONE, with no internet at either end.
+
+              Until this existed the app could only SEND. A colleague's Quick Share or Bluetooth push
+              landed in Downloads and this app never heard about it, so the designer had to remember
+              the file, open the questionnaire list and re-find it through the document picker. These
+              filters add a direct door for the deliveries they can match, at the cost of no
+              permissions and no APK bytes: the OS owns the radios, so the app declares nothing about
+              Bluetooth or wifi at all.
+
+              ⚠ THEY ARE NOT THE WHOLE OF NEARBY SHARE OR BLUETOOTH, which is what this comment used
+              to claim. Quick Share and Bluetooth OPP save the file and hand over a Uri like
+              content://media/external/downloads/1234 or content://com.android.bluetooth.opp/btopp/12,
+              whose PATH carries no extension — so the pathPattern below misses — and the receiving
+              MediaStore guesses the type from an unknown .dpwq extension, so the custom-subtype
+              filter misses as well. For those two transports the app is not offered as a handler. The
+              filters DO fire for a DocumentsUI-backed open (/document/primary:Download/x.dpwq matches
+              once decoded) and for a file this app exported and shared itself.
+
+              The remedy is the document picker in the receiving card, which is the MAIN door for
+              nearby share and Bluetooth rather than a fallback, validates identically, and works with
+              no signal. Dropping the path gate below is not an alternative: it would put this app on
+              the "open with" list for every unrecognised file on the phone. See
+              `isQuestionnaireBundleDelivery` for the same argument at more length.
+
+              THE SPLIT BETWEEN THE FILTERS IS DELIBERATE and the reasoning is written out at
+              `isQuestionnaireBundleDelivery`, which mirrors it exactly so that what the OS offers and
+              what the app accepts cannot drift apart:
+
+                SEND — our own subtype ONLY. A share sheet is a menu a person reads; putting this app
+                on it for `application/octet-stream` would add a wrong entry for everybody who ever
+                shares an unrecognised file, which is a cost paid by people who will never use this
+                feature.
+
+                VIEW — the broad types as well, but gated on a `.dpwq` path. Opening a file is already
+                aimed at one specific file, so the extension is evidence there rather than noise. This
+                is what catches a DocumentsUI open of a file whose type a provider did not recognise.
+
+              NEITHER FILTER IS VALIDATION. The type string is set by whichever app is sending, so it
+              is untrusted like the rest of the delivery. What a file actually is gets decided by
+              `readQuestionnaireBundle` reading the bytes.
+
+              No exported="true" change and no new permission: the activity is already exported for
+              LAUNCHER, and receiving a file needs neither storage nor Bluetooth permission because
+              the sender hands over a Uri with a read grant attached.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.designprototype.questionnaire+gzip" />
+            </intent-filter>
+            <!--
+              NO `BROWSABLE` ON EITHER VIEW FILTER, and it was on both until lint said so. BROWSABLE
+              means "a web browser may hand this app a link", which is not what receiving a file is:
+              a file manager, a DocumentsUI open and a download notification all send VIEW under
+              DEFAULT. Declaring it bought nothing, made the activity a candidate for
+              browser-originated intents, and raised `AppLinkUrlError` twice — a BROWSABLE VIEW filter
+              with no host is exactly what that check is for. Removing it loses no delivery.
+            -->
+            <!--
+              `tools:ignore="AppLinkUrlError"` — NOT a suppressed real problem. That check exists for
+              App Links: a VIEW filter meant to open `https://…` needs a scheme and a host, and lint
+              applies the rule to EVERY VIEW+DEFAULT filter carrying a `<data>` element. This filter
+              matches by MIME TYPE, on a Uri handed over by whichever app is sending the file. There
+              is no host to name and no web address involved, so the check's advice cannot be
+              followed, and adding a host would be inventing one. Scoped to these two filters rather
+              than baselined or disabled project-wide, so a genuine App Link added later is still
+              checked.
+            -->
+            <intent-filter tools:ignore="AppLinkUrlError">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.designprototype.questionnaire+gzip" />
+            </intent-filter>
+            <!--
+              The same VIEW door for a provider that did not recognise our bytes. `pathPattern` needs
+              the doubled backslash: the manifest unescapes one, leaving `\.` for the matcher, which
+              is what keeps the dot literal rather than "any character".
+
+              `file` is declared beside `content` for form's sake only: passing a file:// Uri between
+              apps has thrown FileUriExposedException since API 24 and minSdk here is 26, so nothing
+              a modern sender does can arrive on it. It costs nothing and is left rather than removed
+              so that an ancient file manager on an Android 8 handset is not newly refused.
+            -->
+            <intent-filter tools:ignore="AppLinkUrlError">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/gzip" />
+                <data android:mimeType="application/x-gzip" />
+                <data android:pathPattern=".*\\.dpwq" />
+                <data android:pathPattern=".*\\..*\\.dpwq" />
             </intent-filter>
         </activity>
     </application>

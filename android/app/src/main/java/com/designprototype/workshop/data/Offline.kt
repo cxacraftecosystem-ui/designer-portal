@@ -77,6 +77,31 @@ data class PendingEntry(
     val media: List<PendingMedia> = emptyList(),
     val createdAt: String,
     /**
+     * THE RECORD THIS ENTRY IS AIMED AT, when it is not creating one. Null = a create, which is
+     * every entry any build before this one ever wrote.
+     *
+     * Two things queue against a record that already exists, and both were losing work outright:
+     *
+     *  - AN EDIT. `trySaveOffline` used to answer false for `isEdit` and the form then fell through
+     *    to the online path, which threw an IOException that reached the designer as a raw OkHttp
+     *    message. NOTHING WAS PERSISTED ANYWHERE — a record form has no draft file — so twenty
+     *    artisan corrections made on the bus home were twenty corrections gone. With this set, the
+     *    replay calls the record's UPDATE route instead of its create route (see
+     *    `WorkshopRepository.createFromEntry`), which is the only difference between the two.
+     *
+     *  - MEDIA WITH NOWHERE ELSE TO GO. `uploadAttachments` runs AFTER the record POST has landed,
+     *    so a connection that dies in between left the record saved and the photographs held only
+     *    as content Uris in Compose state, pointed at `cacheDir` — and told the designer to re-open
+     *    the record and re-attach them, which was an instruction they could not carry out: the Uris
+     *    die with the screen and `cacheDir` is reclaimed without warning. Those files are now staged
+     *    and queued against the saved record's id with an empty [payloadJson] and [type]
+     *    [OFFLINE_MEDIA_ONLY], so the replay attaches them and creates nothing.
+     *
+     * DEFAULTED, for the reason every field in this class is defaulted: the queue on a device that
+     * has been offline for a fortnight was written by the build that was installed a fortnight ago.
+     */
+    val targetId: String? = null,
+    /**
      * REPLAY PROGRESS, written back as each step lands. All defaulted, so an entry queued by an
      * older build decodes into "nothing has happened yet" and replays exactly as it used to.
      *
@@ -130,6 +155,72 @@ data class OfflineMediaSpec(
     /** See [PendingMedia.purpose]; a form builds this from its `MediaCaptureState.purposes` map. */
     val purpose: String? = null
 )
+
+/**
+ * WHAT ACTUALLY WENT INTO THE QUEUE, so the form can say it rather than say "Saved".
+ *
+ * A save with no signal used to answer a bare Boolean, and a Boolean has exactly one sentence
+ * available to it. That sentence — "Saved on this device. It'll upload automatically when you're
+ * back online." — was said whether all eight photographs were copied or none of them were, because
+ * an unreadable file threw and the throw was flattened to `false` by the call site, which then went
+ * down the online path and lost the record outright.
+ *
+ * @property unreadableFiles the captures whose bytes could not be read at all. NAMED rather than
+ *   counted, because the designer's next act is to look at the gallery and decide which one to take
+ *   again, and "one file failed" does not tell them which.
+ */
+data class OfflineQueueResult(
+    val entryId: String,
+    val queuedFiles: Int,
+    val unreadableFiles: List<String> = emptyList(),
+) {
+    val allFilesQueued: Boolean get() = unreadableFiles.isEmpty()
+}
+
+/**
+ * The sentence a form shows after a save with no signal.
+ *
+ * PURE, and here rather than in the seven forms, because seven copies of a sentence about whether
+ * fieldwork is safe is seven chances for one of them to keep promising a photograph that is not
+ * there. Pinned by `OfflineQueueMessageTest`.
+ *
+ * @param isCorrection an edit to a record the server already holds, which is a different promise: a
+ *   new record does not exist anywhere until it is sent, whereas a correction has an older version
+ *   of itself sitting on the server in the meantime, and the designer needs to know that the office
+ *   is still reading the old one.
+ *
+ * ── WHY THE CORRECTION SENTENCE SAYS WHO WINS ─────────────────────────────────────────────────
+ *
+ * Because a queued correction WILL win, and nothing else in the app said so. `writeFromEntry` replays
+ * it as a whole create-shaped body through `updateArtisan`/`updateProduct`/… with no version and no
+ * `If-Match`, so a correction composed on the bus and drained hours later overwrites anything anybody
+ * else changed in between, field for field, with nobody told. The questionnaire interview form refuses
+ * to queue an edit for exactly this hazard and spends a paragraph explaining why (see MainActivity's
+ * questionnaire save handler); the six record types accept it, which is a defensible trade for a
+ * register a small team keeps — losing a courtyard's fieldwork to a refusal is worse than a rare
+ * overwrite — but it is not defensible to make it silently. "The office still sees the earlier
+ * version" told the designer the half that costs them nothing and left out the half that costs
+ * somebody else their edit.
+ *
+ * Closing it properly needs the record's version as the queued write's precondition, exactly as the
+ * custom questionnaire's write does. Until then this sentence is the whole of the warning, which is
+ * why it is here and not in a comment.
+ */
+fun offlineSavedMessage(result: OfflineQueueResult, isCorrection: Boolean): String {
+    val head = if (isCorrection) {
+        "This correction is saved on this device and will be sent when you have a signal. Until then " +
+            "the office still sees the earlier version. When it does go, it replaces the whole record " +
+            "— so if somebody else edits it before then, your version wins and theirs is lost. Tell " +
+            "them if that matters."
+    } else {
+        "Saved on this device. It will be sent when you have a signal."
+    }
+    if (result.allFilesQueued) return head
+    val names = result.unreadableFiles.joinToString(", ")
+    return "$head " +
+        "${result.unreadableFiles.size} file(s) could NOT be read and are not in it ($names) — " +
+        "the record is safe, those captures are not. Take them again if you still can."
+}
 
 /** Live connectivity check (validated internet, not just an attached interface). */
 object ConnectivityObserver {
@@ -246,8 +337,39 @@ object OfflineOutbox {
     suspend fun all(context: Context): List<PendingEntry> =
         withContext(Dispatchers.IO) { mutex.withLock { read(context) } }
 
+    /**
+     * How many entries a connection will actually move — refusals EXCLUDED.
+     *
+     * ── THIS USED TO BE `read(context).size` AND THAT WAS THE LIE ─────────────────────────────
+     *
+     * The one caller is `WorkshopRepository.pendingUploads`, and the one thing it feeds is the
+     * banner in `MainActivity`, which draws the number under a cloud-off icon and the words
+     * "uploading when you're online". [PendingEntry.failure] is the server's FINAL answer, and
+     * `syncOutbox` steps over such an entry for ever — so counting it here put a record the server
+     * has permanently refused inside a sentence promising it was on its way, and kept it there for
+     * ever. `notifyUser`'s own KDoc names this defect; the Toast it added lasts five seconds in a
+     * courtyard and fires only when the REASON changes, so the durable surface stayed wrong.
+     *
+     * The design-workshop side spent a hundred lines eliminating exactly this class of bug —
+     * `dwDeviceSyncBanner` computes a `waiting` flag that is false when the only outstanding items
+     * are ones a connection will not move, and gates the cloud-off icon on it. [counts] and
+     * [outboxDeviceBanner] are that treatment applied to the records queue. Refusals are NOT hidden
+     * by being dropped from this number: they are counted separately and given their own sentence,
+     * their own colour and a retry.
+     */
     suspend fun count(context: Context): Int =
-        withContext(Dispatchers.IO) { mutex.withLock { read(context).size } }
+        withContext(Dispatchers.IO) { mutex.withLock { read(context).count { it.failure == null } } }
+
+    /** Both halves of the queue in ONE read, so the two numbers cannot come from different moments. */
+    suspend fun counts(context: Context): OutboxCounts = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val entries = read(context)
+            OutboxCounts(
+                waiting = entries.count { it.failure == null },
+                refused = entries.count { it.failure != null },
+            )
+        }
+    }
 
     suspend fun enqueue(context: Context, entry: PendingEntry) = withContext(Dispatchers.IO) {
         mutex.withLock { write(context, read(context) + entry) }
@@ -307,13 +429,135 @@ object OfflineOutbox {
     suspend fun failed(context: Context): List<PendingEntry> =
         withContext(Dispatchers.IO) { mutex.withLock { read(context).filter { it.failure != null } } }
 
+    /**
+     * THE INVERSE OF [markFailure], WHICH DID NOT EXIST — and its absence was the dead end.
+     *
+     * `blocksRetry(failure != null, skewRun = null)` is unconditionally true, so an entry marked
+     * with an ordinary refusal was skipped by every pass for the rest of the installation's life,
+     * and this class offered nothing that could ever unmark it. `WorkshopSyncEngine.retryWorkshop`
+     * covers design workshops; the records queue had no equivalent, and `outboxFailures` — the
+     * durable half, documented as "readable through outboxFailures by whatever screen shows it
+     * next" — was called by nothing at all.
+     *
+     * The contrast that made it indefensible is forty lines away in [WorkshopDraftStore]:
+     * `DraftMedia.uploadFailure` is "cleared by a manual retry, which is what makes 'the file limit
+     * was raised, try again' one tap rather than a support request". A refused artisan is the same
+     * shape of problem — a field the designer can correct, a permission an administrator can grant,
+     * a limit somebody can raise — and it deserved the same one tap.
+     *
+     * [skewRun] IS CLEARED TOO. A person choosing to retry has said "try it as it stands now"; a
+     * stale run stamp left behind would go on describing a disagreement between builds that may no
+     * longer be what is standing in the way.
+     *
+     * @return true when an entry with that id was found and unmarked.
+     */
+    suspend fun clearFailure(context: Context, entryId: String): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = read(context)
+            if (current.none { it.id == entryId && it.failure != null }) return@withLock false
+            write(
+                context,
+                current.map {
+                    if (it.id == entryId) it.copy(failure = null, failedAt = null, skewRun = null) else it
+                }
+            )
+            true
+        }
+    }
+
+    /** Unmark every refusal at once, for "try all of them again" after a sign-in or an update. */
+    suspend fun clearAllFailures(context: Context): Int = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = read(context)
+            val refused = current.count { it.failure != null }
+            if (refused == 0) return@withLock 0
+            write(context, current.map { it.copy(failure = null, failedAt = null, skewRun = null) })
+            refused
+        }
+    }
+
+    /**
+     * DISCARD one entry and its copied bytes, on a person's explicit instruction and never otherwise.
+     *
+     * [remove] exists for an entry that is SYNCED; this exists for one a person has read the refusal
+     * on and decided to abandon — a duplicate artisan, a record captured by mistake. Separate from
+     * [remove] so that no automatic path can reach it: nothing in `syncOutbox` calls this, and the
+     * whole policy of this file is that being refused is not a reason to destroy the only copy of a
+     * day's fieldwork. Only a human is allowed to make that call.
+     */
+    suspend fun discard(context: Context, entryId: String): Boolean = withContext(Dispatchers.IO) {
+        val doomed = mutex.withLock {
+            val current = read(context)
+            val entry = current.firstOrNull { it.id == entryId } ?: return@withLock null
+            write(context, current.filterNot { it.id == entryId })
+            entry
+        } ?: return@withContext false
+        doomed.media.forEach { runCatching { File(it.localPath).delete() } }
+        true
+    }
+
+    /**
+     * Delete staged bytes in `outbox/media/` that no queued entry references any more.
+     *
+     * ── THE LEAK THIS RECLAIMS ────────────────────────────────────────────────────────────────
+     *
+     * `queueOfflineEntry` stages every file and THEN enqueues. A throw part-way through — an
+     * unreadable Uri, a full disk — left every file already copied sitting in this directory with
+     * nothing pointing at it, and there was no sweeper anywhere in the app: `StagedJournal` reclaims
+     * S3 objects, not local files. On the phone least able to be told to clear its storage, a
+     * repeatedly-failing save leaked a photograph's worth of flash each time, silently, for ever.
+     * The staging path itself no longer leaks (it rolls back), and this reclaims what earlier builds
+     * already left behind.
+     *
+     * [graceMillis] IS THE WHOLE SAFETY ARGUMENT. Staging happens milliseconds before the enqueue,
+     * but it happens OUTSIDE this lock — so a file younger than the grace period may belong to a
+     * save that is still in flight, and deleting it would turn a working save into a record whose
+     * photograph vanished. A day is many orders of magnitude more than any save takes and costs
+     * nothing but a day of the leak persisting.
+     *
+     * @return how many files were reclaimed.
+     */
+    suspend fun reclaimOrphanMedia(
+        context: Context,
+        graceMillis: Long = 24L * 60 * 60 * 1000,
+    ): Int = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val referenced = read(context).flatMap { entry -> entry.media.map { it.localPath } }.toSet()
+            val cutoff = System.currentTimeMillis() - graceMillis
+            var reclaimed = 0
+            mediaDir(context).listFiles()?.forEach { file ->
+                if (!file.isFile) return@forEach
+                if (file.absolutePath in referenced) return@forEach
+                if (file.lastModified() > cutoff) return@forEach
+                if (runCatching { file.delete() }.getOrDefault(false)) reclaimed++
+            }
+            reclaimed
+        }
+    }
+
     /** Remove a synced entry and delete the local media copies it owned. */
     suspend fun remove(context: Context, entry: PendingEntry) = withContext(Dispatchers.IO) {
         mutex.withLock { write(context, read(context).filterNot { it.id == entry.id }) }
         entry.media.forEach { runCatching { File(it.localPath).delete() } }
     }
 
-    /** Copy a captured content Uri into local app storage so it survives offline until uploaded. */
+    /**
+     * Copy a captured content Uri into local app storage so it survives offline until uploaded.
+     *
+     * ── FLUSHED, FSYNCED AND MEASURED, LIKE EVERY INDEX WRITE BESIDE IT ───────────────────────
+     *
+     * [write] and `QuestionnaireBundleInbox.write` both end in `fd.sync()`, and the reason given there
+     * applies harder to these bytes than to the index: the index can be rebuilt from the queue, and a
+     * photograph cannot be re-taken once the designer has walked away from the loom. A `copyTo` inside
+     * `use` flushes the stream, but the bytes may still be in the page cache when a low-memory kill or
+     * a flat battery arrives, and the entry pointing at them is already written down — so the record
+     * syncs later carrying a truncated or empty file, and it does so silently.
+     *
+     * AND A ZERO-LENGTH COPY IS RAISED RATHER THAN RETURNED. The whole point of `OfflineQueueResult`'s
+     * `unreadableFiles` is that a capture whose bytes could not be read is NAMED, so the designer knows
+     * which one to take again; a zero-byte staged file is exactly that failure, and returning it as a
+     * `PendingMedia` would tick the photograph off as saved and lose it at the far end instead.
+     */
     fun stageMedia(
         context: Context,
         uri: Uri,
@@ -332,9 +576,21 @@ object OfflineOutbox {
         val originalName = displayName(context, uri) ?: "field-media-${System.currentTimeMillis()}"
         val extension = originalName.substringAfterLast('.', "").takeIf { it.isNotBlank() }
         val target = File(mediaDir(context), UUID.randomUUID().toString() + (extension?.let { ".$it" } ?: ""))
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(target).use { output -> input.copyTo(output, 64 * 1024) }
+        val copied = context.contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(target).use { output ->
+                val bytes = input.copyTo(output, 64 * 1024)
+                output.flush()
+                output.fd.sync()
+                bytes
+            }
         } ?: throw IllegalStateException("Unable to read the captured media for offline storage")
+        // MEASURED AFTER THE SYNC, so this is what is actually on the disk and not what the stream
+        // believed it had handed over. Cleaned up on the way out: a zero-byte file left behind under
+        // `outbox/media/` has nothing pointing at it and only `reclaimOrphanMedia` to find it.
+        if (copied <= 0L || target.length() != copied) {
+            runCatching { target.delete() }
+            throw IllegalStateException("Unable to read the captured media for offline storage")
+        }
         return PendingMedia(
             localPath = target.absolutePath,
             originalFilename = originalName,

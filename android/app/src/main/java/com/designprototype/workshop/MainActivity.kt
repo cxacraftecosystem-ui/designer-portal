@@ -81,6 +81,7 @@ import com.designprototype.workshop.ui.visibleNavItems
 import com.designprototype.workshop.ui.IslandEntry
 import com.designprototype.workshop.ui.IslandGroup
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.OfflineOutboxTray
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.TextButton
@@ -138,6 +139,10 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.designprototype.workshop.data.ApiClient
+import com.designprototype.workshop.data.OfflineQueueResult
+import com.designprototype.workshop.data.OutboxCounts
+import com.designprototype.workshop.data.offlineSavedMessage
+import com.designprototype.workshop.data.outboxDeviceBanner
 import com.designprototype.workshop.data.ArtisanIdentity
 import com.designprototype.workshop.data.ArtisanCreateRequest
 import com.designprototype.workshop.data.CarryContext
@@ -165,6 +170,7 @@ import com.designprototype.workshop.data.ProductCreateRequest
 import com.designprototype.workshop.data.QuestionnaireInterviewCreateRequest
 import com.designprototype.workshop.data.QuestionnaireInterviewDetailDto
 import com.designprototype.workshop.data.QuestionnaireInterviewUpdateRequest
+import com.designprototype.workshop.data.isQuestionnaireBundleDelivery
 import com.designprototype.workshop.data.QuestionnaireQuestionCreateRequest
 import com.designprototype.workshop.data.QuestionnaireQuestionDto
 import com.designprototype.workshop.data.QuestionnaireQuestionUpdateRequest
@@ -286,6 +292,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Dashboard
@@ -375,8 +382,62 @@ import java.time.ZoneId
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+    /**
+     * A questionnaire file another phone has just handed this app, waiting to be read.
+     *
+     * ── WHY IT IS ACTIVITY STATE AND NOT READ INSIDE THE COMPOSITION ──────────────────────────
+     *
+     * A delivery arrives twice over, by two different routes, and only one of them is a composition:
+     * a COLD START (the app was not running — the file is on the launch [Intent]) and a WARM one
+     * ([onNewIntent], because the activity is `singleTop`). Held here, both funnel into the same
+     * `mutableStateOf` and the screen cannot tell them apart, which is the point — a designer being
+     * handed a questionnaire does not know or care whether the app happened to be open.
+     *
+     * ⚠ THE URI IS A GRANT, NOT AN ADDRESS, and this is the whole reason the value is CONSUMED
+     * rather than merely read. `ACTION_SEND` attaches a read permission scoped to this delivery; it
+     * dies with the task, and the file behind it may be in a chat app's cache that is emptied
+     * minutes later. So the receiving card copies the bytes into `filesDir` the moment it sees this
+     * and clears it, whether the read succeeded or was refused. Leaving it set would re-refuse the
+     * same dead Uri on every recomposition, and deferring it to a button the designer might press
+     * tomorrow would read nothing at all.
+     */
+    private val incomingQuestionnaire = mutableStateOf<Uri?>(null)
+
+    /**
+     * Pull a questionnaire bundle out of an intent, or leave the state alone.
+     *
+     * `getParcelableExtra` IS DEPRECATED AND UNREPLACEABLE HERE at `minSdk = 26`: the typed overload
+     * arrived in API 33, so the compatible call is the deprecated one. Suppressed at the narrowest
+     * possible scope rather than on the class.
+     *
+     * The type check is [isQuestionnaireBundleDelivery] and NOT a second copy of the rules — the
+     * manifest's filters and that function are deliberately the same decision written twice, once for
+     * the OS and once for this app, and a third rendering here is how they would drift. Note it is
+     * only ever a check on what to LOOK at: whether the bytes really are a questionnaire is decided
+     * by `readQuestionnaireBundle`, which is the only thing that reads them.
+     */
+    @Suppress("DEPRECATION")
+    private fun takeQuestionnaireDelivery(intent: Intent?) {
+        val candidate = when (intent?.action) {
+            Intent.ACTION_SEND -> intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            Intent.ACTION_VIEW -> intent.data
+            else -> null
+        } ?: return
+        if (!isQuestionnaireBundleDelivery(intent?.action, intent?.type, candidate.lastPathSegment)) return
+        incomingQuestionnaire.value = candidate
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // `setIntent` so that a configuration change re-reading `getIntent()` sees the delivery that
+        // actually arrived rather than the launcher intent that started the app hours ago.
+        setIntent(intent)
+        takeQuestionnaireDelivery(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        takeQuestionnaireDelivery(intent)
         val tokenStore = TokenStore(applicationContext)
         val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
         val googleAuthClient = GoogleAuthClient(this)
@@ -395,6 +456,8 @@ class MainActivity : ComponentActivity() {
                     RepositoryApp(
                         repository = repository,
                         googleAuthClient = googleAuthClient,
+                        incomingQuestionnaire = incomingQuestionnaire.value,
+                        onIncomingQuestionnaireConsumed = { incomingQuestionnaire.value = null },
                         preferences = preferences,
                         onPreferencesChanged = { next ->
                             // Apply first, persist second: the switch must feel instant. The screen
@@ -794,6 +857,9 @@ private fun EntryMode.icon(): ImageVector = when (this) {
 private fun RepositoryApp(
     repository: WorkshopRepository,
     googleAuthClient: GoogleAuthClient,
+    /** A `.dpwq` file handed to this app by another phone. See `MainActivity.incomingQuestionnaire`. */
+    incomingQuestionnaire: Uri?,
+    onIncomingQuestionnaireConsumed: () -> Unit,
     preferences: AppPreferences,
     onPreferencesChanged: (AppPreferences) -> Unit
 ) {
@@ -815,6 +881,12 @@ private fun RepositoryApp(
      * approved for the first time has had nothing withdrawn. See [AccessRefusal].
      */
     var refusal by remember { mutableStateOf(AccessRefusal.NOT_REFUSED) }
+
+    // Declared HERE rather than beside the outbox block below, because the session effect underneath
+    // needs it too: `repository.logout` now clears this device's cached questionnaire forms as well as
+    // the token, and that needs a Context. See its KDoc for what a sign-out used to leave behind for
+    // the next person to sign in on a shared handset.
+    val appContext = LocalContext.current.applicationContext
 
     // Persistent login: start from the cached profile so minimise/resume never logs the user out.
     // Refresh in the background and only clear the session if the token is genuinely rejected.
@@ -839,7 +911,7 @@ private fun RepositoryApp(
                          * screen, in the server's own words.
                          */
                         status == 403 -> {
-                            repository.logout()
+                            repository.logout(appContext)
                             user = null
                             // The STATUS and headers first, then the message: reading the message
                             // consumes Retrofit's buffered error body, so the classification has to
@@ -850,7 +922,7 @@ private fun RepositoryApp(
                             error = err.signInErrorMessage()
                         }
                         status == 401 -> {
-                            repository.logout()
+                            repository.logout(appContext)
                             user = null
                             refusal = AccessRefusal.NOT_REFUSED
                             error = "Your session expired. Please sign in again."
@@ -879,7 +951,18 @@ private fun RepositoryApp(
 
     // Offline outbox auto-sync: drain queued entries on login/start, whenever the network returns, and
     // on a periodic fallback. `pendingUploads` powers the "saved offline — uploading" banner.
-    val appContext = LocalContext.current.applicationContext
+    /**
+     * BOTH HALVES OF THE QUEUE, not one number.
+     *
+     * This was a single `pendingUploads` count and the banner drew it under a cloud-off icon with the
+     * words "uploading when you're online" — which was a lie for every entry the server had refused
+     * for good, and stayed a lie for ever. `OfflineOutbox.count` counted refusals; nothing on any
+     * screen told them apart; and there was no way to retry one. See `data/OfflineBanner.kt` for the
+     * whole account, and `dwDeviceSyncBanner` for the same fix made on the design-workshop side
+     * first.
+     */
+    var outboxCounts by remember { mutableStateOf(OutboxCounts(waiting = 0, refused = 0)) }
+    var showOutboxTray by remember { mutableStateOf(false) }
     var pendingUploads by remember { mutableStateOf(0) }
     /**
      * HOW MANY PEOPLE ARE WAITING TO BE LET INTO THE APPLICATION — the badge on the menu's
@@ -897,7 +980,8 @@ private fun RepositoryApp(
         if (user == null) return@LaunchedEffect
         while (true) {
             runCatching { repository.syncOutbox(appContext) }
-            pendingUploads = runCatching { repository.pendingUploads(appContext) }.getOrDefault(0)
+            outboxCounts = runCatching { repository.outboxCounts(appContext) }.getOrDefault(outboxCounts)
+            pendingUploads = outboxCounts.waiting
             // ONLY FOR AN ACCOUNT THAT COULD READ IT. The endpoint is `require_access_manager`, so
             // asking on behalf of a designer would spend a request every 45 seconds to be refused —
             // and would log an authorisation failure, forever, against somebody doing nothing wrong.
@@ -920,7 +1004,8 @@ private fun RepositoryApp(
             override fun onAvailable(network: android.net.Network) {
                 scope.launch {
                     runCatching { repository.syncOutbox(appContext) }
-                    pendingUploads = runCatching { repository.pendingUploads(appContext) }.getOrDefault(0)
+                    outboxCounts = runCatching { repository.outboxCounts(appContext) }.getOrDefault(outboxCounts)
+                    pendingUploads = outboxCounts.waiting
                 }
             }
         }
@@ -999,34 +1084,89 @@ private fun RepositoryApp(
                 // number in the app and one place that asks for it.
                 pendingAccessRequests = pendingAccessRequests,
                 onPendingAccessRequests = { pendingAccessRequests = it },
+                incomingQuestionnaire = incomingQuestionnaire,
+                onIncomingQuestionnaireConsumed = onIncomingQuestionnaireConsumed,
                 onLogout = {
                     scope.launch {
                         runCatching { googleAuthClient.clear() }
-                        repository.logout()
+                        repository.logout(appContext)
                         user = null
                     }
                 }
             )
         }
-        if (user != null && pendingUploads > 0) {
-            Row(
+        // ── THE DEVICE QUEUE BANNER ──────────────────────────────────────────────────────────────
+        //
+        // The sentences, and the decision about whether the cloud-off icon may be drawn at all, are
+        // in `outboxDeviceBanner` — pure, and pinned by `OutboxBannerTest`, because every one of them
+        // is read by somebody with no signal and there is no other way to check them. This composable
+        // decides only where they sit and what colour they are.
+        val banner = if (user != null) {
+            outboxDeviceBanner(outboxCounts, online = repository.isOnline(appContext))
+        } else {
+            null
+        }
+        if (banner != null) {
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(bottom = 8.dp)
                     .background(Color(0xFF2A2520), RoundedCornerShape(10.dp))
+                    // Tappable ONLY when there is something a person can do. A banner that opens an
+                    // empty tray teaches designers that tapping it is pointless, and the day it is
+                    // not pointless is the day they have stopped trying.
+                    .then(
+                        if (banner.actionable) {
+                            Modifier.clickable { showOutboxTray = true }
+                        } else {
+                            Modifier
+                        }
+                    )
                     .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Icon(Icons.Filled.CloudOff, contentDescription = null, tint = Color(0xFFE0C9B0), modifier = Modifier.size(16.dp))
-                Text(
-                    "$pendingUploads entr${if (pendingUploads == 1) "y" else "ies"} saved on this device — uploading when you're online.",
-                    color = Color(0xFFE0C9B0),
-                    fontSize = 12.sp,
-                    modifier = Modifier.weight(1f)
-                )
+                banner.lines.forEachIndexed { index, line ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (index == 0) {
+                            Icon(
+                                // CloudOff only for work a connection will move. A refusal under a
+                                // cloud icon sends the designer up the hill to find a signal, which
+                                // is the one thing that cannot help — see OutboxBanner.showCloudOff.
+                                if (banner.showCloudOff) Icons.Filled.CloudOff else Icons.Filled.ErrorOutline,
+                                contentDescription = null,
+                                tint = if (banner.showCloudOff) Color(0xFFE0C9B0) else Color(0xFFF0B37E),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        } else {
+                            Spacer(Modifier.size(16.dp))
+                        }
+                        Text(
+                            line.text,
+                            color = if (line.warn) Color(0xFFF0B37E) else Color(0xFFE0C9B0),
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
             }
+        }
+        if (showOutboxTray) {
+            OfflineOutboxTray(
+                repository = repository,
+                onClose = { showOutboxTray = false },
+                onChanged = {
+                    scope.launch {
+                        outboxCounts = runCatching { repository.outboxCounts(appContext) }
+                            .getOrDefault(outboxCounts)
+                        pendingUploads = outboxCounts.waiting
+                    }
+                },
+            )
         }
     }
 }
@@ -1228,6 +1368,17 @@ private fun HomeScreen(
     pendingAccessRequests: Int = 0,
     /** The allow-list screen correcting the number the moment it has read the queue itself. */
     onPendingAccessRequests: (Int) -> Unit = {},
+    /**
+     * A questionnaire file another phone handed this app, or null. See `MainActivity`.
+     *
+     * IT SURVIVES A SIGN-IN, and that is deliberate rather than incidental. A delivery can land on a
+     * signed-out app — the sender has no way to know — and the read grant on the Uri lives as long as
+     * this task does, not as long as the screen does. So the value is held above and reaches this
+     * composable whenever it first appears, which means a designer handed a questionnaire while
+     * logged out signs in and finds it waiting, instead of being shown a file that has already died.
+     */
+    incomingQuestionnaire: Uri? = null,
+    onIncomingQuestionnaireConsumed: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var stats by remember { mutableStateOf<DashboardStats?>(null) }
@@ -1235,6 +1386,23 @@ private fun HomeScreen(
     var crafts by remember { mutableStateOf<List<CraftDto>>(emptyList()) }
     var artisans by remember { mutableStateOf<List<ArtisanDto>>(emptyList()) }
     var screen by remember { mutableStateOf<Screen>(Screen.Dashboard) }
+
+    /**
+     * A questionnaire arriving from another phone OPENS THE SCREEN THAT CAN RECEIVE IT.
+     *
+     * Without this the app would launch on the dashboard with the file held invisibly in memory, and
+     * the read grant on it dies with the task — so a designer who did not happen to walk to
+     * Questionnaires would lose a transfer the sender was told had succeeded. Navigation is the whole
+     * of the handling here; the card on that screen does the reading, and it clears the value through
+     * [onIncomingQuestionnaireConsumed] whether the file was accepted or refused.
+     *
+     * NOT keyed on `Unit`: a second questionnaire can arrive while the first is still on screen.
+     */
+    LaunchedEffect(incomingQuestionnaire) {
+        if (incomingQuestionnaire != null && screen !is Screen.Questionnaires) {
+            screen = Screen.Questionnaires
+        }
+    }
     var carryForward by remember { mutableStateOf<Prefill?>(null) }
     /**
      * The record form a design-workshop reference picker has asked for, or null when none is open.
@@ -2482,7 +2650,9 @@ private fun HomeScreen(
                 repository = repository,
                 onOpen = { id -> message = null; screen = Screen.QuestionnaireDetail(id) },
                 onMessage = { showMessage(it) },
-                onError = { showMessage(it) }
+                onError = { showMessage(it) },
+                incoming = incomingQuestionnaire,
+                onIncomingConsumed = onIncomingQuestionnaireConsumed,
             )
 
             is Screen.QuestionnaireDetail -> QuestionnaireDetailScreen(
@@ -4254,6 +4424,8 @@ private suspend fun uploadAttachments(
     // Resilient: attempt every attachment so one bad file never blocks the rest; the saved record
     // already persisted before this runs, so partial uploads are kept and only the failures surface.
     val failures = mutableListOf<String>()
+    /** The Uris that did NOT land, with their position, so they can be queued rather than lost. */
+    val stranded = mutableListOf<IndexedValue<Uri>>()
     media.uris.forEachIndexed { index, uri ->
         // Prefer the eagerly pre-uploaded object (awaiting any still-in-flight transfer); only fall
         // back to a fresh upload if pre-upload never started or failed.
@@ -4297,14 +4469,64 @@ private suspend fun uploadAttachments(
             val error = result.exceptionOrNull()
             if (error is kotlinx.coroutines.CancellationException) throw error
             failures.add(uri.lastPathSegment ?: "file ${index + 1}")
+            stranded.add(IndexedValue(index, uri))
         }
     }
     if (failures.isNotEmpty()) {
+        // ── THE FILES ARE PUT SOMEWHERE THEY CAN SURVIVE, BEFORE ANYTHING IS SAID ─────────────────
+        //
+        // This block used to throw an instruction the designer could not carry out: "re-open it from
+        // 'Update existing' to re-attach the media". Three things made that impossible. The Uris are
+        // in a Compose `remember` block that dies with the screen; the bytes behind them are in
+        // `cacheDir/field-captures/`, which Android reclaims without asking and without telling; and
+        // re-opening the record to re-attach was itself an edit, which the offline path refused. So
+        // the sharpest media-loss path in this app was a good connection that faltered for ten
+        // seconds after the record POST landed — and the app's advice guaranteed the loss.
+        //
+        // The bytes are now copied out of cacheDir into `filesDir/outbox/media/` and queued against
+        // the record's own id, which is in hand right here. See OFFLINE_MEDIA_ONLY.
+        val rescued = runCatching {
+            repository.queueMediaForSavedRecord(
+                context = context,
+                recordType = recordType,
+                recordId = recordId,
+                label = titleHint?.takeIf { it.isNotBlank() } ?: "Attachments for a saved record",
+                items = stranded.map { (index, uri) ->
+                    com.designprototype.workshop.data.OfflineMediaSpec(
+                        uri = uri,
+                        caption = caption,
+                        recordName = titleHint,
+                        customSegment = customSegment,
+                        batchIndex = index + 1,
+                        // The per-file marker, on this path too. A grid shot rescued into the queue
+                        // and uploaded unmarked prints as the product; see PendingMedia.purpose.
+                        purpose = media.purposes[uri],
+                    )
+                },
+            )
+        }.getOrNull()
+
         val allFailed = failures.size == media.uris.size
         val prefix = if (allFailed) "All ${failures.size} media file(s) failed to upload" else "${failures.size} media file(s) failed to upload"
+        // STILL THROWN. The caller's `onFailure` is what puts this on screen and what stops the form
+        // reporting a clean save, and both are still true — the record is on the server and its
+        // media is not. What changed is which sentence is honest.
         throw IllegalStateException(
-            "$prefix (${failures.joinToString(", ")}). The record was saved — check your connection " +
-                "and re-open it from \"Update existing\" to re-attach the media."
+            when {
+                rescued != null && rescued.allFilesQueued ->
+                    "$prefix (${failures.joinToString(", ")}). The record was saved, and those files " +
+                        "are now saved on this device — they will be attached to it automatically when " +
+                        "you have a signal. You do not need to take them again."
+                rescued != null ->
+                    "$prefix (${failures.joinToString(", ")}). The record was saved and " +
+                        "${rescued.queuedFiles} of them are now kept on this device to attach when you " +
+                        "have a signal, but ${rescued.unreadableFiles.size} could not be read at all " +
+                        "(${rescued.unreadableFiles.joinToString(", ")}). Take those again if you can."
+                else ->
+                    "$prefix (${failures.joinToString(", ")}). The record was saved but this device " +
+                        "could not keep a copy of the files — there may be no storage left. Do not " +
+                        "leave this screen: attach them again from here while they are still on it."
+            }
         )
     }
 }
@@ -6391,13 +6613,18 @@ private fun CraftForm(
                 workshopId = workshop.value(),
                 recordedAt = if (isEdit) null else Instant.now().toString()
             )
+            // No connection: queue this on the device — a NEW craft, or a correction to one that is
+            // already on the server (see `trySaveOffline`). `getOrNull` and not `getOrElse { false }`:
+            // the result names the files that could not be read, and the sentence the designer sees
+            // is built from it rather than being a fixed promise about photographs nobody checked.
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "craft", offlineFormJson.encodeToString(body),
-                    name.trim(), media, name.trim(), "Field media for ${name.trim()}")
-            }.getOrElse { false }
-            if (queuedOffline) {
+                    name.trim(), media, name.trim(), "Field media for ${name.trim()}",
+                    editingId = editing?.id)
+            }.getOrNull()
+            if (queuedOffline != null) {
                 media.reset()
-                onError("Saved on this device. It'll upload automatically when you're back online.")
+                onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
                 onDone()
                 saving = false
                 return@launch
@@ -6770,13 +6997,17 @@ private fun ArtisanForm(
                 location = locationForBody(isEdit, media.location, editing?.location)
             )
             // No connection: save to the device and sync on reconnect, instead of failing the upload.
+            // An EDIT now takes this door too, and for this record type it is the one that mattered
+            // most — an artisan's identity answers, address and phone are what a designer goes back
+            // and corrects, and there is no signal in the place they were taken down.
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "artisan", offlineFormJson.encodeToString(body),
-                    name.trim(), media, name.trim(), "Field media for ${name.trim()}")
-            }.getOrElse { false }
-            if (queuedOffline) {
+                    name.trim(), media, name.trim(), "Field media for ${name.trim()}",
+                    editingId = editing?.id)
+            }.getOrNull()
+            if (queuedOffline != null) {
                 media.reset()
-                onError("Saved on this device. It'll upload automatically when you're back online.")
+                onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
                 onDone()
                 saving = false
                 return@launch
@@ -7180,11 +7411,12 @@ private fun WorkshopForm(
             )
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "workshop", offlineFormJson.encodeToString(body),
-                    title.trim(), media, title.trim(), "Field media for ${title.trim()}")
-            }.getOrElse { false }
-            if (queuedOffline) {
+                    title.trim(), media, title.trim(), "Field media for ${title.trim()}",
+                    editingId = editing?.id)
+            }.getOrNull()
+            if (queuedOffline != null) {
                 media.reset()
-                onError("Saved on this device. It'll upload automatically when you're back online.")
+                onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
                 onDone()
                 saving = false
                 return@launch
@@ -7436,17 +7668,23 @@ private fun ProductForm(
             )
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "product", offlineFormJson.encodeToString(body),
-                    productName.trim(), media, productName.trim(), "Field media for ${productName.trim()}")
-            }.getOrElse { false }
-            if (queuedOffline) {
-                // Offline is the normal case, but a queued product has no id yet, so no process form
-                // could link to it. Whatever product was in the bag is dropped rather than left to
-                // stand in for the one just recorded — an old product offered under a new one's name
-                // is a wrong link.
-                carry.prune(CarryNode.PRODUCT)
+                    productName.trim(), media, productName.trim(), "Field media for ${productName.trim()}",
+                    editingId = editing?.id)
+            }.getOrNull()
+            if (queuedOffline != null) {
+                // Offline is the normal case, but a queued NEW product has no id yet, so no process
+                // form could link to it. Whatever product was in the bag is dropped rather than left
+                // to stand in for the one just recorded — an old product offered under a new one's
+                // name is a wrong link.
+                //
+                // A CORRECTION IS THE OPPOSITE CASE and must not prune: that product already has a
+                // server id, it is the same object it was before the edit, and dropping it from the
+                // bag would send the designer hunting it out of a dropdown of seventy for the process
+                // they were about to record about it.
+                if (!isEdit) carry.prune(CarryNode.PRODUCT)
                 carry.remember(sitting)
                 media.reset()
-                onError("Saved on this device. It'll upload automatically when you're back online.")
+                onError(offlineSavedMessage(queuedOffline, isCorrection = isEdit))
                 onDone()
                 saving = false
                 return@launch
@@ -7741,8 +7979,11 @@ private fun ToolForm(
                 workshopId = workshop.value(),
                 workshopName = workshop.workshops.firstOrNull { it.id == workshop.value() }?.title
             )
-            if (!isEdit && !repository.isOnline(context)) {
-                val ok = runCatching {
+            // AN EDIT TAKES THIS DOOR TOO now — see `trySaveOffline`, which the four simpler forms
+            // reach the same conclusion through. `editing?.id` is what makes it a correction rather
+            // than a duplicate toolkit, so the branch is entered only when there is one to name.
+            if ((!isEdit || editing?.id != null) && !repository.isOnline(context)) {
+                val queued = runCatching {
                     val items = media.uris.mapIndexed { i, uri ->
                         // `purpose` CARRIES THE GRID MARKER INTO THE OUTBOX. This form has a
                         // [GridMeasurementSection] and it routes its graph-paper shots into this
@@ -7758,19 +7999,32 @@ private fun ToolForm(
                         // marker was lost on the product path.
                         com.designprototype.workshop.data.OfflineMediaSpec(uri = uri, caption = "Process stage step ${i + 1} for ${toolkitName.trim()}", recordName = toolkitName.trim(), stageStep = i + 1, purpose = stages.purposes[uri])
                     }
-                    repository.queueOfflineEntry(context, "tool", offlineFormJson.encodeToString(body), toolkitName.trim(), items)
-                }.isSuccess
-                if (ok) {
-                    // Offline is the normal case, but a queued tool has no id yet, so nothing can be
-                    // assigned to it. Whatever tool was in the bag is dropped rather than left to
+                    repository.queueOfflineEntry(
+                        context, "tool", offlineFormJson.encodeToString(body), toolkitName.trim(), items,
+                        targetId = if (isEdit) editing?.id else null,
+                    )
+                }.getOrNull()
+                if (queued != null) {
+                    // Offline is the normal case, but a queued NEW tool has no id yet, so nothing can
+                    // be assigned to it. Whatever tool was in the bag is dropped rather than left to
                     // stand in for the one just recorded — an old tool offered under a new one's
-                    // name is a wrong link.
-                    carry.prune(CarryNode.TOOL)
+                    // name is a wrong link. A CORRECTION keeps its id and therefore keeps its place
+                    // in the bag.
+                    if (!isEdit) carry.prune(CarryNode.TOOL)
                     carry.remember(sitting)
                     media.reset(); stages.reset()
-                    onError("Saved on this device. It'll upload automatically when you're back online.")
+                    onError(offlineSavedMessage(queued, isCorrection = isEdit))
                     onDone(); saving = false; return@launch
-                } else onError("Couldn't save offline")
+                } else {
+                    // Reached only when the QUEUE itself could not be written — a full disk, an
+                    // unwritable file. An unreadable capture no longer lands here: it is queued
+                    // without that file and named in the sentence above. Every staged byte for this
+                    // attempt is deleted on the way out, so nothing is left behind either way.
+                    onError(
+                        "This device could not save the toolkit — there may be no storage left. " +
+                            "Nothing has been sent and nothing has been kept; the form is still filled in."
+                    )
+                }
                 saving = false; return@launch
             }
             runCatching {
@@ -8255,8 +8509,11 @@ private fun ProcessForm(
             )
             // Offline: queue the process with its pre-process media (linked to the process) and each
             // step's media (linked to that step on sync, by index), preserving the step nomenclature.
-            if (!isEdit && !repository.isOnline(context)) {
-                val ok = runCatching {
+            // A CORRECTION TAKES THIS DOOR TOO, on `trySaveOffline`'s reasoning. `updateProcess`
+            // answers with the step ids exactly as `createProcess` does, which is what lets a queued
+            // correction still carry per-step captures — see the "process" arm of `writeFromEntry`.
+            if ((!isEdit || editing?.id != null) && !repository.isOnline(context)) {
+                val queued = runCatching {
                     val items = mutableListOf<com.designprototype.workshop.data.OfflineMediaSpec>()
                     if (preProcessAvailable) {
                         preMedia.uris.forEachIndexed { i, uri ->
@@ -8278,14 +8535,22 @@ private fun ProcessForm(
                                 purpose = local.media.purposes[uri]))
                         }
                     }
-                    repository.queueOfflineEntry(context, "process", offlineFormJson.encodeToString(body), name.trim(), items)
-                }.isSuccess
-                if (ok) {
+                    repository.queueOfflineEntry(
+                        context, "process", offlineFormJson.encodeToString(body), name.trim(), items,
+                        targetId = if (isEdit) editing?.id else null,
+                    )
+                }.getOrNull()
+                if (queued != null) {
                     carry.remember(sitting)
                     preMedia.reset(); steps.forEach { it.media.reset() }
-                    onError("Saved on this device. It'll upload automatically when you're back online.")
+                    onError(offlineSavedMessage(queued, isCorrection = isEdit))
                     onDone()
-                } else onError("Couldn't save offline")
+                } else {
+                    onError(
+                        "This device could not save the process — there may be no storage left. " +
+                            "Nothing has been sent and nothing has been kept; the form is still filled in."
+                    )
+                }
                 saving = false
                 return@launch
             }
@@ -12799,9 +13064,37 @@ private fun QuestionnaireForm(
                         } else null
                     }
                     // Offline: queue the interview + every recorded clip (with its section/question
-                    // nomenclature) and attachments, to upload on reconnect. New interviews only.
+                    // nomenclature) and attachments, to upload on reconnect.
+                    //
+                    // ── NEW INTERVIEWS ONLY, AND THIS ONE STAYS THAT WAY ────────────────────────
+                    //
+                    // Every other record form on this screen queues an EDIT as a correction against
+                    // its server id (see `trySaveOffline`), and this one deliberately does not. The
+                    // reason is `responsesToSend` twenty lines above: it is a DIFF, computed against
+                    // `editing?.responses` — what the server held at the moment this form was opened
+                    // — and `QuestionnaireInterviewUpdateRequest` reads a present `responses` as
+                    // "replace" and an absent one as "leave alone". Replaying that diff hours later,
+                    // against a sitting a second interviewer may have added answers to in the
+                    // meantime, would drop theirs without either person being told. `artisanIds` has
+                    // the same shape and the same hazard.
+                    //
+                    // So an interview edit with no signal is refused, in the room, with the answers
+                    // still on the screen to be re-sent — which is the honest failure. Closing it
+                    // properly needs the interview's own version as a precondition, exactly as the
+                    // custom questionnaire's write does (`WorkshopRepository`, the custom
+                    // questionnaires block), and not a queue.
+                    if (isEdit && !repository.isOnline(context)) {
+                        saveState = SaveState.IDLE
+                        onError(
+                            "A correction to an interview cannot be saved on this device. It changes " +
+                                "answers other interviewers may also be editing, and this phone cannot " +
+                                "tell what they have changed since you opened it. Your answers are still " +
+                                "on screen — save again when you have a signal."
+                        )
+                        return@launch
+                    }
                     if (!isEdit && !repository.isOnline(context)) {
-                        val ok = runCatching {
+                        val queued = runCatching {
                             val request = QuestionnaireInterviewCreateRequest(
                                 title = title.trim(),
                                 place = place.blankToNull(),
@@ -12855,8 +13148,8 @@ private fun QuestionnaireForm(
                             }
                             repository.queueOfflineEntry(context, "questionnaire", offlineFormJson.encodeToString(request),
                                 title.trim().ifBlank { "Interview" }, items)
-                        }.isSuccess
-                        if (ok) {
+                        }.getOrNull()
+                        if (queued != null) {
                             media.reset(); qMedia.reset(); questionAudio = emptyMap()
                             title = ""; selectedArtisans = emptySet(); place = ""; language = "Hindi"; notes = ""
                             status = defaultCreateStatus(repository.cachedUser()?.role)
@@ -12865,11 +13158,24 @@ private fun QuestionnaireForm(
                             // selection carries over — re-baselined so it isn't flagged as unsaved.
                             workshop.markSaved()
                             saveState = SaveState.SAVED
+                            // SAID EVEN ON THE HAPPY PATH, because this form clears itself and
+                            // navigates away — so a clip whose bytes could not be read is a clip the
+                            // designer will never be told about if it is not said here. Silent on a
+                            // clean save: `offlineSavedMessage` adds nothing when every file went in,
+                            // and an "everything worked" notice on top of the SAVED tick is noise
+                            // that teaches people to dismiss this channel.
+                            if (!queued.allFilesQueued) {
+                                onError(offlineSavedMessage(queued, isCorrection = false))
+                            }
                             delay(SAVED_CONFIRM_MS)
                             onSaved()
                         } else {
                             saveState = SaveState.IDLE
-                            onError("Couldn't save offline")
+                            onError(
+                                "This device could not save the interview — there may be no storage " +
+                                    "left. Nothing has been sent and nothing has been kept; your " +
+                                    "answers are still on screen."
+                            )
                         }
                         return@launch
                     }
@@ -14903,10 +15209,25 @@ private fun MappingStatTile(label: String, value: Int, modifier: Modifier = Modi
 private val offlineFormJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
 /**
- * Offline save: when there's no connection, persist this new record (and copies of its captured media)
- * to the local outbox and return true so the form can confirm "saved on device" and navigate. Returns
- * false when online (the form should take its normal upload path). Only for NEW records — edits need
- * the existing server record. The outbox auto-syncs on reconnect.
+ * Offline save: when there's no connection, persist this record (and copies of its captured media)
+ * to the local outbox and return WHAT WENT IN, so the form can confirm it honestly and navigate.
+ * Returns null when online (the form should take its normal upload path). The outbox auto-syncs on
+ * reconnect.
+ *
+ * ── IT NO LONGER REFUSES AN EDIT, AND THAT WAS THE LARGEST HOLE IN THE OFFLINE STORY ─────────────
+ *
+ * The first line of this function used to be `if (isEdit || repository.isOnline(context)) return
+ * false`, and a `false` sends the form down the ONLINE path. Offline, that path threw an IOException
+ * which arrived as `onError(it.message)` — a raw OkHttp sentence — and NOTHING WAS PERSISTED
+ * ANYWHERE, because a record form has no draft file the way the design-workshop stages do. A designer
+ * correcting twenty artisan records on the bus home lost all twenty, one raw error message at a time.
+ *
+ * An edit is now queued as a CORRECTION against the record's server id; see
+ * [com.designprototype.workshop.data.PendingEntry.targetId] for what that changes on replay and for
+ * what a correction deliberately cannot carry (a review status). [editingId] must be the id of the
+ * record being edited whenever [isEdit] is true — passing null there would queue the correction as a
+ * NEW record and put a second copy of the artisan into the register, so it is asserted rather than
+ * assumed.
  *
  * IT PASSES [MediaCaptureState.purposes] DOWN, and that is not bookkeeping. This is the path a new
  * product takes when the designer is standing in a cluster with no signal — which is the normal case
@@ -14923,14 +15244,19 @@ private suspend fun trySaveOffline(
     label: String,
     media: MediaCaptureState,
     recordName: String?,
-    caption: String?
-): Boolean {
-    if (isEdit || repository.isOnline(context)) return false
-    repository.queueOffline(
+    caption: String?,
+    editingId: String? = null,
+): OfflineQueueResult? {
+    if (repository.isOnline(context)) return null
+    // An edit with no id is a create, and a create of something that already exists is a duplicate.
+    // Refused here rather than queued wrongly: the form falls through to the online path and reports
+    // a network error, which is a bad afternoon rather than a corrupted register.
+    if (isEdit && editingId.isNullOrBlank()) return null
+    return repository.queueOffline(
         context, type, payloadJson, label, media.uris, recordName, caption,
         purposes = media.purposes,
+        targetId = if (isEdit) editingId else null,
     )
-    return true
 }
 
 /** Save-button lifecycle: idle, in-flight (spinner + "Saving…"), then a brief "Saved ✓" confirmation. */

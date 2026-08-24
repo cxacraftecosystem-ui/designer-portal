@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.questionnaires
 
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -76,6 +77,18 @@ fun QuestionnaireListScreen(
     onOpen: (questionnaireId: String) -> Unit,
     onMessage: (String) -> Unit,
     onError: (String) -> Unit,
+    /**
+     * A `.dpwq` file another phone has just handed this app through the share sheet or a file
+     * manager, or null on an ordinary visit to this screen.
+     *
+     * CONSUMED ONCE, and that is not a style choice. A Uri delivered by `ACTION_SEND` carries a read
+     * grant scoped to that delivery; holding it and retrying tomorrow reads nothing. So the card
+     * copies the bytes into `filesDir` immediately and calls [onIncomingConsumed] whether the read
+     * succeeded or was refused — a second attempt on the same Uri cannot succeed, so leaving it set
+     * would re-refuse it on every recomposition.
+     */
+    incoming: Uri? = null,
+    onIncomingConsumed: () -> Unit = {},
 ) {
     var rows by remember { mutableStateOf<List<CustomQuestionnaireSummaryDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -292,6 +305,26 @@ fun QuestionnaireListScreen(
         uploadReport?.let { report ->
             UploadReportPanel(report = report, onDismiss = { uploadReport = null })
         }
+
+        // ── THE COURTYARD DOOR, and it is a different door from the spreadsheet above ───────────
+        //
+        // Everything in the card above needs a server at both ends: the pro-forma is downloaded from
+        // one and the workbook is parsed by one. This card is the only path in this feature that
+        // works with no internet at all, in either direction, which is why it is a card of its own
+        // rather than a third row inside that one. It is placed AFTER the spreadsheet deliberately —
+        // the spreadsheet is the ordinary way to build a questionnaire and this is the way to receive
+        // somebody else's, and a designer who has never been handed one should meet them in that
+        // order.
+        ReceivedQuestionnairesCard(
+            repository = repository,
+            incoming = incoming,
+            onIncomingConsumed = onIncomingConsumed,
+            // A newly adopted questionnaire is a row this list does not have yet, and the adoption
+            // happened on this device rather than through the search that populates it.
+            onAdopted = { reload++ },
+            onMessage = onMessage,
+            onError = onError,
+        )
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
