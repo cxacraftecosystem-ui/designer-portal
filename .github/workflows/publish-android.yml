@@ -972,11 +972,24 @@ jobs:
             echo "::error::A file this small is a truncated or empty output, not a release — a Kotlin-daemon OOM has produced a zero-byte APK in this project before, on a build that reported success. Do not publish it."
             exit 1
           fi
+          # ── WHICH UPLOAD PATH, and this used to be a hard refusal ────────────────────────────
+          #
+          # It read: at or above 64 MiB, "THE MULTIPART UPLOAD FLOW IS REQUIRED AND IS NOT
+          # IMPLEMENTED IN THIS WORKFLOW", and stopped. That was the right refusal to ship with —
+          # attempting a single PUT of an over-size object and hoping produces a truncated file with a
+          # published release row pointing at it, which is a broken download for every user and cannot
+          # be taken back.
+          #
+          # It then fired for real: adding CameraX took the APK to 67,222,842 bytes, **113,978 bytes**
+          # over the line. So the flow is implemented now and this step CHOOSES a path instead of
+          # refusing. The floor check above is untouched and still refuses, because a too-SMALL APK is
+          # a truncated build and there is no path that makes it publishable.
           if [ "$bytes" -ge "$SINGLE_PUT_LIMIT_BYTES" ]; then
-            echo "::error title=APK too large for the single-PUT upload path::The APK is ${bytes} bytes, at or above the ${SINGLE_PUT_LIMIT_BYTES}-byte (64 MiB) limit. THE MULTIPART UPLOAD FLOW IS REQUIRED AND IS NOT IMPLEMENTED IN THIS WORKFLOW."
-            echo "::error::Refusing to attempt a single PUT and hope: a truncated object with a published release row pointing at it is a broken download for every user, and it cannot be taken back."
-            echo "::error::Implement the flow the web client uses — POST /api/media/multipart/create, POST /api/media/multipart/presign-parts, PUT each part, POST /api/media/multipart/complete (see frontend/lib/media.ts) — or shrink the APK."
-            exit 1
+            echo "UPLOAD_MODE=multipart" >> "$GITHUB_ENV"
+            echo "::notice title=Multipart upload::${bytes} bytes is at or above the ${SINGLE_PUT_LIMIT_BYTES}-byte single-PUT limit, so the APK goes up in parts."
+          else
+            echo "UPLOAD_MODE=single" >> "$GITHUB_ENV"
+            echo "${bytes} bytes fits the single-PUT path (limit ${SINGLE_PUT_LIMIT_BYTES})."
           fi
           if [ "$headroom" -lt 2097152 ]; then
             echo "::notice::Only ${headroom} bytes of headroom under the 64 MiB single-PUT limit. The next release may well cross it; the multipart flow named above is what will be needed."
@@ -1173,6 +1186,9 @@ jobs:
 
       - name: Upload the APK to object storage (presign, then one PUT)
         id: upload
+        # Only for an APK that fits one PUT. GUARD 5 decides and sets UPLOAD_MODE; the step
+        # below takes the over-size case. Exactly one of the two runs, and both set OBJECT_KEY.
+        if: ${{ env.UPLOAD_MODE == 'single' }}
         # ─── THE SAME TWO CALLS THE WEB PUBLISHER MAKES ────────────────────────────────────────
         # POST /api/media/presign returns {uploadUrl, objectKey, bucket, headers, publicUrl} and
         # then the bytes go to `uploadUrl` with exactly the headers it returned. The request body
@@ -1334,6 +1350,141 @@ jobs:
             echo "PUBLIC_URL=${public_url}"
           } >> "$GITHUB_ENV"
           rm -f "$put_cfg"
+
+      # ─── THE OVER-SIZE PATH, AND WHY IT EXISTS NOW ───────────────────────────────────────────
+      #
+      # GUARD 5 used to refuse at 64 MiB with "the multipart flow is required and is not implemented
+      # in this workflow" — honest, and correct to ship with, until CameraX took the APK to
+      # 67,222,842 bytes: 113,978 over the line. This is that flow, and it is the same four calls
+      # `frontend/lib/media.ts`'s `uploadInParts` makes.
+      #
+      # NO CORS PROBLEM HERE, which is the one way this is easier than the browser's version. A page
+      # needs `ExposeHeaders: ["ETag"]` on the bucket or no part response can be read and a multipart
+      # upload is impossible from a browser at all — `lib/media.ts` carries a whole runtime flag for
+      # detecting that. curl reads response headers unconditionally.
+      #
+      # IT ABORTS ON FAILURE. An abandoned multipart upload is invisible storage that is billed and
+      # never collected, so the abort runs on any error and reports its own outcome without masking
+      # the failure that triggered it.
+      - name: Upload the APK to object storage in parts
+        id: upload_multipart
+        if: ${{ env.UPLOAD_MODE == 'multipart' }}
+        env:
+          APK: app/build/outputs/apk/release/app-release.apk
+        run: |
+          set -euo pipefail
+
+          # $1 path, $2 JSON body. The bearer comes from the mode-600 curl config written earlier, so
+          # the token never reaches a command line, a process list or the log.
+          api() {
+            curl -sS --config "$CURL_AUTH" -H 'Content-Type: application/json' \
+                 -o /tmp/mp.json -w '%{http_code}' --max-time 120 \
+                 -X POST "${API_BASE}$1" --data-binary "$2"
+          }
+
+          create_body="$(jq -n \
+            --arg n "design-prototype-workshop-${VERSION_NAME}.apk" \
+            --argjson b "${APK_BYTES}" \
+            '{filename:$n, mimeType:"application/vnd.android.package-archive", mediaType:"DOCUMENT", sizeBytes:$b}')"
+          code="$(api /api/media/multipart/create "$create_body")" || code=000
+          case "$code" in
+            200|201) ;;
+            *) echo "::error::multipart/create answered ${code}. Nothing was uploaded."; exit 1 ;;
+          esac
+          object_key="$(jq -r '.objectKey // empty' /tmp/mp.json)"
+          upload_id="$(jq -r '.uploadId // empty' /tmp/mp.json)"
+          part_size="$(jq -r '.partSize // empty' /tmp/mp.json)"
+          part_count="$(jq -r '.partCount // empty' /tmp/mp.json)"
+          if [ -z "$object_key" ] || [ -z "$upload_id" ] || [ -z "$part_size" ] || [ -z "$part_count" ]; then
+            echo "::error::multipart/create returned ${code} without the four fields the rest of this depends on."
+            exit 1
+          fi
+          echo "created: ${part_count} part(s) of ${part_size} bytes"
+
+          abort_upload() {
+            echo "::warning title=Aborting the multipart upload::Parts already sent would otherwise sit billed and uncollected."
+            body="$(jq -n --arg k "$object_key" --arg u "$upload_id" '{objectKey:$k, uploadId:$u}')"
+            rc="$(api /api/media/multipart/abort "$body")" || rc=000
+            echo "abort answered ${rc}"
+          }
+          trap abort_upload ERR
+
+          numbers="$(seq 1 "$part_count" | jq -s -R 'split("\n") | map(select(length>0) | tonumber)' | jq -c '.')"
+          presign_body="$(jq -n --arg k "$object_key" --arg u "$upload_id" --argjson p "$numbers" \
+            '{objectKey:$k, uploadId:$u, partNumbers:$p}')"
+          code="$(api /api/media/multipart/presign-parts "$presign_body")" || code=000
+          if [ "$code" != "200" ]; then
+            echo "::error::multipart/presign-parts answered ${code}."
+            exit 1
+          fi
+          cp /tmp/mp.json /tmp/mp-urls.json
+
+          # One pass with `split` rather than a `dd` per part: five 16 MiB reads through dd on a runner
+          # disk is slower than one sequential pass, and a short final part is exactly what split
+          # produces without any arithmetic of mine.
+          rm -rf /tmp/apkparts
+          mkdir -p /tmp/apkparts
+          split -b "$part_size" -d -a 3 "$APK" /tmp/apkparts/part
+          made="$(find /tmp/apkparts -type f | wc -l | tr -d ' ')"
+          if [ "$made" != "$part_count" ]; then
+            echo "::error::split produced ${made} parts and the server planned ${part_count}. Refusing to guess which is right."
+            exit 1
+          fi
+
+          parts_json='[]'
+          n=0
+          for f in $(find /tmp/apkparts -type f | sort); do
+            n=$((n + 1))
+            url="$(jq -r --arg k "$n" '.urls[$k] // empty' /tmp/mp-urls.json)"
+            if [ -z "$url" ]; then
+              echo "::error::no presigned URL for part ${n} of ${part_count}."
+              exit 1
+            fi
+            # A presigned URL is a write credential with a deadline. Into a mode-600 config file, the
+            # same way the bearer token is handled, and never onto a command line.
+            cfg="$(mktemp)"
+            chmod 600 "$cfg"
+            printf 'url = "%s"\n' "$url" > "$cfg"
+            hdr="$(mktemp)"
+            pcode="$(curl -sS --config "$cfg" -X PUT --upload-file "$f" \
+                     -D "$hdr" -o /dev/null -w '%{http_code}' --max-time 900)" || pcode=000
+            shred -u "$cfg" 2>/dev/null || rm -f "$cfg"
+            if [ "$pcode" != "200" ]; then
+              echo "::error::part ${n} of ${part_count} answered ${pcode}."
+              rm -f "$hdr"
+              exit 1
+            fi
+            etag="$(tr -d '\r' < "$hdr" | grep -i '^etag:' | tail -1 | sed -e 's/^[Ee][Tt][Aa][Gg]:[[:space:]]*//' -e 's/"//g')"
+            rm -f "$hdr"
+            if [ -z "$etag" ]; then
+              echo "::error::part ${n} uploaded but answered no ETag, and multipart/complete cannot be called without one."
+              exit 1
+            fi
+            parts_json="$(printf '%s' "$parts_json" | jq -c --argjson pn "$n" --arg e "$etag" '. + [{partNumber:$pn, etag:$e}]')"
+            echo "part ${n}/${part_count} ok"
+          done
+
+          complete_body="$(jq -n --arg k "$object_key" --arg u "$upload_id" --argjson p "$parts_json" \
+            '{objectKey:$k, uploadId:$u, parts:$p}')"
+          code="$(api /api/media/multipart/complete "$complete_body")" || code=000
+          case "$code" in
+            200|201) ;;
+            *) echo "::error::multipart/complete answered ${code}. The object is NOT assembled."; exit 1 ;;
+          esac
+          trap - ERR
+          rm -rf /tmp/apkparts
+
+          assembled="$(jq -r '.objectKey // empty' /tmp/mp.json)"
+          if [ -n "$assembled" ]; then object_key="$assembled"; fi
+
+          # Masked the way the single-PUT step masks it: the second path segment is the uploader's
+          # user id, and this repository's rule is that object keys are not logged.
+          safe="$(printf '%s' "$object_key" | awk -F/ 'NF>2{ $2="<uploader-id-redacted>" }1' OFS=/)"
+          echo "assembled ${part_count} parts into ${safe}"
+          {
+            echo "OBJECT_KEY=${object_key}"
+            echo "OBJECT_KEY_SAFE=${safe}"
+          } >> "$GITHUB_ENV"
 
       - name: Publish the release
         id: publish
@@ -1758,7 +1909,7 @@ jobs:
             echo "| GUARD 3 API is this product's | ${{ steps.api_identity.outcome }} |"
             echo "| assembleRelease | ${{ steps.assemble.outcome }} |"
             echo "| GUARD 2 signer fingerprint | ${{ steps.signer.outcome }} |"
-            echo "| GUARD 5 fits the single-PUT path | ${{ steps.size.outcome }} |"
+            echo "| GUARD 5 upload path chosen | ${{ steps.size.outcome }} (${{ env.UPLOAD_MODE }}) |"
             echo "| login (MASTER_ADMIN) | ${{ steps.login.outcome }} |"
             echo "| GUARD 4 versionCode above published | ${{ steps.ceiling.outcome }} |"
             echo "| upload (presign + PUT) | ${{ steps.upload.outcome }} |"
